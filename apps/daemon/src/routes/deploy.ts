@@ -9,6 +9,18 @@ export interface RegisterDeployRoutesDeps extends RouteDeps<'db' | 'http' | 'pat
 export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps) {
   const { db } = ctx;
   const { sendApiError } = ctx.http;
+
+  /**
+   * A DeployError now carries a specific `code` (MISSING_REFERENCES,
+   * CF_ASSET_TOO_LARGE, VERCEL_TOKEN_REQUIRED, …). Pass it through instead of
+   * flattening every failure to BAD_REQUEST: the client mirrors the envelope
+   * code into `artifact_deploy_result.error_code`, so without this every
+   * distinct cause — missing token, non-HTML file, unresolved asset reference,
+   * oversized asset — collapsed into one opaque HTTP_400 bucket.
+   */
+  const deployErrorCodeFor = (err: any, status: number): string =>
+    (err instanceof DeployError && err.code) ||
+    (status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST');
   const { PROJECTS_DIR } = ctx.paths;
   const { randomUUID } = ctx.ids;
   const { getProject } = ctx.projectStore;
@@ -57,7 +69,7 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
         err instanceof DeployError && err.details
           ? { details: err.details }
           : {};
-      sendApiError(res, status, 'BAD_REQUEST', String(err?.message || err), init);
+      sendApiError(res, status, deployErrorCodeFor(err, status), String(err?.message || err), init);
     }
   });
 
@@ -181,7 +193,7 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
       sendApiError(
         res,
         status,
-        status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST',
+        deployErrorCodeFor(err, status),
         String(err?.message || err),
         init,
       );
@@ -224,7 +236,7 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
       sendApiError(
         res,
         status,
-        status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST',
+        deployErrorCodeFor(err, status),
         String(err?.message || err),
       );
     }
