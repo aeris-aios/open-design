@@ -22,7 +22,9 @@ function frontmatter(markdown: string): Record<string, string> {
 }
 
 test('blog index registers the new AI design and prototyping listicles', () => {
-  const index = read('app/pages/blog/index.astro');
+  // Cover art lives in the shared `_lib/blog-images` map (consumed by both the
+  // blog index and the homepage highlights rail), not inline in the page.
+  const index = read('app/_lib/blog-images.ts');
   const expected = [
     {
       id: 'ai-design-agents',

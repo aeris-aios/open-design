@@ -2440,14 +2440,14 @@ const COMMON_COPY: Record<LandingLocaleCode, CommonCopy> = {
 
 const HOME_SEO_COPY: Record<LandingLocaleCode, HomeSeoCopy> = {
   en: {
-    title: 'Open Design — Best Open Source Claude Design Alternative',
+    title: 'Open Design — Vibe Design Workspace & Claude Design Alternative',
     description:
-      'Open-source vibe design workspace & Claude Design alternative — build prototypes, landing pages, dashboards, slides & HTML video with your own coding agent.',
+      'Open-source Vibe Design Workspace & Claude Design alternative — one design system across prototypes, landing pages, dashboards, slides & HTML video, with your own coding agent.',
   },
   zh: {
-    title: 'Open Design —— 最佳 Claude Design 开源替代',
+    title: 'Open Design —— Vibe Design Workspace，Claude Design 开源替代',
     description:
-      'Open Design 是开源的 vibe design workspace，也是 Claude Design 的开源替代——用你自己的 coding agent 做原型、落地页、数据看板、Slides 和 HTML 视频。',
+      'Open Design 是开源的 Vibe Design Workspace，也是 Claude Design 的开源替代——一套设计系统，贯穿原型、落地页、数据看板、Slides 和 HTML 视频，用你自己的 coding agent 驱动。',
   },
   'zh-tw': {
     title: 'Open Design —— 最佳 Claude Design 開源替代',
@@ -2455,44 +2455,44 @@ const HOME_SEO_COPY: Record<LandingLocaleCode, HomeSeoCopy> = {
       'Open Design 是最佳的開源、本地優先 Claude Design 替代方案。用 Claude Code、Codex、Cursor、Gemini、OpenCode 或 Qwen 生成簡報、落地頁、儀表板與品牌系統，背後由 {skills} 個可組合 Skill 與 {systems} 套 DESIGN.md 系統驅動。',
   },
   ja: {
-    title: 'Open Design — 最高のオープンソース Claude Design 代替',
+    title: 'Open Design — Vibe Design Workspace & Claude Design 代替',
     description:
-      'オープンソースの vibe design workspace であり Claude Design の代替。自分の coding agent でプロトタイプ、ランディングページ、ダッシュボード、スライド、HTML 動画を作成。',
+      'オープンソースの Vibe Design Workspace であり Claude Design の代替。プロトタイプ、ランディングページ、ダッシュボード、スライド、HTML 動画をひとつのデザインシステムで貫き、自分の coding agent で動かせます。',
   },
   ko: {
-    title: 'Open Design — 최고의 오픈소스 Claude Design 대안',
+    title: 'Open Design — Vibe Design Workspace & Claude Design 대안',
     description:
-      '오픈소스 vibe design workspace이자 Claude Design 대안. 내 coding agent로 프로토타입, 랜딩 페이지, 대시보드, 슬라이드, HTML 비디오를 만드세요.',
+      '오픈소스 Vibe Design Workspace이자 Claude Design 대안 — 하나의 디자인 시스템으로 프로토타입, 랜딩 페이지, 대시보드, 슬라이드, HTML 비디오까지, 내 coding agent와 함께 만드세요.',
   },
   de: {
-    title: 'Open Design — beste Open-Source-Alternative zu Claude Design',
+    title: 'Open Design — Vibe Design Workspace & Claude-Design-Alternative',
     description:
-      'Open-Source Vibe Design Workspace und Claude-Design-Alternative – Prototypen, Landingpages, Dashboards, Slides & HTML-Video mit deinem eigenen Coding-Agent.',
+      'Open-Source Vibe Design Workspace und Claude-Design-Alternative – ein Designsystem für Prototypen, Landingpages, Dashboards, Slides & HTML-Video, mit deinem eigenen Coding-Agent.',
   },
   fr: {
-    title: "Open Design — la meilleure alternative open source à Claude Design",
+    title: 'Open Design — Vibe Design Workspace & alternative à Claude Design',
     description:
-      'Vibe design workspace open source et alternative à Claude Design — créez prototypes, landing pages, dashboards, slides et vidéo HTML avec votre agent de code.',
+      'Vibe design workspace open source et alternative à Claude Design — un seul design system pour prototypes, landing pages, dashboards, slides et vidéo HTML, avec votre propre agent de code.',
   },
   ru: {
-    title: 'Open Design — лучшая open-source альтернатива Claude Design',
+    title: 'Open Design — Vibe Design Workspace и альтернатива Claude Design',
     description:
-      'Open-source vibe design workspace и альтернатива Claude Design — прототипы, лендинги, дашборды, слайды и HTML-видео с вашим кодинг-агентом.',
+      'Open-source Vibe Design Workspace и альтернатива Claude Design — одна дизайн-система для прототипов, лендингов, дашбордов, слайдов и HTML-видео, с вашим собственным кодинг-агентом.',
   },
   es: {
-    title: 'Open Design — la mejor alternativa open source a Claude Design',
+    title: 'Open Design — Vibe Design Workspace y alternativa a Claude Design',
     description:
-      'Vibe design workspace open source y alternativa a Claude Design: crea prototipos, landing pages, dashboards, slides y vídeo HTML con tu agente de código.',
+      'Vibe Design Workspace open source y alternativa a Claude Design: un solo sistema de diseño para prototipos, landing pages, dashboards, slides y vídeo HTML, con tu propio agente de código.',
   },
   'pt-br': {
-    title: 'Open Design — a melhor alternativa open source ao Claude Design',
+    title: 'Open Design — Vibe Design Workspace e alternativa ao Claude Design',
     description:
-      'Vibe design workspace open source e alternativa ao Claude Design — crie protótipos, landing pages, dashboards, slides e vídeo HTML com seu coding agent.',
+      'Vibe Design Workspace open source e alternativa ao Claude Design — um único design system em protótipos, landing pages, dashboards, slides e vídeo HTML, com seu próprio coding agent.',
   },
   it: {
-    title: "Open Design — la migliore alternativa open source a Claude Design",
+    title: 'Open Design — Vibe Design Workspace e alternativa a Claude Design',
     description:
-      'Vibe design workspace open source e alternativa a Claude Design: crea prototipi, landing page, dashboard, slide e video HTML con il tuo coding agent.',
+      'Vibe Design Workspace open source e alternativa a Claude Design: un solo design system per prototipi, landing page, dashboard, slide e video HTML, con il tuo coding agent.',
   },
   vi: {
     title: 'Open Design — lựa chọn mã nguồn mở tốt nhất thay Claude Design',
@@ -2520,9 +2520,9 @@ const HOME_SEO_COPY: Record<LandingLocaleCode, HomeSeoCopy> = {
       'Open Design هو أفضل بديل مفتوح المصدر والمحلي أولاً لـ Claude Design. أنشئ عروضاً وصفحات هبوط ولوحات بيانات وأنظمة علامة عبر Claude Code أو Codex أو Cursor أو Gemini أو OpenCode أو Qwen، مع {skills} مهارة قابلة للتركيب و {systems} نظام DESIGN.md قابل للنقل.',
   },
   tr: {
-    title: "Open Design — Claude Design'ın en iyi açık kaynak alternatifi",
+    title: 'Open Design — Vibe Design Workspace & Claude Design alternatifi',
     description:
-      'Açık kaynaklı vibe design workspace ve Claude Design alternatifi — kendi kodlama ajanınla prototip, açılış sayfası, dashboard, slayt ve HTML video oluştur.',
+      'Açık kaynaklı Vibe Design Workspace ve Claude Design alternatifi — prototip, açılış sayfası, dashboard, slayt ve HTML videoda tek bir tasarım sistemi, kendi kodlama ajanınla.',
   },
   uk: {
     title: 'Open Design — найкраща open-source альтернатива Claude Design',
@@ -2535,7 +2535,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
   en: [
     {
       q: 'What is Open Design?',
-      a: 'Open Design is the official open-source AI design workspace from the nexu-io/open-design project. It turns a local coding agent — Claude Code, Codex, Cursor, Gemini CLI, OpenCode, or Qwen — into a design engine driven by composable skills and portable DESIGN.md systems.',
+      a: 'Open Design is the open-source Vibe Design Workspace from the nexu-io/open-design project. It turns the local coding agents you already run (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen) into a brand design engine: one design system, kept consistent across every artifact, driven by composable skills and portable DESIGN.md systems.',
     },
     {
       q: 'Is Open Design official?',
@@ -2600,6 +2600,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'What\'s on the Open Design roadmap?',
       a: 'The live roadmap is at docs/roadmap.md in the GitHub repo, and weekly release notes ship through GitHub Releases. Major themes for the next quarter: more agent adapters, richer template families (3D, video, audio), and an optional shared-daemon mode for design teams.',
     },
+    {
+      q: 'Does Open Design work inside Codex?',
+      a: 'Yes. Install the Open Design Plugin for Codex once, then call @open-design from any Codex conversation and get a real, editable design artifact back. Setup takes one pasted prompt; see the Codex plugin page for details.',
+      href: '/codex-plugin/',
+    },
+    {
+      q: 'What is a brand system, and what does self-evolving mean?',
+      a: 'A brand system (brand kernel) is the single source of truth for your visual identity: colors, type, radius, imagery, voice. Every artifact inherits it, and every choice you make feeds back into it, so the system keeps evolving and each result lands more on-brand than the last. Change one token and your work recalculates.',
+    },
+    {
+      q: 'Can my whole team share one workspace?',
+      a: "Yes. Team Workspace shares the brand system, template library, and projects across your team: everyone generates with the same kernel, artifacts land in one library, and changes to the system recalculate the team's work. See the pricing page for team plans.",
+      href: '/pricing/',
+    },
   ],
   zh: [
     {
@@ -2614,7 +2628,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'Open Design 是什么？',
-      a: 'Open Design 是 nexu-io/open-design 项目的官方开源 AI 设计工作台。它把本地编码 Agent（Claude Code、Codex、Cursor、Gemini CLI、OpenCode 或 Qwen）变成设计引擎，并由可组合 SKILL.md 工作流驱动。',
+      a: 'Open Design 是 nexu-io/open-design 项目的开源 Vibe Design Workspace。它把你已经在用的本地 coding agent（Claude Code、Codex、Cursor、Gemini CLI、OpenCode、Qwen）变成品牌设计引擎：一套设计系统，在所有产物上保持一致，由可组合的 skill 和可移植的 DESIGN.md 系统驱动。',
     },
     {
       q: 'Open Design 是官方项目吗？',
@@ -2664,6 +2678,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     {
       q: 'Open Design 的路线图有什么？',
       a: '实时路线图在 GitHub 仓库的 docs/roadmap.md，每周发布说明通过 GitHub Releases 发出。下个季度的主要方向：更多 Agent 适配器、更丰富的模板族（3D、视频、音频），以及面向设计团队的可选共享 daemon 模式。',
+    },
+    {
+      q: 'Open Design 能在 Codex 里用吗？',
+      a: '可以。安装一次 Open Design Plugin for Codex，之后在任何 Codex 对话里 @open-design，就能拿回真实可编辑的设计产物。安装只需粘贴一段 prompt，详见 Codex 插件页。',
+      href: '/codex-plugin/',
+    },
+    {
+      q: '什么是品牌系统？自进化是什么意思？',
+      a: '品牌系统（品牌内核）是你视觉识别的单一事实源：颜色、字体、圆角、影像、语气。所有产物都继承它，你的每次选择也会回馈进去，系统持续进化，下一件作品比上一件更 on-brand。改一个 token，作品全部重算。',
+    },
+    {
+      q: '整个团队能共用一个工作台吗？',
+      a: '可以。Team Workspace 让品牌系统、模板库和项目全团队共享：所有人用同一个内核生成，作品进同一个库，系统一改，全员作品一起重算。团队方案见价格页。',
+      href: '/pricing/',
     },
   ],
   'zh-tw': [
@@ -2734,7 +2762,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'Open Design とは何ですか？',
-      a: 'Open Design は nexu-io/open-design プロジェクト公式のオープンソース AI デザインワークスペースです。Claude Code、Codex、Cursor、Gemini CLI、OpenCode、Qwen などのローカル coding agent を、スキルと DESIGN.md システムで動くデザインエンジンにします。',
+      a: 'Open Design は nexu-io/open-design プロジェクトのオープンソース Vibe Design Workspace です。すでに使っているローカル coding agent（Claude Code、Codex、Cursor、Gemini CLI、OpenCode、Qwen）をブランドデザインエンジンに変えます：ひとつのデザインシステムをあらゆる成果物で一貫させ、組み合わせ可能なスキルとポータブルな DESIGN.md システムで駆動します。',
     },
     {
       q: 'Open Design は公式ですか？',
@@ -2785,6 +2813,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'Open Design のロードマップは？',
       a: '最新のロードマップは GitHub repo の docs/roadmap.md にあり、週次のリリースノートは GitHub Releases で公開されます。次の四半期の主なテーマは、agent adapter の追加、テンプレートファミリーの拡充（3D・動画・音声）、デザインチーム向けのオプションの共有 daemon モードです。',
     },
+    {
+      q: 'Open Design は Codex の中で使えますか？',
+      a: 'はい。Codex 向けの Open Design Plugin を一度インストールすれば、どの Codex 会話からでも @open-design を呼び出し、本物の編集可能なデザイン成果物を受け取れます。セットアップはプロンプトを 1 回貼り付けるだけ。詳細は Codex プラグインのページをご覧ください。',
+      href: '/codex-plugin/',
+    },
+    {
+      q: 'ブランドシステムとは何ですか？self-evolving（自己進化）とはどういう意味ですか？',
+      a: 'ブランドシステム（ブランドカーネル）は、色、タイポグラフィ、角丸、イメージ、ボイスといったビジュアルアイデンティティの単一の情報源です。すべての成果物がそれを継承し、あなたの選択はすべてそこへ還元されるため、システムは進化を続け、成果物は一つごとに、より on-brand に仕上がります。トークンをひとつ変えれば、作品全体が再計算されます。',
+    },
+    {
+      q: 'チーム全員でひとつのワークスペースを共有できますか？',
+      a: 'はい。Team Workspace はブランドシステム、テンプレートライブラリ、プロジェクトをチーム全体で共有します：全員が同じカーネルで生成し、成果物はひとつのライブラリに集まり、システムの変更はチームの作業を再計算します。チームプランは料金ページをご覧ください。',
+      href: '/pricing/',
+    },
   ],
   ko: [
     {
@@ -2799,7 +2841,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'Open Design은 무엇인가요?',
-      a: 'Open Design은 nexu-io/open-design 프로젝트의 공식 오픈소스 AI 디자인 워크스페이스입니다. Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen 같은 로컬 coding agent를 조합형 skill과 DESIGN.md 시스템으로 구동되는 디자인 엔진으로 바꿉니다.',
+      a: 'Open Design은 nexu-io/open-design 프로젝트의 오픈소스 Vibe Design Workspace입니다. 이미 실행 중인 로컬 coding agent(Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen)를 브랜드 디자인 엔진으로 바꿉니다: 하나의 디자인 시스템이 모든 산출물에서 일관되게 유지되며, 조합형 skill과 이식 가능한 DESIGN.md 시스템으로 구동됩니다.',
     },
     {
       q: 'Open Design은 공식 프로젝트인가요?',
@@ -2850,6 +2892,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'Open Design 로드맵에는 무엇이 있나요?',
       a: '실시간 로드맵은 GitHub repo의 docs/roadmap.md에 있고, 주간 릴리스 노트는 GitHub Releases로 나갑니다. 다음 분기의 주요 주제는 더 많은 agent adapter, 더 풍부한 템플릿 패밀리(3D, 비디오, 오디오), 디자인 팀을 위한 선택형 공유 daemon 모드입니다.',
     },
+    {
+      q: 'Open Design은 Codex 안에서도 작동하나요?',
+      a: '네. Codex용 Open Design Plugin을 한 번 설치한 뒤, 어떤 Codex 대화에서든 @open-design을 호출하면 편집 가능한 진짜 디자인 산출물을 받을 수 있습니다. 설정은 프롬프트 하나를 붙여넣는 것으로 끝납니다. 자세한 내용은 Codex 플러그인 페이지를 확인하세요.',
+      href: '/codex-plugin/',
+    },
+    {
+      q: '브랜드 시스템이란 무엇이고, 자가 진화(self-evolving)는 무슨 뜻인가요?',
+      a: '브랜드 시스템(브랜드 커널)은 컬러, 타이포, 라운드, 이미지, 보이스까지 시각 아이덴티티 전체의 단일 원천입니다. 모든 산출물이 이를 물려받고, 사용자의 모든 선택이 다시 시스템에 반영되어 시스템이 계속 진화하며, 결과물은 만들 때마다 더 브랜드다워집니다. 토큰 하나만 바꿔도 작업물이 다시 계산됩니다.',
+    },
+    {
+      q: '팀 전체가 하나의 워크스페이스를 공유할 수 있나요?',
+      a: '네. Team Workspace는 브랜드 시스템, 템플릿 라이브러리, 프로젝트를 팀 전체와 공유합니다: 모두가 같은 커널로 생성하고, 산출물은 하나의 라이브러리에 모이며, 시스템을 바꾸면 팀의 작업이 다시 계산됩니다. 팀 요금제는 가격 페이지에서 확인하세요.',
+      href: '/pricing/',
+    },
   ],
   de: [
     {
@@ -2864,7 +2920,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'Was ist Open Design?',
-      a: 'Open Design ist der offizielle Open-Source-AI-Design-Workspace des Projekts nexu-io/open-design. Es macht lokale Coding-Agents wie Claude Code, Codex, Cursor, Gemini CLI, OpenCode oder Qwen zu einer Design-Engine auf Basis von Skills und DESIGN.md-Systemen.',
+      a: 'Open Design ist der quelloffene Vibe Design Workspace des Projekts nexu-io/open-design. Es macht die lokalen Coding-Agents, die du bereits nutzt (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen), zu einer Marken-Design-Engine: ein Designsystem, konsistent über jedes Artefakt hinweg, angetrieben von komponierbaren Skills und portablen DESIGN.md-Systemen.',
     },
     {
       q: 'Ist Open Design offiziell?',
@@ -2915,6 +2971,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'Was steht auf der Open-Design-Roadmap?',
       a: 'Die aktuelle Roadmap liegt unter docs/roadmap.md im GitHub-Repo, wöchentliche Release Notes erscheinen über GitHub Releases. Die großen Themen fürs nächste Quartal: mehr Agent-Adapter, reichere Template-Familien (3D, Video, Audio) und ein optionaler Shared-Daemon-Modus für Design-Teams.',
     },
+    {
+      q: 'Funktioniert Open Design in Codex?',
+      a: 'Ja. Installiere das Open Design Plugin für Codex einmal, rufe dann @open-design aus jeder Codex-Konversation auf und erhalte ein echtes, editierbares Design-Artefakt zurück. Das Setup ist ein einziger eingefügter Prompt; Details stehen auf der Codex-Plugin-Seite.',
+      href: '/codex-plugin/',
+    },
+    {
+      q: 'Was ist ein Markensystem, und was heißt, dass es sich selbst weiterentwickelt?',
+      a: 'Ein Markensystem (Marken-Kernel) ist die einzige Quelle der Wahrheit für deine visuelle Identität: Farben, Typografie, Radius, Bildwelt, Tonalität. Jedes Artefakt erbt es, und jede Entscheidung, die du triffst, fließt zurück ins System — es entwickelt sich also stetig weiter, und jedes Ergebnis landet noch mehr on-brand als das letzte. Ändere ein Token, und deine Arbeit wird neu berechnet.',
+    },
+    {
+      q: 'Kann mein ganzes Team einen Workspace teilen?',
+      a: 'Ja. Team Workspace teilt Markensystem, Template-Bibliothek und Projekte im ganzen Team: Alle generieren mit demselben Kernel, Artefakte landen in einer Bibliothek, und Änderungen am System berechnen die Arbeit des Teams neu. Team-Pläne findest du auf der Pricing-Seite.',
+      href: '/pricing/',
+    },
   ],
   fr: [
     {
@@ -2929,7 +2999,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: "Qu'est-ce qu'Open Design ?",
-      a: "Open Design est l'espace de travail officiel et open source du projet nexu-io/open-design. Il transforme un agent local — Claude Code, Codex, Cursor, Gemini CLI, OpenCode ou Qwen — en moteur de design piloté par des skills composables et des systèmes DESIGN.md portables.",
+      a: 'Open Design est le Vibe Design Workspace open source du projet nexu-io/open-design. Il transforme les agents de code locaux que vous utilisez déjà (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen) en moteur de design de marque : un seul design system, cohérent sur chaque artifact, piloté par des skills composables et des systèmes DESIGN.md portables.',
     },
     {
       q: 'Open Design est-il officiel ?',
@@ -2980,6 +3050,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'Qu\'y a-t-il sur la roadmap d\'Open Design ?',
       a: 'La roadmap vivante est dans docs/roadmap.md du repo GitHub, et des notes de version hebdomadaires sortent via GitHub Releases. Les grands thèmes du prochain trimestre : plus d\'adaptateurs d\'agents, des familles de templates plus riches (3D, vidéo, audio) et un mode shared-daemon optionnel pour les équipes design.',
     },
+    {
+      q: 'Open Design fonctionne-t-il dans Codex ?',
+      a: "Oui. Installez une fois le plugin Open Design pour Codex, puis appelez @open-design depuis n'importe quelle conversation Codex pour récupérer un artifact de design réel et éditable. L'installation tient en un prompt à coller ; voir la page du plugin Codex pour les détails.",
+      href: '/codex-plugin/',
+    },
+    {
+      q: "Qu'est-ce qu'un système de marque, et que signifie auto-évolutif ?",
+      a: "Un système de marque (brand kernel) est la source de vérité unique de votre identité visuelle : couleurs, typographie, arrondis, imagerie, ton. Chaque artifact en hérite, et chaque choix que vous faites l'alimente en retour : le système continue d'évoluer et chaque résultat est plus fidèle à la marque que le précédent. Changez un token et votre travail se recalcule.",
+    },
+    {
+      q: 'Toute mon équipe peut-elle partager un même workspace ?',
+      a: "Oui. Team Workspace partage le système de marque, la bibliothèque de templates et les projets avec toute l'équipe : chacun génère avec le même noyau, les artifacts atterrissent dans une seule bibliothèque, et les modifications du système recalculent le travail de l'équipe. Voir la page tarifs pour les offres équipe.",
+      href: '/pricing/',
+    },
   ],
   ru: [
     {
@@ -2994,7 +3078,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'Что такое Open Design?',
-      a: 'Open Design — официальный open-source AI design workspace проекта nexu-io/open-design. Он превращает локальный coding agent — Claude Code, Codex, Cursor, Gemini CLI, OpenCode или Qwen — в design-движок на базе composable skills и переносимых DESIGN.md-систем.',
+      a: 'Open Design — open-source Vibe Design Workspace проекта nexu-io/open-design. Он превращает локальные кодинг-агенты, которыми вы уже пользуетесь (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen), в движок бренд-дизайна: одна дизайн-система, единая во всех артефактах, на базе composable skills и переносимых DESIGN.md-систем.',
     },
     {
       q: 'Open Design официальный?',
@@ -3045,6 +3129,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'Что в роадмапе Open Design?',
       a: 'Живой роадмап — в docs/roadmap.md в GitHub-репозитории, еженедельные release notes выходят через GitHub Releases. Главные темы следующего квартала: больше agent adapters, более богатые семейства шаблонов (3D, видео, аудио) и опциональный режим общего daemon для дизайн-команд.',
     },
+    {
+      q: 'Open Design работает внутри Codex?',
+      a: 'Да. Установите Open Design Plugin для Codex один раз, затем вызывайте @open-design из любого диалога в Codex и получайте настоящий редактируемый дизайн-артефакт. Настройка — один вставленный промпт; подробности на странице плагина для Codex.',
+      href: '/codex-plugin/',
+    },
+    {
+      q: 'Что такое бренд-система и что значит «самоэволюционирующая»?',
+      a: 'Бренд-система (ядро бренда) — единый источник истины для вашей визуальной идентичности: цвета, шрифты, скругления, изображения, голос. Каждый артефакт наследует её, а каждый ваш выбор возвращается в неё, поэтому система продолжает эволюционировать, и каждый результат получается более on-brand, чем предыдущий. Измените один токен — и ваша работа пересчитается.',
+    },
+    {
+      q: 'Может ли вся команда работать в одном воркспейсе?',
+      a: 'Да. Team Workspace делает бренд-систему, библиотеку шаблонов и проекты общими для команды: все генерируют с одним ядром, артефакты попадают в одну библиотеку, а изменения системы пересчитывают работу всей команды. Тарифы для команд — на странице цен.',
+      href: '/pricing/',
+    },
   ],
   es: [
     {
@@ -3059,7 +3157,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: '¿Qué es Open Design?',
-      a: 'Open Design es el workspace oficial y open source de IA de diseño del proyecto nexu-io/open-design. Convierte un coding agent local — Claude Code, Codex, Cursor, Gemini CLI, OpenCode o Qwen — en un motor de diseño con skills componibles y sistemas DESIGN.md portables.',
+      a: 'Open Design es el Vibe Design Workspace open source del proyecto nexu-io/open-design. Convierte los coding agents locales que ya usas (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen) en un motor de diseño de marca: un solo sistema de diseño, coherente en cada artifact, impulsado por skills componibles y sistemas DESIGN.md portables.',
     },
     {
       q: '¿Open Design es oficial?',
@@ -3110,6 +3208,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: '¿Qué hay en el roadmap de Open Design?',
       a: 'El roadmap vivo está en docs/roadmap.md del repo de GitHub, y las notas de versión semanales salen por GitHub Releases. Los grandes temas del próximo trimestre: más adaptadores de agents, familias de plantillas más ricas (3D, vídeo, audio) y un modo opcional de daemon compartido para equipos de diseño.',
     },
+    {
+      q: '¿Open Design funciona dentro de Codex?',
+      a: 'Sí. Instala el Open Design Plugin para Codex una sola vez y luego llama a @open-design desde cualquier conversación de Codex para recibir un artifact de diseño real y editable. La configuración es un solo prompt pegado; consulta la página del plugin de Codex para más detalles.',
+      href: '/codex-plugin/',
+    },
+    {
+      q: '¿Qué es un sistema de marca y qué significa que se autoevoluciona?',
+      a: 'Un sistema de marca (brand kernel) es la única fuente de verdad de tu identidad visual: colores, tipografía, radios, imágenes, tono. Cada artifact lo hereda, y cada decisión que tomas vuelve a alimentarlo, de modo que el sistema sigue evolucionando y cada resultado sale más on-brand que el anterior. Cambia un token y tu trabajo se recalcula.',
+    },
+    {
+      q: '¿Todo mi equipo puede compartir un mismo workspace?',
+      a: 'Sí. Team Workspace comparte el sistema de marca, la biblioteca de plantillas y los proyectos con todo tu equipo: todos generan con el mismo kernel, los artifacts llegan a una sola biblioteca y los cambios en el sistema recalculan el trabajo del equipo. Consulta la página de precios para ver los planes de equipo.',
+      href: '/pricing/',
+    },
   ],
   'pt-br': [
     {
@@ -3124,7 +3236,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'O que é Open Design?',
-      a: 'Open Design é o workspace oficial, open source, de design com IA do projeto nexu-io/open-design. Ele transforma um coding agent local — Claude Code, Codex, Cursor, Gemini CLI, OpenCode ou Qwen — em um motor de design movido por skills componíveis e sistemas DESIGN.md portáteis.',
+      a: 'Open Design é o Vibe Design Workspace open source do projeto nexu-io/open-design. Ele transforma os coding agents locais que você já usa (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen) em um motor de design de marca: um único design system, mantido consistente em cada artifact, movido por skills componíveis e sistemas DESIGN.md portáteis.',
     },
     {
       q: 'Open Design é oficial?',
@@ -3175,6 +3287,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
       q: 'O que tem no roadmap do Open Design?',
       a: 'O roadmap vivo está em docs/roadmap.md no repo do GitHub, e notas de release semanais saem pelo GitHub Releases. Os grandes temas do próximo trimestre: mais adaptadores de agents, famílias de templates mais ricas (3D, vídeo, áudio) e um modo opcional de daemon compartilhado para times de design.',
     },
+    {
+      q: 'O Open Design funciona dentro do Codex?',
+      a: 'Sim. Instale o Open Design Plugin para Codex uma vez, depois chame @open-design em qualquer conversa do Codex e receba de volta um artifact de design real e editável. A configuração é um único prompt colado; veja a página do plugin do Codex para detalhes.',
+      href: '/codex-plugin/',
+    },
+    {
+      q: 'O que é um sistema de marca, e o que significa autoevolutivo?',
+      a: 'Um sistema de marca (brand kernel) é a fonte única de verdade da sua identidade visual: cores, tipografia, raio, imagens, tom de voz. Todo artifact herda esse sistema, e cada escolha que você faz realimenta o kernel — assim o sistema continua evoluindo e cada resultado sai mais on-brand que o anterior. Mude um token e seu trabalho é recalculado.',
+    },
+    {
+      q: 'Meu time inteiro pode compartilhar um único workspace?',
+      a: 'Sim. O Team Workspace compartilha o sistema de marca, a biblioteca de templates e os projetos com todo o time: todos geram com o mesmo kernel, os artifacts vão para uma única biblioteca e mudanças no sistema recalculam o trabalho do time. Veja a página de preços para os planos de equipe.',
+      href: '/pricing/',
+    },
   ],
   it: [
     {
@@ -3189,7 +3315,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: "Cos'è Open Design?",
-      a: 'Open Design è il workspace ufficiale e open source di AI design del progetto nexu-io/open-design. Trasforma un coding agent locale — Claude Code, Codex, Cursor, Gemini CLI, OpenCode o Qwen — in un motore di design guidato da skill componibili e sistemi DESIGN.md portabili.',
+      a: 'Open Design è il Vibe Design Workspace open source del progetto nexu-io/open-design. Trasforma i coding agent locali che già usi (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen) in un motore di design per il brand: un solo design system, mantenuto coerente su ogni artifact, guidato da skill componibili e sistemi DESIGN.md portabili.',
     },
     {
       q: 'Open Design è ufficiale?',
@@ -3239,6 +3365,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     {
       q: 'Cosa c\'è nella roadmap di Open Design?',
       a: 'La roadmap viva è in docs/roadmap.md nel repo GitHub, e le release notes settimanali escono via GitHub Releases. I grandi temi del prossimo trimestre: più adapter per agent, famiglie di template più ricche (3D, video, audio) e una modalità opzionale di daemon condiviso per i team di design.',
+    },
+    {
+      q: 'Open Design funziona dentro Codex?',
+      a: "Sì. Installa una volta l'Open Design Plugin per Codex, poi chiama @open-design da qualsiasi conversazione Codex e ricevi un artifact di design reale e modificabile. La configurazione richiede un solo prompt incollato; per i dettagli vedi la pagina del plugin per Codex.",
+      href: '/codex-plugin/',
+    },
+    {
+      q: "Che cos'è un brand system e cosa significa auto-evolutivo?",
+      a: "Un brand system (kernel del brand) è l'unica fonte di verità della tua identità visiva: colori, tipografia, raggi, immagini, voce. Ogni artifact lo eredita e ogni tua scelta vi torna dentro, così il sistema continua a evolversi e ogni risultato è più on-brand del precedente. Cambia un token e il tuo lavoro si ricalcola.",
+    },
+    {
+      q: 'Tutto il mio team può condividere un unico workspace?',
+      a: "Sì. Team Workspace condivide brand system, libreria di template e progetti con tutto il team: tutti generano con lo stesso kernel, gli artifact finiscono in un'unica libreria e le modifiche al sistema ricalcolano il lavoro del team. Vedi la pagina prezzi per i piani team.",
+      href: '/pricing/',
     },
   ],
   vi: [
@@ -3529,7 +3669,7 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     },
     {
       q: 'Open Design nedir?',
-      a: "Open Design, nexu-io/open-design projesinin resmi açık kaynak AI design workspace'idir. Claude Code, Codex, Cursor, Gemini CLI, OpenCode veya Qwen gibi yerel coding agent'ları, birleştirilebilir skill'ler ve taşınabilir DESIGN.md sistemleriyle çalışan bir tasarım motoruna dönüştürür.",
+      a: "Open Design, nexu-io/open-design projesinin açık kaynaklı Vibe Design Workspace'idir. Hâlihazırda çalıştırdığın yerel coding agent'ları (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Qwen) bir marka tasarım motoruna dönüştürür: tek bir tasarım sistemi, her artifact'te tutarlı tutulur; birleştirilebilir skill'ler ve taşınabilir DESIGN.md sistemleriyle çalışır.",
     },
     {
       q: 'Open Design resmi mi?',
@@ -3579,6 +3719,20 @@ const HOME_FAQ_COPY: Record<LandingLocaleCode, HomeFaqTemplate[]> = {
     {
       q: 'Open Design roadmap\'inde neler var?',
       a: 'Canlı roadmap GitHub repo\'sundaki docs/roadmap.md dosyasında, haftalık release notları ise GitHub Releases üzerinden yayınlanır. Önümüzdeki çeyreğin ana başlıkları: daha fazla agent adapter\'ı, daha zengin şablon aileleri (3D, video, ses) ve tasarım ekipleri için isteğe bağlı shared-daemon modu.',
+    },
+    {
+      q: 'Open Design, Codex içinde çalışır mı?',
+      a: "Evet. Codex için Open Design eklentisini bir kez kur, sonra herhangi bir Codex konuşmasında @open-design'ı çağır ve karşılığında gerçek, düzenlenebilir bir tasarım artifact'i al. Kurulum tek bir yapıştırılmış prompt'tan ibaret; ayrıntılar için Codex eklentisi sayfasına bak.",
+      href: '/codex-plugin/',
+    },
+    {
+      q: 'Marka sistemi nedir ve kendi kendine evrilmesi ne anlama gelir?',
+      a: 'Marka sistemi (marka çekirdeği), görsel kimliğinin tek doğruluk kaynağıdır: renkler, tipografi, köşe yarıçapı, görsel dil, ses tonu. Her artifact onu miras alır ve verdiğin her karar sisteme geri beslenir; böylece sistem sürekli evrilir ve her sonuç bir öncekinden markana daha çok oturur. Tek bir token değiştir, tüm işlerin yeniden hesaplanır.',
+    },
+    {
+      q: 'Tüm ekibim tek bir çalışma alanını paylaşabilir mi?',
+      a: "Evet. Team Workspace marka sistemini, şablon kütüphanesini ve projeleri ekibin genelinde paylaşır: herkes aynı çekirdekle üretir, artifact'ler tek bir kütüphaneye düşer ve sistemde yapılan değişiklikler ekibin işini yeniden hesaplar. Ekip planları için fiyatlandırma sayfasına bak.",
+      href: '/pricing/',
     },
   ],
   uk: [

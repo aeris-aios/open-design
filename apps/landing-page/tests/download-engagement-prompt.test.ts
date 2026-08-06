@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { getDownloadPromptCopy } from '../app/download-prompt-i18n.ts';
-import { getHomeExtra } from '../app/home-translations.ts';
+import { getHomeRedesignCopy } from '../app/home-redesign-i18n.ts';
 import { getInfoPageCopy } from '../app/info-page-i18n.ts';
 import { LANDING_LOCALES } from '../app/i18n.ts';
 import { buildMatrixFromStableMetadata } from '../app/_lib/github.ts';
@@ -32,7 +32,7 @@ const homeDownloadEnhancerStart = homeIndexSource.indexOf(
   '        const enhanceDownloadCta = () => {',
 );
 const homeDownloadEnhancerEnd = homeIndexSource.indexOf(
-  '        // Labs artifact switcher.',
+  '        const enhanceFaqHover = () => {',
   homeDownloadEnhancerStart,
 );
 assert.ok(
@@ -216,61 +216,52 @@ test('download prompt: every active locale has complete, localized copy', () => 
   assert.equal(getDownloadPromptCopy('zh').primary, '免费下载');
 });
 
-test('homepage hero: every active locale carries the brand-system scenario promise', () => {
-  const english = getHomeExtra('en').heroTaskTitle!;
-  const englishHighlight = getHomeExtra('en').heroSubHighlight!;
+test('homepage hero: the redesigned hero keeps its structure and localized copy', () => {
+  const english = getHomeRedesignCopy('en');
   for (const { code } of LANDING_LOCALES) {
-    const home = getHomeExtra(code);
-    const title = home.heroTaskTitle;
-    const lines = home.heroTaskLines;
-    const emphasis = home.heroTaskEmphasis;
-    const highlight = home.heroSubHighlight;
-    assert.ok(title && title.length > 20, `${code}: hero scenario promise is missing`);
-    assert.equal(lines?.length, 2, `${code}: hero promise must have two deliberate lines`);
-    assert.ok(lines?.every((line) => line.trim().length > 0), `${code}: hero lines must be non-empty`);
-    assert.ok(emphasis, `${code}: design-system emphasis is missing`);
-    assert.ok(
-      lines?.some((line) => line.includes(emphasis)),
-      `${code}: design-system emphasis must match the localized hero promise`,
-    );
-    assert.match(home.heroTitleSub, /Claude Design/, `${code}: eyebrow positioning is inconsistent`);
-    assert.ok(highlight && highlight.length > 10, `${code}: inline value highlight is missing`);
-    assert.ok(home.heroSub.includes(highlight), `${code}: inline value highlight must match heroSub`);
+    const copy = getHomeRedesignCopy(code);
+    for (const value of [
+      copy.hero.title,
+      copy.hero.subEm,
+      copy.hero.download,
+      copy.tabs.web,
+      copy.tabs.mobile,
+      copy.tabs.poster,
+      copy.tabs.slides,
+      copy.tabs.video,
+      copy.demo.getApp,
+      copy.agents.bold,
+    ]) {
+      assert.ok(value.trim().length > 0, `${code}: redesigned hero copy must be non-empty`);
+    }
     if (code !== 'en') {
-      assert.notEqual(title, english, `${code}: hero promise fell back to English`);
       assert.notEqual(
-        highlight,
-        englishHighlight,
-        `${code}: inline value highlight fell back to English`,
+        copy.hero.title,
+        english.hero.title,
+        `${code}: hero title fell back to English`,
+      );
+      assert.notEqual(
+        copy.how.steps[0].body,
+        english.how.steps[0].body,
+        `${code}: body copy fell back to English`,
       );
     }
   }
-  assert.match(english, /design system/i);
-  assert.equal(
-    english,
-    'One design system. Every website, slide, prototype, dashboard, image, and video stays on-brand.',
+  assert.equal(english.hero.title, 'The Vibe Design Workspace for your brand.');
+  assert.notEqual(
+    getHomeRedesignCopy('zh').hero.title,
+    english.hero.title,
+    'zh: hero title fell back to English',
   );
-  assert.equal(
-    getHomeExtra('zh').heroTaskTitle,
-    '一套设计系统，让网页、PPT、原型、数据看板、图像与视频保持品牌一致',
-  );
-  assert.equal(getHomeExtra('en').heroTitleSub, 'Best open-source Claude Design alternative');
-  assert.equal(getHomeExtra('zh').heroTitleSub, 'Claude Design最佳开源平替');
-  assert.equal(getHomeExtra('zh').heroSubHighlight, '把你已有的 Coding Agent 变成设计引擎');
-  assert.doesNotMatch(homePageSource, /hero-title-agent-promise/);
-  assert.match(homePageSource, /hero-sub-highlight/);
-  assert.match(homePageSource, /hero-title-main-line/);
-  assert.match(homePageSource, /hero-task-emphasis/);
-  assert.match(
-    homeStylesSource,
-    /\.hero-title-main-line\s*\{[^}]*background:\s*none;[^}]*text-decoration:\s*none;/s,
-  );
-  assert.match(
-    homeStylesSource,
-    /\.hero-task-emphasis\s*\{[^}]*display:\s*inline-block;[^}]*background:\s*linear-gradient\(/s,
-  );
-  assert.match(homePageSource, /hero-download-attention/);
+  // Structure: single breathing download CTA, scenario tabs driving the
+  // workspace-demo iframe, and the agent marquee.
+  assert.match(homePageSource, /hm-dl-hero/);
   assert.match(homePageSource, /data-direct-download/);
+  assert.match(homePageSource, /data-hm-workspace/);
+  assert.match(homePageSource, /data-hm-scene/);
+  assert.match(homePageSource, /hm-mq-track/);
+  assert.match(homeStylesSource, /\.hm-dl-hero\s*\{[^}]*animation:\s*hm-dl-breathe/s);
+  assert.match(homeStylesSource, /\.hm-frame\s*\{/);
 });
 
 test('download hero: every active locale explains the agent-led design workflow', () => {

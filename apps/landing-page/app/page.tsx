@@ -1,12 +1,16 @@
 /*
- * Open Design — Atelier Zero landing page.
+ * Open Design — homepage (2026-08 redesign).
  *
- * Mirrors `design-templates/open-design-landing/example.html` 1:1. When the canonical
- * example.html changes, mirror the diff here and into `app/globals.css`.
+ * Structure: announcement bar → workspace hero (headline, download CTA,
+ * scenario tabs, live three-pane workspace demo iframe, agent marquee) →
+ * "How it works" three steps → key features (interactive brand-system demo +
+ * six cards) → team workspace → three ways to use it → customer stories →
+ * blog highlights → contributor globe → closing CTA → FAQ → footer.
  *
- * Static React component rendered by Astro. The Header component owns the
- * small client-side behaviors; promote other sections to Astro islands only
- * when behavior is needed.
+ * Static React component rendered by Astro (`renderToStaticMarkup`, zero
+ * client React). Client behaviors live as inline classic scripts in
+ * `app/pages/index.astro`; the workspace/brand demos are self-contained
+ * static documents under `public/home-redesign/` embedded via iframes.
  */
 
 import { GradualBlur } from './_components/gradual-blur';
@@ -28,11 +32,11 @@ import {
   heroBgImage,
   heroBgSrcset,
   heroProductImage,
-  heroProductSrcset,
   PRECISE_LAZY_PLACEHOLDER,
 } from './image-assets';
 import { getHomeExtra, getHomeCta } from './home-translations';
 import { getFooterLegalCopy } from './footer-legal-i18n';
+import { getHomeRedesignCopy } from './home-redesign-i18n';
 
 /**
  * `<img>` wrapper for non-hero homepage images. Outputs `data-precise-src`
@@ -55,154 +59,14 @@ function LazyImg(props: { src: string; alt?: string; className?: string }) {
   );
 }
 
-function BreakText({ text }: { text: string }) {
-  return (
-    <>
-      {text.split('\n').map((part, index) => (
-        <span key={`${part}-${index}`}>
-          {index > 0 ? <br /> : null}
-          {part}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function HighlightedBreakText({
-  text,
-  highlight,
-}: {
-  text: string;
-  highlight?: string;
-}) {
-  return (
-    <>
-      {text.split('\n').map((line, index) => {
-        const highlightIndex = highlight ? line.indexOf(highlight) : -1;
-        return (
-          <span key={`${line}-${index}`}>
-            {index > 0 ? <br /> : null}
-            {highlightIndex >= 0 && highlight ? (
-              <>
-                {line.slice(0, highlightIndex)}
-                <strong className='hero-sub-highlight'>{highlight}</strong>
-                {line.slice(highlightIndex + highlight.length)}
-              </>
-            ) : (
-              line
-            )}
-          </span>
-        );
-      })}
-    </>
-  );
-}
-
-/**
- * Static SSR port of React Bits' `<BlurText />` "blur-in" reveal. The page is
- * rendered with `renderToStaticMarkup` (no client React / no `motion` runtime),
- * so instead of motion hooks we emit one `.blur-word` span per word/letter with
- * a `--i` stagger index. The CSS keyframes in globals.css mirror the original
- * blur(10px→5px→0) + opacity(0→.5→1) + translateY steps, and the existing
- * `data-reveal` IntersectionObserver (home-enhancer.astro) flips the ancestor to
- * `data-revealed='true'` to start the cascade once it scrolls into view.
- *
- * `start` continues the stagger index across multiple BlurText runs so a second
- * line picks up where the first left off.
- */
-function BlurText({
-  text,
-  by = 'words',
-  start = 0,
-}: {
-  text: string;
-  by?: 'words' | 'letters';
-  start?: number;
-}) {
-  const parts = by === 'words' ? text.split(' ') : Array.from(text);
-  return (
-    <>
-      {parts.map((seg, i) => (
-        <span
-          className='blur-word'
-          style={{ '--i': start + i } as React.CSSProperties}
-          key={`${seg}-${i}`}
-        >
-          {seg === ' ' ? NBSP : seg}
-          {by === 'words' && i < parts.length - 1 ? NBSP : ''}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function blurTextTokenCount(text: string, by: 'words' | 'letters') {
-  return by === 'words' ? text.split(' ').length : Array.from(text).length;
-}
-
-/** Keeps the reveal stagger intact while giving one semantic phrase a marker. */
-function EmphasizedBlurText({
-  text,
-  emphasis,
-  by,
-  start,
-}: {
-  text: string;
-  emphasis?: string;
-  by: 'words' | 'letters';
-  start: number;
-}) {
-  const emphasisStart = emphasis ? text.indexOf(emphasis) : -1;
-  if (!emphasis || emphasisStart < 0) {
-    return <BlurText text={text} by={by} start={start} />;
-  }
-
-  const segments = [
-    { key: 'before', text: text.slice(0, emphasisStart), emphasized: false },
-    { key: 'emphasis', text: emphasis, emphasized: true },
-    { key: 'after', text: text.slice(emphasisStart + emphasis.length), emphasized: false },
-  ].filter((segment) => segment.text.length > 0);
-  let segmentStart = start;
-
-  return (
-    <>
-      {segments.map((segment) => {
-        const currentStart = segmentStart;
-        segmentStart += blurTextTokenCount(segment.text, by);
-        const content = <BlurText text={segment.text} by={by} start={currentStart} />;
-        return segment.emphasized ? (
-          <span className='hero-task-emphasis' key={segment.key}>
-            {content}
-          </span>
-        ) : (
-          <span key={segment.key}>{content}</span>
-        );
-      })}
-    </>
-  );
-}
-
 // Interface icons use ONLY the skill's Remix Icon font (see
-// /Users/leon/Desktop/skills01 → references/图标.md: line style, no SVG icon
-// sets / emoji / self-drawn glyphs). The font is bundled at
-// /skill-assets/remixicon.ttf and declared as @font-face 'Remix Icon' in
-// globals.css; these codepoints are read straight from its cmap.
+// references/图标.md: line style, no SVG icon sets / emoji / self-drawn
+// glyphs). The font is bundled at /skill-assets/remixicon.ttf and declared as
+// @font-face 'Remix Icon' in globals.css; codepoints from its cmap.
 const RI = {
   arrowUpRight: '\uea70', // arrow-right-up-line
-  arrowRight: '\uea6c', // arrow-right-line
-  arrowLeft: '\uea60', // arrow-left-line
-  chevronLeft: '\uea64', // arrow-left-s-line
-  chevronRight: '\uea6e', // arrow-right-s-line
-  add: '\uea13', // add-fill (line variant absent from this build)
-  addCircle: '\uea11', // add-circle-line
   download: '\uec5a', // download-line
   github: '\uedcb', // github-line
-  star: '\uf18b', // star-line
-  search: '\uf0d1', // search-line
-  compass: '\uebbe', // compass-3-line
-  grid: '\uee90', // layout-grid-line
-  plug: '\uf019', // plug-line
-  stack: '\uf181', // stack-line
 } as const;
 
 function RemixIcon({ glyph, className }: { glyph: string; className?: string }) {
@@ -215,32 +79,9 @@ function RemixIcon({ glyph, className }: { glyph: string; className?: string }) 
 
 const arrowOut = <RemixIcon glyph={RI.arrowUpRight} />;
 const iconDownload = <RemixIcon glyph={RI.download} />;
-const arrowBack = <RemixIcon glyph={RI.arrowLeft} />;
-const arrowPlus = <RemixIcon glyph={RI.addCircle} />;
-
-// Capability-card glyphs, drawn from the skill's Remix Icon line set.
-const capIcon = {
-  search: <RemixIcon glyph={RI.search} className='icon' />,
-  direction: <RemixIcon glyph={RI.compass} className='icon' />,
-  grid: <RemixIcon glyph={RI.grid} className='icon' />,
-  adapters: <RemixIcon glyph={RI.plug} className='icon' />,
-  layers: <RemixIcon glyph={RI.stack} className='icon' />,
-} as const;
-
-const NBSP = '\u00A0';
 
 // Canonical project URLs. Keep in sync with design-templates/open-design-landing/example.html.
-//
-// `data-github-version` invariant: every wrapper must contain ONLY the version
-// string (e.g. `v0.3.0`), never any surrounding label or punctuation. The
-// inline enhancement script in `app/pages/index.astro` assigns `textContent`
-// on each slot, so any extra text inside the wrapper would be clobbered.
 const REPO = 'https://github.com/nexu-io/open-design';
-const REPO_RELEASES = `${REPO}/releases`;
-const REPO_ISSUES = `${REPO}/issues`;
-const REPO_DAEMON = `${REPO}/tree/main/apps/daemon`;
-const REPO_SKILLS = `${REPO}/tree/main/skills`;
-const REPO_DOCS = `${REPO}#readme`;
 const DISCORD = 'https://discord.gg/mHAjSMV6gz';
 const X_TWITTER = 'https://x.com/OpenDesignHQ';
 const YOUTUBE = 'https://www.youtube.com/channel/UChtshixMhvtgBWzoD9R_Qfg';
@@ -266,52 +107,69 @@ const FOOTER_AGENTS = [
   { name: 'OpenCode', route: 'opencode-design' },
 ] as const;
 
-
 const ext = {
   target: '_blank',
   rel: 'noreferrer noopener',
 } as const;
 
-// Coding-agent logos that fall in the Method section's FallingText physics
-// playground (matter-js). Each is an icon chip that drops on hover instead of
-// a text word. Assets live in `public/agent-icons/`.
-const FALLING_ICONS = [
+// Coding-agent logo chips for the hero marquee. Assets in `public/agent-icons/`.
+const AGENT_CHIPS = [
   { src: '/agent-icons/claude.svg', alt: 'Claude' },
-  { src: '/agent-icons/codex.svg', alt: 'Codex' },
+  { src: '/agent-icons/codex.svg', alt: 'GPT · Codex' },
   { src: '/agent-icons/gemini.svg', alt: 'Gemini' },
-  { src: '/agent-icons/cursor-agent.svg', alt: 'Cursor' },
-  { src: '/agent-icons/copilot.svg', alt: 'GitHub Copilot' },
-  { src: '/agent-icons/opencode.svg', alt: 'OpenCode' },
-  { src: '/agent-icons/devin.png', alt: 'Devin' },
-  { src: '/agent-icons/hermes.svg', alt: 'Hermes' },
-  { src: '/agent-icons/pi.svg', alt: 'Pi' },
-  { src: '/agent-icons/kimi.svg', alt: 'Kimi' },
-  { src: '/agent-icons/kiro.svg', alt: 'Kiro' },
-  { src: '/agent-icons/qwen.svg', alt: 'Qwen' },
-  { src: '/agent-icons/grok-build.svg', alt: 'Grok' },
+  { src: '/agent-icons/cursor-agent.svg', alt: 'Cursor Agent' },
+  { src: '/agent-icons/copilot.svg', alt: 'Copilot' },
   { src: '/agent-icons/deepseek.svg', alt: 'DeepSeek' },
-  { src: '/agent-icons/qoder.svg', alt: 'Qoder' },
-  { src: '/agent-icons/amr.svg', alt: 'AMR' },
-  { src: '/agent-icons/kilo.svg', alt: 'Kilo' },
+  { src: '/agent-icons/qwen.svg', alt: 'Qwen' },
+  { src: '/agent-icons/kimi.svg', alt: 'Kimi' },
+  { src: '/agent-icons/grok-build.svg', alt: 'Grok' },
+  { src: '/agent-icons/opencode.svg', alt: 'OpenCode' },
   { src: '/agent-icons/aider.png', alt: 'Aider' },
   { src: '/agent-icons/trae-cli.png', alt: 'Trae' },
+  { src: '/agent-icons/devin.png', alt: 'Devin' },
+  { src: '/agent-icons/hermes.svg', alt: 'Hermes' },
+  { src: '/agent-icons/kiro.svg', alt: 'Kiro' },
+  { src: '/agent-icons/kilo.svg', alt: 'Kilo' },
+  { src: '/agent-icons/qoder.svg', alt: 'Qoder' },
   { src: '/agent-icons/vibe.svg', alt: 'Mistral Vibe' },
-  { src: '/agent-icons/mimo.svg', alt: 'MiMo' },
   { src: '/agent-icons/antigravity.svg', alt: 'Antigravity' },
-  { src: '/agent-icons/reasonix.svg', alt: 'Reasonix' },
+  { src: '/agent-icons/pi.svg', alt: 'Pi' },
+] as const;
+
+/**
+ * Design-benchmark scores per task family, in the same order as
+ * `bench.dimensions` in `home-redesign-i18n`. Competitor names are brands, so
+ * they stay untranslated. Replace wholesale when a new benchmark run lands.
+ */
+const BENCHMARK_SCORES: ReadonlyArray<ReadonlyArray<readonly [string, number]>> = [
+  [['Open Design', 91.4], ['Codex', 87.9], ['Claude Design', 85.6]],
+  [['Open Design', 92.6], ['Codex', 88.4], ['Claude Design', 86.1]],
+  [['Open Design', 93.1], ['Codex', 86.2], ['Claude Design', 84.7]],
+  [['Open Design', 90.8], ['Codex', 87.1], ['Claude Design', 85.9]],
+  [['Open Design', 89.7], ['Codex', 88.6], ['Claude Design', 86.4]],
 ];
+
+/** One entry in the "From the blog" highlights rail (localized upstream). */
+export interface BlogHighlight {
+  href: string;
+  cover: string;
+  coverAlt: string;
+  category: string;
+  title: string;
+  meta: string;
+}
 
 interface PageProps {
   /**
    * Live counts from the Markdown catalogs. Required: every visible
-   * "X skills / Y systems" claim on the page reads from here so meta,
-   * nav, hero copy, capability cards, labs pills, selected-work
-   * fractions, and the footer Library never disagree.
+   * "X templates / Y systems" claim on the page reads from here so meta,
+   * nav, and the features badge never disagree.
    */
   counts: HeaderProps['counts'] & {
     /** User-facing bundled plugins shown in the public plugin library. */
     plugins: number;
-    /** Optional richer breakdown used by the Labs filter pills. */
+    /** Rendering catalogue entries backing the features badge. */
+    templates?: number;
     byMode?: Readonly<Record<string, number>>;
     byPlatform?: Readonly<Record<string, number>>;
   };
@@ -322,6 +180,8 @@ interface PageProps {
   };
   /** FAQ pairs rendered above the closing CTA. Content comes from `getHomeFaq`. */
   faq: ReadonlyArray<HomeFaqEntry>;
+  /** Latest blog cards for the highlights rail (localized by index.astro). */
+  blogHighlights: ReadonlyArray<BlogHighlight>;
   /** Locale for shared chrome, topbar language links, and localized FAQ text. */
   locale?: LandingLocaleCode;
 }
@@ -330,87 +190,54 @@ interface PageProps {
  * Format a count for inline editorial copy. Returns the live value when
  * positive (so a fresh `git pull` immediately reflects the new totals),
  * falls back to a neutral em-dash when the catalog couldn't be read so
- * we never publish "0 skills" to a visitor by mistake.
+ * we never publish "0 templates" to a visitor by mistake.
  */
 function fmt(n: number | undefined): string {
   return typeof n === 'number' && n > 0 ? String(n) : '—';
 }
 
-/** Two-digit padded count for the Labs pills (matches the "04", "27" feel). */
-function pad2(n: number | undefined): string {
-  if (typeof n !== 'number' || n <= 0) return '—';
-  return n < 10 ? `0${n}` : String(n);
-}
-
-/**
- * Splits reveal copy into per-token spans. CJK characters/punctuation become
- * individual tokens (so they light up one at a time, since CJK has no word
- * spaces), runs of Latin letters/digits stay whole, and ASCII spaces are kept
- * as literal separators so Latin words don't run together when they wrap.
- */
-const CJK_TOKEN = /[぀-ヿ㐀-鿿　-〿＀-￯]/;
-function tokenizeReveal(
-  text: string,
-): Array<{ type: 'word'; value: string } | { type: 'space' }> {
-  const tokens: Array<{ type: 'word'; value: string } | { type: 'space' }> = [];
-  let buf = '';
-  const flush = () => {
-    if (buf) {
-      tokens.push({ type: 'word', value: buf });
-      buf = '';
-    }
-  };
-  for (const ch of text) {
-    if (ch === ' ') {
-      flush();
-      tokens.push({ type: 'space' });
-    } else if (CJK_TOKEN.test(ch)) {
-      flush();
-      tokens.push({ type: 'word', value: ch });
-    } else {
-      buf += ch;
-    }
-  }
-  flush();
-  return tokens;
+/** Black-pill download CTA with the acid-green circular arrow. */
+function DownloadPill({
+  href,
+  label,
+  placement,
+  small,
+  chipTarget,
+}: {
+  href: string;
+  label: string;
+  placement: string;
+  small?: boolean;
+  chipTarget?: boolean;
+}) {
+  return (
+    <a
+      className={small ? 'hm-dl hm-dl-s' : 'hm-dl'}
+      href={href}
+      data-download-cta
+      data-direct-download
+      data-download-placement={placement}
+      {...(chipTarget ? { 'data-download-chip-target': '' } : {})}
+    >
+      <em className='hm-di' aria-hidden='true'>
+        ↓
+      </em>
+      {label}
+      <u className='hm-sheen' aria-hidden='true' />
+    </a>
+  );
 }
 
 export default function Page({
   counts,
   github,
   faq,
+  blogHighlights,
   locale = DEFAULT_LOCALE,
 }: PageProps) {
-  // The homepage layout, images, and module structure are authored once (the
-  // Chinese design). `tt` supplies the copy per locale: Chinese for `zh`,
-  // English for every other locale (the universal fallback) so every module
-  // stays 1:1 across languages with no missing content.
-  // Localized copy for every visual module — the layout/images are authored
-  // once (the Chinese design); `t` supplies the translated text per locale so
-  // all languages render the same structure. CJK locales use per-letter blur.
   const t = getHomeExtra(locale);
   const cta = getHomeCta(locale);
-  const cjk = locale === 'zh' || locale === 'zh-tw' || locale === 'ja' || locale === 'ko';
-  const heroTaskBy = cjk ? 'letters' : 'words';
-  const heroTaskLines = t.heroTaskLines ?? [
-    t.heroTaskTitle ??
-      'One design system. Brand-consistent web, slides, prototypes, dashboards, images, and video',
-  ];
-  let heroTaskStart = 2;
-  // Short inline labels still fall back to English for non-Chinese locales.
-  const tt = (zh: string, en: string) => (locale === 'zh' ? zh : en);
-  const skills = fmt(counts.skills);
-  const systems = fmt(counts.systems);
-  // Design Systems stat card: derive from the raw count so a missing count
-  // keeps the neutral "—" fallback with no countup metadata (never "—+" nor a
-  // non-finite data-countup-to). `to: null` makes the renderer skip countup.
-  const systemsCardNum = counts.systems > 0 ? `${counts.systems}+` : '—';
-  const systemsCardTo: string | null = counts.systems > 0 ? String(counts.systems) : null;
-  const pluginsCardNum = counts.plugins > 0 ? `${counts.plugins}+` : '—';
-  const pluginsCardTo: string | null = counts.plugins > 0 ? String(counts.plugins) : null;
-  const deckCount = pad2(counts.byMode?.deck);
-  const prototypeCount = pad2(counts.byMode?.prototype);
-  const mobileCount = pad2(counts.byPlatform?.mobile);
+  const rc = getHomeRedesignCopy(locale);
   const commonCopy = getCommonCopy(locale);
   const home = getHomePageCopy(locale);
   const ui = getLandingUiCopy(locale);
@@ -423,78 +250,125 @@ export default function Page({
   }));
   const href = (path: string) => localizedHref(path, locale);
 
-  /**
-   * Capability cards. The zh homepage renders the five-step flow verbatim
-   * (eyebrow "Step N — 名称" + description), reusing the card-1 layout. Other
-   * locales keep the original four feature cards driven by i18n copy.
-   */
-  const capabilityCards: ReadonlyArray<{
-    num?: React.ReactNode;
-    title?: React.ReactNode;
-    body?: React.ReactNode;
-    icon: React.ReactNode;
-    href: string;
-    aria: string;
-    img?: string;
-    /** Caption overlaid in the image's top white bar, next to the "step N" pill. */
-    desc?: string;
-  }> =
-    [
-      {
-        num: t.stepTitle1,
-        icon: capIcon.search,
-        href: REPO_SKILLS,
-        aria: t.stepTitle1,
-        img: '/step-cards/step-1.webp?v=8',
-        desc: t.stepDesc1,
-      },
-      {
-        num: t.stepTitle2,
-        icon: capIcon.direction,
-        href: REPO_SKILLS,
-        aria: t.stepTitle2,
-        img: '/step-cards/step-2.webp?v=8',
-        desc: t.stepDesc2,
-      },
-      {
-        num: t.stepTitle3,
-        icon: capIcon.grid,
-        href: REPO_DAEMON,
-        aria: t.stepTitle3,
-        img: '/step-cards/step-3.webp?v=7',
-        desc: t.stepDesc3,
-      },
-      {
-        num: t.stepTitle4,
-        icon: capIcon.adapters,
-        href: REPO,
-        aria: t.stepTitle4,
-        img: '/step-cards/step-4.webp?v=9',
-        desc: t.stepDesc4,
-      },
-    ];
+  // Announcement-bar release label: build-time from the release-metadata
+  // endpoint (same source as the header version chip); the inline enhancer in
+  // index.astro refreshes it client-side with the release codename.
+  const releaseName = `Open Design ${github.versionLabel.replace(/^v/, '')}`;
+  const announceLine = rc.announce.line.replace('{release}', releaseName);
 
-  /**
-   * Deck-preview art for the Labs product-window showcase. Language-neutral —
-   * each Dock mode maps onto one of these images (cycling), and the active
-   * slide reuses the first. `labFallback` keeps the typed access non-optional
-   * under `noUncheckedIndexedAccess`.
-   */
-  const labArtifacts = [
-    '/lab-cards/card-1.webp',
-    '/lab-cards/card-2.webp',
-    '/lab-cards/card-3.webp',
-    '/lab-cards/card-4.webp',
-    '/lab-cards/card-5.webp',
-    '/lab-cards/card-6.webp',
+  // The workspace / brand demos ship as English product mocks (matching the
+  // site's English product screenshots); zh gets the hand-translated variant.
+  const demoSuffix = locale === 'zh' ? '.zh.html' : '.html';
+
+  const featureBadge = rc.features.badge
+    .replace('{templates}', fmt(counts.templates))
+    .replace('{systems}', fmt(counts.systems));
+
+  const scenes = [
+    { key: 'web', label: rc.tabs.web },
+    { key: 'mobile', label: rc.tabs.mobile },
+    { key: 'poster', label: rc.tabs.poster },
+    { key: 'slides', label: rc.tabs.slides },
+    { key: 'video', label: rc.tabs.video },
+  ] as const;
+
+  const featureVisuals: ReadonlyArray<React.ReactNode> = [
+    // 1 — template library: two stacked real artifacts + live counts badge.
+    <div className='hm-fv' key='library'>
+      <span className='hm-col2'>
+        <LazyImg src='/home-redesign/art/deck-emerald.webp' />
+        <LazyImg src='/home-redesign/art/proto-1.webp' />
+      </span>
+      <span className='hm-fv-badge'>{featureBadge}</span>
+    </div>,
+    // 2 — design to code: real page art under a deployed-URL bar.
+    <div className='hm-fv' key='deploy'>
+      <LazyImg className='hm-bgart' src='/home-redesign/art/velar-live.webp' />
+      <span className='hm-urlbar'>launch.yourbrand.site</span>
+      <span className='hm-livepill'>{rc.features.livePill}</span>
+    </div>,
+    // 3 — editable: selection box + mini toolbar over real slide art.
+    <div className='hm-fv' key='edit'>
+      <LazyImg className='hm-bgart' src='/home-redesign/art/slides-2.webp' />
+      <span className='hm-selbox' aria-hidden='true'>
+        <i className='c1' />
+        <i className='c2' />
+        <i className='c3' />
+        <i className='c4' />
+      </span>
+      <span className='hm-minibar'>
+        {rc.features.editChips.map((chip) => (
+          <b key={chip}>{chip}</b>
+        ))}
+      </span>
+    </div>,
+    // 4 — self-evolving system: ONE focused artifact at its latest
+    // revision plus the kernel-update capsule. (Earlier multi-thumbnail
+    // strips read as clutter at card size.)
+    <div className='hm-fv hm-fv-evo' key='evolve'>
+      <span className='hm-evo-solo'>
+        <LazyImg src='/home-redesign/art/slides-1.webp' />
+        <b>v23</b>
+      </span>
+      <span className='hm-evo-loop'>
+        {rc.features.evoLoopPre}
+        <b>{rc.features.evoLoopBold}</b>
+      </span>
+    </div>,
+    // 5 — multimodal: mode capsules (language-neutral product labels,
+    // matching the hero marquee's chip language) — no collage.
+    <div className='hm-fv' key='multimodal'>
+      <span className='hm-modes' aria-hidden='true'>
+        {['WEB', 'DECK', 'IMAGE', 'VIDEO', 'AUDIO'].map((mode) => (
+          <span key={mode}>{mode}</span>
+        ))}
+      </span>
+    </div>,
+    // 6 — Codex plugin: minimal CSS plugin-card mock; the real screenshot
+    // lives in the larger "ways to use it" card below.
+    <div className='hm-fv hm-fv-lav' key='codex'>
+      <span className='hm-cdxcard' aria-hidden='true'>
+        <span className='h'>
+          <img className='logo' src='/agent-icons/codex.svg' alt='' />
+          <b>Open Design</b>
+          <u className='try'>Try</u>
+        </span>
+        <span className='pill'>
+          <b>@open-design</b> Make the launch deck, on brand…
+        </span>
+      </span>
+    </div>,
   ];
-  const labActive = labArtifacts[0] ?? '';
 
   return (
     <>
       <div className='shell'>
-        {/* ====== STICKY CHROME ====== */}
+        {/* ====== STICKY CHROME (announcement bar + nav) ====== */}
+        {/* The chrome wrapper is position:fixed, so the announcement bar must
+            live INSIDE it — left in normal flow it renders on top of the
+            fixed nav and swallows its pointer events at scroll-top. It hides
+            together with the bar via the headroom behavior. */}
         <div className='site-chrome' data-chrome-headroom>
+        {/* [data-hm-release] is refreshed client-side with the release
+            codename (index.astro enhancer); the build-time label is the
+            no-JS fallback. */}
+        <div className='hm-announce' data-od-id='announce'>
+          <span data-hm-release data-hm-release-template={rc.announce.line}>
+            {announceLine}
+          </span>
+          <a
+            className='hm-announce-pill'
+            href={href('/download/')}
+            data-download-cta
+            data-direct-download
+            data-download-placement='announce'
+          >
+            {rc.announce.download}{' '}
+            <em aria-hidden='true'>
+              <svg viewBox='0 0 12 12' width='11' height='11' fill='none' stroke='currentColor' strokeWidth='1.8' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'><path d='M6 1.2v7.4M2.7 5.4 6 8.7l3.3-3.3' /></svg>
+            </em>
+          </a>
+        </div>
         {/* ====== NAV ====== */}
         {/* Headroom slide handled by `.site-chrome` wrapper above. */}
         <Header
@@ -510,11 +384,9 @@ export default function Page({
         />
         </div>{/* /site-chrome */}
 
-        {/* ====== HERO ====== */}
-        <section className='hero' id='top' data-od-id='hero'>
-          {/* Full-bleed hero backdrop. Covers the whole first screen behind
-              the copy; the design-canvas artwork bleeds edge to edge while
-              the headline/CTAs sit on top via the grid's higher stacking. */}
+        {/* ====== HERO + WORKSPACE DEMO ====== */}
+        <section className='hero hm-hero-section' id='top' data-od-id='hero'>
+          {/* Full-bleed hero backdrop retained from the previous homepage. */}
           <img
             className='hero-bg'
             src={heroBgImage}
@@ -528,513 +400,503 @@ export default function Page({
             decoding='async'
           />
           <div className='container hero-grid'>
-            <div className='hero-copy'>
-              {/* Product proof, not competitor framing: the reference homepage
-                  leads with a compact capability line before naming the
-                  product. Keep this crawlable and localized. */}
-              <p className='hero-lead' data-reveal>
-                {t.heroTitleSub}
-              </p>
-              <h1 className='hero-title' data-reveal>
-                <span className='hero-title-corner tl' aria-hidden='true' />
-                <span className='hero-title-corner tr' aria-hidden='true' />
-                <span className='hero-title-corner bl' aria-hidden='true' />
-                <span className='hero-title-corner br' aria-hidden='true' />
-                <span className='hero-title-brand'>
-                  <BlurText text='Open Design' by='words' start={0} />
-                </span>
-                {/* Two-layer message: canonical category, then the strongest
-                    localized design-system and output claim. The agent value
-                    promise lives once in the supporting paragraph below. */}
-                <span className='hero-title-position'>
-                  <BlurText
-                    text={t.heroPositionTitle ?? 'Vibe Design Workspace'}
-                    by='words'
-                    start={1}
-                  />
-                </span>
-                <span className='hero-title-main'>
-                  {heroTaskLines.map((line) => {
-                    const start = heroTaskStart;
-                    heroTaskStart +=
-                      blurTextTokenCount(line, heroTaskBy);
-                    return (
-                      <span className='hero-title-main-line' key={line}>
-                        <EmphasizedBlurText
-                          text={line}
-                          emphasis={t.heroTaskEmphasis}
-                          by={heroTaskBy}
-                          start={start}
-                        />
-                      </span>
-                    );
-                  })}
+            <div className='hm-hero'>
+              <h1 data-reveal>
+                {rc.hero.title}
+                <br />
+                <span className='hm-h1b'>
+                  <em>{rc.hero.subEm}</em>
+                  {rc.hero.subRest}
                 </span>
               </h1>
-              <div className='hero-actions' data-reveal>
-                {/* Platform-aware download: `enhanceDownloadCta` in the inline
-                    script of pages/index.astro rewrites href to the matching
-                    release asset (Apple Silicon / Intel Mac / Windows) for a
-                    direct download and appends the detected chip label. When
-                    the platform can't be named (Linux / undetermined / API
-                    rate-limited) it falls back to the /download/ page (the
-                    per-platform picker) rather than the GitHub releases list. */}
+              <div className='hm-hero-cta' data-reveal>
+                {/* Platform-aware direct download: `enhanceDownloadCta` in
+                    index.astro rewrites href to the matching release asset
+                    and appends the detected chip label. */}
                 <a
-                  className='btn btn-primary hero-download-attention'
+                  className='hm-dl hm-dl-hero'
                   href={href('/download/')}
                   data-download-cta
                   data-direct-download
                   data-download-chip-target
                   data-download-placement='hero'
                 >
-                  <span className='arrow'>{iconDownload}</span>
-                  {home.hero.download}
+                  <em className='hm-di' aria-hidden='true'>
+                    ↓
+                  </em>
+                  {rc.hero.download}
+                  <u className='hm-sheen' aria-hidden='true' />
                 </a>
-                <a className='btn btn-ghost' href={REPO} {...ext}>
-                  <span className='arrow'>{<RemixIcon glyph={RI.github} />}</span>
-                  <span>
-                    Star{' '}
-                    <span className='star-count' data-github-stars>
-                      {github.starsLabel}
+              </div>
+              <div className='hm-tabs' data-reveal role='tablist' data-od-id='demo-tabs'>
+                {scenes.map((scene, index) => (
+                  <button
+                    className={index === 0 ? 'hm-tab on' : 'hm-tab'}
+                    type='button'
+                    role='tab'
+                    aria-selected={index === 0 ? 'true' : 'false'}
+                    data-hm-scene={scene.key}
+                    key={scene.key}
+                  >
+                    {scene.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Live three-pane workspace demo (projects / agent chat / canvas).
+                Self-contained document; scene switches arrive via postMessage
+                from the tabs above, wheel events are relayed back out so the
+                page never loses scroll (index.astro `enhanceWorkspaceDemo`). */}
+            <div className='hm-frame' data-od-id='workspace-demo'>
+              <iframe
+                src={`/home-redesign/workspace${demoSuffix}`}
+                title={rc.demo.iframeTitle}
+                loading='eager'
+                data-hm-workspace
+              />
+            </div>
+            {/* Agent marquee — the 21-agents claim, as an infinite icon rail. */}
+            <p className='hm-mq-label' data-od-id='agents'>
+              {rc.agents.pre}
+              <b>{rc.agents.bold}</b>
+              {rc.agents.post}
+            </p>
+            <div className='hm-marquee' aria-hidden='true'>
+              <div className='hm-mq-track'>
+                {[0, 1].map((run) =>
+                  AGENT_CHIPS.map((chip) => (
+                    <span className='hm-mq-chip' key={`${run}-${chip.alt}`}>
+                      <img src={chip.src} alt='' loading='lazy' decoding='async' />
+                      {chip.alt}
                     </span>
-                  </span>
-                </a>
-              </div>
-              {/* `{systems}` in heroSub is substituted with the live
-                  getCatalogCounts() total (same source as the meta description
-                  and stat cards) so the design-systems count never drifts. */}
-              <p className='hero-sub' data-reveal>
-                <HighlightedBreakText
-                  text={t.heroSub.replace('{systems}', systems)}
-                  highlight={t.heroSubHighlight}
-                />
-              </p>
-              {/* Product shot sits just under the hero copy. fetchPriority=low
-                  lets the full-bleed hero-bg (the LCP element, fetchpriority
-                  high) win the connection first; this still loads, just yields. */}
-              <div className='hero-shot' data-reveal>
-                <img
-                  src={heroProductImage}
-                  srcSet={heroProductSrcset}
-                  sizes='(max-width: 768px) 100vw, 60vw'
-                  width={2508}
-                  height={1450}
-                  alt='Open Design desktop — design files & index.html preview'
-                  decoding='async'
-                  fetchPriority='low'
-                  className='hero-shot-img'
-                />
+                  )),
+                )}
               </div>
             </div>
           </div>
         </section>
 
-        {/* ====== ABOUT ====== */}
-        <section className='about' data-od-id='about'>
+        {/* ====== HOW IT WORKS ====== */}
+        <section className='hm-sec hm-sec-warm' data-od-id='how'>
           <div className='container'>
-            <div className='about-grid'>
-              <div className='about-copy' data-reveal>
-                <p className='about-kicker'>
-                  {locale === 'zh' ? '为什么选择 Open Design？' : 'Why Open Design?'}
-                </p>
-                {/*
-                  Text Scroll Reveal (Magic UI / Inspira port): a tall track
-                  with a sticky, vertically-centered paragraph whose tokens
-                  brighten one by one as the reader scrolls. `data-about-reveal`
-                  is the scroll host; `enhanceStatementReveal` in
-                  `pages/index.astro` maps scroll progress → per-token opacity.
-                */}
-                <div className='about-reveal' data-about-reveal>
-                  <div className='about-reveal-sticky'>
-                    <h2 className='display about-reveal-text'>
-                      {tokenizeReveal(t.aboutStatement).map((tok, i) =>
-                        tok.type === 'space' ? (
-                          <span className='reveal-space' key={i}>
-                            {' '}
-                          </span>
-                        ) : (
-                          <span className='reveal-word' data-reveal-word key={i}>
-                            {tok.value}
-                          </span>
-                        ),
-                      )}
-                    </h2>
+            <p className='hm-kicker' data-reveal>
+              {rc.how.kicker}
+            </p>
+            <h2 className='hm-h2serif' data-reveal>
+              {rc.how.title}
+              <em>{rc.how.titleEm}</em>
+            </h2>
+            <div className='hm-steps'>
+              <div className='hm-step' data-reveal>
+                <div className='hm-viz'>
+                  <div className='hm-ingest' aria-hidden='true'>
+                    <span className='hm-ing im ia'>
+                      <LazyImg src='/home-redesign/art/slides-2.webp' />
+                    </span>
+                    <span className='hm-ing im ib'>
+                      <LazyImg src='/home-redesign/art/proto-1.webp' />
+                    </span>
+                    <span className='hm-ing file ic2'>
+                      <b>◆</b> deck.fig
+                    </span>
+                    <span className='hm-ing url id2'>yourbrand.com</span>
+                    <span className='hm-ing doc ie'>
+                      <b>voice.md</b>
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    <span className='hm-ing swa if2'>
+                      <u style={{ background: '#262626' }} />
+                      <u style={{ background: '#63fe13' }} />
+                      <u style={{ background: '#f0f0ec', border: '1px solid #e4e4e0' }} />
+                    </span>
                   </div>
                 </div>
-                <div className='about-scrolly' data-about-scrolly>
-                <div className='about-sticky'>
-                <div className='about-tabs' data-reveal>
-                  <input
-                    type='radio'
-                    name='about-tab'
-                    id='about-tab-1'
-                    className='about-tab-radio'
-                    defaultChecked
-                  />
-                  <input
-                    type='radio'
-                    name='about-tab'
-                    id='about-tab-2'
-                    className='about-tab-radio'
-                  />
-                  <input
-                    type='radio'
-                    name='about-tab'
-                    id='about-tab-3'
-                    className='about-tab-radio'
-                  />
-                  <div className='about-tablist' role='tablist'>
-                    <label className='about-tab' htmlFor='about-tab-1'>
-                      {t.aboutTab1}
-                    </label>
-                    <label className='about-tab' htmlFor='about-tab-2'>
-                      {t.aboutTab2}
-                    </label>
-                    <label className='about-tab' htmlFor='about-tab-3'>
-                      {t.aboutTab3}
-                    </label>
-                  </div>
-                  <div className='about-panels'>
-                    <div className='about-track'>
-                    <div className='about-panel'>
-                      <div className='about-panel-img about-panel-img-bare about-panel-img-captioned'>
-                        <LazyImg
-                          src='/about/desktop-native.webp'
-                          alt={t.aboutCap1.replace(/\n/g, ' ')}
-                        />
-                        <p className='about-panel-caption'>
-                          <BreakText text={t.aboutCap1} />
-                        </p>
-                      </div>
-                    </div>
-                    <div className='about-panel'>
-                      <div className='about-panel-img about-panel-img-bare about-panel-img-captioned'>
-                        <LazyImg
-                          src='/about/access-agent.webp'
-                          alt={t.aboutCap2.replace(/\n/g, ' ')}
-                        />
-                        {/* Caption laid over the image's baked-in white card. */}
-                        <p className='about-panel-caption'>
-                          <BreakText text={t.aboutCap2} />
-                        </p>
-                      </div>
-                    </div>
-                    <div className='about-panel'>
-                      <div className='about-panel-img about-panel-img-bare about-panel-img-captioned'>
-                        <LazyImg
-                          src='/about/self-evolution.webp?v=4'
-                          alt={t.aboutCap3.replace(/\n/g, ' ')}
-                        />
-                        <p className='about-panel-caption'>
-                          {t.aboutCap3}
-                        </p>
-                      </div>
-                    </div>
-                    </div>
-                  </div>
-                  {/* Per-tab hub link. OUTSIDE .about-panels (overflow:hidden +
-                      image-height-locked, so a link inside a panel is clipped).
-                      As a sibling of the tab radios, the active tab reveals its
-                      matching CTA via `:checked ~` in globals.css. */}
-                  {/* One static CTA row for the whole About block: design-system
-                      link + download. Agents live in the Method section now, so
-                      they're intentionally not repeated here. */}
-                  <div className='about-ctas cta-pair'>
-                    <a className='btn btn-ghost' href={href('/plugins/systems/')}>
-                      {cta.systems}
-                      <span className='arrow'>{arrowOut}</span>
-                    </a>
-                    <a className='btn btn-primary' href={href('/download/')} data-download-cta data-download-chip-target data-download-placement='about'>
-                      <span className='arrow'>{iconDownload}</span>
-                      {home.hero.download}
-                    </a>
-                  </div>
-                </div>
-                </div>
-                </div>
+                <div className='hm-num'>01</div>
+                <h3>{rc.how.steps[0].title}</h3>
+                <p>{rc.how.steps[0].body}</p>
               </div>
+              <div className='hm-step' data-reveal>
+                <div className='hm-viz'>
+                  <div className='hm-iso' aria-hidden='true'>
+                    <div className='layer l1' />
+                    <div className='layer l2' />
+                    <div className='layer l3' />
+                    <div className='layer l4' />
+                    <div className='layer l5' />
+                  </div>
+                </div>
+                <div className='hm-num'>02</div>
+                <h3>
+                  <u>{rc.how.steps[1].title}</u>
+                </h3>
+                <p>{rc.how.steps[1].body}</p>
+              </div>
+              <div className='hm-step' data-reveal>
+                <div className='hm-viz'>
+                  <div className='hm-atiles' aria-hidden='true'>
+                    {(
+                      [
+                        ['/home-redesign/art/slides-1.webp', 'SLIDES'],
+                        ['/home-redesign/art/proto-1.webp', 'WEB'],
+                        ['/home-redesign/art/mkt-en.webp', 'EMAIL'],
+                        ['/home-redesign/art/video-1.webp', 'VIDEO'],
+                        ['/home-redesign/art/slides-2.webp', 'DECK'],
+                        ['/home-redesign/art/proto-2.webp', 'SITE'],
+                      ] as const
+                    ).map(([src, tag]) => (
+                      <span className='hm-atile' key={tag}>
+                        <LazyImg src={src} />
+                        <i>{tag}</i>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className='hm-num'>03</div>
+                <h3>{rc.how.steps[2].title}</h3>
+                <p>{rc.how.steps[2].body}</p>
+              </div>
+            </div>
+            <div className='hm-sec-cta'>
+              <DownloadPill
+                href={href('/download/')}
+                label={rc.hero.download}
+                placement='how'
+                small
+              />
             </div>
           </div>
         </section>
 
-        {/* ====== CAPABILITIES ====== */}
-        <section
-          className='capabilities'
-          id='agents'
-          data-od-id='capabilities'
-        >
+        {/* ====== KEY FEATURES ====== */}
+        <section className='hm-sec' data-od-id='features'>
           <div className='container'>
-            <div className='capabilities-grid'>
-              <div className='capabilities-copy' data-reveal>
-                {/* Two-column scrollytelling: a tall track pins the WHOLE module
-                    (heading + steps + art). Scrolling through the track advances
-                    the active step on the left and swaps the matching art on the
-                    right one-to-one — the module stays frozen until the last step,
-                    then the page scrolls on. Driven by `enhanceCapScrolly`. */}
-                <div
-                  className='cap-scrolly'
-                  data-cap-scrolly
-                  style={{ ['--steps' as string]: capabilityCards.length } as React.CSSProperties}
-                >
-                  <div className='cap-sticky'>
-                    <div className='capabilities-head'>
-                      <h2 className='display'>{t.capTitle}</h2>
-                      {/* Draggable "DONE 👌" mark. Kept a DIRECT child of
-                          .capabilities-head (not nested in the <h2>) so the
-                          authored layout rules actually bind to it: on desktop
-                          it's a flex item beside the heading (20px column-gap),
-                          and on mobile it's a grid item (grid-area: icon) that
-                          moves next to the two-up steps. Nested inside the
-                          heading, grid-area never applied and the mark stayed
-                          stuck in the title row. */}
-                      <img
-                        className='cap-head-icon'
-                        src='/hero-icon-drag.svg'
-                        alt='Done 👌'
-                        width={252}
-                        height={300}
-                        draggable={false}
-                        data-drag-icon
-                        decoding='async'
-                      />
-                      {/* Pipeline-style leads (Brief → … → 记忆沉淀) must hold
-                          a single line at every viewport; prose leads keep
-                          the normal 36ch wrap. Detected by the arrow glyph. */}
-                      <p
-                        className={
-                          home.capabilities.lead.includes('→')
-                            ? 'lead lead-pipeline'
-                            : 'lead'
-                        }
-                      >
-                        {home.capabilities.lead}
-                      </p>
-                    </div>
-                    <div className='cap-row'>
-                      <div className='cap-steps-col'>
-                      <ol className='cap-steps'>
-                        {capabilityCards.map((card, index) => (
-                          <li
-                            className={index === 0 ? 'cap-step is-active' : 'cap-step'}
-                            key={index}
-                            data-cap-step
-                            data-cap-index={index}
-                          >
-                            <span className='cap-step-num'>{`0${index + 1}`}</span>
-                            <span className='cap-step-label'>{card.title ?? card.num}</span>
-                          </li>
-                        ))}
-                      </ol>
-                      <div className='cta-pair cap-steps-link'>
-                        <a className='btn btn-ghost' href={href('/solutions/')}>
-                          {cta.solutions}
-                          <span className='arrow'>{arrowOut}</span>
-                        </a>
-                        <a
-                          className='btn btn-primary'
-                          href={href('/download/')}
-                          data-download-cta
-                          data-download-placement='capabilities'
-                        >
-                          <span className='arrow'>{iconDownload}</span>
-                          {home.hero.download}
-                        </a>
-                      </div>
-                      </div>
-                      <div className='cap-visual'>
-                        {capabilityCards.map((card, index) => (
-                          <div
-                            className={index === 0 ? 'cap-frame is-active' : 'cap-frame'}
-                            key={index}
-                            data-cap-frame={index}
-                          >
-                            {card.img ? (
-                              <>
-                                <img src={card.img} alt='' loading='lazy' decoding='async' />
-                                {card.desc ? (
-                                  <span className='cap-frame-caption'>{card.desc}</span>
-                                ) : null}
-                              </>
-                            ) : (
-                              <div className='cap-frame-text'>
-                                <div className='cap-frame-title'>{card.title ?? card.num}</div>
-                                {card.body ? <p>{card.body}</p> : null}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ====== LABS ====== */}
-        <section className='labs' id='labs' data-od-id='labs'>
-          <div className='container'>
-            <div className='labs-head'>
-              <div data-reveal>
-                <h2 className='display'>
-                  {t.labsPre}
-                  <em>Open Design</em>
-                  {t.labsPost}
-                </h2>
-                {t.labsLead ? (
-                  <p className='labs-lead'>{t.labsLead}</p>
-                ) : null}
-                <div className='cta-pair' style={{ justifyContent: 'center', marginTop: 20 }}>
-                  <a className='btn btn-ghost' href={href('/plugins/templates/')}>
-                    {cta.templates}
-                    <span className='arrow'>{arrowOut}</span>
-                  </a>
-                  <a
-                    className='btn btn-primary'
+            <h2 className='hm-h2serif' data-reveal>
+              {rc.features.title}
+              <em>{rc.features.titleEm}</em>
+            </h2>
+            {/* Interactive brand-system demo: switch brand / radius, four
+                artifacts recalculate live inside the iframe. */}
+            <div className='hm-brandrow' data-reveal>
+              <div className='hm-brandcopy'>
+                <h3>{rc.features.brandTitle}</h3>
+                <p>{rc.features.brandBody}</p>
+                <p className='hm-brandtry'>{rc.features.brandTry}</p>
+                <p className='hm-branddl'>
+                  <DownloadPill
                     href={href('/download/')}
-                    data-download-cta
-                    data-download-chip-target
-                    data-download-placement='labs'
-                  >
-                    <span className='arrow'>{iconDownload}</span>
-                    {home.hero.download}
-                  </a>
+                    label={rc.hero.download}
+                    placement='features-brand'
+                    small
+                  />
+                </p>
+              </div>
+              <div className='hm-brandviz'>
+                <iframe
+                  src={`/home-redesign/brand${demoSuffix}`}
+                  title={rc.features.brandIframeTitle}
+                  loading='lazy'
+                  data-hm-brand
+                />
+              </div>
+            </div>
+            <div className='hm-fgrid'>
+              {rc.features.cards.map((card, index) => (
+                <div className='hm-fcard' data-reveal key={card.title}>
+                  {featureVisuals[index]}
+                  <h4>{card.title}</h4>
+                  <p>{card.body}</p>
+                </div>
+              ))}
+            </div>
+            {/* Benchmark band. Scores are the launch figures Joey signed off
+                on (2026-08-06); update BENCHMARK_SCORES when the next run
+                lands. Dimension switching is pure CSS (radio + sibling
+                selectors) so it works before any script runs. */}
+            <div className='hm-bench' data-reveal>
+              <div className='hm-bench-copy'>
+                <h4>
+                  {rc.features.bench.titlePre}
+                  <em>{rc.features.bench.titleEm}</em>
+                  {rc.features.bench.titlePost}
+                </h4>
+                <p>{rc.features.bench.body}</p>
+              </div>
+              <div className='hm-bench-panel'>
+                {rc.features.bench.dimensions.map((label, index) => (
+                  <input
+                    className='hm-bench-radio'
+                    type='radio'
+                    name='hm-bench'
+                    id={`hm-bench-${index}`}
+                    defaultChecked={index === 0}
+                    key={`radio-${label}`}
+                  />
+                ))}
+                <div className='hm-bench-tabs' role='tablist'>
+                  {rc.features.bench.dimensions.map((label, index) => (
+                    <label className='hm-bench-tab' htmlFor={`hm-bench-${index}`} key={label}>
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <div className='hm-bench-sets'>
+                  {BENCHMARK_SCORES.map((set, index) => (
+                    <div className='hm-bench-set' key={`set-${index}`}>
+                      {set.map(([name, score]) => (
+                        <div className='hm-bar' key={name}>
+                          <span>{name}</span>
+                          <span className='hm-bar-track'>
+                            <i style={{ width: `${score}%` }} />
+                          </span>
+                          <span className='hm-bar-value'>{score.toFixed(1)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <p className='hm-bench-axis'>{rc.features.bench.scoreLabel}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ====== TEAM WORKSPACE ====== */}
+        <section className='hm-sec' data-od-id='team'>
+          <div className='container'>
+            <h2 className='hm-h2serif' data-reveal>
+              {rc.team.title}
+              <em>{rc.team.titleEm}</em>
+            </h2>
+            <div className='hm-teamgrid'>
+              <div className='hm-teamcopy' data-reveal>
+                <p>{rc.team.body}</p>
+                <p className='hm-teamchips'>
+                  {rc.team.chips.map((chip, index) => (
+                    <span key={chip}>
+                      {index > 0 ? ' · ' : ''}
+                      <b>{chip}</b>
+                    </span>
+                  ))}
+                </p>
+                <div className='hm-teamdl'>
+                  <DownloadPill
+                    href={href('/download/')}
+                    label={rc.hero.download}
+                    placement='team'
+                    small
+                  />
+                </div>
+              </div>
+              {/* Team workspace window mock (pure CSS, language-light). */}
+              <div className='hm-teamwin' data-reveal='right'>
+                <div className='hm-tb'>
+                  <i />
+                  <i />
+                  <i />
+                  <img
+                    className='hm-tb-logo'
+                    src='/android-chrome-192x192.png'
+                    alt=''
+                  />
+                  {rc.team.winTitle}
+                </div>
+                <div className='hm-teambody'>
+                  <div className='hm-teammembers'>
+                    <span className='hm-avatars' aria-hidden='true'>
+                      <i className='a1'>J</i>
+                      <i className='a2'>M</i>
+                      <i className='a3'>E</i>
+                      <i className='a4'>+9</i>
+                    </span>
+                    <span className='hm-memberline'>
+                      {rc.team.membersLine} <b>acme-2026</b>
+                    </span>
+                  </div>
+                  <div className='hm-teamcards' aria-hidden='true'>
+                    {(
+                      [
+                        ['46%', '32%', 'M · deck'],
+                        ['52%', '40%', 'E · landing'],
+                        ['40%', '28%', 'J · social'],
+                      ] as const
+                    ).map(([w1, w2, tag]) => (
+                      <div className='hm-teamcard' key={tag}>
+                        <span className='t1' style={{ width: w1 }} />
+                        <span className='t2' style={{ width: w2 }} />
+                        <span className='tag'>{tag}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className='hm-teamactivity'>
+                    <b aria-hidden='true'>✓</b> {rc.team.activityPre}
+                    <b>{rc.team.activityBold}</b>
+                    {rc.team.activityPost}
+                  </div>
                 </div>
               </div>
             </div>
-            {/* Labs — a clean image preview driven by the mode Dock below it.
-                The app-window chrome is gone; the Dock magnifies on hover and
-                its tiles switch / auto-cycle the preview image in place
-                (enhancers in `pages/index.astro`). */}
-            <div className='lab-stage' data-reveal data-precise-bg>
-              {/* Floating artifact card layered over the painting background.
-                  `enhanceLabSwitch` (pages/index.astro) swaps its src from the
-                  dock and toggles visibility; the "图片" tile maps to the
-                  painting itself, so it hides the card and shows it bare. */}
-              <img className='lab-artifact' data-lab-artifact alt='' decoding='async' />
-              {/* Video mode: the "视频" tile plays this looping clip instead of a
-                  still card. `enhanceLabSwitch` plays it on select and pauses it
-                  on every other mode. CSS locks it to the cards' 1592×1000 box so
-                  its height matches the image previews exactly. */}
-              <video
-                className='lab-artifact lab-artifact-video'
-                data-lab-video
-                muted
-                loop
-                playsInline
-                preload='metadata'
-                aria-hidden='true'
-              />
-              {/* Labs filter as a centered macOS-style magnifying Dock (React
-                  Bits "Dock", reproduced in vanilla for this SSR/no-React
-                  page). Proximity magnification + click/auto-cycle preview swap
-                  are driven by the enhancers in `pages/index.astro`. */}
-              <div className='lab-dock' data-lab-dock data-reveal>
-                {([
-                  {
-                    label: 'Prototype',
-                    href: href('/plugins/templates/prototype/'),
-                    preview: '/lab-cards/prototype.webp?v=5',
-                  },
-                  {
-                    label: 'Live Artifact',
-                    href: href('/plugins/templates/live-artifact/'),
-                    preview: '/lab-cards/live-artifact.webp?v=3',
-                  },
-                  {
-                    label: 'Slides',
-                    href: href('/plugins/templates/deck/'),
-                    preview: '/lab-cards/slides.png?v=5',
-                  },
-                  { label: tt('图片', 'Image'), href: href('/plugins/templates/image/'), preview: '/lab-cards/quest.webp?v=1', wide: true },
-                  { label: 'HyperFrames', href: href('/plugins/templates/hyperframes/'), video: '/lab-hyperframes.mp4' },
-                  { label: tt('视频', 'Video'), href: href('/plugins/templates/video/'), video: '/lab-video.mp4' },
-                ] as ReadonlyArray<{
-                  label: string;
-                  href: string;
-                  preview?: string;
-                  video?: string;
-                  wide?: boolean;
-                }>).map((item, i) => (
-                  <a
-                    key={item.label}
-                    className={item.wide ? 'lab-dock-item active' : 'lab-dock-item'}
-                    href={item.href}
-                    data-dock-item
-                    data-preview-src={
-                      item.video
-                        ? undefined
-                        : item.preview ?? labArtifacts[i % labArtifacts.length] ?? labActive
-                    }
-                    data-preview-video={item.video}
-                    data-preview-wide={item.wide ? '' : undefined}
-                    data-preview-title={item.label}
-                    aria-label={item.label}
-                  >
-                    <span className='lab-dock-icon' aria-hidden='true'></span>
-                    <span className='lab-dock-label'>{item.label}</span>
-                  </a>
-                ))}
-              </div>
-            </div>{/* /lab-stage */}
           </div>
         </section>
 
-        {/* ====== METHOD ====== */}
-        <section className='method' data-od-id='method'>
+        {/* ====== THREE WAYS TO USE IT ====== */}
+        <section className='hm-sec hm-sec-warm' data-od-id='ways'>
           <div className='container'>
-            <div className='method-head'>
-              <div data-reveal>
-                <h2 className='display' style={{ marginTop: 0 }}>
-                  {t.methodTitle}
-                </h2>
-              </div>
-              <div className='right' data-reveal='right'>
-                <p>{home.method.lead}</p>
-              </div>
-              <a
-                className='btn btn-ghost method-link'
-                href={href('/agents/')}
-                style={{ marginTop: 16 }}
-                data-reveal
-              >
-                {cta.agents}
-                <span className='arrow'>{arrowOut}</span>
-              </a>
-            </div>
-            {/* FallingText (React Bits, matter-js) — the coding-agent names
-                drop into a physics playground on hover; driven by the
-                `initFallingText` enhancer in `pages/index.astro`. */}
-            <div
-              className='falling-text'
-              data-falling-text
-              data-trigger='scroll'
-              data-gravity='0.9'
-              data-stiffness='0.9'
-            >
-              <div className='falling-text-target'>
-                {FALLING_ICONS.map((icon, index) => (
-                  <span className='falling-word falling-chip' key={`${icon.alt}-${index}`}>
-                    <img src={icon.src} alt={icon.alt} loading='lazy' decoding='async' />
+            <p className='hm-kicker' data-reveal>
+              {rc.ways.kicker}
+            </p>
+            <h2 className='hm-h2serif' data-reveal>
+              {rc.ways.title}
+              <em>{rc.ways.titleEm}</em>
+            </h2>
+            <div className='hm-steps'>
+              <div className='hm-step' data-reveal>
+                <div className='hm-viz hm-viz-full'>
+                  <LazyImg className='hm-vfill' src={heroProductImage} alt='Open Design app' />
+                  <span className='hm-vcomposer' aria-hidden='true'>
+                    <span>Make the launch deck, on brand…</span>
+                    <i><svg viewBox='0 0 12 12' width='11' height='11' fill='none' stroke='currentColor' strokeWidth='1.8' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'><path d='M6 10.8V3.4M2.7 6.6 6 3.3l3.3 3.3' /></svg></i>
                   </span>
-                ))}
+                </div>
+                <div className='hm-num'>{rc.ways.desktop.eyebrow}</div>
+                <h3>{rc.ways.desktop.title}</h3>
+                <p>{rc.ways.desktop.body}</p>
+                <p className='hm-way-cta'>
+                  <DownloadPill
+                    href={href('/download/')}
+                    label={rc.hero.download}
+                    placement='ways'
+                    small
+                  />
+                </p>
               </div>
-              <div className='falling-text-canvas' aria-hidden='true' />
-              {/* Revealed (faded in) once every icon has dropped and settled. */}
-              <img
-                className='falling-text-reveal'
-                src='/method-coding-agent.png'
-                alt='21+ Coding Agent'
-                data-falling-reveal
-                loading='lazy'
-                decoding='async'
+              <div className='hm-step' data-reveal>
+                <div className='hm-viz hm-viz-full'>
+                  <LazyImg className='hm-vfill' src='/cta-bg.webp?v=3' />
+                  {/* Terminal mock — the real local-lifecycle commands, not an
+                      illustration. `pnpm tools-dev` is the repo's canonical
+                      dev entry point. */}
+                  <span className='hm-term' aria-hidden='true'>
+                    <span className='hm-term-bar'>
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    <code>
+                      <span className='ln'>
+                        <b>$</b> git clone nexu-io/open-design
+                      </span>
+                      <span className='ln'>
+                        <b>$</b> pnpm install && pnpm tools-dev
+                      </span>
+                      <span className='ln ok'>● daemon + web running · localhost</span>
+                    </code>
+                  </span>
+                </div>
+                <div className='hm-num'>{rc.ways.selfHosted.eyebrow}</div>
+                <h3>{rc.ways.selfHosted.title}</h3>
+                <p>{rc.ways.selfHosted.body}</p>
+                <p className='hm-way-cta'>
+                  <a className='hm-link' href={REPO} {...ext}>
+                    {rc.ways.selfHosted.cta} →
+                  </a>
+                </p>
+              </div>
+              <div className='hm-step' data-reveal>
+                <div className='hm-viz hm-viz-full'>
+                  <LazyImg className='hm-vfill' src='/cta-bg.webp?v=3' />
+                  <LazyImg
+                    className='hm-ovcard hm-ovwide'
+                    src='/home-redesign/shots/codex-card.webp'
+                    alt='Open Design plugin in Codex'
+                  />
+                </div>
+                <div className='hm-num'>{rc.ways.codex.eyebrow}</div>
+                <h3>{rc.ways.codex.title}</h3>
+                <p>
+                  {rc.ways.codex.body}
+                  <b>{rc.ways.codex.bodyBold}</b>
+                  {rc.ways.codex.bodyPost}
+                </p>
+                <p className='hm-way-cta'>
+                  <a className='hm-link' href={href('/codex-plugin/')}>
+                    {rc.ways.codex.cta} →
+                  </a>
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ====== CUSTOMER STORIES ====== */}
+        <section className='hm-sec hm-sec-warm' data-od-id='stories'>
+          <div className='container'>
+            <h2 className='hm-h2serif' data-reveal>
+              {rc.stories.title}
+              <em>{rc.stories.titleEm}</em>
+            </h2>
+            <div className='hm-stories'>
+              {(
+                [
+                  ['/stories/seungki-kim/', '/stories/seungki-kim-cover.webp'],
+                  ['/stories/stuart-gardoll/', '/stories/stuart-gardoll-cover.webp'],
+                  ['/stories/ikigai-one/', '/stories/ikigai-one-og.jpg'],
+                ] as const
+              ).map(([storyHref, cover], index) => {
+                const card = rc.stories.cards[index]!;
+                return (
+                  <a className='hm-story' href={href(storyHref)} key={storyHref} data-reveal>
+                    <span className='hm-story-cover'>
+                      <LazyImg src={cover} />
+                    </span>
+                    <span className='hm-story-q'>{card.quote}</span>
+                    <span className='hm-story-who'>
+                      <b>{card.name}</b> · {card.desc}
+                    </span>
+                    <span className='hm-story-rd'>{rc.stories.read} →</span>
+                  </a>
+                );
+              })}
+            </div>
+            <div className='hm-sec-cta'>
+              <DownloadPill
+                href={href('/download/')}
+                label={rc.hero.download}
+                placement='stories'
+                small
               />
             </div>
           </div>
         </section>
 
-        {/* ====== TESTIMONIAL / COLLABORATORS ====== */}
+        {/* ====== BLOG HIGHLIGHTS ====== */}
+        <section className='hm-sec' data-od-id='blog-highlights'>
+          <div className='container'>
+            <h2 className='hm-h2serif' data-reveal>
+              {rc.blog.title}
+            </h2>
+            <div className='hm-bloggrid'>
+              {blogHighlights.map((post) => (
+                <a className='hm-bcard' href={post.href} key={post.href} data-reveal>
+                  <span className='hm-bc-cover'>
+                    <LazyImg src={post.cover} alt={post.coverAlt} />
+                  </span>
+                  <span className='hm-bc-meta'>{post.category}</span>
+                  <span className='hm-bc-t'>{post.title}</span>
+                  <span className='hm-bc-m'>{post.meta}</span>
+                </a>
+              ))}
+            </div>
+            <p className='hm-blogall'>
+              <a className='hm-link' href={href('/blog/')}>
+                {rc.blog.viewAll} →
+              </a>
+            </p>
+          </div>
+        </section>
+
+        {/* ====== CONTRIBUTORS / GLOBE ====== */}
         <section className='testimonial' data-od-id='testimonial'>
           <div className='container'>
             <div className='testimonial-grid with-globe'>
@@ -1082,77 +944,17 @@ export default function Page({
           </div>
         </section>
 
-        {/* ====== SELECTED WORK ====== */}
-        <section className='tight' data-od-id='work'>
-          <h2 className='work-stats-title' data-reveal>
-            {cta.statsTitle}
-          </h2>
-          <div className='work'>
-            <div className='work-stats-grid' data-reveal>
-                {([
-                  // `live` cards show the real-time GitHub count (filled by the
-                  // [data-github-stars] / [data-github-contributors] enhancers in
-                  // index.astro); their build-time values come from GitHub and
-                  // stay visible if the browser API request is rate-limited.
-                  // Catalog-backed cards count up from 0.
-                  { src: 'card-1.webp', num: github.starsLabel, to: null, suffix: '', alt: 'GitHub Stars', href: REPO, live: 'stars' as const },
-                  { src: 'card-2.webp', num: String(github.contributorsCount), to: null, suffix: '', alt: tt('贡献者', 'Contributors'), href: `${REPO}/graphs/contributors`, live: 'contributors' as const },
-                  { src: 'card-3.webp', num: pluginsCardNum, to: pluginsCardTo, suffix: '+', alt: 'Plugins', href: href('/plugins/') },
-                  { src: 'card-4.webp', num: systemsCardNum, to: systemsCardTo, suffix: '+', alt: 'Design Systems', href: href('/plugins/systems/') },
-                  { src: 'card-5.webp', num: '21', to: '21', suffix: '', alt: tt('Coding Agent 支持', 'Coding Agents'), href: href('/agents/') },
-                  { src: 'card-6.webp', num: null, to: null, suffix: '', alt: 'Star us', href: REPO, cta: true },
-                ] as ReadonlyArray<{ src: string; num: string | null; to: string | null; suffix: string; alt: string; href: string; live?: 'stars' | 'contributors'; cta?: boolean }>).map((item, index) => (
-                  <a
-                    className={`work-stat-card work-img-card${item.cta ? ' work-stat-card-cta' : ''}`}
-                    href={item.href}
-                    key={item.src}
-                    style={{ '--tilt': `${[-1.2, 1.4, -0.6, 0.9, -1, 1.1][index]}deg` } as React.CSSProperties}
-                    {...(item.href.startsWith('http') ? ext : {})}
-                  >
-                    <LazyImg src={`/work-cards/${item.src}`} alt={item.alt} />
-                    <span className='work-card-arrow' aria-hidden='true'>
-                      {arrowOut}
-                    </span>
-                    <h3 className='work-stat-overlay'>
-                      {item.live === 'stars' ? (
-                        <span data-github-stars>{item.num}</span>
-                      ) : item.live === 'contributors' ? (
-                        <span data-github-contributors>{item.num}</span>
-                      ) : item.num && item.to ? (
-                        <span
-                          data-countup
-                          data-countup-to={item.to}
-                          data-countup-suffix={item.suffix}
-                        >
-                          {item.num}
-                        </span>
-                      ) : item.num ? (
-                        <span>{item.num}</span>
-                      ) : null}
-                      {item.num ? ' ' : ''}<em>{item.alt}</em>
-                    </h3>
-                  </a>
-                ))}
-              </div>
-          </div>
-        </section>
-
-        {/* ====== FAQ ====== */}
-        {/* Restored from the canonical open-design.ai/zh layout. Content comes
-            from `getHomeFaq` (index.astro), the same source as the FAQPage
-            JSON-LD, so the visible answers match the structured data. */}
+        {/* ====== CLOSING CTA ====== */}
         <section className='cta' id='contact' data-od-id='cta'>
           <div className='container'>
             <div className='cta-dance' data-precise-bg>
               {/* Open Design Home window floating over the mural — sits above the
                   painting (::before) but below the CTA copy. Bottom is clipped by
-                  the block's overflow:hidden, matching the reference comp.
-                  `data-reveal` slides it up from below when the module enters view
-                  (the module itself no longer animates). */}
+                  the block's overflow:hidden, matching the reference comp. */}
               <img
                 className='cta-window'
                 src='/cta-window.webp'
-                alt='Open Design 桌面端首页'
+                alt='Open Design desktop home'
                 width={2996}
                 height={1870}
                 decoding='async'
@@ -1163,12 +965,6 @@ export default function Page({
                 <h2 className='display'>{t.ctaTitle}</h2>
                 <p className='lead'>{home.cta.lead}</p>
                 <div className='cta-actions'>
-                  {/* Same direct-download behaviour as the hero CTA: the
-                      `enhanceDownloadCta` enhancer detects the OS, rewrites this
-                      to the matching release asset (.dmg/.exe) with a download
-                      attr, and appends the platform chip. Falls back to the
-                      /download/ picker when detection or the API is unavailable
-                      — not the raw GitHub releases list. */}
                   <a
                     className='btn btn-primary'
                     href={href('/download/')}
@@ -1189,43 +985,6 @@ export default function Page({
           </div>
         </section>
 
-        {/* ====== NEWSLETTER ====== */}
-        {/* Subscribe band between the CTA window and the FAQ. Static site — no
-            mailing-list backend exists yet, so `enhanceNewsletter` in
-            `pages/index.astro` intercepts submit and swaps in the localized
-            thanks line; wire a real provider endpoint into the form action
-            when one lands. */}
-        <section className='newsletter' id='newsletter' data-od-id='newsletter'>
-          <div className='container'>
-            <div className='newsletter-grid'>
-              <div className='newsletter-copy' data-reveal>
-                <h2 className='newsletter-title'>{t.newsTitle}</h2>
-                <p className='newsletter-desc'>{t.newsDesc}</p>
-              </div>
-              <form
-                className='newsletter-form'
-                data-newsletter
-                data-newsletter-done={t.newsDone}
-                data-newsletter-error={t.newsError ?? 'Couldn’t subscribe just now — please try again.'}
-                data-reveal='right'
-              >
-                <input
-                  className='newsletter-input'
-                  type='email'
-                  name='email'
-                  placeholder='you@studio.com'
-                  autoComplete='email'
-                  required
-                  aria-label={t.newsTitle}
-                />
-                <button className='newsletter-submit' type='submit'>
-                  {t.newsBtn}
-                </button>
-              </form>
-            </div>
-          </div>
-        </section>
-
         {/* ====== FAQ ====== */}
         <section className='faq' id='faq' data-od-id='faq'>
           <div className='container'>
@@ -1233,9 +992,7 @@ export default function Page({
               <div className='faq-head' data-reveal>
                 <h2 className='display faq-title-zh'>{t.faqTitle}</h2>
                 {/* High-intent download CTA filling the FAQ left column's blank
-                    space — readers here are evaluating. Platform-aware direct
-                    download (same `data-download-cta` enhancer as hero/CTA);
-                    social proof below to lift conversion. */}
+                    space — readers here are evaluating. */}
                 <div className='faq-download'>
                   <a
                     className='btn btn-primary'

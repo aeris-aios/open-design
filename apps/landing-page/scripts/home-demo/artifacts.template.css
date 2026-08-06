@@ -1,0 +1,473 @@
+/*
+ * Artifact styles for the workspace demo.
+ *
+ * Every rule reads only --ds-* custom properties, bound at runtime from a real
+ * design system in `design-systems.json`. No brand-specific rule lives here:
+ * switching the system is a token swap, not a stylesheet swap.
+ *
+ * Each layout is composed like the real thing it stands for - a poster fills
+ * its sheet, an app screen carries a tab bar, a slide carries a data panel -
+ * because a schematic wireframe would undersell what the product generates.
+ */
+
+.af {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ds-bg);
+  color: var(--ds-fg);
+  font-family: var(--ds-font-body);
+  transition: background 0.35s ease, color 0.35s ease;
+}
+.af * { box-sizing: border-box; }
+
+/* Shared atoms ---------------------------------------------------------- */
+.af-eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  /* Set by guardAccentText(): the brand accent where it is legible on the
+     brand background, the foreground colour where it is not. */
+  color: var(--ds-accent-text, var(--ds-accent));
+}
+.af-body { font-size: 12.5px; line-height: 1.6; color: var(--ds-muted); margin: 0; max-width: 42ch; }
+.af-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ds-accent);
+  color: var(--ds-accent-on);
+  border-radius: var(--ds-radius);
+  padding: 10px 20px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--ds-font-body);
+  white-space: nowrap;
+  transition: background 0.3s ease, border-radius 0.3s ease;
+}
+.af-btn-sm { padding: 7px 14px; font-size: 11px; }
+.af-btn-block { display: flex; padding: 12px; margin-top: 4px; }
+.af-ghost {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--ds-border);
+  color: var(--ds-fg);
+  border-radius: var(--ds-radius);
+  padding: 10px 20px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.af-row { display: flex; gap: 10px; margin-top: 20px; }
+
+/* Marketing site -------------------------------------------------------- */
+.af-nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 13px 26px;
+  border-bottom: 1px solid var(--ds-border);
+  background: var(--ds-surface);
+}
+.af-logo { font-family: var(--ds-font-display); font-weight: 800; font-size: 15px; letter-spacing: var(--ds-tracking); }
+.af-links { display: flex; gap: 16px; margin-right: auto; }
+.af-links i { font-style: normal; font-size: 11.5px; color: var(--ds-muted); }
+.af-hero {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 26px;
+  align-items: center;
+  padding: 30px 26px 24px;
+  flex: 1;
+}
+.af-h1 {
+  font-family: var(--ds-font-display);
+  font-size: 36px;
+  line-height: 1.06;
+  letter-spacing: var(--ds-tracking);
+  font-weight: 800;
+  margin: 12px 0 12px;
+}
+/* Hero visual = the kernel that produced the page. */
+.af-panel {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-radius 0.3s ease;
+}
+.af-panel-head { display: flex; align-items: center; }
+.af-panel-head b { font-size: 11.5px; font-weight: 800; }
+.af-panel-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--ds-accent); margin-left: auto; }
+.af-swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.af-sw { display: block; height: 40px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-border); }
+.af-sw-accent { background: var(--ds-accent); border-color: transparent; }
+.af-sw-fg { background: var(--ds-fg); border-color: transparent; }
+.af-sw-surface { background: var(--ds-bg); }
+.af-ramp { display: flex; align-items: baseline; gap: 12px; font-family: var(--ds-font-display); }
+.af-ramp-1 { font-size: 26px; font-weight: 800; letter-spacing: var(--ds-tracking); }
+.af-ramp-2 { font-size: 17px; font-weight: 700; }
+.af-ramp-3 { font-size: 12px; font-weight: 500; color: var(--ds-muted); }
+.af-panel-meta { font-size: 10px; color: var(--ds-muted); letter-spacing: 0.04em; }
+.af-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--ds-border);
+}
+.af-stat-cell { padding: 14px 26px; }
+.af-stat-cell + .af-stat-cell { border-left: 1px solid var(--ds-border); }
+.af-stat-cell b {
+  display: block;
+  font-family: var(--ds-font-display);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: var(--ds-tracking);
+}
+.af-stat-cell span { font-size: 10.5px; color: var(--ds-muted); }
+.af-trust {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 26px;
+  background: var(--ds-surface);
+  border-top: 1px solid var(--ds-border);
+}
+.af-trust-label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ds-muted); }
+.af-mark { font-style: normal; font-size: 15px; color: var(--ds-fg); opacity: 0.45; }
+
+/* Product UI ------------------------------------------------------------ */
+.af-mobile { align-items: center; justify-content: center; background: var(--ds-surface); }
+.af-phone {
+  width: 274px;
+  height: 94%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-border);
+  border-radius: calc(var(--ds-radius-lg) + 16px);
+  padding: 14px 16px 10px;
+  transition: border-radius 0.3s ease;
+}
+.af-status { display: flex; align-items: center; font-size: 9.5px; font-weight: 700; color: var(--ds-muted); }
+.af-status-dots { margin-left: auto; width: 26px; height: 5px; border-radius: 999px; background: var(--ds-border); }
+.af-app-head { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.af-app-brand { display: block; font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ds-muted); }
+.af-app-greet { display: block; font-family: var(--ds-font-display); font-size: 19px; font-weight: 800; letter-spacing: var(--ds-tracking); }
+.af-avatar { width: 30px; height: 30px; border-radius: 999px; background: var(--ds-accent); margin-left: auto; flex: none; }
+/* Hero card carries the accent as a field, the way a real app promotes work. */
+.af-appcard {
+  background: var(--ds-accent);
+  color: var(--ds-accent-on);
+  border-radius: var(--ds-radius-lg);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: border-radius 0.3s ease, background 0.3s ease;
+}
+.af-appcard-label { font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.8; }
+.af-appcard-title { font-family: var(--ds-font-display); font-size: 20px; font-weight: 800; letter-spacing: var(--ds-tracking); }
+.af-appcard-meta { font-size: 10px; opacity: 0.85; }
+.af-appcard-prog { display: block; height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.32); margin-top: 8px; }
+.af-appcard-prog i { display: block; width: 62%; height: 100%; border-radius: 999px; background: currentColor; }
+.af-seg {
+  display: flex;
+  gap: 4px;
+  background: var(--ds-surface);
+  border-radius: var(--ds-radius);
+  padding: 3px;
+}
+.af-seg span {
+  flex: 1;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ds-muted);
+  padding: 6px 0;
+  border-radius: calc(var(--ds-radius) - 2px);
+}
+.af-seg span.on { background: var(--ds-bg); color: var(--ds-fg); }
+.af-listrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--ds-border); }
+.af-thumb { width: 34px; height: 34px; flex: none; border-radius: var(--ds-radius-sm); background: var(--ds-surface); border: 1px solid var(--ds-border); }
+.af-listcol { flex: 1; min-width: 0; }
+.af-listcol b { display: block; font-size: 11.5px; }
+.af-listcol span { display: block; font-size: 9.5px; color: var(--ds-muted); margin-top: 2px; }
+.af-chev { color: var(--ds-muted); font-size: 14px; }
+.af-tabs { display: flex; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--ds-border); }
+.af-tabs span { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--ds-muted); }
+.af-tabs span.on { color: var(--ds-accent-text, var(--ds-accent)); }
+.af-tabs i { width: 14px; height: 14px; border-radius: var(--ds-radius-sm); background: currentColor; opacity: 0.85; }
+.af-tabs u { text-decoration: none; font-size: 8.5px; font-weight: 700; }
+
+/* Poster ---------------------------------------------------------------- */
+.af-poster { align-items: center; justify-content: center; background: var(--ds-surface); padding: 14px; }
+.af-sheet {
+  width: min(420px, 100%);
+  height: 100%;
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-radius 0.3s ease;
+}
+/* Accent field up top, information band below: the standard poster split. */
+.af-sheet-top {
+  position: relative;
+  flex: 1;
+  background: var(--ds-accent);
+  color: var(--ds-accent-on);
+  padding: 18px 20px 22px;
+  display: flex;
+  flex-direction: column;
+}
+.af-sheet-bar {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.af-poster-title {
+  font-family: var(--ds-font-display);
+  font-size: 46px;
+  line-height: 0.94;
+  letter-spacing: var(--ds-tracking);
+  font-weight: 800;
+  margin: auto 0 0;
+  text-transform: uppercase;
+}
+.af-poster-badge {
+  position: absolute;
+  right: 18px;
+  top: 44px;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  opacity: 0.9;
+}
+.af-sheet-bottom { padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 14px; }
+.af-poster-body { font-size: 11.5px; line-height: 1.55; color: var(--ds-muted); margin: 0; }
+.af-poster-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; border-top: 1px solid var(--ds-border); padding-top: 12px; }
+.af-poster-meta b { display: block; font-size: 11px; font-weight: 800; }
+.af-poster-meta span { display: block; font-size: 9.5px; color: var(--ds-muted); margin-top: 2px; }
+.af-poster-foot { display: flex; align-items: center; justify-content: space-between; }
+.af-poster-url { font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ds-muted); }
+
+/* Deck slide ------------------------------------------------------------ */
+.af-slides { align-items: center; justify-content: center; background: var(--ds-surface); padding: 16px; }
+.af-slide {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 100%;
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-lg);
+  padding: 24px 26px 16px;
+  display: grid;
+  grid-template-columns: 1.25fr 0.75fr;
+  grid-template-rows: 1fr auto;
+  gap: 20px 22px;
+  transition: border-radius 0.3s ease;
+}
+.af-slide-title {
+  font-family: var(--ds-font-display);
+  font-size: 27px;
+  line-height: 1.08;
+  letter-spacing: var(--ds-tracking);
+  font-weight: 800;
+  margin: 10px 0 14px;
+}
+.af-bullets { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.af-bullets li { display: flex; gap: 10px; }
+.af-bullets i {
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--ds-accent-text, var(--ds-accent));
+  padding-top: 2px;
+}
+.af-bullets b { display: block; font-size: 11.5px; }
+.af-bullets span { display: block; font-size: 10.5px; color: var(--ds-muted); margin-top: 2px; }
+/* Data panel: the slide's visual weight, in the brand's accent. */
+.af-slide-side {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  transition: border-radius 0.3s ease;
+}
+.af-slide-stat {
+  font-family: var(--ds-font-display);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: var(--ds-tracking);
+  color: var(--ds-accent-text, var(--ds-accent));
+  line-height: 1;
+}
+.af-slide-statlabel { font-size: 10px; color: var(--ds-muted); margin-top: 4px; }
+.af-chart { display: flex; align-items: flex-end; gap: 8px; height: 74px; margin-top: auto; }
+.af-chart span { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; justify-content: flex-end; }
+.af-chart i { display: block; width: 100%; border-radius: var(--ds-radius-sm) var(--ds-radius-sm) 0 0; background: var(--ds-border); }
+.af-chart i.on { background: var(--ds-accent); }
+.af-chart u { text-decoration: none; font-size: 8.5px; color: var(--ds-muted); }
+.af-slide-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--ds-border);
+  padding-top: 10px;
+  font-size: 9.5px;
+  color: var(--ds-muted);
+}
+
+/* Motion frame ---------------------------------------------------------- */
+.af-video { background: var(--ds-surface); padding: 16px; gap: 10px; justify-content: center; }
+.af-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--ds-fg);
+  color: var(--ds-bg);
+  border-radius: var(--ds-radius);
+  overflow: hidden;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  transition: background 0.4s ease, color 0.4s ease, border-radius 0.3s ease;
+}
+/* The end card flips to the accent field, the way a real outro lands. */
+.af-frame-accent { background: var(--ds-accent); color: var(--ds-accent-on); }
+.af-frame-bar {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.af-rec { display: inline-flex; align-items: center; gap: 5px; }
+.af-rec i { width: 6px; height: 6px; border-radius: 999px; background: currentColor; animation: af-rec-blink 1.4s steps(1) infinite; }
+@keyframes af-rec-blink { 50% { opacity: 0.25; } }
+.af-frame-center { margin: auto 0; }
+.af-shot { display: flex; flex-direction: column; }
+.af-frame-kicker {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ds-accent);
+  margin-bottom: 8px;
+}
+.af-frame-accent .af-frame-kicker { color: currentColor; }
+.af-frame-title {
+  font-family: var(--ds-font-display);
+  font-size: 34px;
+  line-height: 1.02;
+  letter-spacing: var(--ds-tracking);
+  font-weight: 800;
+  margin: 0;
+  text-transform: uppercase;
+}
+.af-frame-line { display: block; animation: af-line-in 0.6s cubic-bezier(0.23, 1, 0.32, 1) both; }
+@keyframes af-line-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.af-frame-wipe {
+  display: block;
+  height: 6px;
+  width: 46%;
+  margin: 14px 0 10px;
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-accent);
+  transform-origin: left center;
+  animation: af-wipe 0.7s 0.45s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes af-wipe { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.af-frame-sub { display: block; font-size: 11px; opacity: 0.75; }
+/* Shot 02: mark + wordmark, revealed by a sheet sliding off. */
+.af-shot-logo { position: relative; align-items: flex-start; gap: 10px; }
+.af-mark-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--ds-radius);
+  background: var(--ds-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: af-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.af-mark-badge i { width: 14px; height: 14px; border-radius: 3px; background: var(--ds-accent-on); }
+@keyframes af-pop { from { opacity: 0; transform: scale(0.7); } to { opacity: 1; transform: none; } }
+.af-wordmark {
+  font-family: var(--ds-font-display);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: var(--ds-tracking);
+  animation: af-line-in 0.55s 0.12s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.af-wipe-sheet {
+  position: absolute;
+  inset: -20px;
+  background: var(--ds-accent);
+  transform-origin: right center;
+  animation: af-sheet-off 0.75s 0.1s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes af-sheet-off { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+/* Shot 03: end card on the accent field. */
+.af-shot-end { align-items: flex-start; gap: 16px; }
+.af-end-title { font-size: 40px; }
+.af-end-row { display: flex; align-items: center; gap: 14px; animation: af-line-in 0.5s 0.25s cubic-bezier(0.23, 1, 0.32, 1) both; }
+.af-frame-accent .af-btn { background: var(--ds-accent-on); color: var(--ds-accent); }
+.af-end-url { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.8; }
+.af-frame-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+.af-frame-tc { font-variant-numeric: tabular-nums; }
+/* Timeline: shots are clickable, the active one fills as it plays. */
+.af-track { display: flex; gap: 8px; }
+.af-track span { flex: 1; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
+.af-track i {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ds-border);
+  overflow: hidden;
+}
+.af-track .af-track-fill { display: block; height: 100%; width: 0; background: var(--ds-accent); }
+.af-track span.done i { background: var(--ds-accent); opacity: 0.45; }
+.af-track span.on .af-track-fill { width: 100%; animation: af-track-fill 3.4s linear both; }
+@keyframes af-track-fill { from { width: 0; } to { width: 100%; } }
+.af-track u.af-track-label { text-decoration: none; font-size: 9px; color: var(--ds-muted); }
+.af-track span.on u.af-track-label { color: var(--ds-fg); font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+  .af, .af-btn, .af-panel, .af-phone, .af-sheet, .af-slide, .af-appcard, .af-slide-side { transition: none; }
+  .af-frame-line, .af-frame-wipe, .af-rec i, .af-mark-badge, .af-wordmark,
+  .af-wipe-sheet, .af-end-row, .af-track span.on .af-track-fill { animation: none; }
+  .af-wipe-sheet { display: none; }
+  .af-track span.on .af-track-fill { width: 100%; }
+}

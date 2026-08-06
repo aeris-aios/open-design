@@ -1,0 +1,170 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brand system demo</title>
+<style>
+/* 版式参照 Console 品牌中心 kernel-detail:白卡 + 发丝线 + 绿组标 + 规格表 */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--p:#63fe13;--d:#262626;--bgc:#f0f0ec;--r:8px;--fname:'Albert Sans';
+  --sans:'Albert Sans','PingFang SC','Microsoft YaHei',sans-serif;--line:#e7e7e3;--mute:#8c8c8c;--grn:#1e8000}
+html,body{height:100%}
+body{font-family:var(--sans);background:#fafafa;color:#262626;display:flex;overflow:hidden}
+.col{padding:16px;display:flex;flex-direction:column;gap:10px}
+.kernel{width:300px;flex:none;border-right:1px solid var(--line);background:#fff;overflow:hidden}
+.bname{font-weight:900;font-size:20px;letter-spacing:.02em}
+.bsub{font-size:10.5px;color:var(--mute);margin-top:2px}
+/* Switcher affordance: the tabs read as the demo's control surface, so they
+   carry a labelled cue, a resting pulse until first use, and hover/active
+   states strong enough to look clickable at a glance. */
+.trylabel{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:10px;font-weight:800;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--grn)}
+.trylabel i{font-style:normal;animation:nudge 1.6s ease-in-out infinite}
+@keyframes nudge{0%,100%{transform:translateY(0)}50%{transform:translateY(3px)}}
+.tabs{display:flex;gap:6px;margin-top:6px}
+.tabs button{border:1.5px solid #26262633;background:#fff;border-radius:999px;padding:8px 15px;
+  font-family:var(--sans);font-size:12px;font-weight:800;cursor:pointer;color:#434343;
+  transition:transform .15s,border-color .15s,background .15s,box-shadow .15s}
+.tabs button:hover{border-color:#262626;transform:translateY(-1px);box-shadow:0 6px 14px -8px rgba(38,38,38,.5)}
+.tabs button.on{background:#262626;color:#fff;border-color:#262626}
+body:not(.touched) .tabs button:not(.on){animation:tabpulse 2.2s ease-in-out infinite}
+body:not(.touched) .tabs button:nth-of-type(3){animation-delay:.4s}
+@keyframes tabpulse{0%,100%{box-shadow:0 0 0 0 rgba(99,254,19,0)}
+  50%{box-shadow:0 0 0 4px rgba(99,254,19,.35)}}
+@media (prefers-reduced-motion: reduce){
+  .trylabel i,.tabs button{animation:none !important}
+}
+.glabel{font-size:10px;font-weight:800;letter-spacing:.06em;color:var(--grn);margin-top:6px}
+.sw-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sw{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.sw i{display:block;height:30px}
+.sw span{display:block;font-size:9.5px;color:#595959;font-weight:650;padding:5px 8px}
+.spec{border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;
+  padding:8px 0;font-size:11px}
+.spec .k{color:var(--mute)}
+.spec .v{font-weight:750}
+.radii{display:flex;gap:4px}
+.radii b{font-weight:750;font-size:11px;color:#595959;cursor:pointer;padding:3px 8px;border-radius:6px;
+  border:1px solid var(--line);background:#fff;transition:.15s}
+.radii b:hover{border-color:#262626;color:#262626}
+.radii b.on{background:#262626;color:#fff;border-color:#262626}
+.voice{font-size:10.5px;color:#595959;line-height:1.8}
+.voice li{list-style:none}
+.voice li::before{content:'· ';color:var(--grn);font-weight:800}
+/* 右侧:成品实时重算 */
+.arts{flex:1;overflow:hidden;background:
+  radial-gradient(circle at 20% 10%,#fff 0%,transparent 50%),
+  repeating-linear-gradient(0deg,transparent 0 23px,#26262607 23px 24px),
+  repeating-linear-gradient(90deg,transparent 0 23px,#26262607 23px 24px),#fafafa;overflow:auto}
+.arts-head{display:flex;justify-content:space-between;align-items:center}
+.arts-head .t{font-size:11px;font-weight:800;color:#595959}
+.recalc{font-size:10.5px;font-weight:750;color:var(--grn);opacity:0;transition:opacity .3s}
+.recalc.show{opacity:1}
+.agrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+.art{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px;position:relative;
+  transition:border-radius .35s;min-height:108px}
+.art .tag{position:absolute;right:8px;top:6px;font-size:8px;font-weight:800;color:#b5b5b0;letter-spacing:.06em}
+/* poster */
+.a-poster{background:var(--d);color:#fff;overflow:hidden}
+.a-poster .big{font-weight:900;font-size:17px;line-height:1.1;font-family:var(--fname),var(--sans)}
+.a-poster .big em{font-style:normal;color:var(--p)}
+.a-poster .cta{display:inline-block;margin-top:12px;background:var(--p);color:#111;font-size:9px;
+  font-weight:800;padding:4px 10px;border-radius:calc(var(--r) * 2);transition:border-radius .35s}
+/* web */
+.a-web .nav{display:flex;justify-content:space-between;align-items:center}
+.a-web .lg{width:38px;height:7px;background:var(--d);border-radius:2px}
+.a-web .bt{width:30px;height:11px;background:var(--p);border-radius:calc(var(--r) * 2);transition:border-radius .35s}
+.a-web .h1{width:70%;height:9px;background:var(--d);border-radius:2px;margin-top:14px}
+.a-web .h2{width:46%;height:6px;background:#dcdcd8;border-radius:2px;margin-top:6px}
+.a-web .chips{display:flex;gap:5px;margin-top:12px}
+.a-web .chips i{width:26px;height:14px;border:1px solid var(--line);border-radius:var(--r);transition:border-radius .35s}
+.a-web .chips i:first-child{background:color-mix(in srgb,var(--p) 30%,#fff);border-color:transparent}
+/* slide */
+.a-slide .kk{font-size:8px;font-weight:800;letter-spacing:.1em;color:var(--p);filter:brightness(.72)}
+.a-slide .tt{font-weight:800;font-size:13px;margin-top:5px;font-family:var(--fname),var(--sans)}
+.a-slide .bars{display:flex;gap:5px;align-items:flex-end;height:38px;margin-top:10px}
+.a-slide .bars i{width:10px;background:#e4e4e0;border-radius:2px 2px 0 0}
+.a-slide .bars i:nth-child(3){background:var(--d)}
+.a-slide .bars i:nth-child(4){background:var(--p)}
+/* social */
+.a-soc{overflow:hidden;padding:0}
+.a-soc .im{height:64px;background:radial-gradient(circle at 70% 20%,color-mix(in srgb,var(--p) 60%,#fff) 0%,transparent 55%),var(--d)}
+.a-soc .cap{padding:8px 10px;font-size:9.5px;font-weight:750}
+.a-soc .hash{font-size:8.5px;color:var(--grn);margin-top:2px}
+.hint{font-size:10.5px;color:#8c8c8c;margin-top:8px}
+</style></head><body>
+<div class="col kernel">
+  <div>
+    <div class="bname" id="bn">SANDÍA</div>
+    <div class="bsub" id="bs">Lip-tint brand. Four colors, set once, everything recalculates.</div>
+  </div>
+  <div class="trylabel"><i aria-hidden="true">↓</i>Try it — switch the brand</div>
+  <div class="tabs">
+    <button class="on" data-b="sandia">SANDÍA</button>
+    <button data-b="ember">EMBER</button>
+    <button data-b="noir">NOIR</button>
+  </div>
+  <div class="glabel">A · Color &amp; type</div>
+  <div class="sw-grid">
+    <div class="sw"><i id="sw1" style="background:#63fe13"></i><span>Primary</span></div>
+    <div class="sw"><i id="sw2" style="background:#262626"></i><span>Ink · text &amp; buttons</span></div>
+  </div>
+  <div class="spec"><span class="k">Radius steps <em style="font-style:normal;color:#1e8000;font-weight:750">· tap</em></span>
+    <span class="radii" id="radii"><b data-r="2">2</b><b data-r="4">4</b><b class="on" data-r="8">8</b><b data-r="12">12</b><b data-r="16">16</b></span></div>
+  <div class="spec"><span class="k">Typeface</span><span class="v" id="fv">Albert Sans</span></div>
+  <div class="glabel">C · Voice rules</div>
+  <ul class="voice"><li>Short sentences, spoken tone</li><li>No emoji; only ♥ and ·</li></ul>
+</div>
+<div class="col arts">
+  <div class="arts-head"><span class="t">Used in 4 artifacts. Change one thing, they all recalculate.</span>
+    <span class="recalc" id="rc">✓ 4 artifacts recalculated</span></div>
+  <div class="agrid">
+    <div class="art a-poster"><span class="tag" style="color:#ffffff66">POSTER</span>
+      <div class="big">New drop.<br><em>Zero noise.</em></div><span class="cta">SHOP NOW</span></div>
+    <div class="art a-web"><span class="tag">WEB</span>
+      <div class="nav"><span class="lg"></span><span class="bt"></span></div>
+      <div class="h1"></div><div class="h2"></div>
+      <div class="chips"><i></i><i></i><i></i></div></div>
+    <div class="art a-slide"><span class="tag">SLIDES</span>
+      <div class="kk">Q3 REVIEW</div><div class="tt">Where growth goes next</div>
+      <div class="bars"><i style="height:36%"></i><i style="height:52%"></i><i style="height:70%"></i><i style="height:100%"></i></div></div>
+    <div class="art a-soc"><span class="tag" style="color:#ffffff88">SOCIAL</span>
+      <div class="im"></div><div class="cap">Launch day. You asked, we shipped.<div class="hash">#newdrop #sandia</div></div></div>
+  </div>
+  <div class="hint">The kernel on the left drives everything: switch brands or tap a radius step. In the app it applies to all your work.</div>
+</div>
+<script>
+var BRANDS={
+  sandia:{p:'#63fe13',d:'#262626',f:'Albert Sans',n:'SANDÍA',s:'Lip-tint brand. Four colors, set once, everything recalculates.'},
+  ember:{p:'#ff6a3d',d:'#1f1f38',f:'Georgia',n:'EMBER',s:'Hand-poured candles. Warm orange on midnight blue, serif display.'},
+  noir:{p:'#c9a34a',d:'#111111',f:'Georgia',n:'NOIR',s:'Black-and-gold premium line. Metallic accents, all-caps voice.'}
+};
+var rc=document.getElementById('rc'), t;
+function recalc(){rc.classList.add('show');clearTimeout(t);t=setTimeout(function(){rc.classList.remove('show')},1400);}
+document.addEventListener('pointerdown',function(){document.body.classList.add('touched');},{once:true});
+document.querySelectorAll('.tabs button').forEach(function(b){
+  b.onclick=function(){
+    document.body.classList.add('touched');
+    document.querySelectorAll('.tabs button').forEach(function(x){x.classList.remove('on')});
+    b.classList.add('on');
+    var br=BRANDS[b.dataset.b], r=document.documentElement.style;
+    r.setProperty('--p',br.p); r.setProperty('--d',br.d); r.setProperty('--fname',br.f);
+    document.getElementById('sw1').style.background=br.p;
+    document.getElementById('sw2').style.background=br.d;
+    document.getElementById('fv').textContent=br.f;
+    document.getElementById('bn').textContent=br.n;
+    document.getElementById('bs').textContent=br.s;
+    recalc();
+  };
+});
+document.querySelectorAll('#radii b').forEach(function(b){
+  b.onclick=function(){
+    document.querySelectorAll('#radii b').forEach(function(x){x.classList.remove('on')});
+    b.classList.add('on');
+    document.documentElement.style.setProperty('--r', b.dataset.r+'px');
+    recalc();
+  };
+});
+
+document.addEventListener('wheel',function(e){ parent.postMessage({odScroll:e.deltaY},'*'); },{passive:true});
+</script>
+</body></html>

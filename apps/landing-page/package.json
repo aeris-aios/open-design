@@ -4,14 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx scripts/vendor-enhancers.ts && astro dev --host 127.0.0.1 --port 17574",
+    "dev": "tsx scripts/vendor-enhancers.ts && tsx scripts/build-home-demo.ts && astro dev --host 127.0.0.1 --port 17574",
     "build": "astro check && pnpm run build:static",
-    "build:static": "pnpm test && tsx scripts/vendor-enhancers.ts && astro build && tsx scripts/verify-localized-template-routes.ts && tsx scripts/copy-example-html.ts",
+    "build:static": "pnpm test && tsx scripts/vendor-enhancers.ts && tsx scripts/build-home-demo.ts && astro build && tsx scripts/verify-localized-template-routes.ts && tsx scripts/copy-example-html.ts",
     "vendor:enhancers": "tsx scripts/vendor-enhancers.ts",
     "preview": "astro preview --host 127.0.0.1 --port 17574",
     "previews": "tsx scripts/generate-previews.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "typecheck": "astro check"
+    "typecheck": "astro check",
+    "build:home-demo": "tsx scripts/build-home-demo.ts"
   },
   "dependencies": {
     "@astrojs/rss": "4.0.18",

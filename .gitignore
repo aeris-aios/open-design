@@ -90,6 +90,15 @@ apps/landing-page/public/previews/
 # artifact, not source — must not be committed.
 apps/landing-page/public/enhancers/
 
+# Workspace-demo assets for the homepage, generated from the repo's own
+# design systems by `apps/landing-page/scripts/build-home-demo.ts` on every
+# build/dev. Generated, never edited by hand.
+apps/landing-page/public/home-redesign/artifacts.js
+apps/landing-page/public/home-redesign/artifacts.css
+apps/landing-page/public/home-redesign/design-systems.json
+apps/landing-page/public/home-redesign/workspace.html
+apps/landing-page/public/home-redesign/workspace.zh.html
+
 # Ad-hoc local e2e scripts and their screenshots
 e2e/scripts/test-fal-webui.ts
 e2e/scripts/fal-webui-*.png
