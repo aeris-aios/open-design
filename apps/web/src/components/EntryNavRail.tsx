@@ -70,6 +70,7 @@ import {
   workspaceBillingSummaryForContext,
   workspaceIdentityCacheKey,
 } from '../collab/useWorkspaceContext';
+import { isMacPlatform } from '../utils/platform';
 import { canUpgradeFromPlanTier, hasTeamPlan, resolvePlanLabelTier } from '../collab/team-plan';
 import { AMR_CONSOLE_UPGRADE_INTENT, amrPlansUrlForProfile } from '../runtime/amr-guidance';
 import type { EntryHomeView } from '../router';
@@ -1023,6 +1024,7 @@ export function EntryTopRightCluster({
                         }}
                       >
                         <Icon name="discord" size={15} />
+                        <span className="entry-nav-rail__menu-social-label">Discord</span>
                       </a>
                       <a
                         className="entry-nav-rail__menu-social-btn"
@@ -1036,6 +1038,7 @@ export function EntryTopRightCluster({
                           setAccountOpen(false);
                         }}
                       >
+                        {/* The wordmark IS the name here — no label after it. */}
                         <span className="entry-nav-rail__menu-x" aria-hidden>X</span>
                       </a>
                       <a
@@ -1050,6 +1053,7 @@ export function EntryTopRightCluster({
                         }}
                       >
                         <Icon name="mail" size={15} />
+                        <span className="entry-nav-rail__menu-social-label">{t('entry.mailLabel')}</span>
                       </a>
                     </div>
                     <div className="entry-nav-rail__menu-divider" />
@@ -1598,12 +1602,17 @@ export function EntryNavRail({
             <span className="entry-nav-rail__search-placeholder">{t('common.search')}</span>
             <span className="entry-nav-rail__search-kbd" aria-hidden>⌘K</span>
           </button>
+          {/* The tooltip carries the keyboard shortcut (EntryShell owns the
+              ⌘B/Ctrl+B handler) — the bare label left the binding
+              undiscoverable. `aria-label` stays label-only: screen readers
+              announce the glyph as punctuation, and the e2e contract matches
+              on it. */}
           <button
             type="button"
             className="entry-nav-rail__collapse od-tooltip"
             aria-label={t('entry.navCollapse')}
-            title={t('entry.navCollapse')}
-            data-tooltip={t('entry.navCollapse')}
+            title={`${t('entry.navCollapse')} ${isMacPlatform() ? '⌘B' : 'Ctrl+B'}`}
+            data-tooltip={`${t('entry.navCollapse')} ${isMacPlatform() ? '⌘B' : 'Ctrl+B'}`}
             data-tooltip-placement="bottom"
             data-testid="entry-rail-collapse"
             onClick={() => {

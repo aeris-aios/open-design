@@ -528,7 +528,12 @@ html.od-radial-open .workspace-shell {
   height: 17px;
   flex: 0 0 auto;
 }
-.workspace-tab__rail-toggle:not(.is-inert):hover .workspace-chrome-logo {
+/* `:has(...)` is load-bearing: the OTHER pinned-tab variant (any non-home
+   entry section, where the logo simply means "go home") renders no swap
+   glyph, so hiding its logo on hover left an empty button behind the 主页
+   tooltip. Only swap where there is something to swap TO. */
+.workspace-tab__rail-toggle:not(.is-inert):has(.workspace-chrome-logo-swap):hover
+  .workspace-chrome-logo {
   display: none;
 }
 .workspace-tab__rail-toggle:not(.is-inert):hover .workspace-chrome-logo-swap {
@@ -2305,7 +2310,23 @@ a.avatar-item:visited {
   initial-value: 8px;
 }
 .split {
+  /* Easing for the chat module's collapse/expand (width tracks + the pane's
+     vertical fold), kept in one place so both axes stay in lockstep.
+     Deliberately NOT the app-wide `cubic-bezier(0.23, 1, 0.32, 1)`: that curve
+     is tuned for short hops and is so front-loaded that it covers ~85% of the
+     distance in the first quarter of its duration. Over this module's ~890px
+     fold that reads as a hard cut followed by a slow settle — the exact
+     "there's no animation" complaint this easing exists to fix. easeOutCubic
+     is still a decisive ease-out (never `ease-in`, per house rules) but spends
+     its first quarter on ~58% of the travel, so the fold is legible. */
+  --curve-fold: cubic-bezier(0.33, 1, 0.68, 1);
   --project-chat-panel-width: 460px;
+  /* Non-animated twin of the track width above, holding the last EXPANDED
+     value (kept alive across the collapse by `applySplitChatPanelWidth`, which
+     clears the animated vars but not this one). The pane's layout width is
+     pinned to it while collapsing so the content is swept out from the right
+     rather than reflowed into a narrowing column. */
+  --project-chat-panel-width-expanded: 460px;
   --project-chat-handle-width: 8px;
   --project-workspace-panel-track: minmax(400px, 1fr);
   display: grid;
@@ -2329,8 +2350,8 @@ a.avatar-item:visited {
      governs the expand direction. `.split.split-focus` below overrides both
      durations to the faster "exit" timing for the collapse direction. */
   transition:
-    --project-chat-panel-width 200ms cubic-bezier(0.23, 1, 0.32, 1),
-    --project-chat-handle-width 200ms cubic-bezier(0.23, 1, 0.32, 1);
+    --project-chat-panel-width 300ms var(--curve-fold, cubic-bezier(0.33, 1, 0.68, 1)),
+    --project-chat-handle-width 300ms var(--curve-fold, cubic-bezier(0.33, 1, 0.68, 1));
 }
 .split.is-resizing-chat {
   /* Pointer/keyboard resize writes `--project-chat-panel-width` directly on
@@ -2362,8 +2383,8 @@ a.avatar-item:visited {
      `minmax(0, 1fr)` collapse target exactly. */
   --project-workspace-panel-track: minmax(0, 1fr);
   transition:
-    --project-chat-panel-width 140ms cubic-bezier(0.23, 1, 0.32, 1),
-    --project-chat-handle-width 140ms cubic-bezier(0.23, 1, 0.32, 1);
+    --project-chat-panel-width 240ms var(--curve-fold, cubic-bezier(0.33, 1, 0.68, 1)),
+    --project-chat-handle-width 240ms var(--curve-fold, cubic-bezier(0.33, 1, 0.68, 1));
 }
 .split-chat-slot {
   grid-column: 1;
@@ -2377,9 +2398,61 @@ a.avatar-item:visited {
   visibility: hidden;
   pointer-events: none;
 }
+/* Collapse/expand reads as ONE module folding shut from the top down: the
+   pane's box height animates alongside the grid track's width, so the module
+   closes on both axes at once instead of the width squeeze hard-cutting the
+   content away (which read as no animation at all). `.pane` already clips its
+   overflow, so the shrinking box crops rather than reflowing children out of
+   view. Durations pair with the track widths on `.split` / `.split-focus`.
+
+   Two non-obvious mechanics, both forced by this slot being a COLUMN flex
+   container:
+
+   - `max-height`, not `height`. The pane keeps `flex: 1 1 auto`, and in a
+     column container that grow factor re-expands the box to fill the track —
+     it silently overrode a `height: 0` collapse. `max-height` clamps the
+     flex-resolved height instead, so grow cannot fight it. The expanded value
+     is `100%` rather than `none` because `none` has nothing to interpolate
+     from; 100% never actually constrains the flex height, so the expanded
+     layout is byte-identical to before.
+
+   - `margin-top: auto` bottom-anchors the fold. Expanded there is no free
+     space in the column, so the margin resolves to 0 and changes nothing. As
+     `max-height` shrinks, the freed space collects above the pane, pinning its
+     BOTTOM edge to the track and letting the TOP edge travel down — the
+     top-to-bottom direction this animation is for. Anchoring via the slot's
+     `justify-content` would have dragged the tabs dock down with it. */
 .split-chat-slot > .pane {
   flex: 1 1 auto;
   min-width: 0;
+}
+.split.split-focus .split-chat-slot > .pane {
+  /* The sweep repaints the chat column every frame; containment keeps that
+     work from escaping into the workspace track's layout. */
+  contain: layout paint;
+}
+/* Collapsing sweeps the messages out from the RIGHT edge toward the left: the
+   log keeps the layout width it had while the grid track narrows, so the
+   pane's `overflow: hidden` progressively clips it instead of the column
+   reflowing (rewrapping every paragraph into an ever-narrower ribbon, which
+   read as the content being crushed rather than put away).
+
+   Scoped to `.chat-log`, NOT the whole pane, on purpose. The composer is
+   portaled to `document.body` and positioned from a placeholder measured
+   inside the pane, so it can be clipped by neither the pane nor the slot —
+   freezing the pane's width froze the composer's too and left it hanging at
+   full width over the workspace. Leaving the pane free to narrow keeps that
+   placeholder tracking the track, so the composer follows the collapse.
+
+   `min-width`, not `width`: it floors the flex stretch without touching the
+   expanded layout, where the log is already exactly this wide. The log sits at
+   the pane's inline-start, so the overflow — and the clip — is all on the
+   right. */
+.split.split-focus .split-chat-slot .chat-log {
+  min-width: calc(
+    var(--project-chat-panel-width-expanded, 460px)
+    - var(--chat-card-inset-inline-start, 0px)
+  );
 }
 .split-edit-divider {
   grid-column: 2;

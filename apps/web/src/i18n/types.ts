@@ -1121,6 +1121,7 @@ export interface Dict {
   'entry.discordAriaWithOnline': string;
   'entry.discordOnlineLabel': string;
   'entry.mailAria': string;
+  'entry.mailLabel': string;
   'entry.accountSettings': string;
   'chat.collapsePane': string;
   'collabPresence.ariaOne': string;

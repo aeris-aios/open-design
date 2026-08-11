@@ -731,6 +731,7 @@ export const zhCN: Dict = {
   "entry.discordAriaWithOnline": "加入 Open Design Discord - {online}",
   "entry.discordOnlineLabel": "{count} 在线",
   "entry.mailAria": "给 Open Design 发邮件",
+  "entry.mailLabel": "邮件",
   "entry.accountSettings": "设置",
   "chat.collapsePane": "收起对话栏",
   "collabPresence.ariaOne": "1 位协作者在线",

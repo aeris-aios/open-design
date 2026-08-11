@@ -726,6 +726,7 @@ export const esES: Dict = {
   'entry.discordAriaWithOnline': 'Únete al Discord de Open Design - {online}',
   'entry.discordOnlineLabel': '{count} en línea',
   'entry.mailAria': 'Enviar un correo a Open Design',
+  'entry.mailLabel': 'Correo electrónico',
   'entry.accountSettings': 'Ajustes',
   'chat.collapsePane': 'Contraer el panel de conversación',
   'collabPresence.ariaOne': '1 collaborator online',

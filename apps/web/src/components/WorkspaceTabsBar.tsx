@@ -14,6 +14,7 @@ import {
   subscribeWorkspaceTabsDock,
 } from './workspaceTabsDock';
 import { useT } from '../i18n';
+import { isMacPlatform } from '../utils/platform';
 import { buildPath, navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
 import { Icon, type IconName } from './Icon';
@@ -656,6 +657,10 @@ export function WorkspaceTabsBar({
   identityScopeKey,
 }: Props) {
   const t = useT();
+  // Label + keyboard shortcut for re-opening a collapsed entry rail (the
+  // handler lives in EntryShell). Mirrors the hint on the rail's own collapse
+  // control so the binding is discoverable from either end of the toggle.
+  const railExpandTooltip = `${t('entry.navExpand')} ${isMacPlatform() ? '⌘B' : 'Ctrl+B'}`;
   const [persistedTabsStore] = useState(readPersistedTabsStore);
   const [state, setState] = useState<WorkspaceTabsState>(
     () => initialTabsState(route, persistedTabsStore, identityScopeKey),
@@ -1727,8 +1732,8 @@ export function WorkspaceTabsBar({
                   className={`workspace-tab__rail-toggle od-tooltip${entryRailOpen ? ' is-inert' : ''}`}
                   aria-label={entryRailOpen ? t('entry.navHome') : t('entry.navExpand')}
                   aria-expanded={entryRailOpen}
-                  title={entryRailOpen ? undefined : t('entry.navExpand')}
-                  data-tooltip={entryRailOpen ? undefined : t('entry.navExpand')}
+                  title={entryRailOpen ? undefined : railExpandTooltip}
+                  data-tooltip={entryRailOpen ? undefined : railExpandTooltip}
                   data-tooltip-placement="bottom"
                   data-testid="workspace-home-rail-toggle"
                   onClick={(event) => {

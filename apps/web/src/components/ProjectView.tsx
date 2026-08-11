@@ -1465,9 +1465,16 @@ function applySplitChatPanelWidth(
     split.style.removeProperty('--project-chat-panel-width');
     split.style.removeProperty('--project-chat-handle-width');
     split.style.removeProperty('--project-workspace-panel-track');
+    // `--project-chat-panel-width-expanded` is deliberately NOT cleared here.
+    // It is the collapse animation's memory of how wide the pane was: the CSS
+    // pins the pane's layout width to it while the track shrinks, so the chat
+    // content is swept away from the right edge instead of reflowing into an
+    // ever-narrower column. Clearing it would drop that width mid-animation
+    // and reintroduce the squeeze.
     return;
   }
   split.style.setProperty('--project-chat-panel-width', `${width}px`);
+  split.style.setProperty('--project-chat-panel-width-expanded', `${width}px`);
   split.style.setProperty('--project-chat-handle-width', `${SPLIT_RESIZE_HANDLE_WIDTH}px`);
   split.style.setProperty('--project-workspace-panel-track', workspacePanelTrack);
 }
@@ -9755,11 +9762,14 @@ export function ProjectView({
       finish();
     };
     split.addEventListener('transitionend', handleTransitionEnd);
-    // Collapse is 140ms (shell.css `.split.split-focus`); the margin above
-    // that covers `prefers-reduced-motion` (duration collapses to ~0 globally,
-    // which some engines never fire a `transitionend` for) and any
-    // already-collapsed-width edge case where the property never changes.
-    const fallback = window.setTimeout(finish, 220);
+    // Collapse is 240ms (shell.css `.split.split-focus` — width track AND the
+    // pane's vertical fold). The margin above that covers
+    // `prefers-reduced-motion` (duration collapses to ~0 globally, which some
+    // engines never fire a `transitionend` for) and any already-collapsed-width
+    // edge case where the property never changes. Keep it comfortably clear of
+    // the animation: firing early flips `visibility: hidden` mid-fold, which
+    // hard-cuts the very animation this timing exists to protect.
+    const fallback = window.setTimeout(finish, 400);
     return () => {
       split.removeEventListener('transitionend', handleTransitionEnd);
       window.clearTimeout(fallback);

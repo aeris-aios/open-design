@@ -60,17 +60,31 @@ describe('recvpYC6eTaifb — home hero blank space above the title (empty worksp
 });
 
 describe('recvpYDfW12NBu — example-prompt preset thumbnails read as mostly padding', () => {
-  it('zooms baked preset posters/videos in past their raw cover-fit crop', () => {
-    // The fix is a FRAMING transform on the resting tile: the baked poster is
-    // framed 1.31:1 while the preset cell is a wider ~1.65:1 box, so a bare
-    // object-fit:cover only crops vertically and leaves the poster's own
-    // canvas margin intact on every side. Scaling the already-cover-fitted
-    // media up around its centre crops that margin off instead.
+  it('gives the preset card a full-width column so the thumbnail is not inset', () => {
+    // Root cause of the "mostly padding" look: the card is a grid whose
+    // implicit column was content-sized, so it took the PreviewSurface's 4/3
+    // intrinsic width (a 149px row → 198.7px) and the global
+    // `button { justify-content: center }` primitive centred that short column
+    // inside the 248px card — leaving a strip of card background down both
+    // sides of every thumbnail. An explicit 1fr column makes the poster span
+    // the card edge-to-edge, matching the Community tiles.
+    const card = cssDeclarations(homeHeroCss, '.home-hero__plugin-preset');
+
+    expect(ruleValue(card, 'grid-template-columns')).toBe('minmax(0, 1fr)');
+  });
+
+  it('frames preset posters/videos exactly like the Community tiles', () => {
+    // Community (.community-template-thumb__media) is plain object-fit:cover
+    // anchored to the top — no compensating zoom. The preset tiles carried a
+    // scale(1.15) to claw back the inset above; with the column fixed that
+    // zoom would only resample the poster and crop real content away.
     const img = cssDeclarations(homeHeroCss, '.home-hero__plugin-preset-preview .plugins-home__media-img');
     const video = cssDeclarations(homeHeroCss, '.home-hero__plugin-preset-preview .plugins-home__media-video');
 
-    expect(ruleValue(img, 'transform')).toBe('scale(1.15)');
-    expect(ruleValue(video, 'transform')).toBe('scale(1.15)');
+    expect(ruleValue(img, 'object-position')).toBe('top center');
+    expect(ruleValue(video, 'object-position')).toBe('top center');
+    expect(() => ruleValue(img, 'transform')).toThrow(/Missing CSS property/);
+    expect(() => ruleValue(video, 'transform')).toThrow(/Missing CSS property/);
   });
 
   it('keeps the framing zoom out of the hover state (cover zoom removed 2026-07-27)', () => {

@@ -843,7 +843,11 @@
   gap: 7px;
   height: 34px;
   margin: 4px 0 10px;
-  padding: 0 10px;
+  /* Left inset stays 11px + the 1px border = 12px, matching the gap down to
+     the first nav item. The RIGHT end is tightened separately below: the ⌘K
+     chip only clears the box by 5px top and bottom, so a 12px right gap read
+     as a hole beside it. */
+  padding: 0 11px;
   /* White to match the rail surface; a border keeps the input visible on it. */
   border: 1px solid var(--border);
   border-radius: var(--radius-large, 8px);
@@ -853,6 +857,11 @@
     background-color var(--duration-ultra-fast) var(--curve-easy-ease),
     border-color var(--duration-ultra-fast) var(--curve-easy-ease),
     color var(--duration-ultra-fast) var(--curve-easy-ease);
+}
+/* Chip end: 4px + the 1px border = 5px, so the ⌘K chip clears the box by the
+   same 5px on its right as it does above and below. */
+.entry-nav-rail__search {
+  padding-right: 4px;
 }
 /* The search box is now a <button> that opens the search palette. Keep the
    input-box look, left-align its content, and give it a plain hover. */
@@ -6280,12 +6289,30 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Same 8px side inset as the menu rows above (设置 / 消息中心 / …), so the
+     first icon and the last label line up with their icons and labels; the
+     three spread edge to edge inside that width. */
+  justify-content: space-between;
+  padding: 0 8px;
+}
+/* First/last hug the row's content edges: their own padding would otherwise
+   push them inward from the rows above. */
+.entry-nav-rail__menu-social > :first-child { padding-left: 0; }
+.entry-nav-rail__menu-social > :last-child { padding-right: 0; }
+.entry-nav-rail__menu-social-label {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
 }
 .entry-nav-rail__menu-social-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
+  /* Icon + name: the row sizes to its content now, so the fixed 34px icon
+     box gives way to padding around the pair. */
+  gap: 6px;
+  padding: 0 8px;
   height: 30px;
   border-radius: var(--radius-md);
   color: var(--text-soft);

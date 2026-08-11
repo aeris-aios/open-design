@@ -726,6 +726,7 @@ export const th: Dict = {
   'entry.discordAriaWithOnline': 'เข้าร่วม Discord ของ Open Design - {online}',
   'entry.discordOnlineLabel': 'ออนไลน์ {count} คน',
   'entry.mailAria': 'ส่งอีเมลถึง Open Design',
+  'entry.mailLabel': 'อีเมล',
   'entry.accountSettings': 'การตั้งค่า',
   'chat.collapsePane': 'ย่อแผงสนทนา',
   'collabPresence.ariaOne': '1 collaborator online',

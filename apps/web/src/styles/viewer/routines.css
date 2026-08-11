@@ -1531,8 +1531,14 @@
      giving a 10px tab-to-content spacing (was 18px). Bottom/left stay 8px; the
      slot's overflow:hidden (shell.css) clips the card's shadow cleanly at the
      slot edge. Right side is 0 so the gap to the workspace card is just the
-     8px resize-handle column (not 8+8+8=24px). */
-  padding: 0 0 8px 8px;
+     8px resize-handle column (not 8+8+8=24px).
+
+     The inline-start inset is a variable because shell.css's collapse
+     animation has to subtract it to derive the pane's own layout width from
+     the track width — two copies of `8px` would silently clip or overhang the
+     swept content the moment one of them changed. */
+  --chat-card-inset-inline-start: 8px;
+  padding: 0 0 8px var(--chat-card-inset-inline-start);
   background: var(--veil-page, transparent);
 }
 .app .split-chat-slot > .pane {

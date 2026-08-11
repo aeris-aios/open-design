@@ -726,6 +726,7 @@ export const ptBR: Dict = {
   'entry.discordAriaWithOnline': 'Entre no Discord do Open Design - {online}',
   'entry.discordOnlineLabel': '{count} online',
   'entry.mailAria': 'Enviar e-mail para o Open Design',
+  'entry.mailLabel': 'E-mail',
   'entry.accountSettings': 'Configurações',
   'chat.collapsePane': 'Recolher o painel de conversa',
   'collabPresence.ariaOne': '1 collaborator online',
