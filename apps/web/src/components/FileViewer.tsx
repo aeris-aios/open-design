@@ -13224,8 +13224,6 @@ function HtmlViewer({
       return;
     }
     const activateCommentCreate = () => {
-      setCommentPanelOpen(true);
-      setCommentSidePanelCollapsed(false);
       setCommentCreateMode(true);
       if (!activeCommentTarget) clearBoardComposer();
       setInspectMode(false);
@@ -13411,8 +13409,6 @@ function HtmlViewer({
         setActiveCommentExistingAttachments(saved.attachments ?? []);
         setBoardMode(true);
         setCommentCreateMode(true);
-        setCommentPanelOpen(true);
-        setCommentSidePanelCollapsed(false);
         setActivePreviewCommentId(saved.id);
         setCommentSavedToast(isFreePin ? t('chat.comments.pinSavedToast') : t('chat.comments.savedToast'));
       }
@@ -14600,8 +14596,6 @@ function HtmlViewer({
         setActiveCommentExistingAttachments(comment.attachments ?? []);
         setBoardMode(true);
         setCommentCreateMode(true);
-        setCommentPanelOpen(true);
-        setCommentSidePanelCollapsed(false);
       }}
       onSendSelected={async () => {
         if (!onSendBoardCommentAttachments) return;
@@ -15992,8 +15986,6 @@ function HtmlViewer({
                   strokePoints={strokePoints}
                   activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
                   onOpenComment={(comment, snapshot) => {
-                    setCommentPanelOpen(true);
-                    setCommentSidePanelCollapsed(false);
                     setCommentCreateMode(true);
                     setBoardMode(true);
                     setActiveCommentTarget(snapshot);
