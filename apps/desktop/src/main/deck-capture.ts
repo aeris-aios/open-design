@@ -1153,6 +1153,10 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
     return layers.every((layer) => supportedGradient.test(layer));
   }
 
+  function hasTextBackgroundClip(input: string): boolean {
+    return splitCssBackgroundLayers(input).some((layer) => layer.toLowerCase() === "text");
+  }
+
   function preserveLayeredGradientBackgrounds(slides: HTMLElement[]): void {
     const slideElements = new Set(slides);
     const elements = new Set<HTMLElement>();
@@ -1165,10 +1169,12 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       const style = getComputedStyle(element);
       if (
         !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
-        (style.position === "static" && !slideElements.has(element))
+        hasTextBackgroundClip(style.backgroundClip || "") ||
+        hasTextBackgroundClip(style.webkitBackgroundClip || "")
       ) {
         continue;
       }
+      const isStaticNestedElement = style.position === "static" && !slideElements.has(element);
 
       // dom-to-pptx's native gradient parser assumes one linear-gradient and
       // greedily merges layered gradients into one invalid SVG. Its custom-
@@ -1205,21 +1211,32 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       background.style.setProperty("background-origin", style.backgroundOrigin, "important");
       background.style.setProperty("background-clip", style.backgroundClip, "important");
 
-      // ensureExplicitSlideBackgrounds already establishes this containing-block
-      // contract for slides. Do not extend it to static nested panels because
-      // their absolutely positioned descendants may intentionally anchor to an
-      // outer slide.
-      if (style.position === "static") element.style.setProperty("position", "relative", "important");
-      Array.from(element.children).forEach((child) => {
-        const childStyle = getComputedStyle(child);
-        const childElement = child as HTMLElement;
-        if (childStyle.position === "static") {
-          childElement.style.setProperty("position", "relative", "important");
-        }
-        if (childStyle.zIndex === "auto") {
-          childElement.style.setProperty("z-index", "1", "important");
-        }
-      });
+      if (isStaticNestedElement) {
+        // A static panel and its absolutely positioned descendants share the
+        // same outer containing block. Anchor only the capture child to the
+        // panel's measured border box so the authored panel never becomes a
+        // new containing block.
+        background.style.setProperty("inset", "auto", "important");
+        background.style.setProperty("left", `${element.offsetLeft}px`, "important");
+        background.style.setProperty("top", `${element.offsetTop}px`, "important");
+        background.style.setProperty("width", `${element.offsetWidth}px`, "important");
+        background.style.setProperty("height", `${element.offsetHeight}px`, "important");
+      } else {
+        // ensureExplicitSlideBackgrounds already establishes this containing-
+        // block contract for slides; positioned authored elements already own
+        // the absolutely positioned capture child.
+        if (style.position === "static") element.style.setProperty("position", "relative", "important");
+        Array.from(element.children).forEach((child) => {
+          const childStyle = getComputedStyle(child);
+          const childElement = child as HTMLElement;
+          if (childStyle.position === "static") {
+            childElement.style.setProperty("position", "relative", "important");
+          }
+          if (childStyle.zIndex === "auto") {
+            childElement.style.setProperty("z-index", "1", "important");
+          }
+        });
+      }
 
       element.style.setProperty("background-image", "none", "important");
       element.prepend(background);

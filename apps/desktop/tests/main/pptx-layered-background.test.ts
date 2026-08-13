@@ -28,6 +28,10 @@ function fakeElement(tagName = 'DIV'): HTMLElement {
     closest: () => null,
     getAttribute: (name: string) => attributes.get(name) ?? null,
     innerText: '',
+    offsetHeight: 80,
+    offsetLeft: 24,
+    offsetTop: 32,
+    offsetWidth: 160,
     parentElement: null,
     prepend: (child: HTMLElement) => {
       (child as unknown as { parentElement: HTMLElement | null }).parentElement = element as unknown as HTMLElement;
@@ -206,30 +210,76 @@ describe('editable PPTX layered backgrounds', () => {
     expect((panel.style as unknown as FakeStyle).getPropertyValue('background-image')).toBe('');
   });
 
-  test('does not turn a static layered panel into the containing block for its absolute child', async () => {
+  test('rasterizes a static layered panel without changing its containing block semantics', async () => {
     const slide = fakeElement();
     const panel = fakeElement();
     const outerAnchoredChild = fakeElement();
     panel.prepend(outerAnchoredChild);
     slide.prepend(panel);
+    const backgroundImage = 'linear-gradient(white, transparent), radial-gradient(circle, white, black)';
     const styles = new Map<HTMLElement, Partial<ComputedStyle>>([
       [slide, { position: 'relative' }],
       [
         panel,
         {
-          backgroundImage: 'linear-gradient(white, transparent), radial-gradient(circle, white, black)',
+          backgroundImage,
           position: 'static',
         },
       ],
       [outerAnchoredChild, { position: 'absolute' }],
     ]);
-    const created = stubExportDom(slide, styles);
+    stubExportDom(slide, styles);
 
-    await runExport();
+    let layeredBackground: HTMLElement | undefined;
+    await runExport(() => {
+      layeredBackground = Array.from(panel.children).find(
+        (child) => child.getAttribute('data-od-pptx-layered-bg') === 'true',
+      ) as HTMLElement | undefined;
+    });
 
-    expect(created.filter((element) => element.tagName === 'OD-PPTX-LAYERED-BACKGROUND')).toHaveLength(0);
+    expect((panel.style as unknown as FakeStyle).getPropertyValue('background-image')).toBe('none');
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('background-image')).toBe(
+      backgroundImage,
+    );
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('inset')).toBe('auto');
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('left')).toBe('24px');
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('top')).toBe('32px');
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('width')).toBe('160px');
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('height')).toBe('80px');
     expect((panel.style as unknown as FakeStyle).getPropertyValue('position')).toBe('');
     expect((outerAnchoredChild.style as unknown as FakeStyle).getPropertyValue('position')).toBe('');
+  });
+
+  test.each([
+    { clip: { backgroundClip: 'text' }, name: 'standard' },
+    { clip: { webkitBackgroundClip: 'text' }, name: 'WebKit' },
+  ])('keeps a $name text-clipped layered gradient on the authored text path', async ({ clip }) => {
+    const slide = fakeElement();
+    const title = fakeElement();
+    title.textContent = 'Gradient title';
+    slide.prepend(title);
+    const backgroundImage = 'linear-gradient(90deg, red, blue), linear-gradient(white, black)';
+    const styles = new Map<HTMLElement, Partial<ComputedStyle>>([
+      [slide, { position: 'relative' }],
+      [
+        title,
+        {
+          backgroundImage,
+          color: 'transparent',
+          position: 'absolute',
+          ...clip,
+        },
+      ],
+    ]);
+    const created = stubExportDom(slide, styles);
+
+    let exportedBackgroundOverride = '';
+    await runExport(() => {
+      exportedBackgroundOverride = (title.style as unknown as FakeStyle).getPropertyValue('background-image');
+    });
+
+    expect(exportedBackgroundOverride).toBe('');
+    expect(created.filter((element) => element.tagName === 'OD-PPTX-LAYERED-BACKGROUND')).toHaveLength(0);
   });
 
   test('emits one Chromium capture layer for a slide with a supported layered background', async () => {
