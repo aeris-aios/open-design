@@ -25,7 +25,7 @@ import { useI18n } from '../i18n';
 import { getDeepSeekV4ProCopy } from '../campaigns/deepseek-v4-pro-copy';
 
 const SEEN_KEY = `open-design:campaign-seen:${campaign.id}`;
-const REVIEW_COUNTDOWN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const REVIEW_COUNTDOWN_DURATION_MS = 14 * 24 * 60 * 60 * 1000;
 
 interface Props {
   /**

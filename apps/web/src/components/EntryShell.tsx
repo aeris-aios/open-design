@@ -116,6 +116,10 @@ import {
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
+import {
+  amrPlansUrlForProfile,
+  amrPlansUrlForWorkspace,
+} from '../runtime/amr-guidance';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { EntryBlankState } from './EntryBlankState';
 import { RecentProjectsStrip } from './RecentProjectsStrip';
@@ -237,9 +241,6 @@ import {
 } from './entryRailBridge';
 import { enterpriseUrl } from './enterpriseUrl';
 import { resolveByokModelPreference } from './byok/validation';
-
-const DEEPSEEK_CAMPAIGN_PRICING_URL =
-  'https://open-design.ai/zh/pricing/?source=desktop_campaign_badge';
 
 // Persist the entry nav-rail open/collapsed state so it survives both a
 // home -> project -> home navigation (EntryShell unmounts on the project
@@ -1135,12 +1136,20 @@ export function EntryShell({
         conversionSource: 'deepseek_workbench_badge',
       },
     );
+    const plansUrl =
+      amrPlansUrlForWorkspace(undefined, workspaceContext?.workspaceId)
+      ?? amrPlansUrlForProfile(undefined);
     window.open(
-      attributedAmrUrl(DEEPSEEK_CAMPAIGN_PRICING_URL, attribution),
+      attributedAmrUrl(plansUrl, attribution),
       '_blank',
       'noopener,noreferrer',
     );
-  }, [analytics.track, config.telemetry?.metrics, deepSeekV4ProCampaignAudience]);
+  }, [
+    analytics.track,
+    config.telemetry?.metrics,
+    deepSeekV4ProCampaignAudience,
+    workspaceContext?.workspaceId,
+  ]);
   function changeView(next: EntryViewKind) {
     const navElement = navElementForView(next);
     if (navElement) {

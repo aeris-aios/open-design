@@ -26,10 +26,12 @@ describe('DeepSeek V4 Pro workbench campaign entry', () => {
     expect(entryShellSource).toContain('deepSeekV4ProCampaignAudience !== \'unknown\'');
   });
 
-  it('opens the official Pricing page in a separate browser context', () => {
-    expect(entryShellSource).toContain('https://open-design.ai/zh/pricing/?source=desktop_campaign_badge');
+  it('opens the Cloud console Pricing view in a separate browser context', () => {
+    expect(entryShellSource).toContain('amrPlansUrlForWorkspace(');
+    expect(entryShellSource).toContain('amrPlansUrlForProfile(undefined)');
+    expect(entryShellSource).not.toContain('https://open-design.ai/zh/pricing/?source=desktop_campaign_badge');
     expect(entryShellSource).toContain("'deepseek_workbench_badge'");
-    expect(entryShellSource).toContain('attributedAmrUrl(DEEPSEEK_CAMPAIGN_PRICING_URL, attribution)');
+    expect(entryShellSource).toContain('attributedAmrUrl(plansUrl, attribution)');
     expect(entryShellSource).toContain("'noopener,noreferrer'");
   });
 
@@ -51,9 +53,29 @@ describe('DeepSeek V4 Pro workbench campaign entry', () => {
 
   it('models the unpaid review URL as a signed-in user with existing models', () => {
     expect(modelSwitcherSource).toContain('DEEPSEEK_CAMPAIGN_REVIEW_MODELS');
+    expect(modelSwitcherSource).toContain(
+      "{ id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }",
+    );
+    expect(modelSwitcherSource).toContain(
+      "{ id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }",
+    );
+    expect(modelSwitcherSource.indexOf("id: 'deepseek-v4-pro'")).toBeLessThan(
+      modelSwitcherSource.indexOf("id: 'deepseek-v4-flash'"),
+    );
     expect(modelSwitcherSource).toContain('DEEPSEEK_UNPAID_REVIEW_DEFAULT_MODEL_ID');
     expect(modelSwitcherSource).toContain("campaignAudienceOverride === 'unpaid'");
-    expect(modelSwitcherSource).toContain('!isDeepSeekV4ProCampaignModel(model.id)');
+    expect(modelSwitcherSource).toContain('isDeepSeekV4ProCampaignModel(modelId)');
+    expect(modelSwitcherSource).toContain('isDeepSeekV4ProCampaignModel(model.id)');
+    expect(modelSwitcherSource).toContain('const selectableInCampaign =');
+    expect(modelSwitcherSource).toContain('campaignVisibility.visible &&');
+    expect(modelSwitcherSource).toContain('selectableInCampaign ||');
+    expect(modelSwitcherSource).toContain(
+      'isDeepSeekV4ProCampaignModel(model.id)\n            ? true',
+    );
+    expect(modelSwitcherSource).toContain(': campaignCopy.badge;');
+    expect(modelSwitcherSource).not.toContain('? campaignCopy.locked');
+    expect(modelSwitcherSource).not.toContain("? ' is-unpaid'");
+    expect(entryLayoutStyles).not.toContain('.inline-switcher__campaign-badge.is-unpaid');
     expect(modelSwitcherSource).toContain('data-campaign-review');
     expect(homeHeroStyles).toContain('.inline-switcher[data-campaign-review]');
     expect(homeHeroStyles).toContain('max-width: 220px');
@@ -69,6 +91,12 @@ describe('DeepSeek V4 Pro workbench campaign entry', () => {
     expect(entryShellSource).toContain('trackDeepSeekCampaignBadgeSurfaceView');
     expect(entryShellSource).toContain('trackDeepSeekCampaignBadgeClick');
     expect(modelSwitcherSource).toContain('trackDeepSeekCampaignModelBenefitSurfaceView');
+    expect(modelSwitcherSource).toContain("element: 'deepseek_v4_pro_benefit'");
+    expect(modelSwitcherSource).toContain("campaign_id: 'deepseek_v4_pro'");
+    expect(modelSwitcherSource).toContain("model_id: 'deepseek-v4-pro'");
+    expect(modelSwitcherSource).toContain("element: 'deepseek_v4_flash_benefit'");
+    expect(modelSwitcherSource).toContain("campaign_id: 'deepseek_v4_flash'");
+    expect(modelSwitcherSource).toContain("model_id: 'deepseek-v4-flash'");
     expect(modelSwitcherSource).toContain('trackExecutionSettingsPopoverClick');
   });
 });

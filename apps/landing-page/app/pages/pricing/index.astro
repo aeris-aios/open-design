@@ -39,6 +39,7 @@ import { getCatalogCounts } from '../../_lib/catalog';
 import { localeFromPath, localizedHref } from '../../i18n';
 import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 import { getPricingCampaignContent } from '../../_lib/pricing-campaign-content';
+import { getPricingCloudCapabilityContent } from '../../_lib/pricing-cloud-capability-content';
 
 const locale = localeFromPath(Astro.url.pathname);
 const href = (path: string) => localizedHref(path, locale);
@@ -114,6 +115,7 @@ const FREE_PREMIUM_MODELS = [...PREMIUM_MODELS].sort(
 );
 const renderCatalogLabel = (label: string) => fillTemplate(label, catalogLabelVars);
 const deepSeekCampaign = getPricingCampaignContent(locale);
+const cloudCapability = getPricingCloudCapabilityContent(locale);
 
 // Vela's grant already includes the advertised Pro/Max uplift. The percentage
 // is a presentation badge only; applying it again would inflate $120/$300 to
@@ -391,10 +393,14 @@ const jsonLd = [
             {/* Fully-expanded benefits — credit + concurrency lead the list,
                 then every included benefit; no "includes all <tier>" heading. */}
             <ul class="pr-feats">
-              <li class="pr-feat pr-campaign-model-benefit" data-pricing-campaign-surface hidden>
-                <strong>{deepSeekCampaign.modelBenefit}</strong>
-                <small>{deepSeekCampaign.paidBenefitNote}</small>
-              </li>
+              {deepSeekCampaign.modelBenefits.map((benefit) => (
+                <li class="pr-feat pr-campaign-model-benefit" data-pricing-campaign-surface hidden>
+                  <div>
+                    <strong>{benefit}</strong>
+                    <small>{deepSeekCampaign.paidBenefitNote}</small>
+                  </div>
+                </li>
+              ))}
               <li class="pr-feat pr-feat-lead pr-feat-strong">
                 <span data-od-credit>{v.credits}</span>
                 {v.bonusPct != null && (
@@ -528,10 +534,14 @@ const jsonLd = [
           </p>
 
           <ul class="pr-team-feature-list">
-            <li class="pr-campaign-model-benefit" data-pricing-campaign-surface hidden>
-              <strong>{deepSeekCampaign.modelBenefit}</strong>
-              <small>{deepSeekCampaign.teamBenefitNote}</small>
-            </li>
+            {deepSeekCampaign.modelBenefits.map((benefit) => (
+              <li class="pr-campaign-model-benefit" data-pricing-campaign-surface hidden>
+                <div>
+                  <strong>{benefit}</strong>
+                  <small>{deepSeekCampaign.teamBenefitNote}</small>
+                </div>
+              </li>
+            ))}
             {teamContent.teamFeatures.map((feature) => <li>{feature}</li>)}
           </ul>
 
@@ -564,6 +574,34 @@ const jsonLd = [
         </section>
       </div>
     </div>
+
+    <section class="pr-cloud-capability" data-pricing-cloud-capability aria-labelledby="pr-cloud-capability-title">
+      <div class="pr-cloud-capability-copy">
+        <p class="pr-cloud-capability-eyebrow">{cloudCapability.eyebrow}</p>
+        <h2 id="pr-cloud-capability-title">{cloudCapability.title}</h2>
+        <p class="pr-cloud-capability-body">{cloudCapability.body}</p>
+      </div>
+      <div class="pr-cloud-capability-cards">
+        {cloudCapability.cards.map((card, index) => (
+          <article class:list={['pr-cloud-capability-card', { 'is-upcoming': card.note }]}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              {index === 0 ? (
+                <><path d="M4 6h16M4 12h11M4 18h8" /><path d="m17 15 3 3-3 3" /></>
+              ) : index === 1 ? (
+                <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m4 17 5-5 4 4 2-2 5 5" /></>
+              ) : (
+                <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m10 9 5 3-5 3Z" /></>
+              )}
+            </svg>
+            <div class="pr-cloud-capability-card-copy">
+              {card.note && <small>{card.note}</small>}
+              <strong>{card.label}</strong>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+
     <p class="pr-foot" set:html={footnoteHtml} />
     <p class="pr-campaign-disclaimer" data-pricing-campaign-surface hidden>{deepSeekCampaign.disclaimer}</p>
   </article>
@@ -610,7 +648,7 @@ const jsonLd = [
       const campaignEndAt = Date.parse(campaign?.getAttribute('data-campaign-end-at') || '');
       const campaignReviewParam = campaign?.getAttribute('data-campaign-review-param');
       const campaignPreview = new URLSearchParams(window.location.search).get('campaign') === campaignReviewParam;
-      const campaignPreviewEndAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      const campaignPreviewEndAt = Date.now() + 14 * 24 * 60 * 60 * 1000;
       let campaignActive = false;
       const formatCampaignRemaining = (remainingMs) => {
         const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -692,10 +730,18 @@ const jsonLd = [
         if (!campaignActive) return;
         if (lastCampaignBenefitAudience === audience) return;
         lastCampaignBenefitAudience = audience;
+        const area = audience === 'team' ? 'pricing_team_plan' : 'pricing_personal_plan';
         track('surface_view', {
-          area: audience === 'team' ? 'pricing_team_plan' : 'pricing_personal_plan',
+          area,
           element: 'deepseek_v4_pro_benefit',
           campaign_id: 'deepseek_v4_pro',
+          user_state: 'unknown',
+          audience,
+        });
+        track('surface_view', {
+          area,
+          element: 'deepseek_v4_flash_benefit',
+          campaign_id: 'deepseek_v4_flash',
           user_state: 'unknown',
           audience,
         });
@@ -1124,18 +1170,24 @@ const jsonLd = [
   .pr-team-feature-list .pr-campaign-model-benefit {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
+    gap: 0;
     margin-left: -8px;
     margin-right: -8px;
-    padding: 8px 10px 8px 30px;
+    padding: 9px 10px 9px 30px;
     border: 1px solid color-mix(in srgb, #68f22e 30%, transparent);
     border-radius: 10px;
     color: inherit;
     background: color-mix(in srgb, #68f22e 7%, transparent);
   }
-  .pr-campaign-model-benefit strong { font-weight: 780; }
-  .pr-campaign-model-benefit small { color: var(--muted); font-size: .72rem; font-weight: 500; }
+  .pr-campaign-model-benefit > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+  }
+  .pr-campaign-model-benefit strong { display: block; min-width: 0; overflow-wrap: anywhere; font-weight: 780; }
+  .pr-campaign-model-benefit small { display: block; color: var(--muted); font-size: .72rem; font-weight: 500; }
   /* The highlighted row expands 8px beyond the regular list. Offset its
      checkmark back by the same amount so it shares the column below. */
   .pr-campaign-model-benefit::before { left: 8px; }
@@ -1424,6 +1476,105 @@ const jsonLd = [
     color: var(--ink-soft, #bbb);
   }
   /* ---- Footnote ---- */
+  .pr-page .pr-cloud-capability {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(420px, .95fr);
+    gap: clamp(28px, 5vw, 72px);
+    align-items: center;
+    margin: 42px auto 0;
+    min-height: 250px;
+    padding: clamp(32px, 4vw, 48px);
+    overflow: hidden;
+    border: 1px solid var(--border, rgba(0, 0, 0, .12));
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at 4% 20%, rgb(104 242 46 / 9%), transparent 28%),
+      var(--surface, rgba(255, 255, 255, .62));
+  }
+  .pr-cloud-capability::after {
+    content: '';
+    position: absolute;
+    top: -96px;
+    right: 19%;
+    width: 210px;
+    height: 210px;
+    border: 1px solid color-mix(in srgb, var(--brand, #2bd200) 26%, transparent);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .pr-cloud-capability-copy { position: relative; z-index: 1; min-width: 0; }
+  .pr-cloud-capability-eyebrow {
+    margin: 0 0 18px;
+    color: var(--olive, #218c00);
+    font-size: .78rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+  }
+  .pr-cloud-capability h2 {
+    margin: 0;
+    max-width: 760px;
+    color: var(--ink);
+    font-size: clamp(24px, 3vw, 38px);
+    font-weight: 650;
+    letter-spacing: -.025em;
+    line-height: 1.18;
+  }
+  .pr-cloud-capability-body {
+    margin: 22px 0 0;
+    max-width: 780px;
+    color: var(--ink-soft, #666);
+    font-size: .95rem;
+    line-height: 1.75;
+  }
+  .pr-cloud-capability-cards {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .pr-cloud-capability-card {
+    display: flex;
+    min-height: 136px;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 22px;
+    border: 1px solid var(--border, rgba(0, 0, 0, .12));
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface, #fff) 92%, transparent);
+  }
+  .pr-cloud-capability-card svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .pr-cloud-capability-card-copy {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+  }
+  .pr-cloud-capability-card strong {
+    display: block;
+    min-width: 0;
+    font-size: .88rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .pr-cloud-capability-card small {
+    display: block;
+    min-width: 0;
+    margin: 0;
+    color: var(--ink-soft, #777);
+    font-size: .72rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .pr-cloud-capability-card.is-upcoming { color: var(--ink-soft, #777); }
   .pr-foot {
     margin: 40px auto 0;
     max-width: 640px;
@@ -1431,6 +1582,15 @@ const jsonLd = [
     font-size: 0.82rem;
     line-height: 1.6;
     color: var(--ink-soft, #666);
+  }
+  @media (max-width: 980px) {
+    .pr-page .pr-cloud-capability { grid-template-columns: 1fr; }
+    .pr-cloud-capability::after { right: 8%; }
+  }
+  @media (max-width: 620px) {
+    .pr-page .pr-cloud-capability { min-height: 0; padding: 24px 20px; border-radius: 18px; }
+    .pr-cloud-capability-cards { grid-template-columns: 1fr; }
+    .pr-cloud-capability-card { min-height: 92px; }
   }
 
   /* ---- Team / Enterprise plans ---- */

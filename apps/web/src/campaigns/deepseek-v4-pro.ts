@@ -1,39 +1,40 @@
 export const DEEPSEEK_V4_PRO_CAMPAIGN = {
   id: 'deepseek-v4-pro-unlimited-2026',
   modelId: 'deepseek-v4-pro',
+  modelIds: ['deepseek-v4-flash', 'deepseek-v4-pro'],
   window: {
-    startAt: '2026-08-14T20:00:00+08:00',
-    endAtExclusive: '2026-08-21T20:00:00+08:00',
-    label: '8 月 14 日—8 月 21 日',
+    startAt: '2026-08-13T20:00:00+08:00',
+    endAtExclusive: '2026-08-27T20:00:00+08:00',
+    label: '8 月 13 日—8 月 27 日',
   },
-  headline: '这次，更聪明的模型别省着用。',
+  headline: '这次，顶级智能无限用。',
   description: '落地页、网站、幻灯片、图片，无限做，做到满意',
   badge: '无限使用',
-  benefit: 'DeepSeek V4 Pro 无限使用',
-  timing: '8 月 14 日至 8 月 21 日，活动期间免费使用',
-  ruleSummary: '8 月 14 日至 8 月 21 日，付费用户可在产品内免费使用；大规模盗刷等违规行为将暂停活动权益。',
+  benefit: 'DeepSeek V4 Pro 与 V4 Flash 无限使用',
+  timing: '8 月 13 日至 8 月 27 日，活动期间免费使用',
+  ruleSummary: '8 月 13 日至 8 月 27 日，付费用户可在产品内免费使用；大规模盗刷等违规行为将暂停活动权益。',
   audienceDefinition: {
     paid: '付费用户：当前存在有效个人或团队订阅的用户。',
     unpaid: '未付费用户：当前没有有效订阅的用户；曾经充值但没有订阅的用户仍归为未付费用户。',
   },
   paid: {
-    eyebrow: '7 天免费开放',
-    status: '已解锁 · 8 月 14 日—8 月 21 日',
+    eyebrow: '两周免费开放',
+    status: '已解锁',
     cta: '立即使用',
     modelBadge: '无限使用',
   },
   unpaid: {
     eyebrow: '付费用户免费开放',
-    status: '升级后可用 · 截止 8 月 21 日',
+    status: '升级后可用',
     cta: '升级套餐，立即使用',
     modelBadge: '升级可用',
-    tooltip: '活动窗口内订阅付费套餐后可用，统一于 8 月 21 日结束。',
+    tooltip: '活动窗口内订阅付费套餐后可用，统一于 8 月 27 日结束。',
   },
   restricted: {
     modelBadge: '已暂停',
     tooltip: '检测到异常的大规模使用，本活动权益已暂停；如有疑问请联系支持。',
   },
-  boundary: '套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用；无法在MCP/CLI/API及其他场景使用。解释权归官方所有。',
+  boundary: '套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用；无法在MCP/CLI/API及其他场景使用。部分模型高峰期需要排队。解释权归官方所有。',
 } as const;
 
 export const DEEPSEEK_V4_PRO_CAMPAIGN_REVIEW_PARAM = 'deepseek-v4-pro';
@@ -139,5 +140,6 @@ export function resolveDeepSeekV4ProCampaignAudience(input: {
 }
 
 export function isDeepSeekV4ProCampaignModel(modelId: string | null | undefined): boolean {
-  return modelId?.trim().toLowerCase() === DEEPSEEK_V4_PRO_CAMPAIGN.modelId;
+  const normalized = modelId?.trim().toLowerCase();
+  return normalized != null && DEEPSEEK_V4_PRO_CAMPAIGN.modelIds.includes(normalized as 'deepseek-v4-flash' | 'deepseek-v4-pro');
 }

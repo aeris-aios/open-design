@@ -57,7 +57,7 @@ const amrAgent: AgentInfo = {
   version: '1.0.0',
   models: [
     { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro', enabled: true, default: true },
-    { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro', enabled: true },
+    { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash', enabled: true },
     { id: 'claude-fable-5', label: 'claude-fable-5', enabled: false },
     { id: 'claude-opus-4.6', label: 'claude-opus-4.6', enabled: false },
     { id: 'claude-opus-4.7', label: 'claude-opus-4.7', enabled: false },
@@ -241,7 +241,7 @@ describe('compact home model list — a clicked model reaches the chip', () => {
     expect(screen.queryByTestId('inline-model-switcher-popover')).toBeNull();
   });
 
-  it('shows the unlimited badge only on DeepSeek V4 Pro and keeps it in the selected chip', () => {
+  it('shows the unlimited badge on both DeepSeek V4 models and keeps it in the selected chip', () => {
     window.history.replaceState(
       {},
       '',
@@ -256,9 +256,33 @@ describe('compact home model list — a clicked model reaches the chip', () => {
     const popover = openSwitcher();
     expect(within(compactRow('deepseek-v4-pro')).getByText('无限使用'))
       .toBeInTheDocument();
-    expect(within(compactRow('deepseek-v4-pro')).queryByText('无限使用'))
-      .toBeNull();
-    expect(within(popover).getAllByText('无限使用')).toHaveLength(1);
+    expect(within(compactRow('deepseek-v4-flash')).getByText('无限使用'))
+      .toBeInTheDocument();
+    expect(within(popover).getAllByText('无限使用')).toHaveLength(2);
+  });
+
+  it('keeps the provider icon on every compact model row', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?campaign=deepseek-v4-pro&campaignAudience=paid',
+    );
+    render(<StatefulSwitcher agents={[amrAgentAllEnabled]} />);
+
+    openSwitcher();
+
+    expect(compactRow('deepseek-v4-pro').querySelector('img')).toHaveAttribute(
+      'src',
+      '/agent-icons/deepseek.svg?v=20260813-model-picker-icons',
+    );
+    expect(compactRow('deepseek-v4-flash').querySelector('img')).toHaveAttribute(
+      'src',
+      '/agent-icons/deepseek.svg?v=20260813-model-picker-icons',
+    );
+    expect(compactRow('claude-opus-4.8').querySelector('img')).toHaveAttribute(
+      'src',
+      '/agent-icons/claude.svg?v=20260813-model-picker-icons',
+    );
   });
 
   it('puts the explicit paid review URL on the Cloud agent and Pro model', () => {

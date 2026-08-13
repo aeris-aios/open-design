@@ -51,14 +51,28 @@ export interface DeepSeekCampaignBadgeSurfaceViewProps {
   user_state: TrackingCampaignUserState;
 }
 
-export interface DeepSeekCampaignModelBenefitSurfaceViewProps {
+interface DeepSeekCampaignModelBenefitSurfaceViewBaseProps {
   page_name: 'home';
   area: 'execution_settings_popover';
-  element: 'deepseek_v4_pro_benefit';
-  campaign_id: TrackingCampaignId;
   user_state: TrackingCampaignUserState;
-  model_id: string;
 }
+
+// Keep each visible campaign model independently measurable. The discriminated
+// union prevents a Pro element from being accidentally paired with the Flash
+// campaign/model ids (and vice versa).
+export type DeepSeekCampaignModelBenefitSurfaceViewProps =
+  DeepSeekCampaignModelBenefitSurfaceViewBaseProps & (
+    | {
+        element: 'deepseek_v4_pro_benefit';
+        campaign_id: 'deepseek_v4_pro';
+        model_id: 'deepseek-v4-pro';
+      }
+    | {
+        element: 'deepseek_v4_flash_benefit';
+        campaign_id: 'deepseek_v4_flash';
+        model_id: 'deepseek-v4-flash';
+      }
+  );
 
 // Impression of the plugin detail modal opened from the home Community
 // gallery. Fires once per open so the gallery → detail funnel has a

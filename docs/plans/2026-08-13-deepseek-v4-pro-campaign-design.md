@@ -1,16 +1,16 @@
-# DeepSeek V4 Pro 一周无限用活动设计
+# DeepSeek V4 Pro + V4 Flash 两周无限用活动设计
 
 ## 背景
 
-DeepSeek V4 Flash 一周无限用活动于 2026 年 8 月 13 日 20:00 下线。DeepSeek V4 Pro 上线后，需要以新的活动版本承接原有营销触点和付费归因能力，同时避免与 Flash 活动代码、配置、事件和 PR 生命周期耦合。
+DeepSeek V4 Pro 上线后，本次活动以新的独立版本承接原有营销触点和付费归因能力。活动窗口内同时开放 DeepSeek V4 Pro 与 DeepSeek V4 Flash 无限使用，但仍避免与上一版 Flash 活动代码、配置、事件和 PR 生命周期耦合。
 
 ## 已确认产品规则
 
-- Pro 活动暂定从 2026 年 8 月 14 日 20:00 开始，持续一周，于 2026 年 8 月 21 日 20:00 结束。
-- 产品界面仅展示“8 月 14 日—8 月 21 日”，不展示具体几点。
-- 活动期间只展示 DeepSeek V4 Pro 权益，不同时展示 Flash 权益。
+- 活动从 2026 年 8 月 13 日 20:00 开始，持续两周，于 2026 年 8 月 27 日 20:00 结束。
+- 产品界面仅展示“8 月 13 日—8 月 27 日”，不展示具体几点；活动中可以展示剩余时间倒计时。
+- 活动期间同时展示 DeepSeek V4 Pro 与 DeepSeek V4 Flash 两项无限使用权益，套餐卡片中分两行表达，Pro 始终在前。
 - Flash 原分支、活动参数和 PR 保留，不在 Pro PR 中修改。
-- 主宣传语为“这次，更聪明的模型别省着用。”；权益名称为“DeepSeek V4 Pro 无限使用”。
+- 主宣传语为“这次，顶级智能放开用。”；权益名称依次为“DeepSeek V4 Pro 无限使用”和“DeepSeek V4 Flash 无限使用”。
 - 评审阶段使用 `campaign=deepseek-v4-pro` 强制预览，不改变真实活动时间判断。
 
 ## 隔离策略
@@ -40,10 +40,10 @@ DeepSeek V4 Flash 一周无限用活动于 2026 年 8 月 13 日 20:00 下线。
 ### Open Design
 
 1. 官网首页活动 Banner，点击进入 Pricing，并携带入口归因参数。
-2. Pricing 活动 Banner、倒计时、日期说明、免责声明及个人/团队套餐权益。
+2. Pricing 活动 Banner、倒计时、日期说明、免责声明及个人/团队套餐的双模型权益。
 3. 工作台付费与未付费用户弹窗，CTA 按用户状态区分。
 4. 工作台顶部绿色活动角标，点击进入官网 Pricing。
-5. 模型选择器中的 DeepSeek V4 Pro“无限使用”权益标识。
+5. 模型选择器中的 DeepSeek V4 Pro 与 DeepSeek V4 Flash“无限使用”权益标识。
 
 ### Vela / Cloud
 
@@ -58,8 +58,8 @@ DeepSeek V4 Flash 一周无限用活动于 2026 年 8 月 13 日 20:00 下线。
 - Landing Page 覆盖其现有全部 locale 路由。
 - Open Design Web 覆盖现有 19 种 UI 语言。
 - Vela / Cloud 覆盖其当前支持的全部语言。
-- 日期按 locale 本地化，模型名 `DeepSeek V4 Pro`、campaign 参数和埋点 ID 不翻译。
-- 英文主文案采用自然营销表达：`Put smarter intelligence to work—without limits.`
+- 日期按 locale 本地化，模型名 `DeepSeek V4 Pro`、`DeepSeek V4 Flash`、campaign 参数和埋点 ID 不翻译。
+- 英文主文案采用自然营销表达：`Put top-tier intelligence to work—without limits.`
 - RTL 语言需要验证布局、倒计时和 CTA 顺序。
 - 非中文页面不得回退显示中文活动文案。
 
@@ -79,10 +79,9 @@ DeepSeek V4 Flash 一周无限用活动于 2026 年 8 月 13 日 20:00 下线。
 
 ## 验收标准
 
-- Pro 页面不出现 Flash 文案、参数、测试 ID 或事件 ID。
+- 新活动页面同时展示 Flash 与 Pro 权益，但不引用上一版 Flash 活动参数、测试 ID 或事件 ID。
 - Flash 分支和旧 PR 无新增提交。
 - 所有触点在活动前、活动中、活动后及强制预览四种状态下行为正确。
 - 所有支持语言均有 Pro 活动文案，且测试能阻止缺失翻译。
 - 入口归因可贯通到结账与支付结果。
 - Open Design PR 通过 ODC 创建后保持开放；Vela PR 的 base 必须是 `feat/go-plan`。
-

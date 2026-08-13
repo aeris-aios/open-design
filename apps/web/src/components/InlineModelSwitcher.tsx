@@ -111,6 +111,7 @@ function deepSeekCampaignUsageRestricted(): boolean {
 const DEEPSEEK_CAMPAIGN_REVIEW_MODELS: NonNullable<AgentInfo['models']> = [
   { id: 'claude-opus-4.8', label: 'Claude Opus 4.8' },
   { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { id: 'glm-5.1', label: 'GLM 5.1' },
 ];
@@ -229,9 +230,7 @@ export function InlineModelSwitcher({
   const campaignNeedsUpgrade = campaignAudienceOverride === 'unpaid';
   const campaignModelBadge = campaignUsageRestricted
     ? campaignCopy.restrictedBadge
-    : campaignNeedsUpgrade
-      ? campaignCopy.locked
-      : campaignCopy.badge;
+    : campaignCopy.badge;
   const campaignModelTooltip = campaignUsageRestricted
     ? campaignCopy.restrictedTooltip
     : campaignNeedsUpgrade
@@ -239,9 +238,7 @@ export function InlineModelSwitcher({
       : campaignCopy.paidTooltip;
   const campaignBadgeStateClass = campaignUsageRestricted
     ? ' is-restricted'
-    : campaignNeedsUpgrade
-      ? ' is-unpaid'
-      : '';
+    : '';
   // recvqfYKutwWlQ: gate the AMR upgrade entry on billing permission below,
   // not just plan tier — a team member without `canManageBilling` (owner-only)
   // can't act on an upgrade even when the tier itself is upgradeable.
@@ -852,27 +849,35 @@ export function InlineModelSwitcher({
     (modelId: string, extra?: { serviceTier?: string }) => {
       const agentId = currentAgent?.id;
       if (!agentId) return false;
+      const selectableInCampaign =
+        compact &&
+        campaignVisibility.visible &&
+        !campaignUsageRestricted &&
+        currentAgent.id === 'amr' &&
+        isDeepSeekV4ProCampaignModel(modelId);
       const selectableInPaidReview =
         compact && campaignAudienceOverride === 'paid' && currentAgent.id === 'amr';
-      const selectableInUnpaidReview =
-        compact &&
-        campaignAudienceOverride === 'unpaid' &&
-        currentAgent.id === 'amr' &&
-        !isDeepSeekV4ProCampaignModel(modelId);
       if (
+        !selectableInCampaign &&
         !selectableInPaidReview &&
-        !selectableInUnpaidReview &&
         !agentModelIsSelectable(currentAgent, modelId)
       ) {
         return false;
       }
-      if (selectableInPaidReview || selectableInUnpaidReview) {
+      if (selectableInCampaign || selectableInPaidReview) {
         setCampaignReviewModelId(modelId);
       }
       onAgentModelChange?.(agentId, { model: modelId, ...extra });
       return true;
     },
-    [campaignAudienceOverride, compact, currentAgent, onAgentModelChange],
+    [
+      campaignAudienceOverride,
+      campaignUsageRestricted,
+      campaignVisibility.visible,
+      compact,
+      currentAgent,
+      onAgentModelChange,
+    ],
   );
 
   /**
@@ -885,13 +890,23 @@ export function InlineModelSwitcher({
       inlineAgentModelOptions.map((model) => ({
         model,
         selectable:
-          compact && campaignAudienceOverride === 'paid'
+          compact &&
+          campaignVisibility.visible &&
+          !campaignUsageRestricted &&
+          isDeepSeekV4ProCampaignModel(model.id)
             ? true
-            : compact && campaignAudienceOverride === 'unpaid'
-              ? !isDeepSeekV4ProCampaignModel(model.id)
+            : compact && campaignAudienceOverride === 'paid'
+              ? true
             : agentModelIsSelectable(currentAgent, model.id),
       })),
-    [campaignAudienceOverride, compact, currentAgent, inlineAgentModelOptions],
+    [
+      campaignAudienceOverride,
+      campaignUsageRestricted,
+      campaignVisibility.visible,
+      compact,
+      currentAgent,
+      inlineAgentModelOptions,
+    ],
   );
 
   useEffect(() => {
@@ -908,14 +923,27 @@ export function InlineModelSwitcher({
       return;
     }
     campaignBenefitTrackedForOpenRef.current = true;
-    trackDeepSeekCampaignModelBenefitSurfaceView(analytics.track, {
-      page_name: 'home',
-      area: 'execution_settings_popover',
-      element: 'deepseek_v4_pro_benefit',
-      campaign_id: 'deepseek_v4_pro',
-      user_state: campaignNeedsUpgrade ? 'unpaid' : 'paid',
-      model_id: 'deepseek-v4-pro',
-    });
+    const userState = campaignNeedsUpgrade ? 'unpaid' : 'paid';
+    if (compactModelRows.some(({ model }) => model.id === 'deepseek-v4-pro')) {
+      trackDeepSeekCampaignModelBenefitSurfaceView(analytics.track, {
+        page_name: 'home',
+        area: 'execution_settings_popover',
+        element: 'deepseek_v4_pro_benefit',
+        campaign_id: 'deepseek_v4_pro',
+        user_state: userState,
+        model_id: 'deepseek-v4-pro',
+      });
+    }
+    if (compactModelRows.some(({ model }) => model.id === 'deepseek-v4-flash')) {
+      trackDeepSeekCampaignModelBenefitSurfaceView(analytics.track, {
+        page_name: 'home',
+        area: 'execution_settings_popover',
+        element: 'deepseek_v4_flash_benefit',
+        campaign_id: 'deepseek_v4_flash',
+        user_state: userState,
+        model_id: 'deepseek-v4-flash',
+      });
+    }
   }, [
     analytics.track,
     campaignNeedsUpgrade,
@@ -1438,7 +1466,7 @@ export function InlineModelSwitcher({
                               const src = modelProviderIconSrc(m.id);
                               return src ? (
                                 <img
-                                  src={src}
+                                  src={`${src}?v=20260813-model-picker-icons`}
                                   alt=""
                                   width={16}
                                   height={16}
