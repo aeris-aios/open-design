@@ -55,8 +55,14 @@ const UNBOUND_PROJECT = 'p-unbound-run';
 const WORKSPACE_ID = 'ws-run-gate';
 const OWNER_MEMBER_ID = 'member-owner-run';
 
-function sendApiError(res: any, status: number, code: string, message: string) {
-  return res.status(status).json({ error: { code, message } });
+function sendApiError(
+  res: any,
+  status: number,
+  code: string,
+  message: string,
+  details: Record<string, unknown> = {},
+) {
+  return res.status(status).json({ error: { code, message, ...details } });
 }
 
 function workspaceHeaders(memberId: string, role: 'owner' | 'admin' | 'member') {
@@ -309,7 +315,7 @@ async function startServer(opts?: {
       runRetryEventsForAnalytics: () => [],
     },
     messages: {
-      pinAssistantMessageOnRunCreate: () => {},
+      pinAssistantMessageOnRunCreate: () => ({ ok: true }),
       reconcileAssistantMessageOnRunEnd: () => {},
     },
     enforceWorkspaceProjectMutation:
@@ -484,7 +490,10 @@ describe('POST /api/runs — workspace mutation gate', () => {
 
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({
-        error: { code: 'WORKSPACE_AUTHORITY_UNAVAILABLE' },
+        error: {
+          code: 'WORKSPACE_AUTHORITY_UNAVAILABLE',
+          retryable: true,
+        },
       });
       expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(1);
       expect(createdRunCount).toBe(0);
@@ -1437,7 +1446,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
   });
 
   it.each(['/api/runs', '/api/chat'])(
-    'refuses a signed-in AMR run through %s when an unbound project has no explicit Personal identity',
+    'keeps a signed-in AMR run through %s account-scoped when its local project is unbound',
     async (route) => {
     const verifyWorkspaceRequestAuthority = vi.fn();
     const baseUrl = await startServer({
@@ -1455,10 +1464,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
       }),
     });
 
-      expect(response.status).toBe(409);
-      await expect(response.json()).resolves.toMatchObject({
-        error: { code: 'AMR_WORKSPACE_SCOPE_REQUIRED' },
-      });
+      expect(response.status).toBe(202);
       expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
       expect(
         getWorkspaceProjectByProjectId(openDatabase(tempDir!), UNBOUND_PROJECT),

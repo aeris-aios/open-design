@@ -15,7 +15,11 @@ import type {
   WorkspaceSeatSummary,
   WorkspaceType,
 } from '@open-design/contracts';
-import { readVelaControlApiContext, type VelaUser } from '../integrations/vela.js';
+import {
+  markVelaAuthorizationExpired,
+  readVelaControlApiContext,
+  type VelaUser,
+} from '../integrations/vela.js';
 import {
   createDevWorkspaceContextProvider,
   resolveWorkspaceSettingsUrl,
@@ -68,6 +72,8 @@ interface VelaWorkspaceContextOptions {
   fetch?: typeof fetch;
   /** Injectable for tests; defaults to reading ~/.amr/config.json + env. */
   readSession?: typeof readVelaControlApiContext;
+  /** Settings-backed AMR environment used by the daemon's agent launcher. */
+  configuredEnv?: Record<string, string>;
   /**
    * Legacy default for no-argument `current()` and fresh-account bootstrap.
    * Exact request resolution never reads it.
@@ -519,6 +525,8 @@ function velaUserDisplayName(user: VelaUser | null): string {
 export interface WorkspaceDirectoryFetchResult {
   ok: boolean;
   items: WorkspaceDirectoryItem[];
+  reason?: 'unauthorized' | 'upstream' | 'network';
+  status?: number;
 }
 
 /**
@@ -528,8 +536,9 @@ export interface WorkspaceDirectoryFetchResult {
  */
 export function velaWorkspaceDirectoryIdentity(
   readSession: typeof readVelaControlApiContext = readVelaControlApiContext,
+  configuredEnv: Record<string, string> = {},
 ): string {
-  const session = readSession();
+  const session = readSession(process.env, configuredEnv);
   if (!session?.controlKey || !session.apiUrl) return 'signed-out';
   const credentialFingerprint = createHash('sha256')
     .update(session.controlKey)
@@ -562,10 +571,25 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
   identityKey?: () => string;
   ttlMs?: number;
   now?: () => number;
+  onDecision?: (input: {
+    source: 'cache' | 'directory';
+    reason: 'cold' | 'lease_hit' | 'lease_expired' | 'in_flight' | 'fresh';
+    outcome: 'allow' | 'deny' | 'unavailable' | 'fallback';
+    ageMs?: number;
+  }) => void;
+  onSuppressedRequest?: (input: {
+    source: 'directory';
+    reason: 'lease_hit' | 'in_flight';
+  }) => void;
+  onInvalidation?: (input: {
+    source: 'cache';
+    reason: 'mutation' | 'event_dirty' | 'auth_reject' | 'catch_up';
+  }) => void;
 } = {}): {
   cached: () => Promise<WorkspaceDirectoryFetchResult>;
   read: () => Promise<WorkspaceDirectoryFetchResult>;
   fresh: () => Promise<WorkspaceDirectoryFetchResult>;
+  invalidate: (reason?: 'event_dirty' | 'auth_reject' | 'catch_up') => void;
   refreshAfterMutation: () => Promise<WorkspaceDirectoryFetchResult>;
 } {
   const fetchDirectory =
@@ -575,26 +599,75 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
   const now = options.now ?? Date.now;
   const cached = new Map<
     string,
-    { expiresAt: number; result: WorkspaceDirectoryFetchResult }
+    {
+      generation: number;
+      expiresAt: number;
+      result: WorkspaceDirectoryFetchResult;
+    }
   >();
-  const inFlight = new Map<string, Promise<WorkspaceDirectoryFetchResult>>();
+  const inFlight = new Map<
+    string,
+    {
+      generation: number;
+      request: Promise<WorkspaceDirectoryFetchResult>;
+    }
+  >();
+  const generations = new Map<string, number>();
+
+  const generationFor = (identity: string): number =>
+    generations.get(identity) ?? 0;
+
+  const invalidateIdentity = (identity: string): void => {
+    generations.set(identity, generationFor(identity) + 1);
+    cached.delete(identity);
+  };
+
+  const recordDecision = (
+    input: Parameters<NonNullable<typeof options.onDecision>>[0],
+  ): void => {
+    options.onDecision?.(input);
+  };
 
   const start = (
     identity: string,
+    reason: 'cold' | 'lease_expired' | 'fresh',
   ): Promise<WorkspaceDirectoryFetchResult> => {
+    const generation = generationFor(identity);
     const pending = inFlight.get(identity);
-    if (pending) return pending;
+    if (pending?.generation === generation) {
+      options.onSuppressedRequest?.({ source: 'directory', reason: 'in_flight' });
+      return pending.request;
+    }
     const request = fetchDirectory()
       .then((result) => {
-        if (result.ok) {
-          cached.set(identity, { expiresAt: now() + ttlMs, result });
+        if (result.ok && generationFor(identity) === generation) {
+          cached.set(identity, {
+            generation,
+            expiresAt: now() + ttlMs,
+            result,
+          });
         }
+        recordDecision({
+          source: 'directory',
+          reason,
+          outcome: result.ok ? 'allow' : 'unavailable',
+        });
         return result;
       })
+      .catch((error) => {
+        recordDecision({
+          source: 'directory',
+          reason,
+          outcome: 'unavailable',
+        });
+        throw error;
+      })
       .finally(() => {
-        if (inFlight.get(identity) === request) inFlight.delete(identity);
+        if (inFlight.get(identity)?.request === request) {
+          inFlight.delete(identity);
+        }
       });
-    inFlight.set(identity, request);
+    inFlight.set(identity, { generation, request });
     return request;
   };
 
@@ -602,30 +675,63 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
     cached: () => {
       const identity = identityKey();
       const cachedEntry = cached.get(identity);
-      if (cachedEntry && now() < cachedEntry.expiresAt) {
+      if (
+        cachedEntry
+        && cachedEntry.generation === generationFor(identity)
+        && now() < cachedEntry.expiresAt
+      ) {
+        const ageMs = Math.max(0, ttlMs - (cachedEntry.expiresAt - now()));
+        recordDecision({
+          source: 'cache',
+          reason: 'lease_hit',
+          outcome: 'allow',
+          ageMs,
+        });
+        options.onSuppressedRequest?.({ source: 'directory', reason: 'lease_hit' });
         return Promise.resolve(cachedEntry.result);
       }
+      const reason = cachedEntry ? 'lease_expired' : 'cold';
       cached.delete(identity);
+      recordDecision({ source: 'cache', reason, outcome: 'fallback' });
       return Promise.resolve({ ok: false, items: [] });
     },
     read: () => {
       const identity = identityKey();
       const cachedEntry = cached.get(identity);
-      if (cachedEntry && now() < cachedEntry.expiresAt) {
+      if (
+        cachedEntry
+        && cachedEntry.generation === generationFor(identity)
+        && now() < cachedEntry.expiresAt
+      ) {
+        const ageMs = Math.max(0, ttlMs - (cachedEntry.expiresAt - now()));
+        recordDecision({
+          source: 'cache',
+          reason: 'lease_hit',
+          outcome: 'allow',
+          ageMs,
+        });
+        options.onSuppressedRequest?.({ source: 'directory', reason: 'lease_hit' });
         return Promise.resolve(cachedEntry.result);
       }
-      return start(identity);
+      const reason = cachedEntry ? 'lease_expired' : 'cold';
+      cached.delete(identity);
+      return start(identity, reason);
     },
-    fresh: () => start(identityKey()),
+    fresh: () => start(identityKey(), 'fresh'),
+    invalidate: (reason = 'event_dirty') => {
+      invalidateIdentity(identityKey());
+      options.onInvalidation?.({ source: 'cache', reason });
+    },
     refreshAfterMutation: async () => {
       // A read that started before the remote mutation can still be in flight
       // after the mutation commits. Drain it, then deliberately start another
       // fetch so the settled lease is based on post-mutation authority.
       const identity = identityKey();
-      const pending = inFlight.get(identity);
+      const pending = inFlight.get(identity)?.request;
       if (pending) await pending.catch(() => undefined);
-      cached.delete(identity);
-      return start(identityKey());
+      invalidateIdentity(identity);
+      options.onInvalidation?.({ source: 'cache', reason: 'mutation' });
+      return start(identityKey(), 'fresh');
     },
   };
 }
@@ -662,7 +768,7 @@ export async function fetchVelaWorkspaceDirectory(
   const fetchImpl = options.fetch ?? fetch;
   const readSession = options.readSession ?? readVelaControlApiContext;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const session = readSession();
+  const session = readSession(process.env, options.configuredEnv ?? {});
   // No local Vela session is an authoritative signed-out identity, not an
   // authority outage. Returning a successful empty directory lets clients
   // clear a previously cached Team selection instead of preserving it forever.
@@ -675,10 +781,28 @@ export async function fetchVelaWorkspaceDirectory(
       headers: { authorization: `Bearer ${session.controlKey}` },
       signal: controller.signal,
     });
-    if (!response.ok) return { ok: false, items: [] };
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        if (!options.readSession) {
+          markVelaAuthorizationExpired(process.env, options.configuredEnv ?? {});
+        }
+        return {
+          ok: false,
+          items: [],
+          reason: 'unauthorized',
+          status: response.status,
+        };
+      }
+      return {
+        ok: false,
+        items: [],
+        reason: 'upstream',
+        status: response.status,
+      };
+    }
     return { ok: true, items: mapVelaWorkspaceDirectory(await response.json()) };
   } catch {
-    return { ok: false, items: [] };
+    return { ok: false, items: [], reason: 'network' };
   } finally {
     clearTimeout(timeout);
   }

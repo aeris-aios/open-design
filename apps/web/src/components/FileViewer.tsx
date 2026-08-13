@@ -8897,9 +8897,9 @@ function HtmlViewer({
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
   // A configured portal is an overlay contract from the first render, even
-  // before the host DOM node has been resolved. Keying this on the async host
-  // lookup briefly treated the panel as a local dock, shrinking the preview by
-  // 320px for one frame before the fixed card appeared.
+  // before the host DOM node has been resolved. Treating that lookup window as
+  // a local dock briefly shrinks the preview and shifts centered desktop or
+  // mobile content left before the floating card appears.
   const localCommentSideDockActive = commentPanelOpen && !commentPortalId;
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
@@ -10410,8 +10410,19 @@ function HtmlViewer({
       const frame = urlPreviewIframeRef.current;
       if (ev.source !== frame?.contentWindow) return;
       if (frame.getAttribute('src') === 'about:blank') return;
-      const data = ev.data as { type?: string } | null;
+      const data = ev.data as { type?: string; href?: string } | null;
       if (data?.type !== 'od:url-selection-bridge-ready') return;
+      // The latch must describe the currently committed document's bridge, so
+      // the ready must carry and match the document href.
+      if (typeof data.href !== 'string' || data.href.length === 0) return;
+      let matches: boolean;
+      try {
+        matches = new URL(data.href, window.location.href).href
+          === new URL(frame.getAttribute('src') ?? '', window.location.href).href;
+      } catch {
+        return;
+      }
+      if (!matches) return;
       setUrlSelectionBridgeReady(true);
     }
     window.addEventListener('message', onMessage);
