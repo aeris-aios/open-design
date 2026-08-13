@@ -132,9 +132,6 @@ describe('EntryShell AMR workspace precheck race', () => {
     resetTeamProjectsCache();
   });
 
-<<<<<<< HEAD
-  it('keeps a locally signed-in account in syncing state while Cloud is unavailable', async () => {
-=======
   it.each(['get', 'set'] as const)(
     'starts the team gate from in-memory directory identity when sessionStorage %sItem fails',
     async (blockedOperation) => {
@@ -572,7 +569,6 @@ describe('EntryShell AMR workspace precheck race', () => {
   });
 
   it('moves a locally signed-in account from initial syncing to compact auto recovery', async () => {
->>>>>>> b55d443b4 (fix(web): streamline Home submit preflight (#6756))
     window.history.replaceState(null, '', '/');
     const workspace = teamContext('workspace-a', 'member-a');
     const contextFailure = deferred<Response>();

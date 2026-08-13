@@ -597,13 +597,14 @@ export function EntryShell({
   // view from the route rather than keeping it in component state.
   const route = useRoute();
   const view: EntryViewKind = route.kind === 'home' ? route.view : 'home';
+  const usesOpenDesignCloud = config.mode === 'daemon' && config.agentId === 'amr';
   useEffect(() => {
-    // The entry shell is the authenticated Home surface. A definitive
-    // signed-out result returns it to the Cloud identity gate while leaving
-    // the saved model source untouched for passive reauthentication.
-    if (amrLoggedIn !== false || view === 'onboarding') return;
+    // Only Hosted execution requires a Cloud session. Local CLI and BYOK stay
+    // usable while signed out; an explicit Cloud sign-out is routed to the
+    // login surface by App.handleActiveCloudSignOut.
+    if (!usesOpenDesignCloud || amrLoggedIn !== false || view === 'onboarding') return;
     navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
-  }, [amrLoggedIn, view]);
+  }, [amrLoggedIn, usesOpenDesignCloud, view]);
   // The one shared workspace context. Any non-null context is a real workspace
   // (personal or team); workspace surfaces gate on B's permission bits, not on
   // workspaceType.

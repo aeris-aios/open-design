@@ -2652,7 +2652,7 @@ export function HomeView({
         ...(examplePromptToSend ? { examplePromptContext: examplePromptToSend } : {}),
       });
       if (accepted === false) {
-        setError('Failed to start the run. Make sure the daemon is reachable, then try again.');
+        setError('Failed to start the run. Try again.');
         return;
       }
       // Blocked-and-handled (AMR balance gate): the shell already shows its
@@ -2674,7 +2674,7 @@ export function HomeView({
       // A submit handler that throws (instead of resolving false) lands on
       // the same recovery path as a rejected creation.
       console.warn('Home composer submit failed', err);
-      setError('Failed to start the run. Make sure the daemon is reachable, then try again.');
+      setError('Failed to start the run. Try again.');
     } finally {
       setSending(false);
     }
