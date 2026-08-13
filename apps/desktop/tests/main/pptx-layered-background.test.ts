@@ -396,6 +396,17 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
   }, 30_000);
 
+  test('flattens a multiply-blended pseudo background against its authored backdrop', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.blended.pngs;
+
+    expect(media.blended, JSON.stringify(media.blended)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
+  }, 30_000);
+
   test('captures only the layered background pixels from a replaced element', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.replaced.pngs;
@@ -460,6 +471,7 @@ describe('editable PPTX layered backgrounds', () => {
 });
 
 type LayeredBackgroundProbe = {
+  blended: LayeredBackgroundExport;
   composited: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
@@ -475,6 +487,7 @@ type LayeredBackgroundProbe = {
 type LayeredBackgroundExport = { captures: number; media: string[]; pngs: PngProbe[] };
 
 type PngProbe = {
+  centerRgb: [number, number, number];
   height: number;
   maxAlpha: number;
   minAlpha: number;
@@ -515,6 +528,7 @@ const { gunzipSync, inflateRawSync } = require('node:zlib');
 const fixtures = {
   supported: '<div class="supported"></div>',
   pseudo: '<div class="pseudo"></div>',
+  blended: '<div class="blended"></div>',
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
@@ -550,6 +564,21 @@ const styles = \`
     color: white;
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
+  }
+  .blended {
+    position: absolute;
+    left: 120px;
+    top: 64px;
+    width: 80px;
+    height: 40px;
+    background: rgb(128, 192, 128);
+  }
+  .blended::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
   }
   .replaced {
     position: absolute;
@@ -640,7 +669,9 @@ function inspectPng(data, name) {
     else if (alpha < 240) translucentPixels += 1;
     else opaquePixels += 1;
   }
-  return { height, maxAlpha, minAlpha, name, opaquePixels, translucentPixels, transparentPixels, width };
+  const centerOffset = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
+  const centerRgb = [bitmap[centerOffset + 2], bitmap[centerOffset + 1], bitmap[centerOffset]];
+  return { centerRgb, height, maxAlpha, minAlpha, name, opaquePixels, translucentPixels, transparentPixels, width };
 }
 
 function inspectPseudoLayerOrder(entries, mediaName) {
@@ -757,6 +788,18 @@ app.whenReady().then(async () => {
         pngs: exportedImage.png ? [exportedImage.png] : [],
       };
     }
+    if (!result.blended) {
+      const blendedMedia = media.find(({ name, png }) =>
+        !usedMedia.has(name)
+        && (png?.width === 80 || png?.width === 160)
+        && (png?.height === 40 || png?.height === 80));
+      if (blendedMedia) usedMedia.add(blendedMedia.name);
+      result.blended = {
+        captures: captureCounts.blended,
+        media: blendedMedia ? [blendedMedia.name] : [],
+        pngs: blendedMedia?.png ? [blendedMedia.png] : [],
+      };
+    }
     const replacedCapture = Object.entries(captures)
       .find(([targetId]) => probeByTarget[targetId] === 'replaced')?.[1];
     const replacedForegroundMedia = replacedCapture ? media.filter(({ name, png }) =>
@@ -848,6 +891,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
   if (
     typeof value !== 'object'
     || value === null
+    || !('blended' in value)
     || !('supported' in value)
     || !('pseudo' in value)
     || !('replaced' in value)
@@ -879,6 +923,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     throw new Error('Electron renderer probe returned an invalid result');
   }
   return {
+    blended: parseLayeredBackgroundExport(value.blended),
     composited: parseLayeredBackgroundExport(value.composited),
     masked: parseLayeredBackgroundExport(value.masked),
     pseudo: parseLayeredBackgroundExport(value.pseudo),

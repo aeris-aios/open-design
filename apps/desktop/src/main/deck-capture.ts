@@ -499,6 +499,81 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       .some((value) => value.toLowerCase() === "text");
   }
 
+  function hasNonNormalBlendMode(style: CSSStyleDeclaration): boolean {
+    const mode = (style.mixBlendMode || "normal").trim().toLowerCase();
+    return mode !== "" && mode !== "normal";
+  }
+
+  function materializeBlendedPseudoBackground(
+    element: HTMLElement,
+    pseudo: "::before" | "::after",
+  ): HTMLElement | null {
+    const style = getComputedStyle(element, pseudo);
+    const content = (style.content || "").trim().toLowerCase();
+    const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
+    if (
+      !isGenerated ||
+      (style.position !== "absolute" && style.position !== "fixed") ||
+      !isSupportedLayeredGradient(style.backgroundImage || "") ||
+      !hasNonNormalBlendMode(style) ||
+      hasTextClip(style)
+    ) {
+      return null;
+    }
+
+    // html2canvas rasterizes custom elements without their backdrop and does
+    // not parse mix-blend-mode. Materialize only blended pseudos in the live
+    // Chromium page so the main-process capture can flatten the authored
+    // backdrop into the resulting PNG.
+    const background = document.createElement("od-pptx-layered-background");
+    background.setAttribute("data-od-pptx-materialized-pseudo", pseudo);
+    background.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
+    background.setAttribute("aria-hidden", "true");
+    background.style.setProperty("position", style.position, "important");
+    background.style.setProperty("top", style.top || "auto", "important");
+    background.style.setProperty("right", style.right || "auto", "important");
+    background.style.setProperty("bottom", style.bottom || "auto", "important");
+    background.style.setProperty("left", style.left || "auto", "important");
+    background.style.setProperty("width", style.width || "auto", "important");
+    background.style.setProperty("height", style.height || "auto", "important");
+    background.style.setProperty("box-sizing", "border-box", "important");
+    background.style.setProperty(
+      "padding",
+      `${style.paddingTop || "0px"} ${style.paddingRight || "0px"} ${style.paddingBottom || "0px"} ${style.paddingLeft || "0px"}`,
+      "important",
+    );
+    background.style.setProperty(
+      "border-width",
+      `${style.borderTopWidth || "0px"} ${style.borderRightWidth || "0px"} ${style.borderBottomWidth || "0px"} ${style.borderLeftWidth || "0px"}`,
+      "important",
+    );
+    background.style.setProperty("border-style", "solid", "important");
+    background.style.setProperty("border-color", "transparent", "important");
+    background.style.setProperty("border-radius", style.borderRadius || "0px", "important");
+    background.style.setProperty("background-color", style.backgroundColor, "important");
+    background.style.setProperty("background-image", style.backgroundImage, "important");
+    background.style.setProperty("background-position", style.backgroundPosition, "important");
+    background.style.setProperty("background-size", style.backgroundSize, "important");
+    background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
+    background.style.setProperty("background-origin", style.backgroundOrigin, "important");
+    background.style.setProperty("background-clip", style.backgroundClip, "important");
+    background.style.setProperty("clip-path", style.clipPath || "none", "important");
+    background.style.setProperty("filter", style.filter || "none", "important");
+    background.style.setProperty("opacity", style.opacity || "1", "important");
+    background.style.setProperty("mix-blend-mode", style.mixBlendMode, "important");
+    background.style.setProperty("transform", style.transform || "none", "important");
+    background.style.setProperty("transform-origin", style.transformOrigin || "50% 50%", "important");
+    background.style.setProperty("transform-box", style.transformBox || "view-box", "important");
+    background.style.setProperty("translate", style.translate || "none", "important");
+    background.style.setProperty("rotate", style.rotate || "none", "important");
+    background.style.setProperty("scale", style.scale || "none", "important");
+    background.style.setProperty("z-index", style.zIndex || "auto", "important");
+    background.style.setProperty("pointer-events", "none", "important");
+    if (pseudo === "::before") element.prepend(background);
+    else element.append(background);
+    return background;
+  }
+
   function isRenderedInsideSlide(
     element: HTMLElement,
     slide: HTMLElement,
@@ -538,7 +613,13 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
   const targets: LayeredPptxBackgroundTarget[] = [];
   let nextId = 0;
   for (const slide of slides) {
-    const elements = [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))];
+    const authoredElements = [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))];
+    const materializedPseudos = authoredElements.flatMap((element) =>
+      (["::before", "::after"] as const)
+        .map((pseudo) => materializeBlendedPseudoBackground(element, pseudo))
+        .filter((element): element is HTMLElement => element !== null),
+    );
+    const elements = [...authoredElements, ...materializedPseudos];
     for (const element of elements) {
       const style = getComputedStyle(element);
       if (
@@ -549,6 +630,9 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
         continue;
       }
       const id = `od-pptx-layer-${nextId++}`;
+      if (hasNonNormalBlendMode(style)) {
+        element.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
+      }
       element.setAttribute("data-od-pptx-layer-capture-id", id);
       targets.push({ id });
     }
@@ -584,6 +668,7 @@ export function isolateLayeredPptxBackground(
   if (slideIndex < 0) return null;
   const slide = slides[slideIndex]!;
   const targetStyle = getComputedStyle(target);
+  const flattenBlendBackdrop = target.getAttribute("data-od-pptx-flatten-blend-backdrop") === "true";
   const targetRect = target.getBoundingClientRect();
   const slideRect = slide.getBoundingClientRect();
   const hasVisualOverflow = targetStyle.filter && targetStyle.filter !== "none";
@@ -608,9 +693,11 @@ export function isolateLayeredPptxBackground(
   for (let ancestor: HTMLElement | null = target; ancestor; ancestor = ancestor.parentElement) {
     ancestor.style.setProperty("visibility", "visible", "important");
     if (ancestor !== target) {
-      ancestor.style.setProperty("background", "transparent", "important");
-      ancestor.style.setProperty("border-color", "transparent", "important");
-      ancestor.style.setProperty("box-shadow", "none", "important");
+      if (!flattenBlendBackdrop) {
+        ancestor.style.setProperty("background", "transparent", "important");
+        ancestor.style.setProperty("border-color", "transparent", "important");
+        ancestor.style.setProperty("box-shadow", "none", "important");
+      }
       ancestor.style.setProperty("color", "transparent", "important");
       ancestor.style.setProperty("outline", "none", "important");
       ancestor.style.setProperty("text-shadow", "none", "important");
@@ -633,7 +720,7 @@ export function isolateLayeredPptxBackground(
   for (const root of [document.documentElement, document.body]) {
     if (!root) continue;
     root.style.setProperty("visibility", "visible", "important");
-    root.style.setProperty("background", "transparent", "important");
+    if (!flattenBlendBackdrop) root.style.setProperty("background", "transparent", "important");
   }
 
   return {
@@ -1465,6 +1552,11 @@ export async function runDomToPptx(
     return splitCssBackgroundLayers(input).some((layer) => layer.toLowerCase() === "text");
   }
 
+  function hasNonNormalBlendMode(input: string): boolean {
+    const mode = (input || "normal").trim().toLowerCase();
+    return mode !== "" && mode !== "normal";
+  }
+
   function hasCssMask(style: CSSStyleDeclaration): boolean {
     const maskImages = [
       style.maskImage || style.getPropertyValue("mask-image"),
@@ -1513,10 +1605,17 @@ export async function runDomToPptx(
         const style = getComputedStyle(element, pseudo);
         const content = (style.content || "").trim().toLowerCase();
         const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
+        const hasMaterializedCapture = Array.from(element.children).some(
+          (child) => child.getAttribute("data-od-pptx-materialized-pseudo") === pseudo,
+        );
         if (
           !isGenerated ||
+          hasMaterializedCapture ||
           (style.position !== "absolute" && style.position !== "fixed") ||
           !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
+          // The html2canvas custom-element path has no blend-mode parser and
+          // cannot reproduce this background without its authored backdrop.
+          hasNonNormalBlendMode(style.mixBlendMode || "") ||
           hasTextBackgroundClip(style.backgroundClip || "") ||
           hasTextBackgroundClip(style.webkitBackgroundClip || "") ||
           hasCssMask(style)
@@ -1583,8 +1682,10 @@ export async function runDomToPptx(
       if (captured) {
         const slide = slides[captured.slideIndex];
         if (!slide) continue;
+        const materializedPseudo = element.getAttribute("data-od-pptx-materialized-pseudo");
         const background = document.createElement("img");
         background.setAttribute("data-od-pptx-layered-bg", "true");
+        if (materializedPseudo) background.setAttribute("data-od-pptx-pseudo", materializedPseudo);
         background.setAttribute("aria-hidden", "true");
         background.src = captured.dataUrl;
         background.style.setProperty("position", "absolute", "important");
@@ -1597,7 +1698,13 @@ export async function runDomToPptx(
         background.style.setProperty("pointer-events", "none", "important");
         background.style.setProperty(
           "z-index",
-          element === slide ? slideBackgroundSortSlot : style.zIndex || "auto",
+          element === slide
+            ? slideBackgroundSortSlot
+            : materializedPseudo === "::before"
+              ? pseudoBeforeBackgroundSortSlot
+              : materializedPseudo === "::after"
+                ? pseudoAfterBackgroundSortSlot
+                : style.zIndex || "auto",
           "important",
         );
         background.getBoundingClientRect = () => {
