@@ -466,13 +466,16 @@ const fixtures = {
 const styles = \`
   html, body { margin: 0; }
   .slide { position: relative; width: 320px; height: 180px; overflow: hidden; background: #111; }
-  .card { position: absolute; inset: 10px; background: #24506f; }
-  .supported, .pseudo, .masked, .composited { position: absolute; inset: 20px; }
+  .card { position: absolute; left: 170px; top: 90px; width: 140px; height: 80px; background: #24506f; }
+  .supported, .pseudo, .masked, .composited { position: absolute; width: 120px; height: 60px; }
   .label { position: absolute; right: 8px; bottom: 8px; color: white; }
   .supported {
+    left: 16px;
+    top: 12px;
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
   }
+  .pseudo { left: 176px; top: 12px; }
   .pseudo::before {
     content: '';
     position: absolute;
@@ -481,12 +484,17 @@ const styles = \`
     background-size: 24px 24px;
   }
   .masked {
+    left: 16px;
+    top: 102px;
+    width: 100px;
+    height: 50px;
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
     -webkit-mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
     mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
   }
   .composited {
+    inset: 10px;
     background-image: linear-gradient(#ff3b30, #ff3b30), linear-gradient(#ff3b30, #ff3b30);
     clip-path: polygon(0 0, 100% 0, 0 100%);
     filter: drop-shadow(0 10px 12px rgba(0, 0, 0, .45));
@@ -523,26 +531,10 @@ function zipEntries(pptxBase64) {
   return entries;
 }
 
-function inspectSlideMedia(pptxBase64) {
-  const entries = zipEntries(pptxBase64);
-  const entriesByName = new Map(entries.map((entry) => [entry.name, entry]));
-  return entries
-    .map(({ name }) => /^ppt\\/slides\\/slide(\\d+)\\.xml$/.exec(name))
-    .filter(Boolean)
-    .sort((left, right) => Number(left[1]) - Number(right[1]))
-    .map((match) => {
-      const relationships = entriesByName.get('ppt/slides/_rels/slide' + match[1] + '.xml.rels');
-      const media = relationships
-        ? Array.from(relationships.data.toString('utf8').matchAll(/Target="([^"]+)"/g), (target) => target[1])
-            .filter((target) => target.startsWith('../media/'))
-            .map((target) => entriesByName.get('ppt/media/' + target.slice('../media/'.length)))
-            .filter(Boolean)
-        : [];
-      const pngs = media
-        .filter(({ name }) => name.endsWith('.png'))
-        .map(({ data, name }) => inspectPng(data, name));
-      return { media: media.map(({ name }) => name).sort(), pngs };
-    });
+function inspectMedia(pptxBase64) {
+  return zipEntries(pptxBase64)
+    .filter(({ name }) => /^ppt\\/media\\/.+\\.(?:gif|jpe?g|png|svg)$/.test(name))
+    .map(({ data, name }) => ({ name, png: name.endsWith('.png') ? inspectPng(data, name) : null }));
 }
 
 function inspectPng(data, name) {
@@ -565,6 +557,7 @@ function inspectPng(data, name) {
   return { height, maxAlpha, minAlpha, name, opaquePixels, translucentPixels, transparentPixels, width };
 }
 
+let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
   const window = new BrowserWindow({
@@ -579,17 +572,23 @@ app.whenReady().then(async () => {
     dbg.attach('1.3');
     await dbg.sendCommand('Page.enable');
     await dbg.sendCommand('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
-    // Keep one real exporter invocation: four serial PPTX archive builds made
-    // this probe hit its Linux workspace-test timeout under concurrent load.
+    // Keep one slide and one real exporter invocation: serial slide conversion
+    // made this probe hit its Linux workspace-test timeout under concurrent load.
     const fixtureEntries = Object.entries(fixtures);
-    const slides = fixtureEntries
-      .map(([name, markup]) => '<section class="slide" data-od-probe="' + name + '">' + markup + '</section>')
+    const fixtureMarkup = fixtureEntries
+      .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
       .join('');
-    await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slides), true);
+    const slide = '<section class="slide">' + fixtureMarkup + '</section>';
+    await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
+    const probeByTarget = await window.webContents.executeJavaScript(
+      'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-pptx-layer-capture-id]"), (target) => [target.getAttribute("data-od-pptx-layer-capture-id"), target.closest("[data-od-probe]").getAttribute("data-od-probe")]))',
+      true,
+    );
     for (const target of targets) {
+      probeStage = 'isolate target ' + target.id;
       const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
       await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
       const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
@@ -601,17 +600,41 @@ app.whenReady().then(async () => {
       captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
       await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
     }
+    probeStage = 'export deck';
     const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)} + '(' + JSON.stringify(captures) + ')', true);
     if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
     const captureCounts = await window.webContents.executeJavaScript(
-      'Array.from(document.querySelectorAll("[data-od-probe]"), (slide) => slide.querySelectorAll("[data-od-pptx-layered-bg]").length)',
+      'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-probe]"), (probe) => [probe.getAttribute("data-od-probe"), probe.querySelectorAll("[data-od-pptx-layered-bg]").length]))',
       true,
     );
-    const slideMedia = inspectSlideMedia(exported.b64);
-    const result = Object.fromEntries(fixtureEntries.map(([name], index) => [
-      name,
-      { captures: captureCounts[index], ...slideMedia[index] },
-    ]));
+    const media = inspectMedia(exported.b64);
+    const usedMedia = new Set();
+    const result = {};
+    for (const [targetId, capture] of Object.entries(captures)) {
+      const exportedImage = media.find(({ name, png }) =>
+        !usedMedia.has(name)
+        && Math.abs((png?.width ?? 0) - capture.width * 2) <= 1
+        && Math.abs((png?.height ?? 0) - capture.height * 2) <= 1);
+      if (!exportedImage) {
+        throw new Error('PPTX did not contain capture-sized media for ' + targetId + ': ' + JSON.stringify({
+          capture: { height: capture.height, width: capture.width },
+          media: media.map(({ name, png }) => ({ name, height: png?.height, width: png?.width })),
+        }));
+      }
+      const name = probeByTarget[targetId];
+      usedMedia.add(exportedImage.name);
+      result[name] = {
+        captures: captureCounts[name],
+        media: [exportedImage.name],
+        pngs: exportedImage.png ? [exportedImage.png] : [],
+      };
+    }
+    const pseudoMedia = media.filter(({ name }) => !usedMedia.has(name));
+    result.pseudo = {
+      captures: captureCounts.pseudo,
+      media: pseudoMedia.map(({ name }) => name).sort(),
+      pngs: pseudoMedia.flatMap(({ png }) => png ? [png] : []),
+    };
     process.stdout.write('OD_PPTX_LAYER_PROBE:' + JSON.stringify(result) + '\\n');
   } finally {
     if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
@@ -619,7 +642,7 @@ app.whenReady().then(async () => {
     app.quit();
   }
 }).catch((error) => {
-  process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
+  process.stderr.write(probeStage + ': ' + String(error && error.stack ? error.stack : error) + '\\n');
   app.exit(1);
 });
 `,
