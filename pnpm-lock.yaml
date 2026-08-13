@@ -65,9 +65,6 @@ importers:
       '@open-design/diagnostics':
         specifier: workspace:*
         version: link:../../packages/diagnostics
-      '@open-design/host':
-        specifier: workspace:*
-        version: link:../../packages/host
       '@open-design/platform':
         specifier: workspace:*
         version: link:../../packages/platform
@@ -563,9 +560,6 @@ importers:
       '@open-design/release':
         specifier: workspace:*
         version: link:../release
-      '@open-design/sidecar':
-        specifier: workspace:*
-        version: link:../sidecar
     devDependencies:
       '@types/node':
         specifier: 24.12.2
@@ -670,6 +664,31 @@ importers:
         specifier: 4.1.6
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(jsdom@29.1.1)(vite@7.3.3(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
 
+  packages/shell:
+    dependencies:
+      '@open-design/release':
+        specifier: workspace:*
+        version: link:../release
+      '@open-design/sidecar':
+        specifier: workspace:*
+        version: link:../sidecar
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      esbuild:
+        specifier: 0.28.0
+        version: 0.28.0
+      tsx:
+        specifier: 4.22.3
+        version: 4.22.3
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(jsdom@29.1.1)(vite@7.3.3(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
+
   packages/sidecar:
     dependencies:
       '@open-design/release':
@@ -712,6 +731,9 @@ importers:
       '@open-design/release':
         specifier: workspace:*
         version: link:../../packages/release
+      '@open-design/shell':
+        specifier: workspace:*
+        version: link:../../packages/shell
       '@open-design/sidecar':
         specifier: workspace:*
         version: link:../../packages/sidecar
@@ -777,15 +799,15 @@ importers:
       '@open-design/closure':
         specifier: workspace:*
         version: link:../../packages/closure
-      '@open-design/host':
-        specifier: workspace:*
-        version: link:../../packages/host
       '@open-design/platform':
         specifier: workspace:*
         version: link:../../packages/platform
       '@open-design/release':
         specifier: workspace:*
         version: link:../../packages/release
+      '@open-design/shell':
+        specifier: workspace:*
+        version: link:../../packages/shell
       '@open-design/sidecar':
         specifier: workspace:*
         version: link:../../packages/sidecar
@@ -827,9 +849,6 @@ importers:
       '@open-design/closure':
         specifier: workspace:*
         version: link:../../packages/closure
-      '@open-design/host':
-        specifier: workspace:*
-        version: link:../../packages/host
       '@open-design/release':
         specifier: workspace:*
         version: link:../../packages/release
