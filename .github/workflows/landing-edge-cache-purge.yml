@@ -28,9 +28,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Purge hosts
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           CLOUDFLARE_PURGE_HOSTS: ${{ inputs.hosts }}
-        run: node apps/landing-page/scripts/purge-open-design-edge-cache.mjs
+        run: node --experimental-strip-types .github/scripts/landing-page-purge-edge-cache.ts
