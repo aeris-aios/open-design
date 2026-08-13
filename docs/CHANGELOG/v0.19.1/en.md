@@ -42,8 +42,10 @@ projects responsive by putting firm bounds around background work.
   as a visual foundation for generated interfaces. (#6769)
 - `od mcp install claude-desktop` can configure Open Design for Claude Desktop
   on macOS and Windows. (#6489)
+- The public Pricing page now describes hosted image generation alongside text
+  models. (#6395)
 - Launch Week is easier to discover from the landing page, and community links
-  are labeled before they take you away from Open Design. (#6395, #6680, #6684)
+  are labeled before they take you away from Open Design. (#6680, #6684)
 
 ## 🔁 Changed
 

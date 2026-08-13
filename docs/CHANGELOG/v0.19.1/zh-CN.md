@@ -37,8 +37,9 @@ description: 从首页提交后立即进入项目，Open Design Cloud 会话过�
   (#6769)
 - macOS 和 Windows 上可以通过 `od mcp install claude-desktop` 为 Claude Desktop
   配置 Open Design。 (#6489)
+- 公开 Pricing 页现在会写明托管图像生成，而不再只描述文本模型。 (#6395)
 - Launch Week 在落地页上更容易被发现；离开 Open Design 的社区链接也会提前标明
-  去向。 (#6395, #6680, #6684)
+  去向。 (#6680, #6684)
 
 ## 🔁 变更
 
