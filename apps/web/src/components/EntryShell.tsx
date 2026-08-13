@@ -21,7 +21,6 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   defaultScenarioPluginIdForProjectMetadata,
   type AmrWalletSnapshot,
@@ -84,6 +83,7 @@ import type {
   DesignSystemSummary,
   ExecMode,
   Project,
+  ProjectKind,
   ProjectMetadata,
   ProjectTemplate,
   PromptTemplateSummary,
@@ -222,6 +222,7 @@ import {
   notifyAmrLoginStatusChanged,
 } from './amrLoginPolling';
 import { closeAmrActivationWindowBestEffort } from './AmrLoginPill';
+import { isMacPlatform } from '../utils/platform';
 import { smoothScrollToTop } from '../utils/smoothScrollToTop';
 import { summarizeProjectNameFromPrompt } from '../utils/projectName';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
@@ -1070,12 +1071,38 @@ export function EntryShell({
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
 
   // ⌘K / Ctrl+K opens the project search palette — same as clicking the rail
-  // search box.
+  // search box. ⌘B / Ctrl+B toggles the nav rail — same as the pinned Home
+  // tab's sidebar toggle.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.isComposing
+        || (
+          target instanceof Element
+          && target.closest(
+            'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+          )
+        )
+      ) {
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
         event.preventDefault();
         setProjectSearchOpen(true);
+        return;
+      }
+      const primary = isMacPlatform()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      if (
+        primary &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === 'b' || event.key === 'B')
+      ) {
+        event.preventDefault();
+        setRailOpen((v) => !v);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -1215,9 +1242,10 @@ export function EntryShell({
   function usePluginFromLibrary(
     record: InstalledPluginRecord,
     action: PluginUseAction = 'use',
+    homeType?: { chipId: string; projectKind: ProjectKind },
   ) {
     setHomePromptHandoff(
-      createPluginUseHandoff(Date.now(), record.id, { action }),
+      createPluginUseHandoff(Date.now(), record.id, { action, ...homeType }),
     );
     changeView('home');
   }
@@ -1521,11 +1549,11 @@ export function EntryShell({
   // reachable through either the account menu or the signed-out rail item.
   //
   // The updater host has no topbar to live in any more (the rail toggle is the
-  // pinned Home tab in the workspace tabs bar), so the rail owns it: it renders
-  // in a right-aligned strip just above the account row, falling back to the
-  // rail footer in the signed-out shell. `EntryNavRail` decides which — the
-  // shell only supplies the host, which renders nothing until the real updater
-  // reports a downloaded, unopened installer.
+  // pinned Home tab in the workspace tabs bar), so the rail owns it: it rides
+  // the floating account row immediately after the avatar chip, falling back
+  // to the rail footer in the signed-out shell. `EntryNavRail` decides which —
+  // the shell only supplies the host, which renders nothing until the real
+  // updater reports a downloaded, unopened installer.
   const updaterSlot = (
     <UpdaterPopup
       allowSilentUpdates={config.allowSilentUpdates}
@@ -1606,6 +1634,20 @@ export function EntryShell({
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
+          topRightSlot={
+            view === 'home' && deepSeekV4FlashCampaignAudience !== 'unknown' ? (
+              <button
+                type="button"
+                className="entry-deepseek-campaign-badge"
+                onClick={openDeepSeekCampaignPricing}
+                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
+                data-testid="deepseek-campaign-pricing-badge"
+              >
+                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
+                <Icon name="arrow-right" size={13} />
+              </button>
+            ) : null
+          }
           context={railWorkspaceContext}
           billing={workspaceBilling}
           balanceUsd={workspaceBalanceUsd}
@@ -1636,23 +1678,9 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
-          {view === 'home'
-            && deepSeekV4FlashCampaignAudience !== 'unknown'
-            && typeof document !== 'undefined'
-            ? createPortal(
-              <button
-                type="button"
-                className="entry-deepseek-campaign-badge"
-                onClick={openDeepSeekCampaignPricing}
-                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
-                data-testid="deepseek-campaign-pricing-badge"
-              >
-                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
-                <Icon name="arrow-right" size={13} />
-              </button>,
-              document.body,
-            )
-            : null}
+          {/* DeepSeek campaign badge moved into EntryNavRail's top-right
+              cluster (topRightSlot above) so it sits beside the account
+              module in one flex row. */}
           {amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}
@@ -1874,18 +1902,28 @@ export function EntryShell({
                     }
                   })();
                 }}
-                onUsePrompt={(prompt) => {
+                onUsePrompt={(target) => {
                   // Seed the Home composer with the template's starting prompt,
                   // then switch to Home to review + send it (keep in sync with
                   // the standalone /community branch in App.tsx).
-                  seedHomeComposerPrompt(prompt);
+                  seedHomeComposerPrompt(target.prompt);
+                  setHomePromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
+                    action: 'use',
+                    chipId: target.chipId,
+                    projectKind: target.projectKind,
+                  }));
                   changeView('home');
                 }}
                 // The gallery card's full details modal routes Use through the
                 // same Home hand-off the plugin library uses, so the plugin
                 // becomes the composer's active driver instead of only seeding
                 // prompt text.
-                onUsePlugin={usePluginFromLibrary}
+                onUsePlugin={(record, action, target) => {
+                  usePluginFromLibrary(record, action, {
+                    chipId: target.chipId,
+                    projectKind: target.projectKind,
+                  });
+                }}
               />
             ) : null}
             {/* Team destinations — the entry shell owns the nav frame only; each

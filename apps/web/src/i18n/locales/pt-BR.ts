@@ -2113,6 +2113,7 @@ export const ptBR: Dict = {
   'chat.comments.removeAttachmentAria': 'Remover anexo de comentário de {name}',
   'chat.comments.comment': 'Comentar',
   'chat.comments.sendToChat': 'Enviar para o chat',
+  'chat.comments.viewAll': 'Ver todos os comentários',
   'chat.comments.sending': 'Enviando…',
   'chat.comments.edit': 'Editar',
   'chat.comments.select': 'Selecionar',

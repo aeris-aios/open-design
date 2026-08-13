@@ -2113,6 +2113,7 @@ export const ja: Dict = {
   'chat.comments.removeAttachmentAria': '{name} のコメント添付を削除',
   'chat.comments.comment': 'コメント',
   'chat.comments.sendToChat': 'チャットに送信',
+  'chat.comments.viewAll': 'すべてのコメントを表示',
   'chat.comments.sending': '送信中…',
   'chat.comments.edit': '編集',
   'chat.comments.select': '選択',

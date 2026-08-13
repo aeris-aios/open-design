@@ -2113,6 +2113,7 @@ export const ar: Dict = {
   'chat.comments.removeAttachmentAria': 'إزالة مرفق التعليق لـ {name}',
   'chat.comments.comment': 'تعليق',
   'chat.comments.sendToChat': 'إرسال إلى المحادثة',
+  'chat.comments.viewAll': 'عرض كل التعليقات',
   'chat.comments.sending': 'جارٍ الإرسال…',
   'chat.comments.edit': 'تحرير',
   'chat.comments.select': 'تحديد',

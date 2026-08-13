@@ -2939,6 +2939,7 @@ export interface Dict {
   'chat.comments.removeAttachmentAria': string;
   'chat.comments.comment': string;
   'chat.comments.sendToChat': string;
+  'chat.comments.viewAll': string;
   'chat.comments.sending': string;
   'chat.comments.edit': string;
   'chat.comments.select': string;

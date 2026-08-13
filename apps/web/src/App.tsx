@@ -61,6 +61,7 @@ import {
   removeWorkspaceProjectTabs,
   WorkspaceTabsBar,
 } from './components/WorkspaceTabsBar';
+import { WorkspaceTopRightAccountCluster } from './components/EntryNavRail';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -133,6 +134,10 @@ import { resolvePlanTier } from './collab/team-plan';
 import { deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
 import { CommunityView } from './components/CommunityView';
 import { seedHomeComposerPrompt } from './components/HomeView';
+import {
+  createPluginUseHandoff,
+  stashHomePromptHandoff,
+} from './components/home-hero/plugin-authoring';
 import { goBack, navigate, useRoute, type Route } from './router';
 import {
   fetchDaemonConfig,
@@ -4925,10 +4930,21 @@ function AppInner() {
             }
           })();
         }}
-        onUsePrompt={(prompt) => {
-          // Seed the Home composer with the template's starting prompt, then hand
-          // the user into Home to review + send it (instead of dropping the pick).
-          seedHomeComposerPrompt(prompt);
+        onUsePrompt={(target) => {
+          seedHomeComposerPrompt(target.prompt);
+          stashHomePromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
+            action: 'use',
+            chipId: target.chipId,
+            projectKind: target.projectKind,
+          }));
+          navigate({ kind: 'home', view: 'home' });
+        }}
+        onUsePlugin={(record, action, target) => {
+          stashHomePromptHandoff(createPluginUseHandoff(Date.now(), record.id, {
+            action,
+            chipId: target.chipId,
+            projectKind: target.projectKind,
+          }));
           navigate({ kind: 'home', view: 'home' });
         }}
       />
@@ -5262,6 +5278,27 @@ function AppInner() {
           onboardingCompleted={config.onboardingCompleted === true}
           identityScopeKey={workspaceTabsIdentityScopeKey}
         />
+        {/* Avatar + credits keep their home-view spot (the fixed top-right
+            corner over the tabs chrome) while a project tab is open, even
+            though EntryShell — the cluster's usual owner — is unmounted here.
+            Home and the other entry views mount theirs through EntryNavRail;
+            the routes are mutually exclusive, so exactly one is on screen. */}
+        {route.kind === 'project' ? (
+          <WorkspaceTopRightAccountCluster
+            onOpenSettings={openSettings}
+            onSignedOut={handleActiveCloudSignOut}
+            workspaceContextOverride={
+              activeProject?.workspaceId
+                ? activeProjectWorkspaceContext
+                : undefined
+            }
+            workspaceContextLoading={
+              activeProject?.workspaceId
+                ? projectRouteWorkspaceContext.loading
+                : undefined
+            }
+          />
+        ) : null}
         <div className="workspace-shell__body">
           {appMain}
         </div>

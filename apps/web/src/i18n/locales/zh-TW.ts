@@ -2212,6 +2212,7 @@ export const zhTW: Dict = {
   "chat.comments.removeAttachmentAria": "移除 {name} 的評論附件",
   "chat.comments.comment": "留言",
   "chat.comments.sendToChat": "傳送至對話",
+  "chat.comments.viewAll": "查看全部評論",
   "chat.comments.sending": "傳送中…",
   "chat.comments.edit": "編輯",
   "chat.comments.select": "選取",
