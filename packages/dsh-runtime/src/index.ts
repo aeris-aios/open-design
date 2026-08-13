@@ -95,6 +95,17 @@ function terminalOutput(output: string): { output: string } | Record<string, nev
   return output === '' ? {} : { output };
 }
 
+function writeCancelledResult(output: Output, requestId: string, sessionId: string): void {
+  writeFrame(output, {
+    v: 1,
+    type: 'result',
+    request_id: requestId,
+    status: 'cancelled',
+    session_id: sessionId,
+    resume_rejected: false,
+  });
+}
+
 function usageFrame(requestId: string, provider: string, model: string, usage: TokenUsage) {
   return {
     v: 1,
@@ -231,14 +242,7 @@ async function execute(
       onHandle(handle);
     } catch (error: unknown) {
       if (signal.aborted) {
-        writeFrame(output, {
-          v: 1,
-          type: 'result',
-          request_id: request.request_id,
-          status: 'cancelled',
-          session_id: String(sessionId),
-          resume_rejected: false,
-        });
+        writeCancelledResult(output, request.request_id, String(sessionId));
         return;
       }
       const facts = errorFacts(error, request.resume_session_id
@@ -264,6 +268,10 @@ async function execute(
       resumed: Boolean(request.resume_session_id),
     });
     await handle.agent.whenIdle();
+    if (signal.aborted) {
+      writeCancelledResult(output, request.request_id, String(sessionId));
+      return;
+    }
     firstSeq = handle.agent.session.seq + 1;
     disposeEvent = ctx.on('session/event', onSessionEvent);
     await handle.agent.followup(createUserMessage({
@@ -288,6 +296,10 @@ async function execute(
       ...(failed === undefined ? {} : { error: failed }),
     });
   } catch (error: unknown) {
+    if (signal.aborted) {
+      writeCancelledResult(output, request.request_id, String(sessionId));
+      return;
+    }
     writeFrame(output, {
       v: 1,
       type: 'result',
@@ -394,6 +406,7 @@ export function apply(ctx: Context): void {
 export const internals = {
   contentText,
   emitSessionEvent,
+  execute,
   listModelCatalog,
   resultStatus,
   resultError,

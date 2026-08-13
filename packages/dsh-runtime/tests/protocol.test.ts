@@ -123,4 +123,65 @@ describe('@open-design/dsh-runtime protocol', () => {
     assert.equal(internals.resultError({ kind: 'completed' }), undefined);
     assert.equal(internals.resultError({ kind: 'aborted', reason: { kind: 'user' } }), undefined);
   });
+
+  test('cancels a resumed request during restore without starting its follow-up turn', async () => {
+    let finishRestore!: () => void;
+    const restoring = new Promise<void>((resolveRestore) => { finishRestore = resolveRestore; });
+    let followupCalls = 0;
+    let disposeCalls = 0;
+    const handle = {
+      agent: {
+        session: { seq: 7 },
+        whenIdle: () => restoring,
+        followup: async () => { followupCalls += 1; },
+      },
+      dispose: async () => { disposeCalls += 1; },
+    };
+    const ctx = {
+      agentDefaultModel: {
+        currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      },
+      agents: {
+        resume: async () => handle,
+      },
+      on: () => () => {},
+      sessions: { flush: async () => {} },
+    };
+    const chunks: string[] = [];
+    const abort = new AbortController();
+    const execution = internals.execute(ctx as never, {
+      v: 1,
+      type: 'execute',
+      request_id: 'run-restore-cancel',
+      cwd: '/project',
+      prompt: 'do not start',
+      mcp_servers: [],
+      resume_session_id: 'session-1',
+    }, { write: (chunk: string) => chunks.push(chunk) }, () => {}, abort.signal);
+
+    await Promise.resolve();
+    abort.abort();
+    finishRestore();
+    await execution;
+
+    assert.equal(followupCalls, 0);
+    assert.equal(disposeCalls, 1);
+    assert.deepEqual(chunks.map((chunk) => JSON.parse(chunk) as unknown), [
+      {
+        v: 1,
+        type: 'session',
+        request_id: 'run-restore-cancel',
+        session_id: 'session-1',
+        resumed: true,
+      },
+      {
+        v: 1,
+        type: 'result',
+        request_id: 'run-restore-cancel',
+        status: 'cancelled',
+        session_id: 'session-1',
+        resume_rejected: false,
+      },
+    ]);
+  });
 });
