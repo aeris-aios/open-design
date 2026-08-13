@@ -561,7 +561,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const rawContent = (style.content || "").trim();
     const content = rawContent.toLowerCase();
     const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
-    const materializeEntirePseudo = hasCssMask(style);
+    const materializeEntirePseudo = hasCssMask(style) || dependsOnBackdrop(style);
     if (
       !isGenerated ||
       (style.position !== "absolute" && style.position !== "fixed") ||
@@ -638,9 +638,9 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("scale", style.scale || "none", "important");
     background.style.setProperty("z-index", style.zIndex || "auto", "important");
     if (materializeEntirePseudo) {
-      // A CSS mask applies to the pseudo's complete painted output, including
-      // generated text and borders. Copy the computed pseudo style onto the
-      // real capture helper so Chromium rasterizes that output as one layer.
+      // Masks, blend modes, and backdrop filters apply to the pseudo's complete
+      // painted output, including generated text and borders. Copy the computed
+      // pseudo style so Chromium rasterizes that output as one layer.
       for (let index = 0; index < style.length; index += 1) {
         const property = style.item(index);
         if (property === "content") continue;

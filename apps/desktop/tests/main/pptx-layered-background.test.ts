@@ -511,6 +511,23 @@ describe('editable PPTX layered backgrounds', () => {
     expect(materialized?.centerRgb, JSON.stringify(materialized)).toEqual([64, 96, 64]);
   }, 30_000);
 
+  test('captures non-empty backdrop-dependent pseudos with their Chromium-painted foregrounds', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.compositedPseudoContent.pngs;
+
+    expect(media.compositedPseudoContent, JSON.stringify(media.compositedPseudoContent)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    // The PPTX path resamples Chromium's 2x capture when embedding it, so
+    // compare bounded pixel error rather than requiring byte-identical PNGs.
+    const comparison = media.compositedPseudoContentChromiumComparison;
+    const comparisonContext = JSON.stringify({ chromium: media.compositedPseudoContentChromium, exported: image });
+    expect(comparison.meanChannelDelta, comparisonContext).toBeLessThanOrEqual(8);
+    expect(comparison.maxChannelDelta, comparisonContext).toBeLessThanOrEqual(160);
+    expect(media.compositedPseudoContentNativeContent).toBe(-1);
+  }, 30_000);
+
   test('keeps a materialized pseudo fallback in its PNG without a duplicate native fill', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.materializedOpaquePseudo.pngs;
@@ -716,6 +733,10 @@ type LayeredBackgroundProbe = {
   blended: LayeredBackgroundExport;
   composited: LayeredBackgroundExport;
   compositedMaskedPseudo: LayeredBackgroundExport;
+  compositedPseudoContent: LayeredBackgroundExport;
+  compositedPseudoContentChromium: PngProbe;
+  compositedPseudoContentChromiumComparison: PngComparison;
+  compositedPseudoContentNativeContent: number;
   groupedBackdrop: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   maskedNativeContent: number;
@@ -746,6 +767,11 @@ type LayeredBackgroundProbe = {
 };
 
 type PptxGeometry = { height: number; width: number; x: number; y: number };
+
+type PngComparison = {
+  maxChannelDelta: number;
+  meanChannelDelta: number;
+};
 
 type LayeredBackgroundExport = { captures: number; media: string[]; pngs: PngProbe[] };
 
@@ -808,6 +834,7 @@ const fixtures = {
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked">Masked real content</div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
+  compositedPseudoContent: '<div class="composited-pseudo-content"></div>',
   skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
   backdropFiltered: '<div class="filtered-backdrop"></div><div class="backdrop-filtered"></div>',
   backgroundBlendPseudo: '<div class="background-blend-pseudo"></div>',
@@ -1097,6 +1124,29 @@ const styles = \`
     background-image: linear-gradient(rgba(128, 128, 128, .5), rgba(128, 128, 128, .5)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
+  .composited-pseudo-content {
+    position: absolute;
+    left: 138px;
+    top: 16px;
+    width: 36px;
+    height: 32px;
+    background: rgb(128, 192, 128);
+  }
+  .composited-pseudo-content::after {
+    content: 'BlendX';
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgb(240, 240, 240);
+    color: white;
+    font: 700 9px sans-serif;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(rgb(128, 192, 128), rgb(128, 192, 128));
+    background-blend-mode: multiply;
+    mix-blend-mode: multiply;
+  }
   .replaced {
     position: absolute;
     left: 160px;
@@ -1202,7 +1252,7 @@ function zipEntries(pptxBase64) {
 function inspectMedia(pptxBase64) {
   return zipEntries(pptxBase64)
     .filter(({ name }) => /^ppt\\/media\\/.+\\.(?:gif|jpe?g|png|svg)$/.test(name))
-    .map(({ data, name }) => ({ name, png: name.endsWith('.png') ? inspectPng(data, name) : null }));
+    .map(({ data, name }) => ({ data, name, png: name.endsWith('.png') ? inspectPng(data, name) : null }));
 }
 
 function inspectPng(data, name) {
@@ -1227,6 +1277,32 @@ function inspectPng(data, name) {
   const topLeftOffset = (Math.min(height - 1, 8) * width + Math.min(width - 1, 8)) * 4;
   const topLeftRgb = [bitmap[topLeftOffset + 2], bitmap[topLeftOffset + 1], bitmap[topLeftOffset]];
   return { centerRgb, height, maxAlpha, minAlpha, name, opaquePixels, topLeftRgb, translucentPixels, transparentPixels, width };
+}
+
+function comparePng(referenceData, exportedData) {
+  const reference = nativeImage.createFromBuffer(referenceData);
+  const exported = nativeImage.createFromBuffer(exportedData);
+  const referenceSize = reference.getSize();
+  const exportedSize = exported.getSize();
+  if (referenceSize.width !== exportedSize.width || referenceSize.height !== exportedSize.height) {
+    throw new Error('Cannot compare PNGs with different dimensions: ' + JSON.stringify({ referenceSize, exportedSize }));
+  }
+  const referenceBitmap = reference.toBitmap();
+  const exportedBitmap = exported.toBitmap();
+  let maxChannelDelta = 0;
+  let totalChannelDelta = 0;
+  for (let offset = 0; offset < referenceBitmap.length; offset += 4) {
+    for (let channel = 0; channel < 4; channel += 1) {
+      const delta = Math.abs(referenceBitmap[offset + channel] - exportedBitmap[offset + channel]);
+      maxChannelDelta = Math.max(maxChannelDelta, delta);
+      totalChannelDelta += delta;
+    }
+  }
+  const pixels = referenceSize.width * referenceSize.height;
+  return {
+    maxChannelDelta,
+    meanChannelDelta: totalChannelDelta / (pixels * 4),
+  };
 }
 
 function inspectPseudoLayerOrder(entries, mediaName) {
@@ -1369,6 +1445,21 @@ app.whenReady().then(async () => {
     const prepared = await window.webContents.executeJavaScript(${JSON.stringify(prepareSource)}, true);
     if (!prepared?.prepared || prepared.error) throw new Error(prepared?.error || 'PPTX DOM normalization failed');
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
+    const compositedPseudoContentGeometry = await window.webContents.executeJavaScript(
+      '(() => { const rect = document.querySelector(".composited-pseudo-content").getBoundingClientRect(); return { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }; })()',
+      true,
+    );
+    const compositedPseudoContentScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
+      captureBeyondViewport: true,
+      clip: { ...compositedPseudoContentGeometry, scale: 1 },
+      format: 'png',
+      fromSurface: true,
+    });
+    const compositedPseudoContentChromiumData = Buffer.from(compositedPseudoContentScreenshot.data, 'base64');
+    const compositedPseudoContentChromium = inspectPng(
+      compositedPseudoContentChromiumData,
+      'chromium-composited-pseudo-content.png',
+    );
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
     const targetCounts = await window.webContents.executeJavaScript(
@@ -1491,6 +1582,16 @@ app.whenReady().then(async () => {
     result.nestedOpacityNativeContent = inspectNativeContent(entries, 'Native nested opacity label');
     result.nestedOpacityNativeShape = inspectNativeContent(entries, 'val="00FF00"');
     result.maskedNativeContent = inspectNativeContent(entries, 'Masked real content');
+    result.compositedPseudoContentChromium = compositedPseudoContentChromium;
+    const compositedPseudoContentMedia = media.find(
+      ({ name }) => name === result.compositedPseudoContent?.media?.[0],
+    );
+    if (!compositedPseudoContentMedia) throw new Error('Missing exported composited pseudo media');
+    result.compositedPseudoContentChromiumComparison = comparePng(
+      compositedPseudoContentChromiumData,
+      compositedPseudoContentMedia.data,
+    );
+    result.compositedPseudoContentNativeContent = inspectNativeContent(entries, 'BlendX');
     result.materializedOpaquePseudoNativeFill = inspectNativeContent(entries, 'val="F232A0"');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
@@ -1613,6 +1714,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.maskedPseudoContentOrder.sibling !== 'number'
     || !('composited' in value)
     || !('compositedMaskedPseudo' in value)
+    || !('compositedPseudoContent' in value)
+    || !('compositedPseudoContentChromium' in value)
+    || typeof value.compositedPseudoContentChromium !== 'object'
+    || value.compositedPseudoContentChromium === null
+    || !('compositedPseudoContentChromiumComparison' in value)
+    || typeof value.compositedPseudoContentChromiumComparison !== 'object'
+    || value.compositedPseudoContentChromiumComparison === null
+    || !('compositedPseudoContentNativeContent' in value)
+    || typeof value.compositedPseudoContentNativeContent !== 'number'
     || !('groupedBackdrop' in value)
     || !('pseudoLayerOrder' in value)
     || typeof value.pseudoLayerOrder !== 'object'
@@ -1664,6 +1774,11 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     blended: parseLayeredBackgroundExport(value.blended),
     composited: parseLayeredBackgroundExport(value.composited),
     compositedMaskedPseudo: parseLayeredBackgroundExport(value.compositedMaskedPseudo),
+    compositedPseudoContent: parseLayeredBackgroundExport(value.compositedPseudoContent),
+    compositedPseudoContentChromium: value.compositedPseudoContentChromium as PngProbe,
+    compositedPseudoContentChromiumComparison:
+      value.compositedPseudoContentChromiumComparison as PngComparison,
+    compositedPseudoContentNativeContent: value.compositedPseudoContentNativeContent,
     groupedBackdrop: parseLayeredBackgroundExport(value.groupedBackdrop),
     masked: parseLayeredBackgroundExport(value.masked),
     maskedNativeContent: value.maskedNativeContent,
