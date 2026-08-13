@@ -13238,6 +13238,10 @@ function HtmlViewer({
       ?? commentPanelToggleRef.current
       ?? toolbarMoreTriggerRef.current;
     setCommentPanelOpen(false);
+    // 收起 must only put the panel away. While a composer popover is open
+    // (e.g. the panel was expanded via its 查看全部评论 control), tearing down
+    // board mode here would also close that popover mid-composition.
+    if (activeCommentTarget) return;
     setCommentCreateMode(false);
     setBoardMode(false);
     clearBoardComposer();
@@ -14447,6 +14451,10 @@ function HtmlViewer({
         setHoveredPodMemberId((current) => (current === elementId ? null : current));
       }}
       onHoverMember={setHoveredPodMemberId}
+      onViewAllComments={() => {
+        setCommentPanelOpen(true);
+        setCommentSidePanelCollapsed(false);
+      }}
       onDeleteComment={onRemovePreviewComment ? async (commentId) => {
         const removed = await onRemovePreviewComment(commentId);
         if (!removed) return;

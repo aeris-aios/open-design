@@ -2108,6 +2108,7 @@ export const fr: Dict = {
   'chat.comments.removeAttachmentAria': 'Retirer le commentaire attaché pour {name}',
   'chat.comments.comment': 'Commentaire',
   'chat.comments.sendToChat': 'Envoyer au chat',
+  'chat.comments.viewAll': 'Voir tous les commentaires',
   'chat.comments.sending': 'Envoi…',
   'chat.comments.edit': 'Modifier',
   'chat.comments.select': 'Sélectionner',

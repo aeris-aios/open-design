@@ -2108,6 +2108,7 @@ export const hu: Dict = {
   'chat.comments.removeAttachmentAria': 'Megjegyzéscsatolmány eltávolítása ehhez: {name}',
   'chat.comments.comment': 'Megjegyzés',
   'chat.comments.sendToChat': 'Küldés a csevegésbe',
+  'chat.comments.viewAll': 'Összes megjegyzés megtekintése',
   'chat.comments.sending': 'Küldés…',
   'chat.comments.edit': 'Szerkesztés',
   'chat.comments.select': 'Kijelölés',

@@ -1723,6 +1723,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.comment-popover-view-all {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.comment-popover-view-all:hover {
+  color: var(--text);
+}
 .comment-popover-drag-handle {
   flex: 0 0 auto;
   display: inline-flex;
