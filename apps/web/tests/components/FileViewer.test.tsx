@@ -7387,7 +7387,10 @@ describe('FileViewer tweaks toolbar', () => {
     act(() => {
       window.dispatchEvent(new MessageEvent('message', {
         source: urlFrame.contentWindow,
-        data: { type: 'od:url-selection-bridge-ready' },
+        data: {
+          type: 'od:url-selection-bridge-ready',
+          href: new URL(urlFrame.getAttribute('src') ?? '', window.location.href).href,
+        },
       }));
     });
 
@@ -7795,7 +7798,10 @@ describe('FileViewer tweaks toolbar', () => {
     act(() => {
       window.dispatchEvent(new MessageEvent('message', {
         source: urlFrame.contentWindow,
-        data: { type: 'od:url-selection-bridge-ready' },
+        data: {
+          type: 'od:url-selection-bridge-ready',
+          href: new URL(urlFrame.getAttribute('src') ?? '', window.location.href).href,
+        },
       }));
     });
 
@@ -7822,6 +7828,133 @@ describe('FileViewer tweaks toolbar', () => {
 
     const urlFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     expect(urlFrame.getAttribute('data-od-render-mode')).toBe('url-load');
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+
+    const srcDocFrame = await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return frame;
+    });
+    expect(srcDocFrame.srcdoc).toContain('data-od-selection-bridge');
+  });
+
+  it('ignores stale URL selection bridge readiness after the preview URL changes and falls back to srcDoc comments', async () => {
+    const { rerender } = render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile({ mtime: 1710000001 })}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const urlFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(urlFrame.getAttribute('data-od-render-mode')).toBe('url-load');
+    const srcA = urlFrame.getAttribute('src') ?? '';
+    expect(srcA).toContain('odPreviewBridge=selection');
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: urlFrame.contentWindow,
+        data: {
+          type: 'od:url-selection-bridge-ready',
+          href: new URL(srcA, window.location.href).href,
+        },
+      }));
+    });
+
+    // Same file with a new mtime keeps the pooled iframe element and its
+    // WindowProxy; only the src (v=/odPreviewEpoch cache bust) changes.
+    rerender(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile({ mtime: 1710000002 })}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    await waitFor(() => {
+      expect(urlFrame.getAttribute('src')).not.toBe(srcA);
+    });
+
+    // The real navigation onLoad clears the latch and re-probes.
+    fireEvent.load(urlFrame);
+
+    // A ready posted by the PREVIOUS document (href A) must not re-latch the
+    // bridge for the currently committed document.
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: urlFrame.contentWindow,
+        data: {
+          type: 'od:url-selection-bridge-ready',
+          href: new URL(srcA, window.location.href).href,
+        },
+      }));
+    });
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+
+    const srcDocFrame = await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return frame;
+    });
+    expect(srcDocFrame.srcdoc).toContain('data-od-selection-bridge');
+  });
+
+  it('accepts a URL selection bridge ready matching the current preview URL', async () => {
+    const { rerender } = render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile({ mtime: 1710000001 })}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const urlFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const srcA = urlFrame.getAttribute('src') ?? '';
+
+    rerender(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile({ mtime: 1710000002 })}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+    await waitFor(() => {
+      expect(urlFrame.getAttribute('src')).not.toBe(srcA);
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: urlFrame.contentWindow,
+        data: {
+          type: 'od:url-selection-bridge-ready',
+          href: new URL(urlFrame.getAttribute('src') ?? '', window.location.href).href,
+        },
+      }));
+    });
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+
+    // A matching-href ready keeps Comment on the URL-load engine instead of
+    // falling back to srcdoc. od:comment-mode delivery to the URL frame is
+    // covered by the "keeps the URL-loaded preview mounted when opening
+    // comments" test.
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(urlFrame);
+      expect(urlFrame.getAttribute('data-od-render-mode')).toBe('url-load');
+    });
+  });
+
+  it('rejects a URL selection bridge ready without href and falls back to srcDoc comments', async () => {
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const urlFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(urlFrame.getAttribute('data-od-render-mode')).toBe('url-load');
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: urlFrame.contentWindow,
+        data: { type: 'od:url-selection-bridge-ready' },
+      }));
+    });
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
@@ -8044,10 +8177,10 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByText('Already sent to Claude')).toBeNull();
   });
 
-  it('does not render the comments drawer over the preview while waiting for a configured dock portal', () => {
+  it('keeps the mobile preview centered while waiting for a configured comments dock portal', () => {
     const { container } = render(
       <FileViewer
-        projectId="project-1"
+        projectId="project-mobile-comment-portal"
         projectKind="prototype"
         file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
@@ -8055,8 +8188,13 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Mobile' }));
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
+    expect(screen.getByTestId('comment-preview-layout').classList).not.toContain(
+      'comment-preview-layer-with-side-dock',
+    );
     expect(container.querySelector('.comment-preview-layer > .comment-side-panel')).toBeNull();
   });
 

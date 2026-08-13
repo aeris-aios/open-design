@@ -22,6 +22,7 @@ import {
 import type {
   AmrModelsResponse,
   ChatSessionMode,
+  LocalCatalogScope,
   RunContextSelection,
   TeamProject,
   WorkspaceCollabContext,
@@ -100,6 +101,7 @@ import {
 import {
   AMR_LOGIN_STATUS_EVENT,
   amrLoginStatusEventReason,
+  isAmrSessionAuthenticated,
 } from './components/amrLoginPolling';
 import { CollabDemoView } from './collab/CollabDemoView';
 import {
@@ -121,6 +123,7 @@ import {
   useWorkspaceBilling,
   useWorkspaceContext,
   workspaceIdentityCacheKey,
+  workspaceResourceReadContext,
 } from './collab/useWorkspaceContext';
 import {
   projectResourceReadsCanStart,
@@ -226,6 +229,9 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   metadata?: CreateInput['metadata'];
   pendingPrompt?: string;
   pluginId?: string;
+  pluginSource?: string;
+  skillCatalogScope?: LocalCatalogScope | null;
+  designSystemCatalogScope?: LocalCatalogScope | null;
   pluginType?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
@@ -1591,8 +1597,8 @@ function AppInner() {
     const next: AmrAuthRetryContinuation = {
       ...input,
       accountIdAtArm:
-        amrLoginStatusRef.current?.loggedIn === true
-          ? amrLoginStatusRef.current.user?.id ?? null
+        isAmrSessionAuthenticated(amrLoginStatusRef.current)
+          ? amrLoginStatusRef.current?.user?.id ?? null
           : null,
       createdAtMs: Date.now(),
     };
@@ -1646,14 +1652,15 @@ function AppInner() {
     options: { forceModelRefresh?: boolean; restartOnSignIn?: boolean } = {},
   ) => {
     const previousStatus = amrLoginStatusRef.current;
-    const wasLoggedIn = previousStatus?.loggedIn === true;
+    const wasLoggedIn = isAmrSessionAuthenticated(previousStatus);
+    const isLoggedIn = isAmrSessionAuthenticated(status);
     const pendingRetry = amrAuthRetryContinuationRef.current;
     const accountChangedWhileAuthorizing = Boolean(
       pendingRetry
       && (
-        (wasLoggedIn && status.loggedIn === false)
+        (wasLoggedIn && !isLoggedIn)
         || (
-          status.loggedIn === true
+          isLoggedIn
           && pendingRetry.accountIdAtArm !== null
           && status.user?.id !== pendingRetry.accountIdAtArm
         )
@@ -1668,7 +1675,7 @@ function AppInner() {
     if (
       pendingRetry
       && !accountChangedWhileAuthorizing
-      && status.loggedIn === true
+      && isLoggedIn
       && status.user?.id
       && (
         pendingRetry.accountIdAtArm === null
@@ -1690,7 +1697,7 @@ function AppInner() {
       }, { replace: true });
     }
     if (
-      status.loggedIn === true
+      isLoggedIn
       && (
         options.forceModelRefresh === true
         || (options.restartOnSignIn === true && !wasLoggedIn)
@@ -1761,7 +1768,7 @@ function AppInner() {
       agentId: config.agentId,
       agents: agents.map((a) => ({ id: a.id, available: a.available })),
       byokConfigured,
-      amrAuthorized: amrLoginStatus?.loggedIn === true,
+      amrAuthorized: isAmrSessionAuthenticated(amrLoginStatus),
     });
     analytics.setConfigureGlobals(globals);
   }, [
@@ -1915,13 +1922,37 @@ function AppInner() {
 
   useEffect(() => {
     analytics.setUserId(
-      amrLoginStatus?.loggedIn === true ? amrLoginStatus.user?.id ?? null : null,
+      isAmrSessionAuthenticated(amrLoginStatus) ? amrLoginStatus?.user?.id ?? null : null,
     );
   }, [analytics.setUserId, amrLoginStatus]);
 
   const handleAmrLoginStatusChange = useCallback((status: VelaLoginStatus | null) => {
     if (status) applyAmrLoginStatus(status, { restartOnSignIn: true });
   }, [applyAmrLoginStatus]);
+
+  useEffect(() => {
+    const usesOpenDesignCloud =
+      config.mode === 'daemon'
+      && config.agentId === AMR_AGENT_ID;
+    const cloudIdentityRejected =
+      workspaceContextState.failure === 'reauth-required'
+      || (
+        usesOpenDesignCloud
+        && (
+          amrLoginStatus?.loggedIn === false
+          || amrLoginStatus?.sessionState === 'reauth_required'
+        )
+      );
+    if (!cloudIdentityRejected) return;
+    if (route.kind === 'home' && route.view === 'onboarding') return;
+    navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
+  }, [
+    amrLoginStatus,
+    config.agentId,
+    config.mode,
+    route,
+    workspaceContextState.failure,
+  ]);
 
   // Bootstrap — detect daemon, then fan out independent fetches so each
   // entry-view tab can render the moment its own data lands. Earlier this
@@ -2860,26 +2891,15 @@ function AppInner() {
       let optimisticProjectId: string | null = null;
       let result;
       try {
-        const executionConfig = configRef.current;
-        const usesAmrCloud =
-          executionConfig.mode === 'daemon'
-          && executionConfig.agentId === AMR_AGENT_ID;
-        const isExplicitlySignedOut =
-          amrLoginStatusRef.current?.loggedIn === false;
-        createWorkspaceContext = resolvedWorkspaceContextForWrite(
-          workspaceContextStateRef.current,
-          {
-            // Local/BYOK may create without AMR Workspace authority only after
-            // the independent login read explicitly proves there is no AMR
-            // identity. An unknown or signed-in identity can still own a Team
-            // Workspace whose directory read is merely slow/unavailable, so
-            // executor selection must not silently turn that Team project into
-            // an unscoped Personal one. Unsupported/settled no-workspace states
-            // already retain their explicit compatibility behavior below.
-            unavailablePolicy:
-              !usesAmrCloud && isExplicitlySignedOut ? 'unscoped' : 'reject',
-          },
-        );
+        // PRODUCT INVARIANT: ordinary project creation is local. Reuse a
+        // current in-memory Workspace snapshot for `personal` + `local_only`
+        // attribution when available, but never start identity discovery or
+        // block creation on Workspace availability. Remote share/sync/move
+        // operations retain their authoritative gates.
+        const createWorkspaceState = workspaceContextStateRef.current;
+        createWorkspaceContext = createWorkspaceState.failure === 'unsupported'
+          ? null
+          : workspaceResourceReadContext(createWorkspaceState);
         if (
           input.amrGatePrecheckWitness &&
           !amrBalanceGateScopesMatch(
@@ -2937,11 +2957,18 @@ function AppInner() {
           ...(optimisticProjectId ? { id: optimisticProjectId } : {}),
           name: input.name,
           skillId: input.skillId,
+          ...(input.skillCatalogScope
+            ? { skillCatalogScope: input.skillCatalogScope }
+            : {}),
           designSystemId: input.designSystemId,
+          ...(input.designSystemCatalogScope
+            ? { designSystemCatalogScope: input.designSystemCatalogScope }
+            : {}),
           pendingPrompt: derivedPendingPrompt,
           metadata,
           ...(input.conversationMode ? { conversationMode: input.conversationMode } : {}),
           ...(input.pluginId ? { pluginId: input.pluginId } : {}),
+          ...(input.pluginSource ? { pluginSource: input.pluginSource } : {}),
           ...(input.appliedPluginSnapshotId
             ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
             : {}),
@@ -5118,6 +5145,7 @@ function AppInner() {
         agents={agents}
         agentsLoading={agentsLoading}
         amrLoggedIn={amrLoginStatus?.loggedIn ?? null}
+        amrSessionState={amrLoginStatus?.sessionState}
         amrAccountPlan={
           amrLoginStatus?.account?.plan?.trim()
           || amrLoginStatus?.user?.plan?.trim()
@@ -5258,7 +5286,7 @@ function AppInner() {
         plan={resolvedAmrPlan}
         planResolved={
           amrLoginStatus !== null
-          && (amrLoginStatus.loggedIn === false || resolvedAmrPlan !== null)
+          && (!isAmrSessionAuthenticated(amrLoginStatus) || resolvedAmrPlan !== null)
         }
         profile={amrLoginStatus?.profile ?? null}
         metricsConsent={config.telemetry?.metrics === true}

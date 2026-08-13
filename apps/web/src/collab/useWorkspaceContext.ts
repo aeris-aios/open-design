@@ -78,7 +78,7 @@ export interface WorkspaceContextState {
    * workspace answer is unknown; write paths must fail closed instead of
    * treating that outage as an anonymous identity.
    */
-  failure?: 'unsupported' | 'unavailable';
+  failure?: 'unsupported' | 'unavailable' | 'reauth-required';
 }
 
 /**
@@ -353,25 +353,11 @@ export interface CurrentWorkspaceContextReadWitness {
   isStillCurrent: () => boolean;
 }
 
-/**
- * Resolve the Workspace selected by this browser tab from the account
- * directory, without waiting for the shell's richer `/workspace/context`
- * projection to commit to React state.
- *
- * This is an authorization witness, not a display cache: the directory read
- * verifies the exact Workspace/member pair and the returned lifetime closes
- * over both the account/context generation and the tab-local selection. A
- * concurrent sign-in or Workspace switch therefore invalidates an in-flight
- * project action before it may commit.
- */
-export async function resolveCurrentWorkspaceContextReadWitness(
-  options: { fresh?: boolean } = {},
-): Promise<CurrentWorkspaceContextReadWitness> {
-  const requestToken = workspaceContextRequestToken;
-  const accountGeneration = currentWorkspaceAccountGeneration();
-  const directory = await readWorkspaceDirectoryForCurrentGeneration(options);
-  const selected = chooseWorkspaceForTab(directory.items ?? []);
-  const context = selected ? workspaceContextFromDirectoryItem(selected) : null;
+function createCurrentWorkspaceContextReadWitness(
+  context: WorkspaceCollabContext | null,
+  requestToken: string,
+  accountGeneration: number,
+): CurrentWorkspaceContextReadWitness {
   const selectedWorkspaceId = context?.workspaceId ?? null;
   const selectedWorkspaceMemberId = context?.workspaceMemberId ?? null;
   return {
@@ -381,13 +367,63 @@ export async function resolveCurrentWorkspaceContextReadWitness(
         workspaceContextRequestToken !== requestToken
         || currentWorkspaceAccountGeneration() !== accountGeneration
       ) return false;
-      const currentSelection = readWorkspaceSelection();
+      const currentSelection = readWorkspaceSelectionResult();
+      // The directory-backed identity remains authoritative in memory when a
+      // privacy-restricted browser disables sessionStorage. An available
+      // store still guards explicit tab selection changes below.
+      if (!currentSelection.available) return true;
       return context
-        ? currentSelection?.workspaceId === selectedWorkspaceId
-          && currentSelection.workspaceMemberId === selectedWorkspaceMemberId
-        : currentSelection === null;
+        ? currentSelection.selection?.workspaceId === selectedWorkspaceId
+          && currentSelection.selection.workspaceMemberId === selectedWorkspaceMemberId
+        : currentSelection.selection === null;
     },
   };
+}
+
+/**
+ * Reuse the identity last established by the directory-backed shell state.
+ * This is the steady-state submit path: no new directory request is needed.
+ * The witness protects the client from local account/selection races; mutation
+ * routes still perform the final authorization check in the daemon.
+ */
+export function workspaceContextReadWitnessFromState(
+  state: Pick<WorkspaceContextState, 'resourceReadIdentity'>,
+): CurrentWorkspaceContextReadWitness | null {
+  const identity = state.resourceReadIdentity;
+  if (!identity || identity.generation !== workspaceContextRequestToken) return null;
+  const witness = createCurrentWorkspaceContextReadWitness(
+    identity.context,
+    identity.generation,
+    currentWorkspaceAccountGeneration(),
+  );
+  return witness.isStillCurrent() ? witness : null;
+}
+
+/**
+ * Resolve the Workspace selected by this browser tab from the account
+ * directory, without waiting for the shell's richer `/workspace/context`
+ * projection to commit to React state.
+ *
+ * This is a client-side selection witness, not the final authorization check:
+ * the directory read identifies the exact Workspace/member pair and the
+ * returned lifetime closes over both the account/context generation and the
+ * tab-local selection. A concurrent sign-in or Workspace switch therefore
+ * invalidates an in-flight project action before it may commit; mutation
+ * routes independently re-authorize the claimed pair in the daemon.
+ */
+export async function resolveCurrentWorkspaceContextReadWitness(
+  options: { fresh?: boolean } = {},
+): Promise<CurrentWorkspaceContextReadWitness> {
+  const requestToken = workspaceContextRequestToken;
+  const accountGeneration = currentWorkspaceAccountGeneration();
+  const directory = await readWorkspaceDirectoryForCurrentGeneration(options);
+  const selected = chooseWorkspaceForTab(directory.items ?? []);
+  const context = selected ? workspaceContextFromDirectoryItem(selected) : null;
+  return createCurrentWorkspaceContextReadWitness(
+    context,
+    requestToken,
+    accountGeneration,
+  );
 }
 
 // Last successfully-resolved workspace context, kept at module scope so it
@@ -407,10 +443,27 @@ interface WorkspaceSelection {
   workspaceMemberId: string;
 }
 
-function readWorkspaceSelection(): WorkspaceSelection | null {
-  if (typeof window === 'undefined') return null;
+// `undefined` means storage is authoritative. A value (including null) means
+// the latest write failed and this tab's in-memory choice is authoritative.
+let inMemoryWorkspaceSelection: WorkspaceSelection | null | undefined;
+
+type WorkspaceSelectionRead =
+  | { available: true; selection: WorkspaceSelection | null }
+  | { available: false; selection: null };
+
+function readWorkspaceSelectionResult(): WorkspaceSelectionRead {
+  if (typeof window === 'undefined') return { available: true, selection: null };
+  if (inMemoryWorkspaceSelection !== undefined) {
+    return { available: true, selection: inMemoryWorkspaceSelection };
+  }
+  let storedSelection: string | null;
   try {
-    const raw = JSON.parse(window.sessionStorage.getItem(WORKSPACE_SELECTION_SESSION_KEY) ?? 'null') as {
+    storedSelection = window.sessionStorage.getItem(WORKSPACE_SELECTION_SESSION_KEY);
+  } catch {
+    return { available: false, selection: null };
+  }
+  try {
+    const raw = JSON.parse(storedSelection ?? 'null') as {
       workspaceId?: unknown;
       workspaceMemberId?: unknown;
     } | null;
@@ -418,22 +471,31 @@ function readWorkspaceSelection(): WorkspaceSelection | null {
       typeof raw?.workspaceId === 'string' ? raw.workspaceId.trim() : '';
     const workspaceMemberId =
       typeof raw?.workspaceMemberId === 'string' ? raw.workspaceMemberId.trim() : '';
-    return workspaceId && workspaceMemberId
-      ? { workspaceId, workspaceMemberId }
-      : null;
+    return {
+      available: true,
+      selection: workspaceId && workspaceMemberId
+        ? { workspaceId, workspaceMemberId }
+        : null,
+    };
   } catch {
-    return null;
+    return { available: true, selection: null };
   }
+}
+
+function readWorkspaceSelection(): WorkspaceSelection | null {
+  return readWorkspaceSelectionResult().selection;
 }
 
 function writeWorkspaceSelection(selection: WorkspaceSelection | null): void {
   if (typeof window === 'undefined') return;
+  inMemoryWorkspaceSelection = selection ? { ...selection } : null;
   try {
     if (selection) {
       window.sessionStorage.setItem(WORKSPACE_SELECTION_SESSION_KEY, JSON.stringify(selection));
     } else {
       window.sessionStorage.removeItem(WORKSPACE_SELECTION_SESSION_KEY);
     }
+    inMemoryWorkspaceSelection = undefined;
   } catch {
     // A tab with unavailable sessionStorage still remains isolated in memory.
   }
@@ -490,6 +552,7 @@ export function resetWorkspaceContextCache(): void {
   workspaceAccountGeneration = 0;
   workspaceAccountGenerationStamp = 'initial';
   resetWorkspaceContextRetrySchedules();
+  inMemoryWorkspaceSelection = undefined;
   writeWorkspaceSelection(null);
 }
 
@@ -736,7 +799,9 @@ export function useWorkspaceContext(): WorkspaceContextState {
       // last-known context instead of flashing the signed-out state. A never-
       // signed-in / personal user has a null cache, so this still shows the local
       // state for them.
-      const unsupported = (error as { status?: unknown })?.status === 404;
+      const status = (error as { status?: unknown })?.status;
+      const unsupported = status === 404;
+      const reauthRequired = status === 401 || status === 403;
       setState({
         context: cachedWorkspaceContext,
         resourceReadIdentity:
@@ -748,13 +813,17 @@ export function useWorkspaceContext(): WorkspaceContextState {
             : null,
         loading: false,
         identityChangePending: workspaceContextIdentityChangePending,
-        failure: unsupported ? 'unsupported' : 'unavailable',
+        failure: unsupported
+          ? 'unsupported'
+          : reauthRequired
+            ? 'reauth-required'
+            : 'unavailable',
       });
       // An `unsupported` daemon has no workspace endpoint — retrying is
       // pointless. A transient `unavailable` outage arms the shared jittered
       // backoff so the shell recovers on its own without waiting for the 30s
       // poll or a focus event.
-      if (!unsupported) scheduleWorkspaceContextRetry(requestGeneration);
+      if (!unsupported && !reauthRequired) scheduleWorkspaceContextRetry(requestGeneration);
     }
   }, []);
 

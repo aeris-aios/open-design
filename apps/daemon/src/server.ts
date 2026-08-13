@@ -379,6 +379,7 @@ import {
   registerBuiltInAtomWorkers,
   registerBundledPlugins,
   registryRootsForDataDir,
+  resolveLocalPluginBySource,
   restoreProjectSnapshotLink,
   resolvePluginSnapshot,
   runPipelineForRun,
@@ -548,7 +549,13 @@ import {
   readAllTokens,
   setToken,
 } from './mcp-tokens.js';
-import { agentCliEnvForAgent, readAppConfig, readPluginEnvKnobs, writeAppConfig } from './app-config.js';
+import {
+  agentCliEnvForAgent,
+  readAppConfig,
+  readAppConfigSync,
+  readPluginEnvKnobs,
+  writeAppConfig,
+} from './app-config.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
 import {
@@ -3055,12 +3062,20 @@ export async function startServer({
   // recorded in — and a project-scoped collab call may only be pinned to — a
   // workspace that can actually host a team plane. See collab/team-share-scope.ts.
   const workspaceTypes = createWorkspaceTypeRegistry();
+  const configuredAmrEnv = () =>
+    agentCliEnvForAgent(readAppConfigSync(RUNTIME_DATA_DIR).agentCliEnv, 'amr');
   const workspaceDirectoryAuthority = createWorkspaceDirectoryAuthorityBroker({
     fetchDirectory: async () => {
-      const result = await fetchVelaWorkspaceDirectory();
+      const result = await fetchVelaWorkspaceDirectory({
+        configuredEnv: configuredAmrEnv(),
+      });
       if (result.ok) workspaceTypes.learn(result.items);
       return result;
     },
+    identityKey: () => velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    ),
     onDecision: (input) => recordWorkspaceAuthorityDecision({
       mode: workspaceAuthorityCacheMode,
       ...input,
@@ -3320,7 +3335,10 @@ export async function startServer({
   );
   const workspaceExactContextCache = createWorkspaceExactContextCache({
     provider: workspaceContext,
-    identity: () => velaWorkspaceDirectoryIdentity(),
+    identity: () => velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    ),
     onDecision: (input) => recordWorkspaceAuthorityDecision({
       mode: workspaceAuthorityCacheMode,
       ...input,
@@ -7306,6 +7324,11 @@ export async function startServer({
         options.workspaceId,
         options.workspaceMemberId,
       ),
+      getLocalPluginBySource: (id, source) => getLocalPluginBySource(
+        db,
+        id,
+        source,
+      ),
     },
     events: projectEventDeps,
     ids: idDeps,
@@ -8234,6 +8257,16 @@ export async function startServer({
       (plugin) => plugin.id === id,
     ) ?? null;
   };
+  const getLocalPluginBySource = async (
+    dbHandle,
+    id: string,
+    source: string,
+  ) => resolveLocalPluginBySource({
+    db: dbHandle,
+    id,
+    source,
+    userPluginsRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
+  });
 
   registerPluginRoutes(app, {
     db,
@@ -8256,6 +8289,7 @@ export async function startServer({
       listInstalledPlugins: listWorkspacePlugins,
       getInstalledPlugin,
       getWorkspacePlugin: getWorkspacePluginForRequest,
+      getLocalPluginBySource,
       installPlugin,
       isSafePluginId,
       uninstallPlugin,
@@ -8375,6 +8409,75 @@ export async function startServer({
       typeof workspaceScope?.workspaceMemberId === 'string'
         ? workspaceScope.workspaceMemberId.trim()
         : '';
+    const metadata = project?.metadata;
+    const localCatalogScope = (value) => {
+      const workspaceId = typeof value?.workspaceId === 'string'
+        ? value.workspaceId.trim()
+        : '';
+      const workspaceMemberId = typeof value?.workspaceMemberId === 'string'
+        ? value.workspaceMemberId.trim()
+        : '';
+      return workspaceId && workspaceMemberId
+        ? { workspaceId, workspaceMemberId }
+        : null;
+    };
+    // Resource provenance is intentionally independent from project
+    // attribution. A Home selection can be staged while Workspace identity is
+    // transitioning; the daemon persists the local catalogue partition so
+    // the first run reads the same local record without waiting for identity
+    // discovery or treating this as remote membership authority.
+    const skillCatalogScope = localCatalogScope(metadata?.localCatalogScopes?.skill);
+    const designSystemCatalogScope = localCatalogScope(
+      metadata?.localCatalogScopes?.designSystem,
+    );
+    const designSystemWorkspaceId =
+      designSystemCatalogScope?.workspaceId ?? projectWorkspaceId;
+    const designSystemMemberId =
+      designSystemCatalogScope?.workspaceMemberId ?? projectCreatorMemberId;
+    const projectDesignSystemBinding = (summary) => {
+      if (!designSystemWorkspaceId || summary?.source === 'built-in') return null;
+      const logicalResourceId =
+        typeof summary?.id === 'string' ? summary.id.trim() : '';
+      if (!logicalResourceId) return null;
+      if (summary?.teamSynced === true) {
+        const canonicalTeamBinding = getWorkspaceResource(
+          db,
+          'design_system',
+          designSystemWorkspaceId,
+          workspaceTeamDesignSystemBindingResourceId(
+            designSystemWorkspaceId,
+            logicalResourceId,
+          ),
+        );
+        if (canonicalTeamBinding) return canonicalTeamBinding;
+      }
+      // Keep legacy rows readable while old local data converges to the
+      // Workspace-qualified Team envelope id.
+      return getWorkspaceResource(
+        db,
+        'design_system',
+        designSystemWorkspaceId,
+        logicalResourceId,
+      ) ?? null;
+    };
+    const designSystemVisibleToRun = (summary) => {
+      if (summary?.source === 'built-in') return true;
+      // A truly unbound local project is the legacy CLI/BYOK lane. Bound
+      // projects must resolve resources from their persisted project scope;
+      // shell/current Workspace state never participates.
+      if (!designSystemWorkspaceId) return true;
+      const binding = projectDesignSystemBinding(summary);
+      if (
+        !binding
+        || binding.resourceState === 'deleted'
+      ) {
+        return false;
+      }
+      if (binding.visibility === 'team') return true;
+      return binding.visibility === 'personal'
+        && Boolean(designSystemMemberId)
+        && binding.createdByWorkspaceMemberId?.trim() === designSystemMemberId;
+    };
     let appConfigForPrompt = null;
     try {
       appConfigForPrompt = await readAppConfig(RUNTIME_DATA_DIR);
@@ -8398,7 +8501,6 @@ export async function startServer({
     }
     const effectiveSkillId =
       typeof skillId === 'string' && skillId ? skillId : project?.skillId;
-    const metadata = project?.metadata;
     // Website Clone runs reproduce someone else's site: the fidelity target
     // is the original page. Treating a project/app design system as
     // authoritative would overwrite the cloned site's palette/typography
@@ -8420,22 +8522,18 @@ export async function startServer({
           allowAppDefault: project === null,
         });
     const effectiveDesignSystemId = designSystemSelection.id;
-    const projectResourceScope = projectWorkspaceId
-      ? {
-          workspaceId: projectWorkspaceId,
-          createdByWorkspaceMemberId: projectCreatorMemberId || null,
-        }
-      : null;
+    const skillResourceScope = skillCatalogScope ?? (
+      projectWorkspaceId
+        ? {
+            workspaceId: projectWorkspaceId,
+            workspaceMemberId: projectCreatorMemberId || null,
+          }
+        : null
+    );
     let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
     const loadAllSkills = async () => {
-      allSkillsPromise ??= projectResourceScope?.workspaceId
-        ? listAllSkillLikeEntries({
-            workspaceId: String(projectResourceScope.workspaceId),
-            workspaceMemberId:
-              typeof projectResourceScope.createdByWorkspaceMemberId === 'string'
-                ? projectResourceScope.createdByWorkspaceMemberId
-                : null,
-          })
+      allSkillsPromise ??= skillResourceScope
+        ? listAllSkillLikeEntries(skillResourceScope)
         : listAllSkillLikeEntries();
       return await allSkillsPromise;
     };
@@ -8696,18 +8794,34 @@ export async function startServer({
     let designSystemDigest = null;
     if (effectiveDesignSystemId) {
       const userDesignSystem = effectiveDesignSystemId.startsWith('user:');
-      const effectivePinnedScope = designSystemScope
-        ?? (
-          userDesignSystem && !projectWorkspaceId
-            ? {
-                schemaVersion: 1,
-                kind: 'local',
-                projectId: typeof projectId === 'string' ? projectId : '',
-                designSystemId: effectiveDesignSystemId,
-              }
-            : null
+      // A run with a captured scope must resolve that exact resource even if
+      // the project was later rebound. A legacy, unbound run without a
+      // catalog provenance remains local. Projects created during Workspace
+      // identity transitions intentionally use their immutable local catalog
+      // provenance instead: it identifies a local record, not Workspace
+      // membership or billing authority.
+      const localCatalogDesignSystemRun =
+        designSystemScope?.kind === 'local' && Boolean(designSystemCatalogScope);
+      const usePinnedDesignSystemScope = userDesignSystem
+        && !localCatalogDesignSystemRun
+        && (
+          designSystemScope !== null && designSystemScope !== undefined
+          || (!designSystemCatalogScope && !projectWorkspaceId)
         );
-      const pinnedResolution = userDesignSystem
+      const effectivePinnedScope = usePinnedDesignSystemScope
+        ? designSystemScope
+          ?? (
+            !projectWorkspaceId
+              ? {
+                  schemaVersion: 1,
+                  kind: 'local',
+                  projectId: typeof projectId === 'string' ? projectId : '',
+                  designSystemId: effectiveDesignSystemId,
+                }
+              : null
+          )
+        : null;
+      const pinnedResolution = usePinnedDesignSystemScope
         ? resolvePinnedRunDesignSystemScope({
             db,
             scope: effectivePinnedScope,
@@ -8715,16 +8829,8 @@ export async function startServer({
             userRoot: USER_DESIGN_SYSTEMS_DIR,
           })
         : null;
-      const designSystemListOptions = !userDesignSystem
-        ? (
-            projectWorkspaceId
-              ? {
-                  workspaceId: projectWorkspaceId,
-                  workspaceMemberId: projectCreatorMemberId || null,
-                }
-              : {}
-          )
-        : pinnedResolution?.ok && pinnedResolution.visibility === 'team'
+      const designSystemListOptions = usePinnedDesignSystemScope
+        ? pinnedResolution?.ok && pinnedResolution.visibility === 'team'
           ? {
               workspaceId: pinnedResolution.workspaceId,
               workspaceMemberId: pinnedResolution.workspaceMemberId,
@@ -8736,10 +8842,17 @@ export async function startServer({
                 workspaceMemberId: pinnedResolution.workspaceMemberId,
                 exactPersonal: true,
               }
-            : {};
-      const designSystemVisibleToPinnedRun = (system) => {
+            : {}
+        : designSystemWorkspaceId
+          ? {
+              workspaceId: designSystemWorkspaceId,
+              workspaceMemberId: designSystemMemberId || null,
+            }
+          : {};
+      const designSystemVisibleForRun = (system) => {
+        if (!usePinnedDesignSystemScope) return designSystemVisibleToRun(system);
         if (system?.source === 'built-in') return true;
-        if (!userDesignSystem || !pinnedResolution?.ok) return false;
+        if (!pinnedResolution?.ok) return false;
         return pinnedResolution.visibility === 'team'
           ? system.teamSynced === true
           : system.teamSynced !== true;
@@ -8748,7 +8861,7 @@ export async function startServer({
       let summary = systems.find(
         (system) =>
           system.id === effectiveDesignSystemId
-          && designSystemVisibleToPinnedRun(system),
+          && designSystemVisibleForRun(system),
       );
       if (summary?.source === 'user' && summary.teamSynced !== true) {
         await ensureUserDesignSystemWorkspaceProject(db, effectiveDesignSystemId);
@@ -8756,7 +8869,7 @@ export async function startServer({
         summary = systems.find(
           (system) =>
             system.id === effectiveDesignSystemId
-            && designSystemVisibleToPinnedRun(system),
+            && designSystemVisibleForRun(system),
         );
       }
       const editingOwnDraftDesignSystem =
@@ -8780,9 +8893,13 @@ export async function startServer({
         // live together inside `resolveDesignSystemAssets` so the whole
         // server-side asset-resolution path can be tested end-to-end
         // from real disk fixtures (see `tests/design-system-assets.test.ts`).
-        const scopedUserDesignSystemsRoot = pinnedResolution?.ok
-          ? pinnedResolution.root
-          : USER_DESIGN_SYSTEMS_DIR;
+        const resourceBinding = projectDesignSystemBinding(summary);
+        const scopedUserDesignSystemsRoot =
+          usePinnedDesignSystemScope && pinnedResolution?.ok
+            ? pinnedResolution.root
+            : designSystemWorkspaceId && resourceBinding?.visibility === 'team'
+              ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, designSystemWorkspaceId)
+              : USER_DESIGN_SYSTEMS_DIR;
         const assets = await resolveDesignSystemAssets(
           effectiveDesignSystemId,
           DESIGN_SYSTEMS_DIR,

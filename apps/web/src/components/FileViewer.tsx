@@ -8854,7 +8854,13 @@ function HtmlViewer({
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
-  const localCommentSideDockActive = commentPanelOpen && !commentPortalHost;
+  // A configured portal can take an effect / animation frame to resolve after
+  // Comment opens. Treating that short lookup window as a local-dock fallback
+  // briefly reflows the preview into a side-dock grid, which is especially
+  // visible as a leftward flash for centered tablet/mobile frames. The portal
+  // contract already suppresses the panel until its host exists, so keep the
+  // preview on the portal layout for the whole lookup window as well.
+  const localCommentSideDockActive = commentPanelOpen && !commentPortalId;
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
     sidePanelCollapsed: commentSidePanelCollapsed,
@@ -10364,8 +10370,19 @@ function HtmlViewer({
       const frame = urlPreviewIframeRef.current;
       if (ev.source !== frame?.contentWindow) return;
       if (frame.getAttribute('src') === 'about:blank') return;
-      const data = ev.data as { type?: string } | null;
+      const data = ev.data as { type?: string; href?: string } | null;
       if (data?.type !== 'od:url-selection-bridge-ready') return;
+      // The latch must describe the currently committed document's bridge, so
+      // the ready must carry and match the document href.
+      if (typeof data.href !== 'string' || data.href.length === 0) return;
+      let matches: boolean;
+      try {
+        matches = new URL(data.href, window.location.href).href
+          === new URL(frame.getAttribute('src') ?? '', window.location.href).href;
+      } catch {
+        return;
+      }
+      if (!matches) return;
       setUrlSelectionBridgeReady(true);
     }
     window.addEventListener('message', onMessage);
