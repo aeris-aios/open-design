@@ -396,6 +396,23 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
   }, 30_000);
 
+  test('keeps a slide-root layered pseudo background above the opaque slide background', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.rootPseudo.pngs;
+
+    expect(media.rootPseudo, JSON.stringify(media.rootPseudo)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(image?.translucentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(media.rootPseudoLayerOrder.slideBackground).toBeGreaterThanOrEqual(0);
+    expect(media.rootPseudoLayerOrder.background).toBeGreaterThanOrEqual(0);
+    expect(media.rootPseudoLayerOrder.content).toBeGreaterThanOrEqual(0);
+    expect(media.rootPseudoLayerOrder.slideBackground).toBeLessThan(media.rootPseudoLayerOrder.background);
+    expect(media.rootPseudoLayerOrder.background).toBeLessThan(media.rootPseudoLayerOrder.content);
+  }, 30_000);
+
   test('skips hidden, zero-sized, and off-slide layered backgrounds without aborting export', async () => {
     const media = await probeLayeredBackgroundMedia();
 
@@ -432,6 +449,8 @@ type LayeredBackgroundProbe = {
   masked: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
+  rootPseudo: LayeredBackgroundExport;
+  rootPseudoLayerOrder: { background: number; content: number; slideBackground: number };
   skippedTargets: number;
   supported: LayeredBackgroundExport;
 };
@@ -485,7 +504,15 @@ const fixtures = {
 };
 const styles = \`
   html, body { margin: 0; }
-  .slide { position: relative; width: 320px; height: 180px; overflow: hidden; background: #111; }
+  .slide { position: relative; width: 320px; height: 180px; overflow: hidden; background: #0d1117; }
+  .slide::before {
+    content: 'Root layered pseudo content';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    color: white;
+    background-image: radial-gradient(circle at 20% 20%, rgba(88,166,255,.5), transparent 30%), radial-gradient(circle at 80% 80%, rgba(163,113,247,.5), transparent 30%);
+  }
   .card { position: absolute; left: 170px; top: 90px; width: 140px; height: 80px; background: #24506f; }
   .supported, .pseudo, .masked, .composited { position: absolute; width: 120px; height: 60px; }
   .label { position: absolute; right: 8px; bottom: 8px; color: white; }
@@ -605,6 +632,18 @@ function inspectPseudoLayerOrder(entries, mediaName) {
   };
 }
 
+function inspectRootPseudoLayerOrder(entries, mediaName) {
+  const order = inspectPseudoLayerOrder(entries, mediaName);
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  return {
+    ...order,
+    content: slideXml.indexOf('Root layered pseudo content'),
+    // The slide's native fill and the explicit child shim can both carry this
+    // color. The last occurrence is the topmost opaque background shape.
+    slideBackground: slideXml.lastIndexOf('val="0D1117"'),
+  };
+}
+
 let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
@@ -664,6 +703,10 @@ app.whenReady().then(async () => {
       'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-probe]"), (probe) => [probe.getAttribute("data-od-probe"), probe.querySelectorAll("[data-od-pptx-layered-bg]").length]))',
       true,
     );
+    const rootPseudoCaptureCount = await window.webContents.executeJavaScript(
+      'Array.from(document.querySelector(".slide").children).filter((child) => child.getAttribute("data-od-pptx-pseudo") === "::before").length',
+      true,
+    );
     const entries = zipEntries(exported.b64);
     const media = inspectMedia(exported.b64);
     const usedMedia = new Set();
@@ -688,7 +731,8 @@ app.whenReady().then(async () => {
       };
     }
     const pseudoMedia = media.filter(
-      ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) > 100 && (png?.height ?? 0) > 40,
+      ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) > 100 && (png?.height ?? 0) > 40
+        && (png?.width ?? 0) < 300 && (png?.height ?? 0) < 170,
     );
     result.pseudo = {
       captures: captureCounts.pseudo,
@@ -696,6 +740,15 @@ app.whenReady().then(async () => {
       pngs: pseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
     result.pseudoLayerOrder = inspectPseudoLayerOrder(entries, pseudoMedia[0]?.name || '');
+    const rootPseudoMedia = media.filter(
+      ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
+    );
+    result.rootPseudo = {
+      captures: rootPseudoCaptureCount,
+      media: rootPseudoMedia.map(({ name }) => name).sort(),
+      pngs: rootPseudoMedia.flatMap(({ png }) => png ? [png] : []),
+    };
+    result.rootPseudoLayerOrder = inspectRootPseudoLayerOrder(entries, rootPseudoMedia[0]?.name || '');
     result.skippedTargets = targetCounts.skipped;
     probeResult = result;
   } finally {
@@ -770,6 +823,16 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.pseudoLayerOrder.background !== 'number'
     || !('content' in value.pseudoLayerOrder)
     || typeof value.pseudoLayerOrder.content !== 'number'
+    || !('rootPseudo' in value)
+    || !('rootPseudoLayerOrder' in value)
+    || typeof value.rootPseudoLayerOrder !== 'object'
+    || value.rootPseudoLayerOrder === null
+    || !('background' in value.rootPseudoLayerOrder)
+    || typeof value.rootPseudoLayerOrder.background !== 'number'
+    || !('content' in value.rootPseudoLayerOrder)
+    || typeof value.rootPseudoLayerOrder.content !== 'number'
+    || !('slideBackground' in value.rootPseudoLayerOrder)
+    || typeof value.rootPseudoLayerOrder.slideBackground !== 'number'
     || !('skippedTargets' in value)
     || typeof value.skippedTargets !== 'number'
   ) {
@@ -782,6 +845,12 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     pseudoLayerOrder: {
       background: value.pseudoLayerOrder.background,
       content: value.pseudoLayerOrder.content,
+    },
+    rootPseudo: parseLayeredBackgroundExport(value.rootPseudo),
+    rootPseudoLayerOrder: {
+      background: value.rootPseudoLayerOrder.background,
+      content: value.rootPseudoLayerOrder.content,
+      slideBackground: value.rootPseudoLayerOrder.slideBackground,
     },
     skippedTargets: value.skippedTargets,
     supported: parseLayeredBackgroundExport(value.supported),

@@ -1301,6 +1301,12 @@ export async function runDomToPptx(
   slideSelector: string,
   layeredBackgrounds: Record<string, LayeredPptxBackgroundCapture> = {},
 ): Promise<{ b64?: string; error?: string }> {
+  // dom-to-pptx fixes native ::before content at -1,000,000. Reserve the two
+  // preceding slots for its raster background and the slide background below
+  // it so a slide-root pseudo remains visible over an opaque slide fill.
+  const slideBackgroundSortSlot = "-1000002";
+  const pseudoBeforeBackgroundSortSlot = "-1000001";
+
   function isTransparentColor(input: string): boolean {
     const value = input.trim().toLowerCase();
     return value === "" || value === "transparent" || value === "rgba(0, 0, 0, 0)";
@@ -1368,7 +1374,7 @@ export async function runDomToPptx(
       bg.setAttribute("aria-hidden", "true");
       bg.style.setProperty("position", "absolute", "important");
       bg.style.setProperty("inset", "0", "important");
-      bg.style.setProperty("z-index", "0", "important");
+      bg.style.setProperty("z-index", slideBackgroundSortSlot, "important");
       bg.style.setProperty("pointer-events", "none", "important");
       bg.style.setProperty("background-color", background.color, "important");
       bg.style.setProperty("background-image", background.image, "important");
@@ -1526,12 +1532,11 @@ export async function runDomToPptx(
         background.style.setProperty("left", style.left || "auto", "important");
         background.style.setProperty("width", style.width || "auto", "important");
         background.style.setProperty("height", style.height || "auto", "important");
-        // The converter fixes native ::before content at the host's -1,000,000
-        // sort slot. Keep its raster background one slot lower so editable
-        // pseudo text and borders remain above the captured image.
+        // Keep the raster background immediately below the converter's native
+        // pseudo text/border slot while the slide background stays below both.
         background.style.setProperty(
           "z-index",
-          pseudo === "::before" ? "-1000001" : style.zIndex || "auto",
+          pseudo === "::before" ? pseudoBeforeBackgroundSortSlot : style.zIndex || "auto",
           "important",
         );
         background.style.setProperty("pointer-events", "none", "important");
@@ -1582,7 +1587,11 @@ export async function runDomToPptx(
         background.style.setProperty("display", "block", "important");
         background.style.setProperty("object-fit", "fill", "important");
         background.style.setProperty("pointer-events", "none", "important");
-        background.style.setProperty("z-index", style.zIndex || "auto", "important");
+        background.style.setProperty(
+          "z-index",
+          element === slide ? slideBackgroundSortSlot : style.zIndex || "auto",
+          "important",
+        );
         background.getBoundingClientRect = () => {
           const slideRect = slide.getBoundingClientRect();
           const left = slideRect.left + captured.left;
@@ -1615,7 +1624,11 @@ export async function runDomToPptx(
       background.setAttribute("aria-hidden", "true");
       background.style.setProperty("position", "absolute", "important");
       background.style.setProperty("inset", "0", "important");
-      background.style.setProperty("z-index", "0", "important");
+      background.style.setProperty(
+        "z-index",
+        slideElements.has(element) ? slideBackgroundSortSlot : "0",
+        "important",
+      );
       background.style.setProperty("pointer-events", "none", "important");
       setCaptureBoxStyles(background, style);
 
