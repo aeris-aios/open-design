@@ -766,6 +766,9 @@ interface Props {
   /** Collapse the conversation pane into workspace-focused mode (#5517's
    *  panel-left control). Takes precedence over onBack in the header. */
   onCollapse?: () => void;
+  /** True when the collapse control renders OUTSIDE this pane (lifted into
+   *  the tabs dock row) — suppresses the header's collapse/back slot. */
+  collapseControlLifted?: boolean;
   backLabel?: string;
   projectHeader?: ReactNode;
   designSystemPicker?: ReactNode;
@@ -996,6 +999,7 @@ export function ChatPane({
   chatLogTray,
   onBack,
   onCollapse,
+  collapseControlLifted,
   backLabel,
   projectHeader,
   designSystemPicker,
@@ -2462,7 +2466,7 @@ export function ChatPane({
   return (
     <div className="pane">
       <div className="chat-project-header">
-        {onCollapse ? (
+        {collapseControlLifted ? null : onCollapse ? (
           <button
             type="button"
             className="chat-project-back od-tooltip"

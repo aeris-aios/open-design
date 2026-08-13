@@ -61,6 +61,7 @@ import {
   removeWorkspaceProjectTabs,
   WorkspaceTabsBar,
 } from './components/WorkspaceTabsBar';
+import { WorkspaceTopRightAccountCluster } from './components/EntryNavRail';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -5235,6 +5236,27 @@ function AppInner() {
           onboardingCompleted={config.onboardingCompleted === true}
           identityScopeKey={workspaceTabsIdentityScopeKey}
         />
+        {/* Avatar + credits keep their home-view spot (the fixed top-right
+            corner over the tabs chrome) while a project tab is open, even
+            though EntryShell — the cluster's usual owner — is unmounted here.
+            Home and the other entry views mount theirs through EntryNavRail;
+            the routes are mutually exclusive, so exactly one is on screen. */}
+        {route.kind === 'project' ? (
+          <WorkspaceTopRightAccountCluster
+            onOpenSettings={openSettings}
+            onSignedOut={handleActiveCloudSignOut}
+            workspaceContextOverride={
+              activeProject?.workspaceId
+                ? activeProjectWorkspaceContext
+                : undefined
+            }
+            workspaceContextLoading={
+              activeProject?.workspaceId
+                ? projectRouteWorkspaceContext.loading
+                : undefined
+            }
+          />
+        ) : null}
         <div className="workspace-shell__body">
           {appMain}
         </div>
