@@ -8,6 +8,7 @@ import type { PreviewComment, PreviewCommentMember } from '../types';
 import { isImeComposing } from '../utils/imeComposing';
 
 import { Icon } from './Icon';
+import { RemixIcon } from './RemixIcon';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -49,7 +50,6 @@ type AnnotationStyleRow = { label: string; value: string; swatch?: string };
 type PopoverBounds = { width: number; height: number; scrollLeft?: number; scrollTop?: number };
 type PopoverOffset = { x: number; y: number };
 type PopoverSize = { width: number; height: number };
-type PopoverPosition = { left: number; top: number };
 type PopoverSide = 'top' | 'bottom' | 'left' | 'right';
 
 const POPOVER_PAD = 14;
@@ -294,126 +294,6 @@ export function AnnotationStyleSummary({
   );
 }
 
-function annotationHoverAnchorStyle(
-  target: PreviewCommentSnapshot,
-  scale: number,
-  bounds?: PopoverBounds,
-  offset: PopoverOffset = { x: 0, y: 0 },
-  measuredSize?: PopoverSize,
-): CSSProperties {
-  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  const pad = 14;
-  const anchor = target.hoverPoint ?? {
-    x: target.position.x + Math.min(target.position.width, 24),
-    y: target.position.y + Math.min(target.position.height, 24),
-  };
-  const anchorX = offset.x + anchor.x * safeScale;
-  const anchorY = offset.y + anchor.y * safeScale;
-  const preferredLeft = anchorX + pad;
-  const preferredTop = anchorY + pad;
-  if (!bounds?.width || bounds.width <= 0) {
-    return {
-      left: clampPopoverCoordinate(preferredLeft, pad),
-      top: clampPopoverCoordinate(preferredTop, pad),
-    };
-  }
-  // Keep the card fully inside the preview viewport. The previous logic only
-  // clamped the top-left corner to a minimum, so a card near the right/bottom
-  // edge ran off-screen and its values were clipped. When the card would spill
-  // past an edge, flip it to the opposite side of the anchor; if it still does
-  // not fit, pin it to the last on-screen position.
-  const viewportLeft = Math.max(0, bounds.scrollLeft ?? 0);
-  const viewportTop = Math.max(0, bounds.scrollTop ?? 0);
-  const viewportRight = viewportLeft + bounds.width;
-  const viewportBottom = bounds.height ? viewportTop + bounds.height : Number.POSITIVE_INFINITY;
-  const cardWidth = measuredSize?.width && measuredSize.width > 0 ? measuredSize.width : 240;
-  const cardHeight = measuredSize?.height && measuredSize.height > 0 ? measuredSize.height : 132;
-  const minLeft = viewportLeft + pad;
-  const minTop = viewportTop + pad;
-  const maxLeft = Math.max(minLeft, viewportRight - cardWidth - pad);
-  let left = preferredLeft;
-  if (left > maxLeft) {
-    const flipped = anchorX - cardWidth - pad;
-    left = flipped >= minLeft ? flipped : maxLeft;
-  }
-  if (!Number.isFinite(viewportBottom)) {
-    return {
-      left: clampPopoverRange(left, minLeft, maxLeft),
-      top: clampPopoverCoordinate(preferredTop, minTop),
-    };
-  }
-  const maxTop = Math.max(minTop, viewportBottom - cardHeight - pad);
-  let top = preferredTop;
-  if (top > maxTop) {
-    const flipped = anchorY - cardHeight - pad;
-    top = flipped >= minTop ? flipped : maxTop;
-  }
-  return {
-    left: clampPopoverRange(left, minLeft, maxLeft),
-    top: clampPopoverRange(top, minTop, maxTop),
-  };
-}
-
-export function AnnotationHoverPopover({
-  target,
-  scale,
-  bounds,
-  offset,
-  onMouseEnter,
-  onMouseLeave,
-}: {
-  target: PreviewCommentSnapshot;
-  scale: number;
-  // The preview viewport rect and pan offset, so the card can clamp itself
-  // inside the visible canvas instead of overflowing the right/bottom edge.
-  bounds?: PopoverBounds;
-  offset?: PopoverOffset;
-  // The card floats over the preview iframe at the cursor. Moving onto it pulls
-  // the pointer off the iframe, which fires mouseout and would otherwise unmount
-  // the card — the cursor then lands back on the iframe and re-triggers it,
-  // flickering forever. The host uses these to pin the card while it is hovered
-  // (ignoring the iframe's leave) so the tooltip stays put and its values stay
-  // selectable/copyable.
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
-}) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const [cardSize, setCardSize] = useState<PopoverSize | undefined>(undefined);
-  useLayoutEffect(() => {
-    const node = cardRef.current;
-    if (!node) return;
-    const measure = () => {
-      const rect = node.getBoundingClientRect();
-      const next = { width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
-      if (next.width <= 0 || next.height <= 0) return;
-      setCardSize((current) =>
-        current?.width === next.width && current.height === next.height ? current : next,
-      );
-    };
-    measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    // Content-driven size changes (a different hovered element yields different
-    // rows) are reported by the observer, so a single stable observation covers
-    // every target without re-subscribing.
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <div
-      ref={cardRef}
-      className="comment-popover annotation-hover-popover"
-      data-testid="annotation-hover-popover"
-      role="tooltip"
-      style={annotationHoverAnchorStyle(target, scale, bounds, offset, cardSize)}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-    >
-      <AnnotationStyleSummary target={target} testId="annotation-hover-style-summary" />
-    </div>
-  );
-}
-
 export function BoardComposerPopover({
   target,
   existing,
@@ -433,6 +313,7 @@ export function BoardComposerPopover({
   onAttachImages,
   onRemoveImage,
   onPreviewImage,
+  onViewAllComments,
   sending,
   queueOnSend = false,
   sendDisabled = false,
@@ -468,6 +349,12 @@ export function BoardComposerPopover({
   onAttachImages?: (files: File[]) => void;
   onRemoveImage?: (index: number) => void;
   onPreviewImage?: (index: number) => void;
+  /**
+   * Reveal the full comments list. Passed only while that list is collapsed to
+   * its rail — the card is the whole comment surface until then. Omitted (and
+   * the control hidden) when the list is already on screen.
+   */
+  onViewAllComments?: () => void;
   sending: boolean;
   queueOnSend?: boolean;
   sendDisabled?: boolean;
@@ -503,29 +390,6 @@ export function BoardComposerPopover({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverSize, setPopoverSize] = useState<PopoverSize | undefined>(undefined);
-  const [manualPosition, setManualPosition] = useState<PopoverPosition | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const targetPlacementKey = [
-    target.filePath,
-    target.elementId,
-    target.selector,
-    target.selectionKind,
-    target.position.x,
-    target.position.y,
-    target.position.width,
-    target.position.height,
-    target.hoverPoint?.x,
-    target.hoverPoint?.y,
-    bounds?.width,
-    bounds?.height,
-    bounds?.scrollLeft,
-    bounds?.scrollTop,
-    offset?.x,
-    offset?.y,
-  ].join('\0');
-  useEffect(() => {
-    setManualPosition(null);
-  }, [targetPlacementKey, docked]);
   useLayoutEffect(() => {
     const node = popoverRef.current;
     if (!node) return;
@@ -555,56 +419,7 @@ export function BoardComposerPopover({
   const autoStyle = docked
     ? undefined
     : popoverAnchorStyle(target, scale, bounds, offset, commenting, popoverSize);
-  const popoverStyle = docked
-    ? undefined
-    : manualPosition
-      ? clampPopoverPositionStyle(manualPosition.left, manualPosition.top, bounds, measuredPopover)
-      : autoStyle;
-  const startPopoverDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (docked) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const node = popoverRef.current;
-    if (!node) return;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startLeft = manualPosition?.left
-      ?? numericStyleValue(popoverStyle ?? {}, 'left')
-      ?? node.offsetLeft;
-    const startTop = manualPosition?.top
-      ?? numericStyleValue(popoverStyle ?? {}, 'top')
-      ?? node.offsetTop;
-    const ownerDocument = node.ownerDocument;
-    const handle = event.currentTarget;
-    const pointerId = event.pointerId;
-    const previousUserSelect = ownerDocument.body.style.userSelect;
-    ownerDocument.body.style.userSelect = 'none';
-    handle.setPointerCapture?.(pointerId);
-    setDragging(true);
-    const move = (moveEvent: PointerEvent) => {
-      const clamped = clampPopoverPositionStyle(
-        startLeft + moveEvent.clientX - startX,
-        startTop + moveEvent.clientY - startY,
-        bounds,
-        measuredPopover,
-      );
-      setManualPosition({
-        left: numericStyleValue(clamped, 'left') ?? startLeft,
-        top: numericStyleValue(clamped, 'top') ?? startTop,
-      });
-    };
-    const up = () => {
-      ownerDocument.body.style.userSelect = previousUserSelect;
-      handle.releasePointerCapture?.(pointerId);
-      setDragging(false);
-      ownerDocument.removeEventListener('pointermove', move);
-      ownerDocument.removeEventListener('pointerup', up);
-      ownerDocument.removeEventListener('pointercancel', up);
-    };
-    ownerDocument.addEventListener('pointermove', move);
-    ownerDocument.addEventListener('pointerup', up);
-    ownerDocument.addEventListener('pointercancel', up);
-  };
+  const popoverStyle = docked ? undefined : autoStyle;
   const trimmedDraft = draft.trim();
   const existingNote = existing?.note.trim() ?? '';
   const hasFreshImage = images.length > 0;
@@ -644,7 +459,7 @@ export function BoardComposerPopover({
   return (
     <div
       ref={popoverRef}
-      className={`comment-popover comment-popover-composer${docked ? ' comment-popover-docked' : ''}${dragging ? ' comment-popover-dragging' : ''}`}
+      className={`comment-popover comment-popover-composer${docked ? ' comment-popover-docked' : ''}`}
       data-testid="comment-popover"
       role="dialog"
       aria-modal="false"
@@ -657,29 +472,14 @@ export function BoardComposerPopover({
         }
       }}
     >
-      {!docked ? (
-        <div className="comment-popover-titlebar">
-          <button
-            type="button"
-            className="comment-popover-drag-handle"
-            aria-label="Move comment box"
-            title="Move comment box"
-            onPointerDown={startPopoverDrag}
-          >
-            <span aria-hidden />
-          </button>
-          <span className="comment-popover-title" title={target.label || target.elementId}>
-            {target.label || target.elementId}
-          </span>
-        </div>
-      ) : null}
-      {/* Everything above the action row scrolls; the action row itself lives
+      {/* No titlebar and no element-metrics block: the card is for WRITING
+          about the element, and everything above the box (tag name, size,
+          colour, font readouts) was inspector material the selection outline
+          on the canvas already anchors. The card starts at the comment.
+          Everything above the action row scrolls; the action row itself lives
           outside this box (see below) so a height-clamped card can never push
           the buttons out of view. */}
       <div className="comment-popover-body">
-        <section className="comment-popover-section comment-popover-section-params">
-          <AnnotationStyleSummary target={target} testId="comment-popover-style-summary" />
-        </section>
         {podMembers.length > 0 ? (
           <div className="board-pod-summary">
             <strong>{t('chat.comments.capturedItems', { n: target.memberCount || podMembers.length })}</strong>
@@ -852,6 +652,23 @@ export function BoardComposerPopover({
                 <Icon name="close" size={14} />
               </button>
             )}
+            {/* The comments list starts collapsed to its rail, so this card is
+                the whole comment surface until the reader asks for the rest.
+                The host passes the handler only while the list is away — once
+                it is open there is nothing left to reveal, and its own header
+                chevron is what puts it back. */}
+            {onViewAllComments ? (
+              <button
+                type="button"
+                className="comment-popover-close comment-popover-view-all"
+                data-testid="comment-popover-view-all"
+                onClick={onViewAllComments}
+                title={t('chat.comments.viewAll')}
+                aria-label={t('chat.comments.viewAll')}
+              >
+                <RemixIcon name="message-3-line" size={14} />
+              </button>
+            ) : null}
           </div>
           <div className="comment-popover-actions-end">
             {isPodSelection ? (

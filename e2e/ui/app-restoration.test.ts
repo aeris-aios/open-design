@@ -2728,8 +2728,7 @@ async function runCommentAttachmentFlow(
   await sendPrompt(page, entry.prompt);
   await expectArtifactVisible(page, entry);
 
-  await page.getByTestId('board-mode-toggle').click();
-  await page.getByTestId('comment-mode-toggle').click();
+  await page.getByTestId('comment-panel-toggle').click();
   const frame = artifactPreviewFrame(page);
   await frame.locator('[data-od-id="hero-title"]').click();
   await expect(page.getByTestId('comment-popover')).toBeVisible();

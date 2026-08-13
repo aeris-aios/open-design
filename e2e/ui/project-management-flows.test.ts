@@ -2180,10 +2180,12 @@ test('[P1] project detail workspace keeps design file tabs and preview controls 
 
   await openUploadedHtmlArtifactPreview(page, uploadedName);
 
+  // Canvas mode lives on the dock's trailing segment now. Edit lights only
+  // while editing is armed, and nothing has armed it yet.
   await expect(page.getByRole('tablist', { name: 'View mode' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Edit', exact: true })).toHaveAttribute(
     'aria-selected',
-    'true',
+    'false',
   );
   await expect(artifactPreview(page)).toBeVisible();
   await expect(

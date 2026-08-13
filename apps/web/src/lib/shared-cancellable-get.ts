@@ -40,6 +40,21 @@ const nowMs = (): number =>
 
 const abortError = (): DOMException => new DOMException('Aborted', 'AbortError');
 
+/**
+ * Reason for the deliberate group-abort below.
+ *
+ * `controller.abort()` with no argument makes the browser mint its own
+ * `AbortError` — Chrome's reads "signal is aborted without reason" and carries
+ * a stack captured at the `abort()` call site. That object becomes the shared
+ * `fetch`'s rejection, so any tooling that surfaces it (the Next dev overlay
+ * reports one as a stray `AbortError` pointing into this file) describes a
+ * routine release as if it were a fault. Naming the reason keeps the shared
+ * request's own cancellation self-describing and distinguishable from a
+ * caller's `abortError()`.
+ */
+const releasedError = (): DOMException =>
+  new DOMException('Shared read released: every cancellable reader detached', 'AbortError');
+
 function createEntry<T>(
   key: string,
   run: (signal: AbortSignal) => Promise<T>,
@@ -67,6 +82,13 @@ function createEntry<T>(
       throw error;
     },
   );
+  // `entry.promise` is a cache slot, not any one caller's promise: every
+  // consumer awaits its own derived promise (see the joiner subscription
+  // below), and a signal-less consumer gets this one only after pinning it.
+  // Observe the shared rejection once, here, so a failure that no consumer is
+  // left to receive — above all the deliberate group-abort — can never reach
+  // the runtime as an unhandled rejection. Consumers still see their own copy.
+  void entry.promise.catch(() => {});
   entries.set(key, entry as SharedEntry<unknown>);
   return entry;
 }
@@ -101,10 +123,9 @@ export function sharedCancellableGet<T>(
       done = true;
       joined.liveJoiners -= 1;
       if (joined.liveJoiners === 0 && !joined.pinned && joined.settledAt === null) {
-        joined.controller.abort();
-        // The shared rejection has no listeners left; observe it so the
-        // deliberate group-abort never surfaces as an unhandled rejection.
-        void joined.promise.catch(() => {});
+        // Nobody is left awaiting this read, so release it under a reason that
+        // says so (`createEntry` already observes the resulting rejection).
+        joined.controller.abort(releasedError());
         if (entries.get(key) === (joined as SharedEntry<unknown>)) entries.delete(key);
       }
       reject(abortError());

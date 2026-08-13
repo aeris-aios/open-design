@@ -324,9 +324,11 @@ function designFileRow(page: Page, fileName: string): Locator {
   return page.locator(`[data-testid^="design-file-row-"][data-testid$="${fileName}"]`).first();
 }
 
-// #5517 groups the panel behind per-category tabs, so a file is only listed
-// while its own category tab is active. Land on the row the way a user would:
-// look under the default category, otherwise page through the tab bar.
+// A project with pages lists every file in the structure rail at once, so the
+// row is already there. A page-free project keeps the per-category tab bar,
+// where a file is only listed while its own tab is active. Land on the row the
+// way a user would: look at what is on screen, otherwise page through the tabs
+// (the loop is a no-op when the rail is what rendered).
 async function revealDesignFileRow(page: Page, fileName: string): Promise<Locator> {
   const row = designFileRow(page, fileName);
   if (await row.isVisible().catch(() => false)) return row;

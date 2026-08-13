@@ -336,6 +336,18 @@ function clickAgentTool(testId: string) {
   fireEvent.click(screen.getByTestId(testId));
 }
 
+/**
+ * Comment mode opens with the list collapsed to its rail — arming the tool is
+ * an intent to annotate the artboard, not to read the list. Tests whose subject
+ * IS the list have to ask for it the way a user does: arm the tool, then open
+ * the rail (or the card's 查看全部评论 control, which does the same thing).
+ */
+function openCommentsList() {
+  fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+  const rail = screen.queryByTestId('comment-side-collapsed-rail');
+  if (rail) fireEvent.click(rail);
+}
+
 async function openUnifiedExportTab() {
   // Export is a standalone header button now (no tab strip inside the popover).
   fireEvent.click(await screen.findByRole('button', { name: /export/i }));
@@ -912,6 +924,32 @@ describe('FileViewer preview scale', () => {
     );
   });
 
+  it('strips card chrome from the desktop artboard', () => {
+    const css = readExpandedIndexCss();
+    // The page is the page, not an object standing on the canvas: no hairline,
+    // no drop shadow, no radius. The device viewports keep theirs — there the
+    // frame is the point.
+    const rule = css.match(
+      /\.preview-viewport-desktop \.preview-frame-clip,\s*\.preview-viewport-desktop:not\(\.comment-preview-layer-with-side-dock\) \.comment-preview-canvas,\s*\.preview-viewport-desktop\.manual-edit-workspace \.manual-edit-canvas\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    expect(rule).toContain('border-radius: 0;');
+    expect(rule).toContain('border: 0;');
+    expect(rule).toContain('box-shadow: none;');
+  });
+
+  it('centres the desktop artboard instead of dumping the fit slack on the right', () => {
+    const css = readExpandedIndexCss();
+    // `inset: 0` + an explicit width is over-constrained; LTR anchors the box
+    // left and ALL the leftover pane width lands on the right edge. Auto
+    // margins are what split it — in edit mode too, which is safe because the
+    // hover affordance renders inside the canvas and travels with it.
+    const rule = css.match(
+      /\.preview-viewport-desktop \.preview-frame-clip,\s*\.preview-viewport-desktop:not\(\.comment-preview-layer-with-side-dock\) \.comment-preview-canvas,\s*\.preview-viewport-desktop\.manual-edit-workspace \.manual-edit-canvas\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    expect(rule).toContain('margin-inline: auto;');
+    expect(css).toContain('.manual-edit-canvas > .manual-edit-hover-action');
+  });
+
   it('keeps the preview viewport trigger flat by default', () => {
     const css = readExpandedIndexCss();
     const rules = Array.from(css.matchAll(/\.viewer-viewport-trigger\s*\{[^}]+\}/g), (match) => match[0]);
@@ -972,14 +1010,17 @@ describe('FileViewer preview scale', () => {
     expect(css).not.toContain('padding-bottom: var(--preview-draw-dock-clearance);');
   });
 
-  it('keeps manual edit canvas layout aligned with comment preview on device viewports (#2960)', () => {
+  it('keeps manual edit canvas layout aligned with comment preview on every viewport (#2960)', () => {
     const css = readExpandedIndexCss();
 
+    // Desktop is an artboard too now, so the sizing rule covers every viewport
+    // rather than excluding desktop — manual edit and comment preview still
+    // have to agree, which is what #2960 was about.
     expect(css).toContain(
-      '.preview-viewport:not(.preview-viewport-desktop).manual-edit-workspace .manual-edit-canvas',
+      '.preview-viewport.manual-edit-workspace .manual-edit-canvas',
     );
     expect(css).toMatch(
-      /\.preview-viewport:not\(\.preview-viewport-desktop\) \.preview-frame-clip,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\):not\(\.comment-preview-layer-with-side-dock\) \.comment-preview-canvas,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\)\.manual-edit-workspace \.manual-edit-canvas \{\s*\n\s*width: calc\(var\(--preview-viewport-width\) \* var\(--preview-scale, 1\)\);/,
+      /\.preview-viewport \.preview-frame-clip,\s*\n\.preview-viewport:not\(\.comment-preview-layer-with-side-dock\) \.comment-preview-canvas,\s*\n\.preview-viewport\.manual-edit-workspace \.manual-edit-canvas \{\s*\n\s*width: calc\(var\(--preview-viewport-width\) \* var\(--preview-scale, 1\)\);/,
     );
     expect(css).toMatch(
       /\.preview-viewport:not\(\.preview-viewport-desktop\) \.preview-frame-clip,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\)\.manual-edit-workspace \.manual-edit-canvas \{\s*\n\s*position: relative;/,
@@ -999,8 +1040,12 @@ describe('FileViewer preview scale', () => {
     expect(css).toContain('height: 38px;');
   });
 
-  it('uses the requested zoom for desktop preview overlays', () => {
-    expect(effectivePreviewScale('desktop', 1.5, { width: 320, height: 480 })).toBe(1.5);
+  it('fits the desktop artboard to the canvas instead of honouring a zoom it cannot show', () => {
+    // The desktop preview is a fixed-width artboard: a 1440 design in a 320
+    // canvas is shown at 320/1440, whatever zoom was asked for. Rendering it at
+    // 1.5 would put most of the page outside the pane.
+    expect(effectivePreviewScale('desktop', 1.5, { width: 320, height: 480 }))
+      .toBeCloseTo(320 / 1440, 5);
   });
 
   it('calculates a desktop auto-fit zoom for wide landing pages', () => {
@@ -1136,11 +1181,10 @@ describe('FileViewer preview scale', () => {
   });
 
   it('offsets tablet and mobile overlays to the centered viewport card', () => {
-    expect(previewOverlayTransform('desktop', 1.25, { width: 1200, height: 800 })).toEqual({
-      scale: 1.25,
-      offsetX: 0,
-      offsetY: 0,
-    });
+    // Desktop artboard: fitted on width, and centred like every other viewport.
+    const desktop = previewOverlayTransform('desktop', 1.25, { width: 1200, height: 800 });
+    expect(desktop.scale).toBeCloseTo(1200 / 1440, 5);
+    expect(desktop.offsetY).toBe(24);
 
     expect(previewOverlayTransform('mobile', 1, { width: 1200, height: 1000 })).toEqual({
       scale: 1,
@@ -1353,6 +1397,20 @@ describe('FileViewer SVG artifacts', () => {
     });
     expect(container.querySelector('.viewer.image-viewer img')).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith('/api/projects/project-1/raw/board.sketch.json', { cache: 'no-store' });
+  });
+
+  it('gives the image viewer Download and Close, not open-in-new-tab', () => {
+    const file = baseFile({ name: 'asset-01.png', path: 'asset-01.png', kind: 'image', mime: 'image/png' });
+    const onCloseFile = vi.fn();
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={file} onCloseFile={onCloseFile} />,
+    );
+
+    expect(screen.getByText('Download')).toBeTruthy();
+    // 打开-in-new-tab is gone: the way BACK is the action this toolbar owed.
+    expect(screen.queryByText('Open')).toBeNull();
+    fireEvent.click(screen.getByTestId('image-viewer-close'));
+    expect(onCloseFile).toHaveBeenCalledTimes(1);
   });
 
   it('expands the sketch preview viewBox for off-origin sketches outside the default frame', async () => {
@@ -2585,9 +2643,11 @@ describe('FileViewer SVG artifacts', () => {
     expect(initialSrcDocFrame?.srcdoc).toContain('data-od-lazy-srcdoc-transport');
     expect(initialSrcDocFrame?.srcdoc).not.toContain('__odArtifactBootCount');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
-    expect(screen.getByRole('tab', { name: 'Code' }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+    openSourceView();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByTestId('viewer-more-source').className).toContain('active');
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    openPreviewView();
 
     const urlFrame = await waitFor(() => {
       const frame = container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement | null;
@@ -3749,13 +3809,13 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    // Both destinations stay on the bar as a two-segment tablist.
-    expect(screen.getByRole('tab', { name: 'Code' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Preview' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
-    expect(screen.getByRole('tab', { name: 'Code' }).getAttribute('aria-selected')).toBe('true');
+    // The dock's trailing segment states edit-vs-present; source stays
+    // reachable from the menu.
+    expect(screen.getByRole('tab', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Present' })).toBeTruthy();
+    openSourceView();
     expect(container.querySelector('.viewer-source')?.textContent).toContain('data-od-id="hero"');
-    fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+    openPreviewView();
     fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
 
     await waitFor(() => {
@@ -3863,8 +3923,10 @@ describe('FileViewer SVG artifacts', () => {
       { container: workspaceBody },
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /present/i }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /in this tab/i }));
+    // The header's Present dropdown is gone and the Edit / Present segment no
+    // longer leaves the canvas, so the fullscreen stage (which is what still
+    // renders `.present-overlay`) is reached from the dock.
+    fireEvent.click(screen.getByTestId('canvas-dock-fullscreen'));
 
     await waitFor(() => {
       const frame = document.body.querySelector('.present-overlay iframe');
@@ -3914,8 +3976,10 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /present/i }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /in this tab/i }));
+    // The header's Present dropdown is gone and the Edit / Present segment no
+    // longer leaves the canvas, so the fullscreen stage (which is what still
+    // renders `.present-overlay`) is reached from the dock.
+    fireEvent.click(screen.getByTestId('canvas-dock-fullscreen'));
 
     const frame = await waitFor(() => {
       const nextFrame = document.body.querySelector<HTMLIFrameElement>('.present-overlay iframe');
@@ -4056,9 +4120,10 @@ describe('FileViewer SVG artifacts', () => {
     expect(container.textContent).toContain('window.I');
     expect(screen.queryByRole('button', { name: /backups\.html/ })).toBeNull();
 
-    // Back on Preview, clicking the entry opens the HTML page and closes the
-    // dead-end module tab (icons.jsx) in one move.
-    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    // Back on the canvas, clicking the entry opens the HTML page and closes the
+    // dead-end module tab (icons.jsx) in one move. Source is a toggle now, so
+    // the same control that opened the code returns to the preview.
+    fireEvent.click(screen.getByRole('button', { name: /^code$/i }));
     fireEvent.click(await screen.findByRole('button', { name: /backups\.html/ }));
     expect(onOpenFileReplacing).toHaveBeenCalledWith('backups.html', 'icons.jsx');
   });
@@ -4147,11 +4212,11 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    expect(screen.getByRole('tab', { name: 'Preview' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Code' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+    expect(screen.getByRole('tab', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Present' })).toBeTruthy();
+    openSourceView();
     expect(container.querySelector('.viewer-source')?.textContent).toContain('section class="slide"');
-    fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+    openPreviewView();
     expect(container.querySelector('.deck-nav')).toBeNull();
     expect(container.querySelector('.deck-thumbnail-toolbar-toggle')).toBeTruthy();
     expect(container.querySelector('.deck-thumbnail-rail .deck-thumbnail-toggle')).toBeNull();
@@ -7010,7 +7075,189 @@ describe('FileViewer tweaks toolbar', () => {
     });
   }
 
-  it('renders Annotation, Edit, and Draw as the primary preview tools', async () => {
+  function dockAuthoringFold() {
+    return document.querySelector('.canvas-dock .canvas-dock-collapsible');
+  }
+
+  it('folds the dock down to pointer, zoom, and full screen in Present', async () => {
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    // A freshly opened artifact lands in Present: the page is live and
+    // clickable, nothing is armed over it, and the authoring half of the dock
+    // is folded until the user asks for it by name.
+    const editTab = screen.getByTestId('manual-edit-mode-toggle');
+    const presentTab = screen.getByTestId('canvas-dock-present');
+    expect(editTab.getAttribute('aria-selected')).toBe('false');
+    expect(presentTab.getAttribute('aria-selected')).toBe('true');
+
+    // The authoring half folds sideways rather than unmounting — the width
+    // transition needs both ends to exist — so it stays in the DOM, marked
+    // folded and out of the a11y tree.
+    expect(dockAuthoringFold()?.getAttribute('data-collapsed')).toBe('true');
+    expect(dockAuthoringFold()?.getAttribute('aria-hidden')).toBe('true');
+    expect(dockAuthoringFold()?.contains(screen.getByTestId('draw-overlay-toggle'))).toBe(true);
+    expect(dockAuthoringFold()?.contains(screen.getByTestId('comment-panel-toggle'))).toBe(true);
+    // Pointer, zoom, and full screen stand outside the fold. Present is exactly
+    // when a user reaches for full screen, and the dock is its only entry.
+    expect(dockAuthoringFold()?.contains(screen.getByTestId('canvas-dock-select'))).toBe(false);
+    expect(dockAuthoringFold()?.contains(screen.getByTestId('canvas-dock-fullscreen'))).toBe(false);
+    expect(dockAuthoringFold()?.contains(document.querySelector('.canvas-dock .zoom-trigger')!)).toBe(false);
+
+    fireEvent.click(editTab);
+
+    // Edit leaves Present AND arms editing, so it lights and the fold reopens.
+    await waitFor(() => expect(editTab.getAttribute('aria-selected')).toBe('true'));
+    expect(editTab.getAttribute('aria-pressed')).toBe('true');
+    expect(presentTab.getAttribute('aria-selected')).toBe('false');
+    expect(dockAuthoringFold()?.getAttribute('data-collapsed')).toBeNull();
+  });
+
+  it('does not fold the dock when the user simply puts every tool down', async () => {
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    // Arming a tool leaves Present and unfolds the dock — the arming is the
+    // request to author, whichever control it came from.
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('true'));
+    expect(screen.getByTestId('canvas-dock-present').getAttribute('aria-selected')).toBe('false');
+    expect(dockAuthoringFold()?.getAttribute('data-collapsed')).toBeNull();
+
+    // Putting that tool back down is not a request to present. Folding on "no
+    // tool armed" would take away the buttons the user was just using.
+    fireEvent.click(screen.getByTestId('canvas-dock-select'));
+
+    await waitFor(() => expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('false'));
+    expect(screen.getByTestId('canvas-dock-present').getAttribute('aria-selected')).toBe('false');
+    expect(dockAuthoringFold()?.getAttribute('data-collapsed')).toBeNull();
+  });
+
+  it('lands in Edit when 标记 is put down', async () => {
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('true'));
+
+    // Toggling Mark off is an exit off the authoring detour: the canvas lands
+    // back in Edit, not on a bare preview.
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('false');
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+    });
+  });
+
+  it('leaves the pointer unselected until the user reaches for it', async () => {
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    // Nothing is armed on open, but that is the absence of a tool, not a tool
+    // the user picked — so the pointer must not sit there lit.
+    const pointer = screen.getByTestId('canvas-dock-select');
+    expect(pointer.getAttribute('aria-pressed')).toBe('false');
+    expect(pointer.className).not.toContain('active');
+
+    fireEvent.click(pointer);
+    await waitFor(() => expect(pointer.getAttribute('aria-pressed')).toBe('true'));
+
+    // …and arming anything else puts it back down.
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => expect(pointer.getAttribute('aria-pressed')).toBe('false'));
+  });
+
+  it('offers quarter-step zoom levels down from 1:1', async () => {
+    // Scoped to this render's container, not `document`: this file mounts many
+    // viewers, and a global query can latch onto a dock from a neighbouring
+    // test's leftover DOM and then click a trigger whose popover never opens.
+    const { container } = render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const zoomTrigger = await waitFor(() => {
+      const node = container.querySelector('.canvas-dock .zoom-trigger');
+      if (!node) throw new Error('dock zoom trigger not mounted');
+      return node;
+    });
+    fireEvent.click(zoomTrigger);
+
+    // The popover is portaled to the body (the dock strip's overflow clipped
+    // it), so it is NOT under `container` — query the document for the floating
+    // copy instead.
+    const levels = await waitFor(() => {
+      const items = Array.from(
+        document.querySelectorAll('.zoom-menu-popover--floating .zoom-menu-item'),
+      );
+      if (items.length === 0) throw new Error('zoom menu did not open');
+      return items.map((item) => item.textContent);
+    });
+    expect(levels).toEqual(['25%', '50%', '75%', '100%']);
+  });
+
+  it('keeps the portaled zoom menu open long enough to pick a level', async () => {
+    const { container } = render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const zoomTrigger = await waitFor(() => {
+      const node = container.querySelector('.canvas-dock .zoom-trigger');
+      if (!node) throw new Error('dock zoom trigger not mounted');
+      return node;
+    });
+    fireEvent.click(zoomTrigger);
+
+    const popover = await waitFor(() => {
+      const node = document.querySelector('.zoom-menu-popover--floating');
+      if (!node) throw new Error('zoom menu did not open');
+      return node;
+    });
+    // The clip that hid this menu came from the dock strip's own scroller, so
+    // the invariant is structural: the popover must not live under the dock.
+    expect(container.querySelector('.canvas-dock')?.contains(popover)).toBe(false);
+
+    const fifty = Array.from(popover.querySelectorAll('.zoom-menu-item'))
+      .find((item) => item.textContent?.includes('50%'));
+    expect(fifty).toBeTruthy();
+    if (!fifty) return;
+
+    // A real pointer presses before it clicks. Once the menu left the trigger's
+    // subtree, the outside-click guard had to learn to count the floating node
+    // as inside — otherwise mousedown tore the menu down and the click landed
+    // on nothing.
+    fireEvent.mouseDown(fifty);
+    expect(document.querySelector('.zoom-menu-popover--floating')).not.toBeNull();
+    fireEvent.click(fifty);
+
+    await waitFor(() => {
+      expect(zoomTrigger.textContent).toContain('50%');
+      expect(document.querySelector('.zoom-menu-popover--floating')).toBeNull();
+    });
+
+    // A press anywhere else still dismisses it.
+    fireEvent.click(zoomTrigger);
+    await waitFor(() => expect(document.querySelector('.zoom-menu-popover--floating')).not.toBeNull());
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(document.querySelector('.zoom-menu-popover--floating')).toBeNull());
+  });
+
+  it('renders Comments, Edit, and Draw as the primary preview tools', async () => {
     render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
@@ -7019,22 +7266,28 @@ describe('FileViewer tweaks toolbar', () => {
 
     expect(screen.queryByTestId('palette-tweaks-toggle')).toBeNull();
     expect(screen.queryByTestId('inspect-mode-toggle')).toBeNull();
-    expect(screen.getByTestId('board-mode-toggle')).toBeTruthy();
+    // The standalone Annotation tool is gone: element annotation is reached
+    // through the Comments tool only.
+    expect(screen.queryByTestId('board-mode-toggle')).toBeNull();
+    expect(screen.getByTestId('comment-panel-toggle')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'More annotation tools' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Pick element' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Region' })).toBeNull();
     expect(screen.getByTestId('draw-overlay-toggle')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Mark' })).toBeTruthy();
     // Screenshot-to-chat is the toolbar's ONLY capture tool in preview mode:
     // clipboard capture used to live in the export menu and has been removed
     // from there too, so this is the single 截图 affordance in the viewer.
     expect(screen.getByTestId('edit-screenshot-to-chat-button')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Screenshot to chat' })).toBeTruthy();
     expect(screen.queryByTestId('screenshot-copy-button')).toBeNull();
     expect(screen.queryByPlaceholderText('Add a note for this mark')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pods' })).toBeNull();
 
+    // The file opened in Present, so the authoring half of the dock starts
+    // folded out of the a11y tree. Arming Mark is what puts it back on the
+    // table — and arming Mark is this test's next step anyway.
     fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    expect(screen.getByRole('button', { name: 'Mark' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Screenshot to chat' })).toBeTruthy();
     expect(screen.getByPlaceholderText('Add a note for this mark')).toBeTruthy();
     // Every mark tool is its own always-visible segment; switching does not
     // hide the others.
@@ -7467,14 +7720,15 @@ describe('FileViewer tweaks toolbar', () => {
     expect(duringDraw.srcdoc).toContain('Hero V1');
     expect(duringDraw.srcdoc).not.toContain('Hero V2');
 
-    // Closing the Draw bar flushes the deferred update: the URL-load iframe
-    // returns active with the new mtime so the latest content lands in one
-    // clean pass.
+    // Closing the Draw bar flushes the deferred update — into Edit, where the
+    // exit lands now. The srcDoc stays the active transport (Edit needs its
+    // bridge) and carries the content that arrived mid-mark.
     clickAgentTool('draw-overlay-toggle');
     await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
       const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(active.getAttribute('data-od-render-mode')).toBe('url-load');
-      expect(active.getAttribute('src') ?? '').toContain('v=999999');
+      expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(active.srcdoc).toContain('Hero V2');
     });
   });
 
@@ -7520,7 +7774,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     // Open Comment create mode — the side dock (`commentPanelOpen`) opens.
-    clickAgentTool('comment-panel-toggle');
+    openCommentsList();
     await waitFor(() => {
       expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
       expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
@@ -7571,16 +7825,23 @@ describe('FileViewer tweaks toolbar', () => {
       expect(f.srcdoc).toContain('Materialize me');
     });
 
-    // Exit then re-enter: the iframe is the SAME DOM node (no remount) and stays
-    // materialized (sticky) — so every later toggle is an instant visibility
-    // swap, no re-load.
+    // Putting Mark down lands in Edit; leaving Edit keeps the srcDoc as the
+    // active transport (an edit session retains it until the file changes —
+    // the swap-back would reload the page under the reader). Through the whole
+    // chain the iframe is the SAME DOM node, still materialized: every toggle
+    // is a visibility swap, never a re-load.
     clickAgentTool('draw-overlay-toggle');
     await waitFor(() => {
-      expect((container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement).getAttribute('data-od-active')).toBe('true');
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
     });
-    const hiddenAfterExit = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement;
-    expect(hiddenAfterExit).toBe(before);
-    expect(hiddenAfterExit.srcdoc).toContain('Materialize me');
+    clickAgentTool('manual-edit-mode-toggle');
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+    });
+    const afterExit = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement;
+    expect(afterExit.getAttribute('data-od-active')).toBe('true');
+    expect(afterExit).toBe(before);
+    expect(afterExit.srcdoc).toContain('Materialize me');
   });
 
   it('surfaces raw-route security failures for preview assets without leaking the symlink target', async () => {
@@ -7658,17 +7919,13 @@ describe('FileViewer tweaks toolbar', () => {
       return f.srcdoc;
     });
 
-    // Leave Draw and enter Edit. Because the edit bridge was already in the
-    // materialized srcDoc, entering Edit must NOT change the document string —
-    // same string means the browser does not re-parse/reload it; editing
-    // activates via postMessage.
+    // Leave Draw — which lands straight in Edit now. Because the edit bridge
+    // was already in the materialized srcDoc, that entry must NOT change the
+    // document string — same string means the browser does not re-parse/reload
+    // it; editing activates via postMessage.
     clickAgentTool('draw-overlay-toggle');
     await waitFor(() => {
-      const urlFrame = container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement;
-      expect(urlFrame.getAttribute('data-od-active')).toBe('true');
-    });
-    clickAgentTool('manual-edit-mode-toggle');
-    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
       const active = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement;
       expect(active.getAttribute('data-od-active')).toBe('true');
     });
@@ -7688,7 +7945,7 @@ describe('FileViewer tweaks toolbar', () => {
         liveHtml='<html><body><main data-od-id="hero">Comment V1</main></body></html>'
       />,
     );
-    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     await waitFor(() => {
       const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
@@ -8037,7 +8294,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     expect(screen.queryByTestId('comment-saved-marker-pin-applying')).toBeNull();
@@ -8063,7 +8320,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
   });
 
-  it('closes a floating comment card in one action and restores focus for button and Escape dismissals', async () => {
+  it('rails a floating comment card on 收起 and dismisses it on Escape', async () => {
     const portalId = 'project-comments-float';
     render(
       <>
@@ -8081,26 +8338,32 @@ describe('FileViewer tweaks toolbar', () => {
     const trigger = screen.getByTestId('comment-panel-toggle');
     fireEvent.click(trigger);
 
-    const firstDismiss = await screen.findByRole('button', { name: /hide comments/i });
-    firstDismiss.focus();
-    fireEvent.click(firstDismiss);
+    // The rail column outranks the configured float portal: even on a surface
+    // with a portal host, the list docks beside the canvas like Edit does.
+    const panel = await screen.findByTestId('comment-side-panel');
+    expect(screen.getByTestId('viewer-structure-comment-host').contains(panel)).toBe(true);
+    expect(screen.getByTestId('comment-float-host').contains(panel)).toBe(false);
 
+    // 收起 leaves comment mode — the column is the list's only home. The tool
+    // disarms with it, so ONE toolbar click re-opens instead of being spent on
+    // clearing a stale pressed state.
+    const collapse = await screen.findByRole('button', { name: /hide comments/i });
+    fireEvent.click(collapse);
     await waitFor(() => {
       expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-      expect(document.activeElement).toBe(trigger);
+      expect(screen.queryByTestId('comment-side-collapsed-rail')).toBeNull();
     });
 
-    // The close path must also clear create/board mode: one click reopens the
-    // floating card instead of being consumed by a stale pressed state.
     fireEvent.click(trigger);
-    const secondDismiss = await screen.findByRole('button', { name: /hide comments/i });
-    secondDismiss.focus();
-    fireEvent.keyDown(secondDismiss, { key: 'Escape' });
+    const reopened = await screen.findByTestId('comment-side-panel');
 
+    // Escape leaves the same way.
+    fireEvent.keyDown(reopened, { key: 'Escape' });
     await waitFor(() => {
       expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-      expect(document.activeElement).toBe(trigger);
     });
+    fireEvent.click(trigger);
+    expect(await screen.findByTestId('comment-side-panel')).toBeTruthy();
   });
 
   it('shows the open comment count beside the comments icon', () => {
@@ -8144,17 +8407,20 @@ describe('FileViewer tweaks toolbar', () => {
     const commentsButton = screen.getByTestId('comment-panel-toggle');
     expect(commentsButton.textContent).toContain('1');
     expect(commentsButton.getAttribute('aria-label')).toBe('Comments (1)');
+    // Mark then Comments across the dock's folding half; Edit is no longer
+    // between them — it moved into the trailing mode segment, so it now comes
+    // after everything the fold holds.
     expect(
-      screen.getByTestId('board-mode-toggle').compareDocumentPosition(screen.getByTestId('manual-edit-mode-toggle')) &
+      screen.getByTestId('draw-overlay-toggle').compareDocumentPosition(commentsButton) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      screen.getByTestId('manual-edit-mode-toggle').compareDocumentPosition(commentsButton) &
+      commentsButton.compareDocumentPosition(screen.getByTestId('manual-edit-mode-toggle')) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  it('keeps comments and annotation picker mutually exclusive', () => {
+  it('toggles the comment side panel and element picking together', () => {
     const { container } = render(
       <FileViewer
         projectId="project-1"
@@ -8164,26 +8430,52 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
     expect(container.querySelector('.comment-preview-layer')?.className).not.toContain('comment-preview-layer-comments-open');
     expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByTestId('inspect-empty-hint-container')).toBeNull();
 
-    clickAgentTool('board-mode-toggle');
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-    expect(container.querySelector('.comment-preview-layer')?.className).not.toContain('comment-preview-layer-comments-open');
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('inspect-empty-hint-container')).toBeNull();
+  });
+
+  // Armed from Edit, the list has a column waiting for it. Floating a card over
+  // the artboard there meant the canvas widened out from under the reader on
+  // the way in and narrowed again on the way out, twice per comment.
+  it('hands the structure rail to the comment list when the tool is armed from Edit', async () => {
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await screen.findByTestId('viewer-structure-rail');
+    expect(screen.getAllByTestId(/^design-structure-tab-/)).toHaveLength(3);
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
-    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
-    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('false');
-    expect(screen.queryByTestId('inspect-empty-hint-container')).toBeNull();
+    // The tabs step aside; the column and the list that replaces it stay put.
+    await waitFor(() => expect(screen.queryAllByTestId(/^design-structure-tab-/)).toHaveLength(0));
+    expect(screen.getByTestId('viewer-structure-rail')).toBeTruthy();
+    expect(
+      screen.getByTestId('viewer-structure-comment-host').contains(screen.getByTestId('comment-side-panel')),
+    ).toBe(true);
+
+    // Off gives the column back to Edit rather than dropping it — dropping it
+    // is the reflow this hand-off exists to avoid.
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+
+    await waitFor(() => expect(screen.getAllByTestId(/^design-structure-tab-/)).toHaveLength(3));
+    expect(screen.queryByTestId('viewer-structure-comment-host')).toBeNull();
+    expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('keeps the picker hint inside the canvas and clear of the open comment side panel', () => {
@@ -8196,7 +8488,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     const canvas = screen.getByTestId('comment-preview-canvas');
     const dock = screen.getByTestId('comment-side-dock');
@@ -8205,12 +8497,14 @@ describe('FileViewer tweaks toolbar', () => {
     expect(canvas.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
     expect(dock.contains(screen.getByTestId('artifact-preview-frame'))).toBe(false);
 
+    // 收起 leaves comment mode: the rail column is the list's only home, so
+    // there is no sliver to collapse into.
     fireEvent.click(screen.getByRole('button', { name: /hide comments/i }));
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-    expect(screen.getByTestId('comment-side-collapsed-rail')).toBeTruthy();
+    expect(screen.queryByTestId('comment-side-collapsed-rail')).toBeNull();
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('false');
     expect(canvas.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
-    expect(dock.contains(screen.getByTestId('artifact-preview-frame'))).toBe(false);
   });
 
   it('keeps non-docked tablet comment-tool previews fitted to the padded canvas', async () => {
@@ -8226,12 +8520,15 @@ describe('FileViewer tweaks toolbar', () => {
         projectKind="prototype"
         file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+        // A configured (but unmounted) dock portal keeps the comment tool out of
+        // the local side dock, so this pins the padded non-docked fit math.
+        commentPortalId="project-comments-dock"
       />,
     );
 
     fireEvent.click(screen.getByLabelText('Preview viewport'));
     fireEvent.click(screen.getByRole('option', { name: 'Tablet' }));
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     const layout = screen.getByTestId('comment-preview-layout');
     await waitFor(() => {
@@ -8553,7 +8850,7 @@ describe('FileViewer tweaks toolbar', () => {
   });
 
   it.each([
-    ['Comment', 'board-mode-toggle'],
+    ['Comment', 'comment-panel-toggle'],
     ['Draw', 'draw-overlay-toggle'],
     ['Edit', 'manual-edit-mode-toggle'],
   ])('keeps fixed-width auto-fit stable while %s freezes an older revision', async (_mode, toggleTestId) => {
@@ -8593,6 +8890,12 @@ describe('FileViewer tweaks toolbar', () => {
     await waitFor(() => {
       expect(screen.getByTestId(toggleTestId).getAttribute('aria-pressed')).toBe('true');
     });
+    // Arming a tool may legitimately re-fit once (Comment docks a side panel,
+    // which narrows the canvas). What must not move is the zoom afterwards,
+    // while a newer revision lands behind the freeze.
+    const zoomLabel = () => document.querySelector('.zoom-trigger')?.textContent ?? '';
+    const frozenZoom = zoomLabel();
+    expect(frozenZoom).toMatch(/^\d+%$/);
     view.rerender(
       <FileViewer
         projectId="project-1"
@@ -8604,8 +8907,16 @@ describe('FileViewer tweaks toolbar', () => {
     );
     await Promise.resolve();
 
-    expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+    expect(zoomLabel()).toBe(frozenZoom);
     fireEvent.click(screen.getByTestId(toggleTestId));
+    if (toggleTestId === 'draw-overlay-toggle') {
+      // Putting Mark down lands in Edit; the freeze only lifts once Edit is
+      // left too.
+      await waitFor(() => {
+        expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+      });
+      fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    }
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
     });
@@ -8630,7 +8941,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -8693,7 +9004,7 @@ describe('FileViewer tweaks toolbar', () => {
       </CollabProvider>,
     );
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -8736,26 +9047,26 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     const canvas = screen.getByTestId('comment-preview-canvas');
     const dock = screen.getByTestId('comment-side-dock');
     const panel = screen.getByTestId('comment-side-panel');
-    const canvasBox = canvas.getBoundingClientRect();
-    const dockBox = dock.getBoundingClientRect();
-    const panelBox = panel.getBoundingClientRect();
 
+    // The list stands in the structure rail's column — the same shape Edit
+    // holds — with the canvas making room beside it, not an in-canvas dock
+    // (which would deduct the panel's width a second time) and not a floating
+    // card over the artboard.
     expect(canvas.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
     expect(dock.contains(panel)).toBe(true);
     expect(canvas.contains(panel)).toBe(false);
-    expect(screen.getByTestId('comment-preview-layout').className).toContain(
+    expect(screen.getByTestId('viewer-structure-comment-host').contains(panel)).toBe(true);
+    expect(screen.getByTestId('comment-preview-layout').className).not.toContain(
       'comment-preview-layer-with-side-dock',
     );
-    expect(dockBox.left).toBeGreaterThanOrEqual(canvasBox.right);
-    expect(panelBox.left).toBeGreaterThanOrEqual(canvasBox.right);
   });
 
-  it('uses the narrow board layout when docking would leave too little canvas', async () => {
+  it('keeps the rail-docked comment list on narrow panes instead of stacking', async () => {
     const getBoundingClientRectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function getBoundingClientRectMock(this: HTMLElement) {
         if (this.classList.contains('viewer-body')) return testRect(0, 0, 400, 700);
@@ -8771,13 +9082,18 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
-    await waitFor(() => {
-      expect(screen.getByTestId('comment-preview-layout').className).toContain(
-        'comment-preview-layer-side-dock-stacked',
-      );
-    });
+    // The list's home is the rail column at every width — on a pane too narrow
+    // to split, the rail overlays the canvas (canvas.css keeps a comments rail
+    // visible below the 1100px cutoff), the same trade the docked inspector
+    // makes. The old stacked-below-the-canvas layout retired with the
+    // in-canvas dock: layout must not claim a dock the canvas no longer holds.
+    const panel = await screen.findByTestId('comment-side-panel');
+    expect(screen.getByTestId('viewer-structure-comment-host').contains(panel)).toBe(true);
+    expect(screen.getByTestId('comment-preview-layout').className).not.toContain(
+      'comment-preview-layer-side-dock-stacked',
+    );
 
     getBoundingClientRectSpy.mockRestore();
   });
@@ -8821,13 +9137,13 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('1');
     expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('2');
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
     expect(screen.queryByTestId('comment-saved-marker-pin-newer')).toBeNull();
@@ -9195,7 +9511,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     const items = screen.getAllByTestId('comment-side-item');
     const [firstItem, secondItem] = items;
@@ -9290,7 +9606,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -9307,8 +9623,11 @@ describe('FileViewer tweaks toolbar', () => {
 
     const input = await screen.findByTestId('comment-popover-input') as HTMLTextAreaElement;
     expect(input.value).toBe('');
-    expect(screen.queryByText('Existing note should stay in the thread')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    // The note still belongs to the thread in the side panel — what must not
+    // happen is the composer preloading it as this new annotation's draft.
+    const popover = screen.getByTestId('comment-popover');
+    expect(within(popover).queryByText('Existing note should stay in the thread')).toBeNull();
+    expect(within(popover).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
   it('shows saved image attachments when reopening a comment from the list', async () => {
@@ -9340,7 +9659,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
     const sideImageLink = await screen.findByTestId('comment-side-attachment');
     expect(sideImageLink.getAttribute('href')).toBe('/api/projects/project-1/raw/uploads/ref-a.png');
     expect(sideImageLink.querySelector('img')?.getAttribute('src')).toBe('/api/projects/project-1/raw/uploads/ref-a.png');
@@ -9429,7 +9748,7 @@ describe('FileViewer tweaks toolbar', () => {
     render(<Harness />);
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -9582,7 +9901,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
       data: {
@@ -9629,7 +9948,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
       data: {
@@ -9669,7 +9988,7 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.queryByRole('menuitem', { name: 'Pick element' })).toBeNull();
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -9684,7 +10003,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     const target = {
       elementId: 'hero',
@@ -9701,180 +10020,69 @@ describe('FileViewer tweaks toolbar', () => {
       },
     };
 
+    // Hovering only outlines the element — no parameters, no composer.
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
       data: { ...target, type: 'od:comment-hover' },
     }));
 
-    expect(screen.queryByTestId('annotation-hover-style-summary')).toBeNull();
-    expect(screen.queryByTestId('annotation-hover-popover')).toBeNull();
     expect(screen.queryByTestId('inspect-panel')).toBeNull();
     expect(await screen.findByTestId('comment-target-overlay')).toBeTruthy();
     expect(screen.queryByTestId('comment-popover-input')).toBeNull();
+    expect(screen.queryByTestId('comment-popover-style-summary')).toBeNull();
 
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
       data: { ...target, type: 'od:comment-target' },
     }));
 
-    const summary = await screen.findByTestId('comment-popover-style-summary');
-    expect(summary.textContent).toContain('Color');
-    expect(summary.textContent).toContain('#1A1916');
-    expect(summary.textContent).toContain('13.5px');
+    // A click opens the composer and nothing else: the card is for WRITING
+    // about the element — the tag/size/colour readouts that used to sit above
+    // the box are inspector material and are gone from it.
     expect(await screen.findByTestId('comment-popover-input')).toBeTruthy();
+    expect(screen.queryByTestId('comment-popover-style-summary')).toBeNull();
     expect(screen.getByTestId('comment-target-overlay')).toBeTruthy();
-    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('inspect-panel')).toBeNull();
+  });
+
+  it('keeps the docked comment list up while an element card is open', async () => {
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    // Arming the tool opens the list docked in the rail column; there is no
+    // collapsed sliver, so the element card never needs a view-all control.
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
+    expect(screen.queryByTestId('comment-side-collapsed-rail')).toBeNull();
+
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: {
+        type: 'od:comment-target',
+        elementId: 'hero',
+        selector: '[data-od-id="hero"]',
+        label: 'Hero',
+        text: 'Hero',
+        position: { x: 8, y: 12, width: 120, height: 48 },
+        htmlHint: '<main data-od-id="hero">Hero</main>',
+      },
+    }));
+
+    // The card composes against a list that is already on screen, so it never
+    // needs its own view-all control.
     await waitFor(() => {
-      expect(screen.queryByTestId('annotation-hover-popover')).toBeNull();
+      expect(document.querySelector('.board-composer-popover, [data-testid="comment-popover"]')).toBeTruthy();
     });
-  });
-
-  it('keeps the hover card mounted when the pointer moves onto it (no flicker)', async () => {
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
-
-    const target = {
-      elementId: 'hero',
-      selector: '[data-od-id="hero"]',
-      label: 'p',
-      text: 'Hero',
-      position: { x: 8, y: 12, width: 312, height: 63 },
-      hoverPoint: { x: 200, y: 100 },
-      htmlHint: '<p data-od-id="hero">Hero</p>',
-      style: { color: 'rgb(26, 25, 22)', fontSize: '13.5px' },
-    };
-
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    const card = await screen.findByTestId('annotation-hover-popover');
-
-    // Pointer crosses from the element onto the floating card. The iframe sees
-    // that as a mouseout and posts od:comment-leave; the card's own mouseenter
-    // fires first and pins it, so the leave must be ignored and the card stays.
-    fireEvent.mouseEnter(card);
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od:comment-leave' },
-    }));
-
-    // Give React a chance to (wrongly) unmount before asserting it did not.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
-
-    // Leaving the card itself dismisses it.
-    fireEvent.mouseLeave(card);
-    await waitFor(() => {
-      expect(screen.queryByTestId('annotation-hover-popover')).toBeNull();
-    });
-  });
-
-  it('ignores an occlusion leave that arrives before the card pins (no entry flicker)', async () => {
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
-
-    const target = {
-      elementId: 'hero',
-      selector: '[data-od-id="hero"]',
-      label: 'p',
-      text: 'Hero',
-      position: { x: 8, y: 12, width: 312, height: 63 },
-      hoverPoint: { x: 200, y: 100 },
-      htmlHint: '<p data-od-id="hero">Hero</p>',
-      style: { color: 'rgb(26, 25, 22)', fontSize: '13.5px' },
-    };
-
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    const card = await screen.findByTestId('annotation-hover-popover');
-
-    // Real-world ordering the synchronous teardown got wrong: the iframe's async
-    // od:comment-leave lands BEFORE the card's mouseenter has had a chance to pin
-    // it. The dismiss must be deferred so the imminent mouseenter cancels it —
-    // otherwise the card tears down for a frame and flickers on the way in.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od:comment-leave' },
-    }));
-    fireEvent.mouseEnter(card);
-
-    await new Promise((resolve) => setTimeout(resolve, 140));
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
-  });
-
-  it('keeps the card when the pointer moves from it back onto the element', async () => {
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
-
-    const target = {
-      elementId: 'hero',
-      selector: '[data-od-id="hero"]',
-      label: 'p',
-      text: 'Hero',
-      position: { x: 8, y: 12, width: 312, height: 63 },
-      hoverPoint: { x: 200, y: 100 },
-      htmlHint: '<p data-od-id="hero">Hero</p>',
-      style: { color: 'rgb(26, 25, 22)', fontSize: '13.5px' },
-    };
-
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    const card = await screen.findByTestId('annotation-hover-popover');
-    fireEvent.mouseEnter(card);
-
-    // Pointer leaves the card heading back onto the element it overlaps. The
-    // card must NOT tear down synchronously on its own mouseleave — clearing
-    // here is what made the card vanish while the pointer was still over the
-    // element (the iframe does not always re-emit a hover to bring it back).
-    fireEvent.mouseLeave(card);
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
-
-    // A re-hover (pointer landed back on the element) cancels the pending
-    // dismiss, so the card stays put rather than blinking out.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    await new Promise((resolve) => setTimeout(resolve, 140));
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
+    expect(screen.queryByTestId('comment-popover-view-all')).toBeNull();
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
   });
 
   it('closes an open saved-comment composer when that comment leaves the open state', async () => {
@@ -10129,8 +10337,9 @@ describe('FileViewer tweaks toolbar', () => {
     }
 
     render(<Harness />);
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
-    const selectButtons = screen.getAllByRole('button', { name: 'Select' });
+    openCommentsList();
+    const commentPanel = within(screen.getByTestId('comment-side-panel'));
+    const selectButtons = commentPanel.getAllByRole('button', { name: 'Select' });
     expect(selectButtons).toHaveLength(2);
     for (const button of selectButtons) fireEvent.click(button);
     fireEvent.click(screen.getByTestId('comment-side-send-claude'));
@@ -10521,7 +10730,7 @@ describe('FileViewer tweaks toolbar', () => {
         previewComments={[older, newer]}
       />,
     );
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     const items = screen.getAllByTestId('comment-side-item');
     // Neither fixture sets `sortKey` — the default falls back to createdAt,
@@ -10562,7 +10771,7 @@ describe('FileViewer tweaks toolbar', () => {
         onReorderPreviewComment={onReorderPreviewComment}
       />,
     );
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    openCommentsList();
 
     // Default order: B (sortKey 20) first, A (sortKey 10) second.
     let items = screen.getAllByTestId('comment-side-item');
@@ -10698,13 +10907,14 @@ describe('FileViewer tweaks toolbar', () => {
     }
 
     render(<Harness />);
-    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
-    const selectButtons = screen.getAllByRole('button', { name: /select/i });
+    openCommentsList();
+    const commentPanel = within(screen.getByTestId('comment-side-panel'));
+    const selectButtons = commentPanel.getAllByRole('button', { name: /select/i });
     const firstSelectButton = selectButtons[0];
     expect(firstSelectButton).toBeTruthy();
     if (!firstSelectButton) return;
     fireEvent.click(firstSelectButton);
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    fireEvent.click(commentPanel.getByRole('button', { name: 'Clear' }));
 
     // Per #3081, Clear deselects rather than batch-deleting: the comments stay
     // and removal stays wired to per-comment delete / send-selected instead.
@@ -10712,6 +10922,18 @@ describe('FileViewer tweaks toolbar', () => {
     expect(removed).toEqual([]);
   });
 });
+
+// Source and Preview are no longer two tabs on the bar: the segment states
+// edit-vs-present, and Source lives in the overflow menu as a toggle.
+function openSourceView() {
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
+  fireEvent.click(screen.getByTestId('viewer-more-source'));
+}
+
+function openPreviewView() {
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
+  fireEvent.click(screen.getByTestId('viewer-more-source'));
+}
 
 describe('applyInspectOverridesToSource', () => {
   const base = `<!doctype html><html><head><title>X</title></head><body><main data-od-id="hero">Hi</main></body></html>`;
@@ -11332,8 +11554,10 @@ describe('LiveArtifactViewer', () => {
     expect(screen.queryByRole('button', { name: /zoom in/i })).toBeNull();
 
     fireEvent.click(zoomTrigger);
+    // One ladder across every viewer: quarter steps down from 1:1.
+    expect(screen.getByRole('menuitem', { name: '25%' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '50%' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: '200%' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: '200%' })).toBeNull();
   });
 
   it('enters and exits in-tab presentation from the present menu', async () => {
@@ -11360,6 +11584,8 @@ describe('LiveArtifactViewer', () => {
       expect(screen.getByRole('button', { name: /present/i })).toBeTruthy();
     });
 
+    // LiveArtifactViewer still carries the Present dropdown — only HtmlViewer's
+    // copy was dropped, along with its screen-swapping Present tab.
     fireEvent.click(screen.getByRole('button', { name: /present/i }));
     fireEvent.click(screen.getByRole('menuitem', { name: /in this tab/i }));
 

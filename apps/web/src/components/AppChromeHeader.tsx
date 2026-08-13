@@ -14,6 +14,14 @@ interface Props {
 export const APP_CHROME_FILE_ACTIONS_ID = 'app-chrome-file-actions';
 export const APP_CHROME_FILE_ACTIONS_SELECTOR = '[data-app-chrome-file-actions="true"]';
 
+/* The open file's canvas toolbar (reload / edit·present / viewport / flow)
+   portals into this host so it shares the workspace action row instead of
+   stacking a second bar underneath it. The row leads with these controls and
+   ends with the file actions above, which is why the host sits before
+   `.ws-tabs-actions` rather than inside it. */
+export const WORKSPACE_CANVAS_TOOLBAR_ID = 'workspace-canvas-toolbar';
+export const WORKSPACE_CANVAS_TOOLBAR_SELECTOR = '[data-workspace-canvas-toolbar="true"]';
+
 export function AppChromeHeader({
   actions,
   children,

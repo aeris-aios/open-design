@@ -8,12 +8,17 @@ import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { projectFileUrl, projectRawUrl } from '../providers/registry';
 import {
   appendResourceQuery,
-  workspaceIdentityCacheKey,
   workspaceProjectHeaders,
 } from '../collab/workspace-identity';
 import { useProjectCollabContext } from '../collab/collab-context';
-import { buildSrcdoc } from '../runtime/srcdoc';
 import type { LiveArtifactWorkspaceEntry, ProjectFile, ProjectFileKind, ProjectFolder } from '../types';
+import { DesignStructurePanel } from './design-files/DesignStructurePanel';
+import {
+  type FileCategory,
+  fileCategory,
+  SECTION_ORDER,
+  STYLESHEET_EXTENSIONS,
+} from './design-files/fileCategories';
 import {
   createFileSystemReadError,
   FILE_SYSTEM_READ_ERROR_MESSAGE,
@@ -26,14 +31,6 @@ import { FileSyncBadge } from '../collab/FileSyncBadge';
 import { Icon } from './Icon';
 import { LiveArtifactBadges } from './LiveArtifactBadges';
 import { RemixIcon } from './RemixIcon';
-import {
-  getHtmlSourceSnapshot,
-  htmlSourceSnapshotRefreshKey,
-} from './html-source-snapshot-cache';
-import {
-  getHtmlThumbnailSource,
-  loadHtmlThumbnailSource,
-} from './html-thumbnail-source-cache';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -112,32 +109,9 @@ interface ActionNotice {
   url?: string;
 }
 
-// Display-only refinement of ProjectFileKind. The contract `kind` lumps all
-// source under `code`; the Design Files surface splits CSS/SCSS/etc. into a
-// dedicated "Stylesheets" section to mirror Claude Design. Everything else
-// maps 1:1 to its kind.
-type FileCategory = ProjectFileKind | 'stylesheet';
-
-// Section render order. Empty categories are skipped; the FOLDERS section is
-// pinned above all of these from the directory list.
-const SECTION_ORDER: FileCategory[] = [
-  'html',
-  'stylesheet',
-  'code',
-  'document',
-  'text',
-  'image',
-  'sketch',
-  'pdf',
-  'presentation',
-  'spreadsheet',
-  'video',
-  'audio',
-  'binary',
-];
-
-const STYLESHEET_EXTENSIONS = new Set(['css', 'scss', 'sass', 'less']);
-const HTML_THUMBNAIL_INLINE_MAX_BYTES = 512 * 1024;
+// `FileCategory`, `SECTION_ORDER`, `STYLESHEET_EXTENSIONS`, and `fileCategory`
+// live in ./design-files/fileCategories so the structure rail can share them
+// without importing this module back.
 
 // Incremental grid rendering: the page-card grid and the image masonry start
 // with this many entries and reveal the next batch when the invisible
@@ -145,83 +119,6 @@ const HTML_THUMBNAIL_INLINE_MAX_BYTES = 512 * 1024;
 // nested file (see dirsAtCurrentDir), so a web-clone project can put 4000+
 // HTML files in one section — rendering them all at once froze the client.
 const GRID_RENDER_BATCH = 48;
-
-// At most this many thumbnail content fetches run concurrently. Each visible
-// card fetches its HTML to build a srcDoc preview; without a cap, a large
-// section fires thousands of parallel fetches, exhausting local sockets
-// (net::ERR_INSUFFICIENT_RESOURCES) and starving the web<->daemon proxy.
-const MAX_CONCURRENT_HTML_THUMBNAIL_FETCHES = 6;
-
-let activeHtmlThumbnailFetches = 0;
-const queuedHtmlThumbnailFetches: Array<() => void> = [];
-
-// Start queued thumbnail fetches on a microtask, never synchronously from a
-// release. A synchronous pump would let one card's unmount cleanup start a
-// queued fetch for a sibling card that is being torn down in the same commit
-// (its own cleanup just hasn't run yet). Deferring to a microtask lets every
-// cleanup dequeue its task first; the pump then only starts live tasks.
-function pumpHtmlThumbnailFetchQueue(): void {
-  queueMicrotask(() => {
-    while (
-      activeHtmlThumbnailFetches < MAX_CONCURRENT_HTML_THUMBNAIL_FETCHES
-      && queuedHtmlThumbnailFetches.length > 0
-    ) {
-      queuedHtmlThumbnailFetches.shift()!();
-    }
-  });
-}
-
-/**
- * FIFO concurrency gate for thumbnail content fetches. `start` runs once a
- * slot is free (synchronously when one is available now) and receives the
- * release function to call when the fetch settles. The returned function
- * abandons the reservation, for effect cleanup:
- * - abandoned before starting → the queued task is removed and never runs;
- * - abandoned after starting → the slot stays held until the underlying
- *   request settles and the settle path calls `release`. Cleanup must never
- *   free a slot whose request is still on the network: releasing early would
- *   let the queue pump start replacement fetches while the abandoned ones are
- *   still in flight, pushing real connection concurrency above the cap during
- *   directory/project navigation — the exact socket-exhaustion path this pool
- *   exists to prevent.
- */
-function acquireHtmlThumbnailFetchSlot(
-  start: (release: () => void) => void,
-): () => void {
-  let started = false;
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    activeHtmlThumbnailFetches -= 1;
-    pumpHtmlThumbnailFetchQueue();
-  };
-  const run = () => {
-    started = true;
-    activeHtmlThumbnailFetches += 1;
-    start(release);
-  };
-  let abandoned = false;
-  const abandon = () => {
-    if (abandoned || started) return;
-    abandoned = true;
-    const index = queuedHtmlThumbnailFetches.indexOf(run);
-    if (index >= 0) queuedHtmlThumbnailFetches.splice(index, 1);
-  };
-  if (activeHtmlThumbnailFetches < MAX_CONCURRENT_HTML_THUMBNAIL_FETCHES) {
-    run();
-  } else {
-    queuedHtmlThumbnailFetches.push(run);
-  }
-  return abandon;
-}
-
-function fileCategory(file: ProjectFile): FileCategory {
-  const dot = file.name.lastIndexOf('.');
-  const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : '';
-  if (STYLESHEET_EXTENSIONS.has(ext)) return 'stylesheet';
-  return file.kind;
-}
 
 type FileSystemEntryWithReader = FileSystemEntry & {
   createReader?: () => FileSystemDirectoryReader;
@@ -600,6 +497,47 @@ export function DesignFilesPanel({
   }, [files, folders, currentDir]);
 
   const pluginFolders = useMemo(() => getPluginFolderCandidates(files), [files]);
+
+  // Inline rename input, shared by the legacy file rows and the structure rail
+  // so the row context menu's Rename stays functional on both surfaces.
+  const renderRenameInput = (name: string) => {
+    const renameState = renaming?.name === name ? renaming : null;
+    if (!renameState) return null;
+    return (
+      <input
+        autoFocus
+        className="df-rename-input"
+        value={renameState.draft}
+        disabled={renameState.saving}
+        onChange={(e) => setRenaming({ ...renameState, draft: e.target.value })}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onBlur={(e) => {
+          if (e.currentTarget.dataset.skipRenameCommit === '1') return;
+          void commitRename(name, renameState.draft);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.dataset.skipRenameCommit = '1';
+            void commitRename(name, renameState.draft);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.currentTarget.dataset.skipRenameCommit = '1';
+            setRenaming(null);
+          }
+        }}
+      />
+    );
+  };
+
+  // Projects that have pages navigate through the structure rail instead of the
+  // category grid. The rail is a tree over the WHOLE project (not the browsed
+  // directory), so this is derived from every file rather than `filesAtCurrentDir`.
+  const hasPages = useMemo(
+    () => files.some((file) => fileCategory(file) === 'html'),
+    [files],
+  );
 
   // Category tabs: the panel shows one group at a time behind a tab bar
   // instead of stacking every section into one long list. A tab exists only
@@ -981,141 +919,6 @@ export function DesignFilesPanel({
     );
   }
 
-  // HTML pages render as thumbnail cards (live page preview + meta strip)
-  // instead of compact list rows — the #5517 reference card grid. The grid IS
-  // the preview surface, so a single click on the thumb opens the page in a
-  // workspace tab; the name button is the inline-rename entry point for
-  // editors (read-only viewers open instead), and the ⋯ menu carries
-  // open / rename / copy-path / download / delete.
-  function renderPageCard(f: ProjectFile, category: FileCategory) {
-    const isSelected = selected.has(f.name);
-    const renameState = renaming?.name === f.name ? renaming : null;
-    const displayName = currentDir === '' ? f.name : f.name.slice(currentDir.length + 1);
-    const openLabel = `${t('designFiles.previewOpen')} ${f.name}`;
-    return (
-      <div
-        key={f.name}
-        data-testid={`design-file-row-${f.name}`}
-        className={`df-card ${isSelected ? 'selected' : ''}`}
-      >
-        <span
-          className="df-card-check"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (viewerOnly) return; // read-only viewer cannot batch-select files
-            toggleSelect(f.name);
-          }}
-          role={viewerOnly ? undefined : 'checkbox'}
-          aria-checked={viewerOnly ? undefined : isSelected}
-          aria-disabled={viewerOnly ? 'true' : undefined}
-          tabIndex={viewerOnly ? -1 : 0}
-          onKeyDown={(e) => {
-            if (viewerOnly) return;
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              e.stopPropagation();
-              toggleSelect(f.name);
-            }
-          }}
-        >
-          {viewerOnly ? null : (
-            <RemixIcon name={isSelected ? 'checkbox-line' : 'checkbox-blank-line'} size={14} />
-          )}
-        </span>
-        <button
-          type="button"
-          className="df-card-thumb"
-          onClick={() => onOpenFile(f.name)}
-          title={openLabel}
-          aria-label={openLabel}
-        >
-          <HtmlCardThumbnail
-            projectId={projectId}
-            file={f}
-            filesRefreshKey={filesRefreshKey}
-          />
-        </button>
-        <div className="df-card-meta">
-          <div className="df-card-meta-text">
-            {renameState ? (
-              <input
-                autoFocus
-                className="df-rename-input"
-                value={renameState.draft}
-                disabled={renameState.saving}
-                onChange={(e) => setRenaming({ ...renameState, draft: e.target.value })}
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
-                onBlur={(e) => {
-                  if (e.currentTarget.dataset.skipRenameCommit === '1') return;
-                  void commitRename(f.name, renameState.draft);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.currentTarget.dataset.skipRenameCommit = '1';
-                    void commitRename(f.name, renameState.draft);
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    e.currentTarget.dataset.skipRenameCommit = '1';
-                    setRenaming(null);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={`df-card-name-btn ${viewerOnly ? '' : 'is-renamable'}`}
-                title={viewerOnly ? openLabel : t('common.rename')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // Read-only viewers have no rename entry point, so the name
-                  // stays a plain open target for them.
-                  if (viewerOnly) {
-                    onOpenFile(f.name);
-                    return;
-                  }
-                  startRename(f.name);
-                }}
-              >
-                <span className="df-card-name" title={displayName}>{displayName}</span>
-              </button>
-            )}
-            <span className="df-card-sub">
-              {categoryLabel(category, t)} · {relativeTime(f.mtime, t)}
-            </span>
-          </div>
-          {viewerOnly ? (
-            // Read-only viewer: the ⋯ menu is a mutation entry point, so keep
-            // an inert placeholder that preserves the meta-strip layout.
-            <span className="df-row-menu df-row-menu-placeholder" aria-hidden />
-          ) : (
-            <span
-              data-testid={`design-file-menu-${f.name}`}
-              className="df-row-menu"
-              role="button"
-              tabIndex={0}
-              aria-label={t('designFiles.rowMenu')}
-              onClick={(e) => {
-                e.stopPropagation();
-                openMenuFor(f.name, e.target as HTMLElement);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  openMenuFor(f.name, e.currentTarget as HTMLElement);
-                }
-              }}
-            >
-              ⋯
-            </span>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   // Images in the masonry waterfall: bare image cards — no name/meta strip,
   // the picture IS the card. Check chip floats top-left and the row menu
   // (rename/delete live there) floats top-right, both hover-revealed. A single
@@ -1418,7 +1221,10 @@ export function DesignFilesPanel({
   const hasSelection = selected.size > 0;
 
   return (
-    <div className={`df-panel ${hasSelection ? 'has-selection' : ''}`}>
+    <div
+      className={`df-panel ${hasSelection ? 'has-selection' : ''}`}
+      data-testid="design-files-panel"
+    >
       {reloading ? (
         <div className="df-reloading-overlay" data-testid="design-files-reloading">
           <span className="loading-spinner">
@@ -1610,6 +1416,25 @@ export function DesignFilesPanel({
                 </div>
               </div>
             )
+          ) : hasPages ? (
+            <DesignStructurePanel
+              projectId={projectId}
+              currentDir={currentDir}
+              dirs={dirsAtCurrentDir}
+              files={filesAtCurrentDir}
+              liveArtifacts={liveArtifacts}
+              rootDirName={rootDirName}
+              viewerOnly={viewerOnly}
+              selected={selected}
+              onToggleSelect={toggleSelect}
+              onEnterDir={setCurrentDir}
+              onOpenFile={onOpenFile}
+              onOpenLiveArtifact={onOpenLiveArtifact}
+              onOpenRowMenu={(name, position) => setMenuPos({ name, ...position })}
+              renderRenameInput={renderRenameInput}
+              categoryLabel={(category) => sectionLabel(category, t)}
+              t={t}
+            />
           ) : (
             <>
               {availableTabs.length > 0 ? (
@@ -1744,14 +1569,10 @@ export function DesignFilesPanel({
               {sections.map(([category, sectionFiles]) =>
                 resolvedTab === `cat:${category}` ? (
                   <div className="df-section" key={`cat:${category}`}>
-                    {category === 'html' ? (
-                      // Page cards are self-describing — a straight grid
-                      // under the tab bar.
-                      <div className="df-card-grid">
-                        {limitGridEntries(sectionFiles).map((f) => renderPageCard(f, category))}
-                        {renderGridSentinel(sectionFiles)}
-                      </div>
-                    ) : category === 'image' ? (
+                    {/* No `html` branch: a project with pages navigates through
+                        the structure rail above, so this category tab is only
+                        ever reached by page-free projects. */}
+                    {category === 'image' ? (
                       // Images read as their own preview — a masonry waterfall
                       // of natural-aspect thumbnails instead of list rows.
                       <div className="df-image-masonry" data-testid="design-files-image-masonry">
@@ -1903,221 +1724,6 @@ function GridRenderSentinel({ onReveal }: { onReveal: () => void }) {
       }}
     />
   );
-}
-
-// Pages are laid out at a desktop-ish width and scaled down to the card, so
-// the thumbnail reads as a zoomed-out page preview instead of the page's
-// narrow mobile layout cropped to the card's top-left corner.
-const PAGE_THUMB_LAYOUT_WIDTH = 1200;
-// Matches the card thumb's 16/9 aspect-ratio box.
-const PAGE_THUMB_LAYOUT_HEIGHT = Math.round(PAGE_THUMB_LAYOUT_WIDTH * (9 / 16));
-
-// The HTML page thumbnail: fetch + buildSrcdoc (guarded by the inline size
-// cap), rendered through the #5517 reference's fixed-layout iframe scaled to
-// the card width. While no srcdoc is available (too large, still fetching, or
-// fetch failed) the glyph placeholder shows instead of URL-loading the iframe.
-function HtmlCardThumbnail({
-  projectId,
-  file,
-  filesRefreshKey,
-}: {
-  projectId: string;
-  file: ProjectFile;
-  filesRefreshKey: number;
-}) {
-  const {
-    workspaceContext,
-    workspaceContextLoading,
-  } = useProjectCollabContext();
-  const tooLargeForThumbnail = file.size > HTML_THUMBNAIL_INLINE_MAX_BYTES;
-  const url = projectFileUrl(projectId, file.name, workspaceContext);
-  const authorizationScopeKey = workspaceContextLoading
-    ? null
-    : workspaceContext
-      ? `workspace:${workspaceIdentityCacheKey(workspaceContext)}`
-      : 'local';
-  const refreshKey = htmlSourceSnapshotRefreshKey(file, filesRefreshKey);
-  const thumbnailIdentity = authorizationScopeKey
-    ? {
-        authorizationScopeKey,
-        projectId,
-        fileName: file.name,
-        refreshKey,
-      }
-    : null;
-  const baseHref = projectRawUrl(
-    projectId,
-    baseDirForFile(file.name),
-    workspaceContext,
-  );
-  const [srcDoc, setSrcDoc] = useState<string | null>(() => {
-    if (!thumbnailIdentity) return null;
-    const source =
-      getHtmlSourceSnapshot(
-        thumbnailIdentity.authorizationScopeKey,
-        thumbnailIdentity.projectId,
-        thumbnailIdentity.fileName,
-        thumbnailIdentity.refreshKey,
-      )?.source
-      ?? getHtmlThumbnailSource(thumbnailIdentity);
-    return source === null ? null : buildSrcdoc(source, { baseHref });
-  });
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [scale, setScale] = useState<number | null>(null);
-
-  // Content fetches wait until the card scrolls near the viewport; the 800px
-  // bottom rootMargin prefetches cards about to be scrolled into view, and a
-  // card that has intersected once stays "near" for good (same pattern as
-  // ExampleCard in ExamplesTab). Environments without IntersectionObserver
-  // (jsdom) fall back to treating every card as immediately visible.
-  const [nearViewport, setNearViewport] = useState(false);
-  useEffect(() => {
-    if (nearViewport) return;
-    const host = hostRef.current;
-    if (!host) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      setNearViewport(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setNearViewport(true);
-            observer.disconnect();
-            break;
-          }
-        }
-      },
-      { rootMargin: '0px 0px 800px 0px' },
-    );
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, [nearViewport]);
-
-  useEffect(() => {
-    setSrcDoc(null);
-    if (tooLargeForThumbnail || !thumbnailIdentity) return;
-    const cachedSource =
-      getHtmlSourceSnapshot(
-        thumbnailIdentity.authorizationScopeKey,
-        thumbnailIdentity.projectId,
-        thumbnailIdentity.fileName,
-        thumbnailIdentity.refreshKey,
-      )?.source
-      ?? getHtmlThumbnailSource(thumbnailIdentity);
-    if (cachedSource !== null) {
-      setSrcDoc(buildSrcdoc(cachedSource, { baseHref }));
-      return;
-    }
-    // Only an actual network load waits for viewport proximity (cached
-    // sources above render immediately) and for a free fetch slot — the
-    // gate + pool that keep a huge grid from firing thousands of fetches.
-    if (!nearViewport) return;
-    let cancelled = false;
-    const abandonSlot = acquireHtmlThumbnailFetchSlot((release) => {
-      void loadHtmlThumbnailSource(
-        thumbnailIdentity,
-        async () => {
-          const response = await fetch(
-            appendResourceQuery(url, `v=${Math.round(file.mtime)}`),
-            {},
-          );
-          return response?.ok ? response.text() : null;
-        },
-      ).then((html) => {
-          if (cancelled || html === null) return;
-          const nextSrcDoc = buildSrcdoc(html, { baseHref });
-          if (!cancelled) setSrcDoc(nextSrcDoc);
-        })
-        .catch(() => {
-          if (!cancelled) setSrcDoc(null);
-        })
-        // Success and failure both pass through here exactly once per
-        // started fetch — the ONLY place a started fetch's slot is freed.
-        // Cleanup below abandons the reservation without freeing the slot,
-        // so a fetch abandoned mid-flight keeps its slot until the network
-        // actually settles it and real concurrency stays within the cap.
-        .finally(release);
-    });
-    return () => {
-      cancelled = true;
-      abandonSlot();
-    };
-  }, [
-    authorizationScopeKey,
-    baseHref,
-    nearViewport,
-    refreshKey,
-    tooLargeForThumbnail,
-    url,
-  ]);
-
-  // Track the host width so the fixed-layout iframe scales with the card.
-  // Environments without ResizeObserver (jsdom) fall back to an unscaled
-  // fill-the-box iframe.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || typeof ResizeObserver === 'undefined') return;
-    const update = () => {
-      const width = host.clientWidth;
-      if (width > 0) setScale(width / PAGE_THUMB_LAYOUT_WIDTH);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div ref={hostRef} className="df-thumb-scale-host">
-      {tooLargeForThumbnail || srcDoc === null ? (
-        <FilePreviewPlaceholder file={file} />
-      ) : (
-        <iframe
-          title={file.name}
-          srcDoc={srcDoc}
-          sandbox="allow-scripts allow-downloads"
-          loading="lazy"
-          style={
-            scale
-              ? {
-                  width: PAGE_THUMB_LAYOUT_WIDTH,
-                  height: PAGE_THUMB_LAYOUT_HEIGHT,
-                  transform: `scale(${scale})`,
-                  transformOrigin: '0 0',
-                }
-              : undefined
-          }
-        />
-      )}
-    </div>
-  );
-}
-
-function FilePreviewPlaceholder({
-  file,
-  title,
-}: {
-  file: ProjectFile;
-  title?: string;
-}) {
-  return (
-    <div className="df-preview-placeholder" title={title}>
-      {categoryGlyph(fileCategory(file))}
-    </div>
-  );
-}
-
-function baseDirForFile(name: string): string {
-  const index = name.lastIndexOf('/');
-  return index >= 0 ? name.slice(0, index + 1) : '';
-}
-
-function fileExtensionLabel(name: string): string {
-  const dot = name.lastIndexOf('.');
-  if (dot < 0 || dot === name.length - 1) return '';
-  return name.slice(dot + 1).toUpperCase();
 }
 
 // Plural section header for a category. Reuses existing plural labels where a

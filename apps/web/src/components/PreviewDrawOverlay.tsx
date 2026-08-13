@@ -1637,12 +1637,16 @@ export function PreviewDrawOverlay({
               disabled={sending}
               placeholder={t('chat.annotationNotePlaceholder')}
               style={{
-                background: 'rgba(218, 97, 56, 0.18)',
-                border: '1px solid rgba(248, 150, 104, 0.82)',
+                /* Plain white field. The toolbar pill is a fixed dark surface
+                   (rgba(20,20,20,.92)) rather than a themed one, so these are
+                   raw values on purpose — a theme token would flip with the app
+                   and lose contrast against a surface that never moves. */
+                background: '#ffffff',
+                border: '1px solid rgba(20, 20, 20, 0.14)',
                 borderRadius: 999,
                 outline: 'none',
-                boxShadow: '0 0 0 3px rgba(218, 97, 56, 0.22)',
-                color: 'inherit',
+                boxShadow: 'none',
+                color: '#141414',
                 flexGrow: 1,
                 flexShrink: 1,
                 flexBasis: 240,

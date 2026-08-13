@@ -2935,6 +2935,7 @@ export interface Dict {
   'chat.comments.removeAttachmentAria': string;
   'chat.comments.comment': string;
   'chat.comments.sendToChat': string;
+  'chat.comments.viewAll': string;
   'chat.comments.sending': string;
   'chat.comments.edit': string;
   'chat.comments.select': string;
@@ -3638,6 +3639,25 @@ export interface Dict {
   'designFiles.newDocument': string;
   'designFiles.newDocumentTitle': string;
   'designFiles.empty': string;
+  // Design Structure rail (the Design Files surface's page tree + layer /
+  // element / asset views).
+  'designStructure.tabStructure': string;
+  'designStructure.tabLayers': string;
+  'designStructure.tabEdit': string;
+  'designStructure.tabAssets': string;
+  'designStructure.groupPageCount': string;
+  'designStructure.allPages': string;
+  'designStructure.layersTitle': string;
+  'designStructure.layerCount': string;
+  'designStructure.layersEmpty': string;
+  'designStructure.layersNoPage': string;
+  'designStructure.editTitle': string;
+  'designStructure.editHint': string;
+  'designStructure.editOpen': string;
+  'designStructure.assetsBrand': string;
+  'designStructure.assetsMine': string;
+  'designStructure.assetsBrandEmpty': string;
+  'designStructure.assetsMineEmpty': string;
   'designFiles.syncing': string;
   'designFiles.refresh': string;
   'designFiles.delete': string;
@@ -3858,7 +3878,6 @@ export interface Dict {
   'fileViewer.jsxModuleTitle': string;
   'fileViewer.jsxModuleBody': string;
   'fileViewer.jsxModuleCta': string;
-  'fileViewer.comment': string;
   'fileViewer.edit': string;
   'fileViewer.draw': string;
   'fileViewer.mark': string;
@@ -4023,6 +4042,20 @@ export interface Dict {
   'fileViewer.previewAssetBlockedDetail': string;
   'fileViewer.presenterReset': string;
   'fileViewer.present': string;
+  'fileViewer.selectTool': string;
+  'fileViewer.flowChart': string;
+  'fileViewer.flowChartPending': string;
+  'fileViewer.flowEmpty': string;
+  'fileViewer.flowTitle': string;
+  'fileViewer.flowFocusTitle': string;
+  'fileViewer.flowFocusHint': string;
+  'fileViewer.flowOpenPage': string;
+  'fileViewer.flowGroupChip': string;
+  'fileViewer.flowCurrentPage': string;
+  'fileViewer.flowThumbUnavailable': string;
+  'fileViewer.flowSummary': string;
+  'fileViewer.flowNoLinks': string;
+  'fileViewer.flowOmitted': string;
   'fileViewer.presentInTab': string;
   'fileViewer.presentFullscreen': string;
   'fileViewer.presentNewTab': string;

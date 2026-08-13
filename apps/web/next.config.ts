@@ -199,9 +199,12 @@ const nextConfig: NextConfig = {
             { source: '/frames/:path*', destination: `${DAEMON_ORIGIN}/frames/:path*` },
           ];
         },
-        devIndicators: {
-          position: 'bottom-right',
-        },
+        // Next.js's floating dev badge sat bottom-right, on top of the canvas
+        // dock and the edit rail's lower edge — the two controls the viewer
+        // puts there. Turned off rather than moved: every other corner is
+        // occupied too, and the issues it counts are already in the terminal
+        // and the browser console.
+        devIndicators: false as const,
       }
       : {}),
 };

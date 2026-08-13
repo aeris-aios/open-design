@@ -93,7 +93,7 @@ function fetchServing(bytes: { current: string }) {
 }
 
 async function enterCommentMode(): Promise<void> {
-  const toggle = await screen.findByTestId('board-mode-toggle');
+  const toggle = await screen.findByTestId('comment-panel-toggle');
   await act(async () => {
     fireEvent.click(toggle);
   });

@@ -1421,6 +1421,13 @@
      in this file use (.page-creator-head, .ds-card-thumb) to read as a
      distinct strip instead of bleeding into the canvas. */
   border-bottom: 1px solid var(--border);
+  /* Containment context for the canvas toolbar's own narrow breakpoints (see
+     `.ws-tabs-canvas-toolbar`). Those thresholds were calibrated against a
+     toolbar that spanned the whole pane; now that it shares this row with the
+     file actions its own inline size is ~300px smaller, which tripped
+     icon-only mode at ordinary window widths. Measuring the row instead
+     restores the original meaning: "how wide is the chrome strip". */
+  container-type: inline-size;
 }
 .ws-tabs-shell:has(.entry-settings-menu__popover) {
   z-index: 1900;
@@ -1467,6 +1474,51 @@
   flex-shrink: 0;
 }
 
+/* Leading slot: the open file's canvas toolbar portals in here (FileViewer,
+   WORKSPACE_CANVAS_TOOLBAR_ID). It used to be its own 52px bar directly below
+   this row, so one file cost two chrome strips while this row's left half sat
+   empty. Here it is simply the row's flexible leading item; `.viewer-toolbar`
+   keeps `justify-content: space-between`, so canvas controls stay left and
+   Flow / ⋮ land just before the file actions. */
+.ws-tabs-canvas-toolbar {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* No file open → no portal content. Collapse rather than spend the row's 8px
+   gap on an empty box. */
+.ws-tabs-canvas-toolbar:empty {
+  display: none;
+}
+/* Shed the standalone-bar chrome, and hand the containment context up to the
+   row (see `.ws-tabs-shell`) — the toolbar's narrow breakpoints ask "how wide
+   is the chrome strip", which is now the row, not this flex item.
+   Descendant-of-.ws-tabs-shell keeps this at (0,3,0) so it also outranks the
+   `html:not([data-theme]) .viewer-toolbar` dark fallback in viewer/core.css. */
+.ws-tabs-shell .ws-tabs-canvas-toolbar > .viewer-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border-bottom: 0;
+  container-type: normal;
+}
+/* One control height across the merged row: the file/project actions to the
+   right are 28px, so the canvas controls come down from the 36px they stood at
+   while they owned a 52px bar of their own instead of sitting 8px proud of
+   every neighbour. `.viewer-tab` is 4px shorter than its track's outer height
+   (the segment sits in 2px of padding). */
+.ws-tabs-canvas-toolbar .viewer-action,
+.ws-tabs-canvas-toolbar .viewer-viewport-trigger {
+  height: 28px;
+  min-height: 28px;
+}
+.ws-tabs-canvas-toolbar .viewer-tab {
+  height: 24px;
+}
+
 /* The present button is wrapped in an inline-block .present-wrap that
    doesn't vertically center its child; make it a flex item so the icon
    button sits on the row's centerline like the others. */
@@ -1500,11 +1552,14 @@
   min-height: 28px;
   padding: 0;
   justify-content: center;
-  /* Borderless soft grey-white icon buttons: drop the outline and sit on a
-     light grey fill so present / 历史版本 read as one quiet cluster next to the
-     dark 分享 button. */
+  /* Bare glyphs at rest: no outline, no fill. present / 历史版本 / 分享 used to
+     sit on a resting grey fill, which spent the only visual state this cluster
+     has — the same grey then marks hover AND the open/selected panel below, so
+     an open 历史版本 looked no different from a closed one. Grey now means
+     "you are on it" or "it is open"; the dark 导出 button still overrides the
+     fill entirely. */
   border-color: transparent;
-  background: var(--bg-subtle);
+  background: transparent;
 }
 .app .ws-tabs-actions .chrome-action-icon:hover:not(:disabled) {
   background: var(--bg-muted);
@@ -1535,9 +1590,11 @@
 .app .ws-tabs-actions .chrome-action > svg:first-child {
   transform: none;
 }
-/* The panel's lead action (导出) as a solid dark (inverted) button: black fill
-   + white icon/label in light mode; inverts cleanly to a light fill + dark
-   content in dark mode. Was 分享 until export took the lead slot. */
+/* The row's primary action (导出) as a solid dark (inverted) button: black fill
+   + white icon in light mode; inverts cleanly to a light fill + dark content in
+   dark mode. Declared after `.chrome-action-icon` on purpose — both are (0,3,0),
+   so source order is what keeps the dark fill on the glyph-only export button
+   instead of the quiet grey one. */
 .app .ws-tabs-actions .chrome-action-dark {
   background: var(--text-strong);
   border-color: var(--text-strong);

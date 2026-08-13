@@ -589,7 +589,10 @@
   min-width: 0;
   max-width: min(240px, 100%);
   min-height: var(--spacing-36);
-  padding: 0 var(--spacing-12);
+  /* 4px here + 8px on the body below = the original 12px inset, so the chip's
+     overall width is unchanged while the body's hover fill gets breathing
+     room around the icon and label. */
+  padding: 0 var(--spacing-4);
   border-radius: var(--radius-pill);
   background: transparent;
   border: var(--stroke-thin) solid var(--border);
@@ -658,8 +661,21 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
-  padding: 0;
+  /* Inset the content from the hover fill's own edges (the fill IS this
+     button's background); the chip gives back the same 8px so nothing grows. */
+  padding: 0 var(--spacing-8);
+  /* The global `button` primitive hard-codes height: 36px, which made the fill
+     span the chip's full inner height — 1px above and below against 5px on the
+     left. The chip is 36px tall with a 1px border, so a 26px fill leaves
+     (36 − 2 − 26) / 2 + 1 = 5px above and below: the same 5px the 4px side
+     padding + 1px border gives on the left and right. */
+  height: 26px;
+  min-height: 0;
   border: 0;
+  /* The global `button` primitive paints a --radius-sm hover fill; inside a
+     pill-shaped chip that fill reads as a square block behind the label. Match
+     the chip's own radius so any hover paint follows the pill. */
+  border-radius: var(--radius-pill);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -2716,11 +2732,15 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  /* Caption sits flush with the card/preview left edge (no horizontal
-     inset — dogfood 2026-07-28) and 12px under the preview's bottom line:
-     the 8px grid row gap + this 4px. Overflowing titles ellipsize at the
-     card edge (nowrap + ellipsis on the title below). */
-  padding: 4px 0 8px;
+  /* Horizontally inset from the card edge: the thumbnail above deliberately
+     bleeds edge-to-edge (see the grid comment on `.home-hero__plugin-preset`),
+     but with the card's own `padding: 0` that left the caption sitting 1px off
+     the border — it read as text glued to the frame. The inset applies to this
+     caption row only, so the preview keeps its full-bleed framing.
+     Vertically: 12px under the preview's bottom line (the 8px grid row gap +
+     this 4px). Overflowing titles ellipsize at the inset edge (nowrap +
+     ellipsis on the title below). */
+  padding: 4px var(--spacing-12) 8px;
 }
 .home-hero__plugin-preset-category {
   align-self: flex-start;
@@ -2743,8 +2763,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   /* No horizontal padding of its own: the title nests inside
-     `__plugin-preset-meta`, whose 8px inset IS the text-to-card-edge
-     distance — a second inset here silently doubles it. */
+     `__plugin-preset-meta`, whose inset IS the text-to-card-edge distance —
+     a second inset here silently doubles it. */
   padding: 0 0 6px;
   font-size: 13px;
   font-weight: 600;

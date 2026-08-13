@@ -2,7 +2,12 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, 
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { CenteredLoader } from './Loading';
-import { APP_CHROME_FILE_ACTIONS_ID, APP_CHROME_FILE_ACTIONS_SELECTOR } from './AppChromeHeader';
+import {
+  APP_CHROME_FILE_ACTIONS_ID,
+  APP_CHROME_FILE_ACTIONS_SELECTOR,
+  WORKSPACE_CANVAS_TOOLBAR_ID,
+  WORKSPACE_CANVAS_TOOLBAR_SELECTOR,
+} from './AppChromeHeader';
 import {
   commentSendCompleted,
   commentSendSucceeded,
@@ -248,7 +253,7 @@ import {
 } from '../collab/collab-context';
 import { currentUserDirectoryEntry, useTeamMembers } from '../collab/useTeamMembers';
 import { applyPodMemberRemoval } from '../lib/pod-members';
-import { AnnotationHoverPopover, BoardComposerPopover } from './BoardComposerPopover';
+import { BoardComposerPopover } from './BoardComposerPopover';
 import {
   OD_PREVIEW_KEEP_ALIVE,
   PooledIframe,
@@ -274,6 +279,8 @@ import {
 } from '../edit-mode/source-patches';
 import { MANUAL_EDIT_STYLE_PROPS, type ManualEditBridgeMessage, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
+import { DesignStructurePanel } from './design-files/DesignStructurePanel';
+import { type FileCategory, fileCategory, sectionLabelKey } from './design-files/fileCategories';
 import {
   getHtmlSourceSnapshot,
   htmlSourceSnapshotRefreshKey,
@@ -282,9 +289,31 @@ import {
   setHtmlSourceSnapshot,
 } from './html-source-snapshot-cache';
 
+/** The edit rail navigates; it does not select, rename, or batch. */
+const STRUCTURE_RAIL_NO_SELECTION: ReadonlySet<string> = new Set();
+/* The viewer's rail only exists while Edit is on, and it stands beside the live
+   canvas. Layers is dropped there: hovering and selecting on the artboard
+   already answers what the page is made of, and answers it warmer than a tree
+   of the same nodes one pane over. Module-scope so the array identity is
+   stable — it feeds a `tabs` effect in the panel. */
+const VIEWER_STRUCTURE_RAIL_TABS = ['structure', 'edit', 'assets'] as const;
+/* Over the flow map the rail is an index of the screens on the board, not an
+   authoring surface: Edit and Assets both describe an artboard the map does
+   not have, so only Structure rides along. */
+const structureRailNoop = () => {};
+
 function resolveChromeActionsHost(): HTMLElement | null {
   return document.querySelector<HTMLElement>(APP_CHROME_FILE_ACTIONS_SELECTOR)
     ?? document.getElementById(APP_CHROME_FILE_ACTIONS_ID);
+}
+
+/* Leading slot of the workspace action row. When it exists the canvas toolbar
+   renders there (one merged chrome row); when it does not — viewer mounted
+   outside a workspace, tests, print — the toolbar stays inline above the
+   canvas, which is why every call site keeps the un-portalled branch. */
+function resolveCanvasToolbarHost(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(WORKSPACE_CANVAS_TOOLBAR_SELECTOR)
+    ?? document.getElementById(WORKSPACE_CANVAS_TOOLBAR_ID);
 }
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
@@ -510,10 +539,19 @@ async function readPreviewAssetResponseBody(resp: Response): Promise<unknown> {
   }
 }
 
+/** Design width the desktop artboard renders at. */
+const DESKTOP_ARTBOARD_WIDTH = 1440;
+
 const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
   {
     id: 'desktop',
-    width: null,
+    // The desktop preview is an artboard, not a responsive window: the page
+    // renders at this design width whatever the panel is doing, and the canvas
+    // only ever scales it. Resizing the panel used to re-run the page's
+    // breakpoints, which changed the composition under the person editing it.
+    // Height stays null — a page is as tall as it is and scrolls inside the
+    // artboard, so only width participates in the fit.
+    width: DESKTOP_ARTBOARD_WIDTH,
     height: null,
     labelKey: 'fileViewer.viewportDesktop',
     titleKey: 'fileViewer.viewportDesktopTitle',
@@ -533,6 +571,13 @@ const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
     titleKey: 'fileViewer.viewportMobileTitle',
   },
 ];
+
+/* Quarter steps down from 1:1. The dock's zoom exists to fit more of the
+   artboard into the pane it sits in, so the ladder runs below 100% rather than
+   past it — the old 50/75/100/125/150/200 run spent half its rungs magnifying
+   a preview that is already rendered at its own scale. One list, read by both
+   the dock menu and the toolbar's ⋯ mirror, so the two can't drift. */
+const PREVIEW_ZOOM_LEVELS = [25, 50, 75, 100];
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -1048,11 +1093,10 @@ function PreviewViewportControls({
         tabIndex={tabIndex}
         onClick={() => setOpen((value) => !value)}
       >
-        <RemixIcon
-          name={previewViewportIcon(activePreset.id)}
-          size={14}
-          className="viewer-viewport-icon"
-        />
+        {/* Text-only trigger: the selected device reads from its label alone.
+            The device glyph stays in the menu items, where it disambiguates
+            the three options; on the closed trigger it only doubled the word
+            next to it. */}
         <span>{t(activePreset.labelKey)}</span>
         <RemixIcon name="arrow-down-s-line" size={14} />
       </button>
@@ -1098,7 +1142,11 @@ function previewViewportStyle(
   const effectiveScale = effectivePreviewScale(viewport, previewScale, canvasSize, options);
   return {
     '--preview-viewport-width': `${preset.width}px`,
-    '--preview-viewport-height': `${preset.height}px`,
+    // Desktop declares no artboard height: the page is as tall as it is and
+    // scrolls inside the canvas. Publishing `nullpx` here would set the var to
+    // an invalid value, which is NOT the same as leaving it unset — the `var()`
+    // fallbacks downstream would never engage and the artboard would collapse.
+    ...(preset.height ? { '--preview-viewport-height': `${preset.height}px` } : {}),
     '--preview-scale': effectiveScale,
     '--preview-user-scale': previewScale,
   };
@@ -1148,14 +1196,23 @@ export function effectivePreviewScale(
   canvasSize?: PreviewCanvasSize,
   options?: PreviewScaleOptions,
 ) {
-  if (viewport === 'desktop') return previewScale;
   const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
-  if (!preset?.width || !preset.height || !canvasSize?.width || !canvasSize.height) return previewScale;
-  const canvasPadding = options?.canvasPadding ?? 48;
+  if (!preset?.width || !canvasSize?.width) return previewScale;
+  // The 48px gutter is breathing room around a DEVICE: a phone pressed against
+  // the pane edges stops reading as an object sitting on a canvas. A desktop
+  // artboard is the page itself and owes the stage nothing — at 1:1 it spans
+  // the pane, and the margins that show up below 1:1 come from the zoom rather
+  // than from a reserved frame.
+  const canvasPadding = options?.canvasPadding ?? (viewport === 'desktop' ? 0 : 48);
   const availableWidth = Math.max(1, canvasSize.width - canvasPadding);
-  const availableHeight = Math.max(1, canvasSize.height - canvasPadding);
-  const fitScale = Math.min(1, availableWidth / preset.width, availableHeight / preset.height);
-  return Math.min(previewScale, fitScale);
+  const widthFit = availableWidth / preset.width;
+  // A preset with a height (phone, tablet) is a whole device and fits both
+  // ways. Desktop has no fixed height — the page scrolls — so fitting it on
+  // height would shrink a long page to nothing.
+  const heightFit = preset.height && canvasSize.height
+    ? Math.max(1, canvasSize.height - canvasPadding) / preset.height
+    : Number.POSITIVE_INFINITY;
+  return Math.min(previewScale, 1, widthFit, heightFit);
 }
 
 export function desktopPreviewAutoFitZoomPercent(
@@ -1341,7 +1398,6 @@ export function previewOverlayTransform(
   canvasSize?: PreviewCanvasSize,
 ): PreviewOverlayTransform {
   const scale = effectivePreviewScale(viewport, previewScale, canvasSize);
-  if (viewport === 'desktop') return { scale, offsetX: 0, offsetY: 0 };
   const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
   const pad = 24;
   if (!preset?.width || !preset.height) return { scale, offsetX: pad, offsetY: pad };
@@ -1355,38 +1411,39 @@ export function previewOverlayTransform(
 }
 
 function previewScaleShellStyle(
-  viewport: PreviewViewportId,
-  previewScale: number,
+  _viewport: PreviewViewportId,
+  _previewScale: number,
 ): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop') {
-    return {
-      width: `${100 / previewScale}%`,
-      height: `${100 / previewScale}%`,
-      transform: `scale(${previewScale})`,
-      transformOrigin: '0 0',
-    };
-  }
+  // Every viewport is an artboard: a fixed design width scaled by the fit that
+  // `previewViewportStyle` published as `--preview-scale`. Scaling by the raw
+  // zoom instead would leave the artboard overflowing its canvas, and sizing by
+  // the container would reflow the page — the two failure modes this shape
+  // exists to avoid. Desktop declares no artboard height (the page scrolls), so
+  // it falls back to filling the canvas at the current scale.
   return {
     width: 'var(--preview-viewport-width)',
-    height: 'var(--preview-viewport-height)',
+    // Height divides by the SAME scale the transform multiplies by, or the
+    // artboard renders only that fraction of the canvas and the page is cut off
+    // partway down. `--preview-scale` is the fit; the raw zoom is not.
+    height: 'var(--preview-viewport-height, calc(100% / var(--preview-scale, 1)))',
     transform: 'scale(var(--preview-scale, 1))',
     transformOrigin: '0 0',
   };
 }
 
+/**
+ * Manual edit uses the same artboard shell as every other preview.
+ *
+ * It used to freeze the canvas width on entry and scale against that, because
+ * the desktop preview had no fixed width and would otherwise re-run the page's
+ * breakpoints mid-edit. The desktop preset is a real artboard now, so the
+ * layout width no longer depends on the panel at all and there is nothing left
+ * to freeze.
+ */
 function manualEditPreviewShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
-  frozenWidth: number | null,
 ): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop' && frozenWidth) {
-    return {
-      width: `${frozenWidth / previewScale}px`,
-      height: `${100 / previewScale}%`,
-      transform: `scale(${previewScale})`,
-      transformOrigin: '0 0',
-    };
-  }
   return previewScaleShellStyle(viewport, previewScale);
 }
 
@@ -1432,40 +1489,6 @@ function pickLatestShareDeployment(
     .filter((deployment): deployment is WebDeploymentInfo =>
       Boolean(deployment && shareUrlForDeployment(deployment) && deployResultState(deployment.status) !== 'failed'))
     .sort(compareDeploymentsByNewest)[0] ?? null;
-}
-
-function manualEditFloatingPanelStyle(
-  target: ManualEditTarget,
-  previewScale: number,
-  canvasSize: PreviewCanvasSize | undefined,
-): CSSProperties {
-  const scale = Number.isFinite(previewScale) && previewScale > 0 ? previewScale : 1;
-  const panelWidth = 320;
-  const preferredPanelHeight = 380;
-  const pad = 12;
-  const canvasWidth = canvasSize?.width ?? 1200;
-  const canvasHeight = canvasSize?.height ?? 800;
-  const panelHeight = Math.min(preferredPanelHeight, Math.max(260, canvasHeight - pad * 2));
-  const targetLeft = target.rect.x * scale;
-  const targetTop = target.rect.y * scale;
-  const targetRight = (target.rect.x + target.rect.width) * scale;
-  let left = targetRight + pad;
-  if (left + panelWidth > canvasWidth - pad) {
-    left = Math.max(pad, targetLeft - panelWidth - pad);
-  }
-  const top = Math.max(
-    pad,
-    Math.min(targetTop, Math.max(pad, canvasHeight - panelHeight - pad)),
-  );
-  // Height is left to the content (auto): a short inspector (e.g. typography
-  // only) should be a compact card, not a tall half-empty panel. The cap only
-  // engages for long inspectors, at which point the scroll body takes over.
-  return {
-    left,
-    top,
-    width: panelWidth,
-    maxHeight: panelHeight,
-  };
 }
 
 // Anchors the hover "edit params" affordance to the top-right corner of the
@@ -1694,7 +1717,31 @@ interface Props {
   // Open `openName` as a tab (focusing it) and close `closeName` in one
   // atomic tab-state update. The React module pointer uses this to jump to the
   // HTML entry that renders a module and drop the dead-end module tab.
-  onOpenFileReplacing?: (openName: string, closeName: string) => void;
+  onOpenFileReplacing?: (
+    openName: string,
+    closeName: string,
+    /** `keepManualEdit`: the caller switched pages ON THE WAY INTO Edit and the
+     *  next viewer should come up in Edit too. Set by the structure rail (a
+     *  sibling page picked from inside Edit) and by the flow map's Edit tab (a
+     *  focused screen carried out of the map by a press of Edit). A module
+     *  pointer, or a page clicked on the map itself, is a plain open. */
+    options?: { keepManualEdit?: boolean },
+  ) => void;
+  /**
+   * Close this file's tab. Media viewers surface it as an explicit 关闭 — an
+   * image reached from the assets rail replaced the page being edited, so
+   * "done looking" needs a control, and the workspace (which knows where the
+   * file came from) decides whether closing returns there or just closes.
+   */
+  onCloseFile?: () => void;
+  /**
+   * Come up already in Edit. The workspace sets this for the file a
+   * structure-rail page switch just handed over to, so swapping pages mid-edit
+   * reads as a change of content rather than being thrown back to preview.
+   */
+  enterManualEditOnOpen?: boolean;
+  /** Fired once that hand-off has been taken, so it can never fire twice. */
+  onManualEditHandoffConsumed?: () => void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
   // Bumped nonce asking this viewer to open its Share/Export menu (chat-side
@@ -1787,6 +1834,9 @@ export const FileViewer = memo(function FileViewer({
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
+  onCloseFile,
+  enterManualEditOnOpen = false,
+  onManualEditHandoffConsumed,
   commentPortalId,
   onCommentModeChange,
   shareRequest,
@@ -1893,6 +1943,8 @@ export const FileViewer = memo(function FileViewer({
         onRetainActivityChange={onRetainActivityChange}
         onManualEditExitHandlerChange={onManualEditExitHandlerChange}
         manualEditEntryAllowed={manualEditEntryAllowed}
+        enterManualEditOnOpen={enterManualEditOnOpen}
+        onManualEditHandoffConsumed={onManualEditHandoffConsumed}
       />
     );
   }
@@ -1929,7 +1981,7 @@ export const FileViewer = memo(function FileViewer({
     return <SvgViewer projectId={projectId} file={file} />;
   }
   if (file.kind === 'image') {
-    return <ImageViewer projectId={projectId} file={file} />;
+    return <ImageViewer projectId={projectId} file={file} onCloseFile={onCloseFile} />;
   }
   if (file.kind === 'video') {
     return <VideoViewer projectId={projectId} file={file} />;
@@ -1941,7 +1993,7 @@ export const FileViewer = memo(function FileViewer({
     if (isRenderableSketchJson(file)) {
       return <SketchViewer projectId={projectId} file={file} />;
     }
-    return <ImageViewer projectId={projectId} file={file} />;
+    return <ImageViewer projectId={projectId} file={file} onCloseFile={onCloseFile} />;
   }
   if (file.kind === 'text' || file.kind === 'code') {
     return <TextViewer projectId={projectId} file={file} />;
@@ -2368,7 +2420,7 @@ export function LiveArtifactViewer({
               </button>
               {zoomMenuOpen && mode === 'preview' ? (
                 <div className="zoom-menu-popover" role="menu">
-                  {[50, 75, 100, 125, 150, 200].map((level) => (
+                  {PREVIEW_ZOOM_LEVELS.map((level) => (
                     <button
                       key={level}
                       type="button"
@@ -4608,7 +4660,12 @@ export function CommentSidePanel({
         </div>
         <div className="comment-side-header-actions">
           {/* The header's right slot collapses the panel to its rail (per
-              product: 收起); select all moved below the divider. */}
+              product: 收起); select all moved below the divider. The floating
+              card used to close outright here, back when it had no collapsed
+              state worth landing in. It has one now — comment mode opens on
+              the rail — so 收起 means the same thing on both surfaces, and the
+              rail is what invites the list back. Leaving comment mode entirely
+              is still one click on the toolbar toggle (or Escape, below). */}
           <button
             ref={expandedToggleRef}
             type="button"
@@ -4617,13 +4674,7 @@ export function CommentSidePanel({
             aria-controls={panelId}
             aria-expanded={true}
             title={t('preview.hideSidebar', { label: commentsLabel })}
-            onClick={() => {
-              if (onDismiss) {
-                onDismiss();
-                return;
-              }
-              handleCollapsedChange(true, 'collapsed');
-            }}
+            onClick={() => handleCollapsedChange(true, 'collapsed')}
           >
             <Icon name="chevron-right" size={14} />
           </button>
@@ -6348,7 +6399,16 @@ function ReactComponentViewer({
   projectId: string;
   projectKind: TrackingProjectKind;
   file: ProjectFile;
-  onOpenFileReplacing?: (openName: string, closeName: string) => void;
+  onOpenFileReplacing?: (
+    openName: string,
+    closeName: string,
+    /** `keepManualEdit`: the caller switched pages ON THE WAY INTO Edit and the
+     *  next viewer should come up in Edit too. Set by the structure rail (a
+     *  sibling page picked from inside Edit) and by the flow map's Edit tab (a
+     *  focused screen carried out of the map by a press of Edit). A module
+     *  pointer, or a page clicked on the map itself, is a plain open. */
+    options?: { keepManualEdit?: boolean },
+  ) => void;
   projectName?: string;
   projectDir?: string | null;
   agents?: AgentInfo[];
@@ -6372,6 +6432,13 @@ function ReactComponentViewer({
   const [source, setSource] = useState<string | null>(null);
   const [srcDoc, setSrcDoc] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  // Canvas chrome, mirroring the HTML viewer: a component preview is a live
+  // artboard too, so it gets the same device / zoom / present controls rather
+  // than a bare full-bleed frame.
+  const [previewViewport, setPreviewViewport] = useState<PreviewViewportId>('desktop');
+  const [zoom, setZoom] = useState(100);
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const [inTabPresent, setInTabPresent] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [unifiedActionTab, setUnifiedActionTab] = useState<'share' | 'export'>('share');
   const [shareAccess, setShareAccess] = useState<'private' | 'workspace'>('private');
@@ -6750,8 +6817,14 @@ function ReactComponentViewer({
     };
   }, [source, exportTitle, moduleEntries, isModule]);
 
+
+  const previewScale = zoom / 100;
+  // A module has no standalone preview to frame, and present mode hides the
+  // chrome by design.
+  const showCanvasChrome = mode === 'preview' && !inTabPresent && !isModule && Boolean(srcDoc);
+
   return (
-    <div className="viewer react-component-viewer">
+    <div className={`viewer react-component-viewer${inTabPresent ? ' is-tab-present' : ''}`}>
       {shareAccessConfirm ? (
         <MoveToTeamConfirmDialog
           action={shareAccessConfirm === 'workspace' ? 'to-team' : 'to-personal'}
@@ -6779,24 +6852,60 @@ function ReactComponentViewer({
           <span className="viewer-meta">
             {t('fileViewer.reactMeta', { size: humanSize(file.size) })}
           </span>
-        </div>
-        <div className="viewer-toolbar-actions">
-          <div className="viewer-tabs">
+          {mode === 'preview' ? (
+            <span className="viewer-preview-toolbar-inline">
+              <PreviewViewportControls
+                viewport={previewViewport}
+                onViewport={setPreviewViewport}
+                t={t}
+              />
+            </span>
+          ) : null}
+          <div className="viewer-tabs viewer-mode-tabs canvas-mode-seg" role="tablist" aria-label="View mode">
             <button
               type="button"
-              className={`viewer-tab ${mode === 'preview' ? 'active' : ''}`}
-              onClick={() => setMode('preview')}
+              role="tab"
+              className={`viewer-tab ${!inTabPresent ? 'active' : ''}`}
+              aria-selected={!inTabPresent}
+              onClick={() => {
+                setMode('preview');
+                setInTabPresent(false);
+              }}
             >
-              {t('fileViewer.preview')}
+              <span className="viewer-tab-label">{t('fileViewer.edit')}</span>
             </button>
             <button
               type="button"
-              className={`viewer-tab ${mode === 'source' ? 'active' : ''}`}
-              onClick={() => setMode('source')}
+              role="tab"
+              className={`viewer-tab ${inTabPresent ? 'active' : ''}`}
+              aria-selected={inTabPresent}
+              disabled={source === null || isModule}
+              onClick={() => {
+                setMode('preview');
+                setInTabPresent(true);
+              }}
             >
-              {t('fileViewer.source')}
+              <span className="viewer-tab-label">{t('fileViewer.present')}</span>
             </button>
           </div>
+        </div>
+        <div className="viewer-toolbar-actions">
+          {/* The segment states edit-vs-present, so Source needs its own
+              control. It stays a visible toggle here rather than moving into an
+              overflow menu this viewer does not otherwise have. */}
+          <button
+            type="button"
+            className={`viewer-action viewer-action-icon od-tooltip${mode === 'source' ? ' active' : ''}`}
+            data-testid="react-component-source-toggle"
+            aria-pressed={mode === 'source'}
+            title={t('fileViewer.source')}
+            data-tooltip={t('fileViewer.source')}
+            data-tooltip-placement="bottom"
+            aria-label={t('fileViewer.source')}
+            onClick={() => setMode(mode === 'source' ? 'preview' : 'source')}
+          >
+            <RemixIcon name="code-s-slash-line" size={15} />
+          </button>
           {source !== null ? (
             <>
               <span className="viewer-divider" aria-hidden />
@@ -7090,6 +7199,71 @@ function ReactComponentViewer({
           ) : null}
         </div>
       </div>
+      {inTabPresent ? (
+        <button
+          type="button"
+          className="present-exit-btn"
+          onClick={() => setInTabPresent(false)}
+          title={t('common.exitFullscreen')}
+          aria-label={t('common.exitFullscreen')}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      ) : null}
+      {showCanvasChrome ? (
+        <div className="canvas-dock" data-testid="canvas-dock">
+          <div className="canvas-dock-inner">
+            <div className="canvas-dock-tools">
+              <div className="zoom-menu viewer-toolbar-zoom">
+                <button
+                  type="button"
+                  className="viewer-action zoom-trigger od-tooltip"
+                  aria-haspopup="menu"
+                  aria-expanded={zoomMenuOpen}
+                  title={t('fileViewer.resetZoom')}
+                  data-tooltip={t('fileViewer.resetZoom')}
+                  data-tooltip-placement="top"
+                  onClick={() => setZoomMenuOpen((v) => !v)}
+                >
+                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{zoom}%</span>
+                </button>
+                {zoomMenuOpen ? (
+                  <div className="zoom-menu-popover" role="menu">
+                    {PREVIEW_ZOOM_LEVELS.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        className={`zoom-menu-item${zoom === level ? ' active' : ''}`}
+                        role="menuitem"
+                        onClick={() => {
+                          setZoom(level);
+                          setZoomMenuOpen(false);
+                        }}
+                      >
+                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
+                        {zoom === level ? <Icon name="check" size={13} /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <span className="canvas-dock-divider" aria-hidden />
+              <button
+                type="button"
+                className="viewer-action viewer-action-icon od-tooltip"
+                data-testid="canvas-dock-fullscreen"
+                title={t('fileViewer.presentFullscreen')}
+                data-tooltip={t('fileViewer.presentFullscreen')}
+                data-tooltip-placement="top"
+                aria-label={t('fileViewer.presentFullscreen')}
+                onClick={() => setInTabPresent(true)}
+              >
+                <RemixIcon name="fullscreen-line" size={15} />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="viewer-body">
         {isModule && mode === 'preview' ? (
           // Module of a multi-file prototype: no standalone preview, so the
@@ -7102,15 +7276,29 @@ function ReactComponentViewer({
         ) : source === null || (mode === 'preview' && !srcDoc) ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : mode === 'preview' ? (
-          <PreviewDrawOverlay>
-            <iframe
-              data-testid="react-component-preview-frame"
-              title={file.name}
-              sandbox="allow-scripts allow-downloads"
-              srcDoc={srcDoc}
-              style={{ width: '100%', height: '100%', border: 0 }}
-            />
-          </PreviewDrawOverlay>
+          // Same layer/canvas/clip structure the HTML viewer uses, so the
+          // device frame, viewport sizing, and zoom scaling all come from the
+          // stylesheet both viewers already share.
+          <div
+            className={`comment-preview-layer preview-viewport preview-viewport-${previewViewport}`}
+            style={previewViewportStyle(previewViewport, previewScale)}
+          >
+            <div className="comment-preview-canvas">
+              <div className="comment-frame-clip">
+                <div style={previewScaleShellStyle(previewViewport, previewScale)}>
+                  <PreviewDrawOverlay>
+                    <iframe
+                      data-testid="react-component-preview-frame"
+                      title={file.name}
+                      sandbox="allow-scripts allow-downloads"
+                      srcDoc={srcDoc}
+                      style={{ width: '100%', height: '100%', border: 0 }}
+                    />
+                  </PreviewDrawOverlay>
+                </div>
+              </div>
+            </div>
+          </div>
         ) : (
           <CodeWithLines text={source} />
         )}
@@ -7258,6 +7446,8 @@ function HtmlViewer({
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
+  enterManualEditOnOpen = false,
+  onManualEditHandoffConsumed,
   commentPortalId,
   onCommentModeChange,
   shareRequest,
@@ -7292,7 +7482,24 @@ function HtmlViewer({
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
-  onOpenFileReplacing?: (openName: string, closeName: string) => void;
+  onOpenFileReplacing?: (
+    openName: string,
+    closeName: string,
+    /** `keepManualEdit`: the caller switched pages ON THE WAY INTO Edit and the
+     *  next viewer should come up in Edit too. Set by the structure rail (a
+     *  sibling page picked from inside Edit) and by the flow map's Edit tab (a
+     *  focused screen carried out of the map by a press of Edit). A module
+     *  pointer, or a page clicked on the map itself, is a plain open. */
+    options?: { keepManualEdit?: boolean },
+  ) => void;
+  /**
+   * Come up already in Edit. The workspace sets this for the file a
+   * structure-rail page switch just handed over to, so swapping pages mid-edit
+   * reads as a change of content rather than being thrown back to preview.
+   */
+  enterManualEditOnOpen?: boolean;
+  /** Fired once that hand-off has been taken, so it can never fire twice. */
+  onManualEditHandoffConsumed?: () => void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
   shareRequest?: { nonce: number } | null;
@@ -7790,7 +7997,42 @@ function HtmlViewer({
   }, [fileViewportKey]);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
-  const [presentMenuOpen, setPresentMenuOpen] = useState(false);
+  // The dock's zoom menu leaves the dock's DOM subtree when it opens (see the
+  // note at its render site), so the trigger and the portaled popover are held
+  // separately: the trigger to anchor it, the popover so the outside-click
+  // dismissal still counts a click inside it as inside.
+  const zoomTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const zoomMenuPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [zoomMenuAnchor, setZoomMenuAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!zoomMenuOpen) {
+      setZoomMenuAnchor(null);
+      return;
+    }
+    const measure = () => {
+      const trigger = zoomTriggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      setZoomMenuAnchor({
+        left: Math.round(rect.left + rect.width / 2),
+        bottom: Math.round(window.innerHeight - rect.top + 6),
+      });
+    };
+    measure();
+    // The dock rides the stage, so a resize or a strip scroll moves the anchor
+    // out from under an already-open menu.
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [zoomMenuOpen]);
+  const zoomMenuFloatingStyle: CSSProperties | undefined = zoomMenuAnchor
+    ? { left: zoomMenuAnchor.left, bottom: zoomMenuAnchor.bottom }
+    : { visibility: 'hidden' };
+  const zoomMenuFloatingHost = (node: ReactNode): ReactNode =>
+    (typeof document === 'undefined' ? node : createPortal(node, document.body));
   // Single open-state for the unified chrome share/export/send popover; the
   // active tab is `unifiedActionTab`. External share/download requests below just
   // preselect the tab and open this one popover.
@@ -8182,6 +8424,17 @@ function HtmlViewer({
   const commentPanelReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingCommentPanelFocusRef = useRef<HTMLElement | null>(null);
   const [commentCreateMode, setCommentCreateMode] = useState(false);
+  // Comment mode armed from Edit keeps the structure rail's column and stands
+  // the list up inside it, in place of the 结构 / 编辑 / 资产 tabs, so the
+  // canvas never reflows between the two tools. Armed from the bare canvas
+  // there is no column to inherit and the list stays where it was, on its own
+  // floating host.
+  const [commentRailActive, setCommentRailActive] = useState(false);
+  /* Whether the rail-hosted comment list displaced an armed Edit — leaving it
+     then hands the column back to Edit instead of dropping to plain preview,
+     so the reader lands where they were. A ref: only exit handlers read it. */
+  const commentRailFromEditRef = useRef(false);
+  const [structureCommentHost, setStructureCommentHost] = useState<HTMLElement | null>(null);
   const [boardTool, setBoardTool] = useState<BoardTool>('inspect');
   const [inspectMode, setInspectMode] = useState(false);
   const [agentToolsOpen, setAgentToolsOpen] = useState(false);
@@ -8552,6 +8805,13 @@ function HtmlViewer({
   useEffect(() => {
     onCommentModeChange?.(commentPanelOpen);
   }, [commentPanelOpen, onCommentModeChange]);
+  // The rail hand-off lives exactly as long as the list is open. Deriving it
+  // from `commentPanelOpen` means every path that closes comment mode — a tool
+  // switch, a file switch, workspace teardown — drops the rail with it, instead
+  // of each of those call sites having to remember this flag.
+  useEffect(() => {
+    if (!commentPanelOpen) setCommentRailActive(false);
+  }, [commentPanelOpen]);
   useEffect(() => () => {
     onCommentModeChange?.(false);
   }, [onCommentModeChange]);
@@ -8655,7 +8915,6 @@ function HtmlViewer({
   const [selectedManualEditTarget, setSelectedManualEditTarget] = useState<ManualEditTarget | null>(null);
   const [manualEditHoverTarget, setManualEditHoverTarget] = useState<ManualEditTarget | null>(null);
   const [manualEditPageStylesOpen, setManualEditPageStylesOpen] = useState(false);
-  const [manualEditPanelPosition, setManualEditPanelPosition] = useState<{ left: number; top: number } | null>(null);
   const [manualEditDraftDirty, setManualEditDraftDirty] = useState(false);
   const selectedManualEditTargetIdRef = useRef<string | null>(null);
   const manualEditSelectionDraftRef = useRef<{ id: string; draft: ManualEditDraft } | null>(null);
@@ -8762,20 +9021,12 @@ function HtmlViewer({
   );
   const [activeCommentTarget, setActiveCommentTarget] = useState<PreviewCommentSnapshot | null>(null);
   const [hoveredCommentTarget, setHoveredCommentTarget] = useState<PreviewCommentSnapshot | null>(null);
-  // True while the pointer is physically over the floating hover card. The card
-  // sits on top of the preview iframe, so reaching it makes the iframe fire a
-  // mouseout -> od:comment-leave. We ignore that leave while pinned so the card
-  // (and its selectable values) stays put instead of unmounting and flickering.
-  // The pointer cannot be over the iframe and the host card at once, so a fresh
-  // od:comment-hover never races this; only the card's own leave clears it.
-  const hoverCardPinnedRef = useRef(false);
-  // Tearing the card down is always deferred by a beat rather than done
+  // Dropping the hover highlight is deferred by a beat rather than done
   // synchronously. The iframe's mouseout (od:comment-leave) arrives async via
-  // postMessage; the card's own mouseenter and the next od:comment-hover are the
-  // signals that the pointer actually landed on the card or back on the element
-  // it overlaps. Deferring lets those cancel the dismiss before it lands.
-  // Synchronous teardown raced ahead of them: the card flickered on the way in
-  // and vanished the moment you moved off it back onto the element it described.
+  // postMessage, and the next od:comment-hover is the signal that the pointer
+  // merely crossed into a neighbouring element. Deferring lets that cancel the
+  // dismiss before it lands; synchronous teardown raced ahead of it and made the
+  // outline flicker while the pointer moved across the artifact.
   const hoverCardDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelHoverCardDismiss = useCallback(() => {
     if (hoverCardDismissTimerRef.current !== null) {
@@ -8787,18 +9038,10 @@ function HtmlViewer({
     if (hoverCardDismissTimerRef.current !== null) clearTimeout(hoverCardDismissTimerRef.current);
     hoverCardDismissTimerRef.current = setTimeout(() => {
       hoverCardDismissTimerRef.current = null;
-      // hoverCardPinnedRef tracks "pointer is physically over the card". If it
-      // got (re-)pinned while we waited, this now-stale dismiss must not fire.
-      if (!hoverCardPinnedRef.current) setHoveredCommentTarget(null);
+      setHoveredCommentTarget(null);
     }, HOVER_CARD_DISMISS_DELAY_MS);
   }, []);
   const [hoveredPodMemberId, setHoveredPodMemberId] = useState<string | null>(null);
-  // If the card unmounts for any other reason while the pointer is still over
-  // it (its onMouseLeave never fires), drop the pin so later leaves dismiss
-  // normally instead of being swallowed forever.
-  useEffect(() => {
-    if (!hoveredCommentTarget) hoverCardPinnedRef.current = false;
-  }, [hoveredCommentTarget]);
   // Don't let a pending dismiss outlive the component.
   useEffect(() => cancelHoverCardDismiss, [cancelHoverCardDismiss]);
   const [activePreviewCommentId, setActivePreviewCommentId] = useState<string | null>(null);
@@ -8900,7 +9143,11 @@ function HtmlViewer({
   // before the host DOM node has been resolved. Keying this on the async host
   // lookup briefly treated the panel as a local dock, shrinking the preview by
   // 320px for one frame before the fixed card appeared.
-  const localCommentSideDockActive = commentPanelOpen && !commentPortalId;
+  // Rail-hosted comments reserve their column OUTSIDE the canvas (the
+  // structure rail's 300px, same as Edit). Counting them as an in-canvas side
+  // dock too would deduct the panel's width twice and shrink the artboard
+  // under the reader.
+  const localCommentSideDockActive = commentPanelOpen && !commentPortalId && !commentRailActive;
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
     sidePanelCollapsed: commentSidePanelCollapsed,
@@ -9101,18 +9348,20 @@ function HtmlViewer({
   const boardPreviewScaleOptions = localCommentSideDockActive ? { canvasPadding: 0 } : undefined;
   const shareRef = useRef<HTMLDivElement | null>(null);
   const [chromeActionsHost, setChromeActionsHost] = useState<HTMLElement | null>(null);
+  const [canvasToolbarHost, setCanvasToolbarHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (!workspaceActive || typeof document === 'undefined') {
       setChromeActionsHost(null);
+      setCanvasToolbarHost(null);
       return;
     }
     setChromeActionsHost(resolveChromeActionsHost());
+    setCanvasToolbarHost(resolveCanvasToolbarHost());
   }, [workspaceActive]);
 
   useEffect(() => {
     if (workspaceActive) return;
     setZoomMenuOpen(false);
-    setPresentMenuOpen(false);
     setDeployMenuOpen(false);
     setShareAccessMenuOpen(false);
     setShareAccessConfirm(null);
@@ -10986,7 +11235,6 @@ function HtmlViewer({
     setManualEditViewportWidth(null);
     setManualEditTargets([]);
     setSelectedManualEditTarget(null);
-    setManualEditPanelPosition(null);
     selectedManualEditTargetIdRef.current = null;
     setManualEditDraft(emptyManualEditDraft());
     setManualEditDraftDirty(false);
@@ -11133,21 +11381,18 @@ function HtmlViewer({
         return;
       }
       if (data.type === 'od:comment-leave') {
-        // Already firmly on the card — nothing to dismiss.
-        if (hoverCardPinnedRef.current) return;
-        // The pointer left the element. It may be sliding onto the floating card
-        // (which overlaps the iframe) or hopping toward an adjacent element —
-        // both should keep the card up. Defer the dismiss so the card's
-        // mouseenter or the next comment-hover can cancel it; only a leave with
-        // nothing following actually tears the card down.
+        // The pointer left the element, but it may just be hopping toward an
+        // adjacent one — that should keep the highlight up. Defer the dismiss so
+        // the next comment-hover can cancel it; only a leave with nothing
+        // following actually drops the highlight.
         scheduleHoverCardDismiss();
         return;
       }
       if (data.type === 'od:comment-hover') {
         const snapshot = snapshotFromData(data);
         if (!snapshot.elementId || !isValidCommentOverlayPosition(snapshot.position)) return;
-        // Pointer landed on an element — cancel any deferred dismiss so moving
-        // from the card back onto the element it describes keeps the card.
+        // Pointer landed on an element — cancel any deferred dismiss so crossing
+        // between adjacent elements keeps the highlight up.
         cancelHoverCardDismiss();
         // Hover repeats the same snapshot per pointermove frame — keep the
         // existing state object (and skip the Map clone) when it is unchanged.
@@ -11239,7 +11484,6 @@ function HtmlViewer({
       setSelectedManualEditTarget(null);
       setManualEditHoverTarget(null);
       setManualEditPageStylesOpen(false);
-      setManualEditPanelPosition(null);
       setManualEditDraftDirty(false);
       selectedManualEditTargetIdRef.current = null;
       manualEditSelectionDraftRef.current = null;
@@ -11625,7 +11869,6 @@ function HtmlViewer({
     if (manualEditTextFailedSessionIdsRef.current.size > 0) return false;
     const ok = await flushManualEditStyleSave();
     if (!ok) return false;
-    setManualEditPanelPosition(null);
     setManualEditMode(false);
     return true;
   }
@@ -11709,7 +11952,6 @@ function HtmlViewer({
     manualEditTextSessionIdRef.current = null;
     manualEditTextSessionStartSequenceRef.current = null;
     setSelectedManualEditTarget(null);
-    setManualEditPanelPosition(null);
     setManualEditDraft(emptyManualEditDraft(sourceRef.current ?? ''));
     setManualEditDraftDirty(false);
     setManualEditError(null);
@@ -12467,29 +12709,16 @@ function HtmlViewer({
   }, [presentEscHint, workspaceActive]);
 
   useEffect(() => {
-    if (!workspaceActive || !presentMenuOpen) return;
-    const onPointer = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('.present-wrap')) return;
-      setPresentMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPresentMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [presentMenuOpen, workspaceActive]);
-
-  useEffect(() => {
     if (!workspaceActive || !zoomMenuOpen) return;
     const onDocClick = (e: MouseEvent) => {
       if (!zoomMenuRef.current) return;
-      if (!zoomMenuRef.current.contains(e.target as Node)) setZoomMenuOpen(false);
+      const target = e.target as Node;
+      // The popover is portaled out of the dock, so "inside" is the trigger's
+      // wrapper OR the floating menu — testing only the wrapper closed the menu
+      // on mousedown and the item's click landed on nothing.
+      if (zoomMenuRef.current.contains(target)) return;
+      if (zoomMenuPopoverRef.current?.contains(target)) return;
+      setZoomMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setZoomMenuOpen(false);
@@ -12622,17 +12851,6 @@ function HtmlViewer({
     if (typeof document !== 'undefined' && document.fullscreenElement && typeof document.exitFullscreen === 'function') {
       document.exitFullscreen().catch(() => undefined);
     }
-  }
-
-  function openInNewTab() {
-    if (!source) return;
-    openSandboxedPreviewInNewTab(source, exportTitle, {
-      deck: effectiveDeck,
-      baseHref: srcDocBaseHref,
-      initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
-      hideDeckChrome: effectiveDeck,
-      deckClickNavigation: effectiveDeck,
-    });
   }
 
   // Snapshot this project as a reusable template. The daemon snapshots
@@ -12993,28 +13211,13 @@ function HtmlViewer({
     return ok;
   }
 
-  function presentInThisTab() {
-    setPresentMenuOpen(false);
-    presentFullscreenRequestedRef.current = false;
-    setMode('preview');
-    if (effectiveDeck) openPresenterWindow();
-    setInTabPresent(true);
-    setPresentEscHint(true);
-  }
-
   function presentFullscreen() {
-    setPresentMenuOpen(false);
     if (effectiveDeck) openPresenterWindow();
     setMode('preview');
     presentFullscreenRequestedRef.current = true;
     setPresentFullscreenPending(true);
     setInTabPresent(true);
     setPresentEscHint(true);
-  }
-
-  function presentNewTab() {
-    setPresentMenuOpen(false);
-    openInNewTab();
   }
 
   function reloadHtmlPreview() {
@@ -13142,13 +13345,105 @@ function HtmlViewer({
     setAgentToolsOpen(false);
   }
 
+  // The dock's arrow: the canvas with no tool armed. Mirrors the exit half of
+  // every activate*Tool below so a user can put the canvas back to plain
+  // without remembering which tool is currently on.
+  const noToolActive = !boardMode && !drawOverlayOpen && !manualEditMode;
+
+  /* Which mode the canvas is in is its own state, not a reading of which tool
+     happens to be armed. Edit means "the authoring half of the dock is on the
+     table", and that has to survive the user putting every tool down —
+     deriving it from `noToolActive` would fold the dock shut the moment
+     someone deselected Mark, which is not a mode change. Present is the
+     deliberate act: it clears every tool on the way in, because a live Mark or
+     Comment overlay would swallow the very clicks Present exists to deliver.
+
+     Present is also where a freshly opened artifact LANDS. Reading is what
+     someone does first with a file they just opened, and Present is the mode
+     that says so: the page is live, nothing is armed over it, and the
+     authoring half of the dock stays folded until the user asks for it by
+     name. The segment therefore always has exactly one tab lit — Present on
+     arrival, Edit or Flow once asked for — instead of opening in a fourth,
+     unnamed state that no tab could describe. */
+  const [canvasPresentMode, setCanvasPresentMode] = useState(true);
+
+  /* The pointer is not "on" until the user reaches for it. Reading its selected
+     state off `noToolActive` lit it up the instant the viewer opened, which
+     announces a tool the user chose rather than the absence of one — and it is
+     the absence of one. Arming anything else puts it back down. */
+  const [pointerToolSelected, setPointerToolSelected] = useState(false);
+  useEffect(() => {
+    if (!noToolActive) setPointerToolSelected(false);
+  }, [noToolActive]);
+
+  /* Arming a tool is a request to author, and Present is by definition the mode
+     with nothing armed over the page — so it stands down, wherever the arming
+     came from: the dock, the mode segment, or the ⋯ menu that mirrors Mark /
+     Edit / Comments. Without this, a tool armed from the ⋯ menu while Present
+     held the canvas came up live but folded away inside its own collapsed
+     strip — `visibility: hidden`, no pressed state to read, no way to put it
+     back down from the dock. Present is the entry mode now, so that path is the
+     ordinary one rather than a corner. Going the other way stays explicit:
+     `clearCanvasTools` puts the tools down and raises Present in the same
+     batch, which leaves `noToolActive` true here and no war between them. */
+  useEffect(() => {
+    if (!noToolActive) setCanvasPresentMode(false);
+  }, [noToolActive]);
+
+  function enterCanvasPresentMode() {
+    // Flag set from inside `clearCanvasTools`' success path: an unsaved manual
+    // edit can refuse the flush, and folding the dock shut around an inspector
+    // that is still open would strand it.
+    clearCanvasTools(() => setCanvasPresentMode(true));
+  }
+
+  function exitCanvasPresentMode() {
+    setCanvasPresentMode(false);
+  }
+
+  function clearCanvasTools(onCleared?: () => void) {
+    if (noToolActive) {
+      onCleared?.();
+      return;
+    }
+    capturePreviewScrollPosition();
+    const clear = () => {
+      setBoardMode(false);
+      setCommentCreateMode(false);
+      setCommentPanelOpen(false);
+      clearBoardComposer();
+      setInspectMode(false);
+      setDrawOverlayOpen(false);
+      setAgentToolsOpen(false);
+      closeArtifactToolMenus();
+      onCleared?.();
+    };
+    if (manualEditMode) {
+      void exitManualEditModeAfterFlush().then((ok) => {
+        if (ok) clear();
+      });
+      return;
+    }
+    clear();
+  }
+
+  /** Puts 标记 down and lands in Edit. Mark is a detour off the authoring
+   *  flow, so leaving it (toggle-off, the overlay's own close, a sent markup)
+   *  returns to the mode the canvas is FOR rather than to a bare preview —
+   *  same continuity rule as the comment rail's exit. Switching to another
+   *  tool is not an exit and keeps its own destination. */
+  function exitDrawToolToEdit() {
+    setDrawOverlayOpen(false);
+    setAgentToolsOpen(false);
+    activateManualEditTool();
+  }
+
   function activateDrawTool() {
     if (viewerOnly) return; // read-only viewer: mark (annotate) is an edit action
     fireArtifactToolbarClick('mark');
     const next = !drawOverlayOpen;
     if (!next) {
-      setDrawOverlayOpen(false);
-      setAgentToolsOpen(false);
+      exitDrawToolToEdit();
       return;
     }
     capturePreviewScrollPosition();
@@ -13171,40 +13466,19 @@ function HtmlViewer({
     activateDraw();
   }
 
-  function activateCommentTool() {
-    fireArtifactToolbarClick('comment');
-    capturePreviewScrollPosition();
-    if (boardMode && !commentCreateMode && boardTool === 'inspect') {
-      setBoardMode(false);
-      setCommentCreateMode(false);
-      clearBoardComposer();
-      setAgentToolsOpen(false);
-      return;
-    }
-    const activateComment = () => {
-      setCommentPanelOpen(false);
-      setCommentCreateMode(false);
-      clearBoardComposer();
-      setInspectMode(false);
-      setDrawOverlayOpen(false);
-      setMode('preview');
-      activateBoard('inspect');
-      closeArtifactToolMenus();
-    };
-    if (manualEditMode) {
-      void exitManualEditModeAfterFlush().then((ok) => {
-        if (ok) activateComment();
-      });
-      return;
-    }
-    activateComment();
-  }
-
   function activateCommentCreateTool(returnFocusTarget?: HTMLElement | null) {
     if (returnFocusTarget) commentPanelReturnFocusRef.current = returnFocusTarget;
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
     if (boardMode && commentCreateMode) {
+      // Turning the tool off from the rail hands the column back to Edit rather
+      // than dropping it: the rail is where the reader came from, and letting
+      // it unmount here would widen the canvas under them — the exact reflow
+      // the rail hand-off exists to avoid.
+      if (commentRailActive) {
+        leaveCommentRailForEdit();
+        return;
+      }
       setBoardMode(false);
       setCommentCreateMode(false);
       setCommentPanelOpen(false);
@@ -13212,8 +13486,20 @@ function HtmlViewer({
       closeArtifactToolMenus();
       return;
     }
+    // Read before the exit below flips it off: an Edit-armed comment tool
+    // inherits the structure rail's column instead of floating over the canvas.
+    const fromManualEdit = manualEditMode;
     const activateCommentCreate = () => {
       setCommentPanelOpen(true);
+      // Arming the tool opens the LIST too, docked in the rail column — the
+      // same shape Edit mode holds, with the content area making room beside
+      // it. Both halves of that were reported as bugs when they shipped
+      // otherwise: a folded rail read as the switch not having worked, and a
+      // floating card over the artboard read as a stray overlay rather than a
+      // mode. The canvas gives up a column; that is what showing comments
+      // costs.
+      commentRailFromEditRef.current = fromManualEdit;
+      setCommentRailActive(true);
       setCommentSidePanelCollapsed(false);
       setCommentCreateMode(true);
       if (!activeCommentTarget) clearBoardComposer();
@@ -13232,11 +13518,32 @@ function HtmlViewer({
     activateCommentCreate();
   }
 
+  /** Leaves the rail-hosted comment list. If it displaced an armed Edit, the
+   *  column goes back to Edit; otherwise the canvas simply widens again. */
+  function leaveCommentRailForEdit() {
+    setCommentRailActive(false);
+    setBoardMode(false);
+    setCommentCreateMode(false);
+    setCommentPanelOpen(false);
+    clearBoardComposer();
+    closeArtifactToolMenus();
+    if (commentRailFromEditRef.current) {
+      commentRailFromEditRef.current = false;
+      activateManualEditTool();
+    }
+  }
+
   function dismissFloatingCommentPanel() {
     pendingCommentPanelFocusRef.current =
       commentPanelReturnFocusRef.current
       ?? commentPanelToggleRef.current
       ?? toolbarMoreTriggerRef.current;
+    // Escape out of the rail-hosted list lands back on Edit, same as the
+    // toolbar toggle — see `leaveCommentRailForEdit`.
+    if (commentRailActive) {
+      leaveCommentRailForEdit();
+      return;
+    }
     setCommentPanelOpen(false);
     setCommentCreateMode(false);
     setBoardMode(false);
@@ -13260,6 +13567,13 @@ function HtmlViewer({
         setManualEditViewportWidth(previewBodyRef.current?.clientWidth ?? null);
         setManualEditSrcDocActive(true);
         setManualEditMode(true);
+        // Arming Edit is already the decision to edit — it should not cost a
+        // second click to reach something editable. Nothing is selected yet, so
+        // open the page-styles card: the same compact card clicking bare canvas
+        // gives, and the first element click swaps it for that element's
+        // inspector. Fragments have no page styles to show; the rail still lands
+        // on Edit for them (see `editSlotActive`) with its pick-an-element hint.
+        if (manualEditPageStylesEnabled) setManualEditPageStylesOpen(true);
         closeArtifactToolMenus();
       };
       if (!useUrlLoadPreview) {
@@ -13287,6 +13601,35 @@ function HtmlViewer({
     closeArtifactToolMenus();
     void exitManualEditModeAfterFlush();
   }
+
+  // Page switches made from the structure rail hand Edit over to the page being
+  // opened: the rail only exists inside Edit, so landing in plain preview reads
+  // as being thrown out rather than as changing what is on the canvas. The tab
+  // still follows the file (versions / share / export / comments are all
+  // file-scoped), which means this viewer is a fresh mount and has to re-arm the
+  // tool itself — once its own preview is loaded, since entering Edit captures
+  // runtime state from a live frame. The ref makes it strictly one-shot: turning
+  // Edit off afterwards must not be undone by a late re-run.
+  const manualEditHandoffTakenRef = useRef(false);
+  useEffect(() => {
+    if (!enterManualEditOnOpen || manualEditHandoffTakenRef.current) return;
+    if (viewerOnly || !manualEditEntryAllowed) return;
+    if (mode !== 'preview' || source === null || manualEditMode) return;
+    manualEditHandoffTakenRef.current = true;
+    onManualEditHandoffConsumed?.();
+    activateManualEditTool();
+    // `activateManualEditTool` is redeclared every render; the one-shot ref is
+    // what guards re-entry, so it deliberately stays out of the dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    enterManualEditOnOpen,
+    manualEditEntryAllowed,
+    manualEditMode,
+    mode,
+    onManualEditHandoffConsumed,
+    source,
+    viewerOnly,
+  ]);
 
   function queueCurrentDraft() {
     const note = commentDraft.trim();
@@ -13436,7 +13779,6 @@ function HtmlViewer({
     }
   }
 
-  const showPresent = source !== null;
   const exportTitle = file.name.replace(/\.html?$/i, '') || file.name;
   const artifactKind = file.artifactManifest?.kind ?? file.artifactKind ?? null;
   const rendererId = file.artifactManifest?.renderer ?? null;
@@ -14228,6 +14570,25 @@ function HtmlViewer({
   const initialPreviewLoading = source === null && !sourceEverLoadedRef.current;
   const sourceModeLoading = mode === 'source' && source === null;
   const boardAvailable = mode === 'preview' && source !== null;
+  // Edit mode splits a structure rail off the right edge: while you are
+  // changing one element, the rest of the project is what you reach for next.
+  // The file list loads only while the rail is on screen.
+  const [structureFiles, setStructureFiles] = useState<ProjectFile[]>([]);
+  useEffect(() => {
+    if (!manualEditMode) return;
+    let cancelled = false;
+    void fetchProjectFiles(projectId, { workspaceContext })
+      .then((files) => {
+        if (!cancelled) setStructureFiles(files);
+      })
+      .catch(() => {
+        if (!cancelled) setStructureFiles([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [manualEditMode, projectId, workspaceContext]);
+
   const showPreviewToolbarControls = mode === 'preview';
   // Independent of the rail's lazy per-slide documents so a collapsed rail
   // (which unmounts DeckThumbnailRail entirely) still renders its toggle.
@@ -14299,18 +14660,17 @@ function HtmlViewer({
       onRedo={() => {
         void redoManualEdit();
       }}
+      /* Docked in the structure rail's Edit tab, not floated over the artboard.
+         A card anchored beside the selected element covered the neighbours you
+         style an element AGAINST — and the element itself, whenever it sat on
+         the side the card opened toward. The rail is already on screen in edit
+         mode and already has a tab for exactly this, so the inspector goes
+         where the user is looking rather than on top of the work.
+
+         No `floatingStyle` here is what selects the docked variant inside
+         `ManualEditPanel`; the drag handle and the anchoring maths come with
+         the floating one and stay unused while it is docked. */
       floatingClassName={manualEditPageCardActive ? 'manual-edit-page-card' : undefined}
-      floatingStyle={selectedManualEditTarget
-        ? {
-            ...manualEditFloatingPanelStyle(
-              selectedManualEditTarget,
-              overlayPreviewScale,
-              previewBodySize,
-            ),
-            ...(manualEditPanelPosition ?? {}),
-          }
-        : { top: 12, right: 12, width: 320 }}
-      onFloatingPositionChange={selectedManualEditTarget ? setManualEditPanelPosition : undefined}
       onPickImage={async (pickedFile) => {
         const result = await uploadProjectFiles(projectId, [pickedFile], undefined, workspaceContext);
         const uploaded = result.uploaded[0];
@@ -14323,6 +14683,84 @@ function HtmlViewer({
       }}
     />
   ) : null;
+
+  const structureRail = manualEditMode || commentRailActive ? (
+    <aside
+      className={`viewer-structure-rail${commentRailActive ? ' viewer-structure-rail-comments' : ''}`}
+      data-testid="viewer-structure-rail"
+    >
+      {commentRailActive ? (
+        /* Comments take over the rail's column rather than floating a card over
+           the canvas. The tool was armed from this rail, so the artboard beside
+           it must not reflow underneath the reader: the 结构 / 编辑 / 资产 tabs
+           step aside and the comment list stands in the space they held, at the
+           same width the canvas was already making room for. The list itself is
+           portaled in below (`viewer-structure-comment-host`) because it is
+           built further down this render. */
+        <div
+          className="viewer-structure-comment-host"
+          data-testid="viewer-structure-comment-host"
+          ref={setStructureCommentHost}
+        />
+      ) : (
+      <DesignStructurePanel
+        projectId={projectId}
+        currentDir=""
+        dirs={[]}
+        files={structureFiles}
+        liveArtifacts={[]}
+        viewerOnly
+        selected={STRUCTURE_RAIL_NO_SELECTION}
+        onToggleSelect={structureRailNoop}
+        onEnterDir={structureRailNoop}
+        onOpenFile={(name) => {
+          if (name === file.name) return;
+          // This rail only exists inside Edit, so picking a sibling page here is
+          // "show me that page", not "leave what I am doing". The tab still
+          // follows the file (versions / share / export / comments are all
+          // file-scoped and must not desync), but the next viewer comes up in
+          // Edit so the switch reads as a change of content, not of place.
+          onOpenFileReplacing?.(name, file.name, { keepManualEdit: true });
+        }}
+        onOpenLiveArtifact={structureRailNoop}
+        /* The viewer always fills the Edit tab, because it always has the
+           canvas the tab describes. With nothing selected that means its own
+           empty state — the rail's default copy tells the reader to open the
+           page and switch on Inspect, which is exactly what they already did
+           to be standing here. */
+        structurePagesOnly
+        editSlot={manualEditPanel ?? (
+          <div className="viewer-structure-edit-empty" data-testid="viewer-structure-edit-empty">
+            <strong>{t('designStructure.editTitle')}</strong>
+            <span>{t('chat.inspect.editHint')}</span>
+          </div>
+        )}
+        /* Keyed on the MODE, not on having a selection: the rail belongs to
+           Edit, so arming the tool should land the reader on its tab rather
+           than leaving them on Structure until they happen to click something
+           on the canvas. Still a rising edge inside the panel, so a deliberate
+           move to Structure / Assets mid-edit survives. */
+        editSlotActive={manualEditMode}
+        tabs={VIEWER_STRUCTURE_RAIL_TABS}
+        categoryLabel={(category: FileCategory) => t(sectionLabelKey(category) as keyof Dict)}
+        t={t}
+      />
+      )}
+    </aside>
+  ) : null;
+  /* The affordance renders inside the scaled canvas, so its keep-on-screen
+     clamp is the canvas's own box — the artboard at the current scale — not the
+     pane. A height-less desktop artboard fills the pane vertically, so height
+     falls back to the pane's. */
+  const manualEditHoverPreset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === previewViewport);
+  const manualEditHoverClampSize: PreviewCanvasSize | undefined = manualEditHoverPreset?.width
+    ? {
+        width: manualEditHoverPreset.width * overlayPreviewScale,
+        height: manualEditHoverPreset.height
+          ? manualEditHoverPreset.height * overlayPreviewScale
+          : previewBodySize?.height ?? 800,
+      }
+    : previewBodySize;
   const manualEditHoverAffordance =
     manualEditMode &&
     manualEditHoverTarget &&
@@ -14336,7 +14774,7 @@ function HtmlViewer({
         style={manualEditHoverIconStyle(
           manualEditHoverTarget,
           overlayPreviewScale,
-          previewBodySize,
+          manualEditHoverClampSize,
         )}
         onClick={() => {
           const target = manualEditHoverTarget;
@@ -14438,6 +14876,16 @@ function HtmlViewer({
       onAttachImages={addBoardImages}
       onRemoveImage={removeBoardImage}
       onPreviewImage={setBoardPreviewIndex}
+      // Only while the list is away — see the control's own note in
+      // BoardComposerPopover.
+      onViewAllComments={
+        commentPanelOpen && !commentSidePanelCollapsed
+          ? undefined
+          : () => {
+            setCommentPanelOpen(true);
+            setCommentSidePanelCollapsed(false);
+          }
+      }
       onRemoveMember={(elementId) => {
         setActiveCommentTarget((current) => {
           const { next, shouldClose } = applyPodMemberRemoval(current, elementId);
@@ -14523,14 +14971,19 @@ function HtmlViewer({
       // into a full-height column, where a collapsed rail made no sense). It
       // now always floats as a card, so its collapse control has to actually
       // collapse — forcing `false` here made every click a no-op.
-      collapsed={commentSidePanelCollapsed}
-      onCollapsedChange={setCommentSidePanelCollapsed}
-      // Floating card: 收起 closes it, mirroring the toolbar toggle's own OFF
-      // branch so the toolbar returns to its unpressed state and ONE click
-      // reopens the panel. (Closing only the panel left create/board mode on,
-      // so the next toolbar click spent itself turning those off.) The local
-      // dock keeps its collapse-to-rail behaviour.
-      onDismiss={commentPortalHost ? dismissFloatingCommentPanel : undefined}
+      // In the structure rail there is no sliver to collapse into — the column
+      // is the rail, and a 42px pill inside a 300px rail would be a hole. 收起
+      // there means "give the column back to Edit" instead, which is the same
+      // thing the toolbar toggle does from this state.
+      collapsed={commentRailActive ? false : commentSidePanelCollapsed}
+      onCollapsedChange={commentRailActive ? leaveCommentRailForEdit : setCommentSidePanelCollapsed}
+      // Escape leaves comment mode outright on the floating card, mirroring the
+      // toolbar toggle's own OFF branch so the toolbar returns to its unpressed
+      // state and ONE click reopens. (Closing only the panel left create/board
+      // mode on, so the next toolbar click spent itself turning those off.)
+      // 收起 is a different verb and rails the list instead — see the header's
+      // collapse button.
+      onDismiss={commentRailActive || commentPortalHost ? dismissFloatingCommentPanel : undefined}
       onToggleSelect={(commentId) => {
         setSelectedSideCommentIds((current) => {
           const next = new Set(current);
@@ -14700,8 +15153,269 @@ function HtmlViewer({
     </section>
   ) : null;
 
+  // The prototype puts the canvas tools in a floating dock over the artboard
+  // instead of the top-right corner, so the toolbar states what you are looking
+  // at and the dock states what you can do to it. Same controls, same testids —
+  // only the surface they live on moved. The overflow menu still mirrors every
+  // one of them for narrow widths.
+  /* Present is a viewing state, not an authoring one: the dock controls that
+     still describe something you can do are the pointer, the zoom, and the way
+     to full screen. The authoring half folds away rather than sitting there
+     greyed — and stays reachable the whole time from the toolbar's ⋯ menu,
+     which mirrors Mark / Comments. The mode segment unfolds it again.
+
+     The folded half stays MOUNTED and is hidden by class, not by unmounting:
+     the width transition needs both ends to exist, and a React unmount skips
+     the exit half of it entirely. */
+  const canvasDockAuthoringVisible = !canvasPresentMode;
+  const canvasDock = showPreviewToolbarControls && mode === 'preview' && !inTabPresent ? (
+    <div className="canvas-dock" data-testid="canvas-dock">
+      <div className="canvas-dock-inner">
+        <button
+          type="button"
+          className={`viewer-action viewer-action-icon od-tooltip${pointerToolSelected ? ' active' : ''}`}
+          data-testid="canvas-dock-select"
+          aria-pressed={pointerToolSelected}
+          title={t('fileViewer.selectTool')}
+          data-tooltip={t('fileViewer.selectTool')}
+          aria-label={t('fileViewer.selectTool')}
+          onClick={() => {
+            clearCanvasTools();
+            setPointerToolSelected(true);
+          }}
+        >
+          <RemixIcon name="drag-move-line" size={15} />
+        </button>
+        <span className="canvas-dock-divider" aria-hidden />
+        <div className="canvas-dock-tools">
+          <div
+            className="canvas-dock-collapsible"
+            data-collapsed={canvasDockAuthoringVisible ? undefined : 'true'}
+            aria-hidden={canvasDockAuthoringVisible ? undefined : true}
+          >
+            <div className="canvas-dock-collapsible-inner">
+              {mode === 'preview' ? (
+                <button
+                  type="button"
+                  className="viewer-action viewer-action-icon od-tooltip"
+                  data-testid="edit-screenshot-to-chat-button"
+                  data-tooltip={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.editScreenshotToChat')}
+                  data-tooltip-placement="bottom"
+                  title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.editScreenshotToChat')}
+                  aria-label={t('fileViewer.editScreenshotToChat')}
+                  disabled={viewerOnly}
+                  onClick={() => void handleScreenshotToChat()}
+                >
+                  <RemixIcon name="camera-line" size={15} />
+                </button>
+              ) : null}
+              <button
+                className={`viewer-action viewer-action-icon od-tooltip${drawOverlayOpen ? ' active' : ''}`}
+                type="button"
+                data-testid="draw-overlay-toggle"
+                data-tooltip={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.mark')}
+                data-tooltip-placement="bottom"
+                disabled={viewerOnly}
+                title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.mark')}
+                aria-label={t('fileViewer.mark')}
+                aria-pressed={drawOverlayOpen}
+                onClick={activateDrawTool}
+              >
+                <RemixIcon name="mark-pen-line" size={15} />
+              </button>
+              {/* The edit-pencil that used to sit here is gone: the mode
+                  segment's 编辑 is the same control wearing a word, and two
+                  buttons named Edit on one 30px strip is one too many. The
+                  segment carries its testid and its pressed state. */}
+              <span className="viewer-toolbar-tool-divider" aria-hidden />
+              <button
+                ref={commentPanelToggleRef}
+                type="button"
+                className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
+                data-testid="comment-panel-toggle"
+                data-tooltip={t('chat.tabComments')}
+                data-tooltip-placement="bottom"
+                title={t('chat.tabComments')}
+                aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
+                aria-pressed={boardMode && commentCreateMode}
+                onClick={(event) => activateCommentCreateTool(event.currentTarget)}
+              >
+                <RemixIcon name="message-3-line" size={15} />
+                <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
+              </button>
+            </div>
+          </div>
+          {source !== null && mode === 'preview' ? (
+            <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
+              {/* Stays live at 100%. It looks like a readout, but this menu is
+                  the ONLY way to change zoom on a wide pane — the ⋯ overflow
+                  copy appears only under the toolbar's 720px container query —
+                  so grey it out at 1:1 and the canvas can never leave 1:1
+                  again. `offers quarter-step zoom levels down from 1:1` is the
+                  spec that pins this. */}
+              <button
+                ref={zoomTriggerRef}
+                type="button"
+                className="viewer-action zoom-trigger od-tooltip"
+                aria-haspopup="menu"
+                aria-expanded={zoomMenuOpen}
+                title={t('fileViewer.resetZoom')}
+                data-tooltip={t('fileViewer.resetZoom')}
+                data-tooltip-placement="bottom"
+                onClick={() => {
+                  fireArtifactToolbarClick('zoom_level_dropdown');
+                  setZoomMenuOpen((v) => !v);
+                }}
+              >
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{previewZoomText}</span>
+              </button>
+              {/* Portaled to the body on purpose. The dock strip scrolls
+                  sideways when it outgrows the stage (`.canvas-dock-inner`,
+                  `overflow-x: auto`), and a scroll container clips BOTH axes —
+                  so this menu, which opens upward out of the strip, was cut
+                  away entirely: the dropdown appeared empty and its items sat
+                  under the preview iframe, which swallowed the clicks. The
+                  strip's `backdrop-filter` also makes it the containing block
+                  for fixed descendants, so `position: fixed` alone cannot
+                  escape it — the node has to leave the subtree. */}
+              {zoomMenuOpen ? (
+                zoomMenuFloatingHost(
+                  <div
+                    ref={zoomMenuPopoverRef}
+                    className="zoom-menu-popover zoom-menu-popover--floating"
+                    role="menu"
+                    style={zoomMenuFloatingStyle}
+                  >
+                    {PREVIEW_ZOOM_LEVELS.map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      className={`zoom-menu-item${zoomLevelActive(level) ? ' active' : ''}`}
+                      role="menuitem"
+                      onClick={() => {
+                        setPreviewZoomCached(fileViewportKey, level, 'manual');
+                        setZoomMode('manual');
+                        setZoom(level);
+                        setZoomMenuOpen(false);
+                      }}
+                    >
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
+                      {zoomLevelActive(level) ? (
+                        <Icon name="check" size={13} />
+                      ) : null}
+                    </button>
+                    ))}
+                  </div>,
+                )
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {/* Full screen survives the fold. Present is exactly when a user
+            reaches for it, and the dock is its only entry point — the ⋯ menu
+            never mirrored it. */}
+        <span className="canvas-dock-divider" aria-hidden />
+        <button
+          type="button"
+          className="viewer-action viewer-action-icon od-tooltip"
+          data-testid="canvas-dock-fullscreen"
+          title={t('fileViewer.presentFullscreen')}
+          data-tooltip={t('fileViewer.presentFullscreen')}
+          aria-label={t('fileViewer.presentFullscreen')}
+          disabled={source === null}
+          onClick={() => {
+            firePresentPopoverClick('fullscreen');
+            presentFullscreen();
+          }}
+        >
+          <RemixIcon name="fullscreen-line" size={15} />
+        </button>
+        {/* Canvas mode segment, dock-trailing — the pill-in-a-trough that used
+            to sit in the top toolbar, moved to the end of the strip whose
+            contents it governs.
+
+            Edit lights when editing is actually ARMED, not when the dock merely
+            happens not to be presenting. That distinction is the whole point:
+            an Edit pill lit on open promised a canvas whose elements you could
+            click, while clicks still fell through to the page underneath and no
+            inspector rail existed to receive them. Arming is what mounts the
+            rail and swaps the preview onto the srcDoc bridge, so it stays an
+            explicit press rather than something a freshly opened file does on
+            the reader's behalf.
+
+            A freshly opened file is therefore in Present, not in a nameless
+            fourth state: the page is live and clickable and nothing is armed
+            over it, which is exactly what Present means. Edit is also still the
+            manual-edit toggle the removed pencil was — same testid, same
+            `aria-pressed` — and pressing it a second time disarms, which is why
+            `aria-selected` and `aria-pressed` now say the same thing instead of
+            contradicting each other. Disarming that way drops the canvas back
+            to no tool with Present still off, which is the one place the
+            segment can sit unlit; the mode tabs are how you get back.
+
+            Flow is the third tab in the same trough rather than a pill parked
+            outside it: it is one more thing you can be looking at instead of
+            the artboard, so it takes the same lit-pill selected state as Edit
+            and Present rather than a dark chip of its own.
+
+            Over the flow map, then, Flow is the lit tab and the other two are
+            both ways out. Either press leaves the map holding whichever screen
+            was focused and lands on it in the mode the user named: Edit comes
+            up armed (via `keepManualEdit` when the landing is a fresh mount),
+            Present comes up live — a fresh mount's arrival mode is already
+            Present, so only the same-file landing has to raise it by hand. */}
+        <span className="canvas-dock-divider" aria-hidden />
+        <div
+          className="viewer-tabs viewer-mode-tabs canvas-mode-seg canvas-dock-mode-seg"
+          role="tablist"
+          aria-label="View mode"
+        >
+          <button
+            type="button"
+            role="tab"
+            className={`viewer-tab ${manualEditMode ? 'active' : ''}`}
+            data-testid="manual-edit-mode-toggle"
+            aria-selected={manualEditMode}
+            aria-pressed={manualEditMode}
+            disabled={viewerOnly || (!manualEditMode && !manualEditEntryAllowed)}
+            title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+            onClick={() => {
+              fireArtifactToolbarClick('preview');
+              exitCanvasPresentMode();
+              activateManualEditTool();
+            }}
+          >
+            <span className="viewer-tab-label">{t('fileViewer.edit')}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={`viewer-tab ${canvasPresentMode ? 'active' : ''}`}
+            data-testid="canvas-dock-present"
+            aria-selected={canvasPresentMode}
+            disabled={source === null}
+            onClick={() => {
+              firePresentPopoverClick('in_this_tab');
+              enterCanvasPresentMode();
+            }}
+          >
+            <span className="viewer-tab-label">{t('fileViewer.present')}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
+      {/* Rides the workspace action row when there is one, so the canvas gets
+          a single chrome strip (canvas controls left, file actions right)
+          instead of two stacked bars. The element itself is unchanged either
+          way — `.ws-tabs-canvas-toolbar > .viewer-toolbar` strips the bar
+          chrome it only needs while standing on its own. */}
+      {((canvasToolbar: ReactNode) => (
+        canvasToolbarHost ? createPortal(canvasToolbar, canvasToolbarHost) : canvasToolbar
+      ))(
       <div className="viewer-toolbar">
         <div className="viewer-toolbar-left">
           {showDeckThumbnailRail ? (
@@ -14736,33 +15450,17 @@ function HtmlViewer({
           >
             <Icon name="reload" size={14} />
           </button>
-          {/* Two-segment pill tablist: both destinations stay visible and the
-              active one is legible at a glance. A single toggle that flips its
-              own label reads as "what am I looking at now?" and forces the user
-              to click to find out. */}
-          <div className="viewer-tabs viewer-mode-tabs" role="tablist" aria-label="View mode">
-            {([
-              ['preview', t('fileViewer.preview'), 'eye-line'],
-              ['source', t('fileViewer.source'), 'code-s-slash-line'],
-            ] as const).map(([id, label, icon]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                className={`viewer-tab ${mode === id ? 'active' : ''}`}
-                aria-selected={mode === id}
-                disabled={viewerOnly && id === 'source'}
-                title={viewerOnly && id === 'source' ? viewerOnlyDisabledTitle : undefined}
-                onClick={() => {
-                  fireArtifactToolbarClick(id);
-                  selectMode(id);
-                }}
-              >
-                <RemixIcon name={icon} size={14} className="viewer-tab-icon" />
-                <span className="viewer-tab-label">{label}</span>
-              </button>
-            ))}
-          </div>
+          {/* The Edit / Present segment used to stand here. It moved to the
+              trailing end of the canvas dock (`canvas-dock-mode-toggle`) and
+              collapsed to a single pill: the mode belongs beside the tools the
+              mode governs, not on the row that says which FILE you are looking
+              at. Source stayed in the overflow menu — it answers a different
+              question than "am I editing or showing this?".
+
+              Present still does NOT leave the canvas: the preview is already
+              interactive, so Edit makes the page a document you pick elements
+              out of and Present makes it a prototype you click through. The
+              fullscreen stage is still the dock's own button. */}
           {showPreviewToolbarControls ? (
             <span className="viewer-preview-toolbar-inline">
               <PreviewViewportControls
@@ -14814,127 +15512,9 @@ function HtmlViewer({
           ) : null}
         </div>
         <div className="viewer-toolbar-actions">
-          {showPreviewToolbarControls ? (
-            <div className="viewer-toolbar-inline-actions">
-              {mode === 'preview' ? (
-                <button
-                  type="button"
-                  className="viewer-action viewer-action-icon od-tooltip"
-                  data-testid="edit-screenshot-to-chat-button"
-                  data-tooltip={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.editScreenshotToChat')}
-                  data-tooltip-placement="bottom"
-                  title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.editScreenshotToChat')}
-                  aria-label={t('fileViewer.editScreenshotToChat')}
-                  disabled={viewerOnly}
-                  onClick={() => void handleScreenshotToChat()}
-                >
-                  <RemixIcon name="camera-line" size={15} />
-                </button>
-              ) : null}
-              <div className="artifact-tool-menu-anchor">
-                <button
-                  type="button"
-                  className={`viewer-action viewer-action-icon viewer-comment-toggle od-tooltip${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
-                  data-testid="board-mode-toggle"
-                  data-tooltip={t('fileViewer.comment')}
-                  data-tooltip-placement="bottom"
-                  title={t('fileViewer.comment')}
-                  aria-label={t('fileViewer.comment')}
-                  aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
-                  onClick={activateCommentTool}
-                >
-                  <RemixIcon name="chat-new-line" size={15} />
-                </button>
-              </div>
-              <button
-                className={`viewer-action viewer-action-icon od-tooltip${drawOverlayOpen ? ' active' : ''}`}
-                type="button"
-                data-testid="draw-overlay-toggle"
-                data-tooltip={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.mark')}
-                data-tooltip-placement="bottom"
-                disabled={viewerOnly}
-                title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.mark')}
-                aria-label={t('fileViewer.mark')}
-                aria-pressed={drawOverlayOpen}
-                onClick={activateDrawTool}
-              >
-                <RemixIcon name="mark-pen-line" size={15} />
-              </button>
-              <span className="viewer-toolbar-tool-divider" aria-hidden />
-              <button
-                className={`viewer-action viewer-action-icon od-tooltip${manualEditMode ? ' active' : ''}`}
-                type="button"
-                data-testid="manual-edit-mode-toggle"
-                data-tooltip={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.edit')}
-                data-tooltip-placement="bottom"
-                disabled={viewerOnly || (!manualEditMode && !manualEditEntryAllowed)}
-                title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.edit')}
-                aria-label={t('fileViewer.edit')}
-                aria-pressed={manualEditMode}
-                onClick={activateManualEditTool}
-              >
-                <RemixIcon name="edit-line" size={15} />
-              </button>
-              <span className="viewer-toolbar-tool-divider" aria-hidden />
-              <button
-                ref={commentPanelToggleRef}
-                type="button"
-                className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
-                data-testid="comment-panel-toggle"
-                data-tooltip={t('chat.tabComments')}
-                data-tooltip-placement="bottom"
-                title={t('chat.tabComments')}
-                aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
-                aria-pressed={boardMode && commentCreateMode}
-                onClick={(event) => activateCommentCreateTool(event.currentTarget)}
-              >
-                <RemixIcon name="message-3-line" size={15} />
-                <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
-              </button>
-              {source !== null && mode === 'preview' ? (
-                <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
-                  <button
-                    type="button"
-                    className="viewer-action zoom-trigger od-tooltip"
-                    aria-haspopup="menu"
-                    aria-expanded={zoomMenuOpen}
-                    title={t('fileViewer.resetZoom')}
-                    data-tooltip={t('fileViewer.resetZoom')}
-                    data-tooltip-placement="bottom"
-                    onClick={() => {
-                      fireArtifactToolbarClick('zoom_level_dropdown');
-                      setZoomMenuOpen((v) => !v);
-                    }}
-                  >
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{previewZoomText}</span>
-                  </button>
-                  {zoomMenuOpen ? (
-                    <div className="zoom-menu-popover" role="menu">
-                      {[50, 75, 100, 125, 150, 200].map((level) => (
-                        <button
-                          key={level}
-                          type="button"
-                          className={`zoom-menu-item${zoomLevelActive(level) ? ' active' : ''}`}
-                          role="menuitem"
-                          onClick={() => {
-                            setPreviewZoomCached(fileViewportKey, level, 'manual');
-                            setZoomMode('manual');
-                            setZoom(level);
-                            setZoomMenuOpen(false);
-                          }}
-                        >
-                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
-                          {zoomLevelActive(level) ? (
-                            <Icon name="check" size={13} />
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          {/* Flow moved to the dock, trailing the mode segment — it is a third
+              thing to be looking at, so it belongs beside Edit / Present rather
+              than alone at the far end of a different row. */}
           <div className="viewer-toolbar-more" ref={toolbarMoreRef}>
             <button
               ref={toolbarMoreTriggerRef}
@@ -14952,6 +15532,30 @@ function HtmlViewer({
             </button>
             {toolbarMoreOpen ? (
               <div className="viewer-toolbar-more-menu" role="menu">
+                {/* Source lives here now that the toolbar segment states
+                    edit-vs-present instead of preview-vs-source. It must keep
+                    an entry somewhere: without one, a file's markup would have
+                    no reachable view at all. */}
+                <button
+                  type="button"
+                  className={`viewer-toolbar-more-item${mode === 'source' ? ' active' : ''}`}
+                  role="menuitem"
+                  data-testid="viewer-more-source"
+                  disabled={viewerOnly}
+                  title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+                  onClick={() => {
+                    fireArtifactToolbarClick(mode === 'source' ? 'preview' : 'source');
+                    selectMode(mode === 'source' ? 'preview' : 'source');
+                    setToolbarMoreOpen(false);
+                  }}
+                >
+                  <RemixIcon name="code-s-slash-line" size={15} />
+                  <span>{t('fileViewer.source')}</span>
+                  {mode === 'source' ? <Icon name="check" size={13} /> : null}
+                </button>
+                {versioningAvailable ? (
+                  <div className="viewer-toolbar-more-separator" role="separator" />
+                ) : null}
                 {versioningAvailable ? (
                   <button
                     type="button"
@@ -15025,18 +15629,6 @@ function HtmlViewer({
                     ) : null}
                     <button
                       type="button"
-                      className={`viewer-toolbar-more-item${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
-                      role="menuitem"
-                      onClick={() => {
-                        activateCommentTool();
-                        setToolbarMoreOpen(false);
-                      }}
-                    >
-                      <RemixIcon name="chat-new-line" size={15} />
-                      <span>{t('fileViewer.comment')}</span>
-                    </button>
-                    <button
-                      type="button"
                       className={`viewer-toolbar-more-item${drawOverlayOpen ? ' active' : ''}`}
                       role="menuitem"
                       onClick={() => {
@@ -15075,7 +15667,7 @@ function HtmlViewer({
                     {source !== null && mode === 'preview' ? (
                       <>
                         <div className="viewer-toolbar-more-separator" role="separator" />
-                        {[50, 75, 100, 125, 150, 200].map((level) => (
+                        {PREVIEW_ZOOM_LEVELS.map((level) => (
                           <button
                             key={level}
                             type="button"
@@ -15102,47 +15694,14 @@ function HtmlViewer({
           </div>
         </div>
       </div>
+      )}
       {workspaceActive ? ((filePrimaryActions: ReactNode) => (
         chromeActionsHost ? createPortal(filePrimaryActions, chromeActionsHost) : filePrimaryActions
       ))(<>
-          {showPresent ? (
-            <div className="present-wrap chrome-present-wrap">
-              <button
-                className="chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip"
-                aria-haspopup="menu"
-                aria-expanded={presentMenuOpen}
-                aria-label={t('fileViewer.present')}
-                data-tooltip={t('fileViewer.present')}
-                data-tooltip-placement="bottom"
-                title={t('fileViewer.present')}
-                onClick={() => {
-                  fireArtifactHeaderClick('present_dropdown');
-                  setPresentMenuOpen((v) => !v);
-                }}
-              >
-                <RemixIcon name="slideshow-3-line" size={15} />
-              </button>
-              {presentMenuOpen ? (
-                <div className="present-menu" role="menu">
-                  <button role="menuitem" onClick={() => { firePresentPopoverClick('in_this_tab'); presentInThisTab(); }}>
-                    <span className="present-icon"><RemixIcon name="eye-line" size={14} /></span>{' '}
-                    <span className="present-menu-copy">
-                      <span>{t('fileViewer.presentInTab')}</span>
-                      {effectiveDeck ? <small>{t('fileViewer.presentInTabDeckHint')}</small> : null}
-                    </span>
-                  </button>
-                  <button role="menuitem" onClick={() => { firePresentPopoverClick('fullscreen'); presentFullscreen(); }}>
-                    <span className="present-icon"><RemixIcon name="play-line" size={14} /></span>{' '}
-                    {t('fileViewer.presentFullscreen')}
-                  </button>
-                  <button role="menuitem" onClick={() => { firePresentPopoverClick('new_tab'); presentNewTab(); }}>
-                    <span className="present-icon"><RemixIcon name="share-forward-line" size={14} /></span>{' '}
-                    {t('fileViewer.presentNewTab')}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          {/* No Present entry here: the canvas toolbar's own Edit / Present
+              segment already owns that switch, and the dock carries fullscreen.
+              A second dropdown saying the same thing on the same row was the
+              duplicate. */}
           {versioningAvailable && (rawCanShare || rawCanDownload) ? (
             <button
               type="button"
@@ -15187,40 +15746,60 @@ function HtmlViewer({
                     0.18.0 unified tabs buried Export one level deep and export
                     reach halved); they still share one popover shell so
                     switching between them keeps the menu anchored in place.
-                    Export leads and carries the dark (primary) treatment —
-                    it is the far more used of the two (30-day: ~14k users
-                    exported successfully vs ~0.6k who attempted a deploy). */}
+                    Both are glyph-only: the row already leads with 流程图 and
+                    历史记录, and two worded pills after them made this cluster
+                    the widest thing on the bar. Share sits first as the
+                    lighter intent; Export takes the trailing slot and keeps
+                    the dark (primary) fill — it is the far more used of the
+                    two (30-day: ~14k users exported successfully vs ~0.6k who
+                    attempted a deploy). Names survive as tooltip + aria-label,
+                    suppressed while the popover is open so the tooltip does
+                    not land on top of the menu it just opened. */}
+                {rawCanShare ? (
+                  <button
+                    type="button"
+                    className={
+                      'chrome-action chrome-action-secondary chrome-action-icon chrome-action-unified' +
+                      (deployMenuOpen && unifiedActionTab === 'share' ? '' : ' od-tooltip')
+                    }
+                    aria-haspopup="menu"
+                    aria-expanded={deployMenuOpen && unifiedActionTab === 'share'}
+                    aria-label={shareMenuLabel}
+                    disabled={viewerOnly}
+                    data-tooltip={
+                      deployMenuOpen && unifiedActionTab === 'share'
+                        ? undefined
+                        : (viewerOnly ? viewerOnlyDisabledTitle : shareMenuLabel)
+                    }
+                    data-tooltip-placement="bottom"
+                    title={viewerOnly ? viewerOnlyDisabledTitle : shareMenuLabel}
+                    onClick={openShareMenu}
+                  >
+                    <RemixIcon name="share-forward-line" size={15} />
+                  </button>
+                ) : null}
                 {rawCanDownload ? (
                   <button
                     type="button"
                     className={
-                      'chrome-action chrome-action-secondary chrome-action-with-label chrome-action-text-only chrome-action-unified chrome-action-dark' +
+                      'chrome-action chrome-action-secondary chrome-action-icon chrome-action-unified chrome-action-dark' +
+                      (deployMenuOpen && unifiedActionTab === 'export' ? '' : ' od-tooltip') +
                       (exportReadyNudge ? ' export-ready-nudge' : '')
                     }
                     aria-haspopup="menu"
                     aria-expanded={deployMenuOpen && unifiedActionTab === 'export'}
                     aria-label={t('fileViewer.unifiedExportTab')}
                     disabled={viewerOnly}
-                    title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+                    data-tooltip={
+                      deployMenuOpen && unifiedActionTab === 'export'
+                        ? undefined
+                        : (viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.unifiedExportTab'))
+                    }
+                    data-tooltip-placement="bottom"
+                    title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.unifiedExportTab')}
                     onClick={openDownloadMenu}
                   >
                     <RemixIcon name="download-line" size={15} />
-                    <span>{t('fileViewer.unifiedExportTab')}</span>
-                  </button>
-                ) : null}
-                {rawCanShare ? (
-                  <button
-                    type="button"
-                    className="chrome-action chrome-action-secondary chrome-action-with-label chrome-action-text-only chrome-action-unified"
-                    aria-haspopup="menu"
-                    aria-expanded={deployMenuOpen && unifiedActionTab === 'share'}
-                    aria-label={shareMenuLabel}
-                    disabled={viewerOnly}
-                    title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                    onClick={openShareMenu}
-                  >
-                    <RemixIcon name="share-forward-line" size={15} />
-                    <span>{shareMenuLabel}</span>
                   </button>
                 ) : null}
                 {deployMenuOpen && (rawCanShare || rawCanDownload) ? (
@@ -15679,6 +16258,8 @@ function HtmlViewer({
             </div>
           ) : null}
       </>) : null}
+      {canvasDock}
+      {structureRail}
       <div className="viewer-body" ref={previewBodyRef}>
         {initialPreviewLoading || sourceModeLoading ? (
           initialPreviewLoading ? (
@@ -15694,8 +16275,13 @@ function HtmlViewer({
             style={previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions)}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
           >
-            {manualEditPanel}
-            {manualEditHoverAffordance}
+            {/* The inspector used to render here, floating over the artboard.
+                It lives in the structure rail's Edit tab now — see
+                `structureRail` — so nothing covers the element being edited.
+                The hover affordance moved INTO the canvas below: it is pinned
+                to an element of the page, so it has to share the page's
+                coordinate space — a centred canvas would otherwise slide out
+                from under a layer-anchored icon. */}
             {showDeckThumbnailRail && !deckThumbnailsCollapsed ? (
               <DeckThumbnailRail
                 count={deckSlideTotal}
@@ -15717,17 +16303,25 @@ function HtmlViewer({
               data-testid={manualEditMode ? undefined : 'comment-preview-canvas'}
               ref={manualEditMode ? undefined : setCommentPreviewCanvasRef}
             >
+              {manualEditHoverAffordance}
               <div className={manualEditMode ? undefined : 'comment-frame-clip'} style={manualEditMode ? { height: '100%' } : undefined}>
                 <div
                   style={
                     manualEditMode
-                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportWidth)
+                      ? manualEditPreviewShellStyle(previewViewport, previewScale)
                       : previewScaleShellStyle(previewViewport, previewScale)
                   }
                 >
                   <PreviewDrawOverlay
                     active={drawOverlayOpen}
-                    onActiveChange={setDrawOverlayOpen}
+                    onActiveChange={(active) => {
+                      if (active) setDrawOverlayOpen(true);
+                      // Only a LIVE overlay closing is an exit. The overlay's
+                      // Escape listener stays mounted while inactive and still
+                      // reports false — un-guarded, every stray Escape in any
+                      // other mode would arm Edit.
+                      else if (drawOverlayOpen) exitDrawToolToEdit();
+                    }}
                     captureViewport
                     captureSnapshot={captureExportImageSnapshot}
                     captureTarget={null}
@@ -16069,22 +16663,6 @@ function HtmlViewer({
                 </div>
               ) : null}
               {commentComposer}
-              {boardMode && !commentCreateMode && hoveredCommentTarget && (!activeCommentTarget || commentPortalHost) ? (
-                <AnnotationHoverPopover
-                  target={hoveredCommentTarget}
-                  scale={overlayPreviewScale}
-                  bounds={previewBodySize}
-                  offset={{ x: overlayPreviewTransform.offsetX, y: overlayPreviewTransform.offsetY }}
-                  onMouseEnter={() => {
-                    hoverCardPinnedRef.current = true;
-                    cancelHoverCardDismiss();
-                  }}
-                  onMouseLeave={() => {
-                    hoverCardPinnedRef.current = false;
-                    scheduleHoverCardDismiss();
-                  }}
-                />
-              ) : null}
               {/*
                 Hint banner for Inspect / Picker modes. The bridge in
                 `apps/web/src/runtime/srcdoc.ts` posts `od:comment-targets`
@@ -16143,11 +16721,17 @@ function HtmlViewer({
               ) : null}
             </div>
             {boardImagePreviewModal}
-            {commentPortalHost && commentSidePanel
-              ? createPortal(commentSidePanel, commentPortalHost)
-              : commentPortalId
-                ? null
-                : commentSidePanel}
+            {/* The structure rail wins the list when comment mode was armed
+                from Edit: it is already holding that column open, so hosting
+                there is what keeps the canvas from reflowing. Otherwise the
+                workspace's floating host takes it, as before. */}
+            {structureCommentHost && commentSidePanel
+              ? createPortal(commentSidePanel, structureCommentHost)
+              : commentPortalHost && commentSidePanel
+                ? createPortal(commentSidePanel, commentPortalHost)
+                : commentPortalId
+                  ? null
+                  : commentSidePanel}
             {inspectMode && activeInspectTarget ? (
               <InspectPanel
                 target={activeInspectTarget}
@@ -17037,9 +17621,11 @@ function escapeHtmlAttr(value: string): string {
 function ImageViewer({
   projectId,
   file,
+  onCloseFile,
 }: {
   projectId: string;
   file: ProjectFile;
+  onCloseFile?: (() => void) | undefined;
 }) {
   const t = useT();
   const { workspaceContext } = useProjectCollabContext();
@@ -17065,14 +17651,22 @@ function ImageViewer({
           >
             {t('fileViewer.download')}
           </a>
-          <a
-            className="ghost-link"
-            href={projectFileUrl(projectId, file.name, workspaceContext)}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            {t('fileViewer.open')}
-          </a>
+          {/* 关闭 replaced 打开-in-new-tab: an image on this canvas is
+              usually a detour from the page being edited, and the way BACK is
+              the action this toolbar owed — a browser tab of the same picture
+              answered a question nobody asked. The workspace decides what
+              closing means (return to the file this one replaced, or just
+              close the tab). */}
+          {onCloseFile ? (
+            <button
+              type="button"
+              className="ghost-link"
+              data-testid="image-viewer-close"
+              onClick={onCloseFile}
+            >
+              {t('common.close')}
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="viewer-body image-body">

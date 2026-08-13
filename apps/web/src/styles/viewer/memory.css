@@ -645,39 +645,36 @@
   min-height: 0;
   background: var(--bg);
 }
-.manual-edit-workspace > .manual-edit-right {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  bottom: 8px;
-  width: 320px;
-  max-width: calc(100% - 16px);
-  overflow: hidden;
-  z-index: 30;
-}
-.manual-edit-workspace > .manual-edit-right.manual-edit-floating {
-  right: auto;
-  bottom: auto;
-  overflow: visible;
-  pointer-events: auto;
-}
-
-/* Page-styles card: a compact, content-height variant of the floating panel
-   anchored top-right. Opened by clicking the empty canvas so edit mode itself
-   stays clean instead of docking a full-height panel on open. */
-.manual-edit-workspace > .manual-edit-right.manual-edit-page-card {
-  right: 12px;
-  height: auto;
-  max-height: calc(100% - 24px);
-}
+/* The inspector is no longer a child of the workspace — it renders in the
+   structure rail's Edit tab — so the rules that positioned it over the artboard
+   are gone with it. `.manual-edit-page-card` survives as a marker class only:
+   the page-styles variant still wants to hug its content rather than fill the
+   rail's height. */
 .manual-edit-page-card .manual-edit-modal.cc-panel {
   height: auto;
 }
 
+/* Docked in the rail, the inspector is the tab's content — not an object
+   resting on it. Its card chrome (border, radius, shadow, glass) was drawn
+   against a surface of the SAME `--bg-panel`, so all it produced was an outline
+   tracing the panel and a shadow with nothing to cast onto: a plate under a
+   plate. Strip it and let the panel meet the rail. The floating variant
+   (`.manual-edit-floating`, further down) keeps every bit of it — there the
+   card really does hover over the artboard and needs its own edge. */
+.viewer-structure-rail .manual-edit-modal {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 /* Hover affordance: a small "edit params" handle pinned to the hovered
    element so click-to-pin selection stays discoverable without the panel
-   chasing the cursor. */
-.manual-edit-workspace > .manual-edit-hover-action {
+   chasing the cursor. It renders INSIDE the scaled canvas — it shares the
+   page's coordinate space, so the canvas can move (centring, zoom) without
+   the icon detaching from its element. */
+.manual-edit-canvas > .manual-edit-hover-action {
   position: absolute;
   z-index: 31;
   display: flex;
@@ -695,7 +692,7 @@
   animation: manual-edit-hover-action-in 160ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
   pointer-events: auto;
 }
-.manual-edit-workspace > .manual-edit-hover-action:hover {
+.manual-edit-canvas > .manual-edit-hover-action:hover {
   background: color-mix(in srgb, #1A74FF 12%, var(--bg-panel));
 }
 @keyframes manual-edit-hover-action-in {
@@ -1287,6 +1284,17 @@
   border-color: var(--border);
   background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
   box-shadow: var(--shadow-lg);
+}
+/* The anchored panel is capped so it can sit beside a short element, which
+   means a long parameter list has to scroll. The footer sticks to the bottom
+   of the card so Save/Cancel stay reachable and no row is hidden underneath
+   it — the clipping that once motivated docking the panel in a corner. */
+.manual-edit-floating .manual-edit-modal.cc-panel > .cc-panel-foot,
+.manual-edit-floating .manual-edit-modal.cc-panel > footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: inherit;
 }
 .manual-edit-scroll {
   flex: 1 1 auto;

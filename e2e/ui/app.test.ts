@@ -331,7 +331,6 @@ test('[P0] sending preview comments opens the refreshed follow-up artifact', asy
   await waitForLoadingToClear(page);
   await expect(artifactPreview(page)).toBeVisible();
 
-  await page.getByTestId('board-mode-toggle').click();
   await page.getByTestId('comment-panel-toggle').click();
   await clickCommentTargetInPreview(page, '[data-od-id="hero-title"]');
   await expect(page.getByTestId('comment-popover')).toBeVisible();
@@ -955,7 +954,6 @@ async function runCommentAttachmentFlow(
   page: Page,
   entry: UiScenario,
 ) {
-  await page.getByTestId('board-mode-toggle').click();
   await page.getByTestId('comment-panel-toggle').click();
   await clickCommentTargetInPreview(page, '[data-od-id="hero-title"]');
   await expect(page.getByTestId('comment-popover')).toBeVisible();

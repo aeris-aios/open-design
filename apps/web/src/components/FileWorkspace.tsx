@@ -1,12 +1,10 @@
 import {
-  memo,
   useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type ReactNode,
 } from 'react';
 import { Button } from '@open-design/components';
@@ -127,12 +125,12 @@ import {
 } from './DesignBrowserPanel';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { designSystemGithubEvidenceState, repoConnectCopy } from './design-system-github-evidence';
-import { APP_CHROME_FILE_ACTIONS_ID } from './AppChromeHeader';
+import { APP_CHROME_FILE_ACTIONS_ID, WORKSPACE_CANVAS_TOOLBAR_ID } from './AppChromeHeader';
 import { FileViewer, LiveArtifactViewer } from './FileViewer';
 import { useIframeKeepAlivePool } from './IframeKeepAlivePool';
 import { Icon, type IconName } from './Icon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
-import { FileSyncBadge, type FileSyncBadgeState } from '../collab/FileSyncBadge';
+import type { FileSyncBadgeState } from '../collab/FileSyncBadge';
 import { Toast } from './Toast';
 import { TabLauncherMenu } from './workspace/TabLauncherMenu';
 import { buildLauncherActions, type LauncherContext } from './workspace/tab-launcher';
@@ -1391,18 +1389,15 @@ export function FileWorkspace({
   );
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
-  const fileSyncBadgeLabel = fileSyncBadge
-    ? fileSyncBadge === 'downloading'
-      ? t('workspace.fileSyncDownloading')
-      : t('workspace.fileSyncUploading')
-    : null;
-  const designFilesTabLabel = t('workspace.designFiles');
-  const designFilesTabTitle = fileSyncBadgeLabel
-    ? `${designFilesTabLabel} · ${fileSyncBadgeLabel}`
-    : designFilesTabLabel;
-
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /**
+   * File whose viewer should come up in Edit because a structure-rail page
+   * switch handed Edit over to it. Lives here rather than in either viewer: the
+   * one that set it is unmounting with its tab, and the one that reads it has
+   * not mounted yet.
+   */
+  const [manualEditHandoffFile, setManualEditHandoffFile] = useState<string | null>(null);
   // The folder the Design Files panel is currently viewing (synced via
   // onCurrentDirChange). New files — uploads, pastes, sketches, dropped files —
   // are created under this folder instead of the project root.
@@ -1463,19 +1458,14 @@ export function FileWorkspace({
   // fails on the daemon side, so the click is never a silent no-op.
   const [launcherToast, setLauncherToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [browserSnapshotToast, setBrowserSnapshotToast] = useState<WorkspaceActionToast | null>(null);
-  const [tabsOverflowing, setTabsOverflowing] = useState(false);
-  const [draggedTabName, setDraggedTabName] = useState<string | null>(null);
-  const [dragOverTab, setDragOverTab] = useState<{
-    name: string;
-    edge: TabDropEdge;
-  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const launcherBtnRef = useRef<HTMLButtonElement | null>(null);
   const projectShareRef = useRef<HTMLDivElement | null>(null);
-  const tabsBarRef = useRef<HTMLDivElement | null>(null);
+  // The "+" button that used to anchor the launcher popover is gone with the
+  // tab strip; the header row it lived on is the remaining anchor, so ⌘/Ctrl+T
+  // still has something to position against.
+  const tabsShellRef = useRef<HTMLDivElement | null>(null);
   // Focus-mode dock host for the workspace tab strip (workspaceTabsDock.ts).
   const focusTabsDockRef = useWorkspaceTabsDockRef();
-  const draggedTabNameRef = useRef<string | null>(null);
   const browserTabSequenceRef = useRef(0);
   const openFileRef = useRef<(name: string) => void>(() => {});
   const designFilesNavProjectIdRef = useRef(projectId);
@@ -2191,8 +2181,9 @@ export function FileWorkspace({
   }
 
   function openWorkspaceTabLauncher() {
+    // No "+" button to focus any more — the menu autofocuses its own search
+    // input on mount, so opening it is the whole interaction.
     setLauncherOpen(true);
-    launcherBtnRef.current?.focus();
   }
 
   function closeActiveWorkspaceTab() {
@@ -2211,9 +2202,29 @@ export function FileWorkspace({
   // dropped. Done atomically because calling openFile() then closeTab() would
   // each read the same stale `persistedTabs` prop and the second would clobber
   // the first.
-  function openFileReplacing(openName: string, closeName: string) {
+  /* Where the file standing in a tab came from, when it got there by
+     REPLACING another (the assets rail swapping the edited page for an image,
+     the flow map carrying a screen out). An explicit 关闭 on such a file is
+     "I'm done with the detour", so it goes back rather than leaving the tab
+     strip one file poorer. A ref, not state: only close handlers read it, and
+     it changing must not re-render every open viewer. */
+  const replacedOriginRef = useRef<{ open: string; from: string } | null>(null);
+
+  function openFileReplacing(
+    openName: string,
+    closeName: string,
+    options?: { keepManualEdit?: boolean },
+  ) {
+    replacedOriginRef.current = { open: openName, from: closeName };
     afterActiveManualEditSettles(() => {
       setUploadError(null);
+      // The structure rail switches pages from inside Edit, and the flow map's
+      // Edit tab carries a focused screen out of the map into Edit. Either way
+      // the calling viewer is about to unmount with the tab, so the intent is
+      // parked here and read by the viewer that mounts for `openName` — which
+      // clears it as soon as it has taken it, so a later remount of the same
+      // tab opens plain.
+      setManualEditHandoffFile(options?.keepManualEdit ? openName : null);
       const currentTabs = tabsStateRef.current.tabs;
       const withoutClosed = currentTabs.filter((tabName) => tabName !== closeName);
       const nextTabs = withoutClosed.includes(openName)
@@ -2222,6 +2233,19 @@ export function FileWorkspace({
       commitTabsState(workspaceTabsState(nextTabs, openName));
       setActiveTab(openName);
     });
+  }
+
+  /* The viewer-facing close. Closing a file that replaced another returns to
+     the one it replaced — in Edit, since the detour started inside Edit (the
+     assets rail only exists there). Anything else is a plain tab close. */
+  function closeViewerFile(name: string) {
+    const origin = replacedOriginRef.current;
+    if (origin && origin.open === name) {
+      replacedOriginRef.current = null;
+      openFileReplacing(origin.from, name, { keepManualEdit: true });
+      return;
+    }
+    closeTab(name);
   }
 
   function closeTab(name: string) {
@@ -2279,29 +2303,6 @@ export function FileWorkspace({
       }
       return next;
     });
-  }
-
-  function reorderPersistedTab(
-    draggedName: string,
-    targetName: string,
-    edge: TabDropEdge,
-  ) {
-    if (draggedName === targetName) return;
-    if (!persistedTabs.includes(draggedName)) return;
-    if (!persistedTabs.includes(targetName)) return;
-
-    const nextTabs = persistedTabs.filter((name) => name !== draggedName);
-    const targetIndex = nextTabs.indexOf(targetName);
-    if (targetIndex === -1) return;
-    nextTabs.splice(edge === 'after' ? targetIndex + 1 : targetIndex, 0, draggedName);
-    if (arraysEqual(nextTabs, persistedTabs)) return;
-    onTabsStateChange(workspaceTabsState(nextTabs, tabsState.active));
-  }
-
-  function clearTabDragState() {
-    draggedTabNameRef.current = null;
-    setDraggedTabName(null);
-    setDragOverTab(null);
   }
 
   async function handleFilePicked(ev: React.ChangeEvent<HTMLInputElement>) {
@@ -2391,28 +2392,6 @@ export function FileWorkspace({
       window.removeEventListener('drop', onDrop);
     };
   }, []);
-
-  useEffect(() => {
-    const tabBar = tabsBarRef.current;
-    if (!tabBar) return;
-
-    const onWheel = (event: globalThis.WheelEvent) => {
-      scrollWorkspaceTabsWithWheel(tabBar, event);
-    };
-    tabBar.addEventListener('wheel', onWheel, { passive: false });
-    return () => tabBar.removeEventListener('wheel', onWheel);
-  }, []);
-
-  // Browser-style tab bar: when the active tab changes (open from a chat
-  // file chip, switch via Cmd+P, etc.), scroll it into view so the user
-  // can always see what they have selected even when the strip overflows.
-  useEffect(() => {
-    const tabBar = tabsBarRef.current;
-    if (!tabBar) return;
-    const el = tabBar.querySelector<HTMLElement>('.ws-tab.active');
-    if (!el) return;
-    scrollWorkspaceTabIntoView(tabBar, el);
-  }, [activeTab]);
 
   // Browser-style shortcuts for the high-frequency Design Files workspace
   // tabs. Capture phase prevents the host browser/Electron shell from opening
@@ -3314,6 +3293,7 @@ export function FileWorkspace({
     [slideNavRequest, activeViewerFile?.name, slideNavDeliverableNonce],
   );
   const stableOpenFileReplacing = useStableHandler(openFileReplacing);
+  const clearManualEditHandoff = useCallback(() => setManualEditHandoffFile(null), []);
   const renderFileViewer = (file: ProjectFile, workspaceActive: boolean) => (
     <FileViewer
       projectId={projectId}
@@ -3334,6 +3314,9 @@ export function FileWorkspace({
       }
       onFileSaved={refreshFilesWithoutResult}
       onOpenFileReplacing={stableOpenFileReplacing}
+      onCloseFile={() => closeViewerFile(file.name)}
+      enterManualEditOnOpen={manualEditHandoffFile === file.name}
+      onManualEditHandoffConsumed={clearManualEditHandoff}
       commentPortalId={workspaceActive ? commentPortalId : undefined}
       onCommentModeChange={workspaceActive ? onCommentModeChange : undefined}
       shareRequest={
@@ -3500,89 +3483,6 @@ export function FileWorkspace({
     return ids;
   }, [designSystemProject, visibleOrderedWorkspaceTabs]);
 
-  // Per-tab handler sets with stable identities. Tab is memoized; the inline
-  // closures the strip map used to create handed every Tab fresh props on
-  // each FileWorkspace render, turning the memo into a no-op. Handlers
-  // delegate through a post-commit ref (see useStableHandler for the timing
-  // contract) so they always execute against the latest committed state.
-  const tabItemActions = {
-    activate(key: string) {
-      if (isBrowserTabId(key)) {
-        setPersistedActive(key);
-        return;
-      }
-      const sketchEntry = sketches[key];
-      if (sketchEntry && !sketchEntry.persisted) activatePending(key);
-      else setPersistedActive(key);
-    },
-    close(key: string) {
-      if (isBrowserTabId(key)) closeBrowserTab(key);
-      else closeTab(key);
-    },
-    dragStart(key: string, event: ReactDragEvent<HTMLDivElement>) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', key);
-      draggedTabNameRef.current = key;
-      setDraggedTabName(key);
-    },
-    dragOver(key: string, event: ReactDragEvent<HTMLDivElement>) {
-      const currentDraggedName = draggedTabNameRef.current ?? draggedTabName;
-      if (!currentDraggedName || currentDraggedName === key) return;
-      if (!persistedTabs.includes(currentDraggedName)) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      const edge = tabDropEdgeFromEvent(event);
-      setDragOverTab((current) =>
-        current?.name === key && current.edge === edge
-          ? current
-          : { name: key, edge },
-      );
-    },
-    dragLeave(key: string) {
-      setDragOverTab((current) => (current?.name === key ? null : current));
-    },
-    drop(key: string, event: ReactDragEvent<HTMLDivElement>) {
-      event.preventDefault();
-      const draggedName = draggedTabNameRef.current || draggedTabName;
-      if (draggedName) {
-        reorderPersistedTab(draggedName, key, tabDropEdgeFromEvent(event));
-      }
-      clearTabDragState();
-    },
-    dragEnd() {
-      clearTabDragState();
-    },
-  };
-  const tabItemActionsRef = useRef(tabItemActions);
-  useEffect(() => {
-    tabItemActionsRef.current = tabItemActions;
-  });
-  const tabHandlersByKeyRef = useRef(new Map<string, WorkspaceTabItemHandlers>());
-  function tabHandlersFor(key: string): WorkspaceTabItemHandlers {
-    const map = tabHandlersByKeyRef.current;
-    let handlers = map.get(key);
-    if (!handlers) {
-      handlers = {
-        onActivate: () => tabItemActionsRef.current.activate(key),
-        onClose: () => tabItemActionsRef.current.close(key),
-        onDragStart: (event) => tabItemActionsRef.current.dragStart(key, event),
-        onDragOver: (event) => tabItemActionsRef.current.dragOver(key, event),
-        onDragLeave: () => tabItemActionsRef.current.dragLeave(key),
-        onDrop: (event) => tabItemActionsRef.current.drop(key, event),
-        onDragEnd: () => tabItemActionsRef.current.dragEnd(),
-      };
-      map.set(key, handlers);
-    }
-    return handlers;
-  }
-  useEffect(() => {
-    const alive = new Set(workspaceTabIds);
-    const map = tabHandlersByKeyRef.current;
-    for (const key of [...map.keys()]) {
-      if (!alive.has(key)) map.delete(key);
-    }
-  }, [workspaceTabIds]);
-
   const workspaceContexts = useMemo<WorkspaceContextItem[]>(() => {
     const out: WorkspaceContextItem[] = [];
     const seen = new Set<string>();
@@ -3703,33 +3603,6 @@ export function FileWorkspace({
   useEffect(() => {
     onWorkspaceContextsChange?.(workspaceContexts);
   }, [onWorkspaceContextsChange, workspaceContexts]);
-
-  useEffect(() => {
-    const tabBar = tabsBarRef.current;
-    if (!tabBar) return;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      setTabsOverflowing(tabBar.scrollWidth > tabBar.clientWidth + 1);
-    };
-    const requestMeasure = () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(measure);
-    };
-    requestMeasure();
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(requestMeasure);
-    if (resizeObserver) {
-      resizeObserver.observe(tabBar);
-      Array.from(tabBar.children).forEach((child) => resizeObserver.observe(child));
-    }
-    window.addEventListener('resize', requestMeasure);
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', requestMeasure);
-    };
-  }, [browserTabs.length, designSystemProject, tabNames.length]);
 
   useEffect(() => {
     if (!projectShareMenuOpen) return;
@@ -3872,7 +3745,7 @@ export function FileWorkspace({
         />
       ) : null}
       <SketchEnginePrewarm />
-      <div className="ws-tabs-shell">
+      <div className="ws-tabs-shell" ref={tabsShellRef}>
         {onFocusModeChange && focusMode ? (
           <button
             type="button"
@@ -3899,174 +3772,23 @@ export function FileWorkspace({
             ref={focusTabsDockRef}
           />
         ) : null}
+        {/* Pure portal host for the open file's canvas toolbar (reload /
+            edit·present / viewport / flow). The file-tab strip that used to
+            lead this row is gone, so the left half sat empty while FileViewer
+            stacked its own 52px bar directly underneath — two chrome rows for
+            one file. The toolbar moves up here instead; it keeps its own
+            element (and with it its `container-type` breakpoints), this host
+            just gives it the row's leading slot. Collapses when no file is
+            open, see `.ws-tabs-canvas-toolbar:empty`. */}
         <div
-          ref={tabsBarRef}
-          className={`ws-tabs-bar${tabsOverflowing ? ' is-overflowing' : ''}`}
-          role="tablist"
-          aria-label={t('workspace.pages')}
-          onWheel={(event) => {
-            // Translate vertical wheel into horizontal tab scroll so Windows
-            // mouse-wheel users (no horizontal wheel/trackpad) can reach
-            // overflowed tabs. Only act when there's actually horizontal
-            // overflow and the gesture is predominantly vertical.
-            const el = event.currentTarget;
-            if (el.scrollWidth <= el.clientWidth) return;
-            if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-            el.scrollLeft += event.deltaY;
-          }}
-          onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-            setDragOverTab(null);
-          }}
-          onDrop={(event) => {
-            if (event.target !== event.currentTarget) return;
-            clearTabDragState();
-          }}
-        >
-          {designSystemProject ? (
-            <button
-              type="button"
-              className={`ws-tab design-system-tab ${activeTab === DESIGN_SYSTEM_TAB ? 'active' : ''}`}
-              role="tab"
-              aria-selected={activeTab === DESIGN_SYSTEM_TAB}
-              tabIndex={0}
-              data-testid="design-system-project-tab"
-              onClick={() => setPersistedActive(DESIGN_SYSTEM_TAB)}
-              title={t('dsManager.tabDesignSystem')}
-            >
-              <span className="tab-icon" aria-hidden>
-                <Icon name="blocks" size={13} />
-              </span>
-              <span className="ws-tab-label">{t('dsManager.tabDesignSystem')}</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className={`ws-tab design-files-tab ${designFilesTabActive ? 'active' : ''}`}
-            role="tab"
-            aria-selected={designFilesTabActive}
-            aria-label={designFilesTabTitle}
-            tabIndex={0}
-            data-testid="design-files-tab"
-            onClick={() => setPersistedActive(DESIGN_FILES_TAB)}
-            title={designFilesTabTitle}
-          >
-            <span className="tab-icon" aria-hidden>
-              {fileSyncBadge ? (
-                <FileSyncBadge state={fileSyncBadge} size={14} />
-              ) : (
-                <Icon name="grid" size={14} />
-              )}
-            </span>
-            <span className="ws-tab-label">{designFilesTabLabel}</span>
-          </button>
-          {visibleOrderedWorkspaceTabs.map((entry) => {
-            if (entry.kind === 'browser') {
-              const browserTab = entry.browserTab;
-              const browserUrl = browserTab.url?.trim() ?? '';
-              const browserTitle = browserUrl
-                ? browserTab.title?.trim() || labelFromUrl(browserUrl)
-                : browserTab.label;
-              const browserHandlers = tabHandlersFor(browserTab.id);
-              return (
-                <Tab
-                  key={browserTab.id}
-                  label={browserTitle}
-                  title={browserUrl ? `${browserTitle}\n${browserUrl}` : browserTitle}
-                  active={activeTab === browserTab.id}
-                  onActivate={browserHandlers.onActivate}
-                  onClose={browserHandlers.onClose}
-                  kind="browser"
-                />
-              );
-            }
-            const name = entry.name;
-            const sketchEntry = sketches[name];
-            const dirtyMark =
-              sketchEntry && (sketchEntry.dirty || !sketchEntry.persisted) ? ' •' : '';
-            const onDisk = visibleFiles.find((f) => f.name === name);
-            const liveArtifact = liveArtifactEntries.find((entry) => entry.tabId === name);
-            const kind = liveArtifact ? 'live-artifact' : onDisk?.kind ?? (isSketchName(name) ? 'sketch' : 'text');
-            const isTerminal = isTerminalTabId(name);
-            const isSideChat = isSideChatTabId(name);
-            // Terminal and side-chat tabs are not files: give them a friendly
-            // label + glyph instead of the raw `terminal:<id>` / `chat:<id>` id.
-            let label: string;
-            if (isTerminal) {
-              // Number multiple terminals so the tabs stay distinguishable.
-              const ordinal = tabNames.filter(isTerminalTabId).indexOf(name) + 1;
-              label =
-                ordinal > 1
-                  ? `${t('workspace.newTerminal')} ${ordinal}`
-                  : t('workspace.newTerminal');
-            } else if (isSideChat) {
-              const conv = conversations.find(
-                (c) => c.id === conversationIdFromSideChatTabId(name),
-              );
-              label = conv?.title?.trim() || t('workspace.sideChatDefaultTitle');
-            } else {
-              label = `${liveArtifact?.title ?? name}${dirtyMark}`;
-            }
-            const iconNameOverride: IconName | undefined = isTerminal
-              ? 'terminal'
-              : isSideChat
-                ? 'comment'
-                : undefined;
-            const handlers = tabHandlersFor(name);
-            // The sync badge only makes sense on a real design-file tab: a
-            // terminal / side-chat tab has no on-disk content to sync, and a
-            // live artifact is baked output, not the source file being pulled
-            // or published.
-            const tabSyncBadge =
-              fileSyncBadge && !isTerminal && !isSideChat && !liveArtifact
-                ? fileSyncBadge
-                : null;
-            return (
-              <Tab
-                key={name}
-                label={label}
-                iconNameOverride={iconNameOverride}
-                syncBadge={tabSyncBadge}
-                active={activeTab === name}
-                onActivate={handlers.onActivate}
-                onClose={handlers.onClose}
-                kind={kind}
-                liveArtifact={liveArtifact}
-                draggable={persistedTabs.includes(name)}
-                dragging={draggedTabName === name}
-                dragOverEdge={
-                  dragOverTab?.name === name && draggedTabName !== name
-                    ? dragOverTab.edge
-                    : null
-                }
-                onDragStart={handlers.onDragStart}
-                onDragOver={handlers.onDragOver}
-                onDragLeave={handlers.onDragLeave}
-                onDrop={handlers.onDrop}
-                onDragEnd={handlers.onDragEnd}
-              />
-            );
-          })}
-        </div>
-        <div className="ws-add-tab">
-          <button
-            ref={launcherBtnRef}
-            type="button"
-            className="icon-only ws-tab-add od-tooltip"
-            data-testid="workspace-add-tab"
-            aria-haspopup="dialog"
-            aria-expanded={launcherOpen}
-            title={t('workspace.newTab')}
-            data-tooltip={t('workspace.newTab')}
-            data-tooltip-placement="bottom"
-            aria-label={t('workspace.newTab')}
-            onClick={() => setLauncherOpen((v) => !v)}
-          >
-            <Icon name="plus" size={15} />
-          </button>
-        </div>
-        {/* Pinned to the right for project/file actions; the tab launcher sits
-            next to the file tabs so its spatial relationship stays clear. */}
+          id={WORKSPACE_CANVAS_TOOLBAR_ID}
+          className="ws-tabs-canvas-toolbar"
+          data-workspace-canvas-toolbar="true"
+        />
+        {/* Pinned to the right for project/file actions. The file-tab strip
+            that used to lead this row was removed; navigation between the
+            Design Files panel and open files runs through the panel itself,
+            the chat file chips, and the workspace tab shortcuts. */}
         <div className="ws-tabs-actions">
           {fileActionsBefore ? (
             <div className="ws-tabs-file-actions-before">{fileActionsBefore}</div>
@@ -4089,7 +3811,7 @@ export function FileWorkspace({
       </div>
       {launcherOpen ? (
         <TabLauncherMenu
-          anchor={launcherBtnRef.current}
+          anchor={tabsShellRef.current}
           files={visibleFiles}
           workspaceContexts={workspaceContexts}
           openTabNames={tabNames}
@@ -8281,214 +8003,6 @@ function PageCreatorDialog({
   );
 
   return typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog;
-}
-
-// Stable per-key handler bundle produced by FileWorkspace's tabHandlersFor.
-// Identity stability is the contract: Tab below is memoized, so these must
-// not be re-created per render.
-interface WorkspaceTabItemHandlers {
-  onActivate: () => void;
-  onClose: () => void;
-  onDragStart: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragOver: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragLeave: () => void;
-  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragEnd: () => void;
-}
-
-// Memoized: the strip re-renders on every FileWorkspace state change, but an
-// individual tab only changes when its own label/active/drag props do.
-const Tab = memo(function Tab({
-  label,
-  meta,
-  title,
-  active,
-  onActivate,
-  onClose,
-  closable = true,
-  kind,
-  iconNameOverride,
-  syncBadge,
-  liveArtifact,
-  draggable = false,
-  dragging = false,
-  dragOverEdge,
-  onDragStart,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  onDragEnd,
-}: {
-  label: string;
-  meta?: string;
-  title?: string;
-  active: boolean;
-  onActivate: () => void;
-  onClose?: () => void;
-  closable?: boolean;
-  kind?: ProjectFile['kind'] | 'live-artifact' | 'browser';
-  /** Force a specific icon (e.g. non-file tabs like terminal:<id> / chat:<id>). */
-  iconNameOverride?: IconName;
-  /** Team-share sync state for this tab's file. Replaces the file-type icon
-   *  with an animated downloading/uploading badge while set. */
-  syncBadge?: FileSyncBadgeState | null;
-  liveArtifact?: LiveArtifactWorkspaceEntry;
-  draggable?: boolean;
-  dragging?: boolean;
-  dragOverEdge?: TabDropEdge | null;
-  onDragStart?: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragOver?: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragLeave?: () => void;
-  onDrop?: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragEnd?: () => void;
-}) {
-  const t = useT();
-  const iconName = iconNameOverride ?? kindIconName(kind);
-  const syncBadgeLabel = syncBadge
-    ? syncBadge === 'downloading'
-      ? t('workspace.fileSyncDownloading')
-      : t('workspace.fileSyncUploading')
-    : null;
-  const tabTitle = title ?? (meta ? `${label} ${meta}` : label);
-  const tabTooltip = syncBadgeLabel ? `${tabTitle} · ${syncBadgeLabel}` : tabTitle;
-  return (
-    <div
-      className={[
-        'ws-tab',
-        'od-tooltip',
-        meta ? 'has-meta' : '',
-        kind === 'live-artifact' ? 'live-artifact-tab' : '',
-        kind === 'browser' ? 'browser-tab' : '',
-        active ? 'active' : '',
-        draggable ? 'draggable' : '',
-        dragging ? 'dragging' : '',
-        dragOverEdge ? `drag-over-${dragOverEdge}` : '',
-      ].filter(Boolean).join(' ')}
-      onClick={onActivate}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onActivate();
-        }
-      }}
-      role="tab"
-      aria-selected={active}
-      tabIndex={0}
-      title={tabTooltip}
-      data-tooltip={tabTooltip}
-      data-tooltip-placement="bottom"
-      draggable={draggable}
-      onDragStart={draggable ? onDragStart : undefined}
-      onDragOver={draggable ? onDragOver : undefined}
-      onDragLeave={draggable ? onDragLeave : undefined}
-      onDrop={draggable ? onDrop : undefined}
-      onDragEnd={draggable ? onDragEnd : undefined}
-    >
-      {syncBadge ? (
-        <span className="tab-icon">
-          <FileSyncBadge state={syncBadge} size={13} />
-        </span>
-      ) : iconName ? (
-        <span className="tab-icon" aria-hidden>
-          <Icon name={iconName} size={13} />
-        </span>
-      ) : null}
-      <span className="ws-tab-text">
-        <span className="ws-tab-label">{label}</span>
-        {meta ? <span className="ws-tab-meta">{meta}</span> : null}
-      </span>
-      {liveArtifact ? (
-        <LiveArtifactBadges
-          compact
-          className="ws-live-artifact-badges"
-          status={liveArtifact.status}
-          refreshStatus={liveArtifact.refreshStatus}
-        />
-      ) : null}
-      {closable && onClose ? (
-        <button
-          type="button"
-          className="ws-tab-close od-tooltip"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          title={t('workspace.closeTab')}
-          data-tooltip={t('workspace.closeTab')}
-          data-tooltip-placement="bottom"
-          aria-label={t('workspace.closeTab')}
-        >
-          <Icon name="close" size={11} />
-        </button>
-      ) : null}
-    </div>
-  );
-});
-
-function tabDropEdgeFromEvent(event: ReactDragEvent<HTMLDivElement>): TabDropEdge {
-  const rect = event.currentTarget.getBoundingClientRect();
-  return event.clientX > rect.left + rect.width / 2 ? 'after' : 'before';
-}
-
-function arraysEqual(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((value, index) => value === right[index]);
-}
-
-export function scrollWorkspaceTabIntoView(
-  tabBar: Pick<HTMLDivElement, 'getBoundingClientRect' | 'scrollLeft'>,
-  tab: Pick<HTMLElement, 'getBoundingClientRect'>,
-) {
-  const tabRect = tab.getBoundingClientRect();
-  const barRect = tabBar.getBoundingClientRect();
-  if (tabRect.left < barRect.left) {
-    tabBar.scrollLeft += tabRect.left - barRect.left;
-  } else if (tabRect.right > barRect.right) {
-    tabBar.scrollLeft += tabRect.right - barRect.right;
-  }
-}
-
-export function scrollWorkspaceTabsWithWheel(
-  tabBar: Pick<HTMLDivElement, 'clientWidth' | 'scrollLeft' | 'scrollWidth'>,
-  event: Pick<globalThis.WheelEvent, 'ctrlKey' | 'deltaMode' | 'deltaX' | 'deltaY' | 'preventDefault'>,
-) {
-  if (event.ctrlKey) return;
-  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-  if (tabBar.scrollWidth <= tabBar.clientWidth) return;
-
-  const before = tabBar.scrollLeft;
-  tabBar.scrollLeft += wheelDeltaToPixels(event.deltaY, event.deltaMode);
-  if (tabBar.scrollLeft === before) return;
-
-  event.preventDefault();
-}
-
-function wheelDeltaToPixels(delta: number, deltaMode: number): number {
-  const WHEEL_DELTA_LINE = 1;
-  const WHEEL_DELTA_PAGE = 2;
-
-  if (deltaMode === WHEEL_DELTA_LINE) return delta * 16;
-  if (deltaMode === WHEEL_DELTA_PAGE) return delta * 160;
-  return delta;
-}
-
-function kindIconName(
-  kind?: string,
-):
-  | 'file-code'
-  | 'globe'
-  | 'image'
-  | 'pencil'
-  | 'file'
-  | null {
-  if (kind === 'browser') return 'globe';
-  if (kind === 'live-artifact') return 'file-code';
-  if (kind === 'html') return 'file-code';
-  if (kind === 'image') return 'image';
-  if (kind === 'sketch') return 'pencil';
-  if (kind === 'code') return 'file-code';
-  if (kind === 'text') return 'file';
-  return 'file';
 }
 
 function isBrowserTabId(tabId: string): boolean {

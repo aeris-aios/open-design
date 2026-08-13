@@ -193,6 +193,38 @@ describe('FileViewer manual edit regressions', () => {
     expect(screen.getByTestId('manual-edit-hover-open')).toBeTruthy();
   });
 
+  it('splits a structure rail off the right edge while edit mode is on', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files')) {
+        return new Response(JSON.stringify({
+          files: [
+            { name: 'index.html', path: 'index.html', kind: 'html', mime: 'text/html', size: 10, mtime: 1 },
+            { name: 'cart.html', path: 'cart.html', kind: 'html', mime: 'text/html', size: 10, mtime: 1 },
+          ],
+        }));
+      }
+      return new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    }));
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    // The rail belongs to edit mode: it is what you reach for between edits,
+    // and it has no business taking canvas width the rest of the time.
+    expect(screen.queryByTestId('viewer-structure-rail')).toBeNull();
+
+    await enterManualEditMode();
+
+    const rail = await screen.findByTestId('viewer-structure-rail');
+    await waitFor(() => expect(rail.textContent).toContain('cart'));
+    expect(rail.textContent).toContain('index');
+  });
+
   it('opens the compact page-styles card when the empty canvas is clicked', async () => {
     const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
     vi.stubGlobal('fetch', vi.fn(async () =>
@@ -236,6 +268,43 @@ describe('FileViewer manual edit regressions', () => {
     expect(screen.queryByText('PAGE')).toBeNull();
     // Affordance hides once its element is the pinned selection.
     expect(screen.queryByTestId('manual-edit-hover-open')).toBeNull();
+  });
+
+  it('docks the inspector in the structure rail instead of floating it over the artboard', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
+    ));
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    await enterManualEditMode();
+    // Arming Edit opens the page-styles card straight away, so the rail lands
+    // on its Edit tab with that card docked — not on Structure.
+    await waitFor(() => {
+      expect(screen.getByTestId('design-structure-tab-edit').getAttribute('aria-selected')).toBe('true');
+    });
+    expect(document.querySelector('.viewer-structure-rail .manual-edit-page-card')).not.toBeNull();
+
+    await selectManualEditTarget();
+
+    // Clicking an element is a request to see its properties, so the rail
+    // brings Edit forward and the inspector renders inside it.
+    await waitFor(() => {
+      expect(screen.getByTestId('design-structure-tab-edit').getAttribute('aria-selected')).toBe('true');
+    });
+    expect(document.querySelector('.viewer-structure-rail .manual-edit-right')).not.toBeNull();
+    expect(screen.getByTestId('design-structure-edit-slot')).toBeTruthy();
+
+    // …and nothing floats over the artboard any more: a card anchored beside
+    // the selection covered the neighbours you style an element against.
+    expect(document.querySelector('.manual-edit-workspace .manual-edit-right')).toBeNull();
+    expect(document.querySelector('.manual-edit-floating')).toBeNull();
+    expect(document.querySelector('.manual-edit-drag-handle')).toBeNull();
   });
 
   it('does not let a pending manual edit style save survive a file switch', async () => {

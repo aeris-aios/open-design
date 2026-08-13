@@ -22,6 +22,14 @@ test.beforeEach(async ({ page }) => {
   await applyStandardMocks(page);
 });
 
+// The HTML viewer states edit-vs-present on the canvas dock's trailing segment;
+// Source moved into the overflow menu as a toggle, so a round trip through the
+// markup is two menu clicks rather than two tab clicks.
+async function toggleSourceView(page: Page) {
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByTestId('viewer-more-source').click();
+}
+
 test('[P0] manual edit inspector previews and persists page and selected element styles', async ({ page }) => {
   await routeMockAgents(page);
   const projectId = await createEmptyProject(page, 'Manual edit smoke');
@@ -92,14 +100,17 @@ test('[P0] manual edit inspector previews and persists page and selected element
 
   await page.getByTestId('manual-edit-mode-toggle').click();
   await expect(frame.getByRole('heading', { name: 'Original Hero' })).toBeVisible();
+  // The mode segment lives on the canvas dock now, and Edit lights only while
+  // editing is ARMED — leaving edit mode puts both halves back down, which is
+  // the same state a freshly opened file stands in.
   const viewMode = page.getByRole('tablist', { name: 'View mode' });
   await expect(viewMode).toBeVisible();
-  await expect(viewMode.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(viewMode.getByRole('tab', { name: 'Code', exact: true })).toBeVisible();
+  await expect(viewMode.getByRole('tab', { name: 'Edit', exact: true })).toHaveAttribute('aria-selected', 'false');
+  await expect(viewMode.getByRole('tab', { name: 'Present', exact: true })).toHaveAttribute('aria-selected', 'false');
   await expect(artifactPreview(page)).toBeVisible();
 
-  await page.getByTestId('board-mode-toggle').click();
-  await expect(page.getByRole('button', { name: /^Comment$/ })).toBeVisible();
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: /^Share$/ })).toBeVisible();
   const actionMenu = await openShareExportMenu(page);
   await expect(actionMenu.getByRole('menuitem', { name: /Export as PDF/i })).toBeVisible();
@@ -115,10 +126,10 @@ test('[P0] manual edit mode preserves the current page in a multi-page mobile ap
   const preview = artifactPreviewFrame(page);
   await expect(preview.getByTestId('mobile-page-home')).toBeVisible();
 
-  await page.getByRole('tab', { name: 'Code', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Code', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('tab', { name: 'Preview', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await toggleSourceView(page);
+  await expect(page.locator('.viewer-source')).toBeVisible();
+  await toggleSourceView(page);
+  await expect(page.getByRole('tab', { name: 'Edit', exact: true })).toBeVisible();
   const prewarmedSrcDoc = page.frameLocator('iframe[data-testid="artifact-preview-frame-srcdoc"]');
   await expect(prewarmedSrcDoc.getByTestId('mobile-page-home')).toBeAttached();
   await waitForUrlPreviewRefreshToSettle(page);
@@ -181,8 +192,8 @@ test('[P0] manual edit mode preserves a runtime-rendered mobile app page', async
 
   const preview = artifactPreviewFrame(page);
   await expect(preview.getByTestId('mobile-page-today')).toBeVisible();
-  await page.getByRole('tab', { name: 'Code', exact: true }).click();
-  await page.getByRole('tab', { name: 'Preview', exact: true }).click();
+  await toggleSourceView(page);
+  await toggleSourceView(page);
   await expect(page.frameLocator('iframe[data-testid="artifact-preview-frame-srcdoc"]')
     .getByTestId('mobile-page-today')).toBeAttached();
   await waitForUrlPreviewRefreshToSettle(page);
@@ -319,10 +330,13 @@ test('[P0] @critical preview toolbar keeps share, download, comment, and zoom ac
   await openDesignFile(page, 'toolbar-preview.html');
 
   await expect(page.getByTestId('artifact-preview-frame')).toBeVisible();
+  // The mode segment lives on the canvas dock now. A freshly opened artifact
+  // has asked for neither mode: the page is live and clickable, and the dock's
+  // authoring half is folded out.
   const viewMode = page.getByRole('tablist', { name: 'View mode' });
   await expect(viewMode).toBeVisible();
-  await expect(viewMode.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(viewMode.getByRole('tab', { name: 'Code', exact: true })).toBeVisible();
+  await expect(viewMode.getByRole('tab', { name: 'Edit', exact: true })).toHaveAttribute('aria-selected', 'false');
+  await expect(viewMode.getByRole('tab', { name: 'Present', exact: true })).toHaveAttribute('aria-selected', 'false');
 
   // The three intents are top-level header controls again — Share, Export, and
   // the hand-off split button sit side by side, with no tab strip to cross.
@@ -353,18 +367,18 @@ test('[P0] @critical preview toolbar keeps share, download, comment, and zoom ac
   expect(download.suggestedFilename()).toMatch(/toolbar-preview.*\.html$/i);
   await expect(downloadMenu).toHaveCount(0);
 
-  await page.getByRole('button', { name: /^Comment$/ }).click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: /^Comment$/ }).click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'false');
 
   const zoomButton = page.locator('.viewer-toolbar-zoom .zoom-trigger');
   await expect(zoomButton).toHaveText(/^\d+%$/);
   await zoomButton.click();
   const zoomMenu = page.locator('.zoom-menu-popover[role="menu"]');
   await expect(zoomMenu).toBeVisible();
-  await zoomMenu.getByRole('menuitem', { name: '150%' }).click();
-  await expect(zoomButton).toHaveText('150%');
+  await zoomMenu.getByRole('menuitem', { name: '50%' }).click();
+  await expect(zoomButton).toHaveText('50%');
 });
 
 test('[P1] preview toolbar exports PDF and PPTX through the daemon contracts', async ({ page }) => {
@@ -494,8 +508,8 @@ test('[P1] HTML preview toolbar exposes comments, mark, and edit workflows', asy
   // The screenshot step is gone: `screenshot-copy-button` no longer exists in
   // apps/web, and FileViewer's own suite asserts its absence. Comments, mark
   // and edit below are still live, so the rest of this spec stands.
-  await page.getByTestId('board-mode-toggle').click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
   await artifactPreviewFrame(page).locator('[data-od-id="hero-title"]').click();
   await expect(page.getByTestId('comment-popover')).toBeVisible();
   await page.getByTestId('comment-popover-input').fill('Panel-level comment');
@@ -551,8 +565,8 @@ test('[P1] draw annotation composer floats near the selected mark and can be que
   await page.goto(`/projects/${projectId}/conversations/${conversationId}/files/draw-position.html`);
   await openDesignFile(page, 'draw-position.html');
 
-  await page.getByTestId('board-mode-toggle').click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
   await holdNextRunOpen(page);
   await sendPrompt(page, 'Keep draw queue mode active');
   await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
@@ -785,10 +799,13 @@ test('[P0] @critical edited HTML file restores selected tab and preview after re
   await expectFileSource(page, projectId, 'restore-edit.html', ['font-size: 52px', 'color:']);
 
   await activeEditToggle.click();
+  // The mode segment lives on the canvas dock now, and Edit lights only while
+  // editing is ARMED — leaving edit mode puts both halves back down, which is
+  // the same state a freshly opened file stands in.
   const viewMode = page.getByRole('tablist', { name: 'View mode' });
   await expect(viewMode).toBeVisible();
-  await expect(viewMode.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(viewMode.getByRole('tab', { name: 'Code', exact: true })).toBeVisible();
+  await expect(viewMode.getByRole('tab', { name: 'Edit', exact: true })).toHaveAttribute('aria-selected', 'false');
+  await expect(viewMode.getByRole('tab', { name: 'Present', exact: true })).toHaveAttribute('aria-selected', 'false');
   await expect(page.locator('.viewer-source')).toHaveCount(0);
   await expect(restoreTab).toHaveAttribute('aria-selected', 'true');
   await expect(secondaryTab).toHaveAttribute('aria-selected', 'false');
@@ -801,8 +818,7 @@ test('[P0] @critical edited HTML file restores selected tab and preview after re
   await expect(restoredTab).toHaveAttribute('aria-selected', 'true');
   const restoredViewMode = page.getByRole('tablist', { name: 'View mode' });
   await expect(restoredViewMode).toBeVisible();
-  await expect(restoredViewMode.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(restoredViewMode.getByRole('tab', { name: 'Code', exact: true })).toBeVisible();
+  await expect(restoredViewMode.getByRole('tab', { name: 'Edit', exact: true })).toHaveAttribute('aria-selected', 'false');
   await expect(page.locator('.viewer-source')).toHaveCount(0);
   await expect(artifactPreview(page)).toBeVisible();
   const restoredFrame = artifactPreviewFrame(page);

@@ -1576,6 +1576,22 @@ body:has(.artifact-version-panel) .ws-tabs-file-actions-before {
   right: 0;
   transform: none;
 }
+/* The canvas dock's copy is portaled to the body — its own strip scrolls, and a
+   scroll container clips both axes, which cut this menu away entirely. Freed
+   from the strip it has to place itself: the component measures the trigger and
+   sets `left` / `bottom` in viewport coordinates, so only the centring and the
+   layer belong here. Wins the `.viewer-toolbar-zoom` rule above by source
+   order — same (0,2,0) specificity, and the portaled node carries both
+   classes. */
+.zoom-menu-popover--floating {
+  position: fixed;
+  top: auto;
+  right: auto;
+  transform: translateX(-50%);
+  /* Over the dock (z-index 4) and the preview canvas that swallowed the clicks
+     while this was clipped. */
+  z-index: 60;
+}
 .zoom-menu-item {
   display: flex;
   align-items: center;
@@ -2477,8 +2493,13 @@ a.avatar-item:visited {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  /* No outline, no rounding. The card runs nearly the full height of the stage
+     against the canvas edge, where a rounded, ringed box reads as a floating
+     chip rather than the panel it is — the same squaring the desktop artboard
+     got. The shadow stays and is now the only separator: it lifts the panel off
+     a dark canvas without drawing a second edge beside its own header rule. */
+  border: 0;
+  border-radius: 0;
   background: var(--bg-panel);
   box-shadow: var(--shadow-lg);
 }

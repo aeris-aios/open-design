@@ -1355,15 +1355,16 @@
   width: auto;
 }
 .viewer-viewport-trigger {
-  /* Auto width so the button hugs icon + label + chevron. A fixed square hid
-     the label and left nothing but an empty chip when the glyph was missing. */
+  /* Auto width so the button hugs label + chevron. A fixed square hid the
+     label and left nothing but an empty chip when the glyph was missing. */
   width: auto;
   min-height: 26px;
   justify-content: flex-start;
-  /* Icon ↔ label gap = 4px (the label flexes, so this gap is the visible
-     device-icon-to-text spacing; the chevron stays pushed to the right). */
+  /* Label ↔ chevron gap. */
   gap: 4px;
-  padding: 4px 8px 4px 10px;
+  /* Symmetric now that nothing precedes the label; the chevron glyph carries
+     its own optical whitespace, so the right side stays 8px. */
+  padding: 4px 8px;
   /* Capsule button. */
   border-radius: var(--radius-pill);
   border-color: transparent;
@@ -1529,11 +1530,13 @@
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
-.preview-viewport:not(.preview-viewport-desktop) .preview-frame-clip,
-.preview-viewport:not(.preview-viewport-desktop):not(.comment-preview-layer-with-side-dock) .comment-preview-canvas,
-.preview-viewport:not(.preview-viewport-desktop).manual-edit-workspace .manual-edit-canvas {
+.preview-viewport .preview-frame-clip,
+.preview-viewport:not(.comment-preview-layer-with-side-dock) .comment-preview-canvas,
+.preview-viewport.manual-edit-workspace .manual-edit-canvas {
   width: calc(var(--preview-viewport-width) * var(--preview-scale, 1));
-  height: calc(var(--preview-viewport-height) * var(--preview-scale, 1));
+  /* Desktop declares no artboard height — it fills the canvas and the page
+     scrolls inside, so the height falls back to the container. */
+  height: var(--preview-viewport-height, 100%);
   max-width: none;
   max-height: none;
   flex: 0 0 auto;
@@ -1542,6 +1545,27 @@
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
   background: var(--bg-panel);
+}
+/* A desktop artboard is the page itself, not a device: an 18px bezel radius
+   rounds off the page's own corners and reads as a phone standing in the wrong
+   place. Square it — and drop the hairline and drop shadow for the same
+   reason: card chrome says "an object standing on the canvas", which is the
+   device viewports' story, not the page's. Tablet and mobile keep all three;
+   there the frame IS the point. */
+.preview-viewport-desktop .preview-frame-clip,
+.preview-viewport-desktop:not(.comment-preview-layer-with-side-dock) .comment-preview-canvas,
+.preview-viewport-desktop.manual-edit-workspace .manual-edit-canvas {
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  /* Once the fit engages, the artboard is narrower than its pane — and
+     `inset: 0` + an explicit width is over-constrained, which LTR resolves by
+     anchoring left and dumping ALL the slack on the right edge. Auto margins
+     split it, so the artboard sits centred like the device viewports (which
+     get the same result from their flex parent). Manual edit is included: its
+     hover affordance renders inside the canvas and travels with it. The
+     board's side-dock canvas keeps width 100%, so it has no slack to split. */
+  margin-inline: auto;
 }
 .preview-viewport:not(.preview-viewport-desktop).comment-preview-layer-with-side-dock .comment-preview-canvas {
   width: auto;
@@ -1677,9 +1701,12 @@
   padding: 10px;
   border: 1px solid var(--material-separator);
   border-radius: var(--radius);
-  background: var(--glass-regular);
-  -webkit-backdrop-filter: var(--glass-backdrop);
-  backdrop-filter: var(--glass-backdrop);
+  /* Opaque, not glass. This card floats over the artifact, and the artifact is
+     whatever the author made it — over a dark page the 66% glass took the
+     page's ink and the whole composer went grey-black, with the artboard's own
+     rows still legible through the writing surface. A comment box has to be a
+     sheet of paper, not a window. */
+  background: var(--bg-panel);
   box-shadow: var(--shadow-lg);
 }
 /* Composer variant (BoardComposerPopover). The card's height is clamped to the
@@ -1687,9 +1714,7 @@
    card is shorter than its content. With the whole card as the scroller the
    action row simply fell below the fold and the user could not reach cancel /
    send at all. Invariant: the card is a fixed frame — only the body scrolls,
-   and the action row is always inside the visible box.
-   The read-only `.annotation-hover-popover` keeps the plain scrolling card;
-   it has no `.comment-popover-body` and no actions to protect. */
+   and the action row is always inside the visible box. */
 .comment-popover-composer {
   display: flex;
   flex-direction: column;
@@ -1705,54 +1730,8 @@
 .comment-popover-composer .comment-popover-actions {
   flex: 0 0 auto;
 }
-.comment-popover-titlebar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 24px;
-  margin: -2px 0 8px;
-}
-.comment-popover-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.comment-popover-drag-handle {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: grab;
-  touch-action: none;
-}
-.comment-popover-drag-handle:hover {
-  background: var(--bg-subtle);
-  color: var(--text);
-}
-.comment-popover-drag-handle:active,
-.comment-popover-dragging .comment-popover-drag-handle {
-  cursor: grabbing;
-}
-.comment-popover-drag-handle span {
-  width: 12px;
-  height: 16px;
-  background-image: radial-gradient(currentColor 1.3px, transparent 1.4px);
-  background-position: 0 0;
-  background-size: 6px 5px;
-}
+/* The composer card carries no titlebar and no drag handle any more — it
+   starts at the comment box; see BoardComposerPopover. */
 .comment-popover-section {
   min-width: 0;
 }
@@ -1915,6 +1894,22 @@
   max-height: 112px;
   overflow-y: auto;
   resize: none;
+  /* Resting field carries no stroke — on this card the dark hairline was the
+     loudest line on screen while the reader had typed nothing. A soft fill
+     keeps the field findable; focus brings the border back as the ring. */
+  border-color: transparent;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+}
+.comment-popover textarea:focus {
+  /* The composer autofocuses its field the moment it opens, so `--selected`
+     (#353535) painted a near-black rectangle around an empty box before the
+     reader had done anything — the loudest thing on the card, and read as an
+     error state rather than a cursor. A light grey hairline is enough of a
+     frame; the fill still lightens on focus, which is what actually carries
+     the state. */
+  border-color: var(--border);
+  background: var(--bg-panel);
 }
 .comment-popover-actions {
   display: flex;
@@ -1946,6 +1941,11 @@
   gap: 6px;
   min-width: 0;
 }
+/* Every control on the action row is a full pill — icon chips and worded
+   buttons alike, one shape for the whole line. */
+.comment-popover-actions button {
+  border-radius: var(--radius-pill);
+}
 .comment-popover-close {
   flex: 0 0 auto;
   display: inline-flex;
@@ -1955,7 +1955,7 @@
   height: 34px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
   cursor: pointer;
@@ -2071,8 +2071,14 @@
   height: 100%;
   max-width: 100%;
   background: var(--bg-panel, #fff);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  /* Flat: no outline, no rounding. The panel is a full-height column against
+     the canvas edge, not a chip floating on it — a ring plus a radius drew a
+     second edge right beside its own header rule. The shadow stays and is the
+     only separator. `shell.css` used to zero these for the portaled copy only,
+     through `>` selectors that missed the moment the host nested it one level
+     deeper; owning it here covers both the floating card and the local dock. */
+  border: 0;
+  border-radius: 0;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
@@ -2224,14 +2230,19 @@
   flex-direction: column;
   gap: 4px;
 }
-.comment-side-item.selected {
-  background: var(--comment-accent-surface);
-  border-color: var(--comment-accent-border);
-}
+/* One list, one colour, one weight. Selected and open used to speak different
+   languages — green for "the reader picked this", orange for "this one is
+   open" — which put a red row in the middle of a green stack and read as an
+   error, not a state. Unifying the hue fixed the colour but not the noise:
+   open kept a deeper wash and a solid bar down its edge, so the open row sat
+   in the stack looking like a different KIND of card rather than a peer in a
+   different state. Both states now render identically, and which row is open
+   is carried by `aria-current` and by the composer that row opened — not by
+   making one card louder than the ones around it. */
+.comment-side-item.selected,
 .comment-side-item.active {
-  background: var(--comment-accent-surface-strong);
-  border-color: var(--comment-accent-border);
-  box-shadow: inset 3px 0 0 var(--comment-accent);
+  background: color-mix(in srgb, var(--brand) 8%, var(--bg-panel));
+  border-color: var(--brand);
 }
 .comment-side-item.dragging {
   opacity: 0.45;
@@ -2347,8 +2358,11 @@
   flex-shrink: 0;
 }
 .comment-side-check.checked {
-  background: var(--comment-accent);
-  border-color: var(--comment-accent);
+  /* Ink fill, brand-green check — the app's black+green pairing (Community's
+     selected tab, the 使用 button), matching the row's green selection stroke. */
+  background: var(--text-strong);
+  border-color: var(--text-strong);
+  color: var(--brand);
 }
 .comment-side-body {
   font-size: 13px;
@@ -2378,24 +2392,29 @@
   object-fit: cover;
   display: block;
 }
+/* The bar reports a selection; it is not itself an alert. It used to sit on the
+   comment accent's tint with accent-coloured text, which made a routine "1
+   selected" read as loud as the thing it was reporting on — and put three
+   different oranges in one strip. Plain surface, quiet text, and the one action
+   that matters carries the weight. */
 .comment-side-selectbar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
-  background: var(--comment-accent-surface);
+  background: var(--bg);
 }
 .comment-side-selectcount {
   flex: 1;
   font-size: 12px;
-  color: var(--comment-accent-strong);
+  color: var(--text-muted);
 }
 .comment-side-selectbar .ghost {
   background: transparent;
   border: none;
   font-size: 12px;
-  color: var(--text);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 4px 6px;
 }
@@ -2403,27 +2422,31 @@
   color: var(--text);
   text-decoration: underline;
 }
+/* Ink-filled pill: the same `--text-strong` fill the row's other primary action
+   (导出) wears, so "the dark one is the one that does something" holds across
+   the surface. */
 .comment-side-selectbar .primary {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--comment-accent);
-  color: #fff;
-  border: 1px solid var(--comment-accent);
-  border-radius: var(--radius-sm);
-  padding: 5px 10px;
+  background: var(--text-strong);
+  color: var(--bg);
+  border: 1px solid var(--text-strong);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
 }
 .comment-side-selectbar .primary:disabled {
-  background: color-mix(in srgb, var(--comment-accent) 45%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--comment-accent) 45%, var(--border));
-  color: color-mix(in srgb, #fff 68%, var(--text-muted));
+  background: color-mix(in srgb, var(--text-strong) 32%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--text-strong) 32%, var(--border));
+  color: color-mix(in srgb, var(--bg) 68%, var(--text-muted));
   cursor: not-allowed;
 }
+/* Black cannot darken on hover; lift it instead. */
 .comment-side-selectbar .primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--comment-accent) 88%, #000);
-  border-color: color-mix(in srgb, var(--comment-accent) 88%, #000);
+  background: color-mix(in srgb, var(--text-strong) 86%, var(--bg));
+  border-color: color-mix(in srgb, var(--text-strong) 86%, var(--bg));
 }
 .comment-side-new-comment {
   flex: 0 0 auto;

@@ -730,27 +730,25 @@ export async function gotoVisualWorkspace(page: Page): Promise<void> {
 }
 
 /**
- * Drive the workspace onto its Design Files tab, converging on that state
- * instead of deciding once whether to click.
+ * Drive the workspace onto its Design Files panel, converging on that state
+ * instead of deciding once whether to act.
  *
- * `aria-selected` and the design-file rows both come off FileWorkspace's single
- * `activeTab === DESIGN_FILES_TAB` expression, so probing the rows to decide
- * whether to click was never asking the wrong question — the problem is that the
- * answer can still change after the probe. The tab is *persisted*
- * (`setPersistedActive`) and restored asynchronously, so a restore that lands
- * after this helper's one click puts another tab back, and a one-shot helper has
- * nothing left to re-click. Under the visual lane — fully parallel, `retries: 0`
- * — that surfaced as a single capture timing out for 10s on `aria-selected`
- * while its siblings, running this identical prelude, all passed.
+ * The workspace file-tab strip is gone, so the panel is reached with the first
+ * workspace-tab shortcut (⌘/Ctrl+1, always Design Files) and observed through
+ * the panel itself rather than a tab's `aria-selected`. The active tab is
+ * *persisted* (`setPersistedActive`) and restored asynchronously, so a restore
+ * that lands after one key press puts another tab back and a one-shot helper
+ * has nothing left to re-press. Under the visual lane — fully parallel,
+ * `retries: 0` — that surfaced as a single capture timing out for 10s while
+ * its siblings, running this identical prelude, all passed.
  *
- * Clicking is safe to repeat: the tab's handler just sets the same active id.
+ * Re-pressing is safe: the shortcut just sets the same active id.
  */
 export async function activateVisualDesignFilesTab(page: Page): Promise<void> {
-  const tab = page.getByTestId('design-files-tab');
-  await expect(tab).toBeVisible({ timeout: T.medium });
+  const panel = page.getByTestId('design-files-panel');
   await expect(async () => {
-    if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click();
-    await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: T.short });
+    if (!(await panel.isVisible())) await page.keyboard.press('Control+1');
+    await expect(panel).toBeVisible({ timeout: T.short });
   }).toPass({ timeout: T.long });
 }
 
@@ -789,7 +787,7 @@ export async function prepareVisualAvatarMenu(page: Page): Promise<Locator> {
   // The composer popover is a model picker: the Open Design account card is
   // conditional (Open Design has to be installed), so gate on the model list.
   await expect(menu.locator('.avatar-model-section').first()).toBeVisible();
-  await expect(page.getByTestId('design-files-tab')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('design-files-panel')).toBeVisible();
   await expect(menu.locator('.avatar-item').first()).toBeVisible();
   await expect(page.getByTestId('design-file-row-index.html')).toBeVisible();
   await waitForVisualStable(page);

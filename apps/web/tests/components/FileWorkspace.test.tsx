@@ -17,7 +17,6 @@ import {
   DESIGN_FILES_TAB,
   FileWorkspace,
   settleManualEditFiles,
-  scrollWorkspaceTabsWithWheel,
   settleManualEditExit,
 } from '../../src/components/FileWorkspace';
 import { ENABLE_BLANK_PAGE_WORKSPACE_ENTRYPOINT } from '../../src/components/workspace/tab-launcher';
@@ -408,58 +407,11 @@ function renderWorkspace(element: React.ReactElement) {
   return host;
 }
 
-function getTabByName(container: HTMLElement, name: RegExp): HTMLElement {
-  const tabs = Array.from(container.querySelectorAll<HTMLElement>('[role="tab"]'));
-  const tab = tabs.find((node) => name.test(node.textContent ?? ''));
-  if (!tab) throw new Error(`Could not find tab matching ${name}`);
-  return tab;
-}
-
-function renderedTabLabels(): string[] {
-  return screen.getAllByRole('tab').map((tab) => tab.textContent?.trim() ?? '');
-}
-
-function createDragDataTransfer() {
-  const store = new Map<string, string>();
-  return {
-    effectAllowed: 'move',
-    dropEffect: 'move',
-    getData: vi.fn((type: string) => store.get(type) ?? ''),
-    setData: vi.fn((type: string, value: string) => {
-      store.set(type, value);
-    }),
-  };
-}
-
-function dispatchDragEvent(
-  target: HTMLElement,
-  type: string,
-  dataTransfer = createDragDataTransfer(),
-  clientX = 0,
-  relatedTarget: EventTarget | null = null,
-) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperties(event, {
-    clientX: { value: clientX },
-    dataTransfer: { value: dataTransfer },
-    relatedTarget: { value: relatedTarget },
-  });
-  target.dispatchEvent(event);
-  return dataTransfer;
-}
-
-function stubTabRect(tab: HTMLElement, left = 0, width = 100) {
-  tab.getBoundingClientRect = vi.fn(() => ({
-    x: left,
-    y: 0,
-    left,
-    top: 0,
-    right: left + width,
-    bottom: 20,
-    width,
-    height: 20,
-    toJSON: () => ({}),
-  }));
+// The file-tab strip was removed from the workspace header row. ⌘1…⌘9 is the
+// surviving way to activate a workspace tab by position: ⌘1 is always the
+// Design Files panel, with the open files following in strip order.
+function activateWorkspaceTabByPosition(position: number) {
+  fireEvent.keyDown(window, { key: String(position), metaKey: true });
 }
 
 function changeInputValue(input: HTMLInputElement, value: string) {
@@ -824,7 +776,7 @@ describe('FileWorkspace upload input', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.keyDown(window, { key: 't', metaKey: true });
     fireEvent.click(screen.getByRole('button', { name: /New blank page/i }));
     const title = await screen.findByText('Clean Deck');
     const card = title.closest('article');
@@ -913,7 +865,7 @@ describe('FileWorkspace upload input', () => {
       </I18nProvider>,
     );
 
-    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.keyDown(window, { key: 't', metaKey: true });
     fireEvent.click(screen.getByRole('button', { name: /新建空白页面/ }));
 
     const dialog = await screen.findByRole('dialog', { name: '新建页面' });
@@ -965,7 +917,7 @@ describe('FileWorkspace upload input', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.keyDown(window, { key: 't', metaKey: true });
     fireEvent.click(screen.getByRole('button', { name: /New blank page/i }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Create page' });
@@ -1080,10 +1032,11 @@ describe('FileWorkspace upload input', () => {
 
     const { container, rerender } = render(<FileWorkspace {...baseProps} />);
 
-    // Folder rows live behind the Folders category tab (the default tab is
-    // Pages whenever HTML files exist at the current level).
-    fireEvent.click(screen.getByTestId('design-files-tab-folders'));
-    fireEvent.click(container.querySelector('.df-dir-row .df-row-name-btn')!);
+    // A project with pages navigates through the structure rail, where folder
+    // rows lead the tree instead of hiding behind their own category tab.
+    fireEvent.click(
+      screen.getByTestId('design-dir-row-assets').querySelector('button')!,
+    );
     expect(container.querySelector('.df-breadcrumb-current')?.textContent).toBe('assets');
 
     rerender(
@@ -1300,7 +1253,7 @@ describe('FileWorkspace upload input', () => {
     expect(markup).not.toContain('data-testid="workspace-focus-toggle"');
   });
 
-  it('renders the expand control on the LEFT of the tab bar while focused', () => {
+  it('renders the expand control on the LEFT of the header row while focused', () => {
     const markup = renderToStaticMarkup(
       <FileWorkspace
         projectId="project-1"
@@ -1318,16 +1271,18 @@ describe('FileWorkspace upload input', () => {
 
     expect(markup).toContain('class="ws-tabs-shell"');
     expect(markup).toContain('data-testid="workspace-focus-toggle"');
-    // The expand control sits before the tabs bar (left side) so its
-    // direction matches where the chat pane re-emerges from. In focus mode
-    // the project tab strip's dock host sits between them (the strip portals
-    // into it — see workspaceTabsDock.ts), so allow it in the order check.
+    // The expand control leads the header row (left side) so its direction
+    // matches where the chat pane re-emerges from. In focus mode the project
+    // tab strip's dock host sits after it (the strip portals into it — see
+    // workspaceTabsDock.ts), then the canvas-toolbar host (FileViewer portals
+    // the open file's toolbar into it so both live on this one row), and the
+    // action cluster closes the row.
     expect(markup).toMatch(
-      /<div class="ws-tabs-shell">\s*<button[^>]*data-testid="workspace-focus-toggle"[\s\S]*?<\/button>\s*(?:<div class="ws-tabs-project-dock"[^>]*><\/div>\s*)?<div class="ws-tabs-bar"/,
+      /<div class="ws-tabs-shell">\s*<button[^>]*data-testid="workspace-focus-toggle"[\s\S]*?<\/button>\s*(?:<div class="ws-tabs-project-dock"[^>]*><\/div>\s*)?(?:<div id="workspace-canvas-toolbar"[^>]*><\/div>\s*)?<div class="ws-tabs-actions"/,
     );
   });
 
-  it('keeps the pages switcher before opened file tabs', () => {
+  it('renders no file-tab strip in the header row', () => {
     const markup = renderToStaticMarkup(
       <FileWorkspace
         projectId="project-1"
@@ -1341,10 +1296,10 @@ describe('FileWorkspace upload input', () => {
       />,
     );
 
-    expect(markup).toContain('class="ws-tabs-bar"');
-    expect(markup).toMatch(
-      /role="tablist"[\s\S]*data-testid="design-files-tab"[\s\S]*artifact\.html/,
-    );
+    expect(markup).toContain('class="ws-tabs-shell"');
+    expect(markup).not.toContain('class="ws-tabs-bar"');
+    expect(markup).not.toContain('data-testid="design-files-tab"');
+    expect(markup).not.toContain('data-testid="workspace-add-tab"');
   });
 
   it('labels the same workspace control as chat restore while focused', () => {
@@ -1404,7 +1359,9 @@ describe('FileWorkspace launcher tab creation', () => {
     expect(retainedViewer.style.display).toBe('flex');
 
     for (let round = 0; round < 10; round += 1) {
-      fireEvent.click(screen.getByTestId('design-files-tab'));
+      // The file-tab strip is gone; ⌘1 / ⌘2 are the surviving switch between
+      // the Design Files panel and the first open file.
+      fireEvent.keyDown(window, { key: '1', metaKey: true });
       expect(screen.getByTestId('retained-file-viewer')).toBe(retainedViewer);
       expect(retainedViewer.getAttribute('aria-hidden')).toBe('true');
       expect(retainedViewer.hasAttribute('inert')).toBe(true);
@@ -1414,7 +1371,7 @@ describe('FileWorkspace launcher tab creation', () => {
       expect(retainedViewer.style.visibility).toBe('hidden');
       expect(container.querySelector('.iframe-keep-alive-pool iframe')).toBeNull();
 
-      fireEvent.click(screen.getByRole('tab', { name: /artifact\.html/i }));
+      fireEvent.keyDown(window, { key: '2', metaKey: true });
       expect(screen.getByTestId('artifact-preview-frame')).toBe(firstFrame);
       expect(screen.getByTestId('retained-file-viewer')).toBe(retainedViewer);
       expect(retainedViewer.style.display).toBe('flex');
@@ -1459,7 +1416,7 @@ describe('FileWorkspace launcher tab creation', () => {
     await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(1));
     const alphaFrame = screen.getByTestId('artifact-preview-frame');
 
-    fireEvent.click(screen.getByRole('tab', { name: /beta\.html/i }));
+    activateWorkspaceTabByPosition(3);
     await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(2));
     const betaFrame = screen.getByTestId('artifact-preview-frame');
     expect(betaFrame).not.toBe(alphaFrame);
@@ -1471,7 +1428,7 @@ describe('FileWorkspace launcher tab creation', () => {
       beta.name,
     ]);
 
-    fireEvent.click(screen.getByRole('tab', { name: /alpha\.html/i }));
+    activateWorkspaceTabByPosition(2);
     expect(screen.getByTestId('artifact-preview-frame')).toBe(alphaFrame);
     expect(container.querySelector('.iframe-keep-alive-pool iframe')).toBeNull();
     expect(document.body.contains(betaFrame)).toBe(true);
@@ -1509,9 +1466,9 @@ describe('FileWorkspace launcher tab creation', () => {
     }
 
     render(<Harness />);
-    fireEvent.click(screen.getByRole('tab', { name: /beta\.html/i }));
+    activateWorkspaceTabByPosition(3);
     await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(2));
-    fireEvent.click(screen.getByRole('tab', { name: /gamma\.html/i }));
+    activateWorkspaceTabByPosition(4);
     await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(3));
     const survivingFrames = ['beta.html', 'gamma.html'].map((name) => (
       document.querySelector(`iframe[title="${name}"][data-od-render-mode="url-load"]`)
@@ -1519,7 +1476,7 @@ describe('FileWorkspace launcher tab creation', () => {
     expect(survivingFrames.every(Boolean)).toBe(true);
     const appendSpy = vi.spyOn(Node.prototype, 'appendChild');
 
-    fireEvent.click(screen.getByRole('tab', { name: /delta\.html/i }));
+    activateWorkspaceTabByPosition(5);
     await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(document.querySelector('iframe[title="alpha.html"]')).toBeNull());
 
@@ -1567,7 +1524,7 @@ describe('FileWorkspace launcher tab creation', () => {
     await waitFor(() => expect(document.querySelector(
       'iframe[title="alpha.html"][data-od-render-mode="url-load"]',
     )).not.toBeNull());
-    fireEvent.click(screen.getByRole('tab', { name: /beta\.html/i }));
+    activateWorkspaceTabByPosition(3);
     await waitFor(() => expect(document.querySelector(
       'iframe[title="alpha.html"][data-od-render-mode="url-load"]',
     )).not.toBeNull());
@@ -1724,7 +1681,7 @@ describe('FileWorkspace launcher tab creation', () => {
     const { rerender } = render(
       <Harness files={initialFiles} refreshKey={0} />,
     );
-    fireEvent.click(screen.getByRole('tab', { name: /beta\.html/i }));
+    activateWorkspaceTabByPosition(3);
     await waitFor(() => expect(document.querySelector('iframe[title="beta.html"]')).not.toBeNull());
     const betaFrame = document.querySelector('iframe[title="beta.html"]');
 
@@ -1732,7 +1689,7 @@ describe('FileWorkspace launcher tab creation', () => {
     // A committed refresh that still contains the file must retain that frame.
     rerender(<Harness files={initialFiles} refreshKey={1} />);
     await waitFor(() => expect(document.querySelector('iframe[title="beta.html"]')).toBe(betaFrame));
-    fireEvent.click(screen.getByRole('tab', { name: /alpha\.html/i }));
+    activateWorkspaceTabByPosition(2);
 
     rerender(<Harness files={[workspaceFile(alphaName)]} refreshKey={2} />);
 
@@ -2269,7 +2226,7 @@ describe('FileWorkspace launcher tab creation', () => {
       });
       if (index < files.length - 1) {
         const nextName = files[index + 1]!.name;
-        fireEvent.click(screen.getByRole('tab', { name: new RegExp(nextName.replace('.', '\\.')) }));
+        activateWorkspaceTabByPosition(index + 3);
         await waitFor(() => {
           expect(screen.getByTestId('artifact-preview-frame').getAttribute('title')).toBe(nextName);
         });
@@ -2408,9 +2365,9 @@ describe('FileWorkspace launcher tab creation', () => {
     }
 
     render(<Harness />);
-    for (const name of files.slice(1).map((file) => file.name)) {
-      fireEvent.click(screen.getByRole('tab', { name: new RegExp(name.replace('.', '\\.')) }));
-      await waitFor(() => expect(screen.getByTestId('artifact-preview-frame').getAttribute('title')).toBe(name));
+    for (const [offset, file] of files.slice(1).entries()) {
+      activateWorkspaceTabByPosition(offset + 3);
+      await waitFor(() => expect(screen.getByTestId('artifact-preview-frame').getAttribute('title')).toBe(file.name));
     }
     await waitFor(() => {
       expect(screen.getAllByTestId('retained-file-viewer').map((viewer) => viewer.getAttribute('data-file-name')))
@@ -2419,7 +2376,7 @@ describe('FileWorkspace launcher tab creation', () => {
     expect(document.querySelector('iframe[title="alpha.html"]')).toBeNull();
     expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(4);
 
-    fireEvent.click(screen.getByRole('tab', { name: /alpha\.html/i }));
+    activateWorkspaceTabByPosition(2);
     await waitFor(() => expect(screen.getByTestId('artifact-preview-frame').getAttribute('title')).toBe('alpha.html'));
     expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(5);
     await waitFor(() => {
@@ -2496,10 +2453,8 @@ describe('FileWorkspace launcher tab creation', () => {
       />,
     );
 
-    expect(screen.getByTestId('design-files-tab')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('design-files-empty')).toBeTruthy();
     expect(screen.queryByText(/Open a file from/i)).toBeNull();
-    expect(renderedTabLabels()).toEqual(['Design Files']);
   });
 
   it('hides terminal creation while keeping browser creation available', () => {
@@ -2516,7 +2471,7 @@ describe('FileWorkspace launcher tab creation', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.keyDown(window, { key: 't', metaKey: true });
 
     const launcherMenu = within(screen.getByTestId('tab-launcher-menu'));
     expect(launcherMenu.queryByRole('button', { name: /New Terminal/i })).toBeNull();
@@ -2525,51 +2480,7 @@ describe('FileWorkspace launcher tab creation', () => {
     expect(screen.getByText('Create new')).toBeTruthy();
   });
 
-  it('renders terminal and side chat tabs after a Design Files-anchored browser tab', () => {
-    render(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{
-          tabs: ['terminal:term-1', 'chat:conversation-1'],
-          active: 'chat:conversation-1',
-          browserTabs: [
-            {
-              id: '__browser__:1',
-              insertAfter: '__design_files__',
-              label: 'Browser',
-            },
-          ],
-        }}
-        conversations={[
-          {
-            id: 'conversation-1',
-            projectId: 'project-1',
-            title: null,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ]}
-        onTabsStateChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId('design-files-tab').textContent).toContain('Design Files');
-    // Design Files is a plain tab in the strip (role="tab"), so it is part of
-    // the rendered tab list rather than a dropdown trigger sitting outside it.
-    expect(renderedTabLabels()).toEqual([
-      'Design Files',
-      'Browser',
-      'New Terminal',
-      'Side chat',
-    ]);
-  });
-
-  it('shows project sync progress on the Design Files root tab without hiding materialized files', () => {
+  it('shows project sync progress without hiding materialized files', () => {
     render(
       <FileWorkspace
         projectId="project-1"
@@ -2585,10 +2496,6 @@ describe('FileWorkspace launcher tab creation', () => {
       />,
     );
 
-    const rootTab = screen.getByTestId('design-files-tab');
-    expect(rootTab.title).toContain('Downloading from the team');
-    expect(rootTab.getAttribute('aria-label')).toContain('Downloading from the team');
-    expect(rootTab.querySelector('svg')).toBeTruthy();
     expect(screen.getByText('notes.txt')).toBeTruthy();
     expect(screen.queryByTestId('design-files-syncing')).toBeNull();
   });
@@ -2709,7 +2616,7 @@ describe('FileWorkspace launcher tab creation', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.keyDown(window, { key: 't', metaKey: true });
     fireEvent.click(await screen.findByRole('button', { name: /New Browser/i }));
 
     await waitFor(() => {
@@ -2753,7 +2660,7 @@ describe('FileWorkspace launcher tab creation', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.keyDown(window, { key: 't', metaKey: true });
     fireEvent.click(await screen.findByRole('button', { name: /notes\.html/i }));
 
     await waitFor(() => {
@@ -2790,9 +2697,6 @@ describe('FileWorkspace launcher tab creation', () => {
     });
 
     expect(allowedDefault).toBe(false);
-    expect(screen.getByTestId('workspace-add-tab').getAttribute('aria-expanded')).toBe(
-      'true',
-    );
     expect(await screen.findByRole('dialog', { name: /New tab/i })).toBeTruthy();
     expect(screen.getByTestId('tab-launcher-search')).toBe(document.activeElement);
   });
@@ -2846,13 +2750,10 @@ describe('FileWorkspace launcher tab creation', () => {
 
     expect(nextAllowedDefault).toBe(false);
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /notes\.html/ }).getAttribute('aria-selected')).toBe(
-        'true',
-      );
-    });
-    expect(onTabsStateChange).toHaveBeenLastCalledWith({
-      tabs: ['analysis.html', 'notes.html'],
-      active: 'notes.html',
+      expect(onTabsStateChange).toHaveBeenLastCalledWith({
+        tabs: ['analysis.html', 'notes.html'],
+        active: 'notes.html',
+      });
     });
 
     const previousAllowedDefault = fireEvent.keyDown(window, {
@@ -2863,13 +2764,10 @@ describe('FileWorkspace launcher tab creation', () => {
 
     expect(previousAllowedDefault).toBe(false);
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /analysis\.html/ }).getAttribute('aria-selected')).toBe(
-        'true',
-      );
-    });
-    expect(onTabsStateChange).toHaveBeenLastCalledWith({
-      tabs: ['analysis.html', 'notes.html'],
-      active: 'analysis.html',
+      expect(onTabsStateChange).toHaveBeenLastCalledWith({
+        tabs: ['analysis.html', 'notes.html'],
+        active: 'analysis.html',
+      });
     });
   });
 
@@ -3182,155 +3080,6 @@ describe('DesignFilesPanel plugin folders', () => {
   });
 });
 
-describe('FileWorkspace tab reordering', () => {
-  it('persists a dragged file tab before the tab it is dropped on', () => {
-    const onTabsStateChange = vi.fn();
-
-    const container = renderWorkspace(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('analysis.html'),
-          workspaceFile('notes.md'),
-          workspaceFile('summary.html'),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{
-          tabs: ['analysis.html', 'notes.md', 'summary.html'],
-          active: null,
-        }}
-        onTabsStateChange={onTabsStateChange}
-      />,
-    );
-
-    const source = getTabByName(container, /summary\.html/i);
-    const target = getTabByName(container, /analysis\.html/i);
-    stubTabRect(target);
-
-    let dataTransfer = createDragDataTransfer();
-    act(() => {
-      dataTransfer = dispatchDragEvent(source, 'dragstart', dataTransfer);
-    });
-    act(() => dispatchDragEvent(target, 'dragover', dataTransfer));
-    act(() => dispatchDragEvent(target, 'drop', dataTransfer));
-
-    expect(onTabsStateChange).toHaveBeenCalledWith({
-      tabs: ['summary.html', 'analysis.html', 'notes.md'],
-      active: null,
-    });
-  });
-
-  it('persists a dragged file tab after the tab when dropped on its right side', () => {
-    const onTabsStateChange = vi.fn();
-
-    const container = renderWorkspace(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('analysis.html'),
-          workspaceFile('notes.md'),
-          workspaceFile('summary.html'),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{
-          tabs: ['analysis.html', 'notes.md', 'summary.html'],
-          active: null,
-        }}
-        onTabsStateChange={onTabsStateChange}
-      />,
-    );
-
-    const source = getTabByName(container, /analysis\.html/i);
-    const target = getTabByName(container, /summary\.html/i);
-    stubTabRect(target);
-
-    let dataTransfer = createDragDataTransfer();
-    act(() => {
-      dataTransfer = dispatchDragEvent(source, 'dragstart', dataTransfer);
-    });
-    act(() => dispatchDragEvent(target, 'drop', dataTransfer, 75));
-
-    expect(onTabsStateChange).toHaveBeenCalledWith({
-      tabs: ['notes.md', 'summary.html', 'analysis.html'],
-      active: null,
-    });
-  });
-
-  it('does not persist when a tab is dropped on itself', () => {
-    const onTabsStateChange = vi.fn();
-
-    const container = renderWorkspace(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[workspaceFile('analysis.html'), workspaceFile('notes.md')]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{
-          tabs: ['analysis.html', 'notes.md'],
-          active: null,
-        }}
-        onTabsStateChange={onTabsStateChange}
-      />,
-    );
-
-    const tab = getTabByName(container, /analysis\.html/i);
-    stubTabRect(tab);
-
-    let dataTransfer = createDragDataTransfer();
-    act(() => {
-      dataTransfer = dispatchDragEvent(tab, 'dragstart', dataTransfer);
-    });
-    act(() => dispatchDragEvent(tab, 'drop', dataTransfer));
-
-    expect(onTabsStateChange).not.toHaveBeenCalled();
-  });
-
-  it('clears the drop indicator when the drag leaves the tab bar', () => {
-    const container = renderWorkspace(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[workspaceFile('analysis.html'), workspaceFile('notes.md')]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{
-          tabs: ['analysis.html', 'notes.md'],
-          active: null,
-        }}
-        onTabsStateChange={vi.fn()}
-      />,
-    );
-
-    const source = getTabByName(container, /analysis\.html/i);
-    const target = getTabByName(container, /notes\.md/i);
-    const tabBar = container.querySelector<HTMLElement>('.ws-tabs-bar');
-    if (!tabBar) throw new Error('Could not find tabs bar');
-    stubTabRect(target);
-
-    let dataTransfer = createDragDataTransfer();
-    act(() => {
-      dataTransfer = dispatchDragEvent(source, 'dragstart', dataTransfer);
-    });
-    act(() => dispatchDragEvent(target, 'dragover', dataTransfer));
-
-    expect(target.className).toContain('drag-over-before');
-
-    act(() => dispatchDragEvent(tabBar, 'dragleave', dataTransfer, 0, document.body));
-
-    expect(target.className).not.toContain('drag-over-before');
-    expect(target.className).not.toContain('drag-over-after');
-  });
-});
-
 describe('projectSplitClassName', () => {
   it('marks the project split as focused so the chat pane can collapse globally', () => {
     expect(projectSplitClassName(false)).toBe('split');
@@ -3348,162 +3097,6 @@ describe('projectSplitClassName', () => {
       '--project-workspace-panel-track': 'minmax(420px, 1fr)',
     });
     expect(projectSplitStyle(true, 512, 'minmax(420px, 1fr)')).toBeUndefined();
-  });
-});
-
-describe('scrollWorkspaceTabsWithWheel', () => {
-  function makeTabBar(scrollLeft: number, scrollWidth = 400, clientWidth = 200) {
-    return { scrollLeft, scrollWidth, clientWidth } as HTMLDivElement;
-  }
-
-  function makeClampedTabBar(scrollLeft: number, scrollWidth = 400, clientWidth = 200) {
-    let value = scrollLeft;
-    return {
-      scrollWidth,
-      clientWidth,
-      get scrollLeft() {
-        return value;
-      },
-      set scrollLeft(next: number) {
-        value = Math.min(Math.max(next, 0), scrollWidth - clientWidth);
-      },
-    } as HTMLDivElement;
-  }
-
-  it('maps vertical mouse wheel movement to horizontal tab scrolling', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(12);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 0,
-      deltaX: 0,
-      deltaY: 40,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(52);
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-  });
-
-  it('supports reverse vertical wheel movement', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(52);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 0,
-      deltaX: 0,
-      deltaY: -40,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(12);
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-  });
-
-  it('normalizes line-based wheel deltas to useful pixel movement', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(12);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 1,
-      deltaX: 0,
-      deltaY: 3,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(60);
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-  });
-
-  it('normalizes page-based wheel deltas to useful pixel movement', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(12, 600, 200);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 2,
-      deltaX: 0,
-      deltaY: 1,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(172);
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-  });
-
-  it('leaves native horizontal wheel gestures alone', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(12);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 0,
-      deltaX: 50,
-      deltaY: 10,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(12);
-    expect(preventDefault).not.toHaveBeenCalled();
-  });
-
-  it('leaves ctrl-wheel zoom gestures alone', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(12);
-    const event = {
-      ctrlKey: true,
-      deltaMode: 0,
-      deltaX: 0,
-      deltaY: 40,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(12);
-    expect(preventDefault).not.toHaveBeenCalled();
-  });
-
-  it('does not intercept vertical wheel movement when tabs do not overflow', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeTabBar(12, 200, 200);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 0,
-      deltaX: 0,
-      deltaY: 40,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(12);
-    expect(preventDefault).not.toHaveBeenCalled();
-  });
-
-  it('lets page scrolling continue when the tab bar is already at the wheel boundary', () => {
-    const preventDefault = vi.fn();
-    const currentTarget = makeClampedTabBar(200, 400, 200);
-    const event = {
-      ctrlKey: false,
-      deltaMode: 0,
-      deltaX: 0,
-      deltaY: 40,
-      preventDefault,
-    } as unknown as WheelEvent;
-
-    scrollWorkspaceTabsWithWheel(currentTarget, event);
-
-    expect(currentTarget.scrollLeft).toBe(200);
-    expect(preventDefault).not.toHaveBeenCalled();
   });
 });
 
@@ -4065,28 +3658,22 @@ describe('FileWorkspace add-module menu', () => {
       />,
     );
 
-    const addButton = screen.getByTestId('workspace-add-tab');
-    expect(addButton.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('tab-launcher-menu')).toBeNull();
 
     act(() => {
-      fireEvent.click(addButton);
+      fireEvent.keyDown(window, { key: 't', metaKey: true });
     });
 
-    expect(addButton.getAttribute('aria-expanded')).toBe('true');
     const browserItem = screen.getByRole('button', { name: /New Browser/ });
     const menu = browserItem.closest('[data-testid="tab-launcher-menu"]');
     expect(menu).not.toBeNull();
     expect(screen.queryByRole('button', { name: /New Terminal/ })).toBeNull();
 
-    // The tab strip is a horizontal scroll container that also clips
-    // vertically, so the "+" button lives outside it in `.ws-add-tab`
-    // and the launcher menu is portaled to <body> -- neither can be clipped
-    // by the scrolling bar.
-    const tabsBar = document.querySelector('.ws-tabs-bar');
-    expect(tabsBar).not.toBeNull();
-    expect(tabsBar!.contains(addButton)).toBe(false);
-    expect(tabsBar!.contains(menu)).toBe(false);
-    expect(addButton.closest('.ws-add-tab')).not.toBeNull();
+    // The launcher menu is portaled to <body>, so the workspace header row
+    // (which clips vertically) can never crop it.
+    const tabsShell = document.querySelector('.ws-tabs-shell');
+    expect(tabsShell).not.toBeNull();
+    expect(tabsShell!.contains(menu)).toBe(false);
   });
 
   it('orders launcher sections as create new, files, then tabs in one scroll body', () => {
@@ -4115,7 +3702,7 @@ describe('FileWorkspace add-module menu', () => {
     );
 
     act(() => {
-      fireEvent.click(screen.getByTestId('workspace-add-tab'));
+      fireEvent.keyDown(window, { key: 't', metaKey: true });
     });
 
     const scrollBody = screen.getByTestId('tab-launcher-scroll-body');
@@ -4145,26 +3732,14 @@ describe('FileWorkspace add-module menu', () => {
       />,
     );
 
-    const addButton = screen.getByTestId('workspace-add-tab');
     for (let i = 0; i < 3; i += 1) {
       act(() => {
-        fireEvent.click(addButton);
+        fireEvent.keyDown(window, { key: 't', metaKey: true });
       });
       act(() => {
         fireEvent.click(screen.getByRole('button', { name: /New Browser/ }));
       });
     }
-
-    const browserTabs = screen
-      .getAllByRole('tab')
-      .filter((tab) => /Browser(?: \d+)?/.test(tab.textContent ?? ''));
-    expect(browserTabs).toHaveLength(3);
-    expect(browserTabs.map((tab) => tab.textContent?.trim())).toEqual([
-      'Browser',
-      'Browser 2',
-      'Browser 3',
-    ]);
-    expect(browserTabs[2]!.getAttribute('aria-selected')).toBe('true');
 
     const browserPanels = screen
       .getAllByTestId('design-browser-panel')
@@ -4211,8 +3786,6 @@ describe('FileWorkspace add-module menu', () => {
       />,
     );
 
-    const restoredTab = screen.getByRole('tab', { name: /SVG Repo/ });
-    expect(restoredTab.getAttribute('aria-selected')).toBe('true');
     const browserPanel = screen.getByTestId('design-browser-panel');
     expect(browserPanel.dataset.initialUrl).toBe('https://www.svgrepo.com/');
     expect(browserPanel.dataset.initialTitle).toBe('SVG Repo');
@@ -4240,14 +3813,11 @@ describe('FileWorkspace add-module menu', () => {
       />,
     );
 
-    const restoredTab = screen.getByRole('tab', { name: /Browser/ });
-    const closeButton = restoredTab.querySelector<HTMLButtonElement>('.ws-tab-close');
-    expect(closeButton).not.toBeNull();
+    // The per-tab ✕ went away with the strip; ⌘W is the surviving close.
     act(() => {
-      fireEvent.click(closeButton!);
+      fireEvent.keyDown(window, { key: 'w', metaKey: true });
     });
 
-    expect(screen.queryByRole('tab', { name: /Browser/ })).toBeNull();
     expect(screen.queryByTestId('design-browser-panel')).toBeNull();
     expect(onTabsStateChange).toHaveBeenLastCalledWith({
       tabs: [],

@@ -862,8 +862,10 @@ describe('FileViewer srcDoc reload — prevSourceBeforeReloadRef race conditions
 
     // Step 2: enter Draw (Mark) mode — drawOverlayOpen becomes true, which
     // sets annotationFreezeActive=true and captures annotationFrozenSource="V1".
+    // Reached by testid, not by role: a file opens in Present, so the dock's
+    // authoring half is folded and `aria-hidden` until something arms it.
     act(() => {
-      fireEvent.click(screen.getByRole('button', { name: /^mark$/i }));
+      fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
     });
 
     // Step 3: click Reload while Draw mode is active.

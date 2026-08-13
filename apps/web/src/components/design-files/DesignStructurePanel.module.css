@@ -1,0 +1,445 @@
+/* Design Structure rail — the Design Files surface's page tree and the layer /
+   element / asset views that hang off the selected page. Ported from the v2
+   prototype's right-hand structure pane; every value resolves through a design
+   token so the rail follows the app's light and dark themes. */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Tab row stays reachable while a long tree scrolls under it. */
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 20px 10px;
+  background: var(--veil-canvas, var(--bg));
+  border-bottom: var(--stroke-thin) solid var(--border-soft);
+}
+
+.tab {
+  all: unset;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-quick) var(--ease-out),
+    color var(--dur-quick) var(--ease-out);
+}
+.tab:hover {
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+}
+.tabActive {
+  background: var(--bg-fill-secondary);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.tab:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 20px 24px;
+}
+
+/* Tree and layer lists stay in a readable column even when the panel is wide;
+   the asset grid below opts out and uses the full width. */
+.column {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+}
+
+/* A hosted inspector owns the tab's whole box. It arrives with its own card
+   chrome (border, radius, scrolling body, sticky footer), so the rail gives it
+   height to fill and otherwise keeps out of the way — no second frame around a
+   panel that already has one. The negative margins undo `.body`'s reading
+   gutter, which is sized for text rows rather than a full-bleed panel — the
+   block ends included: a full-height inspector's 保存/取消 row otherwise sits
+   on the footer's own 16px PLUS the body's 24px, and that stack reads as the
+   panel trailing off rather than ending. */
+.editSlot {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  margin: -12px -8px -24px;
+}
+
+.group {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: var(--stroke-thin) solid var(--border-soft);
+}
+.group:last-child {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.groupCount {
+  margin-inline-start: auto;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.treeHead {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 6px;
+  border-radius: var(--radius-medium);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.treeHead:hover {
+  background: var(--bg-fill-tertiary);
+}
+.treeHeadLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.treeHeadCount {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.chevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-faint);
+  transition: transform var(--dur-quick) var(--ease-out);
+}
+.chevronCollapsed {
+  transform: rotate(-90deg);
+}
+/* An RTL rail collapses toward the opposite edge. */
+:global([dir='rtl']) .chevronCollapsed {
+  transform: rotate(90deg);
+}
+
+.treeStaticHead {
+  padding: 5px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.node {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px 5px 20px;
+  border-radius: var(--radius-medium);
+  font-size: 13px;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-quick) var(--ease-out),
+    color var(--dur-quick) var(--ease-out);
+}
+.node:hover {
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+}
+.node:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: -2px;
+}
+.nodeActive {
+  background: var(--brand-soft);
+  color: var(--brand-text);
+  font-weight: 600;
+  /* Ring the page that is actually on the canvas. `--brand-text` is the same
+     green the flow map draws around the current screen, so the rail and the map
+     mark it the same way. Inset shadow rather than a border: these rows are a
+     flush list and a real border would push this one 1px out of line with its
+     neighbours. */
+  box-shadow: inset 0 0 0 var(--stroke-thin) var(--brand-text);
+}
+.nodeSelected {
+  background: var(--bg-fill-secondary);
+  color: var(--text-strong);
+}
+
+/* The row is a container so the checkbox and the open action can be separate
+   controls; the open action carries the row's full clickable width. */
+.nodeOpen {
+  all: unset;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nodeOpen:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+  border-radius: var(--radius-small);
+}
+
+.nodeCheck {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-out);
+}
+.node:hover .nodeCheck,
+.node:focus-within .nodeCheck,
+.nodeSelected .nodeCheck {
+  opacity: 1;
+}
+.nodeCheck:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+.dirGlyph {
+  flex: none;
+  transform: rotate(-90deg);
+  color: var(--text-faint);
+}
+:global([dir='rtl']) .dirGlyph {
+  transform: rotate(90deg);
+}
+
+.nodeName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nodeExt {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.revealMore {
+  all: unset;
+  cursor: pointer;
+  align-self: flex-start;
+  margin: 4px 0 0 20px;
+  padding: 3px 10px;
+  border: var(--stroke-thin) solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--text-muted);
+  transition:
+    border-color var(--dur-quick) var(--ease-out),
+    color var(--dur-quick) var(--ease-out);
+}
+.revealMore:hover {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+.revealMore:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+
+/* -------- Layers -------- */
+
+.layer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-medium);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.layer:hover {
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+}
+.layerName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layerMeta {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* -------- Notes / empty states -------- */
+
+.note {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+.linkButton {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 5px 12px;
+  border: var(--stroke-thin) solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  transition:
+    background-color var(--dur-quick) var(--ease-out),
+    border-color var(--dur-quick) var(--ease-out);
+}
+.linkButton:hover {
+  background: var(--bg-fill-tertiary);
+  border-color: var(--border-strong);
+}
+.linkButton:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+
+/* -------- Assets -------- */
+
+.segment {
+  display: flex;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 2px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-fill-tertiary);
+}
+.segment button {
+  all: unset;
+  cursor: pointer;
+  padding: 4px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-quick) var(--ease-out),
+    color var(--dur-quick) var(--ease-out);
+}
+.segment button:hover {
+  color: var(--text-strong);
+}
+.segment button:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+.segmentActive {
+  background: var(--bg);
+  color: var(--text-strong) !important;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Waterfall, not a grid: every image keeps its own aspect ratio, so uniform
+   rows would either crop them or rag the row bottoms. CSS columns give the
+   masonry fill without measuring anything — order runs down each column, which
+   suits a browse-and-pick surface (nobody scans assets in strict recency
+   order across columns). */
+.assetGrid {
+  columns: 2;
+  column-gap: 10px;
+}
+
+.asset {
+  all: unset;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+  /* Keep each tile whole; a tile split across two columns reads as two
+     mystery crops. */
+  break-inside: avoid;
+}
+.asset img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: var(--stroke-thin) solid var(--border-soft);
+  border-radius: var(--radius-medium);
+  transition: border-color var(--dur-quick) var(--ease-out);
+}
+.asset:hover img {
+  border-color: var(--border-strong);
+}
+.asset:focus-visible img {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+.nodeMenu {
+  all: unset;
+  cursor: pointer;
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-small);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-out);
+}
+.node:hover .nodeMenu,
+.node:focus-within .nodeMenu {
+  opacity: 1;
+}
+.nodeMenu:hover {
+  color: var(--text-strong);
+}
+.nodeMenu:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+  opacity: 1;
+}

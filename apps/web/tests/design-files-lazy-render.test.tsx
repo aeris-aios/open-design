@@ -5,15 +5,16 @@
 // root, and every card fetched its content on mount. 4000+ concurrent
 // fetches exhausted local sockets (net::ERR_INSUFFICIENT_RESOURCES) and
 // 502'd the web<->daemon proxy. The contract under test:
-//   1. thumbnail content fetches start only once a card nears the viewport;
-//   2. at most 6 thumbnail fetches are in flight at once (FIFO queue);
-//      unmount drops queued tasks, but a slot whose request already started
-//      stays held until the request settles — real network concurrency must
-//      never exceed the cap, even across unmount/remount navigation churn;
-//   3. the page-card grid and image masonry render incrementally behind an
-//      invisible end-of-grid sentinel (no visible UI change);
+// A project with pages now navigates through the structure rail, whose rows
+// carry no thumbnail and issue no per-row fetch — which removes the fetch
+// storm at the source. The contract under test:
+//   1. a page-bearing project issues NO content fetch on mount;
+//   2. the rail renders a bounded batch per group and reveals the rest on
+//      demand, so 500 pages never land in one commit;
+//   3. the image masonry (still the surface for page-free projects) renders
+//      incrementally behind an invisible end-of-grid sentinel;
 //   4. the root directory still lists every nested file (semantics guard).
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 
@@ -217,91 +218,36 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("DesignFilesPanel thumbnail fetch viewport gating", () => {
-  it("fetches no thumbnail content on mount before any card nears the viewport", () => {
+describe("DesignFilesPanel page content fetches", () => {
+  it("fetches no page content when listing a project's pages", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
     renderPanel(nestedHtmlFiles(200));
 
-    // The root view lists all 200 nested pages, but not a single content
-    // fetch may start until a card actually intersects the viewport.
+    // The root view lists all 200 nested pages. The rail's rows are text, so
+    // there is no per-row content fetch to storm the proxy with — the
+    // condition that produced the 0.18.0 socket exhaustion cannot arise.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("keeps at most 6 thumbnail fetches in flight and drains the FIFO queue as slots free up", async () => {
-    const { fetchMock, releases } = pendingFetchMock();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { container } = renderPanel(nestedHtmlFiles(50));
-
-    // Reveal every card: the initial batch plus the sentinel (which appends
-    // the remaining cards), then the freshly appended cards' hosts.
-    intersectAll("[data-testid='design-files-grid-sentinel'], .df-thumb-scale-host");
-    intersectAll(".df-thumb-scale-host");
-    expect(container.querySelectorAll(".df-card-grid .df-card").length).toBe(50);
-
-    // 50 visible cards, none resolved yet: exactly 6 fetches in flight.
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-
-    // Settling fetches returns their slots and starts queued cards, FIFO.
-    await act(async () => {
-      for (const release of releases.splice(0, 3)) release();
-    });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(9));
-  });
-
-  it("keeps unmounted in-flight requests counted against the cap and drops their queued siblings", async () => {
-    const { fetchMock, releases } = pendingFetchMock();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const first = renderPanel(nestedHtmlFiles(10, "ja"));
-    intersectAll(".df-thumb-scale-host");
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-
-    // Unmounting with 6 fetches in flight and 4 queued must drop the queued
-    // tasks without starting them. The 6 in-flight requests are still on the
-    // network — cleanup must NOT free their slots early.
-    first.unmount();
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-
-    // A replacement grid mounts while the abandoned requests are still in
-    // flight (the directory-switch scenario from the incident). Its cards
-    // must queue behind them: releasing slots at unmount would start 6 new
-    // fetches here and push real network concurrency to 12.
-    const second = renderPanel(nestedHtmlFiles(10, "de"));
-    intersectAll(".df-thumb-scale-host");
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-
-    // Only as the abandoned requests actually settle do their slots return
-    // and the queued replacement cards start, FIFO, still capped at 6.
-    await act(async () => {
-      for (const release of releases.splice(0, 6)) release();
-    });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(12));
-
-    // Settling the replacement wave starts the remaining 4 queued cards:
-    // 6 abandoned + 10 replacement requests total, never more than 6 live.
-    await act(async () => {
-      for (const release of releases.splice(0, 6)) release();
-    });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(16));
-    second.unmount();
-  });
 });
 
 describe("DesignFilesPanel incremental grid rendering", () => {
-  it("renders at most 48 page cards initially for 500 files and grows on sentinel intersection", () => {
+  it("renders a bounded batch of page rows for 500 files and grows on demand", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderPanel(nestedHtmlFiles(500));
+    renderPanel(nestedHtmlFiles(500));
 
-    expect(container.querySelectorAll(".df-card-grid .df-card").length).toBe(48);
+    // Every page sits under the same top-level folder, so they share one
+    // group. The group renders its first batch only.
+    const rows = () =>
+      document.querySelectorAll('[data-testid^="design-file-row-"]').length;
+    expect(rows()).toBe(50);
 
-    const sentinel = screen.getByTestId("design-files-grid-sentinel");
-    act(() => fireIntersection(sentinel));
-    expect(container.querySelectorAll(".df-card-grid .df-card").length).toBe(96);
+    fireEvent.click(screen.getByTestId("design-structure-reveal-pages:ja"));
+    expect(rows()).toBe(100);
   });
 
   it("renders the image masonry incrementally behind the same sentinel", () => {
@@ -322,16 +268,15 @@ describe("DesignFilesPanel incremental grid rendering", () => {
     ).toBe(96);
   });
 
-  it("adds no visible chrome: no load-more button and no loading copy", () => {
-    const { fetchMock } = pendingFetchMock();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { container } = renderPanel(nestedHtmlFiles(500));
+  it("adds no visible chrome to the image masonry: no load-more and no loading copy", () => {
+    const { container } = renderPanel(
+      Array.from({ length: 200 }, (_, i) => imageFile(`shot-${i + 1}.png`, i)),
+    );
 
     const sentinel = screen.getByTestId("design-files-grid-sentinel");
     expect(sentinel.textContent).toBe("");
-    // Every button inside the grid belongs to a card, not to pagination.
-    const grid = container.querySelector(".df-card-grid")!;
+    // Every button inside the masonry belongs to a card, not to pagination.
+    const grid = container.querySelector(".df-image-masonry")!;
     for (const button of Array.from(grid.querySelectorAll("button"))) {
       expect(button.closest(".df-card")).not.toBeNull();
     }
@@ -346,18 +291,27 @@ describe("DesignFilesPanel root recursive listing (guard)", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderPanel(nestedHtmlFiles(200));
+    renderPanel(nestedHtmlFiles(200));
 
-    // The Pages tab counts every nested page, not just the rendered batch.
+    // The group row counts every nested page, not just the rendered batch.
+    // (It used to be read off the tab's head row, which is gone — the tab strip
+    // already names the surface and the counts live on the rows.)
+    // `aria-expanded` picks the collapsible group row apart from the folder row
+    // of the same name.
+    const groupRow = screen
+      .getAllByRole("button", { name: /^ja/ })
+      .find((button) => button.hasAttribute("aria-expanded"));
+    expect(groupRow?.textContent).toContain("200");
+
+    // Revealing until the button is gone eventually renders every row.
+    for (let guard = 0; guard < 20; guard += 1) {
+      const reveal = screen.queryByTestId("design-structure-reveal-pages:ja");
+      if (!reveal) break;
+      fireEvent.click(reveal);
+    }
     expect(
-      document.querySelector(
-        "[data-testid='design-files-tab-cat:html'] .df-tab-count",
-      )?.textContent,
-    ).toBe("200");
-
-    // Scrolling through the whole grid eventually renders every card.
-    drainGridSentinel();
-    expect(container.querySelectorAll(".df-card-grid .df-card").length).toBe(200);
+      document.querySelectorAll('[data-testid^="design-file-row-"]').length,
+    ).toBe(200);
     expect(
       screen.getByTestId("design-file-row-ja/plugins/p1/index.html"),
     ).toBeTruthy();

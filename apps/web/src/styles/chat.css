@@ -2494,14 +2494,18 @@
   transform: translate(0, -50%);
 }
 
+/* White field on the draw toolbar's fixed dark pill — see the inline style in
+   PreviewDrawOverlay for why these are raw values and not theme tokens. Focus
+   reads as a light halo around the field: on a near-black surface a darker ring
+   would disappear into it. */
 .preview-draw-note-input::placeholder {
-  color: rgba(255, 225, 210, 0.86);
+  color: rgba(20, 20, 20, 0.45);
 }
 
 .preview-draw-note-input:focus {
-  background: rgba(218, 97, 56, 0.26) !important;
-  border-color: rgba(255, 184, 140, 0.95) !important;
-  box-shadow: 0 0 0 3px rgba(218, 97, 56, 0.34), 0 0 18px rgba(218, 97, 56, 0.24) !important;
+  background: #ffffff !important;
+  border-color: rgba(20, 20, 20, 0.3) !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22) !important;
 }
 
 /* -------- Staged attachments -------------------------------------- */
