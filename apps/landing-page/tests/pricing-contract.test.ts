@@ -18,6 +18,10 @@ import {
 } from "../app/_lib/pricing-team-content.ts";
 import { PREMIUM_MODELS } from "../app/_lib/pricing-content.ts";
 import { LANDING_LOCALES } from "../app/i18n.ts";
+import {
+  getPricingCampaignContent,
+  PRICING_CAMPAIGN_CONTENT_BY_LOCALE,
+} from "../app/_lib/pricing-campaign-content.ts";
 
 const CONTRACT_PATH = new URL("../public/pricing/plans.json", import.meta.url);
 const HEADERS_PATH = new URL("../public/_headers", import.meta.url);
@@ -28,6 +32,10 @@ const PRICING_PAGE_PATH = new URL(
 );
 const TEAM_CONTENT_PATH = new URL(
   "../app/_lib/pricing-team-content.ts",
+  import.meta.url,
+);
+const PRICING_CAMPAIGN_CONTENT_PATH = new URL(
+  "../app/_lib/pricing-campaign-content.ts",
   import.meta.url,
 );
 
@@ -75,6 +83,112 @@ function assertPlanContract(value: unknown): asserts value is PricingContract {
 }
 
 describe("pricing contract", () => {
+  it("localizes the DeepSeek campaign across every active pricing locale", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+    await readFile(PRICING_CAMPAIGN_CONTENT_PATH, "utf8");
+
+    assert.match(page, /getPricingCampaignContent\(locale\)/);
+    assert.doesNotMatch(page, /const deepSeekCampaign = locale\.startsWith\('zh'\)/);
+    for (const locale of LANDING_LOCALES) {
+      const copy = PRICING_CAMPAIGN_CONTENT_BY_LOCALE[
+        locale.code as keyof typeof PRICING_CAMPAIGN_CONTENT_BY_LOCALE
+      ];
+      assert.ok(copy, `missing explicit DeepSeek campaign copy for ${locale.code}`);
+      for (const value of Object.values(copy)) assert.notEqual(value.trim(), "");
+    }
+    assert.notEqual(getPricingCampaignContent("it").headline, getPricingCampaignContent("en").headline);
+    assert.notEqual(getPricingCampaignContent("tr").headline, getPricingCampaignContent("en").headline);
+  });
+
+  it("does not render the customer story on pricing", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+
+    assert.doesNotMatch(page, /getStory\(/);
+    assert.doesNotMatch(page, /class="pr-story"/);
+    assert.doesNotMatch(page, /\/\* ---- Customer story ---- \*\//);
+  });
+
+  it("keeps the existing Free entry card while the Go proposal remains isolated", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+
+    assert.match(page, /data-tier="free"/);
+    assert.match(page, /<span class="pr-tier-name">Free<\/span>/);
+    assert.doesNotMatch(page, /data-tier="go"/);
+    assert.doesNotMatch(page, /const goPlan/);
+  });
+
+  it("renders the final DeepSeek campaign promise on personal and team pricing", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+    const zhCampaign = getPricingCampaignContent("zh");
+    const enCampaign = getPricingCampaignContent("en");
+
+    assert.equal(zhCampaign.modelBenefit, "DeepSeek V4 Pro 无限使用");
+    assert.equal(zhCampaign.badge, "无限使用");
+    assert.equal(zhCampaign.windowLabel, "活动倒计时");
+    assert.equal(zhCampaign.dayUnit, "天");
+    assert.match(page, /data-pricing-campaign-countdown/);
+    assert.match(page, /data-campaign-day-unit=\{deepSeekCampaign\.dayUnit\}/);
+    assert.match(page, /campaignPreviewEndAt = Date\.now\(\) \+ 7 \* 24 \* 60 \* 60 \* 1000/);
+    assert.doesNotMatch(page, /距开始/);
+    assert.equal(enCampaign.headline, "Put smarter intelligence to work—without limits.");
+    assert.equal(enCampaign.body, "FREE all week, Aug 14—Aug 21");
+    assert.equal(zhCampaign.headline, "这次，更聪明的模型别省着用。");
+    assert.equal(zhCampaign.body, "8月14日—8月21日，一周免费用");
+    assert.doesNotMatch(zhCampaign.body, /20:00/);
+    assert.equal(zhCampaign.paidBenefitNote, "8月14日—8月21日 · 一周免费用");
+    assert.equal(zhCampaign.teamBenefitNote, "8月14日—8月21日 · 一周免费用");
+    assert.match(page, /DEEPSEEK_V4_PRO_CAMPAIGN\.startAt/);
+    assert.match(page, /DEEPSEEK_V4_PRO_CAMPAIGN\.endAtExclusive/);
+    assert.match(page, /now >= campaignStartAt && now < campaignEndAt/);
+    assert.match(page, /data-pricing-campaign-surface/);
+    assert.match(page, /class="pr-campaign-disclaimer"/);
+    assert.equal(zhCampaign.disclaimer, "套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用；无法在MCP/CLI/API及其他场景使用。解释权归官方所有。");
+    assert.match(page, /<p class="pr-foot" set:html=\{footnoteHtml\} \/>\s*<p class="pr-campaign-disclaimer" data-pricing-campaign-surface hidden>\{deepSeekCampaign\.disclaimer\}<\/p>/);
+    assert.doesNotMatch(page, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
+    assert.match(page, /\.pr-campaign-disclaimer\s*\{[\s\S]*font-size:\s*\.82rem;/);
+    assert.match(page, /track\('surface_view',\s*\{\s*area:\s*'campaign_banner'/);
+    assert.match(page, /element:\s*'deepseek_v4_pro_benefit'/);
+    assert.match(page, /window\.__odRecordCampaignEntry\?\./);
+    assert.match(page, /'landing_pricing_team_plan'\s*:\s*'landing_pricing_personal_plan'/);
+    assert.match(page, /'deepseek_v4_pro'/);
+    assert.match(page, /'od_conversion_source', 'od_campaign_id'/);
+    assert.match(page, /window\.__odTrack\('ui_click', props\)/);
+    assert.doesNotMatch(page, /pricing_subscribe_click/);
+    const disclaimerRule = page.match(
+      /\.pr-campaign-disclaimer\s*\{([^}]*)\}/,
+    )?.[1];
+    assert.ok(disclaimerRule);
+    assert.doesNotMatch(disclaimerRule, /border-top:/);
+    assert.doesNotMatch(disclaimerRule, /font-weight:/);
+    assert.match(disclaimerRule, /width:\s*100%;/);
+    assert.match(disclaimerRule, /max-width:\s*none;/);
+    assert.match(disclaimerRule, /margin:\s*0 0 36px;/);
+    assert.match(disclaimerRule, /padding:\s*0;/);
+    assert.match(disclaimerRule, /text-align:\s*center;/);
+    assert.doesNotMatch(page, /权益生效后连续 7 天/);
+    assert.doesNotMatch(page, /2026-08-22T00:00:00\+08:00/);
+    assert.doesNotMatch(page, /限时抢购/);
+    assert.doesNotMatch(page, /DeepSeek V4 Flash/);
+    assert.doesNotMatch(page, /deepseek_v4_flash/);
+    assert.doesNotMatch(page, /deepseek-v4-flash/);
+  });
+
+  it("aligns the highlighted campaign checkmark with the benefit list below", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+
+    assert.match(page, /\.pr-campaign-model-benefit::before\s*\{\s*left:\s*8px;\s*\}/);
+    assert.match(
+      page,
+      /\.pr-feat\.pr-campaign-model-benefit::before\s*\{[\s\S]*left:\s*8px;[\s\S]*top:\s*18px;[\s\S]*transform:\s*translateY\(-50%\);/,
+      "the personal campaign checkmark must share the benefit x-axis and align with the title line",
+    );
+    assert.match(
+      page,
+      /\.pr-team-feature-list li\.pr-campaign-model-benefit::before\s*\{[\s\S]*left:\s*8px;[\s\S]*top:\s*18px;[\s\S]*transform:\s*translateY\(-50%\);/,
+      "the team campaign checkmark must override the later base list rule",
+    );
+  });
+
   it("points the public pricing URL at the landing-page JSON contract", () => {
     assert.equal(PLANS_JSON_URL, "/pricing/plans.json");
   });

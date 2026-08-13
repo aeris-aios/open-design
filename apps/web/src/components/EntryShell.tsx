@@ -42,9 +42,12 @@ import {
   trackOnboardingCompleteResult,
   trackOnboardingRuntimeScanResult,
   trackPageView,
+  trackDeepSeekCampaignBadgeClick,
+  trackDeepSeekCampaignBadgeSurfaceView,
 } from '../analytics/events';
 import {
   amrHandoffDeviceId,
+  attributedAmrUrl,
   recordAmrEntry,
   syncAmrAttributionWithOnboardingProfile,
   type AmrEntryAttribution,
@@ -74,7 +77,7 @@ import type {
   TrackingCliProviderId,
 } from '@open-design/contracts/analytics';
 import { agentIdToTracking } from '@open-design/contracts/analytics';
-import { useT } from '../i18n';
+import { useI18n, useT } from '../i18n';
 import { navigate, useRoute } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import type {
@@ -149,6 +152,10 @@ import {
   workspaceBillingSummaryForContext,
 } from '../collab/useWorkspaceContext';
 import { useWorkspaceInvalidation } from '../collab/workspace-events';
+import { resolvePlanLabelTier } from '../collab/team-plan';
+import { resolveDeepSeekV4ProCampaignAudience } from '../campaigns/deepseek-v4-pro';
+import { useDeepSeekV4ProCampaignVisibility } from '../campaigns/use-deepseek-v4-pro-campaign';
+import { getDeepSeekV4ProCopy } from '../campaigns/deepseek-v4-pro-copy';
 import {
   beginWorkspaceScopedRead,
   workspaceIdentityCacheKey,
@@ -231,6 +238,9 @@ import {
 import { enterpriseUrl } from './enterpriseUrl';
 import { resolveByokModelPreference } from './byok/validation';
 
+const DEEPSEEK_CAMPAIGN_PRICING_URL =
+  'https://open-design.ai/zh/pricing/?source=desktop_campaign_badge';
+
 // Persist the entry nav-rail open/collapsed state so it survives both a
 // home -> project -> home navigation (EntryShell unmounts on the project
 // route) and a full reload. Without this the rail always reset to its
@@ -280,7 +290,7 @@ const ONBOARDING_BYOK_AUTO_TEST_DELAY_MS = 500;
 
 const ONBOARDING_AMR_MODEL_OPTIONS: NonNullable<AgentInfo['models']> = [
   { id: 'claude-opus-4.8', label: 'Claude Opus 4.8' },
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { id: 'glm-5.1', label: 'GLM 5.1' },
 ];
@@ -600,6 +610,8 @@ export function EntryShell({
   artifactUpgradeSlot,
 }: Props) {
   const t = useT();
+  const { locale } = useI18n();
+  const deepSeekCampaignCopy = getDeepSeekV4ProCopy(locale);
   // Each entry sub-view (home / projects / design-systems) is its own
   // URL now, so the browser back/forward buttons work and a deep link
   // to /design-systems lands on that section. We derive the active
@@ -630,6 +642,21 @@ export function EntryShell({
     workspaceBillingResponse,
     workspaceContext,
   );
+  const deepSeekCampaignSearch = typeof window === 'undefined'
+    ? null
+    : window.location.search;
+  const deepSeekCampaignVisibility = useDeepSeekV4ProCampaignVisibility(
+    deepSeekCampaignSearch,
+  );
+  const deepSeekV4ProCampaignAudience = resolveDeepSeekV4ProCampaignAudience({
+    // Subscription is the only campaign segmentation axis. In particular,
+    // `resolvePlanLabelTier` turns the backend-confirmed unsubscribed state into
+    // `free`; wallet balance / historical recharge never upgrades this audience.
+    plan: resolvePlanLabelTier({ billing: workspaceBilling, context: workspaceContext }),
+    loggedIn: amrLoggedIn,
+    search: deepSeekCampaignSearch,
+    now: deepSeekCampaignVisibility.now,
+  });
   const workspaceBalanceUsd = workspaceBillingBalanceUsd(
     workspaceBillingResponse,
     workspaceContext,
@@ -1079,6 +1106,41 @@ export function EntryShell({
     scrollContainer.scrollTop = 0;
   }, [view]);
   const analytics = useAnalytics();
+  useEffect(() => {
+    if (view !== 'home' || deepSeekV4ProCampaignAudience === 'unknown') return;
+    trackDeepSeekCampaignBadgeSurfaceView(analytics.track, {
+      page_name: 'home',
+      area: 'campaign_badge',
+      element: 'deepseek_v4_pro',
+      campaign_id: 'deepseek_v4_pro',
+      user_state: deepSeekV4ProCampaignAudience,
+    });
+  }, [analytics.track, deepSeekV4ProCampaignAudience, view]);
+  const openDeepSeekCampaignPricing = useCallback(() => {
+    if (deepSeekV4ProCampaignAudience === 'unknown') return;
+    trackDeepSeekCampaignBadgeClick(analytics.track, {
+      page_name: 'home',
+      area: 'campaign_badge',
+      element: 'open_pricing',
+      campaign_id: 'deepseek_v4_pro',
+      user_state: deepSeekV4ProCampaignAudience,
+    });
+    const attribution = recordAmrEntry(
+      analytics.track,
+      'deepseek_workbench_badge',
+      new Date(),
+      {
+        metricsConsent: config.telemetry?.metrics === true,
+        campaignId: 'deepseek_v4_pro',
+        conversionSource: 'deepseek_workbench_badge',
+      },
+    );
+    window.open(
+      attributedAmrUrl(DEEPSEEK_CAMPAIGN_PRICING_URL, attribution),
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }, [analytics.track, config.telemetry?.metrics, deepSeekV4ProCampaignAudience]);
   function changeView(next: EntryViewKind) {
     const navElement = navElementForView(next);
     if (navElement) {
@@ -1559,6 +1621,18 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
+          {view === 'home' && deepSeekV4ProCampaignAudience !== 'unknown' ? (
+            <button
+              type="button"
+              className="entry-deepseek-campaign-badge"
+              onClick={openDeepSeekCampaignPricing}
+              aria-label={deepSeekCampaignCopy.topBadge}
+              data-testid="deepseek-campaign-pricing-badge"
+            >
+              <span>{deepSeekCampaignCopy.topBadge}</span>
+              <Icon name="arrow-right" size={13} />
+            </button>
+          ) : null}
           {amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}
@@ -1622,6 +1696,7 @@ export function EntryShell({
                 onRecommendationDismiss={dismissRecommendation}
                 executionSwitcher={view === 'home' ? homeExecutionSwitcher : undefined}
                 artifactUpgradeSlot={artifactUpgradeSlot}
+                deepSeekV4ProCampaignAudience={deepSeekV4ProCampaignAudience}
               />
             </div>
             <div data-testid="entry-view-projects" data-active={view === 'projects' ? 'true' : 'false'} {...inactiveViewProps(view === 'projects')}>
