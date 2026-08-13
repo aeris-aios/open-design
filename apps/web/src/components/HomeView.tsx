@@ -2775,6 +2775,20 @@ export function HomeView({
   // #5517: with no recent projects the home (logo + heading + composer)
   // centers vertically instead of hugging the top, and the strip is skipped.
   const recentProjectsEmpty = !projectsLoading && projects.length === 0;
+  // A deliberate resource/plugin selection already gives submit an exact
+  // route, so it must not remain behind the fresh-home default-deck barrier.
+  // Keep the barrier for a plain prompt: that is the only lane where sending
+  // before the catalog settles could incorrectly fall back to the generic
+  // scenario immediately before Slide deck binds.
+  const hasExplicitSubmitRoute = Boolean(
+    active
+    || activeSkill
+    || selectedPluginContexts.length > 0
+    || selectedMcpContexts.length > 0
+    || selectedConnectorContexts.length > 0
+    || contextWorkspaceItems.length > 0
+    || stagedFiles.length > 0
+  );
 
   return (
     <div
@@ -2861,8 +2875,7 @@ export function HomeView({
         pendingPluginId={pendingApplyId}
         pendingChipId={pendingChipId}
         submitDisabled={
-          pluginsLoading ||
-          defaultChipSeedPending ||
+          (defaultChipSeedPending && !hasExplicitSubmitRoute) ||
           Boolean(pendingChipRestore) ||
           Boolean(pendingPluginUseHandoff) ||
           Boolean(pendingApplyId) ||
