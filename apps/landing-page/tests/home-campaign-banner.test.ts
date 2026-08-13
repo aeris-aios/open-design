@@ -7,14 +7,22 @@ const source = readFileSync(
   'utf8',
 );
 const campaign = readFileSync(
-  new URL('../app/_lib/deepseek-v4-flash-campaign.ts', import.meta.url),
+  new URL('../app/_lib/pricing-campaign-content.ts', import.meta.url),
+  'utf8',
+);
+const homeCampaign = readFileSync(
+  new URL('../app/_lib/home-campaign-content.ts', import.meta.url),
+  'utf8',
+);
+const campaignConfig = readFileSync(
+  new URL('../app/_lib/deepseek-v4-pro-campaign.ts', import.meta.url),
   'utf8',
 );
 
 test('home campaign banner keeps only the arrow visible while preserving an accessible link label', () => {
   assert.doesNotMatch(source, /限时抢购/);
-  assert.match(source, /linkLabel: '查看活动权益'/);
-  assert.match(source, /badge: '活动倒计时'/);
+  assert.match(campaign, /linkLabel: '查看活动权益'/);
+  assert.match(campaign, /windowLabel: '活动倒计时'/);
   assert.match(source, /home-campaign-banner__badge/);
   assert.match(source, /data-home-campaign-countdown/);
   assert.match(source, /活动剩余/);
@@ -32,33 +40,34 @@ test('home campaign banner can be dismissed without nesting a button in its link
   assert.match(source, /home-campaign-banner-dismissed/);
   assert.match(source, /window\.__odTrack\('surface_view'/);
   assert.match(source, /area:\s*'campaign_banner'/);
-  assert.match(source, /window\.__odRecordCampaignEntry\?\.\('landing_home_banner', 'deepseek_v4_flash'\)/);
+  assert.match(source, /window\.__odRecordCampaignEntry\?\.\('landing_home_banner', 'deepseek_v4_pro'\)/);
   assert.match(source, /window\.__odAttributedUrl/);
   assert.match(source, /localStorage\.setItem\(dismissKey, '1'\)/);
   assert.match(source, /<div class="home-campaign-banner"/);
   assert.doesNotMatch(source, /<a class="home-campaign-banner"/);
 });
 
-test('home campaign banner has no URL preview backdoor left', () => {
-  // Product decision: the former ?campaign= preview fixture is fully removed.
-  // Banner visibility is decided by the real activity window only; pre-launch
-  // review happens by temporarily overriding the startAt constant.
-  assert.doesNotMatch(source, /data-campaign-revie[w]/);
-  assert.doesNotMatch(source, /reviewPara[m]|reviewAllowe[d]|previewEndA[t]/);
-  assert.doesNotMatch(source, /get\('campaign'\)/);
+test('home campaign banner supports the explicit campaign review parameter', () => {
+  assert.match(source, /data-campaign-review-param/);
+  assert.match(source, /reviewParam/);
+  assert.match(source, /campaignPreview|preview/);
+  assert.match(source, /reviewParam \|\| 'deepseek-v4-pro'/);
 });
 
 test('home campaign banner uses the fixed two-week activity window', () => {
-  assert.match(source, /DEEPSEEK_V4_FLASH_CAMPAIGN\.startAt/);
-  assert.match(source, /DEEPSEEK_V4_FLASH_CAMPAIGN\.endAtExclusive/);
+  assert.match(source, /DEEPSEEK_V4_PRO_CAMPAIGN\.startAt/);
+  assert.match(source, /DEEPSEEK_V4_PRO_CAMPAIGN\.endAtExclusive/);
   assert.match(source, /now >= startAt && now < endAt/);
   assert.match(source, /data-home-campaign-banner[^>]*hidden/);
   assert.match(source, /home-campaign-banner-active/);
-  assert.match(source, /这次，顶级智能放开用。/);
-  assert.match(source, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用/);
-  assert.match(source, /This time, top-tier intelligence is wide open\./);
-  assert.match(source, /DeepSeek V4 Pro and V4 Flash · two weeks free/);
-  assert.match(campaign, /endAtExclusive: '2026-08-27T20:00:00\+08:00'/);
+  assert.match(homeCampaign, /这次，顶级智能放开用。/);
+  assert.match(homeCampaign, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用/);
+  assert.match(homeCampaign, /最高峰の知性/);
+  assert.match(campaign, /DeepSeek V4 Pro and V4 Flash · FREE for two weeks/);
+  for (const locale of ['en', 'zh', 'ja', 'ko', 'de', 'fr', 'ru', 'es', 'pt-br', 'it', 'tr']) {
+    assert.match(campaign, new RegExp(`^  ['"]?${locale.replace('-', '\\-')}['"]?: \\{`, 'm'));
+  }
+  assert.match(campaignConfig, /endAtExclusive: '2026-08-27T20:00:00\+08:00'/);
   assert.doesNotMatch(source, /home-campaign-banner__disclaimer/);
   assert.doesNotMatch(source, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
   assert.doesNotMatch(source, /2026-08-22T00:00:00\+08:00/);

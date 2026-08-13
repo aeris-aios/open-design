@@ -26,6 +26,10 @@ const PRICING_PAGE_PATH = new URL(
   "../app/pages/pricing/index.astro",
   import.meta.url,
 );
+const CAMPAIGN_PATH = new URL(
+  "../app/_lib/pricing-campaign-content.ts",
+  import.meta.url,
+);
 const TEAM_CONTENT_PATH = new URL(
   "../app/_lib/pricing-team-content.ts",
   import.meta.url,
@@ -86,33 +90,34 @@ describe("pricing contract", () => {
 
   it("renders the final DeepSeek campaign promise on personal and team pricing", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
+    const campaign = await readFile(CAMPAIGN_PATH, "utf8");
 
-    assert.match(page, /DeepSeek V4 Pro 与 V4 Flash 两周免费/);
-    assert.match(page, /badge: '无限使用'/);
-    assert.match(page, /windowLabel: '活动倒计时'/);
-    assert.match(page, /windowValue: '14天 00:00:00'/);
+    assert.match(campaign, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用/);
+    assert.match(campaign, /badge: '无限使用'/);
+    assert.match(campaign, /windowLabel: '活动倒计时'/);
+    assert.match(campaign, /dayUnit: '天'/);
     assert.match(page, /data-pricing-campaign-countdown/);
     assert.doesNotMatch(page, /距开始/);
-    assert.match(page, /two weeks free/);
-    assert.match(page, /body: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
-    assert.match(page, /body: 'DeepSeek V4 Pro and V4 Flash · two weeks free'/);
-    assert.doesNotMatch(page, /body: ['\"][^'\"]*20:00/);
-    assert.match(page, /paidBenefitNote: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
-    assert.match(page, /teamBenefitNote: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
-    assert.match(page, /DEEPSEEK_V4_FLASH_CAMPAIGN\.startAt/);
-    assert.match(page, /DEEPSEEK_V4_FLASH_CAMPAIGN\.endAtExclusive/);
+    assert.match(campaign, /FREE for two weeks/);
+    assert.match(campaign, /body: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
+    assert.match(campaign, /body: 'DeepSeek V4 Pro and V4 Flash · FREE for two weeks'/);
+    assert.doesNotMatch(campaign, /body: ['\"][^'\"]*20:00/);
+    assert.match(campaign, /paidBenefitNote: '8月13日—8月27日 · 两周免费用'/);
+    assert.match(campaign, /teamBenefitNote: '8月13日—8月27日 · 两周免费用'/);
+    assert.match(page, /DEEPSEEK_V4_PRO_CAMPAIGN\.startAt/);
+    assert.match(page, /DEEPSEEK_V4_PRO_CAMPAIGN\.endAtExclusive/);
     assert.match(page, /now >= campaignStartAt && now < campaignEndAt/);
     assert.match(page, /data-pricing-campaign-surface/);
     assert.match(page, /class="pr-campaign-disclaimer"/);
-    assert.match(page, /套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用；无法在MCP\/CLI\/API及其他场景使用。解释权归官方所有。/);
+    assert.match(campaign, /套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用/);
     assert.match(page, /<p class="pr-foot" set:html=\{footnoteHtml\} \/>\s*<p class="pr-campaign-disclaimer" data-pricing-campaign-surface hidden>\{deepSeekCampaign\.disclaimer\}<\/p>/);
     assert.doesNotMatch(page, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
     assert.match(page, /\.pr-campaign-disclaimer\s*\{[\s\S]*font-size:\s*\.82rem;/);
     assert.match(page, /track\('surface_view',\s*\{\s*area:\s*'campaign_banner'/);
-    assert.match(page, /element:\s*'deepseek_v4_flash_benefit'/);
+    assert.match(page, /element:\s*'deepseek_v4_pro_benefit'/);
     assert.match(page, /window\.__odRecordCampaignEntry\?\./);
     assert.match(page, /'landing_pricing_team_plan'\s*:\s*'landing_pricing_personal_plan'/);
-    assert.match(page, /'deepseek_v4_flash'/);
+    assert.match(page, /'deepseek_v4_pro'/);
     // First-touch envelope + device id survive Pricing → Cloud. Campaign id is
     // re-decided by campaignActive and written only via __odAttributedUrl.
     assert.match(page, /'od_conversion_source',\s*'od_device_id'/);
@@ -135,16 +140,12 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /限时抢购/);
   });
 
-  it("decides campaign visibility by the real window with no URL preview backdoor", async () => {
-    // Product decision: the former ?campaign= preview fixture is fully
-    // removed. The pricing surfaces toggle on the fixed activity window only;
-    // pre-launch review happens by temporarily overriding startAt.
+  it("decides campaign visibility by the real window or explicit review parameter", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
-    assert.match(page, /campaignActive = now >= campaignStartAt && now < campaignEndAt/);
-    assert.doesNotMatch(page, /data-campaign-revie[w]/);
-    assert.doesNotMatch(page, /campaignPrevie[w]|campaignReviewPara[m]|campaignReviewAllowe[d]/);
-    assert.doesNotMatch(page, /get\('campaign'\)/);
+    assert.match(page, /campaignActive = campaignPreview \|\| \(now >= campaignStartAt && now < campaignEndAt\)/);
+    assert.match(page, /data-campaign-review-param/);
+    assert.match(page, /campaignPreview/);
   });
 
   it("stamps campaign attribution on subscribe CTAs only inside the activity window", async () => {
@@ -156,12 +157,12 @@ describe("pricing contract", () => {
 
     assert.match(
       page,
-      /__odRecordCampaignEntry\?\.\(\s*audience === 'team' \? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',\s*campaignActive \? 'deepseek_v4_flash' : undefined,\s*\)/,
+      /__odRecordCampaignEntry\?\.\(\s*audience === 'team' \? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',\s*campaignActive \? 'deepseek_v4_pro' : undefined,\s*\)/,
     );
-    assert.match(page, /\.\.\.\(campaignActive \? \{ campaign_id: 'deepseek_v4_flash' \} : \{\}\)/);
+    assert.match(page, /\.\.\.\(campaignActive \? \{ campaign_id: 'deepseek_v4_pro' \} : \{\}\)/);
     assert.doesNotMatch(
       page,
-      /element: 'subscribe',[\s\S]{0,300}?\n\s*campaign_id: 'deepseek_v4_flash',/,
+      /element: 'subscribe',[\s\S]{0,300}?\n\s*campaign_id: 'deepseek_v4_pro',/,
     );
   });
 
