@@ -272,37 +272,37 @@ describe("pricing contract", () => {
       [
         {
           tier: "team_basic",
-          monthly: 20,
-          monthlyIntro: 16,
-          yearly: 240,
-          yearlyIntro: 168,
+          monthly: 5,
+          monthlyIntro: 4,
+          yearly: 60,
+          yearlyIntro: 42,
           credits: 0,
           minSeats: 3,
         },
         {
           tier: "team_plus",
-          monthly: 40,
-          monthlyIntro: 32,
-          yearly: 480,
-          yearlyIntro: 336,
+          monthly: 25,
+          monthlyIntro: 20,
+          yearly: 300,
+          yearlyIntro: 210,
           credits: 20,
           minSeats: 3,
         },
         {
           tier: "team_pro",
-          monthly: 120,
-          monthlyIntro: 84,
-          yearly: 1440,
-          yearlyIntro: 864,
+          monthly: 105,
+          monthlyIntro: 73.5,
+          yearly: 1260,
+          yearlyIntro: 756,
           credits: 100,
           minSeats: 3,
         },
         {
           tier: "team_max",
-          monthly: 220,
-          monthlyIntro: 132,
-          yearly: 2640,
-          yearlyIntro: 1296,
+          monthly: 205,
+          monthlyIntro: 123,
+          yearly: 2460,
+          yearlyIntro: 1207.61,
           credits: 200,
           minSeats: 3,
         },
@@ -313,28 +313,28 @@ describe("pricing contract", () => {
   it("renders all 16 introductory Team totals for interval, tier, and seat changes", () => {
     const expected = {
       team_basic: {
-        monthly: { 3: "First month only $48", 4: "First month only $64" },
-        yearly: { 3: "First year only $504", 4: "First year only $672" },
+        monthly: { 3: "First month only $12", 4: "First month only $16" },
+        yearly: { 3: "First year only $126", 4: "First year only $168" },
       },
       team_plus: {
-        monthly: { 3: "First month only $96", 4: "First month only $128" },
-        yearly: {
-          3: "First year only $1,008",
-          4: "First year only $1,344",
-        },
+        monthly: { 3: "First month only $60", 4: "First month only $80" },
+        yearly: { 3: "First year only $630", 4: "First year only $840" },
       },
       team_pro: {
-        monthly: { 3: "First month only $252", 4: "First month only $336" },
+        monthly: {
+          3: "First month only $220.50",
+          4: "First month only $294",
+        },
         yearly: {
-          3: "First year only $2,592",
-          4: "First year only $3,456",
+          3: "First year only $2,268",
+          4: "First year only $3,024",
         },
       },
       team_max: {
-        monthly: { 3: "First month only $396", 4: "First month only $528" },
+        monthly: { 3: "First month only $369", 4: "First month only $492" },
         yearly: {
-          3: "First year only $3,888",
-          4: "First year only $5,184",
+          3: "First year only $3,622.83",
+          4: "First year only $4,830.44",
         },
       },
     } as const;
@@ -541,11 +541,11 @@ describe("pricing contract", () => {
         .replace(/\b\w/g, (character) => character.toUpperCase());
       assert.ok(md.includes(`## ${label}`), `pricing.md missing ${label}`);
       assert.ok(
-        md.includes(`$${tier.monthly.introPriceUsd.toLocaleString("en-US")} / seat / month`),
+        md.includes(`${formatUsd(tier.monthly.introPriceUsd)} / seat / month`),
         `pricing.md missing ${label} monthly intro price`,
       );
       assert.ok(
-        md.includes(`$${tier.yearly.introPriceUsd.toLocaleString("en-US")} / seat / year`),
+        md.includes(`${formatUsd(tier.yearly.introPriceUsd)} / seat / year`),
         `pricing.md missing ${label} yearly intro price`,
       );
     }
