@@ -286,6 +286,10 @@ resumes old history under a different cwd, model route, or profile composition.
 
 OD's conversation transcript remains the product source of truth. Harness
 session persistence is the native execution history and is never edited by OD.
+Once the profile has emitted a validated `session` frame, canceling the active
+OD run preserves that opaque session handle. The canceled child is still fully
+reaped, but a later run may cold-resume the same Harness session when the
+normal conversation/cwd/model compatibility guard passes.
 
 ## 8. Prompt and artifact contract
 

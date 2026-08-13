@@ -13125,6 +13125,19 @@ export async function startServer({
     ): boolean => {
       if (!run.cancelRequested) return false;
       if (!design.runs.isTerminal(run.status)) {
+        // Harness has already durably established the session by the time its
+        // validated `session` frame reaches `capturedSessionId`. Preserve that
+        // handle when the user cancels the current process so a later OD run
+        // can cold-resume the same conversation. Keep this scoped to the
+        // profile-stdio contract: other capture-style CLIs do not promise that
+        // a session interrupted mid-turn is safe to continue.
+        if (def.resumesSessionViaProfileStdio === true && capturedSessionId) {
+          try {
+            persistDeliveredAgentSessionState();
+          } catch (err) {
+            console.warn('[sessions] canceled profile session persistence failed', err);
+          }
+        }
         markRpcCloseReason('cancel_requested');
         finishWithRetryDecision('canceled', code, signal);
       }

@@ -92,6 +92,8 @@ The UI supplies accurate installation guidance and actionable probe errors.
 
 - protocol cancel;
 - bounded wait for cancelled result;
+- preserve a validated Harness session handle so a later run can cold-resume
+  after cancellation;
 - stdin EOF;
 - graceful process-tree termination;
 - force-kill fallback;
