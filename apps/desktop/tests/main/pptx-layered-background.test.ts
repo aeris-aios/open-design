@@ -7,7 +7,13 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { cjkPromotedFontFamily, runDomToPptx } from '../../src/main/deck-capture.js';
+import {
+  cjkPromotedFontFamily,
+  collectLayeredPptxBackgroundTargets,
+  isolateLayeredPptxBackground,
+  restoreLayeredPptxBackgroundIsolation,
+  runDomToPptx,
+} from '../../src/main/deck-capture.js';
 
 const execFileP = promisify(execFile);
 const desktopRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -46,6 +52,12 @@ function fakeElement(tagName = 'DIV'): HTMLElement {
     append: (child: HTMLElement) => {
       (child as unknown as { parentElement: HTMLElement | null }).parentElement = element as unknown as HTMLElement;
       children.push(child);
+    },
+    insertBefore: (child: HTMLElement, before: HTMLElement) => {
+      (child as unknown as { parentElement: HTMLElement | null }).parentElement = element as unknown as HTMLElement;
+      const index = children.indexOf(before);
+      if (index < 0) children.push(child);
+      else children.splice(index, 0, child);
     },
     prepend: (child: HTMLElement) => {
       (child as unknown as { parentElement: HTMLElement | null }).parentElement = element as unknown as HTMLElement;
@@ -147,7 +159,10 @@ function stubExportDom(slide: HTMLElement, styles: Map<HTMLElement, Partial<Comp
   return created;
 }
 
-async function runExport(onExport?: () => void): Promise<void> {
+async function runExport(
+  onExport?: () => void,
+  layeredBackgrounds?: Parameters<typeof runDomToPptx>[1],
+): Promise<void> {
   vi.stubGlobal('window', {
     domToPptx: {
       exportToPptx: async () => {
@@ -157,7 +172,7 @@ async function runExport(onExport?: () => void): Promise<void> {
     },
   });
 
-  const result = await runDomToPptx('.slide');
+  const result = await runDomToPptx('.slide', layeredBackgrounds);
   expect(result.error).toBeUndefined();
 }
 
@@ -270,6 +285,47 @@ describe('editable PPTX layered backgrounds', () => {
     expect((outerAnchoredChild.style as unknown as FakeStyle).getPropertyValue('position')).toBe('');
   });
 
+  test('does not turn static content wrappers into containing blocks', async () => {
+    const slide = fakeElement();
+    const panel = fakeElement();
+    const wrapper = fakeElement();
+    const outerAnchoredChild = fakeElement();
+    wrapper.prepend(outerAnchoredChild);
+    panel.prepend(wrapper);
+    slide.prepend(panel);
+    panel.setAttribute('data-od-pptx-layer-capture-id', 'layer-1');
+    const styles = new Map<HTMLElement, Partial<ComputedStyle>>([
+      [slide, { position: 'relative' }],
+      [
+        panel,
+        {
+          backgroundImage: 'linear-gradient(white, transparent), radial-gradient(circle, white, black)',
+          position: 'relative',
+        },
+      ],
+      [wrapper, { position: 'static' }],
+      [outerAnchoredChild, { position: 'absolute' }],
+    ]);
+    stubExportDom(slide, styles);
+
+    await runExport(undefined, {
+      'layer-1': {
+        dataUrl: 'data:image/png;base64,cG5n',
+        height: 80,
+        left: 24,
+        slideIndex: 0,
+        top: 32,
+        width: 160,
+      },
+    });
+
+    expect(slide.children[0]?.getAttribute('data-od-pptx-layered-bg')).toBe('true');
+    expect(slide.children[1]).toBe(panel);
+    expect((wrapper.style as unknown as FakeStyle).getPropertyValue('position')).toBe('');
+    expect((wrapper.style as unknown as FakeStyle).getPropertyValue('z-index')).toBe('');
+    expect((outerAnchoredChild.style as unknown as FakeStyle).getPropertyValue('position')).toBe('');
+  });
+
   test.each([
     { clip: { backgroundClip: 'text' }, name: 'standard' },
     { clip: { webkitBackgroundClip: 'text' }, name: 'WebKit' },
@@ -322,47 +378,97 @@ describe('editable PPTX layered backgrounds', () => {
     expect(created.filter((element) => element.getAttribute('data-od-pptx-bg') === 'true')).toHaveLength(0);
   });
 
-  test('emits fidelity-preserving PPTX media for layered, pseudo, and masked backgrounds', async () => {
+  test('emits PNG media for standard and pseudo layered backgrounds', async () => {
     const media = await probeLayeredBackgroundMedia();
 
-    expect(media.supported).toEqual({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
-    expect(media.pseudo).toEqual({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
-    expect(media.masked.captures).toBe(0);
-    expect(media.masked.media).toContainEqual(expect.stringMatching(/\.svg$/));
+    expect(media.supported).toMatchObject({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
+    expect(media.pseudo).toMatchObject({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
+  }, 30_000);
+
+  test('preserves clipping and effective opacity in the exported layered-background pixels', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.composited.pngs;
+
+    expect(media.composited.captures).toBe(1);
+    expect(image).toBeDefined();
+    expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
+    expect(image?.maxAlpha).toBeLessThanOrEqual(136);
+  }, 30_000);
+
+  test('preserves a CSS mask as decoded alpha in the exported PNG', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.masked.pngs;
+
+    expect(media.masked.captures).toBe(1);
+    expect(media.masked.media).toEqual([expect.stringMatching(/\.png$/)]);
+    expect(image).toBeDefined();
+    expect(image?.transparentPixels).toBeGreaterThan(0);
+    expect(image?.translucentPixels).toBeGreaterThan(0);
+    expect(image?.maxAlpha).toBeGreaterThan(50);
+    expect(image?.maxAlpha).toBeLessThan(128);
   }, 30_000);
 });
 
 type LayeredBackgroundProbe = {
+  composited: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   supported: LayeredBackgroundExport;
 };
 
-type LayeredBackgroundExport = { captures: number; media: string[] };
+type LayeredBackgroundExport = { captures: number; media: string[]; pngs: PngProbe[] };
 
-async function probeLayeredBackgroundMedia(): Promise<LayeredBackgroundProbe> {
+type PngProbe = {
+  height: number;
+  maxAlpha: number;
+  minAlpha: number;
+  name: string;
+  opaquePixels: number;
+  translucentPixels: number;
+  transparentPixels: number;
+  width: number;
+};
+
+let layeredBackgroundProbePromise: Promise<LayeredBackgroundProbe> | undefined;
+
+function probeLayeredBackgroundMedia(): Promise<LayeredBackgroundProbe> {
+  layeredBackgroundProbePromise ??= runLayeredBackgroundMediaProbe();
+  return layeredBackgroundProbePromise;
+}
+
+async function runLayeredBackgroundMediaProbe(): Promise<LayeredBackgroundProbe> {
   const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-probe-'));
-  const invocationSource = `(() => {
+  const invocationSource = `(captures => {
     const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()};
-    return (${runDomToPptx.toString()})(".slide");
-  })()`;
+    return (${runDomToPptx.toString()})(".slide", captures);
+  })`;
+  const collectSource = `(${collectLayeredPptxBackgroundTargets.toString()})(".slide")`;
+  const isolateSource = `(id => {
+    const restoreLayeredPptxBackgroundIsolation = ${restoreLayeredPptxBackgroundIsolation.toString()};
+    return (${isolateLayeredPptxBackground.toString()})(".slide", id);
+  })`;
+  const restoreSource = `(${restoreLayeredPptxBackgroundIsolation.toString()})()`;
   await writeFile(join(probeDir, 'package.json'), '{"main":"main.cjs"}\n');
   await writeFile(
     join(probeDir, 'main.cjs'),
     `
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, nativeImage } = require('electron');
 const { readFile } = require('node:fs/promises');
-const { gunzipSync } = require('node:zlib');
+const { gunzipSync, inflateRawSync } = require('node:zlib');
 
 const fixtures = {
   supported: '<div class="supported"></div>',
   pseudo: '<div class="pseudo"></div>',
   masked: '<div class="masked"></div>',
+  composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
 };
 const styles = \`
   html, body { margin: 0; }
   .slide { position: relative; width: 320px; height: 180px; overflow: hidden; background: #111; }
-  .supported, .pseudo, .masked { position: absolute; inset: 20px; }
+  .card { position: absolute; inset: 10px; background: #24506f; }
+  .supported, .pseudo, .masked, .composited { position: absolute; inset: 20px; }
+  .label { position: absolute; right: 8px; bottom: 8px; color: white; }
   .supported {
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
@@ -380,11 +486,67 @@ const styles = \`
     -webkit-mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
     mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
   }
+  .composited {
+    background-image: linear-gradient(#ff3b30, #ff3b30), linear-gradient(#ff3b30, #ff3b30);
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+    filter: drop-shadow(0 10px 12px rgba(0, 0, 0, .45));
+    opacity: .5;
+    transform: translate(-12px, 0) rotate(8deg) scale(.9);
+  }
 \`;
 
-function mediaNames(pptxBase64) {
-  const archive = Buffer.from(pptxBase64, 'base64').toString('latin1');
-  return [...new Set(archive.match(/ppt\\/media\\/[A-Za-z0-9_-]+\\.(?:gif|jpe?g|png|svg)/g) || [])].sort();
+function zipEntries(pptxBase64) {
+  const archive = Buffer.from(pptxBase64, 'base64');
+  let eocd = archive.length - 22;
+  while (eocd >= 0 && archive.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
+  if (eocd < 0) throw new Error('PPTX central directory was not found');
+  const count = archive.readUInt16LE(eocd + 10);
+  let offset = archive.readUInt32LE(eocd + 16);
+  const entries = [];
+  for (let index = 0; index < count; index += 1) {
+    if (archive.readUInt32LE(offset) !== 0x02014b50) throw new Error('Invalid PPTX central directory entry');
+    const method = archive.readUInt16LE(offset + 10);
+    const compressedSize = archive.readUInt32LE(offset + 20);
+    const nameLength = archive.readUInt16LE(offset + 28);
+    const extraLength = archive.readUInt16LE(offset + 30);
+    const commentLength = archive.readUInt16LE(offset + 32);
+    const localOffset = archive.readUInt32LE(offset + 42);
+    const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+    const localNameLength = archive.readUInt16LE(localOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = archive.subarray(dataOffset, dataOffset + compressedSize);
+    const data = method === 0 ? compressed : method === 8 ? inflateRawSync(compressed) : null;
+    if (data) entries.push({ data, name });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function inspectMedia(pptxBase64) {
+  const media = zipEntries(pptxBase64).filter(({ name }) => /^ppt\\/media\\/.+\\.(?:gif|jpe?g|png|svg)$/.test(name));
+  const pngs = media.filter(({ name }) => name.endsWith('.png')).map(({ data, name }) => inspectPng(data, name));
+  return { media: media.map(({ name }) => name).sort(), pngs };
+}
+
+function inspectPng(data, name) {
+  const image = nativeImage.createFromBuffer(data);
+  const { width, height } = image.getSize();
+  const bitmap = image.toBitmap();
+  let minAlpha = 255;
+  let maxAlpha = 0;
+  let opaquePixels = 0;
+  let translucentPixels = 0;
+  let transparentPixels = 0;
+  for (let offset = 3; offset < bitmap.length; offset += 4) {
+    const alpha = bitmap[offset];
+    minAlpha = Math.min(minAlpha, alpha);
+    maxAlpha = Math.max(maxAlpha, alpha);
+    if (alpha < 16) transparentPixels += 1;
+    else if (alpha < 240) translucentPixels += 1;
+    else opaquePixels += 1;
+  }
+  return { height, maxAlpha, minAlpha, name, opaquePixels, translucentPixels, transparentPixels, width };
 }
 
 app.whenReady().then(async () => {
@@ -397,19 +559,38 @@ app.whenReady().then(async () => {
     const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + styles + '</style></head><body></body></html>';
     await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     await window.webContents.executeJavaScript(bundle, true);
+    const dbg = window.webContents.debugger;
+    dbg.attach('1.3');
+    await dbg.sendCommand('Page.enable');
+    await dbg.sendCommand('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     const result = {};
     for (const [name, markup] of Object.entries(fixtures)) {
       await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify('<section class="slide">' + markup + '</section>'), true);
       await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-      const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)}, true);
+      const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
+      const captures = {};
+      for (const target of targets) {
+        const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
+        await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
+        const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+          captureBeyondViewport: true,
+          clip: { x: geometry.pageX, y: geometry.pageY, width: geometry.width, height: geometry.height, scale: 2 },
+          format: 'png',
+          fromSurface: true,
+        });
+        captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
+        await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
+      }
+      const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)} + '(' + JSON.stringify(captures) + ')', true);
       if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
       result[name] = {
         captures: await window.webContents.executeJavaScript('document.querySelectorAll("[data-od-pptx-layered-bg]").length', true),
-        media: mediaNames(exported.b64),
+        ...inspectMedia(exported.b64),
       };
     }
     process.stdout.write('OD_PPTX_LAYER_PROBE:' + JSON.stringify(result) + '\\n');
   } finally {
+    if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
     window.destroy();
     app.quit();
   }
@@ -450,10 +631,12 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('supported' in value)
     || !('pseudo' in value)
     || !('masked' in value)
+    || !('composited' in value)
   ) {
     throw new Error('Electron renderer probe returned an invalid result');
   }
   return {
+    composited: parseLayeredBackgroundExport(value.composited),
     masked: parseLayeredBackgroundExport(value.masked),
     pseudo: parseLayeredBackgroundExport(value.pseudo),
     supported: parseLayeredBackgroundExport(value.supported),
@@ -469,8 +652,14 @@ function parseLayeredBackgroundExport(value: unknown): LayeredBackgroundExport {
     || !('media' in value)
     || !Array.isArray(value.media)
     || !value.media.every((item) => typeof item === 'string')
+    || !('pngs' in value)
+    || !Array.isArray(value.pngs)
   ) {
     throw new Error('Electron renderer probe returned an invalid export');
   }
-  return { captures: value.captures, media: value.media };
+  return {
+    captures: value.captures,
+    media: value.media,
+    pngs: value.pngs as PngProbe[],
+  };
 }

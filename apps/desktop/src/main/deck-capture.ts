@@ -404,10 +404,11 @@ async function renderEditablePptx(
   );
   await nextFrames(window);
   await window.webContents.executeJavaScript(await loadDomToPptxBundle(), true);
+  const layeredBackgrounds = await captureEditablePptxLayeredBackgrounds(window);
   // runDomToPptx calls cjkPromotedFontFamily by name; define it in the same scope
   // as the serialized body so the reference resolves inside the render window.
   const out = (await window.webContents.executeJavaScript(
-    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}); })()`,
+    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(layeredBackgrounds)}); })()`,
     true,
   )) as { b64?: string; error?: string };
   if (!out || out.error || !out.b64) {
@@ -426,6 +427,258 @@ async function renderEditablePptx(
   }
   const mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   return { ok: true, slides: [`data:${mime};base64,${out.b64}`], width: stage.w, height: stage.h, mode: "deck" };
+}
+
+export type LayeredPptxBackgroundCapture = {
+  dataUrl: string;
+  height: number;
+  left: number;
+  slideIndex: number;
+  top: number;
+  width: number;
+};
+
+type LayeredPptxBackgroundTarget = { id: string };
+type LayeredPptxBackgroundGeometry = Omit<LayeredPptxBackgroundCapture, "dataUrl"> & {
+  pageX: number;
+  pageY: number;
+};
+
+export function collectLayeredPptxBackgroundTargets(slideSelector: string): LayeredPptxBackgroundTarget[] {
+  function splitLayers(input: string): string[] {
+    const layers: string[] = [];
+    let current = "";
+    let depth = 0;
+    let quote = "";
+    let escaped = false;
+    for (const char of input) {
+      if (escaped) {
+        current += char;
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        current += char;
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        current += char;
+        if (char === quote) quote = "";
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        current += char;
+        quote = char;
+        continue;
+      }
+      if (char === "(") depth += 1;
+      else if (char === ")") depth = Math.max(0, depth - 1);
+      if (char === "," && depth === 0) {
+        if (current.trim()) layers.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim()) layers.push(current.trim());
+    return layers;
+  }
+
+  function isSupportedLayeredGradient(input: string): boolean {
+    const layers = splitLayers(input);
+    if (layers.length < 2) return false;
+    const supportedGradient =
+      /^(?:(?:-(?:moz|ms|o|webkit)-)?(?:linear|radial)-gradient|-webkit-gradient)\(/i;
+    return layers.every((layer) => supportedGradient.test(layer));
+  }
+
+  function hasTextClip(style: CSSStyleDeclaration): boolean {
+    return [style.backgroundClip, style.webkitBackgroundClip]
+      .flatMap((value) => splitLayers(value || ""))
+      .some((value) => value.toLowerCase() === "text");
+  }
+
+  const slides = Array.prototype.slice
+    .call(document.querySelectorAll(slideSelector))
+    .filter((element) => !(element as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb")) as HTMLElement[];
+  const targets: LayeredPptxBackgroundTarget[] = [];
+  let nextId = 0;
+  for (const slide of slides) {
+    const elements = [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))];
+    for (const element of elements) {
+      const style = getComputedStyle(element);
+      if (!isSupportedLayeredGradient(style.backgroundImage || "") || hasTextClip(style)) continue;
+      const id = `od-pptx-layer-${nextId++}`;
+      element.setAttribute("data-od-pptx-layer-capture-id", id);
+      targets.push({ id });
+    }
+  }
+  return targets;
+}
+
+type LayeredPptxIsolationState = {
+  inlineStyles: Array<{ cssText: string; element: HTMLElement }>;
+  pseudoStyle: HTMLStyleElement;
+};
+
+export function restoreLayeredPptxBackgroundIsolation(): void {
+  const state = (window as unknown as { __odPptxLayerIsolation?: LayeredPptxIsolationState })
+    .__odPptxLayerIsolation;
+  if (!state) return;
+  for (const { cssText, element } of state.inlineStyles) element.style.cssText = cssText;
+  state.pseudoStyle.remove();
+  delete (window as unknown as { __odPptxLayerIsolation?: LayeredPptxIsolationState }).__odPptxLayerIsolation;
+}
+
+export function isolateLayeredPptxBackground(
+  slideSelector: string,
+  id: string,
+): LayeredPptxBackgroundGeometry | null {
+  restoreLayeredPptxBackgroundIsolation();
+  const target = document.querySelector<HTMLElement>(`[data-od-pptx-layer-capture-id="${id}"]`);
+  if (!target) return null;
+  const slides = Array.prototype.slice
+    .call(document.querySelectorAll(slideSelector))
+    .filter((element) => !(element as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb")) as HTMLElement[];
+  const slideIndex = slides.findIndex((slide) => slide === target || slide.contains(target));
+  if (slideIndex < 0) return null;
+  const slide = slides[slideIndex]!;
+  const targetStyle = getComputedStyle(target);
+  const targetRect = target.getBoundingClientRect();
+  const slideRect = slide.getBoundingClientRect();
+  const hasVisualOverflow = targetStyle.filter && targetStyle.filter !== "none";
+  const padding = hasVisualOverflow ? Math.min(192, Math.max(64, Math.ceil(Math.max(targetRect.width, targetRect.height) / 4))) : 0;
+  const left = Math.max(slideRect.left, targetRect.left - padding);
+  const top = Math.max(slideRect.top, targetRect.top - padding);
+  const right = Math.min(slideRect.right, targetRect.right + padding);
+  const bottom = Math.min(slideRect.bottom, targetRect.bottom + padding);
+  if (right - left < 1 || bottom - top < 1) return null;
+
+  const allElements = Array.from(document.querySelectorAll<HTMLElement>("*"));
+  const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
+  const pseudoStyle = document.createElement("style");
+  pseudoStyle.textContent = `*::before,*::after{visibility:hidden!important}`;
+  document.head.append(pseudoStyle);
+  (window as unknown as { __odPptxLayerIsolation?: LayeredPptxIsolationState }).__odPptxLayerIsolation = {
+    inlineStyles,
+    pseudoStyle,
+  };
+
+  for (const element of allElements) element.style.setProperty("visibility", "hidden", "important");
+  for (let ancestor: HTMLElement | null = target; ancestor; ancestor = ancestor.parentElement) {
+    ancestor.style.setProperty("visibility", "visible", "important");
+    if (ancestor !== target) {
+      ancestor.style.setProperty("background", "transparent", "important");
+      ancestor.style.setProperty("border-color", "transparent", "important");
+      ancestor.style.setProperty("box-shadow", "none", "important");
+      ancestor.style.setProperty("color", "transparent", "important");
+      ancestor.style.setProperty("outline", "none", "important");
+      ancestor.style.setProperty("text-shadow", "none", "important");
+    }
+  }
+  for (const descendant of Array.from(target.querySelectorAll<HTMLElement>("*"))) {
+    descendant.style.setProperty("visibility", "hidden", "important");
+  }
+  target.style.setProperty("border-color", "transparent", "important");
+  target.style.setProperty("box-shadow", "none", "important");
+  target.style.setProperty("color", "transparent", "important");
+  target.style.setProperty("text-shadow", "none", "important");
+  target.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+  for (const root of [document.documentElement, document.body]) {
+    if (!root) continue;
+    root.style.setProperty("visibility", "visible", "important");
+    root.style.setProperty("background", "transparent", "important");
+  }
+
+  return {
+    height: bottom - top,
+    left: left - slideRect.left,
+    pageX: left + window.scrollX,
+    pageY: top + window.scrollY,
+    slideIndex,
+    top: top - slideRect.top,
+    width: right - left,
+  };
+}
+
+async function captureEditablePptxLayeredBackgrounds(
+  window: BrowserWindow,
+): Promise<Record<string, LayeredPptxBackgroundCapture>> {
+  const targets = (await window.webContents.executeJavaScript(
+    `(${collectLayeredPptxBackgroundTargets.toString()})(${JSON.stringify(SLIDE_SELECTOR)})`,
+    true,
+  )) as LayeredPptxBackgroundTarget[];
+  if (targets.length === 0) return {};
+
+  const dbg = window.webContents.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) {
+      dbg.attach("1.3");
+      attachedHere = true;
+    }
+    await dbg.sendCommand("Page.enable");
+    await dbg.sendCommand("Emulation.setDefaultBackgroundColorOverride", {
+      color: { a: 0, b: 0, g: 0, r: 0 },
+    });
+    const captures: Record<string, LayeredPptxBackgroundCapture> = {};
+    for (const target of targets) {
+      const geometry = (await window.webContents.executeJavaScript(
+        `(() => { const restoreLayeredPptxBackgroundIsolation = ${restoreLayeredPptxBackgroundIsolation.toString()}; return (${isolateLayeredPptxBackground.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(target.id)}); })()`,
+        true,
+      )) as LayeredPptxBackgroundGeometry | null;
+      if (!geometry) throw new Error(`could not isolate layered PPTX background ${target.id}`);
+      await nextFrames(window);
+      const screenshot = (await dbg.sendCommand("Page.captureScreenshot", {
+        captureBeyondViewport: true,
+        clip: {
+          height: geometry.height,
+          scale: 2,
+          width: geometry.width,
+          x: geometry.pageX,
+          y: geometry.pageY,
+        },
+        format: "png",
+        fromSurface: true,
+      })) as { data?: string };
+      if (!screenshot.data) throw new Error(`Chromium returned no layered PPTX capture for ${target.id}`);
+      captures[target.id] = {
+        dataUrl: `data:image/png;base64,${screenshot.data}`,
+        height: geometry.height,
+        left: geometry.left,
+        slideIndex: geometry.slideIndex,
+        top: geometry.top,
+        width: geometry.width,
+      };
+      await window.webContents.executeJavaScript(
+        `(${restoreLayeredPptxBackgroundIsolation.toString()})()`,
+        true,
+      );
+    }
+    return captures;
+  } finally {
+    try {
+      await window.webContents.executeJavaScript(
+        `(${restoreLayeredPptxBackgroundIsolation.toString()})()`,
+        true,
+      );
+    } catch {
+      // The render window may already be gone after a capture failure.
+    }
+    try {
+      await dbg.sendCommand("Emulation.setDefaultBackgroundColorOverride");
+    } catch {
+      // Ignore debugger cleanup failures; the window is throwaway.
+    }
+    if (attachedHere && dbg.isAttached()) {
+      try {
+        dbg.detach();
+      } catch {
+        // Ignore debugger cleanup failures; the window is throwaway.
+      }
+    }
+  }
 }
 
 // Shows slide `i` and captures the measured stage rect. Prefers CDP
@@ -1005,7 +1258,10 @@ export function cjkPromotedFontFamily(fontFamily: string, text: string): string 
 // Serialized into the page: runs the injected dom-to-pptx engine over every real
 // slide and returns the .pptx bytes as base64 (or an error). Fonts are
 // auto-detected + embedded; SVGs stay vector (editable in PowerPoint).
-export async function runDomToPptx(slideSelector: string): Promise<{ b64?: string; error?: string }> {
+export async function runDomToPptx(
+  slideSelector: string,
+  layeredBackgrounds: Record<string, LayeredPptxBackgroundCapture> = {},
+): Promise<{ b64?: string; error?: string }> {
   function isTransparentColor(input: string): boolean {
     const value = input.trim().toLowerCase();
     return value === "" || value === "transparent" || value === "rgba(0, 0, 0, 0)";
@@ -1187,6 +1443,16 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
     background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
     background.style.setProperty("background-origin", style.backgroundOrigin, "important");
     background.style.setProperty("background-clip", style.backgroundClip, "important");
+    background.style.setProperty("clip-path", style.clipPath || "none", "important");
+    background.style.setProperty("filter", style.filter || "none", "important");
+    background.style.setProperty("opacity", style.opacity || "1", "important");
+    background.style.setProperty("mix-blend-mode", style.mixBlendMode || "normal", "important");
+    background.style.setProperty("transform", style.transform || "none", "important");
+    background.style.setProperty("transform-origin", style.transformOrigin || "50% 50%", "important");
+    background.style.setProperty("transform-box", style.transformBox || "view-box", "important");
+    background.style.setProperty("translate", style.translate || "none", "important");
+    background.style.setProperty("rotate", style.rotate || "none", "important");
+    background.style.setProperty("scale", style.scale || "none", "important");
   }
 
   function preserveLayeredPseudoGradientBackgrounds(elements: Set<HTMLElement>): void {
@@ -1222,11 +1488,6 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
         background.style.setProperty("width", style.width || "auto", "important");
         background.style.setProperty("height", style.height || "auto", "important");
         background.style.setProperty("z-index", style.zIndex || "auto", "important");
-        background.style.setProperty("opacity", style.opacity || "1", "important");
-        background.style.setProperty("transform", style.transform || "none", "important");
-        background.style.setProperty("transform-origin", style.transformOrigin || "50% 50%", "important");
-        background.style.setProperty("mix-blend-mode", style.mixBlendMode || "normal", "important");
-        background.style.setProperty("filter", style.filter || "none", "important");
         background.style.setProperty("pointer-events", "none", "important");
         setCaptureBoxStyles(background, style);
 
@@ -1246,25 +1507,63 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
 
     for (const element of elements) {
       const style = getComputedStyle(element);
+      const captureId = element.getAttribute("data-od-pptx-layer-capture-id") || "";
+      const captured = layeredBackgrounds[captureId];
       if (
         !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
         hasTextBackgroundClip(style.backgroundClip || "") ||
         hasTextBackgroundClip(style.webkitBackgroundClip || "") ||
-        // html2canvas 1.4.1 does not parse CSS masks. Leave these on the
-        // converter's existing native path instead of exporting a newly
-        // introduced, visibly unmasked Chromium rectangle.
-        hasCssMask(style)
+        // The custom-element fallback uses html2canvas, which cannot preserve
+        // masks. Production exports provide a Chromium capture for these.
+        (hasCssMask(style) && !captured)
       ) {
         continue;
       }
       const isStaticNestedElement = style.position === "static" && !slideElements.has(element);
 
+      if (captured) {
+        const slide = slides[captured.slideIndex];
+        if (!slide) continue;
+        const background = document.createElement("img");
+        background.setAttribute("data-od-pptx-layered-bg", "true");
+        background.setAttribute("aria-hidden", "true");
+        background.src = captured.dataUrl;
+        background.style.setProperty("position", "absolute", "important");
+        background.style.setProperty("left", `${captured.left}px`, "important");
+        background.style.setProperty("top", `${captured.top}px`, "important");
+        background.style.setProperty("width", `${captured.width}px`, "important");
+        background.style.setProperty("height", `${captured.height}px`, "important");
+        background.style.setProperty("display", "block", "important");
+        background.style.setProperty("object-fit", "fill", "important");
+        background.style.setProperty("pointer-events", "none", "important");
+        background.style.setProperty("z-index", style.zIndex || "auto", "important");
+        background.getBoundingClientRect = () => {
+          const slideRect = slide.getBoundingClientRect();
+          const left = slideRect.left + captured.left;
+          const top = slideRect.top + captured.top;
+          return {
+            bottom: top + captured.height,
+            height: captured.height,
+            left,
+            right: left + captured.width,
+            top,
+            width: captured.width,
+            x: left,
+            y: top,
+            toJSON: () => ({}),
+          } as DOMRect;
+        };
+        element.style.setProperty("background-image", "none", "important");
+        element.style.setProperty("background-color", "transparent", "important");
+        if (element === slide) slide.prepend(background);
+        else element.parentElement?.insertBefore(background, element);
+        continue;
+      }
+
       // dom-to-pptx's native gradient parser assumes one linear-gradient and
-      // greedily merges layered gradients into one invalid SVG. Its custom-
-      // element path already uses html2canvas, so move only the background to
-      // a background-only custom element. The converter rasterizes that layer
-      // with Chromium while continuing to emit the authored children as native
-      // editable text and shapes.
+      // greedily merges layered gradients into one invalid SVG. In test-only
+      // callers without the main-process capture seam, retain the existing
+      // custom-element fallback for unmasked layers.
       const background = document.createElement("od-pptx-layered-background");
       background.setAttribute("data-od-pptx-layered-bg", "true");
       background.setAttribute("aria-hidden", "true");
@@ -1289,19 +1588,10 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
         // block contract for slides; positioned authored elements already own
         // the absolutely positioned capture child.
         if (style.position === "static") element.style.setProperty("position", "relative", "important");
-        Array.from(element.children).forEach((child) => {
-          const childStyle = getComputedStyle(child);
-          const childElement = child as HTMLElement;
-          if (childStyle.position === "static") {
-            childElement.style.setProperty("position", "relative", "important");
-          }
-          if (childStyle.zIndex === "auto") {
-            childElement.style.setProperty("z-index", "1", "important");
-          }
-        });
       }
 
       element.style.setProperty("background-image", "none", "important");
+      element.style.setProperty("background-color", "transparent", "important");
       element.prepend(background);
     }
 
