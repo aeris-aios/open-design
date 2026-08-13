@@ -100,6 +100,7 @@ import {
 import {
   AMR_LOGIN_STATUS_EVENT,
   amrLoginStatusEventReason,
+  isAmrSessionAuthenticated,
 } from './components/amrLoginPolling';
 import { CollabDemoView } from './collab/CollabDemoView';
 import {
@@ -1591,8 +1592,8 @@ function AppInner() {
     const next: AmrAuthRetryContinuation = {
       ...input,
       accountIdAtArm:
-        amrLoginStatusRef.current?.loggedIn === true
-          ? amrLoginStatusRef.current.user?.id ?? null
+        isAmrSessionAuthenticated(amrLoginStatusRef.current)
+          ? amrLoginStatusRef.current?.user?.id ?? null
           : null,
       createdAtMs: Date.now(),
     };
@@ -1646,14 +1647,15 @@ function AppInner() {
     options: { forceModelRefresh?: boolean; restartOnSignIn?: boolean } = {},
   ) => {
     const previousStatus = amrLoginStatusRef.current;
-    const wasLoggedIn = previousStatus?.loggedIn === true;
+    const wasLoggedIn = isAmrSessionAuthenticated(previousStatus);
+    const isLoggedIn = isAmrSessionAuthenticated(status);
     const pendingRetry = amrAuthRetryContinuationRef.current;
     const accountChangedWhileAuthorizing = Boolean(
       pendingRetry
       && (
-        (wasLoggedIn && status.loggedIn === false)
+        (wasLoggedIn && !isLoggedIn)
         || (
-          status.loggedIn === true
+          isLoggedIn
           && pendingRetry.accountIdAtArm !== null
           && status.user?.id !== pendingRetry.accountIdAtArm
         )
@@ -1668,7 +1670,7 @@ function AppInner() {
     if (
       pendingRetry
       && !accountChangedWhileAuthorizing
-      && status.loggedIn === true
+      && isLoggedIn
       && status.user?.id
       && (
         pendingRetry.accountIdAtArm === null
@@ -1690,7 +1692,7 @@ function AppInner() {
       }, { replace: true });
     }
     if (
-      status.loggedIn === true
+      isLoggedIn
       && (
         options.forceModelRefresh === true
         || (options.restartOnSignIn === true && !wasLoggedIn)
@@ -1761,7 +1763,7 @@ function AppInner() {
       agentId: config.agentId,
       agents: agents.map((a) => ({ id: a.id, available: a.available })),
       byokConfigured,
-      amrAuthorized: amrLoginStatus?.loggedIn === true,
+      amrAuthorized: isAmrSessionAuthenticated(amrLoginStatus),
     });
     analytics.setConfigureGlobals(globals);
   }, [
@@ -1915,13 +1917,37 @@ function AppInner() {
 
   useEffect(() => {
     analytics.setUserId(
-      amrLoginStatus?.loggedIn === true ? amrLoginStatus.user?.id ?? null : null,
+      isAmrSessionAuthenticated(amrLoginStatus) ? amrLoginStatus?.user?.id ?? null : null,
     );
   }, [analytics.setUserId, amrLoginStatus]);
 
   const handleAmrLoginStatusChange = useCallback((status: VelaLoginStatus | null) => {
     if (status) applyAmrLoginStatus(status, { restartOnSignIn: true });
   }, [applyAmrLoginStatus]);
+
+  useEffect(() => {
+    const usesOpenDesignCloud =
+      config.mode === 'daemon'
+      && config.agentId === AMR_AGENT_ID;
+    const cloudIdentityRejected =
+      workspaceContextState.failure === 'reauth-required'
+      || (
+        usesOpenDesignCloud
+        && (
+          amrLoginStatus?.loggedIn === false
+          || amrLoginStatus?.sessionState === 'reauth_required'
+        )
+      );
+    if (!cloudIdentityRejected) return;
+    if (route.kind === 'home' && route.view === 'onboarding') return;
+    navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
+  }, [
+    amrLoginStatus,
+    config.agentId,
+    config.mode,
+    route,
+    workspaceContextState.failure,
+  ]);
 
   // Bootstrap — detect daemon, then fan out independent fetches so each
   // entry-view tab can render the moment its own data lands. Earlier this
@@ -5118,6 +5144,7 @@ function AppInner() {
         agents={agents}
         agentsLoading={agentsLoading}
         amrLoggedIn={amrLoginStatus?.loggedIn ?? null}
+        amrSessionState={amrLoginStatus?.sessionState}
         amrAccountPlan={
           amrLoginStatus?.account?.plan?.trim()
           || amrLoginStatus?.user?.plan?.trim()
@@ -5258,7 +5285,7 @@ function AppInner() {
         plan={resolvedAmrPlan}
         planResolved={
           amrLoginStatus !== null
-          && (amrLoginStatus.loggedIn === false || resolvedAmrPlan !== null)
+          && (!isAmrSessionAuthenticated(amrLoginStatus) || resolvedAmrPlan !== null)
         }
         profile={amrLoginStatus?.profile ?? null}
         metricsConsent={config.telemetry?.metrics === true}

@@ -384,7 +384,7 @@ test('[P0] onboarding AMR runtime selection carries into the first Home run requ
   });
 });
 
-test('[P0] completed BYOK setup resumes after passive Cloud reauthentication without reopening the chooser', async ({ page }) => {
+test('[P0] completed BYOK setup stays usable while the unrelated Cloud session is signed out', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: true,
     initialLoggedIn: false,
@@ -402,12 +402,10 @@ test('[P0] completed BYOK setup resumes after passive Cloud reauthentication wit
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
   await dismissPrivacyDialog(page);
-  await expect(page).toHaveURL(/\/onboarding$/);
-
-  await clickCloudPrimary(page);
-  await expectOnboardingFinished(page);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('home-hero-input')).toBeVisible();
   await expect(page.getByRole('heading', { name: /Choose your model source|选择模型来源/i })).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => window.__amrOnboardingLoginCalls ?? 0)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__amrOnboardingLoginCalls ?? 0)).toBe(0);
   await pollStoredConfig(page).toMatchObject({
     mode: 'api',
     apiKey: 'persisted-byok-key',
@@ -415,6 +413,54 @@ test('[P0] completed BYOK setup resumes after passive Cloud reauthentication wit
     model: 'claude-sonnet-4-5',
     onboardingCompleted: true,
   });
+});
+
+test('[P0] definitively expired Cloud auth returns to the existing sign-in gate without a dismissible modal', async ({ page }) => {
+  const config = await wireOnboardingMocks(page, {
+    amrAvailable: true,
+    initialLoggedIn: true,
+    sessionState: 'reauth_required',
+  });
+  Object.assign(config, {
+    agentId: 'amr',
+    onboardingCompleted: true,
+  } satisfies Partial<OnboardingConfig>);
+  await mockAmrPersonalWorkspace(page);
+  await seedOnboardingConfig(page, config);
+
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForLoadingToClear(page);
+  await dismissPrivacyDialog(page);
+
+  await expect(page).toHaveURL(/\/onboarding$/, { timeout: T.long });
+  await expect(connectLandingHeading(page)).toBeVisible();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await pollStoredConfig(page).toMatchObject({
+    agentId: 'amr',
+    onboardingCompleted: true,
+  });
+});
+
+test('[P0] definitively expired Cloud auth also gates project deep links', async ({ page }) => {
+  const config = await wireOnboardingMocks(page, {
+    amrAvailable: true,
+    initialLoggedIn: true,
+    sessionState: 'reauth_required',
+  });
+  Object.assign(config, {
+    agentId: 'amr',
+    onboardingCompleted: true,
+  } satisfies Partial<OnboardingConfig>);
+  await mockAmrPersonalWorkspace(page);
+  await seedOnboardingConfig(page, config);
+
+  await page.goto('/projects/expired-auth-project', { waitUntil: 'domcontentloaded' });
+  await waitForLoadingToClear(page);
+  await dismissPrivacyDialog(page);
+
+  await expect(page).toHaveURL(/\/onboarding$/, { timeout: T.long });
+  await expect(connectLandingHeading(page)).toBeVisible();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
 
 test('[P0] active Cloud sign-out clears execution setup, preserves unrelated preferences, and returns to onboarding', async ({ page }) => {
@@ -828,6 +874,7 @@ async function wireOnboardingMocks(
     initialLoggedIn: boolean;
     failAllStatusPolls?: boolean;
     keepAmrLoginIncomplete?: boolean;
+    sessionState?: 'signed_out' | 'authenticated' | 'reauth_required';
     delaySignedOutStatusMs?: number;
     agentsDelayMs?: number;
     codexModels?: Array<{ id: string; label: string }>;
@@ -950,6 +997,8 @@ async function wireOnboardingMocks(
         ? {
             loggedIn: true,
             loginInFlight: false,
+            sessionState: options.sessionState ?? 'authenticated',
+            credentialRevision: 'onboarding-test-credential',
             profile: 'local',
             configPath: '/tmp/.amr/config.json',
             user: { id: 'user-1', email: 'onboarding@example.com', plan: 'free' },
@@ -957,6 +1006,8 @@ async function wireOnboardingMocks(
         : {
             loggedIn: false,
             loginInFlight,
+            sessionState: 'signed_out',
+            credentialRevision: 'signed-out',
             profile: 'local',
             configPath: '/tmp/.amr/config.json',
             user: null,

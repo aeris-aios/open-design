@@ -97,8 +97,15 @@ import { DesignSystemsTab } from './DesignSystemsTab';
 import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
 import { ProjectSearchModal } from './ProjectSearchModal';
-import { CloudSignInTip, RailAccountSyncTip } from './CloudSignInTip';
-import { resolveEntryRailAccountFooterState } from './entry-rail-account-state';
+import {
+  CloudSignInTip,
+  RailAccountRecoveryTip,
+  RailAccountSyncTip,
+} from './CloudSignInTip';
+import {
+  resolveEntryRailAccountFooterState,
+  requiresAmrReauthentication,
+} from './entry-rail-account-state';
 import { LibrarySection } from './LibrarySection';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
@@ -182,6 +189,7 @@ import {
   createProject,
   duplicatePluginAsProject,
   patchProject,
+  ProjectCreateError,
   resolvedWorkspaceContextForWrite,
   type PluginShareAction,
   type PluginShareProjectOutcome,
@@ -206,6 +214,7 @@ import {
 import {
   AMR_LOGIN_POLL_INTERVAL_MS,
   amrLoginPollOutcome,
+  isAmrSessionAuthenticated,
   notifyAmrLoginStatusChanged,
 } from './amrLoginPolling';
 import { closeAmrActivationWindowBestEffort } from './AmrLoginPill';
@@ -418,6 +427,7 @@ interface Props {
   // During a transient Cloud outage it prevents the rail from presenting a
   // still-signed-in user as signed out.
   amrLoggedIn?: boolean | null;
+  amrSessionState?: import('@open-design/contracts').AmrSessionState;
   /**
    * vela login-status account/user plan (ACCOUNT-scoped). Used for personal
    * workspaces so a confirmed free account is not stuck as campaign audience
@@ -550,6 +560,7 @@ export function EntryShell({
   agents,
   agentsLoading = false,
   amrLoggedIn = null,
+  amrSessionState,
   amrAccountPlan = null,
   daemonLive,
   onModeChange,
@@ -593,13 +604,6 @@ export function EntryShell({
   // view from the route rather than keeping it in component state.
   const route = useRoute();
   const view: EntryViewKind = route.kind === 'home' ? route.view : 'home';
-  useEffect(() => {
-    // The entry shell is the authenticated Home surface. A definitive
-    // signed-out result returns it to the Cloud identity gate while leaving
-    // the saved model source untouched for passive reauthentication.
-    if (amrLoggedIn !== false || view === 'onboarding') return;
-    navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
-  }, [amrLoggedIn, view]);
   // The one shared workspace context. Any non-null context is a real workspace
   // (personal or team); workspace surfaces gate on B's permission bits, not on
   // workspaceType.
@@ -611,7 +615,35 @@ export function EntryShell({
   const accountFooterState = resolveEntryRailAccountFooterState(
     workspaceContextState,
     amrLoggedIn,
+    amrSessionState,
   );
+  const railWorkspaceContext = accountFooterState === 'sign-in'
+    ? null
+    : workspaceContext;
+  const usesOpenDesignCloud = config.mode === 'daemon' && config.agentId === 'amr';
+  const amrAuthRequired =
+    workspaceContextState.failure === 'reauth-required'
+    || (
+      usesOpenDesignCloud
+      && requiresAmrReauthentication(amrSessionState, workspaceContextState.failure)
+    );
+  useEffect(() => {
+    // The entry shell is an authenticated surface. Both an explicit signed-out
+    // status and a definitive credential rejection return to the existing
+    // Cloud identity gate. Passive reauthentication preserves the saved model
+    // source and Home's locally persisted, not-yet-sent draft.
+    const selectedCloudIdentityRejected = usesOpenDesignCloud && amrLoggedIn === false;
+    if ((!selectedCloudIdentityRejected && !amrAuthRequired) || view === 'onboarding') return;
+    navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
+  }, [amrAuthRequired, amrLoggedIn, usesOpenDesignCloud, view]);
+  let accountFooterNotice: ReactNode = null;
+  if (accountFooterState === 'syncing') {
+    accountFooterNotice = <RailAccountSyncTip />;
+  } else if (accountFooterState === 'recovering') {
+    accountFooterNotice = <RailAccountRecoveryTip />;
+  } else if (accountFooterState === 'sign-in') {
+    accountFooterNotice = <CloudSignInTip />;
+  }
   const workspaceContextRef = useRef(workspaceContext);
   workspaceContextRef.current = workspaceContext;
   const workspaceBillingResponse = useWorkspaceBillingResponse();
@@ -1279,6 +1311,10 @@ export function EntryShell({
   // projectKind='other', so the agent infers the task type and asks only
   // when the brief cannot be routed reliably.
   async function handlePluginLoopSubmit(payload: PluginLoopSubmit) {
+    if (amrAuthRequired) {
+      navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
+      return 'blocked' as const;
+    }
     // Open Design Cloud pre-run balance gate: hard blocks (empty wallet or
     // signed out) and the soft low-balance reminder both fire BEFORE the
     // project is created, so the dialog appears right here on the home page
@@ -1380,7 +1416,7 @@ export function EntryShell({
         examplePromptBrief: payload.examplePromptContext.brief,
       } : {}),
     };
-    return onCreateProject({
+    const createInput: EntryCreateProjectInput = {
       name,
       skillId: payload.skillId ?? null,
       designSystemId: payload.designSystemId ?? null,
@@ -1403,7 +1439,20 @@ export function EntryShell({
       // require for write access.
       autoSendFirstMessage: true,
       ...(amrGatePrecheckWitness ? { amrGatePrecheckWitness } : {}),
-    });
+    };
+    const create = () => Promise.resolve(onCreateProject(createInput));
+    try {
+      return await create();
+    } catch (error) {
+      if (
+        error instanceof ProjectCreateError
+        && error.code === 'AMR_AUTH_REQUIRED'
+      ) {
+        navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
+        return 'blocked' as const;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1522,7 +1571,7 @@ export function EntryShell({
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
-          context={workspaceContext}
+          context={railWorkspaceContext}
           billing={workspaceBilling}
           balanceUsd={workspaceBalanceUsd}
           onOpenSettings={onOpenSettings}
@@ -1534,13 +1583,7 @@ export function EntryShell({
           // Keep the account slot neutral until Cloud answers successfully;
           // only a successful null context (or known local sign-out) may show
           // the sign-in card.
-          footerNotice={
-            accountFooterState === 'syncing'
-              ? <RailAccountSyncTip />
-              : accountFooterState === 'sign-in'
-                ? <CloudSignInTip />
-                : null
-          }
+          footerNotice={accountFooterNotice}
         />
         {projectSearchOpen ? (
           <ProjectSearchModal
@@ -2087,7 +2130,7 @@ function OnboardingView({
   ) ?? null;
   const availableCliAgents = agents.filter((agent) => agent.available && agent.id !== 'amr');
   const visibleAgents = availableCliAgents.filter((agent) => visibleAgentIds.includes(agent.id));
-  const amrSignedIn = amrStatus?.loggedIn === true;
+  const amrSignedIn = isAmrSessionAuthenticated(amrStatus);
   const selectedAgent = visibleAgents.find((agent) => agent.id === config.agentId) ?? null;
   const selectedAgentChoice = selectedAgent ? (config.agentModels?.[selectedAgent.id] ?? {}) : {};
   const normalizedSelectedAgentChoice = effectiveAgentModelChoice(selectedAgent, selectedAgentChoice) ?? selectedAgentChoice;
@@ -2638,7 +2681,7 @@ function OnboardingView({
         setAmrStatus(currentStatus);
         onAmrLoginStatusChange?.(currentStatus);
       }
-      if (currentStatus?.loggedIn) {
+      if (isAmrSessionAuthenticated(currentStatus)) {
         continueAfterCloudSignIn();
         return;
       }

@@ -15,7 +15,11 @@ import type {
   WorkspaceSeatSummary,
   WorkspaceType,
 } from '@open-design/contracts';
-import { readVelaControlApiContext, type VelaUser } from '../integrations/vela.js';
+import {
+  markVelaAuthorizationExpired,
+  readVelaControlApiContext,
+  type VelaUser,
+} from '../integrations/vela.js';
 import {
   createDevWorkspaceContextProvider,
   resolveWorkspaceSettingsUrl,
@@ -68,6 +72,8 @@ interface VelaWorkspaceContextOptions {
   fetch?: typeof fetch;
   /** Injectable for tests; defaults to reading ~/.amr/config.json + env. */
   readSession?: typeof readVelaControlApiContext;
+  /** Settings-backed AMR environment used by the daemon's agent launcher. */
+  configuredEnv?: Record<string, string>;
   /**
    * Legacy default for no-argument `current()` and fresh-account bootstrap.
    * Exact request resolution never reads it.
@@ -519,6 +525,8 @@ function velaUserDisplayName(user: VelaUser | null): string {
 export interface WorkspaceDirectoryFetchResult {
   ok: boolean;
   items: WorkspaceDirectoryItem[];
+  reason?: 'unauthorized' | 'upstream' | 'network';
+  status?: number;
 }
 
 /**
@@ -528,8 +536,9 @@ export interface WorkspaceDirectoryFetchResult {
  */
 export function velaWorkspaceDirectoryIdentity(
   readSession: typeof readVelaControlApiContext = readVelaControlApiContext,
+  configuredEnv: Record<string, string> = {},
 ): string {
-  const session = readSession();
+  const session = readSession(process.env, configuredEnv);
   if (!session?.controlKey || !session.apiUrl) return 'signed-out';
   const credentialFingerprint = createHash('sha256')
     .update(session.controlKey)
@@ -759,7 +768,7 @@ export async function fetchVelaWorkspaceDirectory(
   const fetchImpl = options.fetch ?? fetch;
   const readSession = options.readSession ?? readVelaControlApiContext;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const session = readSession();
+  const session = readSession(process.env, options.configuredEnv ?? {});
   // No local Vela session is an authoritative signed-out identity, not an
   // authority outage. Returning a successful empty directory lets clients
   // clear a previously cached Team selection instead of preserving it forever.
@@ -772,10 +781,28 @@ export async function fetchVelaWorkspaceDirectory(
       headers: { authorization: `Bearer ${session.controlKey}` },
       signal: controller.signal,
     });
-    if (!response.ok) return { ok: false, items: [] };
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        if (!options.readSession) {
+          markVelaAuthorizationExpired(process.env, options.configuredEnv ?? {});
+        }
+        return {
+          ok: false,
+          items: [],
+          reason: 'unauthorized',
+          status: response.status,
+        };
+      }
+      return {
+        ok: false,
+        items: [],
+        reason: 'upstream',
+        status: response.status,
+      };
+    }
     return { ok: true, items: mapVelaWorkspaceDirectory(await response.json()) };
   } catch {
-    return { ok: false, items: [] };
+    return { ok: false, items: [], reason: 'network' };
   } finally {
     clearTimeout(timeout);
   }
