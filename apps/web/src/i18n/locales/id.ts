@@ -2113,6 +2113,7 @@ export const id: Dict = {
   'chat.comments.removeAttachmentAria': 'Hapus lampiran komentar untuk {name}',
   'chat.comments.comment': 'Comment',
   'chat.comments.sendToChat': 'Send to chat',
+  'chat.comments.viewAll': 'Lihat semua komentar',
   'chat.comments.sending': 'Sending…',
   'chat.comments.edit': 'Edit',
   'chat.comments.select': 'Select',

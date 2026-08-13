@@ -2113,6 +2113,7 @@ export const esES: Dict = {
   'chat.comments.removeAttachmentAria': 'Quitar comentario adjunto de {name}',
   'chat.comments.comment': 'Comentario',
   'chat.comments.sendToChat': 'Enviar al chat',
+  'chat.comments.viewAll': 'Ver todos los comentarios',
   'chat.comments.sending': 'Enviando…',
   'chat.comments.edit': 'Editar',
   'chat.comments.select': 'Seleccionar',

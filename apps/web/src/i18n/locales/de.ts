@@ -2113,6 +2113,7 @@ export const de: Dict = {
   'chat.comments.removeAttachmentAria': 'Kommentaranhang für {name} entfernen',
   'chat.comments.comment': 'Kommentar',
   'chat.comments.sendToChat': 'An Chat senden',
+  'chat.comments.viewAll': 'Alle Kommentare anzeigen',
   'chat.comments.sending': 'Wird gesendet…',
   'chat.comments.edit': 'Bearbeiten',
   'chat.comments.select': 'Auswählen',

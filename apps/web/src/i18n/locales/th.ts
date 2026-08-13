@@ -2113,6 +2113,7 @@ export const th: Dict = {
   'chat.comments.removeAttachmentAria': 'ลบไฟล์แนบความคิดเห็นสำหรับ {name}',
   'chat.comments.comment': 'ความคิดเห็น',
   'chat.comments.sendToChat': 'ส่งไปยังแชต',
+  'chat.comments.viewAll': 'ดูความคิดเห็นทั้งหมด',
   'chat.comments.sending': 'กำลังส่ง…',
   'chat.comments.edit': 'แก้ไข',
   'chat.comments.select': 'เลือก',

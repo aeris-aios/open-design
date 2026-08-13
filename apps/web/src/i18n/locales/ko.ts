@@ -2113,6 +2113,7 @@ export const ko: Dict = {
   'chat.comments.removeAttachmentAria': '{name}의 댓글 첨부 제거',
   'chat.comments.comment': '댓글',
   'chat.comments.sendToChat': '채팅으로 보내기',
+  'chat.comments.viewAll': '모든 댓글 보기',
   'chat.comments.sending': '전송 중…',
   'chat.comments.edit': '편집',
   'chat.comments.select': '선택',

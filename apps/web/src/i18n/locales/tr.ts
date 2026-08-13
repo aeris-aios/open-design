@@ -2113,6 +2113,7 @@ export const tr: Dict = {
   'chat.comments.removeAttachmentAria': '{name} için yorum ekini kaldır',
   'chat.comments.comment': 'Yorum',
   'chat.comments.sendToChat': 'Sohbete gönder',
+  'chat.comments.viewAll': 'Tüm yorumları görüntüle',
   'chat.comments.sending': 'Gönderiliyor…',
   'chat.comments.edit': 'Düzenle',
   'chat.comments.select': 'Seç',

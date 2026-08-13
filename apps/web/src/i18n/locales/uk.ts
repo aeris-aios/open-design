@@ -2113,6 +2113,7 @@ export const uk: Dict = {
   'chat.comments.removeAttachmentAria': 'Видалити прикріплений коментар для {name}',
   'chat.comments.comment': 'Коментар',
   'chat.comments.sendToChat': 'Надіслати в чат',
+  'chat.comments.viewAll': 'Переглянути всі коментарі',
   'chat.comments.sending': 'Надсилання…',
   'chat.comments.edit': 'Редагувати',
   'chat.comments.select': 'Вибрати',

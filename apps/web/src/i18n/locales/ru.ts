@@ -2113,6 +2113,7 @@ export const ru: Dict = {
   'chat.comments.removeAttachmentAria': 'Открепить комментарий для {name}',
   'chat.comments.comment': 'Комментарий',
   'chat.comments.sendToChat': 'Отправить в чат',
+  'chat.comments.viewAll': 'Показать все комментарии',
   'chat.comments.sending': 'Отправка…',
   'chat.comments.edit': 'Редактировать',
   'chat.comments.select': 'Выбрать',

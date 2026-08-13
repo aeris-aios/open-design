@@ -2113,6 +2113,7 @@ export const fa: Dict = {
   'chat.comments.removeAttachmentAria': 'حذف پیوست نظر برای {name}',
   'chat.comments.comment': 'نظر',
   'chat.comments.sendToChat': 'ارسال به گفتگو',
+  'chat.comments.viewAll': 'مشاهده همه نظرات',
   'chat.comments.sending': 'در حال ارسال…',
   'chat.comments.edit': 'ویرایش',
   'chat.comments.select': 'انتخاب',

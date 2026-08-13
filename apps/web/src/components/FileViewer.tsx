@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { CenteredLoader } from './Loading';
@@ -4402,6 +4402,7 @@ export function CommentSidePanel({
   activeCommentId,
   collapsed,
   onCollapsedChange,
+  onDismiss,
   onToggleSelect,
   onSelectAll,
   onClearSelection,
@@ -4426,6 +4427,10 @@ export function CommentSidePanel({
   activeCommentId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  /** Closes the panel outright. The floating card uses this so its collapse
+   *  control hides the card instead of parking a full-height rail on the
+   *  right edge; the toolbar's comment button is the way back. */
+  onDismiss?: () => void;
   onToggleSelect: (commentId: string) => void;
   onSelectAll: () => void;
   canSendComment?: (comment: PreviewComment) => boolean;
@@ -4584,23 +4589,26 @@ export function CommentSidePanel({
   }
 
   return (
-    <aside id={panelId} className="comment-side-panel" data-testid="comment-side-panel" aria-label={commentsLabel}>
+    <aside
+      id={panelId}
+      className="comment-side-panel"
+      data-testid="comment-side-panel"
+      aria-label={commentsLabel}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !onDismiss) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onDismiss();
+      }}
+    >
       <div className="comment-side-header">
         <div className="comment-side-title">
           <RemixIcon name="message-3-line" size={15} />
           <span>{commentsLabel}</span>
         </div>
         <div className="comment-side-header-actions">
-          {sendableCount > 0 ? (
-            <button
-              type="button"
-              className="comment-side-select-all"
-              disabled={allSelected}
-              onClick={onSelectAll}
-            >
-              {t('chat.comments.selectAll')}
-            </button>
-          ) : null}
+          {/* The header's right slot owns collapse; select all moved below
+              the divider. */}
           <button
             ref={expandedToggleRef}
             type="button"
@@ -4609,12 +4617,30 @@ export function CommentSidePanel({
             aria-controls={panelId}
             aria-expanded={true}
             title={t('preview.hideSidebar', { label: commentsLabel })}
-            onClick={() => handleCollapsedChange(true, 'collapsed')}
+            onClick={() => {
+              if (onDismiss) {
+                onDismiss();
+                return;
+              }
+              handleCollapsedChange(true, 'collapsed');
+            }}
           >
             <Icon name="chevron-right" size={14} />
           </button>
         </div>
       </div>
+      {sendableCount > 0 ? (
+        <div className="comment-side-toolbar">
+          <button
+            type="button"
+            className="comment-side-select-all"
+            disabled={allSelected}
+            onClick={onSelectAll}
+          >
+            {t('chat.comments.selectAll')}
+          </button>
+        </div>
+      ) : null}
       <div
         className="comment-side-list"
         onDragLeave={(event) => {
@@ -4882,6 +4908,7 @@ function CommentSideDock({
   activeCommentId,
   collapsed,
   onCollapsedChange,
+  onDismiss,
   onToggleSelect,
   onSelectAll,
   onClearSelection,
@@ -4906,6 +4933,7 @@ function CommentSideDock({
   activeCommentId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  onDismiss?: () => void;
   onToggleSelect: (commentId: string) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
@@ -4939,6 +4967,7 @@ function CommentSideDock({
         activeCommentId={activeCommentId}
         collapsed={collapsed}
         onCollapsedChange={onCollapsedChange}
+        onDismiss={onDismiss}
         onToggleSelect={onToggleSelect}
         onSelectAll={onSelectAll}
         onClearSelection={onClearSelection}
@@ -7788,6 +7817,7 @@ function HtmlViewer({
   // surface_view impression can carry entry_from.
   const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
   const toolbarMoreRef = useRef<HTMLDivElement | null>(null);
+  const toolbarMoreTriggerRef = useRef<HTMLButtonElement | null>(null);
   useDismissOnOutsideInteraction(toolbarMoreOpen, toolbarMoreRef, () => setToolbarMoreOpen(false));
   const [versionModalOpen, setVersionModalOpen] = useState<false | 'toolbar' | 'more_menu'>(false);
   const [exportReadyNudge, setExportReadyNudge] = useState(false);
@@ -8148,6 +8178,9 @@ function HtmlViewer({
   const [urlPreviewFirstLoadPending, setUrlPreviewFirstLoadPending] = useState(false);
   const [boardMode, setBoardMode] = useState(false);
   const [commentPanelOpen, setCommentPanelOpen] = useState(false);
+  const commentPanelToggleRef = useRef<HTMLButtonElement | null>(null);
+  const commentPanelReturnFocusRef = useRef<HTMLElement | null>(null);
+  const pendingCommentPanelFocusRef = useRef<HTMLElement | null>(null);
   const [commentCreateMode, setCommentCreateMode] = useState(false);
   const [boardTool, setBoardTool] = useState<BoardTool>('inspect');
   const [inspectMode, setInspectMode] = useState(false);
@@ -8522,7 +8555,7 @@ function HtmlViewer({
   useEffect(() => () => {
     onCommentModeChange?.(false);
   }, [onCommentModeChange]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!commentPanelOpen || !commentPortalId) {
       setCommentPortalHost(null);
       return;
@@ -8542,6 +8575,15 @@ function HtmlViewer({
       setCommentPortalHost(null);
     };
   }, [commentPanelOpen, commentPortalId]);
+  useLayoutEffect(() => {
+    if (commentPanelOpen) return;
+    const target = pendingCommentPanelFocusRef.current;
+    if (!target) return;
+    pendingCommentPanelFocusRef.current = null;
+    const fallback = commentPanelToggleRef.current ?? toolbarMoreTriggerRef.current;
+    const next = target.isConnected ? target : fallback;
+    next?.focus();
+  }, [commentPanelOpen]);
   const capturePreviewScrollPosition = useCallback(() => {
     const host = previewBodyRef.current;
     let frameLeft = 0;
@@ -8854,12 +8896,10 @@ function HtmlViewer({
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
-  // A configured portal can take an effect / animation frame to resolve after
-  // Comment opens. Treating that short lookup window as a local-dock fallback
-  // briefly reflows the preview into a side-dock grid, which is especially
-  // visible as a leftward flash for centered tablet/mobile frames. The portal
-  // contract already suppresses the panel until its host exists, so keep the
-  // preview on the portal layout for the whole lookup window as well.
+  // A configured portal is an overlay contract from the first render, even
+  // before the host DOM node has been resolved. Treating that lookup window as
+  // a local dock briefly shrinks the preview and shifts centered desktop or
+  // mobile content left before the floating card appears.
   const localCommentSideDockActive = commentPanelOpen && !commentPortalId;
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
@@ -13171,7 +13211,8 @@ function HtmlViewer({
     activateComment();
   }
 
-  function activateCommentCreateTool() {
+  function activateCommentCreateTool(returnFocusTarget?: HTMLElement | null) {
+    if (returnFocusTarget) commentPanelReturnFocusRef.current = returnFocusTarget;
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
     if (boardMode && commentCreateMode) {
@@ -13200,6 +13241,21 @@ function HtmlViewer({
       return;
     }
     activateCommentCreate();
+  }
+
+  function dismissFloatingCommentPanel() {
+    pendingCommentPanelFocusRef.current =
+      commentPanelReturnFocusRef.current
+      ?? commentPanelToggleRef.current
+      ?? toolbarMoreTriggerRef.current;
+    setCommentPanelOpen(false);
+    // Dismissing the panel must not close an active composer popover. The
+    // panel may have been opened from that popover's View all comments action,
+    // so tearing down board mode here would interrupt composition.
+    if (activeCommentTarget) return;
+    setCommentCreateMode(false);
+    setBoardMode(false);
+    clearBoardComposer();
   }
 
   function activateManualEditTool() {
@@ -14406,6 +14462,11 @@ function HtmlViewer({
         setHoveredPodMemberId((current) => (current === elementId ? null : current));
       }}
       onHoverMember={setHoveredPodMemberId}
+      onViewAllComments={(returnFocusTarget) => {
+        commentPanelReturnFocusRef.current = returnFocusTarget ?? null;
+        setCommentPanelOpen(true);
+        setCommentSidePanelCollapsed(false);
+      }}
       onDeleteComment={onRemovePreviewComment ? async (commentId) => {
         const removed = await onRemovePreviewComment(commentId);
         if (!removed) return;
@@ -14478,8 +14539,17 @@ function HtmlViewer({
       projectId={projectId}
       selectedIds={selectedSideCommentIds}
       activeCommentId={activeSideCommentId}
-      collapsed={commentPortalHost ? false : commentSidePanelCollapsed}
+      // The panel used to be pinned open whenever it was portaled (it docked
+      // into a full-height column, where a collapsed rail made no sense). It
+      // now always floats as a card, so its collapse control has to actually
+      // collapse — forcing `false` here made every click a no-op.
+      collapsed={commentSidePanelCollapsed}
       onCollapsedChange={setCommentSidePanelCollapsed}
+      // On a floating card, collapse closes the card and mirrors the toolbar
+      // toggle's OFF branch so one click reopens it. Closing only the panel
+      // would leave create/board mode on and consume that next click. The local
+      // dock keeps its collapse-to-rail behaviour.
+      onDismiss={commentPortalHost ? dismissFloatingCommentPanel : undefined}
       onToggleSelect={(commentId) => {
         setSelectedSideCommentIds((current) => {
           const next = new Set(current);
@@ -14826,6 +14896,7 @@ function HtmlViewer({
               </button>
               <span className="viewer-toolbar-tool-divider" aria-hidden />
               <button
+                ref={commentPanelToggleRef}
                 type="button"
                 className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
                 data-testid="comment-panel-toggle"
@@ -14834,7 +14905,7 @@ function HtmlViewer({
                 title={t('chat.tabComments')}
                 aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
                 aria-pressed={boardMode && commentCreateMode}
-                onClick={activateCommentCreateTool}
+                onClick={(event) => activateCommentCreateTool(event.currentTarget)}
               >
                 <RemixIcon name="message-3-line" size={15} />
                 <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
@@ -14885,6 +14956,7 @@ function HtmlViewer({
           ) : null}
           <div className="viewer-toolbar-more" ref={toolbarMoreRef}>
             <button
+              ref={toolbarMoreTriggerRef}
               type="button"
               className="viewer-action viewer-action-icon od-tooltip"
               aria-label={t('nextStep.more')}
@@ -15012,7 +15084,7 @@ function HtmlViewer({
                       className={`viewer-toolbar-more-item${boardMode && commentCreateMode ? ' active' : ''}`}
                       role="menuitem"
                       onClick={() => {
-                        activateCommentCreateTool();
+                        activateCommentCreateTool(toolbarMoreTriggerRef.current);
                         setToolbarMoreOpen(false);
                       }}
                     >

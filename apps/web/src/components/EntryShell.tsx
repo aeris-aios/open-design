@@ -21,7 +21,6 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   defaultScenarioPluginIdForProjectMetadata,
   type AmrWalletSnapshot,
@@ -97,7 +96,10 @@ import { DesignsTab } from './DesignsTab';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
-import { ProjectSearchModal } from './ProjectSearchModal';
+import {
+  buildProjectSearchCatalog,
+  ProjectSearchModal,
+} from './ProjectSearchModal';
 import {
   CloudSignInTip,
   RailAccountRecoveryTip,
@@ -220,6 +222,7 @@ import {
   notifyAmrLoginStatusChanged,
 } from './amrLoginPolling';
 import { closeAmrActivationWindowBestEffort } from './AmrLoginPill';
+import { isMacPlatform } from '../utils/platform';
 import { smoothScrollToTop } from '../utils/smoothScrollToTop';
 import { summarizeProjectNameFromPrompt } from '../utils/projectName';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
@@ -785,6 +788,7 @@ export function EntryShell({
     sharedFallbackName: t('recentProjects.sharedProjectFallbackName'),
     isShared: isSharedProject,
   });
+  const projectSearchProjects = buildProjectSearchCatalog(draftProjectsList, allProjectsList);
   const homeProjectsList = useMemo(
     () => reconcileSharedProjectCatalogFields({
       projects,
@@ -1067,12 +1071,38 @@ export function EntryShell({
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
 
   // ⌘K / Ctrl+K opens the project search palette — same as clicking the rail
-  // search box.
+  // search box. ⌘B / Ctrl+B toggles the nav rail — same as the pinned Home
+  // tab's sidebar toggle.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.isComposing
+        || (
+          target instanceof Element
+          && target.closest(
+            'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+          )
+        )
+      ) {
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
         event.preventDefault();
         setProjectSearchOpen(true);
+        return;
+      }
+      const primary = isMacPlatform()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      if (
+        primary &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === 'b' || event.key === 'B')
+      ) {
+        event.preventDefault();
+        setRailOpen((v) => !v);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -1519,11 +1549,11 @@ export function EntryShell({
   // reachable through either the account menu or the signed-out rail item.
   //
   // The updater host has no topbar to live in any more (the rail toggle is the
-  // pinned Home tab in the workspace tabs bar), so the rail owns it: it renders
-  // in a right-aligned strip just above the account row, falling back to the
-  // rail footer in the signed-out shell. `EntryNavRail` decides which — the
-  // shell only supplies the host, which renders nothing until the real updater
-  // reports a downloaded, unopened installer.
+  // pinned Home tab in the workspace tabs bar), so the rail owns it: it rides
+  // the floating account row immediately after the avatar chip, falling back
+  // to the rail footer in the signed-out shell. `EntryNavRail` decides which —
+  // the shell only supplies the host, which renders nothing until the real
+  // updater reports a downloaded, unopened installer.
   const updaterSlot = (
     <UpdaterPopup
       allowSilentUpdates={config.allowSilentUpdates}
@@ -1604,6 +1634,20 @@ export function EntryShell({
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
+          topRightSlot={
+            view === 'home' && deepSeekV4FlashCampaignAudience !== 'unknown' ? (
+              <button
+                type="button"
+                className="entry-deepseek-campaign-badge"
+                onClick={openDeepSeekCampaignPricing}
+                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
+                data-testid="deepseek-campaign-pricing-badge"
+              >
+                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
+                <Icon name="arrow-right" size={13} />
+              </button>
+            ) : null
+          }
           context={railWorkspaceContext}
           billing={workspaceBilling}
           balanceUsd={workspaceBalanceUsd}
@@ -1620,10 +1664,9 @@ export function EntryShell({
         />
         {projectSearchOpen ? (
           <ProjectSearchModal
-            // The same merged catalog as the All Projects grid (own + team-
-            // shared cards), opened through the pull-first handler so a shared
-            // project the member has not pulled yet still opens.
-            projects={allProjectsList}
+            // Search spans personal drafts plus the shared workspace catalog.
+            // The pull-first handler still opens not-yet-local shared projects.
+            projects={projectSearchProjects}
             workspaceContext={workspaceContext}
             onOpenProject={handleOpenAllProjects}
             onClose={() => setProjectSearchOpen(false)}
@@ -1635,23 +1678,9 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
-          {view === 'home'
-            && deepSeekV4FlashCampaignAudience !== 'unknown'
-            && typeof document !== 'undefined'
-            ? createPortal(
-              <button
-                type="button"
-                className="entry-deepseek-campaign-badge"
-                onClick={openDeepSeekCampaignPricing}
-                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
-                data-testid="deepseek-campaign-pricing-badge"
-              >
-                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
-                <Icon name="arrow-right" size={13} />
-              </button>,
-              document.body,
-            )
-            : null}
+          {/* DeepSeek campaign badge moved into EntryNavRail's top-right
+              cluster (topRightSlot above) so it sits beside the account
+              module in one flex row. */}
           {amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}

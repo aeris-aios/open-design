@@ -2113,6 +2113,7 @@ export const pl: Dict = {
   'chat.comments.removeAttachmentAria': 'Usuń załącznik komentarza dla {name}',
   'chat.comments.comment': 'Komentarz',
   'chat.comments.sendToChat': 'Wyślij na czat',
+  'chat.comments.viewAll': 'Zobacz wszystkie komentarze',
   'chat.comments.sending': 'Wysyłanie…',
   'chat.comments.edit': 'Edytuj',
   'chat.comments.select': 'Zaznacz',
