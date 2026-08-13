@@ -405,6 +405,60 @@ describe('createFreshWorkspaceDirectoryFetcher', () => {
 });
 
 describe('createWorkspaceDirectoryAuthorityBroker', () => {
+  it('keeps a successful lease past 15s while realtime is healthy, then expires it after disconnect', async () => {
+    let now = 0;
+    const first = { ok: true as const, items: [{ ...B_DIRECTORY_ITEM }] };
+    const second = { ok: true as const, items: [] };
+    const fetchDirectory = vi
+      .fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const authority = createWorkspaceDirectoryAuthorityBroker({
+      fetchDirectory,
+      identityKey: () => 'account-a:config-a',
+      ttlMs: 15_000,
+      now: () => now,
+    });
+
+    await expect(authority.read()).resolves.toEqual(first);
+    authority.setRealtimeHealthy(true);
+    now = 120_000;
+    await expect(authority.read()).resolves.toEqual(first);
+    expect(fetchDirectory).toHaveBeenCalledOnce();
+
+    authority.setRealtimeHealthy(false);
+    await expect(authority.read()).resolves.toEqual(second);
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves the outage circuit when event storms invalidate successful state', async () => {
+    let now = 0;
+    const unavailable = {
+      ok: false as const,
+      items: [],
+      reason: 'network' as const,
+    };
+    const fetchDirectory = vi.fn(async () => unavailable);
+    const authority = createWorkspaceDirectoryAuthorityBroker({
+      fetchDirectory,
+      identityKey: () => 'account-a:config-a',
+      failureBackoffMinMs: 15_000,
+      now: () => now,
+      random: () => 0,
+    });
+
+    await authority.backgroundFresh();
+    for (let index = 0; index < 100; index += 1) {
+      authority.invalidate('event_dirty');
+      await authority.backgroundFresh();
+    }
+    expect(fetchDirectory).toHaveBeenCalledOnce();
+
+    now = 15_000;
+    await authority.backgroundFresh();
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+  });
+
   it('invalidates the current account lease and forces the next read to refresh', async () => {
     const first = {
       ok: true as const,
@@ -676,7 +730,7 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
     expect(fetchDirectory).toHaveBeenCalledTimes(3);
   });
 
-  it('bounds 30s of status polls while every heartbeat mutation stays fresh', async () => {
+  it('avoids directory reads for status and heartbeat while realtime stays healthy', async () => {
     let now = 0;
     let activeReads = 0;
     let maxActiveReads = 0;
@@ -693,15 +747,18 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
       now: () => now,
     });
 
+    await authority.read();
+    authority.setRealtimeHealthy(true);
     // Model the production order pessimistically: status first every 5s, then
-    // heartbeat at each 10s boundary. A fresh heartbeat seeds the next read
-    // lease, but never consumes a settled lease itself.
+    // heartbeat at each 10s boundary. Both are idempotent display/presence
+    // reads of the same directory authority while the strict account event
+    // stream remains healthy.
     for (now = 0; now <= 30_000; now += 5_000) {
       await authority.read();
-      if (now % 10_000 === 0) await authority.fresh();
+      if (now % 10_000 === 0) await authority.read();
     }
 
-    expect(fetchDirectory).toHaveBeenCalledTimes(5);
+    expect(fetchDirectory).toHaveBeenCalledOnce();
     expect(maxActiveReads).toBe(1);
   });
 

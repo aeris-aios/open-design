@@ -94,6 +94,34 @@ export function emitWorkspaceEventToScope(
   return true;
 }
 
+/**
+ * Deliver an account-level dirty signal through every already-authorized local
+ * Workspace stream. The payload deliberately contains no Workspace id/content,
+ * so this broad local nudge reveals no cross-workspace data; each browser then
+ * re-reads the account directory through the daemon's current credential.
+ */
+export function emitWorkspaceEventToAllScopes(
+  sinksByWorkspace: WorkspaceEventSinksByWorkspace,
+  payload: Extract<
+    WorkspaceInvalidationSsePayload,
+    { type: 'workspace-directory-changed' }
+  >,
+): boolean {
+  let emitted = false;
+  for (const [workspaceId, sinks] of Array.from(sinksByWorkspace)) {
+    for (const sink of Array.from(sinks)) {
+      try {
+        sink(payload);
+        emitted = true;
+      } catch {
+        sinks.delete(sink);
+      }
+    }
+    if (sinks.size === 0) sinksByWorkspace.delete(workspaceId);
+  }
+  return emitted;
+}
+
 export interface RegisterCollabContextRoutesDeps {
   workspaceContext: WorkspaceContextProvider;
   /** Optional settled verifier for exact-scoped display GETs. Mutations and
@@ -186,6 +214,8 @@ export interface RegisterCollabContextRoutesDeps {
     send: (event: string, data: unknown, id?: string | number | null) => boolean;
   };
   workspaceEventSinks?: WorkspaceEventSinksByWorkspace;
+  /** Keep one upstream Vela carrier while this local Workspace SSE is open. */
+  retainWorkspaceEventInterest?: (workspaceId: string) => () => void;
   /** Best-effort PostHog group update; never affects the route response. */
   observeWorkspace?: (
     req: Request,
@@ -468,6 +498,8 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
         workspaceEventSinks.set(workspaceId, workspaceSinks);
       }
       workspaceSinks.add(sink);
+      const releaseWorkspaceEventInterest =
+        deps.retainWorkspaceEventInterest?.(workspaceId) ?? (() => undefined);
       // Handshake so the client treats the stream as live and resets its
       // reconnect backoff immediately (mirrors the project stream's `ready`).
       sse.send('ready', { at: Date.now() });
@@ -476,6 +508,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
         if (workspaceSinks?.size === 0) {
           workspaceEventSinks.delete(workspaceId);
         }
+        releaseWorkspaceEventInterest();
       };
       res.on('close', cleanup);
       res.on('finish', cleanup);

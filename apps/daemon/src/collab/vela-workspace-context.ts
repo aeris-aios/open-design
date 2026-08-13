@@ -613,6 +613,8 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
   fresh: () => Promise<WorkspaceDirectoryFetchResult>;
   /** Background fresh read: shares the account-wide outage circuit. */
   backgroundFresh: () => Promise<WorkspaceDirectoryFetchResult>;
+  /** Keep successful display reads alive while account-directory SSE is strict. */
+  setRealtimeHealthy: (healthy: boolean) => void;
   invalidate: (reason?: 'event_dirty' | 'auth_reject' | 'catch_up') => void;
   refreshAfterMutation: () => Promise<WorkspaceDirectoryFetchResult>;
 } {
@@ -654,14 +656,18 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
       nextDelayMs: number;
     }
   >();
+  let realtimeHealthyIdentity: string | null = null;
 
   const generationFor = (identity: string): number =>
     generations.get(identity) ?? 0;
 
-  const invalidateIdentity = (identity: string): void => {
+  const invalidateIdentity = (
+    identity: string,
+    preserveFailure = false,
+  ): void => {
     generations.set(identity, generationFor(identity) + 1);
     cached.delete(identity);
-    failures.delete(identity);
+    if (!preserveFailure) failures.delete(identity);
   };
 
   const failureBackoffHit = (
@@ -795,7 +801,10 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
       if (
         cachedEntry
         && cachedEntry.generation === generationFor(identity)
-        && now() < cachedEntry.expiresAt
+        && (
+          now() < cachedEntry.expiresAt
+          || realtimeHealthyIdentity === identity
+        )
       ) {
         const ageMs = Math.max(0, ttlMs - (cachedEntry.expiresAt - now()));
         recordDecision({
@@ -821,8 +830,16 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
         ? Promise.resolve(backoffResult)
         : start(identity, 'fresh');
     },
+    setRealtimeHealthy: (healthy) => {
+      const identity = identityKey();
+      realtimeHealthyIdentity = healthy ? identity : null;
+    },
     invalidate: (reason = 'event_dirty') => {
-      invalidateIdentity(identityKey());
+      // A dirty event voids successful state, but a sustained event storm must
+      // not punch through the account-wide outage circuit on every frame.
+      // Explicit catch-up/auth boundaries and successful mutations remain
+      // stronger signals and still clear the circuit immediately.
+      invalidateIdentity(identityKey(), reason === 'event_dirty');
       options.onInvalidation?.({ source: 'cache', reason });
     },
     refreshAfterMutation: async () => {

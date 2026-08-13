@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  parseHubWorkspaceDirectoryEvent,
   parseHubWorkspaceEvent,
   startHubEventsSubscriber,
   type HubEventsSubscriber,
@@ -193,6 +194,24 @@ describe('parseHubWorkspaceEvent', () => {
       memberChange: 'removed',
     });
   });
+
+  it('parses account directory invalidations without requiring the carrier workspace', () => {
+    expect(
+      parseHubWorkspaceDirectoryEvent(
+        '{"type":"workspace-directory-changed","workspaceId":"workspace-new","change":"created","at":"2026-08-14T00:00:00.000Z"}',
+      ),
+    ).toEqual({
+      type: 'workspace-directory-changed',
+      workspaceId: 'workspace-new',
+      change: 'created',
+      at: '2026-08-14T00:00:00.000Z',
+    });
+    expect(
+      parseHubWorkspaceDirectoryEvent(
+        '{"type":"workspace-directory-changed","workspaceId":"workspace-new","change":"mystery"}',
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('startHubEventsSubscriber', () => {
@@ -380,6 +399,63 @@ describe('startHubEventsSubscriber', () => {
     ]);
     expect(states).toEqual(['connected']);
     expect(subscriber.connected()).toBe(true);
+  });
+
+  it('delivers a capable account-directory event even when its new workspace differs from the carrier', async () => {
+    const directoryEvents: unknown[] = [];
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    subscriber = startHubEventsSubscriber({
+      resolveEndpoint: async () => ({
+        url: 'https://hub/events',
+        headers: {},
+        workspaceId: 'w1',
+      }),
+      onEvent: () => undefined,
+      onDirectoryEvent: (event) => {
+        directoryEvents.push(event);
+        resolveDone();
+      },
+      fetchImpl: async () => sseResponse([
+        'event: ready\ndata: {"workspaceId":"w1","capabilities":["workspace-directory-events-v1"]}\n\n',
+        'event: workspace-directory-changed\ndata: {"type":"workspace-directory-changed","workspaceId":"workspace-new","change":"created","at":"2026-08-14T00:00:00.000Z"}\n\n',
+      ], { holdOpen: true }),
+    });
+
+    await done;
+    expect(directoryEvents).toEqual([{
+      type: 'workspace-directory-changed',
+      workspaceId: 'workspace-new',
+      change: 'created',
+      at: '2026-08-14T00:00:00.000Z',
+    }]);
+  });
+
+  it('drops account-directory frames from an old server that did not advertise the capability', async () => {
+    const onDirectoryEvent = vi.fn();
+    const onDrop = vi.fn();
+    subscriber = startHubEventsSubscriber({
+      resolveEndpoint: async () => ({
+        url: 'https://hub/events',
+        headers: {},
+        workspaceId: 'w1',
+      }),
+      onEvent: () => undefined,
+      onDirectoryEvent,
+      onDrop,
+      fetchImpl: async () => sseResponse([
+        'event: ready\ndata: {"workspaceId":"w1","capabilities":[]}\n\n',
+        'event: workspace-directory-changed\ndata: {"type":"workspace-directory-changed","workspaceId":"workspace-new","change":"created"}\n\n',
+      ], { holdOpen: true }),
+    });
+
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledWith({
+      reason: 'invalid-payload',
+      eventName: 'workspace-directory-changed',
+    }));
+    expect(onDirectoryEvent).not.toHaveBeenCalled();
   });
 
   it('reports terminal access revocation only after exact-scope ready verification', async () => {

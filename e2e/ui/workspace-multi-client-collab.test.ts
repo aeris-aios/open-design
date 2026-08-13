@@ -18,6 +18,16 @@ const PROJECT_NAME = 'Realtime shared workspace';
 // the richer FileViewer test-id variants mount. There is exactly one visible
 // artifact iframe in this flow.
 const PREVIEW_SELECTOR = 'iframe:visible';
+const COLLAB_COMMENT_NOTE = 'Member asks for a clearer shared headline.';
+const COLLAB_COMMENT_TARGET = {
+  filePath: 'index.html',
+  elementId: 'shared-heading',
+  selector: '[data-od-id="shared-heading"]',
+  label: 'h1',
+  text: 'Owner version 1',
+  htmlHint: '<h1>',
+  position: { x: 0, y: 0, width: 0, height: 0 },
+};
 
 const OWNER = {
   controlKey: 'multi-client-owner-key',
@@ -142,6 +152,67 @@ test('[P0] strict SSE health suppresses authority reads and bounds event storms 
         [OWNER.memberId]: (before[OWNER.memberId] ?? 0) + 1,
         [MEMBER.memberId]: (before[MEMBER.memberId] ?? 0) + 1,
       });
+    });
+
+    await test.step('converge account plan changes independently per account', async () => {
+      const before = billingCommandCounts(hub, 'summary');
+      const startedAt = Date.now();
+      hub.setAccountMembershipTier(OWNER.memberId, 'max');
+      await expect.poll(
+        () => readAccountMembershipTier(owner.page),
+        { timeout: T.medium },
+      ).toBe('max');
+      expect(Date.now() - startedAt).toBeLessThan(T.medium);
+      await expect(readAccountMembershipTier(member.page)).resolves.toBe('team_plus');
+      const after = billingCommandCounts(hub, 'summary');
+      expect((after[OWNER.memberId] ?? 0) - (before[OWNER.memberId] ?? 0))
+        .toBeLessThanOrEqual(2);
+      // The legacy account event is workspace-wide and therefore dirties the
+      // member's account cache too, but its independent summary must remain
+      // unchanged and may cost at most one lazy verification when read.
+      expect((after[MEMBER.memberId] ?? 0) - (before[MEMBER.memberId] ?? 0))
+        .toBeLessThanOrEqual(1);
+    });
+
+    await test.step('converge plan upgrades and bound high-frequency wallet refreshes', async () => {
+      const planBefore = billingCommandCounts(hub, 'workspace-snapshot');
+      const planStartedAt = Date.now();
+      hub.setWorkspacePlan('team_max');
+      await Promise.all([
+        expect.poll(
+          () => readWorkspaceBilling(owner.page, OWNER),
+          { timeout: T.medium },
+        ).toMatchObject({ planId: 'team_max', balanceUsd: '0.00' }),
+        expect.poll(
+          () => readWorkspaceBilling(member.page, MEMBER),
+          { timeout: T.medium },
+        ).toMatchObject({ planId: 'team_max', balanceUsd: '0.00' }),
+      ]);
+      expect(Date.now() - planStartedAt).toBeLessThan(T.medium);
+      const planAfter = billingCommandCounts(hub, 'workspace-snapshot');
+      expect((planAfter[OWNER.memberId] ?? 0) - (planBefore[OWNER.memberId] ?? 0))
+        .toBeLessThanOrEqual(2);
+      expect((planAfter[MEMBER.memberId] ?? 0) - (planBefore[MEMBER.memberId] ?? 0))
+        .toBeLessThanOrEqual(2);
+
+      const walletBefore = billingCommandCounts(hub, 'workspace-snapshot');
+      const walletStartedAt = Date.now();
+      for (let index = 1; index <= 100; index += 1) {
+        hub.setWorkspaceBalance(OWNER.memberId, (100 - index).toFixed(2));
+      }
+      await expect.poll(
+        () => readWorkspaceBilling(owner.page, OWNER),
+        { timeout: T.medium },
+      ).toMatchObject({ planId: 'team_max', balanceUsd: '0.00' });
+      expect(Date.now() - walletStartedAt).toBeLessThan(T.medium);
+      await expect(readWorkspaceBilling(member.page, MEMBER)).resolves.toMatchObject({
+        planId: 'team_max',
+        balanceUsd: '0.00',
+      });
+      const walletAfter = billingCommandCounts(hub, 'workspace-snapshot');
+      expect((walletAfter[OWNER.memberId] ?? 0) - (walletBefore[OWNER.memberId] ?? 0))
+        .toBeLessThanOrEqual(2);
+      expect(walletAfter[MEMBER.memberId] ?? 0).toBe(walletBefore[MEMBER.memberId] ?? 0);
     });
 
     await test.step('bound duplicate workspace invalidations and return to zero-read steady state', async () => {
@@ -392,6 +463,62 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
     });
     await expect(twoPersonPresence.locator('[data-self="true"]')).toHaveCount(1);
     await expect(twoPersonPresence.locator('[title]')).toHaveCount(2);
+
+    await test.step('relay a member comment into the owner UI', async () => {
+      const [ownerConversationId, memberConversationId] = await Promise.all([
+        firstConversationId(ownerPage, projectId, OWNER),
+        firstConversationId(memberPage, projectId, MEMBER),
+      ]);
+      const commentStartedAt = Date.now();
+      const response = await memberPage.request.post(
+        `/api/projects/${projectId}/conversations/${memberConversationId}/comments`,
+        {
+          data: { target: COLLAB_COMMENT_TARGET, note: COLLAB_COMMENT_NOTE },
+          headers: workspaceHeaders(MEMBER),
+          timeout: T.long,
+        },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+      await hub.waitForCommand(
+        (entry) =>
+          entry.memberId === MEMBER.memberId
+          && entry.args[0] === 'collab'
+          && entry.args[1] === 'comment'
+          && entry.args[2] === 'push'
+          && entry.args[3] === projectId,
+        T.medium,
+      );
+      await expect.poll(
+        async () => {
+          const ownerComments = await ownerPage.request.get(
+            `/api/projects/${projectId}/conversations/${ownerConversationId}/comments`,
+            { headers: workspaceHeaders(OWNER), timeout: T.long },
+          );
+          if (!ownerComments.ok()) return [];
+          const body = await ownerComments.json() as {
+            comments?: Array<{ note?: string }>;
+          };
+          return body.comments?.map((comment) => comment.note) ?? [];
+        },
+        { timeout: T.medium },
+      ).toContain(COLLAB_COMMENT_NOTE);
+      expect(Date.now() - commentStartedAt).toBeLessThan(T.medium);
+
+      await ownerPage.goto(`/projects/${projectId}/files/index.html`, {
+        waitUntil: 'domcontentloaded',
+      });
+      await expect(ownerPage.getByTestId('file-workspace')).toBeVisible({
+        timeout: T.long,
+      });
+      await ownerPage.getByTestId('board-mode-toggle').click();
+      await ownerPage.getByTestId('comment-panel-toggle').click();
+      await expect(
+        ownerPage
+          .getByTestId('comment-side-panel')
+          .getByTestId('comment-side-item')
+          .filter({ hasText: COLLAB_COMMENT_NOTE }),
+      ).toBeVisible({ timeout: T.medium });
+    });
 
     const memberDocumentMarker = await memberPage.evaluate(() => {
       const target = window as Window & typeof globalThis & {
@@ -657,6 +784,272 @@ test('[P0] two active clients converge when a member gains then loses admin acce
   }
 });
 
+test('[P0] two isolated clients converge shared plugins and skills without scope leaks', async ({
+  browser,
+}, testInfo) => {
+  const hubRoot = testInfo.outputPath('fake-team-extension-hub');
+  await mkdir(hubRoot, { recursive: true });
+  const hub = await startFakeCollabHub({
+    root: hubRoot,
+    workspaceId: WORKSPACE_ID,
+    workspaceName: 'Multi-client team',
+    clients: [OWNER, MEMBER],
+    includePersonalWorkspace: true,
+  });
+  const velaBin = await hub.writeVelaBin(testInfo.outputPath('fake-vela-team-extensions'));
+  const commonEnv = {
+    OD_COLLAB_TRANSPORT: 'vela-cli',
+    OD_RESOURCE_TRANSPORT: 'vela-cli',
+    OD_TEAM_PROJECTS_TRANSPORT: 'vela-cli',
+    OD_WORKSPACE_CONTEXT_SOURCE: 'vela',
+    VELA_API_URL: hub.url,
+    VELA_BIN: velaBin,
+  };
+  let cluster: CollabCluster | undefined;
+  let failed = false;
+  const pluginId = `shared-plugin-${testInfo.workerIndex}-${Date.now()}`;
+  const skillId = `shared-skill-${testInfo.workerIndex}-${Date.now()}`;
+  try {
+    cluster = await createCollabCluster(browser, testInfo, [
+      {
+        id: 'extension-owner',
+        env: { ...commonEnv, VELA_CONTROL_KEY: OWNER.controlKey },
+      },
+      {
+        id: 'extension-member',
+        env: { ...commonEnv, VELA_CONTROL_KEY: MEMBER.controlKey },
+      },
+    ]);
+    const ownerPage = cluster.clients['extension-owner']!.page;
+    const memberPage = cluster.clients['extension-member']!.page;
+    await Promise.all([
+      applyStandardMocks(ownerPage),
+      applyStandardMocks(memberPage),
+      pinWorkspace(ownerPage, OWNER.memberId),
+      pinWorkspace(memberPage, MEMBER.memberId),
+      registerWorkspaceEventInterest(ownerPage, 'extension-owner', OWNER.memberId),
+      registerWorkspaceEventInterest(memberPage, 'extension-member', MEMBER.memberId),
+    ]);
+    await expect.poll(
+      () => [
+        hub.eventSubscriberCount(OWNER.memberId),
+        hub.eventSubscriberCount(MEMBER.memberId),
+      ],
+      { timeout: T.long },
+    ).toEqual([1, 1]);
+
+    const projectId = await createProject(ownerPage);
+    await writeProjectTextFile(
+      ownerPage,
+      projectId,
+      'plugin-source/open-design.json',
+      JSON.stringify({
+        $schema: 'https://open-design.ai/schemas/plugin.v1.json',
+        name: pluginId,
+        title: 'Realtime Shared Plugin',
+        version: '0.1.0',
+        description: 'A real two-daemon extension fixture.',
+        license: 'MIT',
+        od: { kind: 'atom', capabilities: ['prompt:inject'] },
+      }),
+    );
+    await writeProjectTextFile(
+      ownerPage,
+      projectId,
+      'plugin-source/SKILL.md',
+      `---\nname: ${pluginId}\ndescription: E2E shared plugin fixture.\n---\n# Fixture\n`,
+    );
+    const installPlugin = await ownerPage.request.post(
+      `/api/projects/${projectId}/plugins/install-folder`,
+      {
+        data: { path: 'plugin-source' },
+        headers: workspaceHeaders(OWNER),
+        timeout: T.long,
+      },
+    );
+    expect(installPlugin.ok(), await installPlugin.text()).toBeTruthy();
+    const importSkill = await ownerPage.request.post('/api/skills/import', {
+      data: {
+        name: skillId,
+        description: 'A real two-daemon Skill fixture.',
+        body: '# Shared Skill\n\nReturn the shared skill fixture.',
+      },
+      headers: workspaceHeaders(OWNER),
+      timeout: T.long,
+    });
+    expect(importSkill.ok(), await importSkill.text()).toBeTruthy();
+
+    for (const [kind, resourceId] of [
+      ['plugins', pluginId],
+      ['skills', skillId],
+    ] as const) {
+      const shareStartedAt = Date.now();
+      const share = await ownerPage.request.post(
+        `/api/workspace/${kind}/${encodeURIComponent(resourceId)}/share`,
+        { headers: workspaceHeaders(OWNER), timeout: T.long },
+      );
+      expect(share.ok(), await share.text()).toBeTruthy();
+      await expect.poll(
+        () => readTeamResourceIds(memberPage, MEMBER, kind),
+        { timeout: T.medium },
+      ).toContain(resourceId);
+      expect(Date.now() - shareStartedAt).toBeLessThan(T.medium);
+      await expect.poll(
+        () => readLocalResourceIds(memberPage, MEMBER, kind),
+        { timeout: T.medium },
+      ).toContain(resourceId);
+
+      if (kind === 'plugins') {
+        const unshareStartedAt = Date.now();
+        const unshare = await ownerPage.request.delete(
+          `/api/workspace/${kind}/${encodeURIComponent(resourceId)}/share`,
+          { headers: workspaceHeaders(OWNER), timeout: T.long },
+        );
+        expect(unshare.ok(), await unshare.text()).toBeTruthy();
+        await expect.poll(
+          () => readTeamResourceIds(memberPage, MEMBER, kind),
+          { timeout: T.medium },
+        ).not.toContain(resourceId);
+        expect(Date.now() - unshareStartedAt).toBeLessThan(T.medium);
+      }
+    }
+
+    await openHome(memberPage);
+    await ensureRailOpen(memberPage);
+    const remoteWorkspaceId = 'ws-created-remotely';
+    const remoteWorkspaceName = 'Remote-created team';
+    await expect(memberPage.getByRole('menu')).toHaveCount(0);
+    const workspaceCreatedAt = Date.now();
+    hub.addWorkspace(MEMBER.memberId, remoteWorkspaceId, remoteWorkspaceName);
+
+    // The account event refreshes the rail cache even while the switcher is
+    // closed. Opening it is only how this test observes the already-updated
+    // state; it is not what triggers discovery.
+    await expect.poll(
+      async () => {
+        const directory = await memberPage.request.get(
+          '/api/workspace/directory',
+          { timeout: T.long },
+        );
+        if (!directory.ok()) return [];
+        const body = await directory.json() as {
+          items?: Array<{ workspaceId?: string }>;
+        };
+        return body.items?.map((item) => item.workspaceId) ?? [];
+      },
+      { timeout: T.short },
+    ).toContain(remoteWorkspaceId);
+    const workspaceDirectoryLatencyMs = Date.now() - workspaceCreatedAt;
+    expect(workspaceDirectoryLatencyMs).toBeLessThan(T.short);
+    await testInfo.attach('remote-workspace-directory-latency', {
+      body: JSON.stringify({ workspaceDirectoryLatencyMs }),
+      contentType: 'application/json',
+    });
+    await memberPage.getByTestId('workspace-switcher').click();
+    await expect(
+      memberPage.getByRole('menu').getByRole('menuitem', { name: remoteWorkspaceName }),
+    ).toBeVisible({ timeout: T.medium });
+    expect(Date.now() - workspaceCreatedAt).toBeLessThan(T.medium);
+
+    const ownerDirectory = await ownerPage.request.get('/api/workspace/directory', {
+      timeout: T.long,
+    });
+    expect(ownerDirectory.ok(), await ownerDirectory.text()).toBeTruthy();
+    const ownerDirectoryBody = await ownerDirectory.json() as {
+      items?: Array<{ workspaceId?: string }>;
+    };
+    expect(ownerDirectoryBody.items?.map((item) => item.workspaceId) ?? [])
+      .not.toContain(remoteWorkspaceId);
+
+    await memberPage
+      .getByRole('menu')
+      .getByRole('menuitem', { name: remoteWorkspaceName })
+      .click();
+    await expect(memberPage.getByTestId('workspace-switcher')).toContainText(
+      remoteWorkspaceName,
+      { timeout: T.medium },
+    );
+    const remoteHeaders = addedWorkspaceHeaders(
+      MEMBER,
+      remoteWorkspaceId,
+    );
+    await expect(
+      readTeamResourceIds(memberPage, MEMBER, 'skills', remoteHeaders),
+    ).resolves.not.toContain(skillId);
+    await expect(
+      readLocalResourceIds(
+        memberPage,
+        MEMBER,
+        'plugins',
+        remoteHeaders,
+      ),
+    ).resolves.not.toContain(pluginId);
+    await expect(
+      readLocalResourceIds(
+        memberPage,
+        MEMBER,
+        'skills',
+        remoteHeaders,
+      ),
+    ).resolves.not.toContain(skillId);
+    await expect.poll(
+      () => readWorkspaceBilling(
+        memberPage,
+        MEMBER,
+        remoteWorkspaceId,
+        remoteHeaders,
+      ),
+      { timeout: T.medium },
+    ).toMatchObject({ planId: null, balanceUsd: null });
+
+    const unshareSkill = await ownerPage.request.delete(
+      `/api/workspace/skills/${encodeURIComponent(skillId)}/share`,
+      { headers: workspaceHeaders(OWNER), timeout: T.long },
+    );
+    expect(unshareSkill.ok(), await unshareSkill.text()).toBeTruthy();
+
+    // The member was subscribed to the remote workspace while the original
+    // team's retraction event fired. Switching back must catch up the missed
+    // removal without reviving either resource from a different scope.
+    await ensureRailOpen(memberPage);
+    await memberPage.getByTestId('workspace-switcher').click();
+    await memberPage
+      .getByRole('menu')
+      .getByRole('menuitem', { name: 'Multi-client team' })
+      .click();
+    await expect(memberPage.getByTestId('workspace-switcher')).toContainText(
+      'Multi-client team',
+      { timeout: T.medium },
+    );
+    await expect.poll(
+      () => readWorkspaceBilling(memberPage, MEMBER),
+      { timeout: T.medium },
+    ).toMatchObject({ planId: 'team_plus', balanceUsd: '0.00' });
+    await expect.poll(
+      () => readTeamResourceIds(memberPage, MEMBER, 'skills'),
+      { timeout: T.medium },
+    ).not.toContain(skillId);
+    await expect.poll(
+      () => readLocalResourceIds(memberPage, MEMBER, 'skills'),
+      { timeout: T.medium },
+    ).not.toContain(skillId);
+  } catch (error) {
+    failed = true;
+    await testInfo.attach('fake-team-extension-hub-log', {
+      body: JSON.stringify({
+        commands: hub.commandLog,
+        events: hub.eventLog,
+        requests: hub.requestLog,
+      }, null, 2),
+      contentType: 'application/json',
+    });
+    throw error;
+  } finally {
+    await cluster?.close({ preserve: failed });
+    await hub.close();
+  }
+});
+
 async function pinWorkspace(page: Page, workspaceMemberId: string): Promise<void> {
   const response = await page.request.put('/api/workspace/active', {
     data: { workspaceId: WORKSPACE_ID, workspaceMemberId },
@@ -806,6 +1199,40 @@ async function readAccountBillingBurst(page: Page, count: number): Promise<void>
   }
 }
 
+async function readAccountMembershipTier(page: Page): Promise<string | null> {
+  const response = await page.request.get('/api/workspace/billing?scope=account', {
+    timeout: T.long,
+  });
+  if (!response.ok()) return null;
+  const body = await response.json() as {
+    summary?: { membershipTier?: string } | null;
+  };
+  return body.summary?.membershipTier ?? null;
+}
+
+async function readWorkspaceBilling(
+  page: Page,
+  identity: typeof OWNER | typeof MEMBER,
+  workspaceId = WORKSPACE_ID,
+  headers = workspaceHeaders(identity),
+): Promise<{ planId: string | null; balanceUsd: string | null } | null> {
+  const response = await page.request.get(
+    `/api/workspace/billing?scope=workspace&workspaceId=${encodeURIComponent(workspaceId)}`,
+    { headers, timeout: T.long },
+  );
+  if (!response.ok()) return null;
+  const body = await response.json() as {
+    workspaceSnapshot?: {
+      billing?: { planId?: string | null };
+      wallet?: { balanceUsd?: string | null };
+    } | null;
+  };
+  return {
+    planId: body.workspaceSnapshot?.billing?.planId ?? null,
+    balanceUsd: body.workspaceSnapshot?.wallet?.balanceUsd ?? null,
+  };
+}
+
 function workspaceDirectoryCounts(hub: Awaited<ReturnType<typeof startFakeCollabHub>>):
   Record<string, number> {
   const counts: Record<string, number> = {};
@@ -897,6 +1324,27 @@ async function createProject(page: Page): Promise<string> {
   return body.project.id;
 }
 
+async function firstConversationId(
+  page: Page,
+  projectId: string,
+  identity: typeof OWNER | typeof MEMBER,
+): Promise<string> {
+  const response = await page.request.get(`/api/projects/${projectId}/conversations`, {
+    headers: workspaceHeaders(identity),
+    timeout: T.long,
+  });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const body = await response.json() as {
+    conversations?: Array<{ id?: string; updatedAt?: number }>;
+  };
+  const conversation = [...(body.conversations ?? [])]
+    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0];
+  if (!conversation?.id) {
+    throw new Error(`project ${projectId} has no routable conversation`);
+  }
+  return conversation.id;
+}
+
 async function writeHtml(page: Page, projectId: string, content: string): Promise<void> {
   const response = await page.request.post(`/api/projects/${projectId}/files`, {
     data: {
@@ -917,6 +1365,54 @@ async function writeHtml(page: Page, projectId: string, content: string): Promis
   expect(response.ok(), await response.text()).toBeTruthy();
 }
 
+async function writeProjectTextFile(
+  page: Page,
+  projectId: string,
+  name: string,
+  content: string,
+): Promise<void> {
+  const response = await page.request.post(`/api/projects/${projectId}/files`, {
+    data: { name, content },
+    headers: workspaceHeaders(OWNER),
+    timeout: T.long,
+  });
+  expect(response.ok(), await response.text()).toBeTruthy();
+}
+
+async function readTeamResourceIds(
+  page: Page,
+  identity: typeof OWNER | typeof MEMBER,
+  kind: 'plugins' | 'skills',
+  headers = workspaceHeaders(identity),
+): Promise<string[]> {
+  const response = await page.request.get(`/api/workspace/${kind}/team`, {
+    headers,
+    timeout: T.long,
+  });
+  if (!response.ok()) return [];
+  const body = await response.json() as { ids?: string[] };
+  return body.ids ?? [];
+}
+
+async function readLocalResourceIds(
+  page: Page,
+  identity: typeof OWNER | typeof MEMBER,
+  kind: 'plugins' | 'skills',
+  headers = workspaceHeaders(identity),
+): Promise<string[]> {
+  const response = await page.request.get(`/api/${kind}`, {
+    headers,
+    timeout: T.long,
+  });
+  if (!response.ok()) return [];
+  const body = await response.json() as {
+    plugins?: Array<{ id?: string }>;
+    skills?: Array<{ id?: string }>;
+  };
+  return (kind === 'plugins' ? body.plugins : body.skills)
+    ?.flatMap((resource) => resource.id ? [resource.id] : []) ?? [];
+}
+
 function workspaceHeaders(identity: typeof OWNER | typeof MEMBER): Record<string, string> {
   return {
     'x-od-workspace-id': WORKSPACE_ID,
@@ -927,6 +1423,20 @@ function workspaceHeaders(identity: typeof OWNER | typeof MEMBER): Record<string
     'x-od-workspace-lifecycle-state': 'active',
     'x-od-workspace-can-share-projects': 'true',
     'x-od-workspace-can-write-synced-files': 'true',
+  };
+}
+
+function addedWorkspaceHeaders(
+  identity: typeof OWNER | typeof MEMBER,
+  workspaceId: string,
+): Record<string, string> {
+  return {
+    'x-od-workspace-id': workspaceId,
+    'x-od-workspace-type': 'team',
+    'x-od-workspace-member-id': `member-${identity.memberId}-${workspaceId}`,
+    'x-od-workspace-role': 'owner',
+    'x-od-workspace-member-status': 'active',
+    'x-od-workspace-lifecycle-state': 'active',
   };
 }
 

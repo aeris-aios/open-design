@@ -749,6 +749,7 @@ import {
   type TeamMirrorPullScope,
 } from './routes/collab-sync.js';
 import {
+  emitWorkspaceEventToAllScopes,
   emitWorkspaceEventToScope,
   registerCollabContextRoutes,
 } from './routes/collab-context.js';
@@ -794,6 +795,7 @@ import {
 import {
   AUTHORITATIVE_PROJECT_PRESENCE_CAPABILITY,
   startHubEventsSubscriber,
+  WORKSPACE_DIRECTORY_EVENTS_CAPABILITY,
 } from './collab/hub-events-subscriber.js';
 import {
   createWorkspaceAuthorityHealthCoordinator,
@@ -1415,6 +1417,13 @@ function emitWorkspaceEvent(
     workspaceId,
     payload,
   );
+}
+
+function emitWorkspaceDirectoryChanged(): boolean {
+  return emitWorkspaceEventToAllScopes(workspaceEventSinks, {
+    type: 'workspace-directory-changed',
+    at: Date.now(),
+  });
 }
 
 function hubEventRefreshToken(event: {
@@ -3156,6 +3165,25 @@ export async function startServer({
     workspaceDirectoryAuthority.fresh;
   const fetchFreshBackgroundWorkspaceDirectory =
     workspaceDirectoryAuthority.backgroundFresh;
+  let workspaceHubSubscriptions: WorkspaceHubSubscriptionManager | null = null;
+  let workspaceHubAccountIdentity = velaWorkspaceDirectoryIdentity(
+    readVelaControlApiContext,
+    configuredAmrEnv(),
+  );
+  const refreshWorkspaceHubAccountIdentity = (): void => {
+    const currentIdentity = velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    );
+    if (currentIdentity === workspaceHubAccountIdentity) return;
+    workspaceHubAccountIdentity = currentIdentity;
+    workspaceDirectoryAuthority.setRealtimeHealthy(false);
+    workspaceHubSubscriptions?.refreshEndpoints();
+  };
+  const fetchWorkspaceDirectoryForAccountSurface = () => {
+    refreshWorkspaceHubAccountIdentity();
+    return fetchWorkspaceDirectory();
+  };
   const verifyExplicitWorkspaceRequestContext = async (input: {
     req: any;
     requireTeam?: boolean;
@@ -4246,7 +4274,9 @@ export async function startServer({
     // `createCollabPresenceCloudClient` for the invariant.
     cloud: createCollabPresenceCloudClient(velaCliCollabClient, presenceScopeFor),
     verifyWorkspaceRequest: (req, projectId) =>
-      verifyPresenceWorkspaceRequest(req, projectId, { backgroundFresh: true }),
+      verifyPresenceWorkspaceRequest(req, projectId, { fresh: false }),
+    verifyWorkspaceLeaveRequest: (req, projectId) =>
+      verifyPresenceWorkspaceRequest(req, projectId, { fresh: true }),
     verifyWorkspaceReadRequest: (req, projectId) =>
       verifyPresenceWorkspaceRequest(req, projectId, { fresh: false }),
     isProjectShared: async (projectId, context) => {
@@ -4906,7 +4936,6 @@ export async function startServer({
     if (!teamMembersCache) return [];
     return context ? teamMembersCache(context) : [];
   };
-  let workspaceHubSubscriptions: WorkspaceHubSubscriptionManager | null = null;
   const accountBillingSummary = createAccountBillingSummaryCache({
     identity: () => velaWorkspaceDirectoryIdentity(
       readVelaControlApiContext,
@@ -5002,7 +5031,7 @@ export async function startServer({
     // Same directory read the route would have made on its own, wrapped so every
     // workspace type it carries is memoized for the team-share invariant.
     listWorkspaceDirectory,
-    fetchWorkspaceDirectory,
+    fetchWorkspaceDirectory: fetchWorkspaceDirectoryForAccountSurface,
     refreshWorkspaceDirectoryAfterMutation:
       workspaceDirectoryAuthority.refreshAfterMutation,
     // Reuse the shared team-projects lister (which holds the shared vela-cli
@@ -5018,6 +5047,9 @@ export async function startServer({
     // registers/deregisters its sink here; the poller below feeds them.
     createSseResponse,
     workspaceEventSinks,
+    retainWorkspaceEventInterest: (workspaceId) =>
+      workspaceHubSubscriptions?.retainEventInterest(workspaceId)
+      ?? (() => undefined),
     observeWorkspace: async (req, context, properties) => {
       const service = workspaceAnalyticsService;
       const analyticsContext = readAnalyticsContext(req);
@@ -5149,6 +5181,51 @@ export async function startServer({
       console.warn(`[od] hub event refresh failed key=${key}:`, String(error));
     },
   });
+  const workspaceDirectoryRefreshes = createEventRefreshCoordinator({
+    // Directory events are account-wide and can be duplicated over several
+    // Workspace streams. Preserve an immediate leading refresh plus the final
+    // state while bounding a sustained storm to one upstream read per second.
+    minIntervalMs: 1_000,
+    onError: (error) => {
+      console.warn('[od] workspace directory event refresh failed:', String(error));
+    },
+  });
+  const directoryConnectionIdentities = new Map<string, string>();
+  const directoryHealthyConnections = new Set<string>();
+  const directoryConnectionKey = (
+    workspaceId: string,
+    identityKey: string,
+  ) => `${identityKey}\0${workspaceId}`;
+  const currentWorkspaceDirectoryIdentity = () =>
+    velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    );
+  const syncWorkspaceDirectoryRealtimeHealth = (): void => {
+    const currentIdentity = currentWorkspaceDirectoryIdentity();
+    workspaceDirectoryAuthority.setRealtimeHealthy(
+      [...directoryHealthyConnections].some((key) =>
+        key.startsWith(`${currentIdentity}\0`)),
+    );
+  };
+  const requestWorkspaceDirectoryRefresh = (
+    reason: 'event_dirty' | 'auth_reject' | 'catch_up',
+    token?: string,
+    expectedIdentity = currentWorkspaceDirectoryIdentity(),
+  ): void => {
+    workspaceDirectoryRefreshes.request(
+      'workspace-directory',
+      async () => {
+        if (currentWorkspaceDirectoryIdentity() !== expectedIdentity) return;
+        workspaceDirectoryAuthority.invalidate(reason);
+        const directory = await fetchFreshBackgroundWorkspaceDirectory();
+        if (currentWorkspaceDirectoryIdentity() !== expectedIdentity) return;
+        if (!directory.ok) return;
+        emitWorkspaceDirectoryChanged();
+      },
+      token,
+    );
+  };
   const restoreDirtyCommentProject = (projectId: string) => {
     dirtyCommentProjects.add(projectId);
     // The upstream hub event has already proved that this project changed.
@@ -5188,24 +5265,71 @@ export async function startServer({
       return {
         url: new URL('/api/v1/collab/events', session.apiUrl).toString(),
         workspaceId: subscribedWorkspaceId,
+        identityKey: currentWorkspaceDirectoryIdentity(),
         headers: {
           authorization: `Bearer ${session.controlKey}`,
           'x-vela-workspace-id': subscribedWorkspaceId,
         },
       };
     },
-    onStateChange: (state) => {
+    onStateChange: (state, connection) => {
       if (state === 'disconnected') {
         authoritativePresenceWorkspaces.delete(subscribedWorkspaceId);
+        const identityKey =
+          connection.identityKey
+          ?? directoryConnectionIdentities.get(subscribedWorkspaceId);
+        if (
+          !identityKey
+          || directoryConnectionIdentities.get(subscribedWorkspaceId)
+            === identityKey
+        ) {
+          directoryConnectionIdentities.delete(subscribedWorkspaceId);
+        }
+        if (identityKey) {
+          directoryHealthyConnections.delete(
+            directoryConnectionKey(subscribedWorkspaceId, identityKey),
+          );
+        }
+        syncWorkspaceDirectoryRealtimeHealth();
       }
       console.info(`[od] hub events channel ${state}`);
     },
     onAuthorityHealthChange: ({
       workspaceId,
+      identityKey,
       healthy,
       capabilities,
       listenerStatus,
     }) => {
+      if (
+        identityKey
+        && identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
+      const exactWorkspaceId = workspaceId ?? subscribedWorkspaceId;
+      const exactIdentityKey =
+        identityKey
+        ?? directoryConnectionIdentities.get(exactWorkspaceId)
+        ?? currentWorkspaceDirectoryIdentity();
+      if (capabilities.includes(WORKSPACE_DIRECTORY_EVENTS_CAPABILITY)) {
+        directoryConnectionIdentities.set(exactWorkspaceId, exactIdentityKey);
+      } else {
+        directoryConnectionIdentities.delete(exactWorkspaceId);
+      }
+      const connectionKey = directoryConnectionKey(
+        exactWorkspaceId,
+        exactIdentityKey,
+      );
+      if (
+        healthy
+        && capabilities.includes(WORKSPACE_DIRECTORY_EVENTS_CAPABILITY)
+      ) {
+        directoryHealthyConnections.add(connectionKey);
+      } else {
+        directoryHealthyConnections.delete(connectionKey);
+      }
+      syncWorkspaceDirectoryRealtimeHealth();
       recordWorkspaceAuthorityRealtimeTransition({
         mode: workspaceAuthorityCacheMode,
         healthy,
@@ -5216,16 +5340,43 @@ export async function startServer({
         sourceGap: listenerStatus?.sourceGap === true,
       });
       void workspaceAuthorityHealth.update({
-        workspaceId: workspaceId ?? subscribedWorkspaceId,
+        workspaceId: exactWorkspaceId,
         healthy,
       });
     },
-    onConnect: ({ reconnect, workspaceId, capabilities }) => {
+    onConnect: ({ reconnect, workspaceId, identityKey, capabilities }) => {
+      if (
+        identityKey
+        && identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
       const verifiedWorkspaceId = workspaceId ?? subscribedWorkspaceId;
+      const verifiedIdentityKey =
+        identityKey ?? currentWorkspaceDirectoryIdentity();
       if (capabilities.includes(AUTHORITATIVE_PROJECT_PRESENCE_CAPABILITY)) {
         authoritativePresenceWorkspaces.add(verifiedWorkspaceId);
       } else {
         authoritativePresenceWorkspaces.delete(verifiedWorkspaceId);
+      }
+      if (capabilities.includes(WORKSPACE_DIRECTORY_EVENTS_CAPABILITY)) {
+        const hadDirectoryCarrier = [
+          ...directoryConnectionIdentities.values(),
+        ].includes(verifiedIdentityKey);
+        directoryConnectionIdentities.set(
+          verifiedWorkspaceId,
+          verifiedIdentityKey,
+        );
+        // One account signal is fanned to every capable stream. Only the first
+        // live carrier needs a snapshot boundary; additional Workspace streams
+        // would produce the same GET and are intentionally free.
+        if (!hadDirectoryCarrier) {
+          requestWorkspaceDirectoryRefresh(
+            'catch_up',
+            undefined,
+            verifiedIdentityKey,
+          );
+        }
       }
       console.info(
         `[od] hub events workspace verified workspaceId=${workspaceId ?? 'unknown'} reconnect=${reconnect}`,
@@ -5248,7 +5399,13 @@ export async function startServer({
           `actualWorkspaceId=${actualWorkspaceId ?? 'unknown'}`,
       );
     },
-    onAccessRevoked: ({ workspaceId, reason }) => {
+    onAccessRevoked: ({ workspaceId, identityKey, reason }) => {
+      if (
+        identityKey
+        && identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
       const revocationReceivedAt = performance.now();
       const exactWorkspaceId = workspaceId ?? subscribedWorkspaceId;
       console.info(
@@ -5275,8 +5432,33 @@ export async function startServer({
         workspaceAuthorityCacheMode,
         performance.now() - revocationReceivedAt,
       );
+      requestWorkspaceDirectoryRefresh(
+        'auth_reject',
+        `revoked:${exactWorkspaceId}`,
+      );
     },
-    onEvent: (event) => {
+    onDirectoryEvent: (event, connection) => {
+      if (
+        connection.identityKey
+        && connection.identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
+      requestWorkspaceDirectoryRefresh(
+        'event_dirty',
+        event.at
+          ? [event.type, event.workspaceId, event.change, event.at].join(':')
+          : undefined,
+        connection.identityKey ?? currentWorkspaceDirectoryIdentity(),
+      );
+    },
+    onEvent: (event, connection) => {
+      if (
+        connection.identityKey
+        && connection.identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
       const eventWorkspaceId =
         event.workspaceId ?? subscribedWorkspaceId;
       console.info(
@@ -5594,7 +5776,13 @@ export async function startServer({
         }
       }
     },
-    onReconnect: () => {
+    onReconnect: (connection) => {
+      if (
+        connection.identityKey
+        && connection.identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
       // Close the disconnect gap: one catch-up cycle over the same reads the
       // pollers watch, plus a comment pull for open projects.
       void refreshWorkspaceDigestFaces(
@@ -5618,12 +5806,23 @@ export async function startServer({
       void reconcileTeamResourcesFromRemote(undefined, subscribedWorkspaceId, 'catch-up')
         .catch(() => undefined);
     },
-    onSourceGap: ({ workspaceId, listenerEpoch }) => {
+    onSourceGap: ({ workspaceId, identityKey, listenerEpoch }) => {
+      if (
+        identityKey
+        && identityKey !== currentWorkspaceDirectoryIdentity()
+      ) {
+        return;
+      }
       console.warn(
         `[od] hub source gap detected listenerEpoch=${listenerEpoch} ` +
           `workspaceId=${workspaceId ?? 'unknown'}`,
       );
       const exactWorkspaceId = workspaceId ?? subscribedWorkspaceId;
+      requestWorkspaceDirectoryRefresh(
+        'catch_up',
+        `source-gap:${listenerEpoch}`,
+        identityKey ?? currentWorkspaceDirectoryIdentity(),
+      );
       void refreshWorkspaceDigestFaces(exactWorkspaceId, { revalidate: true })
         .then(() => pollWorkspaceInvalidationForWorkspace(exactWorkspaceId))
         .catch(() => undefined);
@@ -8034,6 +8233,7 @@ export async function startServer({
     appConfig: { readAppConfig },
     http: { getPublicBaseUrl },
     env: process.env,
+    onCredentialStateObserved: refreshWorkspaceHubAccountIdentity,
   });
 
   const allowScopedPluginReplace = (
@@ -14620,6 +14820,7 @@ export async function startServer({
       clearInterval(teamResourcesPollTimer);
       workspaceHubSubscriptions?.dispose();
       hubEventRefreshes.dispose();
+      workspaceDirectoryRefreshes.dispose();
       workspaceBillingRuntime.dispose();
       proactiveContentPull.dispose();
       collabCloud?.dispose();
