@@ -80,6 +80,30 @@ export function buildNotInvocableDiagnostic(
   };
 }
 
+export function buildVersionDiagnostic(
+  def: Pick<RuntimeAgentDef, 'name' | 'versionPolicy'>,
+  version: string | null,
+): AgentDiagnostic {
+  const supported = def.versionPolicy?.supportedVersions ?? [];
+  const expected = supported.length > 0 ? supported.join(', ') : 'a supported version';
+  if (!version) {
+    return {
+      reason: 'version-probe-failed',
+      severity: 'error',
+      message: `${def.name} was found, but Open Design could not verify its version.`,
+      detail: `Expected ${expected}.`,
+      fixActions: [{ kind: 'openDocs' }, { kind: 'openInstall' }, { kind: 'rescan' }],
+    };
+  }
+  return {
+    reason: 'unsupported-version',
+    severity: 'error',
+    message: `${def.name} ${version} is not supported by this Open Design build.`,
+    detail: `Supported versions: ${expected}.`,
+    fixActions: [{ kind: 'openDocs' }, { kind: 'openInstall' }, { kind: 'rescan' }],
+  };
+}
+
 // The agent is installed and invocable but its auth probe reported a
 // missing / unverifiable credential. Detection only reaches this helper for
 // adapters that declare a cheap, side-effect-free authProbe; until an adapter

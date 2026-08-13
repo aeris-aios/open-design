@@ -73,6 +73,10 @@ export type AgentDiagnosticReason =
   | 'shim-broken'
   /** A user-set `*_BIN` override points at a missing/invalid file. */
   | 'configured-bin-invalid'
+  /** The binary ran, but its version could not be read under a strict policy. */
+  | 'version-probe-failed'
+  /** The installed CLI version is outside this Open Design build's tested set. */
+  | 'unsupported-version'
   /** Installed and invocable, but the CLI is not authenticated. */
   | 'auth-missing'
   /** Installed, but auth status could not be verified. */

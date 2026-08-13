@@ -17,6 +17,7 @@ import {
   buildAuthDiagnostic,
   buildExecutableDiagnostic,
   buildNotInvocableDiagnostic,
+  buildVersionDiagnostic,
   type NotInvocableCause,
 } from './diagnostics.js';
 import type {
@@ -153,7 +154,7 @@ async function probeVersionAtPath(
       env,
       timeout: def.versionProbeTimeoutMs ?? 3000,
     });
-    const version = String(stdout).trim().split('\n')[0] ?? null;
+    const version = String(stdout).trim().split('\n')[0]?.trim() || null;
     return { kind: 'spawned', version };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
@@ -271,6 +272,12 @@ async function probe(
       buildNotInvocableDiagnostic(def, launch, outcome.cause),
     ]);
   }
+  if (
+    def.versionPolicy?.requireVersion &&
+    (!outcome.version || !def.versionPolicy.supportedVersions.includes(outcome.version))
+  ) {
+    return unavailableAgent(def, [buildVersionDiagnostic(def, outcome.version)]);
+  }
   // The version probe must finish first (it gates availability), but the
   // three post-version probes are independent reads — run them concurrently
   // so a single agent's detection wall is max(help, models, auth) ≈ 5s rather
@@ -338,6 +345,7 @@ function stripFns(
     capabilityFlags,
     fallbackBins,
     versionProbeTimeoutMs,
+    versionPolicy,
     maxPromptArgBytes,
     env,
     inactivityTimeoutMs,
@@ -348,7 +356,7 @@ function stripFns(
   return rest;
 }
 
-async function safeProbe(
+export async function detectAgent(
   def: RuntimeAgentDef,
   configuredEnv: Record<string, string> = {},
 ): Promise<DetectedAgent> {
@@ -386,7 +394,7 @@ export async function detectAgents(
   configuredEnvByAgent: Record<string, Record<string, string>> = {},
 ) {
   const results = await Promise.all(
-    AGENT_DEFS.map((def) => safeProbe(def, configuredEnvForAgent(configuredEnvByAgent, def.id))),
+    AGENT_DEFS.map((def) => detectAgent(def, configuredEnvForAgent(configuredEnvByAgent, def.id))),
   );
   // Refresh the validation cache from whatever we just surfaced to the UI
   // so /api/chat can accept any model the user could have just picked,
@@ -409,7 +417,7 @@ export async function* detectAgentsStream(
   configuredEnvByAgent: Record<string, Record<string, string>> = {},
 ): AsyncGenerator<DetectedAgent> {
   const tagged = AGENT_DEFS.map((def, index) =>
-    safeProbe(def, configuredEnvForAgent(configuredEnvByAgent, def.id)).then((agent) => {
+    detectAgent(def, configuredEnvForAgent(configuredEnvByAgent, def.id)).then((agent) => {
       rememberDetectedLiveModels(def, configuredEnvForAgent(configuredEnvByAgent, def.id), agent);
       return { index, agent };
     }),

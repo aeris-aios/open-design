@@ -13,6 +13,14 @@ describe('classifyAgentServiceFailure', () => {
     }
   });
 
+  it('classifies the official DeepSeek Harness missing-credential failure', () => {
+    expect(
+      classifyAgentServiceFailure(
+        'dsh: MISSING_CREDENTIAL: llm-deepseek: no API key for provider route "deepseek-official"; export DEEPSEEK_API_KEY',
+      ),
+    ).toBe('AGENT_AUTH_REQUIRED');
+  });
+
   it('classifies quota / rate-limit / balance failures', () => {
     for (const text of [
       'Error: 429 Too Many Requests',
