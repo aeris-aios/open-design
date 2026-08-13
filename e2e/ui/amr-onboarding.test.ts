@@ -384,7 +384,7 @@ test('[P0] onboarding AMR runtime selection carries into the first Home run requ
   });
 });
 
-test('[P0] completed BYOK setup resumes after passive Cloud reauthentication without reopening the chooser', async ({ page }) => {
+test('[P0] completed BYOK setup stays usable while the unrelated Cloud session is signed out', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: true,
     initialLoggedIn: false,
@@ -402,10 +402,8 @@ test('[P0] completed BYOK setup resumes after passive Cloud reauthentication wit
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
   await dismissPrivacyDialog(page);
-  await expect(page).toHaveURL(/\/onboarding$/);
-
-  await clickCloudPrimary(page);
-  await expectOnboardingFinished(page);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('home-hero-input')).toBeVisible();
   await expect(page.getByRole('heading', { name: /Choose your model source|选择模型来源/i })).toHaveCount(0);
   // PRODUCT INVARIANT: Cloud identity gates Open Design Cloud execution only.
   // A configured BYOK runtime neither redirects to onboarding nor starts a
