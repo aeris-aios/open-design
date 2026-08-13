@@ -372,6 +372,7 @@ import {
   registerBuiltInAtomWorkers,
   registerBundledPlugins,
   registryRootsForDataDir,
+  resolveLocalPluginBySource,
   restoreProjectSnapshotLink,
   resolvePluginSnapshot,
   runPipelineForRun,
@@ -3366,8 +3367,9 @@ export async function startServer({
       : null;
   };
   const verifyWorkspaceContextReadAuthority = async (req: unknown) => {
-    const cached = cachedWorkspaceContextForRequest(req);
-    if (cached) return { ok: true as const, context: cached };
+    // `resolveExact` is enrichment, including when its strict-SSE lease is
+    // healthy. Only the membership directory can supply authority-bearing
+    // type, role, lifecycle, and permissions for the context response.
     return verifyWorkspaceReadAuthority(req);
   };
   /**
@@ -7316,6 +7318,11 @@ export async function startServer({
         options.workspaceId,
         options.workspaceMemberId,
       ),
+      getLocalPluginBySource: (id, source) => getLocalPluginBySource(
+        db,
+        id,
+        source,
+      ),
     },
     events: projectEventDeps,
     ids: idDeps,
@@ -8224,6 +8231,16 @@ export async function startServer({
       (plugin) => plugin.id === id,
     ) ?? null;
   };
+  const getLocalPluginBySource = async (
+    dbHandle,
+    id: string,
+    source: string,
+  ) => resolveLocalPluginBySource({
+    db: dbHandle,
+    id,
+    source,
+    userPluginsRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
+  });
 
   registerPluginRoutes(app, {
     db,
@@ -8246,6 +8263,7 @@ export async function startServer({
       listInstalledPlugins: listWorkspacePlugins,
       getInstalledPlugin,
       getWorkspacePlugin: getWorkspacePluginForRequest,
+      getLocalPluginBySource,
       installPlugin,
       isSafePluginId,
       uninstallPlugin,
@@ -8367,8 +8385,33 @@ export async function startServer({
       typeof projectWorkspaceBinding?.createdByWorkspaceMemberId === 'string'
         ? projectWorkspaceBinding.createdByWorkspaceMemberId.trim()
         : '';
+    const metadata = project?.metadata;
+    const localCatalogScope = (value) => {
+      const workspaceId = typeof value?.workspaceId === 'string'
+        ? value.workspaceId.trim()
+        : '';
+      const workspaceMemberId = typeof value?.workspaceMemberId === 'string'
+        ? value.workspaceMemberId.trim()
+        : '';
+      return workspaceId && workspaceMemberId
+        ? { workspaceId, workspaceMemberId }
+        : null;
+    };
+    // Resource provenance is intentionally independent from project
+    // attribution. A Home selection can be staged while Workspace identity is
+    // transitioning; the daemon persists the local catalogue partition so
+    // the first run reads the same local record without waiting for identity
+    // discovery or treating this as remote membership authority.
+    const skillCatalogScope = localCatalogScope(metadata?.localCatalogScopes?.skill);
+    const designSystemCatalogScope = localCatalogScope(
+      metadata?.localCatalogScopes?.designSystem,
+    );
+    const designSystemWorkspaceId =
+      designSystemCatalogScope?.workspaceId ?? projectWorkspaceId;
+    const designSystemMemberId =
+      designSystemCatalogScope?.workspaceMemberId ?? projectCreatorMemberId;
     const projectDesignSystemBinding = (summary) => {
-      if (!projectWorkspaceId || summary?.source === 'built-in') return null;
+      if (!designSystemWorkspaceId || summary?.source === 'built-in') return null;
       const logicalResourceId =
         typeof summary?.id === 'string' ? summary.id.trim() : '';
       if (!logicalResourceId) return null;
@@ -8376,9 +8419,9 @@ export async function startServer({
         const canonicalTeamBinding = getWorkspaceResource(
           db,
           'design_system',
-          projectWorkspaceId,
+          designSystemWorkspaceId,
           workspaceTeamDesignSystemBindingResourceId(
-            projectWorkspaceId,
+            designSystemWorkspaceId,
             logicalResourceId,
           ),
         );
@@ -8389,7 +8432,7 @@ export async function startServer({
       return getWorkspaceResource(
         db,
         'design_system',
-        projectWorkspaceId,
+        designSystemWorkspaceId,
         logicalResourceId,
       ) ?? null;
     };
@@ -8398,7 +8441,7 @@ export async function startServer({
       // A truly unbound local project is the legacy CLI/BYOK lane. Bound
       // projects must resolve resources from their persisted project scope;
       // shell/current Workspace state never participates.
-      if (!projectWorkspaceId) return true;
+      if (!designSystemWorkspaceId) return true;
       const binding = projectDesignSystemBinding(summary);
       if (
         !binding
@@ -8408,8 +8451,8 @@ export async function startServer({
       }
       if (binding.visibility === 'team') return true;
       return binding.visibility === 'personal'
-        && Boolean(projectCreatorMemberId)
-        && binding.createdByWorkspaceMemberId?.trim() === projectCreatorMemberId;
+        && Boolean(designSystemMemberId)
+        && binding.createdByWorkspaceMemberId?.trim() === designSystemMemberId;
     };
     let appConfigForPrompt = null;
     try {
@@ -8434,7 +8477,6 @@ export async function startServer({
     }
     const effectiveSkillId =
       typeof skillId === 'string' && skillId ? skillId : project?.skillId;
-    const metadata = project?.metadata;
     // Website Clone runs reproduce someone else's site: the fidelity target
     // is the original page. Treating a project/app design system as
     // authoritative would overwrite the cloned site's palette/typography
@@ -8460,16 +8502,21 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getWorkspaceProjectByProjectId(db, projectId)
         : null;
-    let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
-    const loadAllSkills = async () => {
-      allSkillsPromise ??= projectResourceScope?.workspaceId
-        ? listAllSkillLikeEntries({
+    const skillResourceScope = skillCatalogScope ?? (
+      projectResourceScope?.workspaceId
+        ? {
             workspaceId: String(projectResourceScope.workspaceId),
             workspaceMemberId:
               typeof projectResourceScope.createdByWorkspaceMemberId === 'string'
                 ? projectResourceScope.createdByWorkspaceMemberId
                 : null,
-          })
+          }
+        : null
+    );
+    let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
+    const loadAllSkills = async () => {
+      allSkillsPromise ??= skillResourceScope
+        ? listAllSkillLikeEntries(skillResourceScope)
         : listAllSkillLikeEntries();
       return await allSkillsPromise;
     };
@@ -8727,10 +8774,10 @@ export async function startServer({
     let activeDesignSystemId = null;
     let designSystemDigest = null;
     if (effectiveDesignSystemId) {
-      const designSystemListOptions = projectWorkspaceId
+      const designSystemListOptions = designSystemWorkspaceId
         ? {
-            workspaceId: projectWorkspaceId,
-            workspaceMemberId: projectCreatorMemberId || null,
+            workspaceId: designSystemWorkspaceId,
+            workspaceMemberId: designSystemMemberId || null,
           }
         : {};
       let systems = await listAllDesignSystems(designSystemListOptions);
@@ -8771,8 +8818,8 @@ export async function startServer({
         // from real disk fixtures (see `tests/design-system-assets.test.ts`).
         const resourceBinding = projectDesignSystemBinding(summary);
         const scopedUserDesignSystemsRoot =
-          projectWorkspaceId && resourceBinding?.visibility === 'team'
-            ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, projectWorkspaceId)
+          designSystemWorkspaceId && resourceBinding?.visibility === 'team'
+            ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, designSystemWorkspaceId)
             : USER_DESIGN_SYSTEMS_DIR;
         const assets = await resolveDesignSystemAssets(
           effectiveDesignSystemId,

@@ -22,6 +22,7 @@ import {
 import type {
   AmrModelsResponse,
   ChatSessionMode,
+  LocalCatalogScope,
   RunContextSelection,
   TeamProject,
   WorkspaceCollabContext,
@@ -122,6 +123,7 @@ import {
   useWorkspaceBilling,
   useWorkspaceContext,
   workspaceIdentityCacheKey,
+  workspaceResourceReadContext,
 } from './collab/useWorkspaceContext';
 import {
   projectResourceReadsCanStart,
@@ -227,6 +229,9 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   metadata?: CreateInput['metadata'];
   pendingPrompt?: string;
   pluginId?: string;
+  pluginSource?: string;
+  skillCatalogScope?: LocalCatalogScope | null;
+  designSystemCatalogScope?: LocalCatalogScope | null;
   pluginType?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
@@ -2886,26 +2891,15 @@ function AppInner() {
       let optimisticProjectId: string | null = null;
       let result;
       try {
-        const executionConfig = configRef.current;
-        const usesAmrCloud =
-          executionConfig.mode === 'daemon'
-          && executionConfig.agentId === AMR_AGENT_ID;
-        const isExplicitlySignedOut =
-          amrLoginStatusRef.current?.loggedIn === false;
-        createWorkspaceContext = resolvedWorkspaceContextForWrite(
-          workspaceContextStateRef.current,
-          {
-            // Local/BYOK may create without AMR Workspace authority only after
-            // the independent login read explicitly proves there is no AMR
-            // identity. An unknown or signed-in identity can still own a Team
-            // Workspace whose directory read is merely slow/unavailable, so
-            // executor selection must not silently turn that Team project into
-            // an unscoped Personal one. Unsupported/settled no-workspace states
-            // already retain their explicit compatibility behavior below.
-            unavailablePolicy:
-              !usesAmrCloud && isExplicitlySignedOut ? 'unscoped' : 'reject',
-          },
-        );
+        // PRODUCT INVARIANT: ordinary project creation is local. Reuse a
+        // current in-memory Workspace snapshot for `personal` + `local_only`
+        // attribution when available, but never start identity discovery or
+        // block creation on Workspace availability. Remote share/sync/move
+        // operations retain their authoritative gates.
+        const createWorkspaceState = workspaceContextStateRef.current;
+        createWorkspaceContext = createWorkspaceState.failure === 'unsupported'
+          ? null
+          : workspaceResourceReadContext(createWorkspaceState);
         if (
           input.amrGatePrecheckWitness &&
           !amrBalanceGateScopesMatch(
@@ -2963,11 +2957,18 @@ function AppInner() {
           ...(optimisticProjectId ? { id: optimisticProjectId } : {}),
           name: input.name,
           skillId: input.skillId,
+          ...(input.skillCatalogScope
+            ? { skillCatalogScope: input.skillCatalogScope }
+            : {}),
           designSystemId: input.designSystemId,
+          ...(input.designSystemCatalogScope
+            ? { designSystemCatalogScope: input.designSystemCatalogScope }
+            : {}),
           pendingPrompt: derivedPendingPrompt,
           metadata,
           ...(input.conversationMode ? { conversationMode: input.conversationMode } : {}),
           ...(input.pluginId ? { pluginId: input.pluginId } : {}),
+          ...(input.pluginSource ? { pluginSource: input.pluginSource } : {}),
           ...(input.appliedPluginSnapshotId
             ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
             : {}),
