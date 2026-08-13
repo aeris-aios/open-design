@@ -29,7 +29,7 @@ import {
   runAgentProviderId,
 } from '../analytics/run-task';
 import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analytics/amr-attribution';
-import { useT } from '../i18n';
+import { useI18n, useT } from '../i18n';
 import { startersForProduct, type ProductType } from '../onboarding/recommendation';
 import { starterCopyFor } from '../onboarding/starter-copy';
 import {
@@ -89,6 +89,7 @@ import {
 import {
   amrPlansUrlForProfile,
   amrRechargeUrlForProfile,
+  formatModelWindowRetryAt,
   resolveRunFailureUi,
 } from '../runtime/amr-guidance';
 import {
@@ -1007,7 +1008,7 @@ export function ChatPane({
   config,
 }: Props) {
   const { workspaceContext } = useProjectCollabContext();
-  const t = useT();
+  const { t, locale } = useI18n();
   const analytics = useAnalytics();
   const displayMessages = useMemo(
     () => messages.filter((message) => !shouldHideEmptyBrandAssistantMessage(message, projectMetadata)),
@@ -1306,6 +1307,10 @@ export function ChatPane({
         failedRunErrorEvent?.code,
         failedRunErrorEvent?.failureDetail,
         retryAssistant.agentId,
+        // The raw upstream sentence, so a failure whose copy names something the
+        // gateway reported (the instant a model window reopens) can read it back
+        // out. Same string the card renders under 「查看详情」.
+        failedRunErrorEvent?.detail,
       )
     : null;
   const hasInlineAmrAuthorizeFailure = Boolean(
@@ -1500,8 +1505,16 @@ export function ChatPane({
   const failedAgentLabel =
     agentDisplayName(retryAssistant?.agentId, retryAssistant?.agentName) ??
     t('chat.runError.agentFallback');
+  // Values the failure copy names, localized before interpolation: the gateway
+  // reports a UTC instant, the reader waits on their own clock.
+  const runFailureMessageVars = runFailureUi?.messageVars?.retryAt
+    ? {
+        ...runFailureUi.messageVars,
+        retryAt: formatModelWindowRetryAt(runFailureUi.messageVars.retryAt, locale),
+      }
+    : runFailureUi?.messageVars;
   const displayError = runFailureUi?.messageKey
-    ? t(runFailureUi.messageKey, { agent: failedAgentLabel })
+    ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
     : rawError;
   const errorDiagnosticText = displayError
     ? buildRunErrorDiagnosticText({

@@ -121,6 +121,10 @@ import {
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
+import {
+  amrPlansUrlForProfile,
+  amrPlansUrlForWorkspace,
+} from '../runtime/amr-guidance';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { EntryBlankState } from './EntryBlankState';
 import { RecentProjectsStrip } from './RecentProjectsStrip';
@@ -239,9 +243,6 @@ import {
 import { enterpriseUrl } from './enterpriseUrl';
 import { resolveByokModelPreference } from './byok/validation';
 import onboardingSourceStyles from './OnboardingModelSource.module.css';
-
-const DEEPSEEK_CAMPAIGN_PRICING_URL =
-  'https://open-design.ai/zh/pricing/?source=desktop_campaign_badge';
 
 // Persist the entry nav-rail open/collapsed state so it survives both a
 // home -> project -> home navigation (EntryShell unmounts on the project
@@ -1159,8 +1160,8 @@ export function EntryShell({
     trackDeepSeekCampaignBadgeSurfaceView(analytics.track, {
       page_name: 'home',
       area: 'campaign_badge',
-      element: 'deepseek_v4_flash',
-      campaign_id: 'deepseek_v4_flash',
+      element: 'deepseek_v4_pro',
+      campaign_id: 'deepseek_v4_pro',
       user_state: deepSeekV4FlashCampaignAudience,
     });
   }, [analytics.track, deepSeekV4FlashCampaignAudience, view]);
@@ -1170,7 +1171,7 @@ export function EntryShell({
       page_name: 'home',
       area: 'campaign_badge',
       element: 'open_pricing',
-      campaign_id: 'deepseek_v4_flash',
+      campaign_id: 'deepseek_v4_pro',
       user_state: deepSeekV4FlashCampaignAudience,
     });
     const attribution = recordAmrEntry(
@@ -1179,7 +1180,7 @@ export function EntryShell({
       new Date(),
       {
         metricsConsent: config.telemetry?.metrics === true,
-        campaignId: 'deepseek_v4_flash',
+        campaignId: 'deepseek_v4_pro',
         conversionSource: 'deepseek_workbench_badge',
       },
     );
@@ -1188,8 +1189,17 @@ export function EntryShell({
       resolvedDeviceId: getResolvedDeviceId(),
       installationId: config.installationId,
     });
+    // The same destination the modal's CTA opens: the console's plan surface,
+    // scoped to this workspace. Both are in-product entries for a signed-in
+    // user, so pointing one at the console (where a subscription can actually
+    // be started) and the other at the marketing site would split one funnel
+    // across two destinations — and the marketing link was pinned to `/zh/`,
+    // landing every non-Chinese user on a Chinese page.
+    const plansUrl =
+      amrPlansUrlForWorkspace(undefined, workspaceContext?.workspaceId)
+      ?? amrPlansUrlForProfile(undefined);
     window.open(
-      attributedAmrUrl(DEEPSEEK_CAMPAIGN_PRICING_URL, attribution, deviceId),
+      attributedAmrUrl(plansUrl, attribution, deviceId),
       '_blank',
       'noopener,noreferrer',
     );
@@ -1198,6 +1208,7 @@ export function EntryShell({
     config.installationId,
     config.telemetry?.metrics,
     deepSeekV4FlashCampaignAudience,
+    workspaceContext?.workspaceId,
   ]);
   // 产品拍板 D5: the campaign modal's paid 立即使用 performs the REAL switch —
   // daemon execution mode + Cloud agent (amr) + DeepSeek V4 Flash — through
