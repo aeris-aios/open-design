@@ -418,59 +418,7 @@ test('[P0] completed BYOK setup stays usable while the unrelated Cloud session i
   });
 });
 
-<<<<<<< HEAD
-test('[P0] active Cloud sign-out clears execution setup, preserves unrelated preferences, and returns to onboarding', async ({ page }) => {
-=======
-test('[P0] definitively expired Cloud auth returns to the existing sign-in gate without a dismissible modal', async ({ page }) => {
-  const config = await wireOnboardingMocks(page, {
-    amrAvailable: true,
-    initialLoggedIn: true,
-    sessionState: 'reauth_required',
-  });
-  Object.assign(config, {
-    agentId: 'amr',
-    onboardingCompleted: true,
-  } satisfies Partial<OnboardingConfig>);
-  await mockAmrPersonalWorkspace(page);
-  await seedOnboardingConfig(page, config);
-
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await waitForLoadingToClear(page);
-  await dismissPrivacyDialog(page);
-
-  await expect(page).toHaveURL(/\/onboarding$/, { timeout: T.long });
-  await expect(connectLandingHeading(page)).toBeVisible();
-  await expect(page.getByRole('alertdialog')).toHaveCount(0);
-  await pollStoredConfig(page).toMatchObject({
-    agentId: 'amr',
-    onboardingCompleted: true,
-  });
-});
-
-test('[P0] definitively expired Cloud auth also gates project deep links', async ({ page }) => {
-  const config = await wireOnboardingMocks(page, {
-    amrAvailable: true,
-    initialLoggedIn: true,
-    sessionState: 'reauth_required',
-  });
-  Object.assign(config, {
-    agentId: 'amr',
-    onboardingCompleted: true,
-  } satisfies Partial<OnboardingConfig>);
-  await mockAmrPersonalWorkspace(page);
-  await seedOnboardingConfig(page, config);
-
-  await page.goto('/projects/expired-auth-project', { waitUntil: 'domcontentloaded' });
-  await waitForLoadingToClear(page);
-  await dismissPrivacyDialog(page);
-
-  await expect(page).toHaveURL(/\/onboarding$/, { timeout: T.long });
-  await expect(connectLandingHeading(page)).toBeVisible();
-  await expect(page.getByRole('alertdialog')).toHaveCount(0);
-});
-
 test('[P0] active Cloud sign-out clears execution setup, preserves unrelated preferences, and returns to sign-in', async ({ page }) => {
->>>>>>> 34c796a4d (test(e2e): assert Cloud sign-in after logout (#6828))
   const config = await wireOnboardingMocks(page, {
     amrAvailable: true,
     initialLoggedIn: true,

@@ -53,11 +53,7 @@ function amrAgentToggle(settings: Locator): Locator {
   return settings.getByTestId('settings-agent-card-amr').getByRole('button').first();
 }
 
-<<<<<<< HEAD
-test('[P0] after local Sign out, the app returns to onboarding and AMR runs require re-login without clearing setup', async ({ page }) => {
-=======
-test('[P0] after local Sign out, the app returns to Cloud sign-in without clearing setup', async ({ page }) => {
->>>>>>> 34c796a4d (test(e2e): assert Cloud sign-in after logout (#6828))
+test('[P0] after local Sign out, the app returns to Cloud sign-in and AMR runs require re-login without clearing setup', async ({ page }) => {
   await stubCatalogsEmpty(page);
   const root = join(tmpdir(), `open-design-amr-logout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const reloginVelaBin = await writeFakeVelaBin(join(root, 'bin-relogin'), {
