@@ -1445,13 +1445,16 @@ app.whenReady().then(async () => {
     const prepared = await window.webContents.executeJavaScript(${JSON.stringify(prepareSource)}, true);
     if (!prepared?.prepared || prepared.error) throw new Error(prepared?.error || 'PPTX DOM normalization failed');
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-    const compositedPseudoContentGeometry = await window.webContents.executeJavaScript(
-      '(() => { const rect = document.querySelector(".composited-pseudo-content").getBoundingClientRect(); return { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }; })()',
+    const compositedPseudoContentCapture = await window.webContents.executeJavaScript(
+      '(() => { const rect = document.querySelector(".composited-pseudo-content").getBoundingClientRect(); return { geometry: { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
       true,
     );
     const compositedPseudoContentScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
       captureBeyondViewport: true,
-      clip: { ...compositedPseudoContentGeometry, scale: 1 },
+      clip: {
+        ...compositedPseudoContentCapture.geometry,
+        scale: 2 / compositedPseudoContentCapture.pixelRatio,
+      },
       format: 'png',
       fromSurface: true,
     });
