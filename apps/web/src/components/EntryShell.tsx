@@ -113,8 +113,8 @@ import { AmrBalanceDialog } from './AmrBalanceDialog';
 import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalanceDialog';
 import {
   amrBalanceGateScopeForWorkspaceContext,
-  amrBalanceGateScopesMatch,
   checkAmrBalanceGate,
+  retryUnavailableAmrBalanceGate,
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
@@ -144,6 +144,7 @@ import {
   useTeamProjects,
   useWorkspaceBillingResponse,
   useWorkspaceContext,
+  workspaceResourceReadContext,
   workspaceBillingBalanceUsd,
   workspaceBillingSummaryForContext,
 } from '../collab/useWorkspaceContext';
@@ -289,6 +290,9 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   metadata?: CreateInput['metadata'];
   pendingPrompt?: string;
   pluginId?: string;
+  pluginSource?: string;
+  skillCatalogScope?: PluginLoopSubmit['skillCatalogScope'];
+  designSystemCatalogScope?: PluginLoopSubmit['designSystemCatalogScope'];
   pluginType?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
@@ -646,6 +650,8 @@ export function EntryShell({
   }
   const workspaceContextRef = useRef(workspaceContext);
   workspaceContextRef.current = workspaceContext;
+  const workspaceContextStateRef = useRef(workspaceContextState);
+  workspaceContextStateRef.current = workspaceContextState;
   const workspaceBillingResponse = useWorkspaceBillingResponse();
   // Plan and money are both workspace-scoped questions, so both go through a
   // context-partitioned projection. `response.summary` on its own is an ACCOUNT
@@ -1321,15 +1327,26 @@ export function EntryShell({
     // and the composer keeps its draft. In-project sends are gated separately
     // in ProjectView.handleSend.
     let amrGatePrecheckWitness: AmrBalanceGateScope | undefined;
+    let amrGatePrecheckPassed = false;
     if (config.mode === 'daemon' && config.agentId === 'amr') {
-      // Awaiting the wallet or either dialog can outlive a workspace switch.
-      // Re-run once against the latest exact workspace/member authority; if it
-      // changes again, fail closed instead of reusing a stale decision.
-      for (let workspaceAttempt = 0; workspaceAttempt < 2; workspaceAttempt += 1) {
-        const gateScope = amrBalanceGateScopeForWorkspaceContext(
-          workspaceContextRef.current,
+      // PRODUCT INVARIANT: Send never starts Workspace identity discovery.
+      // Billing consumes the shell's current in-memory snapshot; if it has not
+      // arrived yet, the existing account-scoped gate is used. The daemon's
+      // ordinary project-create route is local and does not need live Workspace
+      // authority. Account/scope generation checks below only prevent a result
+      // from being reused after the user switches identity while the balance
+      // request or dialog is in flight.
+      for (let scopeAttempt = 0; scopeAttempt < 2; scopeAttempt += 1) {
+        const gateAccountGeneration = currentWorkspaceAccountGeneration();
+        const gateWorkspaceState = workspaceContextStateRef.current;
+        const gateWorkspaceContext = gateWorkspaceState.failure === 'unsupported'
+          ? null
+          : workspaceResourceReadContext(gateWorkspaceState);
+        const gateWorkspaceIdentity = workspaceIdentityCacheKey(gateWorkspaceContext);
+        const gateScope = amrBalanceGateScopeForWorkspaceContext(gateWorkspaceContext);
+        let gate = await retryUnavailableAmrBalanceGate(
+          () => checkAmrBalanceGate(gateScope),
         );
-        let gate = await checkAmrBalanceGate(gateScope);
         // Hard blocks hold THIS submit open: the dialog resolves 'retry' when
         // its blocking condition clears (sign-in completed, recharge landed)
         // and the gate re-runs, so the task auto-continues through the normal
@@ -1346,9 +1363,11 @@ export function EntryShell({
           });
           setAmrBalanceGateBlock(null);
           if (decision === 'dismiss') return 'blocked' as const;
-          gate = await checkAmrBalanceGate(gateScope);
+          gate = await retryUnavailableAmrBalanceGate(
+            () => checkAmrBalanceGate(gateScope),
+          );
         }
-        if (gate.kind === 'unavailable') return 'blocked' as const;
+        if (gate.kind === 'unavailable') return false;
         if (gate.kind === 'soft') {
           // Hold THIS submit while the reminder waits for a decision; 'proceed'
           // resumes the same create-and-run below, so HomeView's normal accept
@@ -1362,16 +1381,21 @@ export function EntryShell({
             if (decision !== 'proceed') return 'blocked' as const;
           }
         }
-        const currentScope = amrBalanceGateScopeForWorkspaceContext(
-          workspaceContextRef.current,
-        );
-        if (!amrBalanceGateScopesMatch(gateScope, currentScope)) continue;
+        if (
+          currentWorkspaceAccountGeneration() !== gateAccountGeneration
+          || workspaceIdentityCacheKey(
+            workspaceContextStateRef.current.failure === 'unsupported'
+              ? null
+              : workspaceResourceReadContext(workspaceContextStateRef.current),
+          ) !== gateWorkspaceIdentity
+        ) {
+          continue;
+        }
         amrGatePrecheckWitness = gateScope;
+        amrGatePrecheckPassed = true;
         break;
       }
-      if (!amrGatePrecheckWitness) {
-        return 'blocked' as const;
-      }
+      if (!amrGatePrecheckPassed) return false;
     }
     const summarizedName = summarizeProjectNameFromPrompt(payload.prompt);
     const head = payload.prompt.trim().split(/\s+/).slice(0, 8).join(' ');
@@ -1419,10 +1443,17 @@ export function EntryShell({
     const createInput: EntryCreateProjectInput = {
       name,
       skillId: payload.skillId ?? null,
+      ...(payload.skillCatalogScope
+        ? { skillCatalogScope: payload.skillCatalogScope }
+        : {}),
       designSystemId: payload.designSystemId ?? null,
+      ...(payload.designSystemCatalogScope
+        ? { designSystemCatalogScope: payload.designSystemCatalogScope }
+        : {}),
       metadata,
       pendingPrompt: payload.prompt,
       ...(payload.pluginId ? { pluginId: payload.pluginId } : {}),
+      ...(payload.pluginSource ? { pluginSource: payload.pluginSource } : {}),
       ...(payload.pluginType ? { pluginType: payload.pluginType } : {}),
       ...(payload.appliedPluginSnapshotId
         ? { appliedPluginSnapshotId: payload.appliedPluginSnapshotId }
@@ -1653,6 +1684,7 @@ export function EntryShell({
                 projects={homeProjectsList}
                 projectsLoading={projectsLoading}
                 designSystems={designSystems}
+                designSystemsLoading={designSystemsLoading}
                 defaultDesignSystemId={defaultDesignSystemId}
                 onSubmit={handlePluginLoopSubmit}
                 onOpenProject={onOpenProject}

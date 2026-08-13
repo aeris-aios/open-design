@@ -15,6 +15,7 @@ import {
   PLANS_JSON_URL,
   CLOUD_CONSOLE_URL,
   cloudSubscribeUrl,
+  formatUsd,
   teamIntroTotalUsd,
   type PlanTierConfig,
   type TeamPlanTierConfig,
@@ -70,7 +71,7 @@ const LF = enterprise.leadForm;
 const SITE = Astro.site?.toString() ?? 'https://open-design.ai/';
 const title = teamContent.metaTitle;
 const description = teamContent.metaDescription;
-const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
+const usd = formatUsd;
 
 const tiers: PlanTierConfig[] = PRICING_SNAPSHOT.tiers;
 const teamTiers: TeamPlanTierConfig[] = PRICING_SNAPSHOT.teamTiers;
@@ -93,11 +94,9 @@ function teamCreditOption(tier: TeamPlanTierConfig): string {
 function teamView(tier: TeamPlanTierConfig, interval: 'monthly' | 'yearly') {
   const selected = tier[interval];
   const months = interval === 'yearly' ? 12 : 1;
-  const introSeatMonth = Math.round(selected.introPriceUsd / months);
+  const introSeatMonth = selected.introPriceUsd / months;
   const regularSeatMonth =
-    interval === 'yearly'
-      ? Math.round(tier.monthly.priceUsd)
-      : Math.round(selected.priceUsd);
+    interval === 'yearly' ? tier.monthly.priceUsd : selected.priceUsd;
   const discountPct = Math.round(
     (1 - introSeatMonth / regularSeatMonth) * 100,
   );
@@ -792,7 +791,18 @@ const jsonLd = [
         }
         return target.toString();
       };
-      const usd = (n) => '$' + Math.round(n).toLocaleString('en-US');
+      // Mirrors `formatUsd` in _lib/pricing.ts: cents only when the amount has
+      // them, so Team seat prices like $73.50 are not rounded into a wrong quote.
+      const usd = (n) => {
+        const cents = Math.round(n * 100);
+        return (
+          '$' +
+          (cents / 100).toLocaleString('en-US', {
+            minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
+            maximumFractionDigits: 2,
+          })
+        );
+      };
       const fill = (tpl, vals) =>
         tpl.replace(/\{(\w+)\}/g, (_, k) => (k in vals ? vals[k] : '{' + k + '}'));
       const set = (scope, sel, text) => {
@@ -981,13 +991,13 @@ const jsonLd = [
         const interval = root.getAttribute('data-interval') === 'monthly' ? 'monthly' : 'yearly';
         const selected = tier[interval];
         const months = interval === 'yearly' ? 12 : 1;
-        const introSeatMonth = Math.round(selected.introPriceUsd / months);
+        const introSeatMonth = selected.introPriceUsd / months;
         const listSeatMonth = tier.monthly.priceUsd;
         const discountPct = Math.round((1 - introSeatMonth / listSeatMonth) * 100);
         const intervalTotal = selected.introPriceUsd * teamSeats;
-        const amount = '$' + introSeatMonth.toLocaleString('en-US');
-        const strike = '$' + listSeatMonth.toLocaleString('en-US');
-        const total = '$' + intervalTotal.toLocaleString('en-US');
+        const amount = usd(introSeatMonth);
+        const strike = usd(listSeatMonth);
+        const total = usd(intervalTotal);
         const introTotalTemplate =
           interval === 'yearly' ? teamCopy.yearlyTotal : teamCopy.monthlyTotal;
 

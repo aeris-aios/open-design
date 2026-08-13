@@ -53,6 +53,9 @@ importers:
 
   apps/daemon:
     dependencies:
+      '@babel/parser':
+        specifier: 7.29.3
+        version: 7.29.3
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.2)
@@ -119,6 +122,9 @@ importers:
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
+      postcss:
+        specifier: 8.5.15
+        version: 8.5.15
       posthog-node:
         specifier: 5.34.6
         version: 5.34.6
@@ -135,6 +141,9 @@ importers:
         specifier: 7.29.0
         version: 7.29.0
     devDependencies:
+      '@babel/types':
+        specifier: 7.29.0
+        version: 7.29.0
       '@types/better-sqlite3':
         specifier: 7.6.13
         version: 7.6.13

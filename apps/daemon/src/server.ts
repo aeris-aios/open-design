@@ -39,6 +39,7 @@ import {
   type StableSectionHashes,
 } from './prompts/stable-sections.js';
 import { emittedRenderableQuestionForm } from './question-form-detect.js';
+import { runHadFailedDesignSystemWrapper } from './runtimes/run-artifacts.js';
 import { resolveProjectRoot } from './project-root.js';
 import { OPEN_DESIGN_PLUGIN_ID } from './mcp-observability.js';
 import {
@@ -306,6 +307,7 @@ import {
   createUserDesignSystem,
   deleteUserDesignSystem,
   digestDesignSystemContext,
+  isDesignTokenChannelEnabled,
   isTeamSyncedUserDesignSystem,
   LEGACY_DESIGN_SYSTEM_ARTIFACTS,
   linkUserDesignSystemProject,
@@ -318,6 +320,7 @@ import {
   readUserDesignSystemFile,
   readUserDesignSystemFileBytes,
   resolveDesignSystemAssets,
+  resolveDesignSystemRuntimePromptContext,
   stripPrefixAndValidateId,
   syncUserDesignSystemAssetsFromFiles,
   updateUserDesignSystem,
@@ -329,6 +332,10 @@ import {
   deleteWorkspaceOwnedDesignSystem as removeWorkspaceOwnedDesignSystem,
 } from './design-systems/workspace-owned-create.js';
 import { createDesignSystemGenerationJobStore } from './design-systems/generation-jobs.js';
+import {
+  pinRunDesignSystemScope,
+  resolvePinnedRunDesignSystemScope,
+} from './design-systems/run-scope.js';
 import { createDesignSystemServerServices } from './design-systems/server-services.js';
 import {
   designSystemIdFromWorkspaceTeamBinding,
@@ -372,6 +379,7 @@ import {
   registerBuiltInAtomWorkers,
   registerBundledPlugins,
   registryRootsForDataDir,
+  resolveLocalPluginBySource,
   restoreProjectSnapshotLink,
   resolvePluginSnapshot,
   runPipelineForRun,
@@ -3366,8 +3374,9 @@ export async function startServer({
       : null;
   };
   const verifyWorkspaceContextReadAuthority = async (req: unknown) => {
-    const cached = cachedWorkspaceContextForRequest(req);
-    if (cached) return { ok: true as const, context: cached };
+    // `resolveExact` is enrichment, including when its strict-SSE lease is
+    // healthy. Only the membership directory can supply authority-bearing
+    // type, role, lifecycle, and permissions for the context response.
     return verifyWorkspaceReadAuthority(req);
   };
   /**
@@ -7316,6 +7325,11 @@ export async function startServer({
         options.workspaceId,
         options.workspaceMemberId,
       ),
+      getLocalPluginBySource: (id, source) => getLocalPluginBySource(
+        db,
+        id,
+        source,
+      ),
     },
     events: projectEventDeps,
     ids: idDeps,
@@ -7738,8 +7752,28 @@ export async function startServer({
   registerDesignSystemToolRoutes(app, {
     auth: authDeps,
     http: httpDeps,
-    paths: pathDeps,
+    paths: {
+      ...pathDeps,
+      resolveUserDesignSystemsRoot: (grant, designSystemId) => {
+        if (!designSystemId.startsWith('user:')) {
+          return { ok: true, root: USER_DESIGN_SYSTEMS_DIR };
+        }
+        const resolved = resolvePinnedRunDesignSystemScope({
+          db,
+          scope: grant.designSystemScope,
+          designSystemId,
+          userRoot: USER_DESIGN_SYSTEMS_DIR,
+        });
+        return resolved.ok
+          ? { ok: true, root: resolved.root }
+          : resolved;
+      },
+    },
     projects: { getProject: (id: string) => getProject(db, id) },
+    runs: { getRun: (id: string) => design.runs.get(id) },
+    features: {
+      isDesignSystemRuntimeEnabled: () => isDesignTokenChannelEnabled(process.env),
+    },
   });
   app.use('/artifacts', express.static(ARTIFACTS_DIR));
   app.use(
@@ -8224,6 +8258,16 @@ export async function startServer({
       (plugin) => plugin.id === id,
     ) ?? null;
   };
+  const getLocalPluginBySource = async (
+    dbHandle,
+    id: string,
+    source: string,
+  ) => resolveLocalPluginBySource({
+    db: dbHandle,
+    id,
+    source,
+    userPluginsRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
+  });
 
   registerPluginRoutes(app, {
     db,
@@ -8246,6 +8290,7 @@ export async function startServer({
       listInstalledPlugins: listWorkspacePlugins,
       getInstalledPlugin,
       getWorkspacePlugin: getWorkspacePluginForRequest,
+      getLocalPluginBySource,
       installPlugin,
       isSafePluginId,
       uninstallPlugin,
@@ -8350,25 +8395,48 @@ export async function startServer({
     freeformDeckSignal,
     mediaHintSignal,
     platformHintSignal,
+    workspaceScope,
+    designSystemScope,
   }) => {
     const project =
       typeof projectId === 'string' && projectId
         ? getProject(db, projectId)
         : null;
-    const projectWorkspaceBinding =
-      typeof projectId === 'string' && projectId
-        ? getWorkspaceProjectByProjectId(db, projectId)
-        : null;
     const projectWorkspaceId =
-      typeof projectWorkspaceBinding?.workspaceId === 'string'
-        ? projectWorkspaceBinding.workspaceId.trim()
+      typeof workspaceScope?.workspaceId === 'string'
+        ? workspaceScope.workspaceId.trim()
         : '';
     const projectCreatorMemberId =
-      typeof projectWorkspaceBinding?.createdByWorkspaceMemberId === 'string'
-        ? projectWorkspaceBinding.createdByWorkspaceMemberId.trim()
+      typeof workspaceScope?.workspaceMemberId === 'string'
+        ? workspaceScope.workspaceMemberId.trim()
         : '';
+    const metadata = project?.metadata;
+    const localCatalogScope = (value) => {
+      const workspaceId = typeof value?.workspaceId === 'string'
+        ? value.workspaceId.trim()
+        : '';
+      const workspaceMemberId = typeof value?.workspaceMemberId === 'string'
+        ? value.workspaceMemberId.trim()
+        : '';
+      return workspaceId && workspaceMemberId
+        ? { workspaceId, workspaceMemberId }
+        : null;
+    };
+    // Resource provenance is intentionally independent from project
+    // attribution. A Home selection can be staged while Workspace identity is
+    // transitioning; the daemon persists the local catalogue partition so
+    // the first run reads the same local record without waiting for identity
+    // discovery or treating this as remote membership authority.
+    const skillCatalogScope = localCatalogScope(metadata?.localCatalogScopes?.skill);
+    const designSystemCatalogScope = localCatalogScope(
+      metadata?.localCatalogScopes?.designSystem,
+    );
+    const designSystemWorkspaceId =
+      designSystemCatalogScope?.workspaceId ?? projectWorkspaceId;
+    const designSystemMemberId =
+      designSystemCatalogScope?.workspaceMemberId ?? projectCreatorMemberId;
     const projectDesignSystemBinding = (summary) => {
-      if (!projectWorkspaceId || summary?.source === 'built-in') return null;
+      if (!designSystemWorkspaceId || summary?.source === 'built-in') return null;
       const logicalResourceId =
         typeof summary?.id === 'string' ? summary.id.trim() : '';
       if (!logicalResourceId) return null;
@@ -8376,9 +8444,9 @@ export async function startServer({
         const canonicalTeamBinding = getWorkspaceResource(
           db,
           'design_system',
-          projectWorkspaceId,
+          designSystemWorkspaceId,
           workspaceTeamDesignSystemBindingResourceId(
-            projectWorkspaceId,
+            designSystemWorkspaceId,
             logicalResourceId,
           ),
         );
@@ -8389,7 +8457,7 @@ export async function startServer({
       return getWorkspaceResource(
         db,
         'design_system',
-        projectWorkspaceId,
+        designSystemWorkspaceId,
         logicalResourceId,
       ) ?? null;
     };
@@ -8398,7 +8466,7 @@ export async function startServer({
       // A truly unbound local project is the legacy CLI/BYOK lane. Bound
       // projects must resolve resources from their persisted project scope;
       // shell/current Workspace state never participates.
-      if (!projectWorkspaceId) return true;
+      if (!designSystemWorkspaceId) return true;
       const binding = projectDesignSystemBinding(summary);
       if (
         !binding
@@ -8408,8 +8476,8 @@ export async function startServer({
       }
       if (binding.visibility === 'team') return true;
       return binding.visibility === 'personal'
-        && Boolean(projectCreatorMemberId)
-        && binding.createdByWorkspaceMemberId?.trim() === projectCreatorMemberId;
+        && Boolean(designSystemMemberId)
+        && binding.createdByWorkspaceMemberId?.trim() === designSystemMemberId;
     };
     let appConfigForPrompt = null;
     try {
@@ -8434,7 +8502,6 @@ export async function startServer({
     }
     const effectiveSkillId =
       typeof skillId === 'string' && skillId ? skillId : project?.skillId;
-    const metadata = project?.metadata;
     // Website Clone runs reproduce someone else's site: the fidelity target
     // is the original page. Treating a project/app design system as
     // authoritative would overwrite the cloned site's palette/typography
@@ -8456,20 +8523,18 @@ export async function startServer({
           allowAppDefault: project === null,
         });
     const effectiveDesignSystemId = designSystemSelection.id;
-    const projectResourceScope =
-      typeof projectId === 'string' && projectId
-        ? getWorkspaceProjectByProjectId(db, projectId)
-        : null;
+    const skillResourceScope = skillCatalogScope ?? (
+      projectWorkspaceId
+        ? {
+            workspaceId: projectWorkspaceId,
+            workspaceMemberId: projectCreatorMemberId || null,
+          }
+        : null
+    );
     let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
     const loadAllSkills = async () => {
-      allSkillsPromise ??= projectResourceScope?.workspaceId
-        ? listAllSkillLikeEntries({
-            workspaceId: String(projectResourceScope.workspaceId),
-            workspaceMemberId:
-              typeof projectResourceScope.createdByWorkspaceMemberId === 'string'
-                ? projectResourceScope.createdByWorkspaceMemberId
-                : null,
-          })
+      allSkillsPromise ??= skillResourceScope
+        ? listAllSkillLikeEntries(skillResourceScope)
         : listAllSkillLikeEntries();
       return await allSkillsPromise;
     };
@@ -8721,23 +8786,83 @@ export async function startServer({
     let designSystemComponentsManifest;
     let designSystemFixtureHtml;
     let designSystemPullIndex;
+    let designSystemIntentIndex;
+    let designSystemRuntimeIssue;
     let designSystemImportMode;
     let designSystemCraftApplies = [];
     let designSystemCraftExemptions = [];
     let activeDesignSystemId = null;
     let designSystemDigest = null;
     if (effectiveDesignSystemId) {
-      const designSystemListOptions = projectWorkspaceId
-        ? {
-            workspaceId: projectWorkspaceId,
-            workspaceMemberId: projectCreatorMemberId || null,
-          }
-        : {};
+      const userDesignSystem = effectiveDesignSystemId.startsWith('user:');
+      // A run with a captured scope must resolve that exact resource even if
+      // the project was later rebound. A legacy, unbound run without a
+      // catalog provenance remains local. Projects created during Workspace
+      // identity transitions intentionally use their immutable local catalog
+      // provenance instead: it identifies a local record, not Workspace
+      // membership or billing authority.
+      const localCatalogDesignSystemRun =
+        designSystemScope?.kind === 'local' && Boolean(designSystemCatalogScope);
+      const usePinnedDesignSystemScope = userDesignSystem
+        && !localCatalogDesignSystemRun
+        && (
+          designSystemScope !== null && designSystemScope !== undefined
+          || (!designSystemCatalogScope && !projectWorkspaceId)
+        );
+      const effectivePinnedScope = usePinnedDesignSystemScope
+        ? designSystemScope
+          ?? (
+            !projectWorkspaceId
+              ? {
+                  schemaVersion: 1,
+                  kind: 'local',
+                  projectId: typeof projectId === 'string' ? projectId : '',
+                  designSystemId: effectiveDesignSystemId,
+                }
+              : null
+          )
+        : null;
+      const pinnedResolution = usePinnedDesignSystemScope
+        ? resolvePinnedRunDesignSystemScope({
+            db,
+            scope: effectivePinnedScope,
+            designSystemId: effectiveDesignSystemId,
+            userRoot: USER_DESIGN_SYSTEMS_DIR,
+          })
+        : null;
+      const designSystemListOptions = usePinnedDesignSystemScope
+        ? pinnedResolution?.ok && pinnedResolution.visibility === 'team'
+          ? {
+              workspaceId: pinnedResolution.workspaceId,
+              workspaceMemberId: pinnedResolution.workspaceMemberId,
+              exactTeam: true,
+            }
+          : pinnedResolution?.ok && pinnedResolution.visibility === 'personal'
+            ? {
+                workspaceId: pinnedResolution.workspaceId,
+                workspaceMemberId: pinnedResolution.workspaceMemberId,
+                exactPersonal: true,
+              }
+            : {}
+        : designSystemWorkspaceId
+          ? {
+              workspaceId: designSystemWorkspaceId,
+              workspaceMemberId: designSystemMemberId || null,
+            }
+          : {};
+      const designSystemVisibleForRun = (system) => {
+        if (!usePinnedDesignSystemScope) return designSystemVisibleToRun(system);
+        if (system?.source === 'built-in') return true;
+        if (!pinnedResolution?.ok) return false;
+        return pinnedResolution.visibility === 'team'
+          ? system.teamSynced === true
+          : system.teamSynced !== true;
+      };
       let systems = await listAllDesignSystems(designSystemListOptions);
       let summary = systems.find(
         (system) =>
           system.id === effectiveDesignSystemId
-          && designSystemVisibleToRun(system),
+          && designSystemVisibleForRun(system),
       );
       if (summary?.source === 'user' && summary.teamSynced !== true) {
         await ensureUserDesignSystemWorkspaceProject(db, effectiveDesignSystemId);
@@ -8745,7 +8870,7 @@ export async function startServer({
         summary = systems.find(
           (system) =>
             system.id === effectiveDesignSystemId
-            && designSystemVisibleToRun(system),
+            && designSystemVisibleForRun(system),
         );
       }
       const editingOwnDraftDesignSystem =
@@ -8771,18 +8896,36 @@ export async function startServer({
         // from real disk fixtures (see `tests/design-system-assets.test.ts`).
         const resourceBinding = projectDesignSystemBinding(summary);
         const scopedUserDesignSystemsRoot =
-          projectWorkspaceId && resourceBinding?.visibility === 'team'
-            ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, projectWorkspaceId)
-            : USER_DESIGN_SYSTEMS_DIR;
+          usePinnedDesignSystemScope && pinnedResolution?.ok
+            ? pinnedResolution.root
+            : designSystemWorkspaceId && resourceBinding?.visibility === 'team'
+              ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, designSystemWorkspaceId)
+              : USER_DESIGN_SYSTEMS_DIR;
         const assets = await resolveDesignSystemAssets(
+          effectiveDesignSystemId,
+          DESIGN_SYSTEMS_DIR,
+          scopedUserDesignSystemsRoot,
+        );
+        const runtimePromptContext = await resolveDesignSystemRuntimePromptContext(
           effectiveDesignSystemId,
           DESIGN_SYSTEMS_DIR,
           scopedUserDesignSystemsRoot,
         );
         designSystemUsageMd = assets.usageMd;
         designSystemTokensCss = assets.tokensCss;
-        designSystemComponentsManifest = assets.componentsManifest;
-        designSystemFixtureHtml = assets.fixtureHtml;
+        // A package has exactly one component-selection authority. Legacy
+        // packages keep the derived manifest / fixture prompt path. Once a
+        // package declares the structured runtime, valid or not, that legacy
+        // evidence must not compete with the intent resolver or mask a broken
+        // runtime as a usable component map.
+        if (runtimePromptContext.mode === 'legacy') {
+          designSystemComponentsManifest = assets.componentsManifest;
+          designSystemFixtureHtml = assets.fixtureHtml;
+        } else if (runtimePromptContext.mode === 'structured') {
+          designSystemIntentIndex = runtimePromptContext.intentIndex;
+        } else {
+          designSystemRuntimeIssue = runtimePromptContext.issue;
+        }
         designSystemPullIndex = assets.pullIndex;
         designSystemImportMode = assets.importMode;
         designSystemCraftApplies = Array.isArray(assets.craftApplies) ? assets.craftApplies : [];
@@ -8798,6 +8941,8 @@ export async function startServer({
             componentsManifest: designSystemComponentsManifest,
             fixtureHtml: designSystemFixtureHtml,
             pullIndex: designSystemPullIndex,
+            intentIndex: designSystemIntentIndex,
+            runtimeIssue: designSystemRuntimeIssue,
             importMode: designSystemImportMode,
           });
         }
@@ -8986,6 +9131,8 @@ export async function startServer({
       designSystemComponentsManifest,
       designSystemFixtureHtml,
       designSystemPullIndex,
+      designSystemIntentIndex,
+      designSystemRuntimeIssue,
       designSystemImportMode,
       craftBody,
       craftSections,
@@ -9195,13 +9342,49 @@ export async function startServer({
     // step. HTTP-created runs already carry the scope captured by the request
     // authorization transaction. Internal runs pin here. Retries reuse the
     // existing property and therefore never consult a later project rebind.
+    let runScopeChanged = false;
     if (!Object.prototype.hasOwnProperty.call(run, 'workspaceScope')) {
       run.workspaceScope =
         typeof projectId === 'string' && projectId
           ? pinRunWorkspaceScopeForProject(db, projectId)
           : null;
-      design.runs.persistState(run);
+      runScopeChanged = true;
     }
+    if (!Object.prototype.hasOwnProperty.call(run, 'designSystemScope')) {
+      const scopeProject =
+        typeof projectId === 'string' && projectId
+          ? getProject(db, projectId)
+          : null;
+      let scopePluginDesignSystemId = null;
+      if (run?.appliedPluginSnapshotId) {
+        try {
+          scopePluginDesignSystemId = designSystemIdFromPluginSnapshot(
+            getSnapshot(db, run.appliedPluginSnapshotId),
+          );
+        } catch {
+          scopePluginDesignSystemId = null;
+        }
+      }
+      const scopeSelection = scopeProject?.metadata?.intent === 'web-clone'
+        ? { id: null }
+        : resolveEffectiveDesignSystemSelection({
+            requestDesignSystemId: designSystemId,
+            pluginDesignSystemId: scopePluginDesignSystemId,
+            projectDesignSystemId: scopeProject?.designSystemId,
+            allowAppDefault: false,
+          });
+      run.designSystemScope =
+        typeof projectId === 'string' && projectId
+          ? pinRunDesignSystemScope({
+              db,
+              projectId,
+              designSystemId: scopeSelection.id,
+              workspaceScope: run.workspaceScope,
+            })
+          : null;
+      runScopeChanged = true;
+    }
+    if (runScopeChanged) design.runs.persistState(run);
     // Stash the original user prompt + per-turn config so the
     // langfuse-bridge report path can include them without reaching back
     // into chatBody across the createChatRunService boundary. Each field
@@ -9428,12 +9611,26 @@ export async function startServer({
         };
       }
     }
+    const toolWorkspaceId = typeof run.workspaceScope?.workspaceId === 'string'
+      ? run.workspaceScope.workspaceId.trim()
+      : '';
+    const toolWorkspaceMemberId =
+      typeof run.workspaceScope?.workspaceMemberId === 'string'
+        ? run.workspaceScope.workspaceMemberId.trim()
+        : '';
     const inactivityTimeoutMs = resolveChatRunInactivityTimeoutMs(def.inactivityTimeoutMs);
     const toolTokenTtlMs = resolveChatToolTokenTtlMs(inactivityTimeoutMs);
     const toolTokenGrant = cwd && typeof projectId === 'string' && projectId
       ? toolTokenRegistry.mint({
           runId,
           projectId,
+          ...(toolWorkspaceId ? { workspaceId: toolWorkspaceId } : {}),
+          ...(toolWorkspaceMemberId
+            ? { workspaceMemberId: toolWorkspaceMemberId }
+            : {}),
+          ...(run.designSystemScope
+            ? { designSystemScope: run.designSystemScope }
+            : {}),
           allowedEndpoints: CHAT_TOOL_ENDPOINTS,
           allowedOperations: CHAT_TOOL_OPERATIONS,
           ttlMs: toolTokenTtlMs,
@@ -9600,6 +9797,8 @@ export async function startServer({
         freeformDeckSignal: intentSignals.deck,
         mediaHintSignal: intentSignals.media,
         platformHintSignal: intentSignals.platform,
+        workspaceScope: run.workspaceScope,
+        designSystemScope: run.designSystemScope,
       });
 
     run.designSystemId = designSystemSelection?.id ?? null;
@@ -13131,6 +13330,29 @@ export async function startServer({
           runArtifactSideEffects.artifactWriteSeen ||
           runArtifactSideEffects.liveArtifactSeen,
       });
+      // Codex reports shell failures as ordinary command_execution items and
+      // can still close the overall turn with code 0. For a structured DS run,
+      // a failed read/resolve/validate wrapper followed by zero artifacts is a
+      // failed delivery, not a successful text-only turn. Resolve the
+      // filesystem diff before finalizing so the run cannot surface as green
+      // merely because the agent explained why it stopped. A later successful
+      // retry that produced an artifact remains a normal success.
+      if (
+        status === 'succeeded'
+        && runHadFailedDesignSystemWrapper(run.events)
+        && !emittedRenderableQuestionForm(clarifyingQuestionText)
+      ) {
+        const artifactOutcome = await resolveRunArtifactOutcomeBeforeFinishAsync();
+        if (!artifactOutcome || artifactOutcome.artifactCount <= 0) {
+          markRpcCloseReason('design_system_wrapper_failed');
+          send('error', createSseErrorPayload(
+            'AGENT_EXECUTION_FAILED',
+            'The agent could not access the active design-system runtime and produced no deliverable. Retry after checking the local agent tool environment.',
+            { retryable: true },
+          ));
+          return finishWithRetryDecision('failed', code, signal);
+        }
+      }
       // Skip the close-handler failure emit when the run is already
       // terminal: the inactivity watchdog (failForInactivity) finishes the
       // run — sending its error and clearing run.clients/eventsLogStream —

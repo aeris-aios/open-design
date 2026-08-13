@@ -10370,8 +10370,19 @@ function HtmlViewer({
       const frame = urlPreviewIframeRef.current;
       if (ev.source !== frame?.contentWindow) return;
       if (frame.getAttribute('src') === 'about:blank') return;
-      const data = ev.data as { type?: string } | null;
+      const data = ev.data as { type?: string; href?: string } | null;
       if (data?.type !== 'od:url-selection-bridge-ready') return;
+      // The latch must describe the currently committed document's bridge, so
+      // the ready must carry and match the document href.
+      if (typeof data.href !== 'string' || data.href.length === 0) return;
+      let matches: boolean;
+      try {
+        matches = new URL(data.href, window.location.href).href
+          === new URL(frame.getAttribute('src') ?? '', window.location.href).href;
+      } catch {
+        return;
+      }
+      if (!matches) return;
       setUrlSelectionBridgeReady(true);
     }
     window.addEventListener('message', onMessage);

@@ -121,6 +121,7 @@ function createRunsServiceStub() {
         assistantMessageId: typeof meta.assistantMessageId === 'string' ? meta.assistantMessageId : null,
         agentId: typeof meta.agentId === 'string' ? meta.agentId : null,
         workspaceScope: meta.workspaceScope,
+        designSystemScope: meta.designSystemScope,
         status: 'queued',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -845,6 +846,43 @@ describe('POST /api/runs — workspace mutation gate', () => {
     expect(typeof payload.runId).toBe('string');
   });
 
+  it.each(['/api/runs', '/api/chat'])(
+    'ignores client-forged run scopes for an unbound project through %s',
+    async (route) => {
+      const baseUrl = await startServer();
+      const response = await fetch(`${baseUrl}${route}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: UNBOUND_PROJECT,
+          agentId: 'claude',
+          message: 'do not trust request scope',
+          workspaceScope: {
+            schemaVersion: 1,
+            projectId: UNBOUND_PROJECT,
+            workspaceId: 'forged-workspace',
+            workspaceMemberId: 'forged-member',
+            source: 'persisted_project_binding',
+          },
+          designSystemScope: {
+            schemaVersion: 1,
+            kind: 'local',
+            projectId: UNBOUND_PROJECT,
+            designSystemId: 'user:forged',
+          },
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      const { runId } = (await response.json()) as { runId: string };
+      const statusResponse = await fetch(`${baseUrl}/api/runs/${runId}`);
+      expect(statusResponse.status).toBe(200);
+      const run = await statusResponse.json() as Record<string, unknown>;
+      expect(run.workspaceScope).toBeNull();
+      expect(run).not.toHaveProperty('designSystemScope');
+    },
+  );
+
   it('verifies AMR adoption before any plugin resolution side effects', async () => {
     const loadPluginRegistryView = vi.fn(async () => ({}));
     const baseUrl = await startServer({
@@ -1446,7 +1484,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
   });
 
   it.each(['/api/runs', '/api/chat'])(
-    'refuses a signed-in AMR run through %s when an unbound project has no explicit Personal identity',
+    'keeps a signed-in AMR run through %s account-scoped when its local project is unbound',
     async (route) => {
     const verifyWorkspaceRequestAuthority = vi.fn();
     const baseUrl = await startServer({
@@ -1464,10 +1502,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
       }),
     });
 
-      expect(response.status).toBe(409);
-      await expect(response.json()).resolves.toMatchObject({
-        error: { code: 'AMR_WORKSPACE_SCOPE_REQUIRED' },
-      });
+      expect(response.status).toBe(202);
       expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
       expect(
         getWorkspaceProjectByProjectId(openDatabase(tempDir!), UNBOUND_PROJECT),
