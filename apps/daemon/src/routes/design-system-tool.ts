@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
-import { readFile, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -36,6 +37,20 @@ type ProjectRecord = {
 
 const MAX_ADHERENCE_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_ADHERENCE_TOTAL_BYTES = 5 * 1024 * 1024;
+
+export const designSystemToolRouteTestHooks = {
+  beforeArtifactRead: null as null | ((input: {
+    filePath: string;
+    maxBytesToRead: number;
+  }) => Promise<void> | void),
+};
+
+type BoundedArtifactRead =
+  | { ok: true; buffer: Buffer }
+  | {
+      ok: false;
+      reason: 'not-regular-file' | 'artifact-too-large' | 'artifacts-too-large';
+    };
 
 type SendApiError = (
   res: Response,
@@ -316,12 +331,38 @@ export function registerDesignSystemToolRoutes(
         } catch (error) {
           const code = (error as NodeJS.ErrnoException | undefined)?.code;
           if (code === 'ENOENT' || code === 'ENOTDIR') {
-            return sendApiError(res, 404, 'PROJECT_FILE_NOT_FOUND', `artifact ${artifactPath} was not found`);
+            return sendApiError(
+              res,
+              404,
+              'PROJECT_FILE_NOT_FOUND',
+              `artifact ${artifactPath} was not found`,
+            );
           }
           throw error;
         }
-        const fileStat = await stat(file.filePath);
-        if (!fileStat.isFile()) {
+        let readResult: BoundedArtifactRead;
+        try {
+          readResult = await readBoundedAdherenceArtifact(
+            file.filePath,
+            MAX_ADHERENCE_ARTIFACT_BYTES,
+            MAX_ADHERENCE_TOTAL_BYTES - totalBytes,
+          );
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException | undefined)?.code;
+          if (code === 'ENOENT' || code === 'ENOTDIR') {
+            return sendApiError(res, 404, 'PROJECT_FILE_NOT_FOUND', `artifact ${artifactPath} was not found`);
+          }
+          if (code === 'ELOOP') {
+            return sendApiError(
+              res,
+              400,
+              'INVALID_INPUT',
+              `artifact ${artifactPath} must be a regular file`,
+            );
+          }
+          throw error;
+        }
+        if (!readResult.ok && readResult.reason === 'not-regular-file') {
           return sendApiError(
             res,
             400,
@@ -329,7 +370,7 @@ export function registerDesignSystemToolRoutes(
             `artifact ${artifactPath} must be a regular file`,
           );
         }
-        if (file.size > MAX_ADHERENCE_ARTIFACT_BYTES) {
+        if (!readResult.ok && readResult.reason === 'artifact-too-large') {
           return sendApiError(
             res,
             413,
@@ -337,7 +378,7 @@ export function registerDesignSystemToolRoutes(
             `artifact ${artifactPath} exceeds the ${MAX_ADHERENCE_ARTIFACT_BYTES}-byte validation limit`,
           );
         }
-        if (totalBytes + file.size > MAX_ADHERENCE_TOTAL_BYTES) {
+        if (!readResult.ok) {
           return sendApiError(
             res,
             413,
@@ -345,24 +386,8 @@ export function registerDesignSystemToolRoutes(
             `artifact set exceeds the ${MAX_ADHERENCE_TOTAL_BYTES}-byte validation limit`,
           );
         }
-        const buffer = await readFile(file.filePath);
-        if (buffer.length > MAX_ADHERENCE_ARTIFACT_BYTES) {
-          return sendApiError(
-            res,
-            413,
-            'ARTIFACT_TOO_LARGE',
-            `artifact ${artifactPath} exceeds the ${MAX_ADHERENCE_ARTIFACT_BYTES}-byte validation limit`,
-          );
-        }
+        const { buffer } = readResult;
         totalBytes += buffer.length;
-        if (totalBytes > MAX_ADHERENCE_TOTAL_BYTES) {
-          return sendApiError(
-            res,
-            413,
-            'ARTIFACTS_TOO_LARGE',
-            `artifact set exceeds the ${MAX_ADHERENCE_TOTAL_BYTES}-byte validation limit`,
-          );
-        }
         if (!isSupportedAdherenceArtifact(file.name) || buffer.includes(0)) {
           return sendApiError(
             res,
@@ -395,6 +420,58 @@ export function registerDesignSystemToolRoutes(
       sendApiError(res, 500, 'INTERNAL_ERROR', error instanceof Error ? error.message : String(error));
     }
   });
+}
+
+async function readBoundedAdherenceArtifact(
+  filePath: string,
+  artifactLimitBytes: number,
+  remainingTotalBytes: number,
+): Promise<BoundedArtifactRead> {
+  const noFollowFlag = typeof fsConstants.O_NOFOLLOW === 'number'
+    ? fsConstants.O_NOFOLLOW
+    : 0;
+  const handle = await open(filePath, fsConstants.O_RDONLY | noFollowFlag);
+  try {
+    const openedStat = await handle.stat();
+    if (!openedStat.isFile()) return { ok: false, reason: 'not-regular-file' };
+    if (openedStat.size > artifactLimitBytes) {
+      return { ok: false, reason: 'artifact-too-large' };
+    }
+    if (openedStat.size > remainingTotalBytes) {
+      return { ok: false, reason: 'artifacts-too-large' };
+    }
+
+    const maxBytesToRead = Math.min(
+      artifactLimitBytes,
+      Math.max(0, remainingTotalBytes),
+    ) + 1;
+    await designSystemToolRouteTestHooks.beforeArtifactRead?.({
+      filePath,
+      maxBytesToRead,
+    });
+
+    const buffer = Buffer.allocUnsafe(maxBytesToRead);
+    let bytesRead = 0;
+    while (bytesRead < maxBytesToRead) {
+      const read = await handle.read(
+        buffer,
+        bytesRead,
+        maxBytesToRead - bytesRead,
+        null,
+      );
+      if (read.bytesRead === 0) break;
+      bytesRead += read.bytesRead;
+    }
+    if (bytesRead > artifactLimitBytes) {
+      return { ok: false, reason: 'artifact-too-large' };
+    }
+    if (bytesRead > remainingTotalBytes) {
+      return { ok: false, reason: 'artifacts-too-large' };
+    }
+    return { ok: true, buffer: buffer.subarray(0, bytesRead) };
+  } finally {
+    await handle.close();
+  }
 }
 
 function userDesignSystemsRootForGrant(

@@ -6,13 +6,17 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { registerDesignSystemToolRoutes } from '../../src/routes/design-system-tool.js';
+import {
+  designSystemToolRouteTestHooks,
+  registerDesignSystemToolRoutes,
+} from '../../src/routes/design-system-tool.js';
 
 type JsonFetchResult = { status: number; body: Record<string, any> };
 
 let server: http.Server | undefined;
 
 afterEach(async () => {
+  designSystemToolRouteTestHooks.beforeArtifactRead = null;
   await new Promise<void>((resolve, reject) => {
     if (!server) return resolve();
     server.close((error?: Error) => (error ? reject(error) : resolve()));
@@ -568,6 +572,41 @@ describe('design-system pull tool route', () => {
 
     expect(response.status).toBe(413);
     expect(response.body.error).toMatchObject({ code: 'ARTIFACT_TOO_LARGE' });
+  });
+
+  it('bounds the opened read when an artifact grows after its metadata check', async () => {
+    const builtInRoot = fresh();
+    const userRoot = fresh();
+    cpSync(
+      path.resolve(import.meta.dirname, '../fixtures/design-systems/runtime-v3'),
+      path.join(builtInRoot, 'runtime-v3'),
+      { recursive: true },
+    );
+    const baseUrl = await startRouteServer({
+      builtInRoot,
+      userRoot,
+      activeDesignSystemId: 'runtime-v3',
+      projectFiles: {
+        'growing.html': '<button class="button button--primary">Save</button>',
+      },
+    });
+    let observedReadCap = 0;
+    designSystemToolRouteTestHooks.beforeArtifactRead = ({
+      filePath,
+      maxBytesToRead,
+    }) => {
+      observedReadCap = maxBytesToRead;
+      writeFileSync(filePath, 'x'.repeat(8 * 1024 * 1024));
+    };
+
+    const response = await jsonFetch(`${baseUrl}/api/tools/design-systems/validate-adherence`, {
+      intent: 'account.settings.save',
+      artifacts: ['growing.html'],
+    });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error).toMatchObject({ code: 'ARTIFACT_TOO_LARGE' });
+    expect(observedReadCap).toBe(2 * 1024 * 1024 + 1);
   });
 
   it('reports legacy and malformed runtime packages without downgrading them', async () => {
