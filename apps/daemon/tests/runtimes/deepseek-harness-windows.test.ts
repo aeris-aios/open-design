@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,12 @@ import {
 import { detectAgent, getDetectedRuntimeVersions } from '../../src/runtimes/detection.js';
 import { resolveAgentExecutable } from '../../src/runtimes/executables.js';
 import { minimalAgentDef } from './helpers/test-helpers.js';
+import {
+  collectProcessTreePids,
+  createCommandInvocation,
+  listProcessSnapshots,
+  stopProcesses,
+} from '@open-design/platform';
 
 const require = createRequire(import.meta.url);
 
@@ -92,4 +99,61 @@ describe('DeepSeek Harness Windows carrier', () => {
   ])('normalizes version output %s', (raw, expected) => {
     expect(parseDeepSeekHarnessVersion(raw)).toBe(expected);
   });
+
+  it.runIf(process.platform === 'win32')(
+    'reaps the cmd shim and its carrier child as one bounded process tree',
+    async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'od-dsh-tree-'));
+      let child: ReturnType<typeof spawn> | undefined;
+      try {
+        const carrier = writeFakeDshCarrier(dir);
+        const env = { ...process.env, OD_DSH_FAKE_SESSION_ROOT: dir };
+        const invocation = createCommandInvocation({
+          command: carrier,
+          args: ['--profile', 'open-design', '--stdio'],
+          env,
+        });
+        child = spawn(invocation.command, invocation.args, {
+          cwd: dir,
+          env,
+          windowsHide: true,
+          windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
+        await waitFor(() => stdout.includes('"type":"ready"'));
+
+        const before = await listProcessSnapshots();
+        const tree = collectProcessTreePids(before, [child.pid ?? -1]);
+        expect(tree).toContain(child.pid);
+        expect(tree.length).toBeGreaterThanOrEqual(2);
+
+        await stopProcesses(tree, { termGraceMs: 1_000, killGraceMs: 1_500 });
+        await waitForClose(child);
+        const live = new Set((await listProcessSnapshots()).map(({ pid }) => pid));
+        expect(tree.filter((pid) => live.has(pid))).toEqual([]);
+      } finally {
+        if (child && child.exitCode === null) child.kill();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for the DeepSeek Harness carrier.');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForClose(child: ReturnType<typeof spawn>): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve, reject) => {
+    child.once('close', () => resolve());
+    child.once('error', reject);
+  });
+}
