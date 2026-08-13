@@ -619,6 +619,12 @@ export function isolateLayeredPptxBackground(
   for (const descendant of Array.from(target.querySelectorAll<HTMLElement>("*"))) {
     descendant.style.setProperty("visibility", "hidden", "important");
   }
+  // Replaced content is painted by the target itself rather than a descendant.
+  // Move that object outside its content box for this screenshot while leaving
+  // the target's CSS background visible; restore replays the saved inline style.
+  if (["IMG", "CANVAS", "VIDEO"].includes(target.tagName)) {
+    target.style.setProperty("object-position", "1000000px 1000000px", "important");
+  }
   target.style.setProperty("border-color", "transparent", "important");
   target.style.setProperty("box-shadow", "none", "important");
   target.style.setProperty("color", "transparent", "important");
@@ -1306,6 +1312,7 @@ export async function runDomToPptx(
   // it so a slide-root pseudo remains visible over an opaque slide fill.
   const slideBackgroundSortSlot = "-1000002";
   const pseudoBeforeBackgroundSortSlot = "-1000001";
+  const pseudoAfterBackgroundSortSlot = "0";
 
   function isTransparentColor(input: string): boolean {
     const value = input.trim().toLowerCase();
@@ -1532,11 +1539,12 @@ export async function runDomToPptx(
         background.style.setProperty("left", style.left || "auto", "important");
         background.style.setProperty("width", style.width || "auto", "important");
         background.style.setProperty("height", style.height || "auto", "important");
-        // Keep the raster background immediately below the converter's native
-        // pseudo text/border slot while the slide background stays below both.
+        // Keep the raster background immediately below the converter's fixed
+        // native pseudo text/border slots. Native ::after always sorts at the
+        // host's z=0 Infinity slot, regardless of its authored z-index.
         background.style.setProperty(
           "z-index",
-          pseudo === "::before" ? pseudoBeforeBackgroundSortSlot : style.zIndex || "auto",
+          pseudo === "::before" ? pseudoBeforeBackgroundSortSlot : pseudoAfterBackgroundSortSlot,
           "important",
         );
         background.style.setProperty("pointer-events", "none", "important");

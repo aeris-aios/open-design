@@ -396,6 +396,21 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
   }, 30_000);
 
+  test('captures only the layered background pixels from a replaced element', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.replaced.pngs;
+
+    expect(media.replaced, JSON.stringify(media.replaced)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image).toBeDefined();
+    expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(image?.translucentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(image?.opaquePixels, JSON.stringify(image)).toBe(0);
+    expect(media.replacedForegroundMedia).toHaveLength(1);
+  }, 30_000);
+
   test('keeps a slide-root layered pseudo background above the opaque slide background', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.rootPseudo.pngs;
@@ -449,6 +464,8 @@ type LayeredBackgroundProbe = {
   masked: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
+  replaced: LayeredBackgroundExport;
+  replacedForegroundMedia: string[];
   rootPseudo: LayeredBackgroundExport;
   rootPseudoLayerOrder: { background: number; content: number; slideBackground: number };
   skippedTargets: number;
@@ -498,6 +515,7 @@ const { gunzipSync, inflateRawSync } = require('node:zlib');
 const fixtures = {
   supported: '<div class="supported"></div>',
   pseudo: '<div class="pseudo"></div>',
+  replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
   skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
@@ -523,14 +541,23 @@ const styles = \`
     background-size: 24px 24px;
   }
   .pseudo { left: 176px; top: 12px; }
-  .pseudo::before {
+  .pseudo::after {
     content: 'Layered pseudo content';
     position: absolute;
     inset: 0;
+    z-index: 5;
     border: 2px solid white;
     color: white;
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
+  }
+  .replaced {
+    position: absolute;
+    left: 160px;
+    top: 102px;
+    width: 150px;
+    height: 60px;
+    background-image: linear-gradient(90deg, rgba(52,199,89,.6), transparent), radial-gradient(circle, rgba(10,132,255,.5), transparent 65%);
   }
   .masked {
     left: 16px;
@@ -730,6 +757,15 @@ app.whenReady().then(async () => {
         pngs: exportedImage.png ? [exportedImage.png] : [],
       };
     }
+    const replacedCapture = Object.entries(captures)
+      .find(([targetId]) => probeByTarget[targetId] === 'replaced')?.[1];
+    const replacedForegroundMedia = replacedCapture ? media.filter(({ name, png }) =>
+      !usedMedia.has(name)
+      && Math.abs((png?.width ?? 0) - replacedCapture.width * 2) <= 1
+      && Math.abs((png?.height ?? 0) - replacedCapture.height * 2) <= 1
+      && png.opaquePixels === png.width * png.height) : [];
+    replacedForegroundMedia.forEach(({ name }) => usedMedia.add(name));
+    result.replacedForegroundMedia = replacedForegroundMedia.map(({ name }) => name);
     const pseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) > 100 && (png?.height ?? 0) > 40
         && (png?.width ?? 0) < 300 && (png?.height ?? 0) < 170,
@@ -814,6 +850,10 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || value === null
     || !('supported' in value)
     || !('pseudo' in value)
+    || !('replaced' in value)
+    || !('replacedForegroundMedia' in value)
+    || !Array.isArray(value.replacedForegroundMedia)
+    || !value.replacedForegroundMedia.every((item) => typeof item === 'string')
     || !('masked' in value)
     || !('composited' in value)
     || !('pseudoLayerOrder' in value)
@@ -846,6 +886,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       background: value.pseudoLayerOrder.background,
       content: value.pseudoLayerOrder.content,
     },
+    replaced: parseLayeredBackgroundExport(value.replaced),
+    replacedForegroundMedia: value.replacedForegroundMedia,
     rootPseudo: parseLayeredBackgroundExport(value.rootPseudo),
     rootPseudoLayerOrder: {
       background: value.rootPseudoLayerOrder.background,
