@@ -1122,9 +1122,9 @@
   border-radius: 12px;
   background: #fff;
   box-shadow: var(--shadow-lg);
-  /* At most six 32px rows visible (plus the 6px paddings); longer tab lists
-     scroll inside the card instead of growing it. */
-  max-height: calc(6 * 32px + 2 * 6px);
+  /* Six 32px rows plus vertical padding and borders. Global border-box sizing
+     means the border must be included or the sixth row is slightly clipped. */
+  max-height: calc(6 * 32px + 2 * 6px + 2 * 1px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }

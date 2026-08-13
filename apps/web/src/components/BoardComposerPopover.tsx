@@ -463,7 +463,7 @@ export function BoardComposerPopover({
   onHoverMember?: (elementId: string | null) => void;
   onDeleteComment?: (commentId: string) => void | Promise<boolean | void>;
   /** Opens the all-comments side panel without closing this popover. */
-  onViewAllComments?: () => void;
+  onViewAllComments?: (returnFocusTarget?: HTMLElement | null) => void;
   /** Object-URL thumbnails for images the user attached to this comment. */
   images?: { file: File; url: string }[];
   /** Already-saved attachment thumbnails (read-only) for a re-opened comment. */
@@ -679,7 +679,7 @@ export function BoardComposerPopover({
               type="button"
               className="comment-popover-view-all"
               data-testid="comment-popover-view-all"
-              onClick={onViewAllComments}
+              onClick={(event) => onViewAllComments(event.currentTarget)}
             >
               {t('chat.comments.viewAll')}
               <Icon name="chevron-right" size={12} />

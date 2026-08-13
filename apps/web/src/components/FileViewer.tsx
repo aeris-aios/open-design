@@ -4427,9 +4427,9 @@ export function CommentSidePanel({
   activeCommentId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
-  /** Closes the panel outright. The floating card passes this so its 收起
+  /** Closes the panel outright. The floating card uses this so its collapse
    *  control hides the card instead of parking a full-height rail on the
-   *  right edge — the toolbar's comment button is the way back. */
+   *  right edge; the toolbar's comment button is the way back. */
   onDismiss?: () => void;
   onToggleSelect: (commentId: string) => void;
   onSelectAll: () => void;
@@ -4607,8 +4607,8 @@ export function CommentSidePanel({
           <span>{commentsLabel}</span>
         </div>
         <div className="comment-side-header-actions">
-          {/* The header's right slot collapses the panel to its rail (per
-              product: 收起); select all moved below the divider. */}
+          {/* The header's right slot owns collapse; select all moved below
+              the divider. */}
           <button
             ref={expandedToggleRef}
             type="button"
@@ -13249,9 +13249,9 @@ function HtmlViewer({
       ?? commentPanelToggleRef.current
       ?? toolbarMoreTriggerRef.current;
     setCommentPanelOpen(false);
-    // 收起 must only put the panel away. While a composer popover is open
-    // (e.g. the panel was expanded via its 查看全部评论 control), tearing down
-    // board mode here would also close that popover mid-composition.
+    // Dismissing the panel must not close an active composer popover. The
+    // panel may have been opened from that popover's View all comments action,
+    // so tearing down board mode here would interrupt composition.
     if (activeCommentTarget) return;
     setCommentCreateMode(false);
     setBoardMode(false);
@@ -14462,7 +14462,8 @@ function HtmlViewer({
         setHoveredPodMemberId((current) => (current === elementId ? null : current));
       }}
       onHoverMember={setHoveredPodMemberId}
-      onViewAllComments={() => {
+      onViewAllComments={(returnFocusTarget) => {
+        commentPanelReturnFocusRef.current = returnFocusTarget ?? null;
         setCommentPanelOpen(true);
         setCommentSidePanelCollapsed(false);
       }}
@@ -14544,10 +14545,9 @@ function HtmlViewer({
       // collapse — forcing `false` here made every click a no-op.
       collapsed={commentSidePanelCollapsed}
       onCollapsedChange={setCommentSidePanelCollapsed}
-      // Floating card: 收起 closes it, mirroring the toolbar toggle's own OFF
-      // branch so the toolbar returns to its unpressed state and ONE click
-      // reopens the panel. (Closing only the panel left create/board mode on,
-      // so the next toolbar click spent itself turning those off.) The local
+      // On a floating card, collapse closes the card and mirrors the toolbar
+      // toggle's OFF branch so one click reopens it. Closing only the panel
+      // would leave create/board mode on and consume that next click. The local
       // dock keeps its collapse-to-rail behaviour.
       onDismiss={commentPortalHost ? dismissFloatingCommentPanel : undefined}
       onToggleSelect={(commentId) => {
