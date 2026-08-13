@@ -9569,7 +9569,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('annotation-style-summary')).toBeNull();
   });
 
-  it('keeps the comment panel closed after saving an annotation comment', async () => {
+  it('keeps the comment panel closed after saving and reopens it with one click', async () => {
     function Harness() {
       const [comments, setComments] = useState<PreviewComment[]>([]);
       return (
@@ -9633,6 +9633,14 @@ describe('FileViewer tweaks toolbar', () => {
     await waitFor(() => expect(screen.queryByTestId('comment-popover')).toBeNull());
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
     expect(screen.getByText('Comment saved')).toBeTruthy();
+
+    const commentsButton = screen.getByTestId('comment-panel-toggle');
+    expect(commentsButton.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(commentsButton);
+
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
+    expect(commentsButton.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('加大字号')).toBeTruthy();
   });
 
   it('keeps saved marker numbers stable after saving another comment', async () => {

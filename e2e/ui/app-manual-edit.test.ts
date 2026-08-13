@@ -504,9 +504,9 @@ test('[P1] HTML preview toolbar exposes comments, mark, and edit workflows', asy
 
   await expect(page.getByTestId('comment-side-panel')).toHaveCount(0);
   const commentsButton = page.getByTestId('comment-panel-toggle');
-  await commentsButton.click();
   await expect(commentsButton).toHaveAttribute('aria-pressed', 'false');
   await commentsButton.click();
+  await expect(commentsButton).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('comment-side-panel')).toBeVisible();
   await expect(page.getByTestId('comment-side-panel')).toContainText('Panel-level comment');
   await expect(commentsButton).toContainText('1');

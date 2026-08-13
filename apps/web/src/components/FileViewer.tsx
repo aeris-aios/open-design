@@ -8182,6 +8182,7 @@ function HtmlViewer({
   const commentPanelReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingCommentPanelFocusRef = useRef<HTMLElement | null>(null);
   const [commentCreateMode, setCommentCreateMode] = useState(false);
+  const commentPanelActive = boardMode && commentCreateMode && commentPanelOpen;
   const [boardTool, setBoardTool] = useState<BoardTool>('inspect');
   const [inspectMode, setInspectMode] = useState(false);
   const [agentToolsOpen, setAgentToolsOpen] = useState(false);
@@ -13215,7 +13216,7 @@ function HtmlViewer({
     if (returnFocusTarget) commentPanelReturnFocusRef.current = returnFocusTarget;
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
-    if (boardMode && commentCreateMode) {
+    if (commentPanelActive) {
       setBoardMode(false);
       setCommentCreateMode(false);
       setCommentPanelOpen(false);
@@ -14896,13 +14897,13 @@ function HtmlViewer({
               <button
                 ref={commentPanelToggleRef}
                 type="button"
-                className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
+                className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${commentPanelActive ? ' active' : ''}`}
                 data-testid="comment-panel-toggle"
                 data-tooltip={t('chat.tabComments')}
                 data-tooltip-placement="bottom"
                 title={t('chat.tabComments')}
                 aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
-                aria-pressed={boardMode && commentCreateMode}
+                aria-pressed={commentPanelActive}
                 onClick={(event) => activateCommentCreateTool(event.currentTarget)}
               >
                 <RemixIcon name="message-3-line" size={15} />
@@ -15079,7 +15080,7 @@ function HtmlViewer({
                     </button>
                     <button
                       type="button"
-                      className={`viewer-toolbar-more-item${boardMode && commentCreateMode ? ' active' : ''}`}
+                      className={`viewer-toolbar-more-item${commentPanelActive ? ' active' : ''}`}
                       role="menuitem"
                       onClick={() => {
                         activateCommentCreateTool(toolbarMoreTriggerRef.current);
