@@ -24,6 +24,8 @@ export interface AgentModelOption {
   additionalSpeedTiers?: string[];
   /** Service tiers supported by this model, keyed by Codex config id. */
   serviceTierOptions?: AgentModelOption[];
+  /** Reasoning efforts advertised for this exact model route. */
+  reasoningOptions?: AgentModelOption[];
 }
 
 /**
@@ -138,7 +140,8 @@ export interface AgentInfo {
   externalMcpInjection?:
     | 'claude-mcp-json'
     | 'acp-merge'
-    | 'opencode-env-content';
+    | 'opencode-env-content'
+    | 'mimo-env-content';
   /**
    * When `false`, the Settings model picker hides the "Custom (fill below)"
    * option and the free-text input. Use this for agents whose CLI doesn't

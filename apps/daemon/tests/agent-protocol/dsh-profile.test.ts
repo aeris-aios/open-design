@@ -92,12 +92,20 @@ describe('DeepSeek Harness profile frame validation', () => {
         provider_name: 'DeepSeek',
         id: 'deepseek-v4-flash',
         name: 'DeepSeek-V4-Flash',
+        reasoning_options: [
+          { id: 'low', name: 'Low' },
+          { id: 'high', name: 'High', default: true },
+        ],
       }],
     })), [{
       provider: 'deepseek-official',
       provider_name: 'DeepSeek',
       id: 'deepseek-v4-flash',
       name: 'DeepSeek-V4-Flash',
+      reasoning_options: [
+        { id: 'low', name: 'Low' },
+        { id: 'high', name: 'High', default: true },
+      ],
     }]);
     assert.equal(parseDshProfileModelsOutput('{"type":"models"}'), null);
   });
@@ -112,12 +120,14 @@ describe('DeepSeek Harness profile frame validation', () => {
         provider_name: 'DeepSeek',
         id: 'deepseek-v4-flash',
         name: 'DeepSeek-V4-Flash',
+        reasoning_options: [{ id: 'high', name: 'High', default: true }],
       }],
     })), [
       { id: 'default', label: 'Default (CLI config)' },
       {
         id: 'deepseek-official/deepseek-v4-flash',
         label: 'DeepSeek-V4-Flash · DeepSeek',
+        reasoningOptions: [{ id: 'high', label: 'High', default: true }],
       },
     ]);
   });

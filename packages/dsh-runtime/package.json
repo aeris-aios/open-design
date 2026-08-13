@@ -4,27 +4,27 @@
   "description": "DeepSeek Harness profile runtime for Open Design",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./startup": {
-      "types": "./lib/types/startup.d.ts",
-      "default": "./lib/startup.js"
+      "types": "./dist/types/startup.d.ts",
+      "default": "./dist/startup.js"
     },
     "./invariant": {
-      "types": "./lib/types/invariant.d.ts",
-      "default": "./lib/invariant.js"
+      "types": "./dist/types/invariant.d.ts",
+      "default": "./dist/invariant.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
-    "lib/*.js",
-    "lib/types/**/*.d.ts",
+    "dist/*.js",
+    "dist/types/**/*.d.ts",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -37,7 +37,7 @@
     }
   },
   "scripts": {
-    "build": "tsx ./esbuild.config.ts && tsc -p tsconfig.json --emitDeclarationOnly",
+    "build": "tsx ./clean.ts && tsx ./esbuild.config.ts && tsc -p tsconfig.json --emitDeclarationOnly",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit"
   },

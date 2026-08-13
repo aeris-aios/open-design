@@ -28,7 +28,7 @@ import {
 
 import type { ToolPackConfig } from "./config.js";
 import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
-import { copyBundledResourceTrees, linuxResources } from "./resources.js";
+import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources.js";
 import { copyOptionalVelaCliBinary } from "./vela-cli.js";
 import { electronBuilderVersionForAppVersion, readRuntimeAppVersion } from "./versions.js";
 import { processWebSourcemaps } from "./web-sourcemaps.js";
@@ -530,6 +530,10 @@ async function copyResourceTree(config: ToolPackConfig, paths: LinuxPaths): Prom
   await rm(paths.resourceRoot, { force: true, recursive: true });
   await mkdir(paths.resourceRoot, { recursive: true });
   await copyBundledResourceTrees({
+    workspaceRoot: config.workspaceRoot,
+    resourceRoot: paths.resourceRoot,
+  });
+  await packBundledDshRuntime({
     workspaceRoot: config.workspaceRoot,
     resourceRoot: paths.resourceRoot,
   });

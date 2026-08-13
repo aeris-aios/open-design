@@ -51,8 +51,8 @@ This adapter remains distinct from the existing `deepseek` TUI adapter.
 - mapping OD conversations to stable Harness session ids;
 - mapping Harness events into OD chat/tool/artifact events;
 - run cancellation and platform process-tree cleanup;
-- product guidance, profile compatibility checks, and later one-click profile
-  installation or repair.
+- product guidance, profile compatibility checks, and explicit one-click
+  profile installation or repair.
 
 ### Open Design explicitly does not own
 
@@ -107,29 +107,34 @@ dsh plugin --profile open-design add <pinned OD bundle package>
 ```
 
 The source lives in the Open Design repository so the host types, fake runtime,
-profile implementation, and protocol fixtures change atomically. The intended
-published identity is `@open-design/dsh-runtime`; setup copy must not claim it
-is installable until the package has actually been published. OD pins an exact
-compatible version or immutable artifact reference rather than installing an
-unbounded latest release.
+profile implementation, and protocol fixtures change atomically. Its package
+identity is `@open-design/dsh-runtime`, but end-user setup does not require a
+public registry release: each packaged OD build carries an exact packed
+tarball plus a SHA-256 manifest. This couples the host and profile protocol
+versions and avoids an unbounded `latest` install.
 
 ### First release
 
-Installation is user-initiated from documented terminal instructions. OD
-detects the result through the profile probe. OD does not silently mutate the
-user's Harness installation and does not implement an installer transaction in
-the first release.
+When the official `dsh` is present but the profile is missing or incompatible,
+DeepSeek Harness remains in the normal installed-CLI group with a
+setup-required label. Selecting it opens a confirmation dialog. Only after the
+user confirms does OD invoke:
 
-### Final experience
+```text
+dsh plugin --profile open-design add <embedded pinned tarball>
+```
 
-The DeepSeek Harness card provides **Connect DeepSeek**. One explicit click
-authorizes OD to invoke the official `dsh plugin` command, install or repair the
-OD profile, probe it, and continue to credential setup. Subsequent compatible
-bundle maintenance may be automatic, with visible status and rollback on
-failure.
+OD verifies the tarball hash before invocation, rescans the profile, selects
+DeepSeek Harness, and performs the normal connection test. Cancelling leaves
+both OD selection and the Harness profile unchanged, and selecting the card
+again shows the prompt again. If a compatible profile already exists, selection
+is immediate and no prompt or reinstall occurs. If `dsh` itself is absent,
+DeepSeek Harness remains in the installable-agent group and points users to the
+official installer.
 
-The UI and `od` CLI must use the same daemon endpoints when this installation
-surface is added. Automatic installation is not part of phase one.
+The Web UI and `od agent setup deepseek-harness --json` call the same local-only
+daemon endpoint. The CLI setup command is explicit rather than being triggered
+by agent selection. Credential setup remains outside this first release.
 
 ## 5. Profile discovery and compatibility
 

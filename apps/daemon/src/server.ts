@@ -195,6 +195,7 @@ import {
   detectAgents,
   getAgentDef,
   isKnownModel,
+  isKnownReasoningEffort,
   isKnownServiceTier,
   openDesignAmrRunAttempt,
   openDesignAmrTraceEnv,
@@ -6868,7 +6869,11 @@ export async function startServer({
 
   registerDaemonRoutes(app, {
     db,
-    paths: { RUNTIME_DATA_DIR },
+    paths: {
+      PROJECT_ROOT,
+      RESOURCE_ROOT: DAEMON_RESOURCE_ROOT ?? PROJECT_ROOT,
+      RUNTIME_DATA_DIR,
+    },
     http: { requireLocalDaemonRequest, sendApiError },
     host,
     getResolvedPort: () => resolvedPort,
@@ -10089,8 +10094,9 @@ export async function startServer({
       process.env[def.defaultModelEnvVar]?.trim(),
     );
     const safeReasoning =
-      typeof reasoning === 'string' && Array.isArray(def.reasoningOptions)
-        ? (def.reasoningOptions.find((r) => r.id === reasoning)?.id ?? null)
+      typeof reasoning === 'string' &&
+      isKnownReasoningEffort(def, safeModel, reasoning, requestedLiveModelScope)
+        ? reasoning
         : null;
     safeModel = resolveModelForServiceTier(
       def,

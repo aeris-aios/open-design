@@ -14,9 +14,10 @@ carrier.
 
 Deliver the smallest useful vertical slice:
 
-> A user who has installed official DSH and the OD profile can select DeepSeek
-> Harness in Open Design, generate a previewable file artifact, cold-resume the
-> conversation in a new process, and modify that artifact.
+> A user who has installed official DSH can explicitly connect it from the
+> normal Open Design CLI picker, select a discovered model and reasoning level,
+> generate a previewable file artifact, cold-resume the conversation in a new
+> process, and modify that artifact.
 
 Phase one is successful because it produces and iterates real design output,
 not because every Harness capability is exposed.
@@ -24,13 +25,15 @@ not because every Harness capability is exposed.
 ## 2. User journey in phase one
 
 1. The user installs official `@deepseek-ai/dsh` using Harness documentation.
-2. The user installs the pinned OD bundle into the `open-design` profile using
-   the documented `dsh plugin --profile open-design add ...` command.
+2. OD shows DeepSeek Harness in **Your CLIs** with a connection-component
+   required state. Selecting it opens a confirmation dialog; confirmation asks
+   the user's `dsh` to install OD's embedded, pinned profile bundle.
 3. The user configures a DeepSeek credential through Harness or the process
    environment.
 4. OD detects `dsh`, verifies `--version`, and runs
    `dsh --profile open-design --probe`.
-5. DeepSeek Harness appears in the normal coding-agent picker.
+5. OD rescans, selects, and connection-tests DeepSeek Harness. A compatible
+   pre-existing profile skips the dialog and selects immediately.
 6. A first request creates an HTML artifact in the OD project and OD previews
    it through the existing artifact path.
 7. A second request starts another `dsh` process, resumes the same Harness
@@ -38,8 +41,9 @@ not because every Harness capability is exposed.
 8. Cancelling a run stops its runtime and tool children without affecting any
    other conversation.
 
-There is no phase-one key input, profile installer, or advanced settings UI.
-The UI supplies accurate installation guidance and actionable probe errors.
+There is no phase-one key input. The first release includes the explicit
+profile installer and per-model reasoning choices, but leaves credential
+storage, MCP injection, and automatic background maintenance deferred.
 
 ## 3. Included scope
 
@@ -49,10 +53,28 @@ The UI supplies accurate installation guidance and actionable probe errors.
 - probe a usable version;
 - treat untested parseable versions as available with a warning;
 - require a compatible `open-design --probe` response;
-- publish an OD profile bundle compatible with the tested official DSH family;
+- build an OD profile bundle compatible with the tested official DSH family;
 - keep the bundle source, daemon protocol types, and fixtures in the same
-  repository and publish the pinned `@open-design/dsh-runtime` package;
+  repository and embed its exact packed artifact in each OD build;
 - never package `dsh`, Node, or the Harness dependency closure in OD.
+
+### Explicit setup
+
+- keep DSH in **Your CLIs** when the official executable exists but the profile
+  is missing or incompatible;
+- open a confirmation dialog on selection and perform no mutation on cancel;
+- install the hash-verified embedded tarball through the user's `dsh` only
+  after confirmation;
+- rescan, select, and connection-test on success;
+- expose the same operation as `od agent setup deepseek-harness --json`;
+- do not reinstall or prompt when the compatible profile already exists.
+
+### Models and reasoning
+
+- discover the user's live model catalog through the profile;
+- expose reasoning choices per model, not as one agent-global guess;
+- validate the requested effort against the selected model before launch;
+- retain a safe fallback model when live discovery is unavailable.
 
 ### Runtime protocol
 
@@ -112,8 +134,7 @@ Phase one does not include:
 
 - **Connect DeepSeek** key input;
 - `credentials.describe/set/unset` through OD;
-- automatic profile installation, upgrade, repair, rollback, or uninstall;
-- dynamic model catalog and reasoning controls in Settings;
+- background profile upgrade, rollback, or uninstall;
 - external MCP injection;
 - TodoWrite snapshots or pinned Todo UI;
 - subagent lifecycle presentation;
@@ -139,6 +160,8 @@ These are deferred without changing the chosen architecture.
 | session model | one compatible Harness session per OD conversation |
 | completion | exactly one matching terminal `result` |
 | resume failure | fail; never silently create |
+| profile setup | explicit selection dialog or `od agent setup` |
+| bundle delivery | pinned tarball embedded in OD; official `dsh` stays external |
 | credential source | preconfigured Harness or inherited environment |
 | MCP | not forwarded in phase one |
 
@@ -240,8 +263,8 @@ Common lane delivers:
 
 Deliver:
 
-1. Setup guidance for official DSH, the OD profile, and Harness credential
-   configuration.
+1. Setup guidance for official DSH and Harness credential configuration, plus
+   explicit in-product installation of the OD profile component.
 2. Agent-picker diagnostics for missing executable, unreadable version,
    untested version, missing profile, incompatible protocol, and missing auth.
 3. macOS/Linux real profile smoke.
@@ -294,23 +317,20 @@ arguments.
 
 ## 11. Phase-one UI and CLI boundary
 
-No new profile-install or credential-management capability ships in phase one,
-so there is no new UI-only capability that requires a CLI peer.
+The agent picker and Settings both place an installed-but-unconfigured DSH in
+the ordinary **Your CLIs** group. Clicking it opens the same confirmation
+dialog; Settings' **Test** remains a pure connection test. The setup operation
+has a shared contract DTO and daemon endpoint, a Web surface, and the explicit
+`od agent setup deepseek-harness --json` CLI peer.
 
-The existing agent picker and normal chat/run APIs expose DeepSeek Harness to
-the Web product. Existing daemon run APIs and `od` run/task surfaces continue to
-provide the automation path; the adapter is selected by runtime id like other
-coding agents.
-
-When one-click install and credential management are implemented later, each
-must land as one closure: shared contract DTO, daemon endpoint, Web surface, and
-`od` CLI subcommand with `--json` and stdin/key-file secret input.
+The existing normal chat/run APIs expose DeepSeek Harness by runtime id like
+other coding agents. Future credential management must likewise land as one
+HTTP/UI/CLI closure, with CLI secrets accepted through stdin or a key file.
 
 ## 12. Later phases
 
-### Phase two — connection experience
+### Phase two — connection maintenance
 
-- one-click, explicitly authorized profile install/repair;
 - pinned bundle update with staging, verification, rollback, and single-flight;
 - Harness credential status/set/unset via write-only Web and CLI surfaces;
 - environment credential shown as read-only;
@@ -318,7 +338,6 @@ must land as one closure: shared contract DTO, daemon endpoint, Web surface, and
 
 ### Phase three — capability parity
 
-- dynamic model and reasoning catalog;
 - validated MCP injection;
 - TodoWrite snapshots;
 - bounded subagent status;

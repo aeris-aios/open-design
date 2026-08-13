@@ -200,12 +200,15 @@ async function probeAmrOpenCodeVersion(
 function unavailableAgent(
   def: RuntimeAgentDef,
   diagnostics: AgentDiagnostic[] = [],
+  detected?: { path?: string; version?: string | null },
 ): DetectedAgent {
   return {
     ...stripFns(def),
     models: def.fallbackModels ?? [DEFAULT_MODEL_OPTION],
     modelsSource: 'fallback',
     available: false,
+    ...(detected?.path ? { path: detected.path } : {}),
+    ...(detected && 'version' in detected ? { version: detected.version ?? null } : {}),
     ...(diagnostics.length > 0 ? { diagnostics } : {}),
     ...installMetaForAgent(def.id),
   };
@@ -283,7 +286,10 @@ async function probe(
   if (def.compatibilityProbe) {
     try {
       if (def.compatibilityProbe.preflight && !def.compatibilityProbe.preflight(probeEnv)) {
-        return unavailableAgent(def, [buildCompatibilityDiagnostic(def)]);
+        return unavailableAgent(def, [buildCompatibilityDiagnostic(def)], {
+          path: launch.selectedPath,
+          version: outcome.version,
+        });
       }
       const { stdout } = await execAgentFile(
         launch.launchPath,
@@ -296,7 +302,10 @@ async function probe(
       );
       runtimeCompanionVersion = def.compatibilityProbe.parse(String(stdout));
     } catch {
-      return unavailableAgent(def, [buildCompatibilityDiagnostic(def)]);
+      return unavailableAgent(def, [buildCompatibilityDiagnostic(def)], {
+        path: launch.selectedPath,
+        version: outcome.version,
+      });
     }
   }
   const versionDiagnostic =

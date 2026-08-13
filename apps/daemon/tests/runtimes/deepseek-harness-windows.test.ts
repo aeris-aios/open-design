@@ -86,6 +86,8 @@ describe('DeepSeek Harness Windows carrier', () => {
         OD_DSH_FAKE_MODE: 'bad-identity',
       });
       expect(detected.available).toBe(false);
+      expect(detected.path).toBe(carrier);
+      expect(detected.version).toBe('0.1.0-rc.6');
       expect(detected.diagnostics).toEqual([
         expect.objectContaining({ reason: 'runtime-profile-incompatible', severity: 'error' }),
       ]);

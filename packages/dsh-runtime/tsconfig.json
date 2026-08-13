@@ -9,7 +9,7 @@
     "exactOptionalPropertyTypes": true,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "outDir": "lib/types",
+    "outDir": "dist/types",
     "rootDir": "src",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,

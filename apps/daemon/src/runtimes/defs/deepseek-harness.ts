@@ -16,6 +16,15 @@ function parseModels(stdout: string) {
     ...catalog.map((model) => ({
       id: `${model.provider}/${model.id}`,
       label: `${model.name} · ${model.provider_name}`,
+      ...(model.reasoning_options?.length
+        ? {
+            reasoningOptions: model.reasoning_options.map((effort) => ({
+              id: effort.id,
+              label: effort.name,
+              ...(effort.default === true ? { default: true } : {}),
+            })),
+          }
+        : {}),
     })),
   ];
 }

@@ -8,7 +8,7 @@ await build({
     invariant: './src/invariant.ts',
   },
   format: 'esm',
-  outdir: './lib',
+  outdir: './dist',
   packages: 'external',
   platform: 'node',
   target: 'node24',

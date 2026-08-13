@@ -11,6 +11,7 @@ export type ModelCatalogEntry = {
   provider_name: string;
   id: string;
   name: string;
+  reasoning_options?: Array<{ id: string; name: string; default?: boolean }>;
 };
 
 export function modelsFrame(models: ModelCatalogEntry[]) {

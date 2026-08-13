@@ -8,7 +8,12 @@ import {
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-agent-default-model';
-import { createUserMessage, type ContentBlock, type TokenUsage } from '@deepseek-ai/dsh-llm';
+import {
+  createUserMessage,
+  ReasoningEffortId,
+  type ContentBlock,
+  type TokenUsage,
+} from '@deepseek-ai/dsh-llm';
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-cmdline';
 import {
@@ -88,11 +93,21 @@ async function listModelCatalog(ctx: Context): Promise<ModelCatalogEntry[]> {
   for (const provider of ctx.llm.listProviders()) {
     try {
       for (const model of await ctx.llm.listModels(provider.id)) {
+        const resolved = await ctx.llm.resolveModelInfo(provider.id, model.id).catch(() => null);
         catalog.push({
           provider: provider.id,
           provider_name: provider.name,
           id: model.id,
           name: model.name,
+          ...(resolved?.reasoning?.efforts.length
+            ? {
+                reasoning_options: resolved.reasoning.efforts.map((effort) => ({
+                  id: String(effort.id),
+                  name: effort.name,
+                  ...(resolved.reasoning?.defaultEffort === effort.id ? { default: true } : {}),
+                })),
+              }
+            : {}),
         });
       }
     } catch {
@@ -156,9 +171,12 @@ async function execute(
   signal: AbortSignal,
 ): Promise<void> {
   const defaultSelection = ctx.agentDefaultModel.currentSelection();
-  const selection = request.model
+  const baseSelection = request.model
     ? { provider: request.model.provider, model: request.model.id }
     : defaultSelection;
+  const selection = request.reasoning_effort
+    ? { ...baseSelection, reasoningEffort: ReasoningEffortId(request.reasoning_effort) }
+    : baseSelection;
   const sessionId = SessionId(request.resume_session_id ?? `od-${randomUUID()}`);
   let handle: AgentHandle | undefined;
   let firstSeq = 0;

@@ -15,6 +15,7 @@ export type RuntimeModelOption = {
   metadata?: ModelMetadata;
   additionalSpeedTiers?: string[];
   serviceTierOptions?: RuntimeModelOption[];
+  reasoningOptions?: RuntimeModelOption[];
 };
 
 export type RuntimeModelSource = 'live' | 'fallback';

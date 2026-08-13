@@ -52,6 +52,28 @@ export function parseDshProfileModelsOutput(stdout: string): DshProfileModelCata
       typeof model.id !== 'string' || model.id.length === 0 ||
       typeof model.name !== 'string' || model.name.length === 0
     ) return null;
+    let reasoningOptions: DshProfileModelCatalogEntry['reasoning_options'];
+    if (model.reasoning_options !== undefined) {
+      if (!Array.isArray(model.reasoning_options)) return null;
+      reasoningOptions = [];
+      const seenEfforts = new Set<string>();
+      for (const candidateEffort of model.reasoning_options) {
+        if (!candidateEffort || typeof candidateEffort !== 'object' || Array.isArray(candidateEffort)) return null;
+        const effort = candidateEffort as Record<string, unknown>;
+        if (
+          typeof effort.id !== 'string' || effort.id.length === 0 ||
+          typeof effort.name !== 'string' || effort.name.length === 0 ||
+          (effort.default !== undefined && typeof effort.default !== 'boolean')
+        ) return null;
+        if (seenEfforts.has(effort.id)) continue;
+        seenEfforts.add(effort.id);
+        reasoningOptions.push({
+          id: effort.id,
+          name: effort.name,
+          ...(effort.default === true ? { default: true } : {}),
+        });
+      }
+    }
     const id = `${model.provider}/${model.id}`;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -60,6 +82,7 @@ export function parseDshProfileModelsOutput(stdout: string): DshProfileModelCata
       provider_name: model.provider_name,
       id: model.id,
       name: model.name,
+      ...(reasoningOptions?.length ? { reasoning_options: reasoningOptions } : {}),
     });
   }
   return models.length > 0 ? models : null;

@@ -124,6 +124,10 @@ describe('runtime version policy', () => {
       const detected = await detectAgent(def, { DSH_BIN: writeProfileBin(dir, true) });
       expect(detected.available).toBe(available);
       expect(detected.diagnostics?.[0]?.reason).toBe(reason);
+      if (!compatible) {
+        expect(detected.path).toBe(path.join(dir, process.platform === 'win32' ? 'dsh.cmd' : 'dsh'));
+        expect(detected.version).toBe('0.1.0-rc.6');
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -72,6 +72,22 @@ describe('@open-design/dsh-runtime protocol', () => {
     });
   });
 
+  test('keeps per-model reasoning metadata in the catalog', () => {
+    assert.deepEqual(modelsFrame([{
+      provider: 'deepseek-official',
+      provider_name: 'DeepSeek',
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek-V4-Flash',
+      reasoning_options: [
+        { id: 'low', name: 'Low' },
+        { id: 'high', name: 'High', default: true },
+      ],
+    }]).models[0]?.reasoning_options, [
+      { id: 'low', name: 'Low' },
+      { id: 'high', name: 'High', default: true },
+    ]);
+  });
+
   test('maps terminal reasons and nested tool output', () => {
     assert.equal(internals.resultStatus({ kind: 'completed' }), 'completed');
     assert.equal(internals.resultStatus({ kind: 'aborted', reason: { kind: 'user' } }), 'cancelled');

@@ -358,21 +358,26 @@ the active-run staging implementation is in
   `DSH_BIN` only when its executable is outside the daemon's PATH.
 - The adapter also requires an Open Design-owned Harness profile named
   `open-design`. The package source lives at
-  [`packages/dsh-runtime`](../packages/dsh-runtime). Until
-  `@open-design/dsh-runtime` is published, repository developers install its
-  packed tarball; user-facing setup must not claim the npm package is already
-  available. Once published, pin the exact version supported by that OD build:
+  [`packages/dsh-runtime`](../packages/dsh-runtime). Packaged OD builds embed
+  an exact tarball and SHA-256 manifest for this thin component; they do not
+  depend on a public npm release at setup time. Repository developers may pack
+  and install the same source manually:
 
   ```sh
-  dsh plugin --profile open-design add @open-design/dsh-runtime@0.1.0
+  pnpm --filter @open-design/dsh-runtime build
+  pnpm -C packages/dsh-runtime pack --pack-destination <temporary-directory>
+  dsh plugin --profile open-design add <temporary-directory>/open-design-dsh-runtime-0.1.0.tgz
   dsh --profile open-design --probe
   dsh --profile open-design --models
   ```
 
 - Detection first checks `dsh --version`, then requires the profile's strict
-  protocol-generation handshake. A missing/incompatible profile keeps the
-  agent unavailable and the Settings card explains that the profile must be
-  installed before rescanning.
+  protocol-generation handshake. When `dsh` exists but the profile is missing
+  or incompatible, DeepSeek Harness stays in the normal **Your CLIs** list with
+  a setup-required state. Selecting it opens an explicit confirmation dialog;
+  confirmation installs the embedded component through the user's `dsh`,
+  rescans, selects, and connection-tests it. Cancelling changes nothing. Only a
+  missing `dsh` executable belongs in the installable-agent group.
 - Each OD run starts a fresh `dsh --profile open-design --stdio` process. The
   JSONL profile protocol creates a Harness session on the first turn and cold
   resumes that exact session on later turns. This is profile-stdio resume, not
@@ -382,6 +387,9 @@ the active-run staging implementation is in
   existing watcher and artifact preview own delivery.
 - Phase one uses credentials already configured for Harness or inherited as
   `DEEPSEEK_API_KEY`; Open Design neither stores nor reads back the secret.
+- Model detection comes from `dsh --profile open-design --models`. Each model
+  may expose its own reasoning-effort choices; OD validates and forwards only
+  one of the choices advertised for that selected model.
 
 ### 5.13 Plain stream artifact handoff
 

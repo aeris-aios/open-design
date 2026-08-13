@@ -24,6 +24,7 @@ export type DshProfileModelCatalogEntry = {
   provider_name: string;
   id: string;
   name: string;
+  reasoning_options?: Array<{ id: string; name: string; default?: boolean }>;
 };
 
 export type DshProfileModelsFrame = {
