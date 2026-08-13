@@ -339,8 +339,6 @@ test('[P0] sending preview comments opens the refreshed follow-up artifact', asy
   await page.getByTestId('comment-popover-save').click();
   await expect(page.getByTestId('comment-saved-marker-hero-title')).toBeVisible();
 
-  await page.getByTestId('comment-saved-marker-hero-title').click({ force: true });
-  await page.getByTestId('comment-popover-view-all').click();
   const sidePanel = page.getByTestId('comment-side-panel');
   await expect(sidePanel).toBeVisible();
   await expect(sidePanel.getByTestId('comment-side-item').filter({ hasText: 'Make the headline more specific.' }).first()).toBeVisible();
@@ -968,8 +966,6 @@ async function runCommentAttachmentFlow(
   await expect(page.getByTestId('staged-comment-attachments')).toHaveCount(0);
   await expect(page.getByTestId('comment-popover')).toHaveCount(0);
 
-  await page.getByTestId('comment-saved-marker-hero-title').click({ force: true });
-  await page.getByTestId('comment-popover-view-all').click();
   const sidePanel = page.getByTestId('comment-side-panel');
   await expect(sidePanel).toBeVisible();
   await expect(sidePanel).toContainText('Make the headline more specific.');

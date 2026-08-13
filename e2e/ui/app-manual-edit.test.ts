@@ -502,13 +502,14 @@ test('[P1] HTML preview toolbar exposes comments, mark, and edit workflows', asy
   await page.getByTestId('comment-popover').getByRole('button', { name: /^Comment$/ }).click();
   await expect(page.getByTestId('comment-saved-marker-hero-title')).toBeVisible();
 
-  await page.getByTestId('comment-saved-marker-hero-title').click({ force: true });
   await expect(page.getByTestId('comment-side-panel')).toHaveCount(0);
-  await expect(page.getByTestId('comment-popover-view-all')).toBeVisible();
-  await page.getByTestId('comment-popover-view-all').click();
+  const commentsButton = page.getByTestId('comment-panel-toggle');
+  await commentsButton.click();
+  await expect(commentsButton).toHaveAttribute('aria-pressed', 'false');
+  await commentsButton.click();
   await expect(page.getByTestId('comment-side-panel')).toBeVisible();
   await expect(page.getByTestId('comment-side-panel')).toContainText('Panel-level comment');
-  await expect(page.getByTestId('comment-panel-toggle')).toContainText('1');
+  await expect(commentsButton).toContainText('1');
   await page.getByRole('button', { name: /hide comments/i }).click();
   await expect(page.getByTestId('chat-composer')).toBeVisible();
 
