@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, test } from 'vitest';
-import { identityFrame, parseHostCommand } from '../src/protocol.js';
+import { identityFrame, modelsFrame, parseHostCommand } from '../src/protocol.js';
 import { internals } from '../src/index.js';
 
 describe('@open-design/dsh-runtime protocol', () => {
@@ -50,6 +50,25 @@ describe('@open-design/dsh-runtime protocol', () => {
       v: 1,
       type: 'cancel',
       request_id: 'run-1',
+    });
+  });
+
+  test('emits a namespaced Harness model catalog', () => {
+    assert.deepEqual(modelsFrame([{
+      provider: 'deepseek-official',
+      provider_name: 'DeepSeek',
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek-V4-Flash',
+    }]), {
+      v: 1,
+      type: 'models',
+      runtime: 'open-design',
+      models: [{
+        provider: 'deepseek-official',
+        provider_name: 'DeepSeek',
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek-V4-Flash',
+      }],
     });
   });
 

@@ -7,7 +7,7 @@ export const inject = ['cmdlineArgs'];
 export const OPEN_DESIGN_STARTUP_SERVICE = 'openDesignStartup';
 
 export interface OpenDesignStartupValues {
-  mode: 'probe' | 'stdio';
+  mode: 'models' | 'probe' | 'stdio';
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -21,15 +21,18 @@ export function apply(ctx: Context): void {
     .name('dsh --profile open-design')
     .description('Run the Open Design JSONL profile adapter.')
     .helpOption('-h, --help', 'show this help')
+    .option('--models', 'print the Harness model catalog and exit')
     .option('--probe', 'print profile compatibility and exit')
     .option('--stdio', 'serve one Open Design run over JSONL stdio')
-    .action((options: { probe?: boolean; stdio?: boolean }) => {
-      if (Boolean(options.probe) === Boolean(options.stdio)) {
-        program.error('error: exactly one of --probe or --stdio is required');
+    .action((options: { models?: boolean; probe?: boolean; stdio?: boolean }) => {
+      const modes = [options.models, options.probe, options.stdio].filter(Boolean);
+      if (modes.length !== 1) {
+        program.error('error: exactly one of --models, --probe, or --stdio is required');
       }
-      ctx.provide(OPEN_DESIGN_STARTUP_SERVICE, {
-        mode: options.probe ? 'probe' : 'stdio',
-      } satisfies OpenDesignStartupValues);
+      let mode: OpenDesignStartupValues['mode'] = 'stdio';
+      if (options.models) mode = 'models';
+      else if (options.probe) mode = 'probe';
+      ctx.provide(OPEN_DESIGN_STARTUP_SERVICE, { mode });
     });
   parseCmdline(ctx, program);
 }

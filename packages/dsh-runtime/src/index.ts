@@ -11,13 +11,21 @@ import type {} from '@deepseek-ai/dsh-agent-default-model';
 import { createUserMessage, type ContentBlock, type TokenUsage } from '@deepseek-ai/dsh-llm';
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-cmdline';
-import { CAPABILITIES, identityFrame, parseHostCommand, type ExecuteCommand } from './protocol.js';
+import {
+  CAPABILITIES,
+  identityFrame,
+  modelsFrame,
+  parseHostCommand,
+  type ExecuteCommand,
+  type ModelCatalogEntry,
+} from './protocol.js';
 
 export const name = 'open-design-runtime';
 export const inject = [
   'openDesignStartup',
   'agentDefaultModel',
   'agents',
+  'llm',
   'sessions',
   'sessionPersistence',
 ];
@@ -69,6 +77,25 @@ function usageFrame(requestId: string, provider: string, model: string, usage: T
     ...(usage.cacheReadTokens === undefined ? {} : { cache_read_tokens: usage.cacheReadTokens }),
     ...(usage.cacheWriteTokens === undefined ? {} : { cache_write_tokens: usage.cacheWriteTokens }),
   };
+}
+
+async function listModelCatalog(ctx: Context): Promise<ModelCatalogEntry[]> {
+  const catalog: ModelCatalogEntry[] = [];
+  for (const provider of ctx.llm.listProviders()) {
+    try {
+      for (const model of await ctx.llm.listModels(provider.id)) {
+        catalog.push({
+          provider: provider.id,
+          provider_name: provider.name,
+          id: model.id,
+          name: model.name,
+        });
+      }
+    } catch {
+      ctx.logger.warn(`open-design-runtime: could not list models for provider "${provider.id}"`);
+    }
+  }
+  return catalog;
 }
 
 function emitSessionEvent(
@@ -306,7 +333,14 @@ export function apply(ctx: Context): void {
     exit(0);
     return;
   }
-  void ctx.get('loader')?.await().then(() => serve(ctx, process.stdout, exit)).catch((error: unknown) => {
+  void ctx.get('loader')?.await().then(async () => {
+    if (startup.mode === 'models') {
+      writeFrame(process.stdout, modelsFrame(await listModelCatalog(ctx)));
+      exit(0);
+      return;
+    }
+    await serve(ctx, process.stdout, exit);
+  }).catch((error: unknown) => {
     process.stderr.write(`open-design-runtime: ${error instanceof Error ? error.message : String(error)}\n`);
     exit(1);
   });
@@ -315,5 +349,6 @@ export function apply(ctx: Context): void {
 export const internals = {
   contentText,
   emitSessionEvent,
+  listModelCatalog,
   resultStatus,
 };

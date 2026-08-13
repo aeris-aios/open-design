@@ -9,6 +9,7 @@ import {
   attachDshProfileSession,
   createDshProfileJsonlStream,
   parseDshProfileHostCommand,
+  parseDshProfileModelsOutput,
   parseDshProfileProbeOutput,
   parseDshProfileRuntimeFrame,
   type DshProfileRuntimeFrame,
@@ -79,6 +80,46 @@ describe('DeepSeek Harness profile frame validation', () => {
       () => parseDshProfileProbeOutput(`${JSON.stringify(probe)}\n${JSON.stringify(probe)}\n`),
       /exactly one frame/,
     );
+  });
+
+  test('parses and validates the profile model catalog', () => {
+    assert.deepEqual(parseDshProfileModelsOutput(JSON.stringify({
+      v: 1,
+      type: 'models',
+      runtime: 'open-design',
+      models: [{
+        provider: 'deepseek-official',
+        provider_name: 'DeepSeek',
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek-V4-Flash',
+      }],
+    })), [{
+      provider: 'deepseek-official',
+      provider_name: 'DeepSeek',
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek-V4-Flash',
+    }]);
+    assert.equal(parseDshProfileModelsOutput('{"type":"models"}'), null);
+  });
+
+  test('maps the Harness catalog into provider-qualified model choices', () => {
+    assert.deepEqual(deepseekHarnessAgentDef.listModels?.parse(JSON.stringify({
+      v: 1,
+      type: 'models',
+      runtime: 'open-design',
+      models: [{
+        provider: 'deepseek-official',
+        provider_name: 'DeepSeek',
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek-V4-Flash',
+      }],
+    })), [
+      { id: 'default', label: 'Default (CLI config)' },
+      {
+        id: 'deepseek-official/deepseek-v4-flash',
+        label: 'DeepSeek-V4-Flash · DeepSeek',
+      },
+    ]);
   });
 });
 

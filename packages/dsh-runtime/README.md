@@ -11,6 +11,7 @@ profile (do not use an unbounded `latest` range):
 ```sh
 dsh plugin --profile open-design add @open-design/dsh-runtime@0.1.0
 dsh --profile open-design --probe
+dsh --profile open-design --models
 ```
 
 For repository development before publication, run this package's build and
@@ -21,3 +22,7 @@ one.
 The probe prints exactly one JSON object. Open Design starts one short-lived
 `dsh --profile open-design --stdio` process per run; Harness session storage
 provides cold resume across later processes.
+
+The models command prints the provider-qualified catalog assembled by the
+user's Harness profile. Open Design refreshes this read-only catalog during
+agent detection; credentials and secret values are never included.

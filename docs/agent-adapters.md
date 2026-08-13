@@ -366,6 +366,7 @@ the active-run staging implementation is in
   ```sh
   dsh plugin --profile open-design add @open-design/dsh-runtime@0.1.0
   dsh --profile open-design --probe
+  dsh --profile open-design --models
   ```
 
 - Detection first checks `dsh --version`, then requires the profile's strict

@@ -19,6 +19,20 @@ export type DshProfileModelSelection = {
   id: string;
 };
 
+export type DshProfileModelCatalogEntry = {
+  provider: string;
+  provider_name: string;
+  id: string;
+  name: string;
+};
+
+export type DshProfileModelsFrame = {
+  v: 1;
+  type: 'models';
+  runtime: 'open-design';
+  models: DshProfileModelCatalogEntry[];
+};
+
 export type DshProfileExecuteCommand = {
   v: 1;
   type: 'execute';

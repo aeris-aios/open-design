@@ -6,6 +6,22 @@ export const CAPABILITIES = {
   structured_events: true,
 } as const;
 
+export type ModelCatalogEntry = {
+  provider: string;
+  provider_name: string;
+  id: string;
+  name: string;
+};
+
+export function modelsFrame(models: ModelCatalogEntry[]) {
+  return {
+    v: PROTOCOL_VERSION,
+    type: 'models' as const,
+    runtime: RUNTIME_NAME,
+    models,
+  };
+}
+
 export type ExecuteCommand = {
   v: 1;
   type: 'execute';

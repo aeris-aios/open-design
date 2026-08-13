@@ -3,7 +3,22 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_MODEL_OPTION } from './shared.js';
 import type { RuntimeAgentDef } from '../types.js';
-import { parseDshProfileProbeOutput } from '../../agent-protocol/dsh-profile/index.js';
+import {
+  parseDshProfileModelsOutput,
+  parseDshProfileProbeOutput,
+} from '../../agent-protocol/dsh-profile/index.js';
+
+function parseModels(stdout: string) {
+  const catalog = parseDshProfileModelsOutput(stdout);
+  if (!catalog) return null;
+  return [
+    DEFAULT_MODEL_OPTION,
+    ...catalog.map((model) => ({
+      id: `${model.provider}/${model.id}`,
+      label: `${model.name} · ${model.provider_name}`,
+    })),
+  ];
+}
 
 function hasOpenDesignProfile(env: NodeJS.ProcessEnv): boolean {
   const configuredHome = env.DSH_HOME?.trim();
@@ -36,6 +51,11 @@ export const deepseekHarnessAgentDef = {
     // invoking --probe until the user-installed profile already exists.
     preflight: hasOpenDesignProfile,
     parse: (stdout) => parseDshProfileProbeOutput(stdout).plugin_version,
+  },
+  listModels: {
+    args: ['--profile', 'open-design', '--models'],
+    parse: parseModels,
+    timeoutMs: 10_000,
   },
   fallbackModels: [DEFAULT_MODEL_OPTION],
   buildArgs: () => ['--profile', 'open-design', '--stdio'],
