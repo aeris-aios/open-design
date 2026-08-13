@@ -374,12 +374,12 @@ export function createVelaWorkspaceContextProvider(
           const body: unknown = await response.json();
           const mapped = mapVelaWorkspaceContext(body);
           if (mapped && (!localSelection || mapped.workspaceId === localSelection)) {
-            return withDisplayName(mapped, session);
+            return withUserIdentity(mapped, session);
           }
           if (localSelection) {
             // Server disagrees with the pinned scope → synthesize from the
             // membership directory instead of silently following the server.
-            return withDisplayName(await resolvePinnedWorkspace(session, localSelection), session);
+            return withUserIdentity(await resolvePinnedWorkspace(session, localSelection), session);
           }
           return null;
         }
@@ -390,7 +390,7 @@ export function createVelaWorkspaceContextProvider(
         if (localSelection) {
           // The pinned workspace could not be read from current — resolve it
           // from the directory (clears the pin only on a CONFIRMED removal).
-          return withDisplayName(await resolvePinnedWorkspace(session, localSelection), session);
+          return withUserIdentity(await resolvePinnedWorkspace(session, localSelection), session);
         }
         if (missingPrincipal) {
           // Fresh account: B has no current workspace and the client has no
@@ -398,7 +398,7 @@ export function createVelaWorkspaceContextProvider(
           const picked = await pickDefaultWorkspace(session);
           if (!picked) return null;
           await options.setLocalSelection?.(picked.workspaceId);
-          return withDisplayName(workspaceContextFromDirectoryItem(picked), session);
+          return withUserIdentity(workspaceContextFromDirectoryItem(picked), session);
         }
         return null;
       } catch {
@@ -419,7 +419,7 @@ export function createVelaWorkspaceContextProvider(
       if (response.ok) {
         const mapped = mapVelaWorkspaceContext(await response.json());
         if (mapped?.workspaceId === workspaceId) {
-          return withDisplayName(mapped, session);
+          return withUserIdentity(mapped, session);
         }
       } else if (response.status === 401) {
         return null;
@@ -437,7 +437,7 @@ export function createVelaWorkspaceContextProvider(
           && entry.lifecycleState !== 'deleted',
       );
       return item
-        ? withDisplayName(workspaceContextFromDirectoryItem(item), session)
+        ? withUserIdentity(workspaceContextFromDirectoryItem(item), session)
         : null;
     } catch {
       return null;
@@ -496,13 +496,17 @@ export function workspaceContextFromDirectoryItem(
   return context;
 }
 
-function withDisplayName(
+function withUserIdentity(
   context: WorkspaceCollabContext | null,
   session: { user: VelaUser | null },
 ): WorkspaceCollabContext | null {
   if (context && !context.displayName) {
     const displayName = velaUserDisplayName(session.user);
     if (displayName) context.displayName = displayName;
+  }
+  if (context && context.avatarUrl === undefined) {
+    const avatarUrl = str(session.user?.image);
+    if (avatarUrl) context.avatarUrl = avatarUrl;
   }
   return context;
 }

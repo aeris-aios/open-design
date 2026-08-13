@@ -643,6 +643,27 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
 });
 
 describe('createVelaWorkspaceContextProvider', () => {
+  it('adds the signed-in user name and profile image to the workspace identity', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch;
+    const provider = createVelaWorkspaceContextProvider({
+      fetch: fetchImpl,
+      readSession: () => ({
+        ...SESSION,
+        user: {
+          id: 'auth-user-1',
+          email: 'elian@example.com',
+          name: 'Elian Zhang',
+          image: 'https://example.com/elian.png',
+        },
+      }),
+    });
+
+    await expect(provider.current({})).resolves.toMatchObject({
+      displayName: 'Elian Zhang',
+      avatarUrl: 'https://example.com/elian.png',
+    });
+  });
+
   it('fetches B with the vela session bearer token and maps the result', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch;
     const provider = createVelaWorkspaceContextProvider({
