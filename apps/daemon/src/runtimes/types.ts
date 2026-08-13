@@ -102,6 +102,16 @@ export type RuntimeVersionPolicy = {
   requireVersion: true;
 };
 
+export type RuntimeCompatibilityProbe = {
+  /** Arguments for a side-effect-free runtime/profile handshake. */
+  args: string[];
+  timeoutMs?: number;
+  /** Optional read-only gate used when invoking the probe would create state. */
+  preflight?: (env: NodeJS.ProcessEnv) => boolean;
+  /** Returns the companion/profile version when the output is compatible. */
+  parse: (stdout: string) => string;
+};
+
 export type RuntimePromptBudgetError = {
   code: 'AGENT_PROMPT_TOO_LARGE';
   message: string;
@@ -127,6 +137,7 @@ export type RuntimeAgentDef = {
   fallbackBins?: string[];
   versionProbeTimeoutMs?: number;
   versionPolicy?: RuntimeVersionPolicy;
+  compatibilityProbe?: RuntimeCompatibilityProbe;
   helpArgs?: string[];
   capabilityFlags?: Record<string, string>;
   // Adapter reads the composed prompt from a daemon-created temp file.

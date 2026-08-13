@@ -77,6 +77,8 @@ export type AgentDiagnosticReason =
   | 'version-probe-failed'
   /** The installed CLI version is outside this Open Design build's tested set. */
   | 'untested-version'
+  /** A required external runtime profile or companion failed its handshake. */
+  | 'runtime-profile-incompatible'
   /** Installed and invocable, but the CLI is not authenticated. */
   | 'auth-missing'
   /** Installed, but auth status could not be verified. */

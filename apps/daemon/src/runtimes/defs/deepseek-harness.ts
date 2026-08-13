@@ -1,0 +1,40 @@
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
+import { DEFAULT_MODEL_OPTION } from './shared.js';
+import type { RuntimeAgentDef } from '../types.js';
+import { parseDshProfileProbeOutput } from '../../agent-protocol/dsh-profile/index.js';
+
+function hasOpenDesignProfile(env: NodeJS.ProcessEnv): boolean {
+  const configuredHome = env.DSH_HOME?.trim();
+  const dshHome = configuredHome
+    ? path.resolve(configuredHome)
+    : path.join(homedir(), '.dsh');
+  return existsSync(path.join(dshHome, 'profiles', 'open-design', 'package.json'));
+}
+
+export const deepseekHarnessAgentDef = {
+  id: 'deepseek-harness',
+  name: 'DeepSeek Harness',
+  bin: 'dsh',
+  versionArgs: ['--version'],
+  versionPolicy: {
+    supportedVersions: ['0.1.0-rc.6'],
+    requireVersion: true,
+  },
+  compatibilityProbe: {
+    args: ['--profile', 'open-design', '--probe'],
+    timeoutMs: 10_000,
+    // rc.6 auto-initializes a missing profile before booting it, so avoid
+    // invoking --probe until the user-installed profile already exists.
+    preflight: hasOpenDesignProfile,
+    parse: (stdout) => parseDshProfileProbeOutput(stdout).plugin_version,
+  },
+  fallbackModels: [DEFAULT_MODEL_OPTION],
+  buildArgs: () => ['--profile', 'open-design', '--stdio'],
+  promptViaStdin: true,
+  streamFormat: 'dsh-profile-jsonl',
+  resumesSessionViaCli: true,
+  capturesSessionIdFromStream: true,
+  supportsCustomModel: false,
+} satisfies RuntimeAgentDef;

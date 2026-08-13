@@ -15,6 +15,7 @@ import { resolveAmrOpenCodeExecutable } from './executables.js';
 import { resolveAmrProfile } from '../integrations/vela.js';
 import {
   buildAuthDiagnostic,
+  buildCompatibilityDiagnostic,
   buildExecutableDiagnostic,
   buildNotInvocableDiagnostic,
   buildVersionDiagnostic,
@@ -275,6 +276,26 @@ async function probe(
   if (def.versionPolicy?.requireVersion && !outcome.version) {
     return unavailableAgent(def, [buildVersionDiagnostic(def, outcome.version)]);
   }
+  let runtimeCompanionVersion: string | undefined;
+  if (def.compatibilityProbe) {
+    try {
+      if (def.compatibilityProbe.preflight && !def.compatibilityProbe.preflight(probeEnv)) {
+        return unavailableAgent(def, [buildCompatibilityDiagnostic(def)]);
+      }
+      const { stdout } = await execAgentFile(
+        launch.launchPath,
+        def.compatibilityProbe.args,
+        {
+          env: probeEnv,
+          timeout: def.compatibilityProbe.timeoutMs ?? 5000,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      runtimeCompanionVersion = def.compatibilityProbe.parse(String(stdout));
+    } catch {
+      return unavailableAgent(def, [buildCompatibilityDiagnostic(def)]);
+    }
+  }
   const versionDiagnostic =
     def.versionPolicy &&
     outcome.version &&
@@ -303,6 +324,14 @@ async function probe(
       ? {
           runtimeCompanionName: 'opencode',
           runtimeCompanionVersion: amrOpenCodeVersion,
+        }
+      : {}),
+    ...(runtimeCompanionVersion
+      ? {
+          runtimeCompanionName: def.id === 'deepseek-harness'
+            ? '@open-design/dsh-runtime'
+            : 'runtime-profile',
+          runtimeCompanionVersion,
         }
       : {}),
   };
@@ -355,6 +384,7 @@ function stripFns(
     fallbackBins,
     versionProbeTimeoutMs,
     versionPolicy,
+    compatibilityProbe,
     maxPromptArgBytes,
     env,
     inactivityTimeoutMs,

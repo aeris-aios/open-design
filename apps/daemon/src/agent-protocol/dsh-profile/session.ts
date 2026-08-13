@@ -87,8 +87,7 @@ export function attachDshProfileSession({
     fatal = true;
     finished = true;
     terminalStatus = 'failed';
-    send('agent', {
-      type: 'error',
+    send('error', {
       message,
       error: { code, message, retryable: false },
     });
@@ -199,13 +198,21 @@ export function attachDshProfileSession({
         fail('DeepSeek Harness profile reported a protocol error.', frame.code);
         return;
       case 'result':
+        if (resumeSessionId && frame.resume_rejected) {
+          if (frame.session_id !== resumeSessionId) {
+            fail('DeepSeek Harness profile rejected a different session.', 'DSH_PROFILE_RESUME_MISMATCH');
+            return;
+          }
+          fail('DeepSeek Harness could not resume the saved session.', frame.error?.code ?? 'DSH_PROFILE_RESUME_REJECTED');
+          return;
+        }
+        if (!sessionId && frame.status === 'failed') {
+          fail(frame.error?.message ?? 'DeepSeek Harness profile could not start a session.', frame.error?.code);
+          return;
+        }
         if (!requireSession()) return;
         if (frame.session_id !== sessionId) {
           fail('DeepSeek Harness profile terminal result changed the session id.', 'DSH_PROFILE_SESSION_MISMATCH');
-          return;
-        }
-        if (resumeSessionId && frame.resume_rejected) {
-          fail('DeepSeek Harness could not resume the saved session.', frame.error?.code ?? 'DSH_PROFILE_RESUME_REJECTED');
           return;
         }
         if (frame.status === 'failed') {

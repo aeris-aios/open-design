@@ -411,6 +411,7 @@ import {
 import { runAutoExtractionCleanup } from './memory-cleanup.js';
 import { attachAcpSession } from './agent-protocol/index.js';
 import { attachPiRpcSession } from './agent-protocol/index.js';
+import { attachDshProfileSession } from './agent-protocol/index.js';
 import { stageAmrImagePaths } from './media/amr-image-staging.js';
 import { ingestRoutineConnectorEvolution } from './automation-routine-evolution.js';
 import { createClaudeStreamHandler } from './runtimes/claude-stream.js';
@@ -11873,7 +11874,9 @@ export async function startServer({
       // Prompt delivery via stdin is now the universal default. This bypasses
       // both the cmd.exe 8KB limit and the CreateProcess 32KB limit.
       const stdinMode =
-        def.promptViaStdin || def.streamFormat === 'acp-json-rpc'
+        def.promptViaStdin ||
+        def.streamFormat === 'acp-json-rpc' ||
+        def.streamFormat === 'dsh-profile-jsonl'
           ? 'pipe'
           : 'ignore';
       const env = applyAgentLaunchEnv({
@@ -12025,7 +12028,12 @@ export async function startServer({
           releaseOnce();
         });
       }
-      if (def.promptViaStdin && child.stdin && def.streamFormat !== 'pi-rpc') {
+      if (
+        def.promptViaStdin &&
+        child.stdin &&
+        def.streamFormat !== 'pi-rpc' &&
+        def.streamFormat !== 'dsh-profile-jsonl'
+      ) {
         // EPIPE from a fast-exiting CLI (bad auth, missing model, exit on
         // launch) would otherwise surface as an unhandled stream error and
         // crash the daemon. Swallow it — the regular exit/close handlers
@@ -12976,6 +12984,66 @@ export async function startServer({
           }
         },
         ...(acpStageTimeoutMs !== undefined ? { stageTimeoutMs: acpStageTimeoutMs } : {}),
+      });
+    } else if (def.streamFormat === 'dsh-profile-jsonl') {
+      trackingSubstantiveOutput = true;
+      acpSession = attachDshProfileSession({
+        child,
+        requestId: run.id,
+        prompt: composed,
+        cwd: effectiveCwd,
+        model: safeModel,
+        reasoningEffort: safeReasoning,
+        ...(agentResumeCtx.isResuming && agentResumeCtx.resumeSessionId
+          ? { resumeSessionId: agentResumeCtx.resumeSessionId }
+          : {}),
+        onReady: () => noteCliReadyAt(),
+        onSession: () => noteSessionInitDoneAt(),
+        onComplete: () => clearFirstOutputWatchdog(),
+        send: (event, data) => {
+          noteAgentActivity();
+          if (event === 'agent') {
+            sendAgentEvent(data);
+            return;
+          }
+          if (event === 'error') {
+            const payload = data as {
+              message?: unknown;
+              error?: { code?: unknown };
+            } | null;
+            const message = String(
+              payload?.message ?? 'DeepSeek Harness profile error',
+            );
+            const code = String(
+              payload?.error?.code ?? 'AGENT_EXECUTION_FAILED',
+            );
+            agentStreamError = message;
+            agentStreamErrorObservedBeforeCancellation = !run.cancelRequested;
+            acpFatalErrorObservedBeforeCancellation = !run.cancelRequested;
+            run.runtimeFailureObservedBeforeCancellation = !run.cancelRequested;
+            agentStdoutTail = `${agentStdoutTail}\n${code}`.slice(-2000);
+            if (
+              agentResumeCtx.isResuming &&
+              !run.resumeAutoReseeded &&
+              /^DSH_PROFILE_RESUME_(?:REJECTED|MISMATCH)$/.test(code)
+            ) {
+              design.runs.emit(run, 'diagnostic', {
+                type: 'agent_resume_failed_suppressed',
+                agent_id: def.id,
+                reason: 'resume_failed',
+                previous_session_id: agentResumeCtx.resumeSessionId ?? null,
+              });
+              return;
+            }
+            if (!run.cancelRequested) {
+              send('error', createSseErrorPayload(code, message, {
+                retryable: code === 'DSH_PROFILE_RESUME_REJECTED',
+              }));
+            }
+            return;
+          }
+          send(event, data);
+        },
       });
     } else if (def.streamFormat === 'json-event-stream') {
       // Pipe through sendAgentEvent so the OpenCode `type:'error'` frame

@@ -205,6 +205,61 @@ describe('fake DeepSeek Harness profile runtime', () => {
 });
 
 describe('DeepSeek Harness profile session controller', () => {
+  test('reports an explicit resume rejection before a session is established', () => {
+    const child = new FakeDshChild();
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const controller = attachDshProfileSession({
+      child: child as never,
+      requestId: 'run-resume',
+      prompt: 'continue',
+      cwd: '/project',
+      resumeSessionId: 'missing-session',
+      send: (event, payload) => events.push({ event, payload: payload as Record<string, unknown> }),
+    });
+
+    child.emitFrame(readyFrame);
+    child.emitFrame({
+      v: 1,
+      type: 'result',
+      request_id: 'run-resume',
+      status: 'failed',
+      session_id: 'missing-session',
+      resume_rejected: true,
+      error: { code: 'DSH_PROFILE_RESUME_REJECTED', message: 'not found' },
+    });
+
+    assert.equal(controller.hasFatalError(), true);
+    assert.equal(events.at(-1)?.event, 'error');
+    assert.match(String(events.at(-1)?.payload.message), /could not resume/);
+  });
+
+  test('surfaces an upstream create failure before a session is established', () => {
+    const child = new FakeDshChild();
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const controller = attachDshProfileSession({
+      child: child as never,
+      requestId: 'run-create',
+      prompt: 'create',
+      cwd: '/project',
+      send: (event, payload) => events.push({ event, payload: payload as Record<string, unknown> }),
+    });
+
+    child.emitFrame(readyFrame);
+    child.emitFrame({
+      v: 1,
+      type: 'result',
+      request_id: 'run-create',
+      status: 'failed',
+      session_id: 'pending-run-create',
+      resume_rejected: false,
+      error: { code: 'DSH_PROVIDER_AUTH_FAILED', message: 'DeepSeek credentials are not configured.' },
+    });
+
+    assert.equal(controller.hasFatalError(), true);
+    assert.equal(events.at(-1)?.event, 'error');
+    assert.equal(events.at(-1)?.payload.message, 'DeepSeek credentials are not configured.');
+  });
+
   test('waits for ready, maps events, and completes only on a matching result', () => {
     const child = new FakeDshChild();
     const writes: Array<Record<string, unknown>> = [];
@@ -281,14 +336,14 @@ describe('DeepSeek Harness profile session controller', () => {
 
   test('ignores other requests and rejects a changed resumed session id', () => {
     const child = new FakeDshChild();
-    const events: Array<Record<string, unknown>> = [];
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
     const controller = attachDshProfileSession({
       child: child as never,
       requestId: 'run-2',
       prompt: 'latest only',
       cwd: '/project',
       resumeSessionId: 'saved-session',
-      send: (_event, payload) => events.push(payload as Record<string, unknown>),
+      send: (event, payload) => events.push({ event, payload: payload as Record<string, unknown> }),
     });
     child.emitFrame(readyFrame);
     child.emitFrame({ v: 1, type: 'text', request_id: 'other-run', content: 'must ignore' });
@@ -296,8 +351,8 @@ describe('DeepSeek Harness profile session controller', () => {
 
     assert.equal(controller.ignoredRequestFrameCount(), 1);
     assert.equal(controller.hasFatalError(), true);
-    assert.equal(events.some((event) => event.type === 'text_delta'), false);
-    assert.equal(events.at(-1)?.type, 'error');
+    assert.equal(events.some(({ payload }) => payload.type === 'text_delta'), false);
+    assert.equal(events.at(-1)?.event, 'error');
   });
 
   test('abort writes a request-scoped cancel command', () => {
@@ -323,19 +378,19 @@ describe('DeepSeek Harness profile session controller', () => {
 
   test('EOF without a terminal result is a fatal failure', () => {
     const child = new FakeDshChild();
-    const events: Array<Record<string, unknown>> = [];
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
     const controller = attachDshProfileSession({
       child: child as never,
       requestId: 'run-eof',
       prompt: 'wait',
       cwd: '/project',
-      send: (_event, payload) => events.push(payload as Record<string, unknown>),
+      send: (event, payload) => events.push({ event, payload: payload as Record<string, unknown> }),
     });
     child.emitFrame(readyFrame);
     child.emitFrame({ v: 1, type: 'session', request_id: 'run-eof', session_id: 'session-1', resumed: false });
     child.stdout.emit('end');
     assert.equal(controller.hasFatalError(), true);
-    assert.equal(events.at(-1)?.type, 'error');
+    assert.equal(events.at(-1)?.event, 'error');
   });
 });
 

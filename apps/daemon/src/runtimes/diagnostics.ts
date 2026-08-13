@@ -113,6 +113,21 @@ export function buildVersionDiagnostic(
   };
 }
 
+export function buildCompatibilityDiagnostic(
+  def: Pick<RuntimeAgentDef, 'name'>,
+): AgentDiagnostic {
+  return {
+    reason: 'runtime-profile-incompatible',
+    severity: 'error',
+    message: `${def.name} is installed, but its Open Design profile is missing or incompatible.`,
+    detail: 'Install or update @open-design/dsh-runtime in the open-design profile, then rescan.',
+    fixActions: [
+      { kind: 'openDocs' },
+      { kind: 'rescan' },
+    ],
+  };
+}
+
 // The agent is installed and invocable but its auth probe reported a
 // missing / unverifiable credential. Detection only reaches this helper for
 // adapters that declare a cheap, side-effect-free authProbe; until an adapter
