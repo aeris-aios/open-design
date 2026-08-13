@@ -511,6 +511,21 @@ describe('editable PPTX layered backgrounds', () => {
     expect(materialized?.centerRgb, JSON.stringify(materialized)).toEqual([64, 96, 64]);
   }, 30_000);
 
+  test('keeps a materialized pseudo fallback in its PNG without a duplicate native fill', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.materializedOpaquePseudo.pngs;
+
+    expect(media.materializedOpaquePseudo, JSON.stringify(media.materializedOpaquePseudo)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [185, 89, 144][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
+    expect(media.materializedOpaquePseudoNativeFill).toBe(-1);
+  }, 30_000);
+
   test('captures only the layered background pixels from a replaced element', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.replaced.pngs;
@@ -581,6 +596,27 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.topLeftRgb[0], JSON.stringify(image)).toBeGreaterThan(image?.topLeftRgb[1] ?? 0);
   }, 30_000);
 
+  test('captures a compositor root solid background below its native foreground', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.solidCompositor.pngs;
+
+    expect(media.solidCompositor, JSON.stringify(media.solidCompositor)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    // The red root background and translucent blue child are composited first,
+    // then the root's half opacity is applied to the complete captured paint.
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [50, 10, 60][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
+    expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
+    expect(image?.maxAlpha).toBeLessThanOrEqual(136);
+    expect(media.solidCompositorOrder.image).toBeGreaterThanOrEqual(0);
+    expect(media.solidCompositorOrder.nativeFill).toBe(-1);
+    expect(media.solidCompositorOrder.image).toBeLessThan(media.solidCompositorOrder.nativeContent);
+  }, 30_000);
+
   test('propagates blended-child backdrop dependency to its opacity capture root', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.groupedBackdrop.pngs;
@@ -595,6 +631,18 @@ describe('editable PPTX layered backgrounds', () => {
       image?.centerRgb.every((channel, index) => Math.abs(channel - [128, 160, 128][index]!) <= 1),
       JSON.stringify(image),
     ).toBe(true);
+    expect(image?.minAlpha).toBe(255);
+  }, 30_000);
+
+  test('captures an ancestor blend context with its layered child and backdrop', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.ancestorBlend.pngs;
+
+    expect(media.ancestorBlend, JSON.stringify(media.ancestorBlend)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
     expect(image?.minAlpha).toBe(255);
   }, 30_000);
 
@@ -662,6 +710,7 @@ type LayeredBackgroundProbe = {
     background: PptxGeometry | null;
     content: PptxGeometry | null;
   };
+  ancestorBlend: LayeredBackgroundExport;
   backdropFiltered: LayeredBackgroundExport;
   backgroundBlendPseudo: LayeredBackgroundExport;
   blended: LayeredBackgroundExport;
@@ -674,6 +723,8 @@ type LayeredBackgroundProbe = {
   maskedPseudoContentMediaCount: number;
   maskedPseudoContentOrder: { image: number; nativeContent: number; sibling: number };
   materializedBackgroundBlend: LayeredBackgroundExport;
+  materializedOpaquePseudo: LayeredBackgroundExport;
+  materializedOpaquePseudoNativeFill: number;
   nestedBlended: LayeredBackgroundExport;
   nestedOpacity: LayeredBackgroundExport;
   nestedOpacityNativeContent: number;
@@ -688,6 +739,8 @@ type LayeredBackgroundProbe = {
   rootPseudo: LayeredBackgroundExport;
   rootPseudoLayerOrder: { background: number; content: number; slideBackground: number };
   skippedTargets: number;
+  solidCompositor: LayeredBackgroundExport;
+  solidCompositorOrder: { image: number; nativeContent: number; nativeFill: number };
   stackingSlide: LayeredBackgroundExport;
   supported: LayeredBackgroundExport;
 };
@@ -746,6 +799,8 @@ const fixtures = {
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
   nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div><div class="nested-opacity-label">Native nested opacity label</div><div class="nested-opacity-shape"></div></div>',
+  solidCompositor: '<div class="solid-compositor"><div class="solid-compositor-child"></div><div class="solid-compositor-label">Solid compositor label</div></div>',
+  ancestorBlend: '<div class="ancestor-blend-backdrop"></div><div class="ancestor-blend-context"><div class="ancestor-blend-child"></div></div>',
   normalMaskedPseudo: '<div class="normal-masked-pseudo"></div>',
   compositedMaskedPseudo: '<div class="composited-masked-pseudo"></div>',
   maskedPseudoContent: '<div class="masked-pseudo-content"></div><div class="masked-pseudo-sibling">Native after mask</div>',
@@ -757,6 +812,7 @@ const fixtures = {
   backdropFiltered: '<div class="filtered-backdrop"></div><div class="backdrop-filtered"></div>',
   backgroundBlendPseudo: '<div class="background-blend-pseudo"></div>',
   materializedBackgroundBlend: '<div class="materialized-background-blend"></div>',
+  materializedOpaquePseudo: '<div class="materialized-opaque-pseudo"></div>',
   alignment: '<div class="alignment-layer"><div class="alignment-native">Alignment native</div></div>',
 };
 const styles = \`
@@ -879,6 +935,41 @@ const styles = \`
     height: 10px;
     background: rgb(0, 255, 0);
   }
+  .solid-compositor {
+    position: absolute;
+    left: 116px;
+    top: 68px;
+    width: 74px;
+    height: 42px;
+    opacity: .5;
+    background: rgb(201, 41, 42);
+  }
+  .solid-compositor-child {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(0, 0, 200, .5), rgba(0, 0, 200, .5)), linear-gradient(transparent, transparent);
+  }
+  .solid-compositor-label {
+    position: absolute;
+    inset: 0;
+    color: white;
+    font: 1px/1px sans-serif;
+  }
+  .ancestor-blend-backdrop,
+  .ancestor-blend-context {
+    position: absolute;
+    left: 24px;
+    top: 72px;
+    width: 70px;
+    height: 34px;
+  }
+  .ancestor-blend-backdrop { background: rgb(128, 192, 128); }
+  .ancestor-blend-context { mix-blend-mode: multiply; }
+  .ancestor-blend-child {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+  }
   .paint-above,
   .paint-target,
   .paint-below {
@@ -980,13 +1071,15 @@ const styles = \`
     backdrop-filter: invert(1);
   }
   .background-blend-pseudo,
-  .materialized-background-blend {
+  .materialized-background-blend,
+  .materialized-opaque-pseudo {
     position: absolute;
     top: 140px;
     background: white;
   }
   .background-blend-pseudo { left: 122px; width: 54px; height: 28px; }
   .materialized-background-blend { left: 180px; width: 58px; height: 30px; }
+  .materialized-opaque-pseudo { left: 242px; width: 60px; height: 30px; }
   .background-blend-pseudo::after,
   .materialized-background-blend::after {
     content: '';
@@ -996,6 +1089,14 @@ const styles = \`
     background-blend-mode: multiply;
   }
   .materialized-background-blend::after { mix-blend-mode: multiply; }
+  .materialized-opaque-pseudo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-color: rgb(242, 50, 160);
+    background-image: linear-gradient(rgba(128, 128, 128, .5), rgba(128, 128, 128, .5)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
+  }
   .replaced {
     position: absolute;
     left: 160px;
@@ -1190,6 +1291,23 @@ function inspectRootPseudoLayerOrder(entries, mediaName) {
   };
 }
 
+function inspectSolidCompositorOrder(entries, mediaName) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  const relationships = entries
+    .find(({ name }) => name === 'ppt/slides/_rels/slide1.xml.rels')
+    ?.data.toString('utf8') || '';
+  const targetName = mediaName.split('/').pop() || '';
+  const relationship = relationships
+    .match(/<Relationship\\b[^>]*>/g)
+    ?.find((entry) => entry.includes(targetName)) || '';
+  const relationshipId = relationship.match(/\\bId="([^"]+)"/)?.[1] || '';
+  return {
+    image: relationshipId ? slideXml.indexOf('r:embed="' + relationshipId + '"') : -1,
+    nativeContent: slideXml.indexOf('Solid compositor label'),
+    nativeFill: slideXml.indexOf('val="C9292A"'),
+  };
+}
+
 function inspectAlignmentGeometry(entries, mediaName) {
   const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
   const relationships = entries
@@ -1373,6 +1491,7 @@ app.whenReady().then(async () => {
     result.nestedOpacityNativeContent = inspectNativeContent(entries, 'Native nested opacity label');
     result.nestedOpacityNativeShape = inspectNativeContent(entries, 'val="00FF00"');
     result.maskedNativeContent = inspectNativeContent(entries, 'Masked real content');
+    result.materializedOpaquePseudoNativeFill = inspectNativeContent(entries, 'val="F232A0"');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
     ).filter(
@@ -1384,6 +1503,10 @@ app.whenReady().then(async () => {
       pngs: rootPseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
     result.rootPseudoLayerOrder = inspectRootPseudoLayerOrder(entries, rootPseudoMedia[0]?.name || '');
+    result.solidCompositorOrder = inspectSolidCompositorOrder(
+      entries,
+      result.solidCompositor?.media?.[0] || '',
+    );
     result.alignmentGeometry = inspectAlignmentGeometry(entries, result.alignment?.media?.[0] || '');
     result.skippedTargets = targetCounts.skipped;
     probeResult = result;
@@ -1448,10 +1571,14 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
   if (
     typeof value !== 'object'
     || value === null
+    || !('ancestorBlend' in value)
     || !('blended' in value)
     || !('backdropFiltered' in value)
     || !('backgroundBlendPseudo' in value)
     || !('materializedBackgroundBlend' in value)
+    || !('materializedOpaquePseudo' in value)
+    || !('materializedOpaquePseudoNativeFill' in value)
+    || typeof value.materializedOpaquePseudoNativeFill !== 'number'
     || !('nestedBlended' in value)
     || !('nestedOpacity' in value)
     || !('nestedOpacityNativeContent' in value)
@@ -1515,12 +1642,23 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.rootPseudoLayerOrder.slideBackground !== 'number'
     || !('skippedTargets' in value)
     || typeof value.skippedTargets !== 'number'
+    || !('solidCompositor' in value)
+    || !('solidCompositorOrder' in value)
+    || typeof value.solidCompositorOrder !== 'object'
+    || value.solidCompositorOrder === null
+    || !('image' in value.solidCompositorOrder)
+    || typeof value.solidCompositorOrder.image !== 'number'
+    || !('nativeContent' in value.solidCompositorOrder)
+    || typeof value.solidCompositorOrder.nativeContent !== 'number'
+    || !('nativeFill' in value.solidCompositorOrder)
+    || typeof value.solidCompositorOrder.nativeFill !== 'number'
     || !('stackingSlide' in value)
   ) {
     throw new Error(`Electron renderer probe returned an invalid result: ${JSON.stringify(value)}`);
   }
   return {
     alignmentGeometry: value.alignmentGeometry as LayeredBackgroundProbe['alignmentGeometry'],
+    ancestorBlend: parseLayeredBackgroundExport(value.ancestorBlend),
     backdropFiltered: parseLayeredBackgroundExport(value.backdropFiltered),
     backgroundBlendPseudo: parseLayeredBackgroundExport(value.backgroundBlendPseudo),
     blended: parseLayeredBackgroundExport(value.blended),
@@ -1533,6 +1671,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     maskedPseudoContentMediaCount: value.maskedPseudoContentMediaCount,
     maskedPseudoContentOrder: value.maskedPseudoContentOrder as LayeredBackgroundProbe['maskedPseudoContentOrder'],
     materializedBackgroundBlend: parseLayeredBackgroundExport(value.materializedBackgroundBlend),
+    materializedOpaquePseudo: parseLayeredBackgroundExport(value.materializedOpaquePseudo),
+    materializedOpaquePseudoNativeFill: value.materializedOpaquePseudoNativeFill,
     nestedBlended: parseLayeredBackgroundExport(value.nestedBlended),
     nestedOpacity: parseLayeredBackgroundExport(value.nestedOpacity),
     nestedOpacityNativeContent: value.nestedOpacityNativeContent,
@@ -1554,6 +1694,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       slideBackground: value.rootPseudoLayerOrder.slideBackground,
     },
     skippedTargets: value.skippedTargets,
+    solidCompositor: parseLayeredBackgroundExport(value.solidCompositor),
+    solidCompositorOrder: value.solidCompositorOrder as LayeredBackgroundProbe['solidCompositorOrder'],
     stackingSlide: parseLayeredBackgroundExport(value.stackingSlide),
     supported: parseLayeredBackgroundExport(value.supported),
   };

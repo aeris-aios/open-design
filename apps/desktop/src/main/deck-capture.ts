@@ -694,7 +694,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const hasFilter = Boolean(style.filter && style.filter !== "none");
     const hasTransform = [style.transform, style.translate, style.rotate, style.scale]
       .some((value) => Boolean(value && value !== "none"));
-    return hasOpacity || hasFilter || hasTransform;
+    return hasOpacity || hasFilter || hasTransform || dependsOnBackdrop(style);
   }
 
   function outermostCompositingAncestor(element: HTMLElement, slide: HTMLElement): HTMLElement | null {
@@ -753,8 +753,13 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       if (!isRenderedInsideSlide(element, slide, style)) continue;
       const id = `od-pptx-layer-${nextId++}`;
       if (members.some((member) => member !== element)) {
+        // The compositor root's own background participates in the same paint
+        // group even when it is a solid fill rather than a layered gradient.
+        // Capture and clear it with the layered descendants so its later
+        // native fill cannot cover the flattened PNG.
+        const compositingMembers = members.includes(element) ? members : [element, ...members];
         element.setAttribute("data-od-pptx-compositing-context", "true");
-        for (const member of members) {
+        for (const member of compositingMembers) {
           member.setAttribute("data-od-pptx-compositing-member", id);
         }
       }
@@ -1926,6 +1931,26 @@ export async function runDomToPptx(
 
   function preserveLayeredPseudoGradientBackgrounds(elements: Set<HTMLElement>): void {
     let nativePseudoBackgroundStyle: HTMLStyleElement | null = null;
+    const neutralizeNativePseudoBackground = (
+      element: HTMLElement,
+      pseudo: "::before" | "::after",
+    ): void => {
+      element.setAttribute(
+        pseudo === "::before"
+          ? "data-od-pptx-rasterized-before-background"
+          : "data-od-pptx-rasterized-after-background",
+        "true",
+      );
+      if (nativePseudoBackgroundStyle) return;
+      nativePseudoBackgroundStyle = document.createElement("style");
+      nativePseudoBackgroundStyle.textContent = `
+        [data-od-pptx-rasterized-before-background="true"]::before,
+        [data-od-pptx-rasterized-after-background="true"]::after{
+          background-color:transparent!important;
+        }
+      `;
+      document.head.append(nativePseudoBackgroundStyle);
+    };
     for (const element of elements) {
       for (const pseudo of ["::before", "::after"] as const) {
         const style = getComputedStyle(element, pseudo);
@@ -1934,9 +1959,15 @@ export async function runDomToPptx(
         const hasMaterializedCapture = Array.from(element.children).some(
           (child) => child.getAttribute("data-od-pptx-materialized-pseudo") === pseudo,
         );
+        if (hasMaterializedCapture) {
+          // The Chromium helper already owns the computed fallback color. Keep
+          // native pseudo text and borders, but prevent dom-to-pptx from
+          // emitting that same color as an opaque fill above the captured PNG.
+          neutralizeNativePseudoBackground(element, pseudo);
+          continue;
+        }
         if (
           !isGenerated ||
-          hasMaterializedCapture ||
           (style.position !== "absolute" && style.position !== "fixed") ||
           !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
           // The html2canvas custom-element path has no blend-mode parser and
@@ -1980,22 +2011,7 @@ export async function runDomToPptx(
         // emits a native solid fill from background-color while ignoring the
         // layered background-image. The raster helper already owns both, so
         // neutralize only that native fallback after copying its computed color.
-        element.setAttribute(
-          pseudo === "::before"
-            ? "data-od-pptx-rasterized-before-background"
-            : "data-od-pptx-rasterized-after-background",
-          "true",
-        );
-        if (!nativePseudoBackgroundStyle) {
-          nativePseudoBackgroundStyle = document.createElement("style");
-          nativePseudoBackgroundStyle.textContent = `
-            [data-od-pptx-rasterized-before-background="true"]::before,
-            [data-od-pptx-rasterized-after-background="true"]::after{
-              background-color:transparent!important;
-            }
-          `;
-          document.head.append(nativePseudoBackgroundStyle);
-        }
+        neutralizeNativePseudoBackground(element, pseudo);
 
         if (pseudo === "::before") element.prepend(background);
         else element.append(background);
