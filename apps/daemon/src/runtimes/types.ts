@@ -95,6 +95,13 @@ export type RuntimeListModels = {
   parse: (stdout: string) => RuntimeModelOption[] | null;
 };
 
+export type RuntimeVersionPolicy = {
+  /** Exact version strings exercised by this Open Design build. */
+  supportedVersions: string[];
+  /** Fail closed when the version probe fails or returns no usable version. */
+  requireVersion: true;
+};
+
 export type RuntimePromptBudgetError = {
   code: 'AGENT_PROMPT_TOO_LARGE';
   message: string;
@@ -119,6 +126,7 @@ export type RuntimeAgentDef = {
   streamFormat: string;
   fallbackBins?: string[];
   versionProbeTimeoutMs?: number;
+  versionPolicy?: RuntimeVersionPolicy;
   helpArgs?: string[];
   capabilityFlags?: Record<string, string>;
   // Adapter reads the composed prompt from a daemon-created temp file.
@@ -276,6 +284,7 @@ export type DetectedAgent = Omit<
   | 'capabilityFlags'
   | 'fallbackBins'
   | 'versionProbeTimeoutMs'
+  | 'versionPolicy'
   | 'maxPromptArgBytes'
   | 'env'
   // Runtime timeout fields are spawn-time-only hints consumed by chat-run
