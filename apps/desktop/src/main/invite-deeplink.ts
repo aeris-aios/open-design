@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app } from "electron";
 import {
   INVITE_DEEPLINK_SCHEME,
   createInviteDeeplinkDispatcher,
@@ -13,6 +13,12 @@ import {
 // register the scheme and route the deeplink to the daemon, which consumes the
 // one-time continuation on B with the signed-in vela session; the client then
 // focuses and the web re-reads the context to switch into the team workspace.
+//
+// The same scheme also carries `opendesign://workspace/open` — the cloud
+// device-activation page's post-sign-in hand-off. That one is payload-free and
+// only refocuses the client (see `isWorkspaceOpenDeeplink`), so the caller's
+// `focus` dep is the whole feature there; it must go through
+// `focusDesktopForDeeplink` rather than any window-list guess.
 
 export {
   continueInviteFromUrl,
@@ -48,6 +54,10 @@ function attachOpenUrlListenerWhenHosted(): void {
 
 attachOpenUrlListenerWhenHosted();
 
+export function dispatchInviteDeeplink(url: string | null): void {
+  deeplinkDispatcher.dispatch(url);
+}
+
 /**
  * Register the `opendesign://` scheme and wire the OS deeplink events to
  * {@link continueInviteFromUrl}. macOS delivers via `open-url`; Windows/Linux via
@@ -55,7 +65,11 @@ attachOpenUrlListenerWhenHosted();
  * holds). A cold start through the deeplink carries it in the initial argv.
  */
 export function registerInviteDeeplink(deps: InviteDeeplinkDeps): void {
-  app.setAsDefaultProtocolClient(INVITE_DEEPLINK_SCHEME);
+  if (process.platform === "win32" && deps.protocolClientPath) {
+    app.setAsDefaultProtocolClient(INVITE_DEEPLINK_SCHEME, deps.protocolClientPath);
+  } else {
+    app.setAsDefaultProtocolClient(INVITE_DEEPLINK_SCHEME);
+  }
   deeplinkDispatcher.setDeps(deps);
 
   if (!secondInstanceHandlerRegistered) {
@@ -67,12 +81,4 @@ export function registerInviteDeeplink(deps: InviteDeeplinkDeps): void {
 
   const initial = findDeeplinkArg(process.argv);
   if (initial) void app.whenReady().then(() => deeplinkDispatcher.dispatch(initial));
-}
-
-/** Best-effort bring-to-front for the deeplink hand-off. */
-export function focusPrimaryWindow(): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
 }

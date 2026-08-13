@@ -29,4 +29,6 @@ interface Window {
     href: string,
     attribution?: ReturnType<NonNullable<Window['__odRecordCampaignEntry']>>,
   ) => string;
+  // QA-only handle exposed by the engagement download prompt.
+  __odDownloadPrompt?: { show: (trigger?: string) => boolean };
 }

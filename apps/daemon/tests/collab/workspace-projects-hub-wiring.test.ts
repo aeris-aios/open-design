@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  handleHubProjectMetadataChanged,
   handleHubTeamProjectsChanged,
   handlePolledWorkspaceInvalidation,
 } from '../../src/collab/workspace-projects-reconciler.js';
@@ -35,12 +36,18 @@ function sseResponse(frames: string[]) {
 }
 
 describe('handleHubTeamProjectsChanged', () => {
-  it('emits the thin display-cache signal AND kicks a reconciliation pass', async () => {
+  it('emits the thin display-cache signal only after reconciliation finishes', async () => {
     const emit = vi.fn();
-    const reconcile = vi.fn(async () => undefined);
+    let finishReconcile!: () => void;
+    const reconcile = vi.fn(() => new Promise<void>((resolve) => {
+      finishReconcile = resolve;
+    }));
     handleHubTeamProjectsChanged(emit, reconcile);
-    expect(emit).toHaveBeenCalledTimes(1);
     expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(emit).not.toHaveBeenCalled();
+
+    finishReconcile();
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(1));
   });
 
   it('never lets a reconciliation failure throw or reject out of the hub event handler', async () => {
@@ -95,6 +102,30 @@ describe('handleHubTeamProjectsChanged', () => {
     } finally {
       subscriber.stop();
     }
+  });
+});
+
+describe('handleHubProjectMetadataChanged', () => {
+  it('re-emits after the targeted metadata write becomes durable', async () => {
+    const emit = vi.fn();
+    const reconcile = vi.fn(async () => true);
+    handleHubProjectMetadataChanged(emit, reconcile);
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not emit a persistence follow-up for a no-op or failed reconcile', async () => {
+    const noOpEmit = vi.fn();
+    handleHubProjectMetadataChanged(noOpEmit, async () => false);
+    await Promise.resolve();
+    expect(noOpEmit).toHaveBeenCalledTimes(1);
+
+    const failedEmit = vi.fn();
+    handleHubProjectMetadataChanged(failedEmit, async () => { throw new Error('offline'); });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(failedEmit).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -167,14 +198,36 @@ describe('server.ts wiring (source boundary)', () => {
     return source.slice(switchStart, i + 1);
   }
 
-  it('calls handleHubTeamProjectsChanged from exactly one case: team-projects-changed', () => {
+  it('routes both project catalog event families through project reconciliation', () => {
     const switchBody = extractOnEventSwitchBody();
     const cases = switchBody.split(/(?=case '[a-z-]+':)/g).filter((chunk) => chunk.startsWith("case '"));
     expect(cases.length).toBeGreaterThanOrEqual(7);
 
     const casesCallingReconcile = cases.filter((chunk) => /handleHubTeamProjectsChanged\(/.test(chunk));
     const caseNames = casesCallingReconcile.map((chunk) => chunk.match(/^case '([a-z-]+)':/)?.[1]);
-    expect(caseNames).toEqual(['team-projects-changed']);
+    expect(caseNames).toEqual(['team-projects-changed', 'team-resources-changed']);
+  });
+
+  it('routes project resource retractions through project reconciliation instead of the generic resource lane', () => {
+    const switchBody = extractOnEventSwitchBody();
+    const teamResourcesCase = switchBody
+      .split(/(?=case '[a-z-]+':)/g)
+      .find((chunk) => chunk.startsWith("case 'team-resources-changed':"));
+
+    expect(teamResourcesCase).toContain("event.resourceKind === 'project'");
+    expect(teamResourcesCase).toContain('handleHubTeamProjectsChanged(');
+    expect(teamResourcesCase).toContain('reconcileWorkspaceProjectsFromRemote(');
+  });
+
+  it('runs targeted metadata reconciliation only from project-metadata-changed', () => {
+    const switchBody = extractOnEventSwitchBody();
+    const cases = switchBody.split(/(?=case '[a-z-]+':)/g).filter((chunk) => chunk.startsWith("case '"));
+    const casesCallingTargetedMetadata = cases.filter((chunk) =>
+      /reconcileWorkspaceProjectMetadataFromRemote\(/.test(chunk),
+    );
+    expect(casesCallingTargetedMetadata.map((chunk) =>
+      chunk.match(/^case '([a-z-]+)':/)?.[1],
+    )).toEqual(['project-metadata-changed']);
   });
 
   it('only starts hub missing-project recovery for a targeted project id', () => {
@@ -356,30 +409,37 @@ describe('server.ts wiring (source boundary)', () => {
       'reconcileWorkspaceProjectsFromRemote(subscribedWorkspaceId)',
     );
     expect(reconnectBody).toContain(
-      'reconcileTeamResourcesFromRemote(undefined, subscribedWorkspaceId)',
+      "reconcileTeamResourcesFromRemote(undefined, subscribedWorkspaceId, 'catch-up')",
     );
     expect(sourceGapBody).toContain(
       'workspaceId ?? subscribedWorkspaceId',
     );
+    expect(sourceGapBody).toContain("'catch-up'");
   });
 
-  it('polls remembered, subscribed, and persisted Team resource Workspaces instead of only ambient', () => {
+  it('polls leased, subscribed, and persisted Team resource Workspaces instead of only ambient', () => {
+    const persistentIdsStart = source.indexOf(
+      'const persistentTeamResourceBackgroundWorkspaceIds = (): string[] => {',
+    );
     const idsStart = source.indexOf(
-      'const teamResourceBackgroundWorkspaceIds = (): string[] => {',
+      'const teamResourceBackgroundWorkspaceIds = (',
+      persistentIdsStart,
     );
     const timerStart = source.indexOf(
       'const teamResourcesPollTimer = setInterval(() => {',
       idsStart,
     );
+    expect(persistentIdsStart).toBeGreaterThan(-1);
     expect(idsStart).toBeGreaterThan(-1);
     expect(timerStart).toBeGreaterThan(idsStart);
+    const persistentIdsBody = source.slice(persistentIdsStart, idsStart);
     const idsBody = source.slice(idsStart, timerStart);
-    expect(idsBody).toContain('rememberedTeamResourceScopes.keys()');
-    expect(idsBody).toContain(
+    expect(idsBody).toContain('rememberedTeamResourceScopes.activeWorkspaceLeases()');
+    expect(persistentIdsBody).toContain(
       'workspaceHubSubscriptions?.activeWorkspaceIds()',
     );
-    expect(idsBody).toContain('listTeamWorkspaceProjectShares(db)');
-    expect(idsBody).toContain(
+    expect(persistentIdsBody).toContain('listTeamWorkspaceProjectShares(db)');
+    expect(persistentIdsBody).toContain(
       'listTeamWorkspaceResourceWorkspaceIds(db)',
     );
 
@@ -390,10 +450,134 @@ describe('server.ts wiring (source boundary)', () => {
     const body = source.slice(start, end);
 
     expect(body).not.toContain('activeWorkspace.get()');
-    expect(body).toContain('teamResourceBackgroundWorkspaceIds()');
+    expect(body).toContain('teamResourceBackgroundWorkspaceIds(');
     expect(body).toContain(
-      'reconcileTeamResourcesFromRemote(undefined, workspaceId)',
+      'const rememberedLease = persistentWorkspaceIdSet.has(workspaceId)',
     );
+    expect(body).toContain('rememberedLease,');
+
+    const refreshStart = source.indexOf(
+      'const reconcileTeamResourcesFromRemote = async (',
+    );
+    const refreshBody = source.slice(refreshStart, persistentIdsStart);
+    expect(refreshBody).toContain(
+      '!rememberedTeamResourceScopes.isLeaseCurrent(rememberedLease)',
+    );
+    expect(refreshBody).toContain('isRefreshCurrent: () =>');
+    expect(refreshBody).toContain(
+      'rememberedTeamResourceScopes.isLeaseCurrent(rememberedLease)',
+    );
+  });
+
+  it('keeps background authority fail-closed without renewing an expired remembered scope', () => {
+    const resolverStart = source.indexOf(
+      'const resolveTeamResourceScopeForWorkspaceId = async (',
+    );
+    const authorizationStart = source.indexOf(
+      'const teamResourceScopeStillAuthorized = async (',
+      resolverStart,
+    );
+    expect(resolverStart).toBeGreaterThan(-1);
+    expect(authorizationStart).toBeGreaterThan(resolverStart);
+    const resolverBody = source.slice(resolverStart, authorizationStart);
+
+    expect(resolverBody).toContain('if (!directory.ok) return null;');
+    expect(resolverBody).toContain('teamResourceRequestScopeForWorkspaceId(');
+    expect(resolverBody).toContain('return scope;');
+    expect(resolverBody).not.toContain('rememberTeamResourceScope(scope)');
+  });
+
+  it('materializes and reconciles Team resources before exact-scope invalidation', () => {
+    const coordinatorStart = source.indexOf(
+      'const teamResourceEventCoordinator = createWorkspaceTeamResourceEventCoordinator({',
+    );
+    const refreshStart = source.indexOf(
+      'const reconcileTeamResourcesFromRemote = async (',
+      coordinatorStart,
+    );
+    expect(coordinatorStart).toBeGreaterThan(-1);
+    expect(refreshStart).toBeGreaterThan(coordinatorStart);
+    const coordinatorBody = source.slice(coordinatorStart, refreshStart);
+    expect(coordinatorBody).toContain(
+      'const listing = await teamResourceListByKind[resourceKind].authoritative(scope);',
+    );
+    expect(coordinatorBody).toContain(
+      '!teamResourceMaterializationIsReady(resourceKind, resource, scope)',
+    );
+    expect(coordinatorBody).toContain(
+      'was not materialized',
+    );
+    expect(coordinatorBody).toContain(
+      'reconcileTeamResourceKind(resourceKind, scope, resources)',
+    );
+    expect(coordinatorBody).toContain('emit: emitWorkspaceEvent');
+    const reconcileKindStart = source.indexOf(
+      'const reconcileTeamResourceKind = async (',
+    );
+    const readinessStart = source.indexOf(
+      'const teamResourceMaterializationIsReady = (',
+      reconcileKindStart,
+    );
+    expect(source.slice(reconcileKindStart, readinessStart)).toContain(
+      'if (reconciliationError) throw reconciliationError;',
+    );
+    const coordinatorStartAfterReadiness = source.indexOf(
+      'const teamResourceEventCoordinator = createWorkspaceTeamResourceEventCoordinator({',
+      readinessStart,
+    );
+    const readinessBody = source.slice(readinessStart, coordinatorStartAfterReadiness);
+    expect(readinessBody).toContain("if (resourceType === 'design_system')");
+    expect(readinessBody).toContain('ownedDesignSystemSourceIsReady({');
+    expect(readinessBody).not.toContain(
+      'if (resource.ownerMemberId === scope.principal.memberId) return true;',
+    );
+
+    const designSystemSyncStart = source.indexOf(
+      'async function syncSharedTeamDesignSystem(',
+    );
+    const skillSyncStart = source.indexOf(
+      'async function syncSharedTeamSkill(',
+      designSystemSyncStart,
+    );
+    const designSystemSyncBody = source.slice(designSystemSyncStart, skillSyncStart);
+    expect(designSystemSyncBody).toContain('const ownerLocalSourceReady = ownedDesignSystemSourceIsReady({');
+    expect(designSystemSyncBody).toContain('if (ownerLocalSourceReady) return;');
+    expect(designSystemSyncBody).not.toContain('if (isOwnedByCurrentMember) return;');
+    const designSystemAdoptionStart = source.indexOf(
+      'const adoptLegacyWorkspaceTeamDesignSystemBindings = async (',
+    );
+    const skillAdoptionStart = source.indexOf(
+      'const adoptLegacyWorkspaceTeamSkillBindings = async (',
+      designSystemAdoptionStart,
+    );
+    const designSystemAdoptionBody = source.slice(
+      designSystemAdoptionStart,
+      skillAdoptionStart,
+    );
+    expect(designSystemAdoptionBody).toContain(
+      'workspaceId,\n          `user:${entry.name}`,\n          entry.name,',
+    );
+
+    const pollStart = source.indexOf(
+      'const persistentTeamResourceBackgroundWorkspaceIds = (): string[] => {',
+      refreshStart,
+    );
+    const refreshBody = source.slice(refreshStart, pollStart);
+    expect(refreshBody).toContain('if (kinds.length === 0) return;');
+    expect(refreshBody.indexOf('invalidateTeamResourceListingCaches({'))
+      .toBeLessThan(refreshBody.indexOf('teamResourceEventCoordinator.refresh({'));
+    expect(refreshBody).toContain('workspaceId: requestedWorkspaceId');
+
+    const hubSwitch = extractOnEventSwitchBody();
+    const resourceCase = hubSwitch
+      .split(/(?=case '[a-z-]+':)/g)
+      .find((chunk) => chunk.startsWith("case 'team-resources-changed':"));
+    expect(resourceCase).toContain("'push'");
+    expect(resourceCase).toContain('event.resourceId');
+    expect(source).toContain(
+      "reconcileTeamResourcesFromRemote(undefined, subscribedWorkspaceId, 'catch-up')",
+    );
+    expect(source).toContain("workspaceId,\n        'poll',");
   });
 
   it('has no ambient active-workspace invalidation poller or hub subscription', () => {

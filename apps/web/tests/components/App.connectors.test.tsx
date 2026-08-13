@@ -237,6 +237,14 @@ const baseConfig: AppConfig = {
   agentCliEnv: {},
 };
 
+async function clickCurrentPrivacyChoice(name: string) {
+  // App bootstrap can rerender the banner while the async findByRole call is
+  // resolving. Re-query synchronously before dispatching the event so the
+  // click lands on the currently mounted button.
+  await screen.findByRole('button', { name });
+  fireEvent.click(screen.getByRole('button', { name }));
+}
+
 describe('App connectors settings flows', () => {
   beforeEach(() => {
     useRouteMock.mockReturnValue(homeRouteMock);
@@ -281,6 +289,88 @@ describe('App connectors settings flows', () => {
     });
   });
 
+  it('does not send a destructive empty Composio write during bootstrap', async () => {
+    mockedLoadConfig.mockReturnValue({
+      ...baseConfig,
+      composio: {
+        apiKey: '',
+        apiKeyConfigured: false,
+        apiKeyTail: '',
+      },
+    });
+    mockedFetchComposioConfigFromDaemon.mockResolvedValue({
+      apiKey: '',
+      apiKeyConfigured: false,
+      apiKeyTail: '',
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockedFetchComposioConfigFromDaemon).toHaveBeenCalledTimes(1);
+      expect(mockedSyncConfigToDaemon).toHaveBeenCalled();
+    });
+
+    // PUT { apiKey: '' } means "clear" at the daemon boundary. A bootstrap
+    // write can complete after the user's first explicit Save and erase the
+    // freshly stored key, so startup must stay read-only when there is no
+    // legacy plaintext key to migrate.
+    expect(mockedSyncComposioConfigToDaemon).not.toHaveBeenCalled();
+  });
+
+  it('removes a legacy plaintext Composio key only after migration succeeds', async () => {
+    mockedLoadConfig.mockReturnValue({
+      ...baseConfig,
+      composio: {
+        apiKey: 'cmp_legacy_secret',
+        apiKeyConfigured: false,
+        apiKeyTail: '',
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockedSyncComposioConfigToDaemon).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'cmp_legacy_secret' }),
+      );
+      expect(mockedSaveConfig.mock.calls.at(-1)?.[0]).toMatchObject({
+        composio: {
+          apiKey: '',
+          apiKeyConfigured: true,
+          apiKeyTail: 'cret',
+        },
+      });
+    });
+  });
+
+  it('retains a legacy plaintext Composio key when migration fails', async () => {
+    mockedLoadConfig.mockReturnValue({
+      ...baseConfig,
+      composio: {
+        apiKey: 'cmp_retry_secret',
+        apiKeyConfigured: false,
+        apiKeyTail: '',
+      },
+    });
+    mockedSyncComposioConfigToDaemon.mockResolvedValueOnce(false);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockedSyncComposioConfigToDaemon).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'cmp_retry_secret' }),
+      );
+      expect(mockedSaveConfig.mock.calls.at(-1)?.[0]).toMatchObject({
+        composio: {
+          apiKey: 'cmp_retry_secret',
+          apiKeyConfigured: false,
+          apiKeyTail: '',
+        },
+      });
+    });
+  });
+
   it('does not show first-run privacy consent until daemon config hydration finishes', async () => {
     let resolveDaemonConfig: (value: Record<string, never>) => void = () => {};
     mockedFetchDaemonConfig.mockReturnValue(
@@ -318,7 +408,7 @@ describe('App connectors settings flows', () => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalled();
     });
     mockedSyncConfigToDaemon.mockClear();
-    fireEvent.click(await screen.findByRole('button', { name: 'Share' }));
+    await clickCurrentPrivacyChoice('Share');
 
     await waitFor(() => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
@@ -346,7 +436,7 @@ describe('App connectors settings flows', () => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalled();
     });
     mockedSyncConfigToDaemon.mockClear();
-    fireEvent.click(await screen.findByRole('button', { name: 'Share' }));
+    await clickCurrentPrivacyChoice('Share');
 
     await waitFor(() => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
@@ -374,7 +464,7 @@ describe('App connectors settings flows', () => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalled();
     });
     mockedSyncConfigToDaemon.mockClear();
-    fireEvent.click(await screen.findByRole('button', { name: 'Share' }));
+    await clickCurrentPrivacyChoice('Share');
 
     await waitFor(() => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
@@ -395,7 +485,7 @@ describe('App connectors settings flows', () => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalled();
     });
     mockedSyncConfigToDaemon.mockClear();
-    fireEvent.click(await screen.findByRole('button', { name: "Don't share" }));
+    await clickCurrentPrivacyChoice("Don't share");
 
     await waitFor(() => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
@@ -422,7 +512,7 @@ describe('App connectors settings flows', () => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalled();
     });
     mockedSyncConfigToDaemon.mockClear();
-    fireEvent.click(await screen.findByRole('button', { name: "Don't share" }));
+    await clickCurrentPrivacyChoice("Don't share");
 
     await waitFor(() => {
       expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(

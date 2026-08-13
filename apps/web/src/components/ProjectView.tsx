@@ -54,6 +54,7 @@ import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   type AmrWalletSnapshot,
+  type ByokChatProviderConfig,
   type ByokMediaDefaults,
   type ByokChatProtocol,
   type ProjectWorkspaceScope,
@@ -103,7 +104,7 @@ import {
 } from '../utils/apiProtocol';
 import { playSound, showCompletionNotification } from '../utils/notifications';
 import { randomUUID } from '../utils/uuid';
-import { DEFAULT_NOTIFICATIONS } from '../state/config';
+import { DEFAULT_NOTIFICATIONS, KNOWN_PROVIDERS } from '../state/config';
 import type { TodoItem } from '../runtime/todos';
 import type {
   AmrAuthRetryContinuation,
@@ -236,6 +237,10 @@ import { localizePluginTitle } from './plugins-home/localization';
 import { DesignSystemPicker } from './DesignSystemPicker';
 import { PresenceBar } from '../collab/PresenceBar';
 import { useProjectCollab } from '../collab/useProjectCollab';
+import {
+  currentUserDirectoryEntry,
+  useTeamMembers,
+} from '../collab/useTeamMembers';
 import { workspaceIdentityCacheKey } from '../collab/workspace-identity';
 import {
   useWorkspaceContext,
@@ -249,7 +254,11 @@ import {
   runWorkspacePersonalAdoptionWitness,
   useProjectWorkspaceScope,
 } from '../collab/useProjectWorkspaceScope';
-import { CollabProvider, type CollabContextValue } from '../collab/collab-context';
+import {
+  CollabProvider,
+  type CollabContextValue,
+  type ProjectResourceAuthority,
+} from '../collab/collab-context';
 import { persistCommentAnchors } from '../collab/comment-anchor-client';
 import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
@@ -310,6 +319,7 @@ import { effectiveMaxTokens } from '../state/maxTokens';
 import { effectiveAgentModelChoice } from './agentModelSelection';
 import { mediaExecutionPolicyForProjectMetadata } from '../media/execution-policy';
 import { mediaModelProviderId } from '../media/models';
+import { byokProviderRequiresApiKey } from '../utils/byokProvider';
 import {
   useByokImageModelOptions,
   useByokVideoModelOptions,
@@ -583,6 +593,11 @@ interface Props {
   onClearPendingPrompt: () => void;
   onTouchProject: () => void;
   onProjectChange: (next: Project) => void;
+  onProjectRenameStarted?: (optimistic: Project) => ProjectRenameFenceToken | null;
+  onProjectRenameSettled?: (
+    token: ProjectRenameFenceToken | null,
+    confirmed: Project,
+  ) => void;
   onProjectsRefresh: () => void;
   onDeleteProject?: (id: string) => Promise<boolean> | boolean;
   onChangeDefaultDesignSystem?: (designSystemId: string | null) => void;
@@ -600,6 +615,13 @@ interface Props {
    * this project can produce a post-run extraction. */
   onRunActivityChange?: (projectId: string, active: boolean) => void;
 }
+
+export type ProjectRenameFenceToken = Readonly<{
+  accountGeneration: number;
+  scopeKey: string;
+  projectId: string;
+  mutationVersion: number;
+}>;
 
 interface QueuedChatSend {
   id: string;
@@ -1498,13 +1520,48 @@ function byokMediaDefaultsForRun(input: {
   };
 }
 
-function byokOpenCodeProfileIdFromConfig(
+function byokOpenCodeProviderFromConfig(
   config: AppConfig,
-): string | undefined {
+): ByokChatProviderConfig | undefined {
   if (!isOpenCodeByokChatProtocol(config.apiProtocol)) return undefined;
-  if (byokPreflightBlockReason(config) !== null) return undefined;
-  if (!config.byokCredentialConfigured) return undefined;
-  return config.byokProfileId?.trim() || undefined;
+  const selectedProvider = selectedKnownProviderForConfig(config);
+  const model = config.model.trim();
+  if (
+    (byokProviderRequiresApiKey(config.apiProtocol, selectedProvider, config.baseUrl)
+      && !config.apiKey.trim())
+    || !model
+    || model.toLowerCase() === 'default'
+    || (config.apiProtocol === 'azure' && !config.baseUrl.trim())
+  ) {
+    return undefined;
+  }
+  return {
+    protocol: config.apiProtocol,
+    apiKey: config.apiKey.trim(),
+    baseUrl: config.baseUrl.trim(),
+    model,
+    ...(config.apiProtocol === 'azure' && config.apiVersion?.trim()
+      ? { apiVersion: config.apiVersion.trim() }
+      : {}),
+    requiresApiKey: byokProviderRequiresApiKey(
+      config.apiProtocol,
+      selectedProvider,
+      config.baseUrl,
+    ),
+  };
+}
+
+function selectedKnownProviderForConfig(config: AppConfig) {
+  if (!config.apiProtocol) return undefined;
+  return KNOWN_PROVIDERS.find(
+    (provider) =>
+      provider.protocol === config.apiProtocol
+      && provider.baseUrl === config.baseUrl
+      && (
+        config.apiProviderBaseUrl == null
+        || provider.baseUrl === config.apiProviderBaseUrl
+      ),
+  );
 }
 
 function isOpenCodeByokChatProtocol(
@@ -1650,6 +1707,8 @@ export function ProjectView({
   onClearPendingPrompt,
   onTouchProject,
   onProjectChange,
+  onProjectRenameStarted,
+  onProjectRenameSettled,
   onProjectsRefresh,
   onDeleteProject,
   onChangeDefaultDesignSystem,
@@ -1738,6 +1797,15 @@ export function ProjectView({
   }
   const projectRunWorkspaceContext =
     canonicalProjectRunWorkspaceContextRef.current.context;
+  const projectResourceAuthority: ProjectResourceAuthority =
+    projectWorkspaceScopeState.failure === 'forbidden'
+    || projectWorkspaceScopeState.failure === 'unsupported'
+      ? 'denied'
+      : projectWorkspaceScopeState.scope?.kind === 'unbound'
+        ? 'local'
+        : projectRunWorkspaceContext
+          ? 'workspace'
+          : 'pending';
   const projectRunWorkspaceContextRef = useRef(projectRunWorkspaceContext);
   projectRunWorkspaceContextRef.current = projectRunWorkspaceContext;
   // The AMR pre-run balance gate uses the project's resolved scope, or the one
@@ -1832,6 +1900,10 @@ export function ProjectView({
     workspaceContextLoading: projectWorkspaceScopeState.loading,
     presenceFilePath: project?.metadata?.entryFile ?? null,
   });
+  const { resolve: resolvePresenceMember } = useTeamMembers(
+    currentUserDirectoryEntry(projectRunWorkspaceContext),
+    projectRunWorkspaceContext,
+  );
   // Tab layout is private browser state for a read-only Team viewer. Keep its
   // identity-partitioned local cache working, but only let a positively proven
   // project writer update the daemon's shared project row. Personal and legacy
@@ -2003,12 +2075,14 @@ export function ProjectView({
       ...projectCollab,
       workspaceContext: projectRunWorkspaceContext,
       workspaceContextLoading: projectWorkspaceScopeState.loading,
+      projectResourceAuthority,
       onLostAnchors: handleLostAnchors,
     }),
     [
       projectCollab,
       projectRunWorkspaceContext,
       projectWorkspaceScopeState.loading,
+      projectResourceAuthority,
       handleLostAnchors,
     ],
   );
@@ -2659,34 +2733,6 @@ export function ProjectView({
     routeConversationId,
   ]);
 
-  const previousConversationRecoveryDownloadRef = useRef<{
-    projectId: string;
-    authorityKey: string;
-    pending: boolean;
-  } | null>(null);
-  useEffect(() => {
-    const previous = previousConversationRecoveryDownloadRef.current;
-    const sameAuthority = previous?.projectId === project.id
-      && previous.authorityKey === projectRunAuthorityKey;
-    previousConversationRecoveryDownloadRef.current = {
-      projectId: project.id,
-      authorityKey: projectRunAuthorityKey,
-      pending: projectCollab.downloadPending,
-    };
-    if (
-      sameAuthority
-      && previous.pending
-      && !projectCollab.downloadPending
-    ) {
-      void recoverMaterializedConversations(project.id, projectRunAuthorityKey);
-    }
-  }, [
-    project.id,
-    projectRunAuthorityKey,
-    projectCollab.downloadPending,
-    recoverMaterializedConversations,
-  ]);
-
   const emptyConversationWriterAuthorized =
     projectWorkspaceScopeState.scope?.kind === 'personal'
     || projectWorkspaceScopeState.scope?.kind === 'unbound'
@@ -2765,9 +2811,9 @@ export function ProjectView({
     // so only react to a genuinely external navigation.
     if (routeConversationId === lastSyncedConversationIdRef.current) return;
     if (lastSeenRouteConversationIdRef.current === routeConversationId) return;
-    lastSeenRouteConversationIdRef.current = routeConversationId;
     const match = conversations.find((c) => c.id === routeConversationId);
     if (!match) return;
+    lastSeenRouteConversationIdRef.current = routeConversationId;
     setActiveConversationId(routeConversationId);
   }, [routeConversationId, conversations, activeConversationId]);
 
@@ -3250,14 +3296,9 @@ export function ProjectView({
       const cached = htmlContentCacheRef.current.get(name);
       if (cached && cached.mtime === mtime) return cached.text;
       try {
-        const response = await fetch(
-          projectRawUrl(
-            project.id,
-            name,
-            projectRunWorkspaceContextRef.current,
-          ),
-        );
-        const text = response.ok ? await response.text() : null;
+        const text = await fetchProjectFileText(project.id, name, {
+          workspaceContext: projectRunWorkspaceContextRef.current,
+        });
         htmlContentCacheRef.current.set(name, { mtime, text });
         return text;
       } catch {
@@ -3297,6 +3338,51 @@ export function ProjectView({
     );
     return { acceptedGeneration };
   }, [refreshWorkspaceItems]);
+
+  const previousMaterializationDownloadRef = useRef<{
+    projectId: string;
+    authorityKey: string;
+    pending: boolean;
+  } | null>(null);
+  useEffect(() => {
+    const previous = previousMaterializationDownloadRef.current;
+    const sameAuthority = previous?.projectId === project.id
+      && previous.authorityKey === projectRunAuthorityKey;
+    previousMaterializationDownloadRef.current = {
+      projectId: project.id,
+      authorityKey: projectRunAuthorityKey,
+      pending: projectCollab.downloadPending,
+    };
+    if (
+      !sameAuthority
+      || !previous.pending
+      || projectCollab.downloadPending
+    ) {
+      return;
+    }
+
+    // The first file read for a newly opened Team mirror can legitimately
+    // observe the empty placeholder directory. Materialization replaces that
+    // directory without producing a chokidar event for a stream that was not
+    // connected yet, so settling the download is itself an authoritative file
+    // invalidation. Fence the placeholder snapshot and fetch the exact scoped
+    // directory now; otherwise the first view stays empty until it is reopened.
+    invalidateProjectFilesCache(
+      project.id,
+      projectRunWorkspaceContextRef.current,
+    );
+    void refreshWorkspaceItems({ freshProjectFiles: true }).catch(() => {
+      // Preserve the last accepted snapshot on a transient transport failure.
+      // The project event stream and ordinary refresh paths remain retries.
+    });
+    void recoverMaterializedConversations(project.id, projectRunAuthorityKey);
+  }, [
+    project.id,
+    projectRunAuthorityKey,
+    projectCollab.downloadPending,
+    recoverMaterializedConversations,
+    refreshWorkspaceItems,
+  ]);
 
   useEffect(() => {
     if (!currentBrandExtractionId) {
@@ -3769,10 +3855,14 @@ export function ProjectView({
     && projectWorkspaceScopeReady(projectWorkspaceScopeState.scope);
   useProjectFileEvents(project.id, projectEventsEnabled, handleProjectEvent, {
     onConnectedChange: setProjectEventsSseConnected,
-    // A file can be created after the initial list snapshot but before SSE is
-    // listening. Reconcile once the exact-scoped stream is ready so that
-    // missed pre-handshake mutations cannot leave the workspace stale forever.
-    onReady: refreshFilesAndDesignMd,
+    // Files or comments can change after their initial snapshots but before
+    // SSE is listening. Reconcile both once the exact-scoped stream is ready:
+    // for comments this also redeems a daemon-side dirty mark left by a hub
+    // event that arrived in the pre-handshake gap.
+    onReady: () => {
+      refreshFilesAndDesignMd();
+      void refreshPreviewCommentsRef.current?.();
+    },
   }, projectRunWorkspaceContext);
 
   const activePromptContextSignature = useMemo(() => {
@@ -4582,7 +4672,16 @@ export function ProjectView({
       images: File[] = [],
       commentId?: string,
     ) => {
-      if (!activeConversationId) return null;
+      const commentConversationId = activeConversationId ?? routeConversationId;
+      if (!commentConversationId) {
+        setProjectActionsToast({
+          message: t('project.previewCommentSaveFailed'),
+          details: null,
+          tone: 'error',
+          ttlMs: 5000,
+        });
+        return null;
+      }
       // Upload any attached images first so the saved comment carries durable
       // file paths — this is what lets the comment list / re-opened popover
       // re-display the images instead of losing them on echo.
@@ -4594,7 +4693,15 @@ export function ProjectView({
           undefined,
           projectRunWorkspaceContext,
         );
-        if (result.uploaded.length !== images.length) return null;
+        if (result.uploaded.length !== images.length) {
+          setProjectActionsToast({
+            message: t('project.previewCommentSaveFailed'),
+            details: null,
+            tone: 'error',
+            ttlMs: 5000,
+          });
+          return null;
+        }
         uploadedAttachments = result.uploaded.map((file) => ({ path: file.path, name: file.name }));
       }
       const existing = commentId
@@ -4603,7 +4710,7 @@ export function ProjectView({
       const attachments = mergePreviewCommentAttachments(existing?.attachments, uploadedAttachments);
       const saved = await upsertPreviewComment(
         project.id,
-        activeConversationId,
+        commentConversationId,
         {
           ...(commentId ? { id: commentId } : {}),
           target,
@@ -4633,6 +4740,7 @@ export function ProjectView({
     [
       project.id,
       activeConversationId,
+      routeConversationId,
       commitPreviewComments,
       previewComments,
       projectRunWorkspaceContext,
@@ -4642,10 +4750,19 @@ export function ProjectView({
 
   const removePreviewComment = useCallback(
     async (commentId: string): Promise<boolean> => {
-      if (!activeConversationId) return false;
+      const commentConversationId = activeConversationId ?? routeConversationId;
+      if (!commentConversationId) {
+        setProjectActionsToast({
+          message: t('project.previewCommentSaveFailed'),
+          details: null,
+          tone: 'error',
+          ttlMs: 5000,
+        });
+        return false;
+      }
       const ok = await deletePreviewComment(
         project.id,
-        activeConversationId,
+        commentConversationId,
         commentId,
         projectRunWorkspaceContext,
       );
@@ -4662,7 +4779,14 @@ export function ProjectView({
       setAttachedComments((current) => removeAttachedComment(current, commentId));
       return true;
     },
-    [project.id, activeConversationId, commitPreviewComments, projectRunWorkspaceContext, t],
+    [
+      project.id,
+      activeConversationId,
+      routeConversationId,
+      commitPreviewComments,
+      projectRunWorkspaceContext,
+      t,
+    ],
   );
 
   /**
@@ -4679,13 +4803,22 @@ export function ProjectView({
    */
   const reorderPreviewComment = useCallback(
     async (commentId: string, sortKey: number) => {
-      if (!activeConversationId) return;
+      const commentConversationId = activeConversationId ?? routeConversationId;
+      if (!commentConversationId) {
+        setProjectActionsToast({
+          message: t('project.previewCommentReorderFailed'),
+          details: null,
+          tone: 'error',
+          ttlMs: 5000,
+        });
+        return;
+      }
       commitPreviewComments((current) =>
         current.map((comment) => (comment.id === commentId ? { ...comment, sortKey } : comment)),
       );
       const saved = await patchPreviewCommentSortKey(
         project.id,
-        activeConversationId,
+        commentConversationId,
         commentId,
         sortKey,
         projectRunWorkspaceContext,
@@ -4701,7 +4834,14 @@ export function ProjectView({
         });
       }
     },
-    [project.id, activeConversationId, commitPreviewComments, projectRunWorkspaceContext, t],
+    [
+      project.id,
+      activeConversationId,
+      routeConversationId,
+      commitPreviewComments,
+      projectRunWorkspaceContext,
+      t,
+    ],
   );
 
   const attachPreviewComment = useCallback((comment: PreviewComment) => {
@@ -6167,11 +6307,11 @@ export function ProjectView({
           chatAttachmentsFromPreviewCommentImages(attachment.imageAttachments),
         ),
       );
-      const byokProfileId = byokOpenCodeProfileIdFromConfig(config);
+      const byokOpenCodeProvider = byokOpenCodeProviderFromConfig(config);
       const requiresByokPreflight =
         (config.mode === 'api' && config.apiProtocol !== 'bedrock') ||
         (config.mode === 'daemon' && config.agentId === 'byok-opencode');
-      if (requiresByokPreflight && !byokProfileId) {
+      if (requiresByokPreflight && !byokOpenCodeProvider) {
         trackByokPreflightBlocked(analytics.track, {
           source: 'run',
           reason: byokPreflightBlockReason(config) ?? 'config_invalid',
@@ -7323,8 +7463,8 @@ export function ProjectView({
           model: daemonByokOpenCode ? config.model : choice?.model ?? null,
           reasoning: daemonByokOpenCode ? null : choice?.reasoning ?? null,
           serviceTier: daemonByokOpenCode ? null : choice?.serviceTier ?? null,
-          ...(daemonByokOpenCode && byokProfileId
-            ? { byokProfileId }
+          ...(daemonByokOpenCode && byokOpenCodeProvider
+            ? { byokProvider: byokOpenCodeProvider }
             : {}),
           ...(daemonByokOpenCode
             ? {
@@ -7407,9 +7547,18 @@ export function ProjectView({
         // BYOK users even though the UI saves model + index + entries
         // for that mode.
         const userText = (userMsg.content ?? '').trim();
-        // Pass only the non-secret profile reference so "Same as chat"
-        // memory extraction resolves the same daemon-owned credential as the
-        // run. Raw provider keys never cross this browser call boundary.
+        // Forward the per-call BYOK provider snapshot so "Same as chat"
+        // memory extraction uses the same vendor, endpoint, key and model as
+        // the run. The daemon consumes it for this request only.
+        const byokChatProvider = byokOpenCodeProvider
+          ? {
+              provider: byokOpenCodeProvider.protocol,
+              apiKey: byokOpenCodeProvider.apiKey,
+              baseUrl: byokOpenCodeProvider.baseUrl,
+              apiVersion: byokOpenCodeProvider.apiVersion,
+              model: byokOpenCodeProvider.model,
+            }
+          : undefined;
         if (userText.length > 0) {
           try {
             await fetch('/api/memory/extract', {
@@ -7419,7 +7568,7 @@ export function ProjectView({
                 userMessage: userText,
                 projectId: project.id,
                 conversationId: runConversationId,
-                byokProfileId,
+                byokChatProvider,
               }),
             });
           } catch {
@@ -7476,7 +7625,7 @@ export function ProjectView({
           model: config.model,
           reasoning: null,
           serviceTier: null,
-          ...(byokProfileId ? { byokProfileId } : {}),
+          ...(byokOpenCodeProvider ? { byokProvider: byokOpenCodeProvider } : {}),
           byokMediaDefaults: byokMediaDefaultsForRun({
             imageModelOverride: byokImageModelOverride,
             videoModelOverride: byokVideoModelOverride,
@@ -8693,10 +8842,38 @@ export function ProjectView({
     ],
   );
 
+  const projectRenameStatesRef = useRef<Map<string, {
+    key: string;
+    generation: number;
+    confirmed: Project;
+    pending: number;
+    tail: Promise<void>;
+  }>>(new Map());
   const handleProjectRename = useCallback(
     (newName: string) => {
       const trimmed = newName.trim();
       if (!trimmed || trimmed === project.name) return;
+      const previousName = project.name;
+      const renameContext = projectRunWorkspaceContextRef.current;
+      const renameWorkspaceIdentity = workspaceIdentityCacheKey(renameContext);
+      const renameKey = JSON.stringify([
+        project.id,
+        project.workspaceId ?? null,
+        renameWorkspaceIdentity,
+      ]);
+      let renameState = projectRenameStatesRef.current.get(renameKey);
+      if (!renameState || renameState.pending === 0) {
+        renameState = {
+          key: renameKey,
+          generation: 0,
+          confirmed: project,
+          pending: 0,
+          tail: Promise.resolve(),
+        };
+        projectRenameStatesRef.current.set(renameKey, renameState);
+      }
+      const renameGeneration = ++renameState.generation;
+      renameState.pending += 1;
       const metadata = project.metadata
         ? { ...project.metadata, nameSource: 'user' as const }
         : undefined;
@@ -8706,13 +8883,83 @@ export function ProjectView({
         ...(metadata ? { metadata } : {}),
         updatedAt: Date.now(),
       };
+      const renameFenceToken = onProjectRenameStarted?.(updated) ?? null;
       onProjectChange(updated);
-      void patchProject(project.id, {
-        name: trimmed,
-        ...(metadata ? { metadata } : {}),
-      }, projectRunWorkspaceContext);
+      const runRename = async () => {
+        const persisted = await patchProject(project.id, {
+          name: trimmed,
+          ...(metadata ? { metadata } : {}),
+        }, renameContext);
+        if (persisted) renameState.confirmed = persisted;
+        const isLatestQueuedRename =
+          projectRenameStatesRef.current.get(renameKey) !== renameState
+          ? false
+          : renameState.generation === renameGeneration;
+        if (!isLatestQueuedRename) return;
+        const settledProject = persisted ?? renameState.confirmed;
+        onProjectRenameSettled?.(renameFenceToken, settledProject);
+        if (
+          projectRef.current.id !== project.id
+          || workspaceIdentityCacheKey(projectRunWorkspaceContextRef.current)
+            !== renameWorkspaceIdentity
+          || (
+            projectRef.current.name !== previousName
+            && projectRef.current.name !== trimmed
+          )
+        ) return;
+        if (!persisted) {
+          if (projectRef.current.name === trimmed) {
+            const rollback = {
+              ...projectRef.current,
+              name: renameState.confirmed.name,
+              metadata: renameState.confirmed.metadata,
+              updatedAt: renameState.confirmed.updatedAt,
+            };
+            onProjectChange(rollback);
+            try {
+              await onProjectsRefresh();
+            } catch {
+              // The rollback is already projected locally. A later list read
+              // closes the stale-request fence if this refresh is unavailable.
+            }
+          }
+          return;
+        }
+        const confirmed = {
+          ...projectRef.current,
+          name: persisted.name,
+          metadata: persisted.metadata,
+          updatedAt: persisted.updatedAt,
+        };
+        onProjectChange(confirmed);
+        try {
+          await onProjectsRefresh();
+        } catch {
+          // The rename is already persisted. Existing list retry/reconnect
+          // paths will reconcile a transient projection refresh failure.
+        }
+      };
+      const queued = renameState.tail.then(runRename, runRename);
+      renameState.tail = queued.then(
+        () => undefined,
+        () => undefined,
+      ).finally(() => {
+        renameState.pending -= 1;
+        if (
+          renameState.pending === 0
+          && projectRenameStatesRef.current.get(renameKey) === renameState
+        ) {
+          projectRenameStatesRef.current.delete(renameKey);
+        }
+      });
     },
-    [project, onProjectChange],
+    [
+      onProjectChange,
+      onProjectRenameSettled,
+      onProjectRenameStarted,
+      onProjectsRefresh,
+      project,
+    ],
   );
 
   const activeConversationChatState = useMemo(
@@ -10371,6 +10618,7 @@ export function ProjectView({
                   variant="icon"
                   designSystems={designSystems}
                   selectedId={projectDesignSystemId ?? null}
+                  workspaceContext={projectRunWorkspaceContext}
                   disabled={projectCollab.viewerOnly}
                   onChange={handleChangeDesignSystemId}
                 />
@@ -10474,6 +10722,7 @@ export function ProjectView({
             <PresenceBar
               members={projectCollab.present}
               selfMember={projectCollab.member}
+              resolveMember={resolvePresenceMember}
               {...(projectCollab.member ? { selfMemberId: projectCollab.member.memberId } : {})}
             />
           ) : null}
@@ -10517,6 +10766,7 @@ export function ProjectView({
       {contextDesignSystemDetails ? (
         <DesignSystemPreviewModal
           system={contextDesignSystemDetails}
+          workspaceContext={projectRunWorkspaceContext}
           initialViewId="kit"
           onClose={() => setContextDesignSystemDetails(null)}
         />

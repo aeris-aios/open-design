@@ -5,6 +5,7 @@ import type {
 } from '@open-design/contracts';
 import type { RouteDeps } from '../../server-context.js';
 import type { BoundWorkspaceResourceMutationGate } from '../../collab/workspace-resource-mutation.js';
+import { isProjectCommentAnchorConversationId } from '../../db.js';
 
 export type ProjectCommentWorkspaceContextResolution =
   | { ok: true; context: WorkspaceCollabContext | null }
@@ -17,6 +18,8 @@ export type ProjectCommentWorkspaceContextResolution =
     };
 
 export interface RegisterProjectCommentRoutesDeps extends RouteDeps<'db' | 'projectStore' | 'conversations'> {
+  /** Optional in focused CRUD fixtures; production supplies request-scoped analytics. */
+  telemetry?: RouteDeps<'telemetry'>['telemetry'];
   /**
    * Gate POST (create/edit)/PATCH status/DELETE on the caller's WORKSPACE
    * identity, before the author-identity logic below ever runs (spec 04 §10
@@ -89,17 +92,6 @@ export interface RegisterProjectCommentRoutesDeps extends RouteDeps<'db' | 'proj
     context?: WorkspaceCollabContext | null,
   ) => Promise<boolean>;
   /**
-   * Whether this project should still sync comment mutations to the team relay.
-   * Local comments are allowed to save regardless; this gate only prevents stale
-   * pulled copies from continuing to publish into a project after it leaves the
-   * team catalog.
-   */
-  shouldSyncProjectComments?: (
-    authorization: string | undefined,
-    projectId: string,
-    context?: WorkspaceCollabContext | null,
-  ) => Promise<boolean>;
-  /**
    * Fired after a comment is created OR edited (body upsert), so the collab-cloud
    * service can push it to the cross-daemon relay (best-effort — a push failure
    * must not fail the local save). No-op off-team / when the collab cloud is
@@ -108,7 +100,7 @@ export interface RegisterProjectCommentRoutesDeps extends RouteDeps<'db' | 'proj
   onCommentCreated?: (
     comment: PreviewComment,
     context: WorkspaceCollabContext | null,
-  ) => void;
+  ) => boolean | void;
   /**
    * Fired after a comment's status changes (the send-to-agent lifecycle), so the
    * new status propagates to other members. Best-effort.
@@ -116,7 +108,7 @@ export interface RegisterProjectCommentRoutesDeps extends RouteDeps<'db' | 'proj
   onCommentUpdated?: (
     comment: PreviewComment,
     context: WorkspaceCollabContext | null,
-  ) => void;
+  ) => boolean | void;
   /**
    * Fired after a comment is deleted, with the comment as it last existed, so a
    * tombstone can be pushed to the relay. Best-effort.
@@ -124,18 +116,19 @@ export interface RegisterProjectCommentRoutesDeps extends RouteDeps<'db' | 'proj
   onCommentDeleted?: (
     comment: PreviewComment,
     context: WorkspaceCollabContext | null,
-  ) => void;
+  ) => boolean | void;
   /**
    * Fired when the comment list is read. The hub push channel marks closed
    * projects comment-dirty instead of pulling eagerly; the first read after
-   * opening consumes that mark and triggers an immediate cloud pull, so an
-   * opened project catches up NOW instead of on the next poll tick.
+   * opening consumes that mark and awaits an immediate cloud pull before the
+   * list is serialized, so an opened project catches up in its first response
+   * instead of requiring a second read after the next poll tick.
    */
   onCommentsRead?: (
     projectId: string,
     context: WorkspaceCollabContext | null,
     resolveFreshWorkspaceContext: () => Promise<ProjectCommentWorkspaceContextResolution>,
-  ) => void;
+  ) => Promise<void> | void;
 }
 
 export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectCommentRoutesDeps): void {
@@ -144,13 +137,57 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   const {
     getConversation,
     listPreviewComments,
+    listProjectPreviewComments,
     upsertPreviewComment,
     getPreviewComment,
+    getProjectPreviewComment,
     updatePreviewCommentStatus,
     updatePreviewCommentAnchor,
     deletePreviewComment,
     reorderPreviewComment,
   } = ctx.conversations;
+  const getRoutableConversation = (projectId: string, conversationId: string) => {
+    if (isProjectCommentAnchorConversationId(conversationId)) return null;
+    const conversation = getConversation(db, conversationId);
+    return conversation?.projectId === projectId ? conversation : null;
+  };
+
+  function commentsAreProjectScoped(
+    projectId: string,
+    context: WorkspaceCollabContext | null,
+  ): boolean {
+    if (typeof getWorkspaceProjectByProjectId !== 'function') return false;
+    const binding = getWorkspaceProjectByProjectId(db, projectId) as {
+      workspaceId?: string;
+      visibility?: string;
+      resourceState?: string;
+    } | undefined;
+    if (
+      !binding
+      || binding.visibility !== 'team'
+      || binding.resourceState === 'deleted'
+    ) {
+      return false;
+    }
+    if ((ctx.resolveReadWorkspaceContext || ctx.resolveWorkspaceContext) && !context) {
+      return false;
+    }
+    // The null case preserves narrow local fixtures that deliberately omit
+    // Workspace auth; production requires an exact context match.
+    return !context || binding.workspaceId === context.workspaceId;
+  }
+
+  function getRequestPreviewComment(
+    projectId: string,
+    conversationId: string,
+    commentId: string,
+    context: WorkspaceCollabContext | null,
+  ): PreviewComment | null {
+    return (commentsAreProjectScoped(projectId, context)
+      && typeof getProjectPreviewComment === 'function'
+      ? getProjectPreviewComment(db, projectId, commentId)
+      : getPreviewComment(db, projectId, conversationId, commentId)) as PreviewComment | null;
+  }
 
   /**
    * Workspace-identity gate for a comment mutation, borrowing the PARENT
@@ -253,20 +290,31 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
     return ctx.resolveAuthorMemberId(req.headers.authorization);
   }
 
-  async function shouldSyncComments(
-    req: Request,
+  function isLocalTeamRelayCandidate(
     projectId: string,
     context: WorkspaceCollabContext | null,
-  ): Promise<boolean> {
-    if (!ctx.shouldSyncProjectComments) return true;
-    try {
-      return await ctx.shouldSyncProjectComments(
-        req.headers.authorization,
-        projectId,
-        context,
-      );
-    } catch {
-      return false;
+    callbackConfigured: boolean,
+  ): boolean {
+    if (!ctx.resolveWorkspaceContext) return callbackConfigured;
+    if (
+      !callbackConfigured
+      || !context
+      || context.workspaceType !== 'team'
+      || context.memberStatus !== 'active'
+      || context.lifecycleState === 'deleted'
+    ) return false;
+    const binding = getWorkspaceProjectByProjectId(db, projectId);
+    return Boolean(
+      binding
+      && binding.workspaceId === context.workspaceId
+      && binding.visibility === 'team'
+      && binding.resourceState !== 'deleted',
+    );
+  }
+
+  function requireRelayEnqueued(result: boolean | void): void {
+    if (result === false) {
+      throw new Error('failed to persist Team comment relay delivery');
     }
   }
 
@@ -316,8 +364,8 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   // ---- Preview comments ----------------------------------------------------
 
   app.get('/api/projects/:id/conversations/:cid/comments', async (req, res) => {
-    const conv = getConversation(db, req.params.cid);
-    if (!conv || conv.projectId !== req.params.id) {
+    const conv = getRoutableConversation(req.params.id, req.params.cid);
+    if (!conv) {
       return res.status(404).json({ error: 'conversation not found' });
     }
     const workspaceResolution = await resolveReadRequestWorkspaceContext(
@@ -327,19 +375,24 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
     if (!workspaceResolution.ok) {
       return sendWorkspaceResolutionError(res, workspaceResolution);
     }
-    ctx.onCommentsRead?.(
+    await ctx.onCommentsRead?.(
       req.params.id,
       workspaceResolution.context,
       () => resolveRequestWorkspaceContext(req, req.params.id),
     );
     res.json({
-      comments: listPreviewComments(db, req.params.id, req.params.cid),
+      comments: commentsAreProjectScoped(
+        req.params.id,
+        workspaceResolution.context,
+      ) && typeof listProjectPreviewComments === 'function'
+        ? listProjectPreviewComments(db, req.params.id)
+        : listPreviewComments(db, req.params.id, req.params.cid),
     });
   });
 
   app.post('/api/projects/:id/conversations/:cid/comments', async (req, res) => {
-    const conv = getConversation(db, req.params.cid);
-    if (!conv || conv.projectId !== req.params.id) {
+    const conv = getRoutableConversation(req.params.id, req.params.cid);
+    if (!conv) {
       return res.status(404).json({ error: 'conversation not found' });
     }
     if (!await enforceCommentWorkspaceMutation(req, res, req.params.id)) return;
@@ -359,13 +412,14 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       const body = { ...(req.body || {}) };
       const authorMemberId = await resolveCaller(req, workspaceContext);
       const requestedId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : '';
+      let existing: PreviewComment | null = null;
       if (requestedId) {
-        const existing = getPreviewComment(
-          db,
+        existing = getRequestPreviewComment(
           req.params.id,
           req.params.cid,
           requestedId,
-        ) as PreviewComment | null;
+          workspaceContext,
+        );
         if (!existing) {
           return res.status(404).json({ error: 'comment not found' });
         }
@@ -385,25 +439,75 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       // genuinely new comment's pin_seq starts unconfirmed on a team-shared
       // project — see UpsertPreviewCommentOptions in db.ts. Ignored on the
       // edit branch, so computing it here for an edit-via-POST is harmless.
-      const syncEnabled = await shouldSyncComments(
-        req,
+      const syncEnabled = isLocalTeamRelayCandidate(
         req.params.id,
         workspaceContext,
+        Boolean(ctx.onCommentCreated),
       );
-      const comment = upsertPreviewComment(db, req.params.id, req.params.cid, body, {
-        pinPendingCloudConfirm: syncEnabled,
-      });
-      updateProject(db, req.params.id, {});
-      // Best-effort cross-daemon push; never fails the local save.
-      if (comment && syncEnabled) {
-        try {
-          ctx.onCommentCreated?.(
-            comment as unknown as PreviewComment,
+      const targetConversationId = requestedId
+        ? existing?.conversationId ?? req.params.cid
+        : req.params.cid;
+      // Local row + durable relay intent commit atomically. Network delivery is
+      // still asynchronous, so a Vela outage never delays this transaction.
+      const comment = db.transaction(() => {
+        const saved = upsertPreviewComment(db, req.params.id, targetConversationId, body, {
+          pinPendingCloudConfirm: syncEnabled,
+        });
+        updateProject(db, req.params.id, {});
+        if (saved && syncEnabled) {
+          requireRelayEnqueued(ctx.onCommentCreated?.(
+            saved as unknown as PreviewComment,
             workspaceContext,
-          );
-        } catch {
-          /* push is best-effort */
+          ));
         }
+        return saved;
+      })();
+      // Only a genuinely new, successfully persisted comment is counted.
+      // Edits reuse this POST route with an id and must not inflate creation.
+      if (comment && !requestedId) {
+        const localBinding = typeof getWorkspaceProjectByProjectId === 'function'
+          ? getWorkspaceProjectByProjectId(db, req.params.id) as
+              | { createdByWorkspaceMemberId?: string | null }
+              | undefined
+          : undefined;
+        let ownerMemberId = localBinding?.createdByWorkspaceMemberId ?? null;
+        if (!ownerMemberId && ctx.resolveProjectOwnerMemberId) {
+          ownerMemberId = await ctx.resolveProjectOwnerMemberId(
+            req.params.id,
+            workspaceContext,
+          ).catch(() => null);
+        }
+        const targetProjectRelation =
+          authorMemberId && ownerMemberId
+            ? authorMemberId === ownerMemberId
+              ? 'self'
+              : 'other'
+            : 'unknown';
+        const planId = workspaceContext?.planId?.trim().toLowerCase();
+        void ctx.telemetry?.captureProductEvent?.(
+          req,
+          'project_comment_create_result',
+          {
+            page_name: 'artifact',
+            area: 'comments',
+            result: 'success',
+            target_project_relation: targetProjectRelation,
+            comment_level: 'top_level',
+            ...(workspaceContext
+              ? {
+                  workspace_key: workspaceContext.workspaceId,
+                  workspace_type: workspaceContext.workspaceType,
+                  workspace_role: workspaceContext.role,
+                  workspace_lifecycle: workspaceContext.lifecycleState,
+                  billing_state: workspaceContext.billingState,
+                  plan_bucket: !planId || planId === 'free' ? 'free' : 'paid',
+                  provider_mode: workspaceContext.providerMode,
+                  seat_state: workspaceContext.seatSummary.isSeatFull ? 'full' : 'available',
+                  $groups: { workspace: workspaceContext.workspaceId },
+                }
+              : {}),
+          },
+        );
       }
       res.json({ comment });
     } catch (err: any) {
@@ -414,8 +518,8 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   app.patch(
     '/api/projects/:id/conversations/:cid/comments/:commentId',
     async (req, res) => {
-      const conv = getConversation(db, req.params.cid);
-      if (!conv || conv.projectId !== req.params.id) {
+      const conv = getRoutableConversation(req.params.id, req.params.cid);
+      if (!conv) {
         return res.status(404).json({ error: 'conversation not found' });
       }
       if (!await enforceCommentWorkspaceMutation(req, res, req.params.id)) return;
@@ -428,12 +532,12 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       }
       const workspaceContext = workspaceResolution.context;
       try {
-        const existing = getPreviewComment(
-          db,
+        const existing = getRequestPreviewComment(
           req.params.id,
           req.params.cid,
           req.params.commentId,
-        ) as PreviewComment | null;
+          workspaceContext,
+        );
         if (!existing) return res.status(404).json({ error: 'comment not found' });
         // Status change is the send-to-agent lifecycle: allowed for the author
         // and the project owner, blocked for other members.
@@ -445,26 +549,31 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
         ))) {
           return res.status(403).json({ error: 'not permitted' });
         }
-        const comment = updatePreviewCommentStatus(
-          db,
+        const syncEnabled = isLocalTeamRelayCandidate(
           req.params.id,
-          req.params.cid,
-          req.params.commentId,
-          req.body?.status,
+          workspaceContext,
+          Boolean(ctx.onCommentUpdated),
         );
+        const comment = db.transaction(() => {
+          const saved = updatePreviewCommentStatus(
+            db,
+            req.params.id,
+            existing.conversationId,
+            req.params.commentId,
+            req.body?.status,
+          );
+          if (!saved) return null;
+          updateProject(db, req.params.id, {});
+          if (syncEnabled) {
+            requireRelayEnqueued(ctx.onCommentUpdated?.(
+              saved as unknown as PreviewComment,
+              workspaceContext,
+            ));
+          }
+          return saved;
+        })();
         if (!comment)
           return res.status(404).json({ error: 'comment not found' });
-        updateProject(db, req.params.id, {});
-        if (await shouldSyncComments(req, req.params.id, workspaceContext)) {
-          try {
-            ctx.onCommentUpdated?.(
-              comment as unknown as PreviewComment,
-              workspaceContext,
-            );
-          } catch {
-            /* push is best-effort */
-          }
-        }
         res.json({ comment });
       } catch (err: any) {
         res.status(400).json({ error: String(err?.message || err) });
@@ -475,8 +584,8 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   app.patch(
     '/api/projects/:id/conversations/:cid/comments/:commentId/anchor',
     async (req, res) => {
-      const conv = getConversation(db, req.params.cid);
-      if (!conv || conv.projectId !== req.params.id) {
+      const conv = getRoutableConversation(req.params.id, req.params.cid);
+      if (!conv) {
         return res.status(404).json({ error: 'conversation not found' });
       }
       const workspaceResolution = await resolveRequestWorkspaceContext(
@@ -486,16 +595,24 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       if (!workspaceResolution.ok) {
         return sendWorkspaceResolutionError(res, workspaceResolution);
       }
+      const workspaceContext = workspaceResolution.context;
       try {
         // Drift-ladder write-back: the client resolves anchor state each render
         // and reports it here. This is a per-daemon DERIVED read-back (each
         // daemon anchors against its own content), not a user edit or a synced
         // field — so it is neither permission-gated nor pushed to the relay, and
         // it does not bump updated_at.
+        const existing = getRequestPreviewComment(
+          req.params.id,
+          req.params.cid,
+          req.params.commentId,
+          workspaceContext,
+        );
+        if (!existing) return res.status(404).json({ error: 'comment not found' });
         const comment = updatePreviewCommentAnchor(
           db,
           req.params.id,
-          req.params.cid,
+          existing.conversationId,
           req.params.commentId,
           req.body || {},
         );
@@ -510,8 +627,8 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   app.patch(
     '/api/projects/:id/conversations/:cid/comments/:commentId/reorder',
     async (req, res) => {
-      const conv = getConversation(db, req.params.cid);
-      if (!conv || conv.projectId !== req.params.id) {
+      const conv = getRoutableConversation(req.params.id, req.params.cid);
+      if (!conv) {
         return res.status(404).json({ error: 'conversation not found' });
       }
       const workspaceResolution = await resolveRequestWorkspaceContext(
@@ -521,6 +638,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       if (!workspaceResolution.ok) {
         return sendWorkspaceResolutionError(res, workspaceResolution);
       }
+      const workspaceContext = workspaceResolution.context;
       const sortKey = Number(req.body?.sortKey);
       if (!Number.isFinite(sortKey)) {
         return res.status(400).json({ error: 'sortKey must be a finite number' });
@@ -531,10 +649,17 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
         // authorship (any member may reorder their OWN view of a shared
         // project's comments), does not bump updated_at, and is never pushed
         // to the collab-cloud relay — see PreviewComment.sortKey.
+        const existing = getRequestPreviewComment(
+          req.params.id,
+          req.params.cid,
+          req.params.commentId,
+          workspaceContext,
+        );
+        if (!existing) return res.status(404).json({ error: 'comment not found' });
         const comment = reorderPreviewComment(
           db,
           req.params.id,
-          req.params.cid,
+          existing.conversationId,
           req.params.commentId,
           sortKey,
         );
@@ -549,8 +674,8 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   app.delete(
     '/api/projects/:id/conversations/:cid/comments/:commentId',
     async (req, res) => {
-      const conv = getConversation(db, req.params.cid);
-      if (!conv || conv.projectId !== req.params.id) {
+      const conv = getRoutableConversation(req.params.id, req.params.cid);
+      if (!conv) {
         return res.status(404).json({ error: 'conversation not found' });
       }
       if (!await enforceCommentWorkspaceMutation(req, res, req.params.id)) return;
@@ -563,12 +688,12 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       }
       const workspaceContext = workspaceResolution.context;
       // Load before deleting so we can gate on the author and build the tombstone.
-      const existing = getPreviewComment(
-        db,
+      const existing = getRequestPreviewComment(
         req.params.id,
         req.params.cid,
         req.params.commentId,
-      ) as PreviewComment | null;
+        workspaceContext,
+      );
       if (!existing) return res.status(404).json({ error: 'comment not found' });
       // Delete is allowed for the comment's author and the project owner.
       if (!(await callerMayMutate(
@@ -579,21 +704,31 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       ))) {
         return res.status(403).json({ error: 'not permitted' });
       }
-      const ok = deletePreviewComment(
-        db,
+      const syncEnabled = isLocalTeamRelayCandidate(
         req.params.id,
-        req.params.cid,
-        req.params.commentId,
+        workspaceContext,
+        Boolean(ctx.onCommentDeleted),
       );
-      if (!ok) return res.status(404).json({ error: 'comment not found' });
-      updateProject(db, req.params.id, {});
-      if (await shouldSyncComments(req, req.params.id, workspaceContext)) {
-        try {
-          ctx.onCommentDeleted?.(existing, workspaceContext);
-        } catch {
-          /* push is best-effort */
-        }
+      let ok = false;
+      try {
+        ok = db.transaction(() => {
+          const deleted = deletePreviewComment(
+            db,
+            req.params.id,
+            existing.conversationId,
+            req.params.commentId,
+          );
+          if (!deleted) return false;
+          updateProject(db, req.params.id, {});
+          if (syncEnabled) {
+            requireRelayEnqueued(ctx.onCommentDeleted?.(existing, workspaceContext));
+          }
+          return true;
+        })();
+      } catch (err: any) {
+        return res.status(400).json({ error: String(err?.message || err) });
       }
+      if (!ok) return res.status(404).json({ error: 'comment not found' });
       res.json({ ok: true });
     },
   );

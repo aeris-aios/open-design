@@ -229,10 +229,16 @@ function deferredResponse() {
 function srcDocActivationMessages(calls: readonly (readonly unknown[])[]) {
   return calls
     .map(([message]) => message)
-    .filter((message): message is { type: 'od:srcdoc-transport-activate'; html: string } => {
+    .filter((message): message is {
+      type: 'od:srcdoc-transport-activate';
+      html: string;
+      generation: string;
+    } => {
       if (typeof message !== 'object' || message === null) return false;
-      const data = message as { type?: unknown; html?: unknown };
-      return data.type === 'od:srcdoc-transport-activate' && typeof data.html === 'string';
+      const data = message as { type?: unknown; html?: unknown; generation?: unknown };
+      return data.type === 'od:srcdoc-transport-activate'
+        && typeof data.html === 'string'
+        && typeof data.generation === 'string';
     });
 }
 
@@ -647,6 +653,248 @@ describe('FileViewer preview scale', () => {
     expect(css).toContain('@keyframes od-viewer-loading-sweep');
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.viewer-loading-stage,[\s\S]*animation: none;/,
+    );
+  });
+
+  it('waits for exact Team authority before loading initial raw source', async () => {
+    const file = baseFile({
+      name: 'first-open.html',
+      path: 'first-open.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'First open',
+        entry: 'first-open.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const rawReads: Array<{ init?: RequestInit; url: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/raw/first-open.html')) {
+        rawReads.push({ init, url });
+        return new Response('<html><body>Materialized</body></html>', { status: 200 });
+      }
+      if (url.endsWith('/files')) {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    }));
+
+    const pendingContext = {
+      ...projectWorkspaceCollabValue(null),
+      workspaceContextLoading: true,
+      projectResourceAuthority: 'pending' as const,
+    };
+    const { rerender } = render(
+      <CollabProvider value={pendingContext}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+        />
+      </CollabProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rawReads).toEqual([]);
+    expect(document.querySelector('.viewer-loading')).not.toBeNull();
+    expect(screen.queryByTestId('artifact-preview-frame')).toBeNull();
+
+    rerender(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(teamWorkspaceContext()),
+        workspaceContextLoading: true,
+        projectResourceAuthority: 'workspace',
+      }}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+        />
+      </CollabProvider>,
+    );
+
+    await waitFor(() => {
+      expect(rawReads).toHaveLength(1);
+      expect(document.querySelector('.viewer-loading')).toBeNull();
+      expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
+    });
+    expect(rawReads[0]?.url).toContain('workspaceId=ws-1');
+    expect(rawReads[0]?.url).toContain('workspaceMemberId=wm-1');
+    expect(rawReads[0]?.init?.headers).toMatchObject({
+      'x-od-workspace-id': 'ws-1',
+      'x-od-workspace-member-id': 'wm-1',
+    });
+  });
+
+  it('recovers the same preview mount when pending authority settles as local', async () => {
+    const file = baseFile({
+      name: 'local-first-open.html',
+      path: 'local-first-open.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Local first open',
+        entry: 'local-first-open.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const rawReads: Array<{ init?: RequestInit; url: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/raw/local-first-open.html')) {
+        rawReads.push({ init, url });
+        return new Response('<html><body>Local materialized</body></html>', { status: 200 });
+      }
+      if (url.endsWith('/files')) {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    }));
+
+    const { rerender } = render(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(teamWorkspaceContext()),
+        workspaceContextLoading: true,
+        projectResourceAuthority: 'pending',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+
+    expect(document.querySelector('.viewer-loading')).not.toBeNull();
+    expect(screen.queryByTestId('artifact-preview-frame')).toBeNull();
+    expect(rawReads).toEqual([]);
+
+    rerender(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        workspaceContextLoading: false,
+        projectResourceAuthority: 'local',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+
+    await waitFor(() => {
+      expect(rawReads).toHaveLength(1);
+      expect(document.querySelector('.viewer-loading')).toBeNull();
+      expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
+    });
+    expect(rawReads[0]?.url).not.toContain('workspaceId=');
+    expect(rawReads[0]?.url).not.toContain('workspaceMemberId=');
+    expect(rawReads[0]?.init?.headers).toBeUndefined();
+  });
+
+  it('never downgrades denied project resources to local reads', async () => {
+    const file = baseFile({
+      name: 'authority.html',
+      path: 'authority.html',
+      mime: 'text/html',
+      kind: 'html',
+    });
+    const rawReads: Array<{ init?: RequestInit; url: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/raw/authority.html')) {
+        rawReads.push({ init, url });
+        return new Response('<html><body>Authorized</body></html>', { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    }));
+
+    const denied = render(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        projectResourceAuthority: 'denied',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rawReads).toEqual([]);
+    expect(document.querySelector('.viewer-loading')).toBeNull();
+    expect(screen.getByText(/Preview unavailable/)).toBeTruthy();
+    denied.unmount();
+
+    const local = render(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        projectResourceAuthority: 'local',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+    await waitFor(() => expect(rawReads).toHaveLength(1));
+    expect(rawReads[0]?.url).not.toContain('workspaceId=');
+    expect(new Headers(rawReads[0]?.init?.headers).get('x-od-workspace-id')).toBeNull();
+
+    local.rerender(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        projectResourceAuthority: 'denied',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+    await waitFor(() => expect(screen.getByText(/Preview unavailable/)).toBeTruthy());
+    expect(rawReads).toHaveLength(1);
+  });
+
+  it('gates non-HTML resource URLs for pending and denied projects', () => {
+    const file = baseFile({
+      name: 'private.png',
+      path: 'private.png',
+      mime: 'image/png',
+      kind: 'image',
+    });
+    const { rerender } = render(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        workspaceContextLoading: true,
+        projectResourceAuthority: 'pending',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+    expect(document.querySelector('.viewer-loading')).not.toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
+
+    rerender(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        projectResourceAuthority: 'denied',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+    expect(document.querySelector('.viewer-loading')).toBeNull();
+    expect(screen.getByText(/Preview unavailable/)).toBeTruthy();
+    expect(screen.queryByRole('img')).toBeNull();
+
+    rerender(
+      <CollabProvider value={{
+        ...projectWorkspaceCollabValue(null),
+        projectResourceAuthority: 'local',
+      }}>
+        <FileViewer projectId="project-1" projectKind="prototype" file={file} />
+      </CollabProvider>,
+    );
+    expect(screen.getByRole('img').getAttribute('src')).toContain(
+      '/api/projects/project-1/raw/private.png',
     );
   });
 
@@ -1555,6 +1803,78 @@ describe('FileViewer SVG artifacts', () => {
     expect(markup).toContain('sandbox="allow-scripts allow-downloads"');
   });
 
+  it('does not mint a second preview capability for Workspace URL-load HTML', () => {
+    const context = teamWorkspaceContext();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => (
+      Response.json({ deployments: [] })
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithProjectWorkspace(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={baseFile({
+          name: 'page.html',
+          path: 'page.html',
+          mime: 'text/html',
+          kind: 'html',
+          artifactManifest: {
+            version: 1,
+            kind: 'html',
+            title: 'Page',
+            entry: 'page.html',
+            renderer: 'html',
+            exports: ['html'],
+          },
+        })}
+        liveHtml="<html><body>URL loaded</body></html>"
+      />,
+      context,
+    );
+
+    expect(
+      (screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement)
+        .getAttribute('data-od-render-mode'),
+    ).toBe('url-load');
+    expect(fetchMock.mock.calls.some(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toBe(false);
+  });
+
+  it('keeps browser-owned URL preview navigation authorized by query scope', () => {
+    const file = baseFile({
+      name: 'team-page.html',
+      path: 'team-page.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Team page',
+        entry: 'team-page.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <CollabProvider value={projectWorkspaceCollabValue(teamWorkspaceContext())}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+          liveHtml="<html><body>team</body></html>"
+        />
+      </CollabProvider>,
+    );
+
+    expect(markup).toContain('data-od-render-mode="url-load" data-od-active="true"');
+    expect(markup).toContain(
+      'src="/api/projects/project-1/raw/team-page.html?workspaceId=ws-1&amp;workspaceMemberId=wm-1&amp;v=1710000000',
+    );
+  });
+
   it('routes brand extraction stop requests from the preview iframe', async () => {
     const file = baseFile({
       name: 'brand.html',
@@ -2216,7 +2536,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByRole('menuitem', { name: /export as image/i })).toBeTruthy();
   });
 
-  it('restores captured URL preview state once when activating a prewarmed edit transport', async () => {
+  it('restores captured URL preview state once after the matching prewarmed document is ready', async () => {
     const file = baseFile({
       name: 'page.html',
       path: 'page.html',
@@ -2265,6 +2585,29 @@ describe('FileViewer SVG artifacts', () => {
     expect(srcDocFrame?.srcdoc).toContain('__odArtifactBootCount');
     fireEvent.load(srcDocFrame!);
 
+    const readyGeneration = srcDocFrame?.srcdoc.match(
+      /data-od-srcdoc-transport-activation>[\s\S]*?var generation = "([^"]+)";/,
+    )?.[1];
+    expect(readyGeneration).toBeTruthy();
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: srcDocFrame?.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: readyGeneration,
+        },
+      }));
+      // A late acknowledgement from the document this frame replaced must not
+      // overwrite the matching prewarm witness.
+      window.dispatchEvent(new MessageEvent('message', {
+        source: srcDocFrame?.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: `${readyGeneration}-stale`,
+        },
+      }));
+    });
+
     const urlPostSpy = vi.spyOn(urlFrame.contentWindow!, 'postMessage');
     const srcDocPostSpy = vi.spyOn(srcDocFrame!.contentWindow!, 'postMessage');
     fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
@@ -2279,6 +2622,22 @@ describe('FileViewer SVG artifacts', () => {
         )) as { type: string; id: string } | undefined;
       expect(message?.id).toBeTruthy();
       return message!;
+    });
+    // The URL preview can become interactive one task before its injected
+    // runtime-state bridge installs the message listener. A single capture
+    // post is therefore lossy: reproduce that ordering by ignoring the first
+    // request and require the host to retry the same id before we answer.
+    const retriedCaptureRequest = await waitFor(() => {
+      const messages = urlPostSpy.mock.calls
+        .map(([value]) => value)
+        .filter((value): value is { type: string; id: string } => (
+          typeof value === 'object'
+          && value !== null
+          && (value as { type?: unknown }).type === 'od:preview-runtime-state-capture'
+        ));
+      expect(messages.length).toBeGreaterThanOrEqual(2);
+      expect(messages.at(-1)?.id).toBe(captureRequest.id);
+      return messages.at(-1)!;
     });
     const capturedState = {
       version: 1 as const,
@@ -2299,7 +2658,7 @@ describe('FileViewer SVG artifacts', () => {
         source: urlFrame.contentWindow,
         data: {
           type: 'od:preview-runtime-state-captured',
-          id: captureRequest.id,
+          id: retriedCaptureRequest.id,
           state: capturedState,
         },
       }));
@@ -2318,18 +2677,37 @@ describe('FileViewer SVG artifacts', () => {
     expect(srcDocFrameAfter).toBe(srcDocFrame);
     expect(srcDocFrameAfter?.srcdoc).toContain('__odArtifactBootCount');
     expect(srcDocFrameAfter?.srcdoc).toContain('data-od-edit-bridge');
-    expect(srcDocPostSpy).toHaveBeenCalledWith(
-      { type: 'od:preview-runtime-state-restore', state: capturedState },
-      '*',
-    );
+    await waitFor(() => {
+      expect(srcDocPostSpy).toHaveBeenCalledWith(
+        { type: 'od:preview-runtime-state-restore', state: capturedState },
+        '*',
+      );
+    });
+
+    const restoreCalls = () => srcDocPostSpy.mock.calls.filter(([message]) => (
+      typeof message === 'object'
+      && message !== null
+      && (message as { type?: unknown }).type === 'od:preview-runtime-state-restore'
+    ));
+    expect(restoreCalls()).toHaveLength(1);
 
     srcDocPostSpy.mockClear();
-    fireEvent.load(srcDocFrameAfter!);
-
-    expect(srcDocPostSpy).not.toHaveBeenCalledWith(
-      { type: 'od:preview-runtime-state-restore', state: capturedState },
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: srcDocFrameAfter?.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: readyGeneration,
+        },
+      }));
+    });
+    expect(srcDocPostSpy).toHaveBeenCalledWith(
+      { type: 'od-edit-mode', enabled: true },
       '*',
     );
+    fireEvent.load(srcDocFrameAfter!);
+
+    expect(restoreCalls()).toHaveLength(0);
   });
 
   it('keeps the srcDoc edit transport active after canceling manual edit', async () => {
@@ -5536,6 +5914,14 @@ describe('FileViewer SVG artifacts', () => {
     const versionDialog = await screen.findByRole('dialog', { name: 'Versions' });
     const currentOption = within(versionDialog).getByRole('option', { name: /Current prompt/ }) as HTMLButtonElement;
     currentOption.focus();
+    // The iframe node exists before the selected version content has committed
+    // and before the deck keyboard effect has installed its window listener.
+    // Wait on the user's observable readiness contract instead: the Open
+    // preview action becomes enabled from the same
+    // selectedContentMatchesVersion/loadingContent state that enables deck
+    // keyboard routing.
+    const openPreview = within(versionDialog).getByRole('button', { name: 'Open preview' }) as HTMLButtonElement;
+    await waitFor(() => expect(openPreview.disabled).toBe(false));
     const previewFrame = await waitFor(() => {
       const frame = versionDialog.querySelector('iframe[title="index.html v4"]') as HTMLIFrameElement | null;
       expect(frame?.contentWindow).toBeTruthy();
@@ -6631,6 +7017,163 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Redo' })).toBeTruthy();
     expect((screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement).srcdoc).toBe(frame.srcdoc);
+  });
+
+  it('uses a project-scoped preview base for runtime-created relative assets in srcDoc', async () => {
+    const context = teamWorkspaceContext();
+    const file = htmlPreviewFile({ name: 'brand.html', path: 'brand.html' });
+    const srcDocHtml = '<!doctype html><html><head></head><body><script>location.reload(); const img = document.createElement("img"); img.src = "logos/mark.png";</script></body></html>';
+    const urlLoadHtml = '<!doctype html><html><body>URL loaded</body></html>';
+    const renderViewer = (liveHtml: string) => (
+      <CollabProvider value={projectWorkspaceCollabValue(context)}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+          liveHtml={liveHtml}
+        />
+      </CollabProvider>
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/scope-1/brand.html',
+          file: 'brand.html',
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerender } = render(renderViewer(srcDocHtml));
+
+    const frame = await waitFor(() => {
+      const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(activeFrame.srcdoc).toContain(
+        '<base href="/api/projects/project-1/preview/scope-1/">',
+      );
+      return activeFrame;
+    });
+    expect(frame.srcdoc).toContain('img.src = "logos/mark.png"');
+    expect(frame.srcdoc).not.toContain('/api/projects/project-1/raw/?workspaceId=');
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '/api/projects/project-1/preview-url?file=brand.html&workspaceId=ws-1&workspaceMemberId=wm-1',
+      ),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-od-workspace-id': 'ws-1',
+          'x-od-workspace-member-id': 'wm-1',
+        }),
+      }),
+    );
+
+    rerender(renderViewer(urlLoadHtml));
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement)
+          .getAttribute('data-od-render-mode'),
+      ).toBe('url-load');
+    });
+    await act(async () => {
+      rerender(renderViewer(srcDocHtml));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(activeFrame.srcdoc).toContain(
+        '<base href="/api/projects/project-1/preview/scope-1/">',
+      );
+    });
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(1);
+  });
+
+  it('preserves an authored base without minting a project-scoped preview capability', async () => {
+    const context = teamWorkspaceContext();
+    const authoredBase = '<base href="https://cdn.example/assets/">';
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => (
+      new Response(JSON.stringify({ deployments: [] }), { status: 200 })
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <CollabProvider value={projectWorkspaceCollabValue(context)}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'brand.html', path: 'brand.html' })}
+          liveHtml={`<!doctype html><html><head>${authoredBase}</head><body><script>location.reload()</script></body></html>`}
+        />
+      </CollabProvider>,
+    );
+
+    await waitFor(() => {
+      const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(activeFrame.srcdoc).toContain(authoredBase);
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/api/projects/project-1/files')
+      ))).toBe(true);
+    });
+    expect(fetchMock.mock.calls.some(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toBe(false);
+  });
+
+  it('does not mint from the previous file source while switching to an authored-base srcDoc', async () => {
+    const context = teamWorkspaceContext();
+    const authoredBase = '<base href="https://cdn.example/brand/">';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/scope-1/first.html',
+          file: 'first.html',
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const renderViewer = (fileName: string, liveHtml: string) => (
+      <CollabProvider value={projectWorkspaceCollabValue(context)}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: fileName, path: fileName })}
+          liveHtml={liveHtml}
+        />
+      </CollabProvider>
+    );
+    const firstHtml = '<!doctype html><html><body><script>location.reload()</script></body></html>';
+    const secondHtml = `<!doctype html><html><head>${authoredBase}</head><body><script>location.reload()</script></body></html>`;
+    const { rerender } = render(renderViewer('first.html', firstHtml));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => (
+        String(input).includes('/api/projects/project-1/preview-url')
+      ))).toHaveLength(1);
+    });
+    fetchMock.mockClear();
+
+    rerender(renderViewer('second.html', secondHtml));
+    await waitFor(() => {
+      const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(activeFrame.srcdoc).toContain(authoredBase);
+    });
+    expect(fetchMock.mock.calls.some(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toBe(false);
   });
 
   it('keeps the URL-loaded iframe active when opening Draw after the URL preview bridge is ready', async () => {

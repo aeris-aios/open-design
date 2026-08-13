@@ -8,8 +8,8 @@ const source = readFileSync(
 );
 
 test('cloud team upgrade demo leads the benefit list with the campaign entitlement', () => {
-  assert.match(source, /DeepSeek V4 Flash 无限使用/);
-  assert.match(source, /8 月 6 日—8 月 13 日 · 团队付费用户生效/);
+  assert.match(source, /DeepSeek V4 Pro 与 V4 Flash 两周免费/);
+  assert.match(source, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用 · 团队付费用户生效/);
   assert.doesNotMatch(source, /权益生效后连续 7 天/);
   assert.doesNotMatch(source, /限时活动权益/);
   assert.match(source, /class="campaign-banner"/);
@@ -25,7 +25,7 @@ test('cloud team upgrade demo leads the benefit list with the campaign entitleme
   assert.doesNotMatch(source, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
   assert.doesNotMatch(source, /\.campaign-disclaimer strong/);
   assert.ok(
-    source.indexOf('DeepSeek V4 Flash 无限使用') < source.indexOf('{benefits.map'),
+    source.indexOf('DeepSeek V4 Pro 与 V4 Flash 两周免费') < source.indexOf('{benefits.map'),
     'campaign entitlement should appear before the existing team benefit list',
   );
 });

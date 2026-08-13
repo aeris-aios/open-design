@@ -122,7 +122,7 @@ describe("pricing contract", () => {
     const zhCampaign = getPricingCampaignContent("zh");
     const enCampaign = getPricingCampaignContent("en");
 
-    assert.equal(zhCampaign.modelBenefit, "DeepSeek V4 Flash 无限使用");
+    assert.equal(zhCampaign.modelBenefit, "DeepSeek V4 Pro 与 V4 Flash 两周免费");
     assert.equal(zhCampaign.badge, "无限使用");
     assert.equal(zhCampaign.windowLabel, "活动倒计时");
     assert.equal(zhCampaign.dayUnit, "天");
@@ -130,11 +130,11 @@ describe("pricing contract", () => {
     assert.match(page, /data-campaign-day-unit=\{deepSeekCampaign\.dayUnit\}/);
     assert.match(page, /campaignPreviewEndAt = Date\.now\(\) \+ 7 \* 24 \* 60 \* 60 \* 1000/);
     assert.doesNotMatch(page, /距开始/);
-    assert.equal(enCampaign.body, "FREE all week, Aug 6—Aug 13");
-    assert.equal(zhCampaign.body, "8月6日—8月13日，一周免费用");
+    assert.equal(enCampaign.body, "DeepSeek V4 Pro and V4 Flash · two weeks free");
+    assert.equal(zhCampaign.body, "DeepSeek V4 Pro 与 V4 Flash · 两周免费用");
     assert.doesNotMatch(zhCampaign.body, /20:00/);
-    assert.equal(zhCampaign.paidBenefitNote, "8月6日—8月13日 · 一周免费用");
-    assert.equal(zhCampaign.teamBenefitNote, "8月6日—8月13日 · 一周免费用");
+    assert.equal(zhCampaign.paidBenefitNote, "DeepSeek V4 Pro 与 V4 Flash · 两周免费用");
+    assert.equal(zhCampaign.teamBenefitNote, "DeepSeek V4 Pro 与 V4 Flash · 两周免费用");
     assert.match(page, /DEEPSEEK_V4_FLASH_CAMPAIGN\.startAt/);
     assert.match(page, /DEEPSEEK_V4_FLASH_CAMPAIGN\.endAtExclusive/);
     assert.match(page, /now >= campaignStartAt && now < campaignEndAt/);

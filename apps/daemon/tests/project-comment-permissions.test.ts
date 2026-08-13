@@ -59,7 +59,10 @@ async function startServer({ shared = true }: { shared?: boolean } = {}) {
   const updated: string[] = [];
   const deleted: string[] = [];
   const created: string[] = [];
-  let syncComments = true;
+  const productEvents: Array<{
+    eventName: string;
+    properties: Record<string, unknown>;
+  }> = [];
 
   const app = express();
   app.use(express.json());
@@ -82,10 +85,14 @@ async function startServer({ shared = true }: { shared?: boolean } = {}) {
     // p1 is owned by OWNER.
     resolveProjectOwnerMemberId: async () => OWNER,
     isSharedProject: async () => shared,
-    shouldSyncProjectComments: async () => syncComments,
-    onCommentCreated: (c) => created.push(c.id),
-    onCommentUpdated: (c) => updated.push(c.id),
-    onCommentDeleted: (c) => deleted.push(c.id),
+    onCommentCreated: (c) => { created.push(c.id); },
+    onCommentUpdated: (c) => { updated.push(c.id); },
+    onCommentDeleted: (c) => { deleted.push(c.id); },
+    telemetry: {
+      captureProductEvent: (_req: unknown, eventName: string, properties: Record<string, unknown>) => {
+        productEvents.push({ eventName, properties });
+      },
+    } as any,
   });
   server = http.createServer(app);
   await new Promise<void>((resolve) => server!.listen(0, resolve));
@@ -150,14 +157,53 @@ async function startServer({ shared = true }: { shared?: boolean } = {}) {
     created,
     updated,
     deleted,
+    productEvents,
     commentTarget,
-    setSyncComments(value: boolean) {
-      syncComments = value;
-    },
   };
 }
 
 describe('preview comment permission gating', () => {
+  it('classifies new comments as self or other and does not count edits', async () => {
+    const api = await startServer();
+    const ownComment = await api.createComment(OWNER, 'owner note');
+    const otherComment = await api.createComment('m-member', 'member note');
+
+    expect(api.productEvents).toEqual([
+      {
+        eventName: 'project_comment_create_result',
+        properties: expect.objectContaining({
+          result: 'success',
+          target_project_relation: 'self',
+          comment_level: 'top_level',
+        }),
+      },
+      {
+        eventName: 'project_comment_create_result',
+        properties: expect.objectContaining({
+          result: 'success',
+          target_project_relation: 'other',
+          comment_level: 'top_level',
+        }),
+      },
+    ]);
+
+    const edit = await api.json(
+      `/api/projects/${PROJECT}/conversations/${CONVERSATION}/comments`,
+      {
+        method: 'POST',
+        member: 'm-member',
+        body: {
+          id: otherComment.id,
+          target: api.commentTarget,
+          note: 'edited member note',
+        },
+      },
+    );
+    expect(edit.status).toBe(200);
+    expect(ownComment.id).not.toBe(otherComment.id);
+    expect(api.productEvents).toHaveLength(2);
+  });
+
   it('legacy comments in a shared project are owner-only', async () => {
     const api = await startServer();
     const legacy = upsertPreviewComment(
@@ -358,30 +404,6 @@ describe('preview comment permission gating', () => {
     );
 
     expect(edit.status).toBe(404);
-    expect(api.listComments()).toHaveLength(0);
-  });
-
-  it('does not push local comment mutations when the project is no longer team-shared', async () => {
-    const api = await startServer();
-    api.setSyncComments(false);
-
-    const comment = await api.createComment('m-author', 'local after unshare');
-    expect(comment.note).toBe('local after unshare');
-    expect(api.created).toEqual([]);
-
-    const patch = await api.json(
-      `/api/projects/${PROJECT}/conversations/${CONVERSATION}/comments/${comment.id}`,
-      { method: 'PATCH', member: 'm-author', body: { status: 'applying' } },
-    );
-    expect(patch.status).toBe(200);
-    expect(api.updated).toEqual([]);
-
-    const del = await api.json(
-      `/api/projects/${PROJECT}/conversations/${CONVERSATION}/comments/${comment.id}`,
-      { method: 'DELETE', member: 'm-author' },
-    );
-    expect(del.status).toBe(200);
-    expect(api.deleted).toEqual([]);
     expect(api.listComments()).toHaveLength(0);
   });
 

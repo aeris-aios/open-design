@@ -5,6 +5,7 @@
 import type { TrackingOnboardingFirstLoopStep, TrackingOnboardingProductType, TrackingOnboardingRole, TrackingOnboardingUseCase } from './onboarding.js';
 import type { TrackingArtifactKind, TrackingCampaignId, TrackingCampaignUserState, TrackingNewProjectTab, TrackingProjectKind } from './shared-enums.js';
 import type { DesignSystemsPresetBrandPickerSurfaceViewProps } from './ui-click.js';
+import type { WorkspaceSurfaceViewProps } from './workspace.js';
 // ---- surface_view --------------------------------------------------------
 
 export interface HelpPopoverSurfaceViewProps {
@@ -223,6 +224,7 @@ export interface StudioOnboardingHintSurfaceViewProps {
 }
 
 export type SurfaceViewProps =
+  | WorkspaceSurfaceViewProps
   | RunFailedToastSurfaceViewProps
   | DeepSeekCampaignModalSurfaceViewProps
   | DeepSeekCampaignBadgeSurfaceViewProps

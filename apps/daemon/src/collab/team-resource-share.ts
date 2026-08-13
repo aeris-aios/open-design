@@ -27,6 +27,23 @@ export class TeamResourceShareForbiddenError extends Error {
   }
 }
 
+/**
+ * Thrown when an operation requires a live Team hub read but the authority
+ * cannot be reached. Callers must distinguish this from an authoritative
+ * empty list: retrying is safe, while proceeding from a cached fallback is
+ * not.
+ */
+export class TeamResourceAuthorityUnavailableError extends Error {
+  readonly status = 503;
+  readonly code = 'WORKSPACE_RESOURCE_AUTHORITY_UNAVAILABLE';
+  readonly retryable = true;
+
+  constructor(cause?: unknown) {
+    super('team resource authority is temporarily unavailable', { cause });
+    this.name = 'TeamResourceAuthorityUnavailableError';
+  }
+}
+
 export interface TeamResourceShareRecord {
   id: string;
   hubResourceId?: string;
@@ -92,11 +109,22 @@ export interface TeamResourceShareService {
   /** Ids of resources shared to the team. */
   sharedIds(scope: TeamResourceRequestScope): Promise<string[]>;
   /** Resources shared to the team, including best-effort display metadata. */
-  sharedResources(scope: TeamResourceRequestScope): Promise<TeamResourceShareRecord[]>;
+  sharedResources(
+    scope: TeamResourceRequestScope,
+    options?: TeamResourceSharedReadOptions,
+  ): Promise<TeamResourceShareRecord[]>;
   /** True once a resource has been shared to the team. */
   isShared(resourceId: string, scope: TeamResourceRequestScope): boolean;
   /** Whether the login-backed Vela transport is wired. */
   readonly configured: boolean;
+}
+
+export interface TeamResourceSharedReadOptions {
+  /**
+   * Require a live hub response. Reconciliation must use this mode so a
+   * transport failure can never be confused with an authoritative empty list.
+   */
+  authoritative?: boolean;
 }
 
 export interface CreateTeamResourceShareOptions {
@@ -111,7 +139,11 @@ export interface CreateTeamResourceShareOptions {
   /** Optional resource-index metadata shown in teammate team lists. */
   describeResource?: (resourceId: string) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
   /** Injectable Vela resource runner for tests. */
-  run?: (args: string[], workspaceId?: string) => Promise<string>;
+  run?: (
+    args: string[],
+    workspaceId?: string,
+    readOptions?: TeamResourceSharedReadOptions,
+  ) => Promise<string>;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -124,7 +156,12 @@ export function createTeamResourceShareService(
       share: async () => null,
       unshare: async () => false,
       sharedIds: async () => [],
-      sharedResources: async () => [],
+      sharedResources: async (_scope, readOptions) => {
+        if (readOptions?.authoritative) {
+          throw new Error('authoritative Team resource listing is unavailable');
+        }
+        return [];
+      },
       isShared: () => false,
       configured: false,
     };
@@ -192,13 +229,14 @@ export function createTeamResourceShareService(
     async sharedIds(scope) {
       return (await this.sharedResources(scope)).map((resource) => resource.id);
     },
-    async sharedResources(scope) {
+    async sharedResources(scope, readOptions) {
       const { principal } = scope;
       const shared = sharedFor(principal.teamId);
       try {
         const out = await (options.run ?? defaultRun)(
           ['shared', '--json'],
           principal.teamId,
+          readOptions,
         );
         const scopedResources = parseSharedResourceRecords(out, options.kind, scopedIdPrefixFor(principal));
         const legacyResources = principal.workspaceType === 'personal'
@@ -220,7 +258,8 @@ export function createTeamResourceShareService(
             return resource;
           })
           .sort((a, b) => a.id.localeCompare(b.id));
-      } catch {
+      } catch (error) {
+        if (readOptions?.authoritative) throw error;
         return [...shared].sort().map((id) => ({ id, canUnshare: true }));
       }
     },
@@ -259,10 +298,15 @@ export async function unshareIfCurrentlyShared(
   resourceId: string,
   scope: TeamResourceRequestScope,
 ): Promise<boolean> {
-  const resources = await service.sharedResources(scope);
+  let resources: TeamResourceShareRecord[];
+  try {
+    resources = await service.sharedResources(scope, { authoritative: true });
+  } catch (error) {
+    if (error instanceof TeamResourceAuthorityUnavailableError) throw error;
+    throw new TeamResourceAuthorityUnavailableError(error);
+  }
   if (!resources.some((resource) => resource.id === resourceId)) return false;
-  await service.unshare(resourceId, scope);
-  return true;
+  return service.unshare(resourceId, scope);
 }
 
 interface SharedResourceListPayload {

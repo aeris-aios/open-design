@@ -73,6 +73,17 @@ export interface CollabClientOptions {
 
 const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_STATUS_POLL_MS = 5_000;
+// Vela's authoritative project-presence lease is 30 seconds from the
+// server-recorded heartbeatAt, not from when this client happens to observe
+// the roster. Using observation time can nearly double a stale lease.
+const DEFAULT_PRESENCE_ROSTER_GRACE_MS = 30_000;
+
+class CollabRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'CollabRequestError';
+  }
+}
 
 export class CollabClient {
   private readonly projectId: string;
@@ -117,12 +128,32 @@ export class CollabClient {
   private contentTransferStateGeneration = 0;
   private contentTransferStatusRequestGeneration = 0;
   /**
-   * Orders every response that can replace the presence roster. Heartbeats and
-   * read-only invalidation refreshes share this fence because either response
-   * may race the other. stop() and identity changes also advance it so an
-   * obsolete session can never publish a late roster into the next render.
+   * Orders responses that can replace the presence roster. Issuing a newer
+   * request must not suppress an older valid response while the newer one is
+   * still pending (slow 10s+ networks would otherwise starve every heartbeat).
+   * Only a successfully applied newer response supersedes older work. stop()
+   * and identity changes advance both fences so obsolete sessions stay inert.
    */
   private presenceRequestGeneration = 0;
+  private presenceAppliedRequestGeneration = 0;
+  /** Authoritative Vela lease expiry derived from each valid heartbeatAt. */
+  private readonly presenceLeaseExpiresAt = new Map<string, number>();
+  /** Compatibility grace for legacy/local rosters without a valid heartbeatAt. */
+  private readonly presenceFallbackMissingSince = new Map<string, number>();
+  /** Suppresses the status-transition echo of an optimistic Team heartbeat. */
+  private presenceAttemptedForMember = false;
+  /**
+   * Cancels cold-start work queued by an obsolete start/stop lifecycle. React
+   * StrictMode replays mount effects as setup -> cleanup -> setup; launching
+   * the first status read synchronously made both the discarded and surviving
+   * clients hit `/collab/status`. The status ordering counters remain
+   * untouched: this fence only decides whether a queued first poll launches.
+   */
+  private lifecycleGeneration = 0;
+  /** Monotonic write ordering for this clientId's remote presence lease. */
+  private presenceSessionSequence = 0;
+  /** A leave is necessary only after a heartbeat request could have made a lease. */
+  private presenceLeaseMemberId: string | null = null;
   private running = false;
   private onVisibilityChange: (() => void) | null = null;
 
@@ -159,43 +190,76 @@ export class CollabClient {
     this.member = member;
     if (nextMemberId !== previousMemberId) {
       this.presenceRequestGeneration += 1;
+      this.presenceAppliedRequestGeneration = this.presenceRequestGeneration;
+      this.clearPresenceRoster();
+      this.presenceAttemptedForMember = false;
     }
     if (
       this.running
       && member
       && nextMemberId !== previousMemberId
     ) {
-      void this.heartbeat();
+      // Defer one microtask so React StrictMode can run its mount-cleanup-
+      // remount probe before the network side effect starts. The retired
+      // client's heartbeat then sees `running === false`; the live client
+      // still announces in the same browser task without waiting for status.
+      void Promise.resolve().then(() => {
+        if (!this.presenceAttemptedForMember) return this.heartbeat();
+      });
     }
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
-    void this.pollStatus();
+    const lifecycleGeneration = ++this.lifecycleGeneration;
+    const statusRequestGeneration =
+      this.contentTransferStatusRequestGeneration;
+    // Let a same-turn teardown cancel a discarded StrictMode lifecycle before
+    // it spends a cold status request. This is deliberately not request
+    // single-flight: explicit polls retain their transfer-ordering semantics.
+    queueMicrotask(() => {
+      if (
+        this.running
+        && lifecycleGeneration === this.lifecycleGeneration
+        && statusRequestGeneration
+          === this.contentTransferStatusRequestGeneration
+      ) {
+        void this.pollStatus();
+      }
+    });
+    // The daemon keeps a short-lived, authority-checked presence roster cache.
+    // Consume that hot path before issuing the write heartbeat: the latter may
+    // still need a slow Vela round trip, but a teammate already known to the
+    // daemon should appear immediately. Only an exact Team scope may use this
+    // pre-status path; legacy/unscoped and Personal sessions still wait for
+    // authoritative project status.
+    if (this.hasExplicitTeamScope()) void this.readCachedPresence();
     // Immediate first heartbeat: the presence roster comes from the heartbeat
     // RESPONSE, so without this the avatars only appear on the interval's
     // first tick — a 10s blank presence bar on every project open. This also
     // announces us to teammates right away.
     void this.heartbeat();
-    // Hidden-tab gating: a backgrounded tab keeps its timers but skips the
-    // network ticks (status head + presence heartbeat both fan out to the
-    // hub), and one immediate catch-up pair fires on return to visible.
-    // Presence naturally expires on the hub's TTL while hidden, which is the
-    // honest signal — a tab nobody is looking at is not "viewing".
+    // Hidden-tab gating applies only to the heavier status poll. Chrome can
+    // report a still-mounted window as hidden merely because another window is
+    // focused; presence must keep its lightweight lease alive in that state.
     const visible = () =>
       typeof document === 'undefined' || document.visibilityState !== 'hidden';
     this.timers.push(setInterval(() => {
       if (visible()) void this.pollStatus();
     }, this.statusPollMs));
     this.timers.push(setInterval(() => {
-      if (visible()) void this.heartbeat();
+      void this.heartbeat();
     }, this.heartbeatMs));
     if (typeof document !== 'undefined') {
       this.onVisibilityChange = () => {
         if (!visible()) return;
+        // Presence itself never pauses while hidden: heartbeat responses keep
+        // the roster converged. This fresh read is only an extra catch-up for
+        // events/timers the browser may have throttled in the background, and
+        // it preserves the current roster until the response lands.
+        void this.refreshPresenceAfterVisibility();
         void this.pollStatus();
-        void this.heartbeat();
       };
       document.addEventListener('visibilitychange', this.onVisibilityChange);
     }
@@ -204,7 +268,11 @@ export class CollabClient {
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    this.lifecycleGeneration += 1;
     this.presenceRequestGeneration += 1;
+    this.presenceAppliedRequestGeneration = this.presenceRequestGeneration;
+    this.presenceLeaseExpiresAt.clear();
+    this.presenceFallbackMissingSince.clear();
     for (const timer of this.timers) clearInterval(timer);
     this.timers.length = 0;
     if (this.onVisibilityChange && typeof document !== 'undefined') {
@@ -242,23 +310,44 @@ export class CollabClient {
     // No identity yet (status polling can be running well before `member`
     // resolves — see setMember) — presence has nothing to announce.
     if (!this.member) return;
-    if (!this.isSharedProject()) {
-      if (this.snapshot.present.length > 0) this.update({ present: [] });
+    // Only an exact Team identity may optimistically announce before the
+    // first status response. Personal Workspaces can be upgraded and gain
+    // collaborators, so they must retain the established post-status path:
+    // once the project is authoritatively confirmed shared below, Presence is
+    // valid and the heartbeat must run.
+    const explicitTeamStatusPending =
+      this.snapshot.syncState === null
+      && this.workspaceContext?.workspaceType === 'team'
+      && Boolean(this.workspaceContext.workspaceId.trim())
+      && Boolean(this.workspaceContext.workspaceMemberId.trim());
+    if (!this.isSharedProject() && !explicitTeamStatusPending) {
+      this.clearPresenceRoster();
       return;
     }
+    this.presenceAttemptedForMember = true;
     const requestGeneration = ++this.presenceRequestGeneration;
+    const sequence = ++this.presenceSessionSequence;
+    const member = this.member;
+    // Set before fetch: a timed-out or in-flight request may still establish a
+    // remote lease, so stop() must close every heartbeat that was attempted.
+    this.presenceLeaseMemberId = member.memberId;
     try {
       const body = await this.post('/presence/heartbeat', {
-        ...this.member,
+        ...member,
         clientId: this.clientId,
+        sequence,
       });
-      if (
-        requestGeneration === this.presenceRequestGeneration
-        && Array.isArray(body?.present)
-      ) {
-        this.update({ present: body.present as CollabPresenceMember[] });
+      if (Array.isArray(body?.present)) {
+        this.applyPresenceResponse(
+          requestGeneration,
+          body.present as CollabPresenceMember[],
+        );
       }
     } catch (error) {
+      if (isForbiddenCollabRequest(error)) {
+        this.applyPresenceAuthorityRevocation(requestGeneration);
+      }
+      this.presenceAttemptedForMember = false;
       this.onError?.(error);
     }
   }
@@ -271,19 +360,59 @@ export class CollabClient {
    * feedback loop, so push-channel consumers must use this read-only path.
    */
   async refreshPresence(): Promise<void> {
+    await this.readFreshPresence(false);
+  }
+
+  /**
+   * Visibility catch-up is not evidence of an explicit viewer-set mutation.
+   * Preserve still-live last-good peers just like a heartbeat response.
+   */
+  private async refreshPresenceAfterVisibility(): Promise<void> {
+    await this.readFreshPresence(true);
+  }
+
+  private async readFreshPresence(preserveMissingPeers: boolean): Promise<void> {
+    const requestGeneration = ++this.presenceRequestGeneration;
+    try {
+      // A hub presence event marks the daemon's short-lived roster cache stale.
+      // Ordinary reads intentionally use stale-while-revalidate, but the event
+      // consumer gets no second push after that background refresh settles.
+      // Ask this one read to wait for the shared in-flight refresh so a stale
+      // self-only roster cannot supersede an authoritative heartbeat forever.
+      const body = await this.get('/presence?fresh=1');
+      if (Array.isArray(body?.present)) {
+        this.applyPresenceResponse(
+          requestGeneration,
+          body.present as CollabPresenceMember[],
+          preserveMissingPeers,
+        );
+      }
+    } catch (error) {
+      if (isForbiddenCollabRequest(error)) {
+        this.applyPresenceAuthorityRevocation(requestGeneration);
+      }
+      this.onError?.(error);
+    }
+  }
+
+  /** Read the daemon's non-blocking SWR roster on an explicitly scoped start. */
+  private async readCachedPresence(): Promise<void> {
     const requestGeneration = ++this.presenceRequestGeneration;
     try {
       const body = await this.get('/presence');
-      if (
-        requestGeneration === this.presenceRequestGeneration
-        && Array.isArray(body?.present)
-      ) {
-        this.update({
-          present: body.present as CollabPresenceMember[],
-        });
+      if (Array.isArray(body?.present)) {
+        this.applyPresenceResponse(
+          requestGeneration,
+          body.present as CollabPresenceMember[],
+        );
       }
     } catch (error) {
-      this.onError?.(error);
+      if (isForbiddenCollabRequest(error)) {
+        this.applyPresenceAuthorityRevocation(requestGeneration);
+      }
+      // This is a best-effort latency optimization. The immediately following
+      // heartbeat (or later authoritative status) owns failure reporting; do
+      // not surface the same cold-start authority/network failure twice.
     }
   }
 
@@ -353,7 +482,13 @@ export class CollabClient {
         this.contentTransferStateGeneration += 1;
       }
       this.update(next);
-      if (!wasShared && this.isSharedProject()) void this.heartbeat();
+      if (
+        !wasShared
+        && this.isSharedProject()
+        && !this.presenceAttemptedForMember
+      ) {
+        void this.heartbeat();
+      }
     } catch (error) {
       this.onError?.(error);
     }
@@ -372,11 +507,14 @@ export class CollabClient {
   }
 
   private async leave(): Promise<void> {
-    if (!this.member) return;
+    const memberId = this.presenceLeaseMemberId;
+    if (!memberId) return;
+    const sequence = ++this.presenceSessionSequence;
     try {
       await this.post('/presence/leave', {
-        memberId: this.member.memberId,
+        memberId,
         clientId: this.clientId,
+        sequence,
       });
     } catch (error) {
       this.onError?.(error);
@@ -391,11 +529,14 @@ export class CollabClient {
    * the page is gone, so the present set drops promptly.
    */
   leaveBeacon(): void {
-    if (!this.member) return;
+    const memberId = this.presenceLeaseMemberId;
+    if (!memberId) return;
+    const sequence = ++this.presenceSessionSequence;
     const url = this.url('/presence/leave');
     const body = JSON.stringify({
-      memberId: this.member.memberId,
+      memberId,
       clientId: this.clientId,
+      sequence,
     });
     // sendBeacon cannot attach workspace headers. Retain it only for legacy
     // unscoped clients; real workspace sessions use keepalive fetch so the
@@ -425,12 +566,133 @@ export class CollabClient {
   }
 
   private update(patch: Partial<CollabSnapshot>): void {
-    this.snapshot = { ...this.snapshot, ...patch };
+    const nextPatch = patch.present
+      ? {
+          ...patch,
+          present: retainPresenceDisplayMetadata(
+            this.snapshot.present,
+            patch.present,
+          ),
+        }
+      : patch;
+    this.snapshot = { ...this.snapshot, ...nextPatch };
     this.onUpdate?.(this.snapshot);
+  }
+
+  private applyPresenceResponse(
+    requestGeneration: number,
+    present: CollabPresenceMember[],
+    preserveMissingPeers = true,
+  ): void {
+    if (requestGeneration <= this.presenceAppliedRequestGeneration) return;
+    this.presenceAppliedRequestGeneration = requestGeneration;
+    this.update({
+      present: this.stabilizePresenceRoster(present, preserveMissingPeers),
+    });
+  }
+
+  private applyPresenceAuthorityRevocation(requestGeneration: number): void {
+    if (requestGeneration <= this.presenceAppliedRequestGeneration) return;
+    this.presenceAppliedRequestGeneration = requestGeneration;
+    this.clearPresenceRoster();
+  }
+
+  private clearPresenceRoster(): void {
+    this.presenceLeaseExpiresAt.clear();
+    this.presenceFallbackMissingSince.clear();
+    if (this.snapshot.present.length > 0) this.update({ present: [] });
+  }
+
+  private stabilizePresenceRoster(
+    incoming: CollabPresenceMember[],
+    preserveMissingPeers: boolean,
+  ): CollabPresenceMember[] {
+    const selfMemberId = this.member?.memberId;
+    const incomingIds = new Set(incoming.map((member) => member.memberId));
+    // Only the relay's known self-bearing partial roster gets display grace.
+    // Empty and caller-less responses can signal revoked project authority.
+    if (
+      !this.running
+      || !selfMemberId
+      || incoming.length === 0
+      || !incomingIds.has(selfMemberId)
+    ) {
+      this.presenceLeaseExpiresAt.clear();
+      this.presenceFallbackMissingSince.clear();
+      return incoming;
+    }
+
+    const now = Date.now();
+    for (const member of incoming) {
+      const heartbeatAt = member.heartbeatAt?.trim();
+      const heartbeatAtMs = heartbeatAt ? Date.parse(heartbeatAt) : Number.NaN;
+      if (Number.isFinite(heartbeatAtMs)) {
+        this.presenceLeaseExpiresAt.set(
+          member.memberId,
+          heartbeatAtMs + DEFAULT_PRESENCE_ROSTER_GRACE_MS,
+        );
+      } else {
+        this.presenceLeaseExpiresAt.delete(member.memberId);
+      }
+      this.presenceFallbackMissingSince.delete(member.memberId);
+    }
+    if (!preserveMissingPeers) {
+      for (const memberId of this.presenceLeaseExpiresAt.keys()) {
+        if (!incomingIds.has(memberId)) this.presenceLeaseExpiresAt.delete(memberId);
+      }
+      for (const memberId of this.presenceFallbackMissingSince.keys()) {
+        if (!incomingIds.has(memberId)) {
+          this.presenceFallbackMissingSince.delete(memberId);
+        }
+      }
+      return incoming;
+    }
+
+    const retained: CollabPresenceMember[] = [];
+    const previousIds = new Set(
+      this.snapshot.present.map((member) => member.memberId),
+    );
+    for (const member of this.snapshot.present) {
+      if (incomingIds.has(member.memberId)) continue;
+      const leaseExpiresAt = this.presenceLeaseExpiresAt.get(member.memberId);
+      if (leaseExpiresAt !== undefined) {
+        if (now < leaseExpiresAt) retained.push(member);
+        else this.presenceLeaseExpiresAt.delete(member.memberId);
+        this.presenceFallbackMissingSince.delete(member.memberId);
+        continue;
+      }
+
+      const missingSince = this.presenceFallbackMissingSince.get(member.memberId);
+      if (missingSince === undefined) {
+        this.presenceFallbackMissingSince.set(member.memberId, now);
+        retained.push(member);
+      } else if (now - missingSince < this.heartbeatMs) {
+        retained.push(member);
+      } else {
+        this.presenceFallbackMissingSince.delete(member.memberId);
+      }
+    }
+    for (const memberId of this.presenceLeaseExpiresAt.keys()) {
+      if (!previousIds.has(memberId) && !incomingIds.has(memberId)) {
+        this.presenceLeaseExpiresAt.delete(memberId);
+      }
+    }
+    for (const memberId of this.presenceFallbackMissingSince.keys()) {
+      if (!previousIds.has(memberId) && !incomingIds.has(memberId)) {
+        this.presenceFallbackMissingSince.delete(memberId);
+      }
+    }
+    return retained.length > 0 ? [...incoming, ...retained] : incoming;
   }
 
   private isSharedProject(): boolean {
     return this.snapshot.syncState !== null && this.snapshot.syncState !== 'local_only';
+  }
+
+  private hasExplicitTeamScope(): boolean {
+    return this.workspaceContext?.workspaceType === 'team'
+      && Boolean(this.workspaceContext.workspaceId.trim())
+      && Boolean(this.workspaceContext.workspaceMemberId.trim());
   }
 
   private async get(path: string): Promise<Record<string, unknown> | null> {
@@ -439,7 +701,12 @@ export class CollabClient {
         ? { headers: workspaceProjectHeaders(this.workspaceContext) }
         : {}),
     });
-    if (!response.ok) throw new Error(`collab GET ${path} failed: ${response.status}`);
+    if (!response.ok) {
+      throw new CollabRequestError(
+        `collab GET ${path} failed: ${response.status}`,
+        response.status,
+      );
+    }
     return (await response.json()) as Record<string, unknown>;
   }
 
@@ -460,7 +727,12 @@ export class CollabClient {
       init.body = JSON.stringify(body);
     }
     const response = await this.fetchImpl(this.url(path), init);
-    if (!response.ok) throw new Error(`collab POST ${path} failed: ${response.status}`);
+    if (!response.ok) {
+      throw new CollabRequestError(
+        `collab POST ${path} failed: ${response.status}`,
+        response.status,
+      );
+    }
     return (await response.json()) as Record<string, unknown>;
   }
 
@@ -515,6 +787,41 @@ export function evictProjectCollabStatusRead(
 
 function isCollabMemberRole(value: unknown): value is CollabMemberRole {
   return value === 'owner' || value === 'admin' || value === 'member';
+}
+
+/**
+ * Presence heartbeats and list reads may return a compact roster containing
+ * only member ids. Keep stable display metadata for ids that remain online,
+ * while taking membership exclusively from the new roster so departures are
+ * never retained locally.
+ */
+function retainPresenceDisplayMetadata(
+  previous: CollabPresenceMember[],
+  incoming: CollabPresenceMember[],
+): CollabPresenceMember[] {
+  const previousById = new Map(
+    previous.map((member) => [member.memberId, member]),
+  );
+  return incoming.map((member) => {
+    const known = previousById.get(member.memberId);
+    if (!known) return member;
+    return {
+      ...member,
+      ...(member.name === undefined && known.name !== undefined
+        ? { name: known.name }
+        : {}),
+      ...(member.avatarUrl === undefined && known.avatarUrl !== undefined
+        ? { avatarUrl: known.avatarUrl }
+        : {}),
+      ...(member.role === undefined && known.role !== undefined
+        ? { role: known.role }
+        : {}),
+    };
+  });
+}
+
+function isForbiddenCollabRequest(error: unknown): boolean {
+  return error instanceof CollabRequestError && error.status === 403;
 }
 
 function parseProjectContentTransferState(

@@ -27,6 +27,10 @@ import {
   resetWorkspaceContextCache,
 } from '../../src/collab/useWorkspaceContext';
 import { workspaceDirectoryFixture } from '../helpers/workspace-context';
+import {
+  fetchProjectFiles,
+  invalidateProjectFilesCache,
+} from '../../src/providers/registry';
 
 const originalFetch = globalThis.fetch;
 const originalResizeObserver = globalThis.ResizeObserver;
@@ -250,7 +254,7 @@ describe('EntryShell team project content readiness', () => {
     expect(card.textContent).not.toContain('just now');
   });
 
-  it('hands the authoritative catalog card to App before opening a local placeholder', async () => {
+  it('opens a materialized local Team row without hydration or pull', async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const pathname = new URL(String(input), 'http://d.local').pathname;
       if (pathname.endsWith('/workspace/directory')) {
@@ -273,6 +277,7 @@ describe('EntryShell team project content readiness', () => {
       if (pathname.endsWith('/files')) return jsonResponse({ files: [] });
       return jsonResponse({});
     }) as typeof fetch;
+    const onTeamProjectContentReady = vi.fn(async () => true);
     const onOpenProject = vi.fn(async () => true);
     renderAt('/all-projects', {
       projects: [{
@@ -280,10 +285,12 @@ describe('EntryShell team project content readiness', () => {
         name: '共享项目',
         skillId: null,
         designSystemId: null,
+        workspaceId: 'ws-1',
         createdAt: 100,
         updatedAt: 100,
       }],
       onOpenProject,
+      onTeamProjectContentReady,
     });
 
     const activeCard = await screen.findByRole('button', {
@@ -303,6 +310,84 @@ describe('EntryShell team project content readiness', () => {
         },
       );
     });
+    expect(onTeamProjectContentReady).not.toHaveBeenCalled();
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input, init]) => (
+      init?.method === 'POST'
+      && String(input).includes('/api/projects/shared-ready/collab/pull')
+    ))).toBe(false);
+  });
+
+  it('hydrates a local shared-project placeholder before opening it', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const pathname = new URL(String(input), 'http://d.local').pathname;
+      if (pathname.endsWith('/workspace/directory')) {
+        return jsonResponse(workspaceDirectoryFixture([teamContext()]));
+      }
+      if (pathname.endsWith('/workspace/context')) {
+        return jsonResponse({ context: teamContext() });
+      }
+      if (pathname.endsWith('/workspace/projects/team')) {
+        return jsonResponse({
+          projects: [{
+            projectId: 'shared-ready',
+            ownerMemberId: 'wm-owner',
+            sharedAt: '2026-07-25T00:00:00.000Z',
+            name: 'Ready shared project',
+            updatedAt: 42,
+          }],
+        });
+      }
+      return jsonResponse({});
+    }) as typeof fetch;
+    let finishHydration!: (hydrated: boolean) => void;
+    const hydration = new Promise<boolean>((resolve) => {
+      finishHydration = resolve;
+    });
+    const onTeamProjectContentReady = vi.fn(async () => hydration);
+    const onOpenProject = vi.fn(async () => true);
+    renderAt('/all-projects', {
+      projects: [{
+        id: 'shared-ready',
+        name: '共享项目',
+        skillId: null,
+        designSystemId: null,
+        workspaceId: 'ws-1',
+        metadata: { kind: 'prototype', sharedProjectPlaceholderAt: 100 },
+        createdAt: 100,
+        updatedAt: 100,
+      }],
+      onOpenProject,
+      onTeamProjectContentReady,
+    });
+
+    const readyProjectCard = await screen.findByRole('button', {
+      name: /Ready shared project/,
+    });
+    fireEvent.click(readyProjectCard);
+
+    await waitFor(() => {
+      expect(onTeamProjectContentReady).toHaveBeenCalledWith(
+        'shared-ready',
+        'ws-1',
+        'wm-1',
+      );
+    });
+    expect(onOpenProject).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishHydration(true);
+      await hydration;
+    });
+    await waitFor(() => expect(onOpenProject).toHaveBeenCalledWith(
+      'shared-ready',
+      undefined,
+      {
+        authoritative: true,
+        name: 'Ready shared project',
+        workspaceId: 'ws-1',
+        workspaceMemberId: 'wm-1',
+      },
+    ));
   });
 
   it('hydrates only a catalog-confirmed ready project and opens it without a second pull', async () => {
@@ -403,6 +488,17 @@ describe('EntryShell team project content readiness', () => {
 
   it('falls back to POST pull when ready hydration does not succeed', async () => {
     vi.stubGlobal('EventSource', MockWorkspaceEventSource as unknown as typeof EventSource);
+    const workspace = teamContext();
+    const materializedFile = {
+      name: 'index.html',
+      path: 'index.html',
+      size: 128,
+      mtime: 123,
+      isDirectory: false,
+      kind: 'code' as const,
+      mime: 'text/html',
+    };
+    let pullSucceeded = false;
     const requests: Array<{
       url: string;
       method: string;
@@ -423,7 +519,7 @@ describe('EntryShell team project content readiness', () => {
         return jsonResponse(workspaceDirectoryFixture([teamContext()]));
       }
       if (pathname.endsWith('/workspace/context')) {
-        return jsonResponse({ context: teamContext() });
+        return jsonResponse({ context: workspace });
       }
       if (pathname.endsWith('/workspace/projects/team')) {
         return jsonResponse({
@@ -435,7 +531,13 @@ describe('EntryShell team project content readiness', () => {
           }],
         });
       }
-      if (pathname.endsWith('/files')) return jsonResponse({ files: [] });
+      if (pathname.endsWith('/collab/pull') && init?.method === 'POST') {
+        pullSucceeded = true;
+        return jsonResponse({ ok: true });
+      }
+      if (pathname.endsWith('/files')) {
+        return jsonResponse({ files: pullSucceeded ? [materializedFile] : [] });
+      }
       return jsonResponse({});
     }) as typeof fetch;
     const onOpenProject = vi.fn(async () => true);
@@ -450,6 +552,11 @@ describe('EntryShell team project content readiness', () => {
       onProjectsRefresh,
       onTeamProjectContentReady,
     });
+
+    await expect(fetchProjectFiles('shared-ready', {
+      workspaceContext: workspace,
+      fresh: true,
+    })).resolves.toEqual([]);
 
     expect(await screen.findByText('Ready shared project')).toBeTruthy();
     act(() => {
@@ -494,6 +601,10 @@ describe('EntryShell team project content readiness', () => {
       workspaceId: 'ws-1',
       workspaceMemberId: 'wm-1',
     });
+    await expect(fetchProjectFiles('shared-ready', {
+      workspaceContext: workspace,
+    })).resolves.toEqual([materializedFile]);
+    invalidateProjectFilesCache('shared-ready', workspace);
   });
 
   it('clears content-ready latches when the member changes inside the same workspace', async () => {

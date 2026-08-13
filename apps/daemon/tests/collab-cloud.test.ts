@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,9 +10,11 @@ import {
 } from '@open-design/contracts';
 import {
   closeDatabase,
+  deleteConversationAndRepairTeamCommentAnchor,
   deleteSyncedPreviewComment,
   ensureProjectCommentAnchorConversation,
   getLatestConversationIdForProject,
+  getProjectCommentAnchorConversationId,
   insertConversation,
   insertProject,
   listConversations,
@@ -20,6 +22,8 @@ import {
   listPreviewComments,
   mergeSyncedPreviewComment,
   openDatabase,
+  repairTeamProjectCommentAnchorConversations,
+  ensureWorkspaceProject,
   upsertPreviewComment,
 } from '../src/db.js';
 import { createCollabCloudClient, type CollabCloudClient } from '../src/integrations/collab-cloud.js';
@@ -301,6 +305,139 @@ function fakeClient() {
 }
 
 describe('createCollabCloudService', () => {
+  it('repairs a dedicated comment anchor for every active Team project and is idempotent', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-collab-cloud-anchor-repair-'));
+    const db = openDatabase(tempDir);
+    for (const id of ['team-empty', 'team-existing', 'personal-empty', 'team-deleted']) {
+      insertProject(db, { id, name: id, createdAt: 1, updatedAt: 1 });
+    }
+    insertConversation(db, {
+      id: 'existing-conversation',
+      projectId: 'team-existing',
+      title: 'Existing',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    ensureWorkspaceProject(db, {
+      projectId: 'team-empty',
+      workspaceId: 'ws-1',
+      visibility: 'team',
+      resourceState: 'active',
+    });
+    ensureWorkspaceProject(db, {
+      projectId: 'team-existing',
+      workspaceId: 'ws-1',
+      visibility: 'team',
+      resourceState: 'active',
+    });
+    ensureWorkspaceProject(db, {
+      projectId: 'personal-empty',
+      workspaceId: 'ws-1',
+      visibility: 'personal',
+      resourceState: 'active',
+    });
+    ensureWorkspaceProject(db, {
+      projectId: 'team-deleted',
+      workspaceId: 'ws-1',
+      visibility: 'team',
+      resourceState: 'deleted',
+    });
+
+    expect(repairTeamProjectCommentAnchorConversations(db, 10)).toEqual({
+      checked: 2,
+      created: 2,
+    });
+    const teamEmptyAnchor = getProjectCommentAnchorConversationId(db, 'team-empty');
+    expect(teamEmptyAnchor).toMatch(/^comment-anchor-/);
+    const repairedId = getLatestConversationIdForProject(db, 'team-empty');
+    expect(repairedId).not.toBeNull();
+    expect(repairedId).not.toMatch(/^comment-anchor-/);
+    expect(listConversations(db, 'team-empty').map((conversation) => conversation.id))
+      .toEqual([repairedId]);
+    const existingProjectConversations = listConversations(db, 'team-existing');
+    expect(existingProjectConversations.map((conversation) => conversation.id))
+      .toEqual(['existing-conversation']);
+    expect(getLatestConversationIdForProject(db, 'team-existing'))
+      .toBe('existing-conversation');
+    const existingProjectAnchor = getProjectCommentAnchorConversationId(db, 'team-existing');
+    expect(existingProjectAnchor).toMatch(/^comment-anchor-/);
+    expect(getLatestConversationIdForProject(db, 'personal-empty')).toBeNull();
+    expect(getLatestConversationIdForProject(db, 'team-deleted')).toBeNull();
+
+    expect(repairTeamProjectCommentAnchorConversations(db, 20)).toEqual({
+      checked: 2,
+      created: 0,
+    });
+    expect(getLatestConversationIdForProject(db, 'team-empty')).toBe(repairedId);
+    expect(
+      getProjectCommentAnchorConversationId(db, 'team-existing'),
+    ).toBe(existingProjectAnchor);
+  });
+
+  it('re-homes Team comments before deleting an ordinary conversation but preserves Personal cascade deletion', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-collab-cloud-anchor-delete-'));
+    const db = openDatabase(tempDir);
+    for (const projectId of ['team-project', 'personal-project'] as const) {
+      insertProject(db, { id: projectId, name: projectId, createdAt: 1, updatedAt: 1 });
+      ensureWorkspaceProject(db, {
+        projectId,
+        workspaceId: 'ws-1',
+        visibility: projectId === 'team-project' ? 'team' : 'personal',
+        resourceState: 'active',
+      });
+    }
+    insertConversation(db, {
+      id: 'team-ordinary',
+      projectId: 'team-project',
+      title: 'Ordinary chat',
+      createdAt: 3,
+      updatedAt: 3,
+    });
+    insertConversation(db, {
+      id: 'personal-last',
+      projectId: 'personal-project',
+      title: 'Personal chat',
+      createdAt: 3,
+      updatedAt: 3,
+    });
+    mergeSyncedPreviewComment(
+      db,
+      'team-project',
+      'team-ordinary',
+      cloudComment('team-comment', { projectId: 'team-project' }),
+    );
+    mergeSyncedPreviewComment(
+      db,
+      'personal-project',
+      'personal-last',
+      cloudComment('personal-comment', { projectId: 'personal-project' }),
+    );
+
+    expect(deleteConversationAndRepairTeamCommentAnchor(db, 'team-project', 'team-ordinary', 10)).toEqual({
+      anchorCreated: true,
+    });
+    const teamAnchorId = getProjectCommentAnchorConversationId(db, 'team-project');
+    expect(teamAnchorId).toMatch(/^comment-anchor-/);
+    const replacementConversationId = getLatestConversationIdForProject(db, 'team-project');
+    expect(replacementConversationId).not.toBeNull();
+    expect(replacementConversationId).not.toBe(teamAnchorId);
+    expect(listConversations(db, 'team-project').map((conversation) => conversation.id)).toEqual([
+      replacementConversationId,
+    ]);
+    expect(listPreviewComments(db, 'team-project', teamAnchorId!)).toEqual([
+      expect.objectContaining({
+        id: 'team-comment',
+        conversationId: teamAnchorId,
+      }),
+    ]);
+
+    expect(deleteConversationAndRepairTeamCommentAnchor(db, 'personal-project', 'personal-last', 10)).toEqual({
+      anchorCreated: false,
+    });
+    expect(getLatestConversationIdForProject(db, 'personal-project')).toBeNull();
+    expect(listPreviewComments(db, 'personal-project', 'personal-last')).toEqual([]);
+  });
+
   it('re-homes remote comments onto a stable empty local anchor', async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-collab-cloud-anchor-'));
     const db = openDatabase(tempDir);
@@ -318,6 +455,18 @@ describe('createCollabCloudService', () => {
       conversationId: firstAnchor?.conversationId,
       created: false,
     });
+    insertConversation(db, {
+      id: 'newer-ordinary-conversation',
+      projectId: 'p1',
+      title: 'Newer ordinary chat',
+      createdAt: 4,
+      updatedAt: 4,
+    });
+    expect(getLatestConversationIdForProject(db, 'p1')).toBe('newer-ordinary-conversation');
+    expect(ensureProjectCommentAnchorConversation(db, 'p1', 5)).toEqual({
+      conversationId: firstAnchor?.conversationId,
+      created: false,
+    });
 
     const { client, seed } = fakeClient();
     seed(cloudComment('remote-comment', {
@@ -329,7 +478,7 @@ describe('createCollabCloudService', () => {
       workspaceContext: fixedContextProvider(teamContext({ role: 'member' })),
       listProjectIds: () => [],
       resolveLocalConversationId: (projectId) =>
-        getLatestConversationIdForProject(db, projectId),
+        getProjectCommentAnchorConversationId(db, projectId),
       mergeComment: ({ projectId, conversationId, comment }) =>
         mergeSyncedPreviewComment(db, projectId, conversationId, comment),
     });
@@ -340,7 +489,7 @@ describe('createCollabCloudService', () => {
 
     const conversations = listConversations(db, 'p1');
     expect(conversations.map((conversation) => conversation.id)).toEqual([
-      firstAnchor?.conversationId,
+      'newer-ordinary-conversation',
     ]);
     expect(listMessages(db, firstAnchor!.conversationId)).toEqual([]);
     expect(
@@ -543,6 +692,30 @@ describe('createCollabCloudService', () => {
     service.dispose();
   });
 
+  it('propagates a transient team directory failure instead of fabricating an empty roster', async () => {
+    const { client } = fakeClient();
+    const outage = new Error('member directory unavailable');
+    const errors: unknown[] = [];
+    const scopedClient = {
+      ...client,
+      listMembers: vi.fn(async () => {
+        throw outage;
+      }),
+    } as unknown as CollabCloudClient;
+    const service = createCollabCloudService({
+      client: scopedClient,
+      workspaceContext: fixedContextProvider(teamContext()),
+      listProjectIds: () => [],
+      resolveLocalConversationId: () => null,
+      mergeComment: () => false,
+      onError: (error) => errors.push(error),
+    });
+
+    await expect(service.listMembers(teamContext())).rejects.toBe(outage);
+    expect(errors).toEqual([outage]);
+    service.dispose();
+  });
+
   it('keeps project comment operations on their explicit scope after ambient moves to B', async () => {
     const { client } = fakeClient();
     const calls: Array<{
@@ -668,6 +841,102 @@ describe('createCollabCloudService', () => {
       { teamId: 'workspace-b', sinceSeq: 0, etag: undefined },
       { teamId: 'workspace-a', sinceSeq: 7, etag: 'etag-workspace-a' },
     ]);
+    service.dispose();
+  });
+
+  it('coalesces concurrent pulls for the same workspace member and project', async () => {
+    let releasePull!: (value: {
+      comments: CollabCloudComment[];
+      latestSeq: number;
+      etag: string | null;
+      notModified: boolean;
+    }) => void;
+    const pendingPull = new Promise<{
+      comments: CollabCloudComment[];
+      latestSeq: number;
+      etag: string | null;
+      notModified: boolean;
+    }>((resolve) => {
+      releasePull = resolve;
+    });
+    const pullComments = vi.fn(() => pendingPull);
+    const client = { pullComments } as unknown as CollabCloudClient;
+    const service = createCollabCloudService({
+      client,
+      listProjectIds: () => [],
+      resolveLocalConversationId: () => 'conv-local',
+      mergeComment: () => false,
+    });
+    const context = teamContext({
+      workspaceId: 'workspace-a',
+      workspaceMemberId: 'member-a',
+      teamId: 'team-a',
+    });
+
+    const first = service.pullProject('same-project', context);
+    const second = service.pullProject('same-project', context);
+
+    expect(pullComments).toHaveBeenCalledTimes(1);
+    releasePull({
+      comments: [],
+      latestSeq: 0,
+      etag: null,
+      notModified: true,
+    });
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    service.dispose();
+  });
+
+  it('shares one pull between the poll floor and a targeted hub/read pull', async () => {
+    let releasePull!: (value: {
+      comments: CollabCloudComment[];
+      latestSeq: number;
+      etag: string | null;
+      notModified: boolean;
+    }) => void;
+    const pendingPull = new Promise<{
+      comments: CollabCloudComment[];
+      latestSeq: number;
+      etag: string | null;
+      notModified: boolean;
+    }>((resolve) => {
+      releasePull = resolve;
+    });
+    const pullComments = vi.fn(() => pendingPull);
+    const context = teamContext({
+      workspaceId: 'workspace-a',
+      workspaceMemberId: 'member-a',
+      teamId: 'team-a',
+    });
+    const client = {
+      pullComments,
+      registerMember: async () => ({
+        memberId: 'member-a',
+        displayName: 'Member A',
+        role: 'member' as const,
+      }),
+    } as unknown as CollabCloudClient;
+    const service = createCollabCloudService({
+      client,
+      listProjectIds: () => ['same-project'],
+      resolveProjectWorkspaceContext: async () => context,
+      resolveLocalConversationId: () => 'conv-local',
+      mergeComment: () => false,
+    });
+
+    const targeted = service.pullProject('same-project', context);
+    const poll = service.pollOnce();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(pullComments).toHaveBeenCalledTimes(1);
+    releasePull({
+      comments: [],
+      latestSeq: 0,
+      etag: null,
+      notModified: true,
+    });
+    await expect(Promise.all([targeted, poll])).resolves.toEqual([true, undefined]);
     service.dispose();
   });
 
@@ -892,5 +1161,20 @@ describe('VelaCliCollabClient', () => {
       JSON.stringify({ label: '正在评论 Typography' }),
     ]);
     expect(workspaces).toEqual(['team-1', 'team-1', 'team-1', 'team-1']);
+  });
+
+  it('does not turn sparse presence fallback fields into display metadata', async () => {
+    const client = createVelaCliCollabClient({
+      run: async () => JSON.stringify({
+        viewers: [{
+          memberId: 'member-id-1',
+          displayName: 'member-id-1',
+        }],
+      }),
+    });
+
+    await expect(client.listPresence('p1', 'team-1')).resolves.toEqual([
+      { memberId: 'member-id-1' },
+    ]);
   });
 });

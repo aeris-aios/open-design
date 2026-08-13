@@ -4,6 +4,12 @@ import { openAllProjectFiles } from '@/playwright/workspace';
 import { T } from '@/timeouts';
 import type { Locator, Page, Request } from '@playwright/test';
 import { routeAgents, routeSuccessfulRuns } from '../lib/playwright/mock-factory.js';
+import {
+  AMR_PERSONAL_WORKSPACE_CONTEXT,
+  AMR_PERSONAL_WORKSPACE_HEADERS,
+  mockAmrPersonalWorkspace,
+  settingsSurface,
+} from '../lib/playwright/amr.js';
 
 // The `/projects` view in `EntryShell` renders a `CenteredLoader` until
 // `projectsLoading || skillsLoading || designSystemsLoading` all clear
@@ -28,33 +34,6 @@ function projectDesignSystemTrigger(page: Page): Locator {
     .getByTestId('chat-composer')
     .getByTestId('composer-design-system-trigger');
 }
-
-async function routeByokProfile(
-  page: Page,
-  config: Record<string, unknown>,
-): Promise<void> {
-  await page.route('**/api/byok/profiles', async (route) => {
-    await route.fulfill({
-      json: {
-        available: true,
-        backend: 'test',
-        profiles: [{
-          id: config.byokProfileId,
-          label: 'OpenAI',
-          protocol: config.apiProtocol,
-          baseUrl: config.baseUrl,
-          model: config.model,
-          requiresApiKey: true,
-          configured: true,
-          keyTail: config.byokCredentialTail,
-          createdAt: 1,
-          updatedAt: 1,
-        }],
-      },
-    });
-  });
-}
-
 const AGENTS = [
   {
     id: 'codex',
@@ -343,6 +322,82 @@ test('[P0] projects empty state create action opens the new project flow', async
   await expect(page.locator('.newproj-title')).toContainText('New prototype');
 });
 
+test('[P0] UI-created Personal project recovers preview and write authority after reload', async ({ page }) => {
+  await mockWritablePersonalProjectScope(page);
+  await stubCatalogsEmpty(page);
+
+  await page.goto('/');
+  await openNewProjectModal(page);
+  await page.getByTestId('new-project-tab-prototype').click();
+  await page.getByTestId('new-project-name').fill('Reloaded Personal authority');
+  await expect(page.getByTestId('create-project')).toBeEnabled();
+  await page.getByTestId('create-project').click();
+  await expectWorkspaceReady(page);
+
+  const uploadedName = await uploadTinyHtml(
+    page,
+    'reload-personal-authority.html',
+    '<!doctype html><html><body><h1>Reloaded Personal preview</h1></body></html>',
+    { headers: AMR_PERSONAL_WORKSPACE_HEADERS },
+  );
+  await openUploadedHtmlArtifactPreview(page, uploadedName);
+  await expect(artifactPreviewFrame(page).getByRole('heading', {
+    name: 'Reloaded Personal preview',
+  })).toBeVisible();
+
+  let releaseScope!: () => void;
+  const scopeGate = new Promise<void>((resolve) => {
+    releaseScope = resolve;
+  });
+  let releaseStatus!: () => void;
+  const statusGate = new Promise<void>((resolve) => {
+    releaseStatus = resolve;
+  });
+  await page.route('**/api/projects/*/workspace-scope', async (route) => {
+    await scopeGate;
+    const projectId = getProjectIdFromApiPath(route.request().url());
+    await route.fulfill({
+      json: {
+        scope: {
+          kind: 'personal',
+          projectId,
+          workspaceId: AMR_PERSONAL_WORKSPACE_CONTEXT.workspaceId,
+          visibility: 'personal',
+          context: AMR_PERSONAL_WORKSPACE_CONTEXT,
+        },
+      },
+    });
+  });
+  await page.route('**/api/projects/*/collab/status', async (route) => {
+    await statusGate;
+    await route.fulfill({
+      json: {
+        publishedVersion: null,
+        materializedVersion: null,
+        syncState: 'local_only',
+        ownerMemberId: null,
+      },
+    });
+  });
+
+  // A hard reload drops the module-local same-session creation witness. Keep
+  // both authority reads unresolved long enough to observe the fail-closed
+  // state, then release them independently. The persisted Personal binding —
+  // not that ephemeral witness — must reconnect the already-ready artifact.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('file-workspace')).toBeVisible();
+  await expect(page.locator('.viewer-loading')).toBeVisible();
+
+  releaseScope();
+  await expect(artifactPreviewFrame(page).getByRole('heading', {
+    name: 'Reloaded Personal preview',
+  })).toBeVisible();
+
+  releaseStatus();
+  await expect(page.getByTestId('chat-composer-input')).not.toHaveAttribute('aria-readonly', 'true');
+  await expect(page.getByRole('button', { name: /^Share$/i })).toBeVisible();
+});
+
 test('[P1] design system multi-select stores primary and inspiration metadata', async ({ page }) => {
   await stubEmptyProjectsNewProjectData(page);
   await openNewProjectFromProjectsView(page);
@@ -561,9 +616,15 @@ test('[P0] @critical project detail composer design system switch carries into t
   await page.route('**/api/design-systems', async (route) => {
     await route.fulfill({ json: { designSystems: DESIGN_SYSTEMS } });
   });
+  // This helper creates through APIRequestContext, bypassing the browser-side
+  // same-session creation witness. Pin the scenario to an exact writable
+  // Personal owner so a slow catalog/status read cannot turn it viewer-only.
+  await mockWritablePersonalProjectScope(page);
 
   await page.goto('/');
-  await createProject(page, 'Header design system run context');
+  await createProject(page, 'Header design system run context', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await expectWorkspaceReady(page);
 
   const trigger = projectDesignSystemTrigger(page);
@@ -1496,15 +1557,8 @@ async function createBoundTeamProject(
       await route.fallback();
       return;
     }
-    const responseFromDaemon = await route.fetch();
-    const body = (await responseFromDaemon.json()) as {
-      project?: Record<string, unknown>;
-    };
     await route.fulfill({
-      response: responseFromDaemon,
-      json: body.project
-        ? { ...body, project: bindProject(body.project) }
-        : body,
+      json: { project: bindProject(created.project) },
     });
   });
   await page.route(`**/api/projects/${created.project.id}/collab/status`, async (route) => {
@@ -1527,32 +1581,31 @@ async function createBoundTeamProject(
   };
 }
 
-test('[P0] Team project send keeps exact Team run scope while its first scope read is pending', async ({ page }) => {
+test('[P0] Team project send keeps exact Team run scope through project bootstrap', async ({ page }) => {
   test.setTimeout(60_000);
-  const prompt = 'Run against the Team workspace while its scope read is still pending.';
+  const prompt = 'Run against the exact Team workspace established during project bootstrap.';
   const balanceRequests = await wireTeamRunBalanceFixtures(page, {
     personalBalanceUsd: '0.00',
     teamBalanceUsd: '99.97',
   });
   const { projectId, conversationId } = await createBoundTeamProject(
     page,
-    'Pending Team scope run witness',
+    'Exact Team scope run witness',
   );
-  let releaseScope!: () => void;
-  const scopeGate = new Promise<void>((resolve) => {
-    releaseScope = resolve;
-  });
   let scopeRequests = 0;
-  let heldScopeHeaders: Record<string, string> | null = null;
+  let scopedReadHeaders: Record<string, string> | null = null;
   await page.route(`**/api/projects/${projectId}/workspace-scope`, async (route) => {
     scopeRequests += 1;
-    // The shell first resolves the bound project route before it is allowed to
-    // mount ProjectView. Hold only ProjectView's own first scope read: this is
-    // the window in which the exact project binding + caller witness must keep
-    // the send Team-scoped instead of falling back to the Personal wallet.
-    if (scopeRequests > 1) {
-      heldScopeHeaders = await route.request().allHeaders();
-      await scopeGate;
+    const requestHeaders = await route.request().allHeaders();
+    // Route bootstrap must finish before ProjectView mounts. Capture the first
+    // exact Team read without blocking it, then prove the same witness reaches
+    // the run and billing boundaries below.
+    if (
+      scopedReadHeaders === null
+      && requestHeaders['x-od-workspace-id'] === TEAM_RUN_CONTEXT.workspaceId
+      && requestHeaders['x-od-workspace-member-id'] === TEAM_RUN_CONTEXT.workspaceMemberId
+    ) {
+      scopedReadHeaders = requestHeaders;
     }
     await route.fulfill({
       json: {
@@ -1580,45 +1633,40 @@ test('[P0] Team project send keeps exact Team run scope while its first scope re
     await route.fallback();
   });
 
-  try {
-    await page.goto(`/projects/${projectId}/conversations/${conversationId}`);
-    await expectWorkspaceReady(page);
-    await expect.poll(() => scopeRequests).toBeGreaterThanOrEqual(2);
-    expect(heldScopeHeaders?.['x-od-workspace-id']).toBe(TEAM_RUN_CONTEXT.workspaceId);
-    expect(heldScopeHeaders?.['x-od-workspace-member-id']).toBe(
-      TEAM_RUN_CONTEXT.workspaceMemberId,
-    );
-    await expect(page.getByTestId('chat-composer-input')).toBeEditable();
-    balanceRequests.resetBalanceRequests();
-    await page.getByTestId('chat-composer-input').fill(prompt);
-    await page.getByTestId('chat-send').click();
+  await page.goto(`/projects/${projectId}/conversations/${conversationId}`);
+  await expectWorkspaceReady(page);
+  await expect.poll(() => scopeRequests).toBeGreaterThanOrEqual(2);
+  expect(scopedReadHeaders?.['x-od-workspace-id']).toBe(TEAM_RUN_CONTEXT.workspaceId);
+  expect(scopedReadHeaders?.['x-od-workspace-member-id']).toBe(
+    TEAM_RUN_CONTEXT.workspaceMemberId,
+  );
+  await expect(page.getByTestId('chat-composer-input')).toBeEditable();
+  balanceRequests.resetBalanceRequests();
+  await page.getByTestId('chat-composer-input').fill(prompt);
+  await page.getByTestId('chat-send').click();
 
-    await expect.poll(() => runHeaders.length).toBe(1);
-    releaseScope();
-    expect(runHeaders[0]?.['x-od-workspace-id']).toBe(TEAM_RUN_CONTEXT.workspaceId);
-    expect(runHeaders[0]?.['x-od-workspace-member-id']).toBe(
-      TEAM_RUN_CONTEXT.workspaceMemberId,
-    );
-    // Run scope is an HTTP authority header contract. The daemon intentionally
-    // does not duplicate this mutable principal into ChatRequest JSON.
-    expect(runBodies[0]?.currentPrompt).toBe(prompt);
-    expect(balanceRequests.teamBillingRequests()).toBeGreaterThanOrEqual(1);
-    const teamBillingQueries = balanceRequests.teamBillingQueries();
-    expect(teamBillingQueries.length).toBeGreaterThanOrEqual(1);
-    for (const query of teamBillingQueries) {
-      expect(query.scope).toBe('workspace');
-      expect(query.workspaceId).toBe(TEAM_RUN_CONTEXT.workspaceId);
-      expect([null, 'authoritative']).toContain(query.freshness);
-    }
-    expect(teamBillingQueries.some((query) => query.freshness === 'authoritative')).toBe(true);
-    // Team preflight reads the account snapshot once for signed-in identity
-    // metadata only; Personal $0 is not the balance oracle and cannot veto the
-    // Team-funded run proved above.
-    expect(balanceRequests.personalWalletRequests()).toBe(1);
-    await expect(page.getByTestId('amr-balance-dialog')).toHaveCount(0);
-  } finally {
-    releaseScope();
+  await expect.poll(() => runHeaders.length).toBe(1);
+  expect(runHeaders[0]?.['x-od-workspace-id']).toBe(TEAM_RUN_CONTEXT.workspaceId);
+  expect(runHeaders[0]?.['x-od-workspace-member-id']).toBe(
+    TEAM_RUN_CONTEXT.workspaceMemberId,
+  );
+  // Run scope is an HTTP authority header contract. The daemon intentionally
+  // does not duplicate this mutable principal into ChatRequest JSON.
+  expect(runBodies[0]?.currentPrompt).toBe(prompt);
+  expect(balanceRequests.teamBillingRequests()).toBeGreaterThanOrEqual(1);
+  const teamBillingQueries = balanceRequests.teamBillingQueries();
+  expect(teamBillingQueries.length).toBeGreaterThanOrEqual(1);
+  for (const query of teamBillingQueries) {
+    expect(query.scope).toBe('workspace');
+    expect(query.workspaceId).toBe(TEAM_RUN_CONTEXT.workspaceId);
+    expect([null, 'authoritative']).toContain(query.freshness);
   }
+  expect(teamBillingQueries.some((query) => query.freshness === 'authoritative')).toBe(true);
+  // Team preflight reads the account snapshot once for signed-in identity
+  // metadata only; Personal $0 is not the balance oracle and cannot veto the
+  // Team-funded run proved above.
+  expect(balanceRequests.personalWalletRequests()).toBe(1);
+  await expect(page.getByTestId('amr-balance-dialog')).toHaveCount(0);
 });
 
 test('[P0] Team project balance gate ignores funded Personal wallet and blocks on empty Team wallet', async ({ page }) => {
@@ -1631,17 +1679,17 @@ test('[P0] Team project balance gate ignores funded Personal wallet and blocks o
     page,
     'Empty Team wallet run witness',
   );
-  let releaseScope!: () => void;
-  const scopeGate = new Promise<void>((resolve) => {
-    releaseScope = resolve;
-  });
   let scopeRequests = 0;
-  let heldScopeHeaders: Record<string, string> | null = null;
+  let scopedReadHeaders: Record<string, string> | null = null;
   await page.route(`**/api/projects/${projectId}/workspace-scope`, async (route) => {
     scopeRequests += 1;
-    if (scopeRequests > 1) {
-      heldScopeHeaders = await route.request().allHeaders();
-      await scopeGate;
+    const requestHeaders = await route.request().allHeaders();
+    if (
+      scopedReadHeaders === null
+      && requestHeaders['x-od-workspace-id'] === TEAM_RUN_CONTEXT.workspaceId
+      && requestHeaders['x-od-workspace-member-id'] === TEAM_RUN_CONTEXT.workspaceMemberId
+    ) {
+      scopedReadHeaders = requestHeaders;
     }
     await route.fulfill({
       json: {
@@ -1660,42 +1708,37 @@ test('[P0] Team project balance gate ignores funded Personal wallet and blocks o
     events: false,
   });
 
-  try {
-    await page.goto(`/projects/${projectId}/conversations/${conversationId}`);
-    await expectWorkspaceReady(page);
-    await expect.poll(() => scopeRequests).toBeGreaterThanOrEqual(2);
-    expect(heldScopeHeaders?.['x-od-workspace-id']).toBe(TEAM_RUN_CONTEXT.workspaceId);
-    expect(heldScopeHeaders?.['x-od-workspace-member-id']).toBe(
-      TEAM_RUN_CONTEXT.workspaceMemberId,
-    );
-    await expect(page.getByTestId('chat-composer-input')).toBeEditable();
-    balanceRequests.resetBalanceRequests();
-    await page.getByTestId('chat-composer-input').fill(
-      'Do not charge the funded Personal wallet for this Team project.',
-    );
-    await page.getByTestId('chat-send').click();
+  await page.goto(`/projects/${projectId}/conversations/${conversationId}`);
+  await expectWorkspaceReady(page);
+  await expect.poll(() => scopeRequests).toBeGreaterThanOrEqual(2);
+  expect(scopedReadHeaders?.['x-od-workspace-id']).toBe(TEAM_RUN_CONTEXT.workspaceId);
+  expect(scopedReadHeaders?.['x-od-workspace-member-id']).toBe(
+    TEAM_RUN_CONTEXT.workspaceMemberId,
+  );
+  await expect(page.getByTestId('chat-composer-input')).toBeEditable();
+  balanceRequests.resetBalanceRequests();
+  await page.getByTestId('chat-composer-input').fill(
+    'Do not charge the funded Personal wallet for this Team project.',
+  );
+  await page.getByTestId('chat-send').click();
 
-    const dialog = page.getByTestId('amr-balance-dialog');
-    await expect(dialog).toBeVisible();
-    releaseScope();
-    await expect(dialog).toContainText('$0.00');
-    expect(balanceRequests.teamBillingRequests()).toBeGreaterThanOrEqual(1);
-    const teamBillingQueries = balanceRequests.teamBillingQueries();
-    expect(teamBillingQueries.length).toBeGreaterThanOrEqual(1);
-    for (const query of teamBillingQueries) {
-      expect(query.scope).toBe('workspace');
-      expect(query.workspaceId).toBe(TEAM_RUN_CONTEXT.workspaceId);
-      expect([null, 'authoritative']).toContain(query.freshness);
-    }
-    expect(teamBillingQueries.some((query) => query.freshness === 'authoritative')).toBe(true);
-    // Conversely, funded Personal identity metadata cannot override Team $0.
-    expect(balanceRequests.personalWalletRequests()).toBe(1);
-    await runRequests.expectNone({
-      message: 'An empty Team wallet must block before POST /api/runs',
-    });
-  } finally {
-    releaseScope();
+  const dialog = page.getByTestId('amr-balance-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('$0.00');
+  expect(balanceRequests.teamBillingRequests()).toBeGreaterThanOrEqual(1);
+  const teamBillingQueries = balanceRequests.teamBillingQueries();
+  expect(teamBillingQueries.length).toBeGreaterThanOrEqual(1);
+  for (const query of teamBillingQueries) {
+    expect(query.scope).toBe('workspace');
+    expect(query.workspaceId).toBe(TEAM_RUN_CONTEXT.workspaceId);
+    expect([null, 'authoritative']).toContain(query.freshness);
   }
+  expect(teamBillingQueries.some((query) => query.freshness === 'authoritative')).toBe(true);
+  // Conversely, funded Personal identity metadata cannot override Team $0.
+  expect(balanceRequests.personalWalletRequests()).toBe(1);
+  await runRequests.expectNone({
+    message: 'An empty Team wallet must block before POST /api/runs',
+  });
 });
 
 test('[P0] @critical project detail composer agent menu lets the user switch the model', async ({ page }) => {
@@ -1721,9 +1764,12 @@ test('[P0] project detail composer model and Plan mode switches carry into the n
   test.setTimeout(60_000);
   const runRequestBodies: Array<Record<string, unknown>> = [];
   await routeSuccessfulRuns(page, { bodies: runRequestBodies, runId: 'agent-model-run' });
+  await mockWritablePersonalProjectScope(page);
 
   await page.goto('/');
-  await createProject(page, 'Composer agent switch run context');
+  await createProject(page, 'Composer agent switch run context', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await expectWorkspaceReady(page);
 
   await pickComposerModel(page, /^GPT 5\.5$/i);
@@ -1844,19 +1890,16 @@ test('[P1] project detail composer keeps the selected mode across consecutive tu
   );
 });
 
-test('[P0] @critical project detail composer reports the BYOK model read-only', async ({ page }) => {
+test('[P0] @critical project detail composer opens Execution settings where BYOK model choice persists', async ({ page }) => {
   test.setTimeout(60_000);
-  const config = {
-    mode: 'api',
-    apiKey: '',
+  let config = {
+    mode: 'daemon',
+    apiKey: 'sk-openai-test',
     apiProtocol: 'openai',
     apiVersion: '',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4o-2024-05-13',
     apiProviderBaseUrl: 'https://api.openai.com/v1',
-    byokProfileId: 'byok-project-model-switch',
-    byokCredentialConfigured: true,
-    byokCredentialTail: 'test',
     agentId: 'codex',
     skillId: null,
     designSystemId: null,
@@ -1877,10 +1920,11 @@ test('[P0] @critical project detail composer reports the BYOK model read-only', 
   await page.route('**/api/app-config', async (route) => {
     if (route.request().method() === 'PUT') {
       const body = route.request().postDataJSON() as Record<string, unknown>;
+      config = { ...config, ...body };
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ config: body }),
+        body: JSON.stringify({ config }),
       });
       return;
     }
@@ -1890,37 +1934,50 @@ test('[P0] @critical project detail composer reports the BYOK model read-only', 
       body: JSON.stringify({ config }),
     });
   });
-  await routeByokProfile(page, config);
 
   await page.goto('/');
   await createProject(page, 'Composer BYOK model switch');
   await expectWorkspaceReady(page);
 
   const { menu } = await openComposerAgentMenu(page);
+  await menu.getByTestId('avatar-open-execution-settings').click();
 
-  // BYOK is provider configuration, not a per-message choice: the composer
-  // popover reports the active model read-only and offers no picker. Changing
-  // it lives in Settings → Execution.
-  const readout = menu.locator('.avatar-model-section .avatar-static-value').first();
-  await expect(readout).toHaveText('gpt-4o-2024-05-13');
-  await expect(menu.locator('.avatar-model-section [role="combobox"]')).toHaveCount(0);
-  await expect(menu.getByTestId('avatar-model-list')).toHaveCount(0);
-  await expect(menu.getByRole('button', { name: /API · BYOK|Use API/i })).toHaveCount(0);
+  const settings = settingsSurface(page);
+  await expect(settings).toBeVisible();
+  await expect(settings.getByTestId('settings-nav-execution')).toBeVisible();
+  await settings.getByRole('tab', { name: 'API providers' }).click();
+  await settings.getByRole('tab', { name: 'OpenAI', exact: true }).click();
+  const modelSelect = settings.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(modelSelect).toContainText('Custom (type below)…');
+  await expect(settings.getByRole('textbox', { name: 'Custom model id', exact: true }))
+    .toHaveValue('gpt-4o-2024-05-13');
+  await modelSelect.click();
+  const modelPopover = page.getByTestId('settings-byok-model-popover');
+  await expect(modelPopover.getByRole('option', { name: /^gpt-4o-mini$/i })).toBeVisible();
+  await expect(modelPopover.getByRole('option', { name: /deepseek/i })).toHaveCount(0);
+  await expect(modelPopover.getByRole('option', { name: /MiniMax/i })).toHaveCount(0);
+  await modelPopover.getByRole('option', { name: /^gpt-4o-mini$/i }).click();
+
+  await expect(modelSelect).toContainText('gpt-4o-mini');
+  await expect.poll(async () => page.evaluate((key) => {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }, STORAGE_KEY)).toMatchObject({
+    mode: 'api',
+    model: 'gpt-4o-mini',
+  });
 });
 
 test('[P0] @critical project detail composer keeps Local CLI and BYOK model choices isolated', async ({ page }) => {
   test.setTimeout(60_000);
   const config = {
     mode: 'daemon',
-    apiKey: '',
+    apiKey: 'test-byok-key',
     apiProtocol: 'openai',
     apiVersion: '',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4o-2024-05-13',
     apiProviderBaseUrl: 'https://api.openai.com/v1',
-    byokProfileId: 'byok-project-model-isolation',
-    byokCredentialConfigured: true,
-    byokCredentialTail: 'test',
     agentId: 'codex',
     skillId: null,
     designSystemId: null,
@@ -1954,7 +2011,6 @@ test('[P0] @critical project detail composer keeps Local CLI and BYOK model choi
       body: JSON.stringify({ config }),
     });
   });
-  await routeByokProfile(page, config);
 
   await page.goto('/');
   await createProject(page, 'Composer model mode isolation');
@@ -2856,12 +2912,17 @@ test('[P0] project detail share menu copies the current share link for uploaded 
       },
     });
   });
+  await mockWritablePersonalProjectScope(page);
 
   await page.goto('/');
-  await createProject(page, 'Share link copy flow');
+  await createProject(page, 'Share link copy flow', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await expectWorkspaceReady(page);
 
-  uploadedName = await uploadTinyHtml(page, 'share-link-copy.html', '<!doctype html><html><body><h1>Share link copy</h1></body></html>');
+  uploadedName = await uploadTinyHtml(page, 'share-link-copy.html', '<!doctype html><html><body><h1>Share link copy</h1></body></html>', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await openUploadedHtmlArtifactPreview(page, uploadedName);
 
   await openShareExportTab(page);
@@ -2909,11 +2970,22 @@ test('[P0] project detail share menu opens the current share page for uploaded h
     });
   });
 
+  // This scenario creates through Playwright's APIRequestContext rather than
+  // the browser UI, so the Web cannot inherit its normal same-session creation
+  // witness. Give the page an exact writable Personal/owner identity and bind
+  // the project-scope bootstrap to that same identity. Do not make the share
+  // control writable by weakening the shared-project authority gate.
+  await mockWritablePersonalProjectScope(page);
+
   await page.goto('/');
-  await createProject(page, 'Open share page flow');
+  await createProject(page, 'Open share page flow', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await expectWorkspaceReady(page);
 
-  uploadedName = await uploadTinyHtml(page, 'share-page-open.html', '<!doctype html><html><body><h1>Open share page</h1></body></html>');
+  uploadedName = await uploadTinyHtml(page, 'share-page-open.html', '<!doctype html><html><body><h1>Open share page</h1></body></html>', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await openUploadedHtmlArtifactPreview(page, uploadedName);
 
   await openShareExportTab(page);
@@ -2944,12 +3016,20 @@ test('[P0] @critical project detail share menu publish action opens the deploy f
       },
     });
   });
+  // Match the other writable share scenarios: APIRequestContext creation does
+  // not register the browser's same-session owner witness, so provide the
+  // exact Personal authority this test intends to exercise.
+  await mockWritablePersonalProjectScope(page);
 
   await page.goto('/');
-  await createProject(page, 'Deploy action flow');
+  await createProject(page, 'Deploy action flow', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await expectWorkspaceReady(page);
 
-  const uploadedName = await uploadTinyHtml(page, 'deploy-action.html', '<!doctype html><html><body><h1>Deploy action</h1></body></html>');
+  const uploadedName = await uploadTinyHtml(page, 'deploy-action.html', '<!doctype html><html><body><h1>Deploy action</h1></body></html>', {
+    headers: AMR_PERSONAL_WORKSPACE_HEADERS,
+  });
   await openUploadedHtmlArtifactPreview(page, uploadedName);
 
   await openShareExportTab(page);
@@ -3553,8 +3633,9 @@ test('[P2] change pet opens pet settings and updates the custom companion draft'
 async function createProject(
   page: Page,
   projectName: string,
+  options: { headers?: Readonly<Record<string, string>> } = {},
 ) {
-  const response = await retryProjectCreate(page, projectName);
+  const response = await retryProjectCreate(page, projectName, options);
   const body = (await response.json()) as {
     project: { id: string };
     conversationId: string;
@@ -3565,12 +3646,14 @@ async function createProject(
 async function retryProjectCreate(
   page: Page,
   projectName: string,
+  options: { headers?: Readonly<Record<string, string>> } = {},
 ) {
   let lastError = '';
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const response = await page.request.post('/api/projects', {
         timeout: 15_000,
+        ...(options.headers ? { headers: { ...options.headers } } : {}),
         data: {
           id: `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           name: projectName,
@@ -4039,6 +4122,7 @@ async function uploadTinyHtml(
   page: Page,
   name: string,
   content: string,
+  options: { headers?: Readonly<Record<string, string>> } = {},
 ): Promise<string> {
   await page.getByTestId('design-files-upload-input').setInputFiles({
     name,
@@ -4049,7 +4133,7 @@ async function uploadTinyHtml(
   let uploadedName = '';
   await expect
     .poll(async () => {
-      const files = await listProjectFiles(page, projectId);
+      const files = await listProjectFiles(page, projectId, options);
       uploadedName = files.find((file) => file.name.endsWith(name))?.name ?? '';
       return uploadedName;
     })
@@ -4169,11 +4253,36 @@ async function listProjectsFromApi(page: Page) {
   return body.projects;
 }
 
-async function listProjectFiles(page: Page, projectId: string) {
-  const response = await page.request.get(`/api/projects/${projectId}/files`);
+async function listProjectFiles(
+  page: Page,
+  projectId: string,
+  options: { headers?: Readonly<Record<string, string>> } = {},
+) {
+  const response = await page.request.get(
+    `/api/projects/${projectId}/files`,
+    options.headers ? { headers: { ...options.headers } } : undefined,
+  );
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as { files: Array<{ name: string }> };
   return body.files;
+}
+
+async function mockWritablePersonalProjectScope(page: Page) {
+  await mockAmrPersonalWorkspace(page);
+  await page.route('**/api/projects/*/workspace-scope', async (route) => {
+    const projectId = getProjectIdFromApiPath(route.request().url());
+    await route.fulfill({
+      json: {
+        scope: {
+          kind: 'personal',
+          projectId,
+          workspaceId: AMR_PERSONAL_WORKSPACE_CONTEXT.workspaceId,
+          visibility: 'personal',
+          context: AMR_PERSONAL_WORKSPACE_CONTEXT,
+        },
+      },
+    });
+  });
 }
 
 function isCreateProjectRequest(request: Request): boolean {

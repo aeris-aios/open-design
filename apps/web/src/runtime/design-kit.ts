@@ -440,7 +440,10 @@ export function brandToKit(brand: Brand, opts: BrandKitOptions): DesignKit {
 }
 
 /** Convenience: build a kit straight from a BrandSummary (Brands surfaces). */
-export function brandSummaryToKit(summary: BrandSummary): DesignKit {
+export function brandSummaryToKit(
+  summary: BrandSummary,
+  workspaceContext: WorkspaceCollabContext | null = null,
+): DesignKit {
   const host = hostnameOf(summary.meta.sourceUrl);
   if (!summary.brand) {
     return {
@@ -465,6 +468,7 @@ export function brandSummaryToKit(summary: BrandSummary): DesignKit {
     editable: true,
     host,
     ready: summary.meta.status === 'ready',
+    workspaceContext,
   });
 }
 
@@ -608,6 +612,8 @@ export interface DesignKitSource {
   /** Bump to force a brand.json re-read after an upload writes a module. */
   reloadKey?: number;
   workspaceContext?: WorkspaceCollabContext | null;
+  /** Re-run Workspace resource reads when a newer directory witness lands. */
+  workspaceReadGeneration?: string;
 }
 
 function tryParseBrand(raw: string | null): Brand | null {
@@ -621,6 +627,68 @@ function tryParseBrand(raw: string | null): Brand | null {
     // Not a valid brand.json — fall back to DESIGN.md parsing.
   }
   return null;
+}
+
+interface LegacyBrandLogo {
+  primary: string | null;
+  alternates: string[];
+  notes?: string;
+}
+
+function tryParseLegacyBrandLogo(raw: string | null): LegacyBrandLogo | null {
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw) as { logo?: unknown };
+    if (!data || typeof data !== 'object' || !data.logo || typeof data.logo !== 'object') {
+      return null;
+    }
+    const logo = data.logo as {
+      primary?: unknown;
+      alternates?: unknown;
+      notes?: unknown;
+    };
+    const primary = typeof logo.primary === 'string' && logo.primary.trim()
+      ? logo.primary.trim()
+      : null;
+    const alternates = Array.isArray(logo.alternates)
+      ? logo.alternates
+          .filter((candidate): candidate is string => typeof candidate === 'string')
+          .map((candidate) => candidate.trim())
+          .filter(Boolean)
+      : [];
+    const notes = typeof logo.notes === 'string' && logo.notes.trim()
+      ? logo.notes.trim()
+      : undefined;
+    return primary || alternates.length > 0
+      ? { primary, alternates, ...(notes ? { notes } : {}) }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeLegacyBrandLogo(
+  kit: DesignKit,
+  logo: LegacyBrandLogo | null,
+  options: {
+    projectId: string;
+    reloadKey?: number | string;
+    workspaceContext?: WorkspaceCollabContext | null;
+  },
+): DesignKit {
+  if (!logo) return kit;
+  const asset = (filePath: string) => withCacheBust(
+    projectRawUrl(options.projectId, filePath, options.workspaceContext),
+    options.reloadKey,
+  );
+  return {
+    ...kit,
+    logoSrc: logo.primary ? asset(logo.primary) : kit.logoSrc,
+    logoAlternates: logo.alternates.length > 0
+      ? logo.alternates.map(asset)
+      : kit.logoAlternates,
+    logoNotes: logo.notes ?? kit.logoNotes,
+  };
 }
 
 /**
@@ -642,6 +710,7 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
     host,
     reloadKey,
     workspaceContext,
+    workspaceReadGeneration,
   } = source;
   const [kit, setKit] = useState<DesignKit | null>(null);
   const [loading, setLoading] = useState(false);
@@ -712,7 +781,11 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
           workspaceContext,
         }));
       } else {
-        setKit(fromDesignMd(rawDesignMd ?? ''));
+        setKit(mergeLegacyBrandLogo(
+          fromDesignMd(rawDesignMd ?? ''),
+          tryParseLegacyBrandLogo(rawBrand),
+          { projectId, reloadKey, workspaceContext },
+        ));
       }
       setLoading(false);
     })();
@@ -732,6 +805,7 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
     host,
     reloadKey,
     workspaceContext,
+    workspaceReadGeneration,
   ]);
 
   return { kit, loading };

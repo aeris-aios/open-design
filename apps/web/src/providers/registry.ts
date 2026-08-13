@@ -18,6 +18,7 @@ import type {
   ReplaceProjectWorkingDirResponse,
   ProjectFileTextPreviewResponse,
   ProjectFileResponse,
+  ProjectPreviewUrlResponse,
   ProjectFileVersion,
   ProjectFileVersionSource,
   ProjectFileVersionResponse,
@@ -80,7 +81,10 @@ import {
   isOpenDesignHostAvailable,
   openHostExternalUrl,
 } from '@open-design/host';
-import { coalescedGet, evictCoalescedGet } from '../lib/coalesced-get';
+import {
+  coalescedGet,
+  evictCoalescedGet,
+} from '../lib/coalesced-get';
 import {
   evictSharedCancellableGet,
   forceSharedCancellableGet,
@@ -529,8 +533,9 @@ export async function fetchSkill(
 
 export async function fetchDesignSystems(
   workspaceContext?: WorkspaceCollabContext | null,
+  options?: FetchDesignSystemsOptions,
 ): Promise<DesignSystemSummary[]> {
-  const result = await fetchDesignSystemsResult(workspaceContext);
+  const result = await fetchDesignSystemsResult(workspaceContext, options);
   return result.ok ? result.designSystems : [];
 }
 
@@ -543,11 +548,30 @@ export type DesignSystemsResult =
   | { ok: true; designSystems: DesignSystemSummary[] }
   | { ok: false };
 
+export interface FetchDesignSystemsOptions {
+  /**
+   * A realtime mutation invalidated the Team index. Every forced call starts
+   * its own authoritative read; distinct mutations must never join an older
+   * in-flight snapshot merely because they arrived inside one burst window.
+   */
+  forceTeamMaterialization?: boolean;
+  /**
+   * Exact Team ids returned by a workspace-scoped Team-index read that just
+   * completed in the caller. Reuse that witness while reading the unified
+   * catalog instead of issuing a duplicate `/team` materialization request.
+   */
+  materializedTeamIds?: readonly string[];
+}
+
 async function materializeTeamDesignSystems(
   workspaceContext: WorkspaceCollabContext | null | undefined,
+  options?: FetchDesignSystemsOptions,
 ): Promise<ReadonlySet<string>> {
   if (!workspaceContext || !workspaceContextHasTeamIdentity(workspaceContext)) {
     return new Set();
+  }
+  if (options?.materializedTeamIds) {
+    return new Set(options.materializedTeamIds);
   }
 
   // Team systems live in a workspace-scoped materialization directory. Prime
@@ -561,24 +585,24 @@ async function materializeTeamDesignSystems(
   // retarget the other's catalog request.
   const identity = workspaceIdentityCacheKey(workspaceContext);
   try {
-    return await coalescedGet(
-      `design-system-team-materialization:${identity}`,
-      async () => {
-        const response = await fetch('/api/workspace/design-systems/team', {
-          cache: 'no-store',
-          headers: workspaceProjectHeaders(workspaceContext),
-        });
-        if (!response.ok) {
-          throw new Error(`design-systems-team ${response.status}`);
-        }
-        const body = (await response.json()) as { ids?: unknown };
-        return new Set(
-          Array.isArray(body.ids)
-            ? body.ids.filter((id): id is string => typeof id === 'string')
-            : [],
-        );
-      },
-    );
+    const cacheKey = `design-system-team-materialization:${identity}`;
+    const readTeamIndex = async () => {
+      const response = await fetch('/api/workspace/design-systems/team', {
+        cache: 'no-store',
+        headers: workspaceProjectHeaders(workspaceContext),
+      });
+      if (!response.ok) {
+        throw new Error(`design-systems-team ${response.status}`);
+      }
+      const body = (await response.json()) as { ids?: unknown };
+      return new Set(
+        Array.isArray(body.ids)
+          ? body.ids.filter((id): id is string => typeof id === 'string')
+          : [],
+      );
+    };
+    if (options?.forceTeamMaterialization) evictCoalescedGet(cacheKey);
+    return await coalescedGet(cacheKey, readTeamIndex);
   } catch {
     // Keep personal/built-in systems usable while the remote team index is
     // temporarily unavailable. The scoped catalog request below remains the
@@ -589,9 +613,10 @@ async function materializeTeamDesignSystems(
 
 export async function fetchDesignSystemsResult(
   workspaceContext?: WorkspaceCollabContext | null,
+  options?: FetchDesignSystemsOptions,
 ): Promise<DesignSystemsResult> {
   try {
-    const teamSharedIds = await materializeTeamDesignSystems(workspaceContext);
+    const teamSharedIds = await materializeTeamDesignSystems(workspaceContext, options);
     const resp = await fetch('/api/design-systems', {
       ...(workspaceContext ? { headers: workspaceProjectHeaders(workspaceContext) } : {}),
     });
@@ -911,6 +936,17 @@ export async function syncDesignSystemAssetsFromWorkspace(
   }
 }
 
+export class DesignSystemDeleteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'DesignSystemDeleteError';
+  }
+}
+
 export async function deleteDesignSystemDraft(
   id: string,
   workspaceContext?: WorkspaceCollabContext | null,
@@ -925,8 +961,15 @@ export async function deleteDesignSystemDraft(
           : {}),
       },
     );
+    if (!resp.ok && resp.status === 403) {
+      const errorBody = await readApiErrorBody(resp);
+      const code = errorBody.code
+        ?? (/^[A-Z][A-Z0-9_]+$/.test(errorBody.message) ? errorBody.message : undefined);
+      throw new DesignSystemDeleteError(errorBody.message, resp.status, code);
+    }
     return resp.ok;
-  } catch {
+  } catch (error) {
+    if (error instanceof DesignSystemDeleteError) throw error;
     return false;
   }
 }
@@ -2218,6 +2261,41 @@ export function projectFileUrl(
   return projectRawUrl(projectId, name, workspaceContext);
 }
 
+/**
+ * Mint the existing daemon-owned, project-scoped preview capability and return
+ * its directory URL for srcDoc relative-resource resolution. The daemon binds
+ * the capability to the exact Workspace identity and re-authorizes every asset
+ * read, so callers must not manufacture a base from raw-file query scope.
+ */
+export async function fetchProjectPreviewBaseHref(
+  projectId: string,
+  name: string,
+  workspaceContext: WorkspaceCollabContext,
+): Promise<string | null> {
+  const params = new URLSearchParams({ file: name });
+  const requestUrl = workspaceResourceUrl(
+    `/api/projects/${encodeURIComponent(projectId)}/preview-url?${params.toString()}`,
+    workspaceContext,
+  );
+  try {
+    const response = await fetch(requestUrl, {
+      cache: 'no-store',
+      headers: workspaceProjectHeaders(workspaceContext),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as ProjectPreviewUrlResponse;
+    if (typeof body.url !== 'string' || !body.url.startsWith('/')) return null;
+    const parsed = new URL(body.url, 'http://open-design.local');
+    const expectedPrefix = `/api/projects/${encodeURIComponent(projectId)}/preview/`;
+    if (!parsed.pathname.startsWith(expectedPrefix)) return null;
+    const directoryEnd = parsed.pathname.lastIndexOf('/') + 1;
+    if (directoryEnd <= expectedPrefix.length) return null;
+    return parsed.pathname.slice(0, directoryEnd);
+  } catch {
+    return null;
+  }
+}
+
 export interface ProjectFilePreviewSection {
   title: string;
   lines: string[];
@@ -2883,7 +2961,7 @@ export async function deleteProjectFile(
 ): Promise<boolean> {
   try {
     const resp = await fetch(
-      projectRawUrl(projectId, name),
+      projectRawUrl(projectId, name, workspaceContext),
       {
         method: 'DELETE',
         ...(workspaceContext ? { headers: workspaceProjectHeaders(workspaceContext) } : {}),

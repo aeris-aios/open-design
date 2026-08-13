@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import {
+  TeamResourceAuthorityUnavailableError,
   TeamResourceShareForbiddenError,
   type TeamResourceRequestScope,
   type TeamResourceShareRecord,
@@ -27,6 +28,11 @@ export interface RegisterTeamResourceShareRoutesDeps {
   share: TeamResourceShareService;
   /** Resolve the request's explicit Workspace against authoritative membership. */
   resolveScope: (req: Request) => Promise<TeamResourceScopeResolution>;
+  /** Optional resource-owner gate applied after Workspace authority succeeds. */
+  authorizeShare?: (
+    resourceId: string,
+    scope: TeamResourceRequestScope,
+  ) => boolean | Promise<boolean>;
   /** Optional materialization hook for shared team resources. */
   syncSharedResource?: (
     resource: TeamResourceShareRecord,
@@ -50,6 +56,16 @@ export interface RegisterTeamResourceShareRoutesDeps {
   listTeam?: ((scope: TeamResourceRequestScope) => Promise<TeamResourceShareListing>) & {
     invalidate?: (scope: TeamResourceRequestScope) => void;
   };
+  /**
+   * Local fan-out after the authoritative mutation and the list-cache
+   * invalidation have both completed. Linked resources use this to invalidate
+   * every projection before the success response escapes.
+   */
+  onMutationCommitted?: (
+    resourceId: string,
+    scope: TeamResourceRequestScope,
+    visibility: 'personal' | 'team',
+  ) => void;
 }
 
 /**
@@ -125,6 +141,9 @@ export function registerTeamResourceShareRoutes(
     const scope = await resolveScope(req, res);
     if (!scope) return;
     try {
+      if (deps.authorizeShare && !await deps.authorizeShare(id, scope)) {
+        return res.status(403).json({ error: 'WORKSPACE_RESOURCE_SHARE_DENIED' });
+      }
       const result = await share.share(id, scope);
       if (!result) return res.json({ shared: false });
       // The cached `/team` listing is now stale by construction — drop it so
@@ -133,6 +152,7 @@ export function registerTeamResourceShareRoutes(
       // freshMs, or worse, the client's slower background poll once SSE
       // lowers its cadence.
       invalidateListTeam(scope);
+      deps.onMutationCommitted?.(id, scope, 'team');
       res.json({ shared: true, version: result.version });
     } catch (error) {
       if (error instanceof TeamResourceShareForbiddenError) {
@@ -151,11 +171,21 @@ export function registerTeamResourceShareRoutes(
     if (!scope) return;
     try {
       const unshared = await share.unshare(id, scope);
-      if (unshared) invalidateListTeam(scope);
+      if (unshared) {
+        invalidateListTeam(scope);
+        deps.onMutationCommitted?.(id, scope, 'personal');
+      }
       res.json({ unshared });
     } catch (error) {
       if (error instanceof TeamResourceShareForbiddenError) {
         return res.status(403).json({ error: 'WORKSPACE_RESOURCE_UNSHARE_DENIED' });
+      }
+      if (error instanceof TeamResourceAuthorityUnavailableError) {
+        return res.status(503).json({
+          error: error.code,
+          message: error.message,
+          retryable: true,
+        });
       }
       res.status(500).json({ error: error instanceof Error ? error.message : 'unshare failed' });
     }

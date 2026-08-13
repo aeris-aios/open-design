@@ -1,4 +1,4 @@
-import type { Express, Response } from 'express';
+import type { Express, Request, Response } from 'express';
 import type {
   CollabCloudMemberDirectoryEntry,
   CollabCloudMembersResponse,
@@ -61,6 +61,7 @@ import {
   type VerifiedWorkspaceRequestContextResult,
 } from '../collab/request-workspace-context.js';
 import { requestWithWorkspaceNavigationScope } from '../collab/workspace-resource-mutation.js';
+import { sendApiError } from '../http/api-errors.js';
 
 export type WorkspaceEventSink = (payload: WorkspaceInvalidationSsePayload) => void;
 export type WorkspaceEventSinksByWorkspace =
@@ -174,9 +175,31 @@ export interface RegisterCollabContextRoutesDeps {
     send: (event: string, data: unknown, id?: string | number | null) => boolean;
   };
   workspaceEventSinks?: WorkspaceEventSinksByWorkspace;
+  /** Best-effort PostHog group update; never affects the route response. */
+  observeWorkspace?: (
+    req: Request,
+    context: WorkspaceCollabContext,
+    properties?: Record<string, unknown>,
+  ) => Promise<void> | void;
 }
 
 const ASSIGNABLE_ROLES = new Set<WorkspaceInviteRole>(['admin', 'member']);
+
+function workspaceGroupProperties(
+  context: WorkspaceCollabContext,
+): Record<string, unknown> {
+  const planId = context.planId?.trim().toLowerCase();
+  return {
+    workspace_type: context.workspaceType,
+    workspace_lifecycle: context.lifecycleState,
+    billing_state: context.billingState,
+    plan_bucket: !planId || planId === 'free' ? 'free' : 'paid',
+    provider_mode: context.providerMode,
+    seat_limit: context.seatSummary.seatLimit,
+    member_count: context.seatSummary.usedSeats,
+    seat_state: context.seatSummary.isSeatFull ? 'full' : 'available',
+  };
+}
 
 /**
  * Normalize an invite-create request body into validated { email, role } items.
@@ -284,6 +307,13 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     // its first exact-scope read. A refresh outage must not turn a successfully
     // consumed, non-repeatable continuation into an HTTP failure.
     await deps.refreshWorkspaceDirectoryAfterMutation?.().catch(() => undefined);
+    if (outcome.context) {
+      void deps.observeWorkspace?.(
+        req,
+        outcome.context,
+        workspaceGroupProperties(outcome.context),
+      );
+    }
     return res.json({ context: outcome.context, workspaceMemberId: outcome.workspaceMemberId });
   });
 
@@ -346,6 +376,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
         ? enriched
         : verified.context;
     const body: WorkspaceContextResponse = { context };
+    void deps.observeWorkspace?.(req, context, workspaceGroupProperties(context));
     res.json(body);
   });
 
@@ -501,14 +532,17 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     // await them — a slow upstream must not delay the tab-local selection.
     deps.onWorkspaceSwitched?.(workspaceId);
     const body: WorkspaceActiveResponse = { activeWorkspaceId: workspaceId, context: resolved };
+    void deps.observeWorkspace?.(req, resolved, workspaceGroupProperties(resolved));
     res.json(body);
   });
 
   // Team-wide shared-project discovery: the web "全部项目" view fetches every
   // project any member shared to the team here (read from the resource hub), so a
   // member whose own /api/projects list is empty still sees the owner's shared
-  // projects to pull + open. Empty off-team / hub-unconfigured; a transient hub
-  // error also degrades to [] so a hub outage never blanks the view with a 500.
+  // projects to pull + open. A successful empty result is authoritative. A
+  // transient upstream failure must stay distinguishable so clients can retain
+  // their exact-scope last-good catalog instead of treating the outage as an
+  // authoritative removal of every project.
   app.get('/api/workspace/projects/team', async (req, res) => {
     const verified = await verifyWorkspaceRequestContext({
       req,
@@ -522,11 +556,17 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
         ...(verified.retryable ? { retryable: true } : {}),
       });
     }
-    let projects: TeamProject[] = [];
+    let projects: TeamProject[];
     try {
       projects = await listTeamProjects(verified.context);
     } catch {
-      projects = [];
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'team project catalog is temporarily unavailable',
+        { retryable: true },
+      );
     }
     const body: WorkspaceTeamProjectsResponse = { projects };
     res.json(body);
@@ -534,8 +574,9 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
 
   // Member directory: the web client resolves comment authors (authorMemberId →
   // "琼羽 · Owner") and the shared-project owner name from this. Read from the
-  // collab-cloud directory; empty off-team / hub-unconfigured, and a directory
-  // outage degrades to [] rather than a 500. STUB: stands in for B's roster.
+  // collab-cloud directory. A directory outage is retryable and must not be
+  // represented as an authoritative empty roster: clients retain last-good
+  // display metadata until a successful response says members really left.
   app.get('/api/workspace/members', async (req, res) => {
     const verified = await verifyWorkspaceRequestContext({
       req,
@@ -543,14 +584,19 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       requireTeam: true,
     });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);
-    let members: CollabCloudMemberDirectoryEntry[] = [];
     try {
-      members = await listMembers(verified.context);
+      const members = await listMembers(verified.context);
+      const body: CollabCloudMembersResponse = { members };
+      return res.json(body);
     } catch {
-      members = [];
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'team member directory is temporarily unavailable',
+        { retryable: true },
+      );
     }
-    const body: CollabCloudMembersResponse = { members };
-    res.json(body);
   });
 
   // Billing reads are explicit at the HTTP boundary:

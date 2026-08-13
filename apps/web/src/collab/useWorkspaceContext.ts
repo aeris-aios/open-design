@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   TeamProject,
   WorkspaceBillingResponse,
@@ -16,12 +16,23 @@ import {
   buildWorkspaceSeatSummary,
 } from '@open-design/contracts';
 import { coalescedGet, forceCoalescedGet } from '../lib/coalesced-get';
+import {
+  markProjectDisplaySnapshotsDirty,
+  patchProjectDisplaySnapshots,
+} from '../state/project-display-cache';
 import { isTeamPlanTier } from './team-plan';
-import { fetchTeamProjectsCatalog } from './team-projects-catalog';
+import {
+  beginTeamProjectCatalogRefresh,
+  beginTeamProjectMetadataRefresh,
+  fetchTeamProjectCatalogEntry,
+  fetchTeamProjectsCatalog,
+  resetTeamProjectMetadataRefreshOrdering,
+} from './team-projects-catalog';
 import { useWorkspaceInvalidation } from './workspace-events';
 import {
   beginWorkspaceScopedRead,
   workspaceIdentityCacheKey,
+  type WorkspaceResourceReadIdentity,
 } from './workspace-identity';
 import {
   createWorkspaceBillingInterestOwnerId,
@@ -40,6 +51,8 @@ import {
 // `packages/contracts/src/api/collab.ts` for the shape.
 export interface WorkspaceContextState {
   context: WorkspaceCollabContext | null;
+  /** Monotonic browser boundary for sign-in/sign-out account changes. */
+  accountGeneration?: number;
   /**
    * Exact directory-backed identity that read-only Workspace catalogs may use
    * while the richer `/api/workspace/context` projection is still loading.
@@ -49,10 +62,7 @@ export interface WorkspaceContextState {
    * The provisional value is only published when this tab's session selection
    * has an exact active row in the current account directory.
    */
-  resourceReadIdentity?: {
-    context: WorkspaceCollabContext;
-    generation: string;
-  } | null;
+  resourceReadIdentity?: WorkspaceResourceReadIdentity | null;
   loading: boolean;
   /**
    * A deliberate identity change was announced, but its replacement context has
@@ -68,6 +78,23 @@ export interface WorkspaceContextState {
    * treating that outage as an anonymous identity.
    */
   failure?: 'unsupported' | 'unavailable';
+}
+
+/**
+ * Exact identity for read-only Workspace resources.
+ *
+ * Production providers always publish `resourceReadIdentity`; when it is
+ * present, its null value is meaningful and must fail closed instead of
+ * falling back to a stale richer context during a Workspace switch. The
+ * `undefined` compatibility lane is only for older test/provider doubles.
+ */
+export function workspaceResourceReadContext(
+  state: WorkspaceContextState,
+): WorkspaceCollabContext | null {
+  if (state.resourceReadIdentity !== undefined) {
+    return state.resourceReadIdentity?.context ?? null;
+  }
+  return state.context;
 }
 
 /**
@@ -308,6 +335,48 @@ export async function resolveBoundProjectWorkspaceContext(
   return item ? workspaceContextFromDirectoryItem(item) : null;
 }
 
+export interface CurrentWorkspaceContextReadWitness {
+  context: WorkspaceCollabContext | null;
+  isStillCurrent: () => boolean;
+}
+
+/**
+ * Resolve the Workspace selected by this browser tab from the account
+ * directory, without waiting for the shell's richer `/workspace/context`
+ * projection to commit to React state.
+ *
+ * This is an authorization witness, not a display cache: the directory read
+ * verifies the exact Workspace/member pair and the returned lifetime closes
+ * over both the account/context generation and the tab-local selection. A
+ * concurrent sign-in or Workspace switch therefore invalidates an in-flight
+ * project action before it may commit.
+ */
+export async function resolveCurrentWorkspaceContextReadWitness(
+  options: { fresh?: boolean } = {},
+): Promise<CurrentWorkspaceContextReadWitness> {
+  const requestToken = workspaceContextRequestToken;
+  const accountGeneration = currentWorkspaceAccountGeneration();
+  const directory = await readWorkspaceDirectoryForCurrentGeneration(options);
+  const selected = chooseWorkspaceForTab(directory.items ?? []);
+  const context = selected ? workspaceContextFromDirectoryItem(selected) : null;
+  const selectedWorkspaceId = context?.workspaceId ?? null;
+  const selectedWorkspaceMemberId = context?.workspaceMemberId ?? null;
+  return {
+    context,
+    isStillCurrent: () => {
+      if (
+        workspaceContextRequestToken !== requestToken
+        || currentWorkspaceAccountGeneration() !== accountGeneration
+      ) return false;
+      const currentSelection = readWorkspaceSelection();
+      return context
+        ? currentSelection?.workspaceId === selectedWorkspaceId
+          && currentSelection.workspaceMemberId === selectedWorkspaceMemberId
+        : currentSelection === null;
+    },
+  };
+}
+
 // Last successfully-resolved workspace context, kept at module scope so it
 // survives a component unmount/remount. Returning to the home view remounts the
 // nav shell, and starting each remount from `null` flashed the signed-out state
@@ -420,24 +489,35 @@ export function lastResolvedWorkspaceContext(): WorkspaceContextState['context']
 }
 
 // Last team-shared catalogs this shell successfully read, partitioned by the
-// Workspace + member identity that authorized each response. A missing entry
+// account generation + complete Workspace identity that authorized each response. A missing entry
 // means "never loaded", which is NOT the same as "nothing is shared" —
 // consumers that relax a fail-closed gate on this must treat it as "unknown".
 const cachedTeamProjects = new Map<string, TeamProject[]>();
+const MAX_CACHED_TEAM_PROJECT_CATALOGS = 24;
 
 function teamProjectsIdentity(
   context: WorkspaceCollabContext | null | undefined,
+  accountGeneration = currentWorkspaceAccountGeneration(),
 ): string | null {
-  const workspaceId = context?.workspaceId?.trim();
-  const workspaceMemberId = context?.workspaceMemberId?.trim();
-  return workspaceId && workspaceMemberId
-    ? JSON.stringify([workspaceId, workspaceMemberId])
+  return context?.workspaceId?.trim() && context.workspaceMemberId?.trim()
+    ? JSON.stringify([accountGeneration, workspaceIdentityCacheKey(context)])
     : null;
+}
+
+function cacheTeamProjects(identity: string, projects: TeamProject[]): void {
+  cachedTeamProjects.delete(identity);
+  cachedTeamProjects.set(identity, projects);
+  while (cachedTeamProjects.size > MAX_CACHED_TEAM_PROJECT_CATALOGS) {
+    const oldest = cachedTeamProjects.keys().next().value as string | undefined;
+    if (!oldest) break;
+    cachedTeamProjects.delete(oldest);
+  }
 }
 
 /** Test seam: clear the module-level team-project cache between tests. */
 export function resetTeamProjectsCache(): void {
   cachedTeamProjects.clear();
+  resetTeamProjectMetadataRefreshOrdering();
 }
 
 /**
@@ -749,7 +829,11 @@ export function useWorkspaceContext(): WorkspaceContextState {
     };
   }, [loadContext]);
 
-  return state;
+  const accountGeneration = currentWorkspaceAccountGeneration();
+  return useMemo(
+    () => ({ ...state, accountGeneration }),
+    [accountGeneration, state],
+  );
 }
 
 const WORKSPACE_CONTEXT_POLL_MS = 30_000;
@@ -1531,12 +1615,30 @@ const TEAM_PROJECTS_POLL_MS = 15_000;
 const TEAM_PROJECTS_SSE_FLOOR_MS = 60_000;
 export const TEAM_PROJECTS_CHANGED_EVENT = 'od:team-projects-changed';
 const TEAM_PROJECTS_CHANGED_STORAGE_KEY = 'od.teamProjects.changedAt';
+let teamProjectsChangedNotificationSequence = 0;
 
-export function notifyTeamProjectsChanged(): void {
+export function notifyTeamProjectsChanged(
+  detail?: Pick<
+    Extract<WorkspaceInvalidationSsePayload, { type: 'team-projects-changed' }>,
+    'projectId' | 'kind'
+  >,
+): void {
   if (typeof window === 'undefined') return;
-  window.dispatchEvent(new Event(TEAM_PROJECTS_CHANGED_EVENT));
+  // Always fan out one shared detail object. Every mounted consumer receives
+  // this same semantic event token and therefore shares one catalog request;
+  // the next call creates another token and cannot be collapsed into this one
+  // merely because it happens inside forceCoalescedGet's 250ms burst window.
+  const sharedDetail = { type: 'team-projects-changed' as const, ...detail };
+  window.dispatchEvent(new CustomEvent(TEAM_PROJECTS_CHANGED_EVENT, {
+    detail: sharedDetail,
+  }));
   try {
-    window.localStorage.setItem(TEAM_PROJECTS_CHANGED_STORAGE_KEY, String(Date.now()));
+    // Include a monotonic suffix so two genuine mutations in the same
+    // millisecond still change the storage value and both reach other tabs.
+    window.localStorage.setItem(
+      TEAM_PROJECTS_CHANGED_STORAGE_KEY,
+      `${Date.now()}:${++teamProjectsChangedNotificationSequence}`,
+    );
   } catch {
     // localStorage can be unavailable in restricted contexts; the in-window event
     // already refreshed the current client.
@@ -1561,27 +1663,41 @@ export function useTeamProjects(): TeamProjectsState {
   const catalogContext = resourceReadIdentity?.context ?? null;
   const catalogGeneration = resourceReadIdentity?.generation ?? null;
   const catalogContextIdentity = workspaceIdentityCacheKey(catalogContext);
+  const catalogAccountGeneration = currentWorkspaceAccountGeneration();
   const catalogScopeKey = catalogGeneration
-    ? JSON.stringify([catalogGeneration, catalogContextIdentity])
+    ? JSON.stringify([catalogAccountGeneration, catalogGeneration, catalogContextIdentity])
     : null;
   const resourceReadIdentityRef = useRef(resourceReadIdentity);
   resourceReadIdentityRef.current = resourceReadIdentity;
-  const teamCatalogIdentity = teamProjectsIdentity(catalogContext);
+  const teamCatalogIdentity = teamProjectsIdentity(
+    catalogContext,
+    catalogAccountGeneration,
+  );
+  const initialCachedCatalog = teamCatalogIdentity
+    ? cachedTeamProjects.get(teamCatalogIdentity) ?? null
+    : null;
   const [catalog, setCatalog] = useState<{
     identity: string | null;
     projects: TeamProject[];
-  }>(() => {
+  }>(() => ({
+    identity: initialCachedCatalog ? catalogScopeKey : null,
+    projects: initialCachedCatalog ?? [],
+  }));
+  const [loading, setLoading] = useState(initialCachedCatalog === null);
+  const [nonce, setNonce] = useState(0);
+  const mountedRef = useRef(true);
+  const catalogScopeRef = useRef(catalogScopeKey);
+  if (catalogScopeRef.current !== catalogScopeKey) {
     const cached = teamCatalogIdentity
       ? cachedTeamProjects.get(teamCatalogIdentity) ?? null
       : null;
-    return {
+    catalogScopeRef.current = catalogScopeKey;
+    setCatalog({
       identity: cached ? catalogScopeKey : null,
       projects: cached ?? [],
-    };
-  });
-  const [loading, setLoading] = useState(true);
-  const [nonce, setNonce] = useState(0);
-  const mountedRef = useRef(true);
+    });
+    setLoading(cached === null);
+  }
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1597,13 +1713,23 @@ export function useTeamProjects(): TeamProjectsState {
   // `onTeamProjectsChanged` below) via `forceCoalescedGet`, which also
   // collapses the case where every mounted `useTeamProjects()` instance reacts
   // to that same change in one synchronous burst into a single fetch.
-  const loadFull = useCallback(async (force = false) => {
+  const loadFull = useCallback(async (force = false, event?: object) => {
     const issuedIdentity = resourceReadIdentityRef.current;
+    const issuedAccountGeneration = currentWorkspaceAccountGeneration();
     const read = beginWorkspaceScopedRead(issuedIdentity?.context);
+    const catalogRefresh = event && read.context
+      ? beginTeamProjectCatalogRefresh({
+          accountGeneration: issuedAccountGeneration,
+          context: read.context,
+          event,
+        })
+      : null;
     const isStillCurrent = () => {
       const current = resourceReadIdentityRef.current;
-      return current?.generation === issuedIdentity?.generation
-        && read.isStillCurrent(current?.context);
+      return currentWorkspaceAccountGeneration() === issuedAccountGeneration
+        && current?.generation === issuedIdentity?.generation
+        && read.isStillCurrent(current?.context)
+        && (catalogRefresh?.isLatest() ?? true);
     };
     if (!read.context) {
       if (mountedRef.current) {
@@ -1620,10 +1746,31 @@ export function useTeamProjects(): TeamProjectsState {
         context: read.context,
         force,
         requestGeneration: issuedIdentity?.generation,
+        cacheDiscriminator: catalogRefresh?.cacheDiscriminator,
       });
       if (!isStillCurrent()) return;
-      const identity = teamProjectsIdentity(read.context);
-      if (identity) cachedTeamProjects.set(identity, projects);
+      const identity = teamProjectsIdentity(read.context, issuedAccountGeneration);
+      if (identity) cacheTeamProjects(identity, projects);
+      if (catalogRefresh) {
+        const projectsById = new Map(projects.map((project) => [project.projectId, project]));
+        patchProjectDisplaySnapshots({
+          accountGeneration: issuedAccountGeneration,
+          context: read.context,
+          patch: (displayProjects) => displayProjects.map((candidate) => {
+            if (candidate.workspaceId !== read.context?.workspaceId) return candidate;
+            const catalogProject = projectsById.get(candidate.id);
+            if (!catalogProject) return candidate;
+            return {
+              ...candidate,
+              ...(catalogProject.name ? { name: catalogProject.name } : {}),
+              ...(catalogProject.metadata ? { metadata: catalogProject.metadata } : {}),
+              ...(catalogProject.updatedAt !== undefined
+                ? { updatedAt: catalogProject.updatedAt }
+                : {}),
+            };
+          }),
+        });
+      }
       if (mountedRef.current) {
         setCatalog({ identity: catalogScopeKey, projects });
         setLoading(false);
@@ -1634,14 +1781,108 @@ export function useTeamProjects(): TeamProjectsState {
       // newer workspace's successful catalog when it rejects late.
       if (!isStillCurrent()) return;
       if (mountedRef.current) {
+        const identity = teamProjectsIdentity(read.context, issuedAccountGeneration);
+        const cached = identity ? cachedTeamProjects.get(identity) ?? null : null;
         setCatalog({
-          identity: catalogScopeKey,
-          projects: [],
+          identity: cached ? catalogScopeKey : null,
+          projects: cached ?? [],
         });
         setLoading(false);
       }
     }
   }, [catalogScopeKey]);
+
+  const loadProjectMetadata = useCallback(async (
+    payload: Extract<WorkspaceInvalidationSsePayload, { type: 'team-projects-changed' }>,
+  ) => {
+    const projectId = payload.projectId;
+    if (!projectId) return;
+    const issuedIdentity = resourceReadIdentityRef.current;
+    const issuedAccountGeneration = currentWorkspaceAccountGeneration();
+    const read = beginWorkspaceScopedRead(issuedIdentity?.context);
+    if (!read.context) return;
+    const metadataRefresh = beginTeamProjectMetadataRefresh({
+      accountGeneration: issuedAccountGeneration,
+      context: read.context,
+      projectId,
+      event: payload,
+    });
+    const isStillCurrent = () => {
+      const current = resourceReadIdentityRef.current;
+      return currentWorkspaceAccountGeneration() === issuedAccountGeneration
+        && current?.generation === issuedIdentity?.generation
+        && read.isStillCurrent(current?.context)
+        && metadataRefresh.isLatest();
+    };
+    try {
+      const project = await fetchTeamProjectCatalogEntry({
+        context: read.context,
+        projectId,
+        force: true,
+        requestGeneration: issuedIdentity?.generation,
+        cacheDiscriminator: metadataRefresh.cacheDiscriminator,
+      });
+      if (!isStillCurrent()) return;
+      if (!project) {
+        // A metadata signal should name an existing row. Absence means it
+        // raced a share/unshare, so fall back to authoritative reconciliation.
+        void loadFull(true, payload);
+        return;
+      }
+      const identity = teamProjectsIdentity(read.context, issuedAccountGeneration);
+      const cached = identity ? cachedTeamProjects.get(identity) ?? null : null;
+      const base = cached ?? (catalog.identity === catalogScopeKey ? catalog.projects : []);
+      if (!base.some((candidate) => candidate.projectId === projectId)) {
+        void loadFull(true, payload);
+        return;
+      }
+      const patched = base.map((candidate) =>
+        candidate.projectId === projectId ? project : candidate
+      );
+      if (identity) cacheTeamProjects(identity, patched);
+      patchProjectDisplaySnapshots({
+        accountGeneration: issuedAccountGeneration,
+        context: read.context,
+        patch: (projects) => projects.map((candidate) =>
+          candidate.id === projectId
+            ? {
+                ...candidate,
+                ...(project.name ? { name: project.name } : {}),
+                ...(project.metadata ? { metadata: project.metadata } : {}),
+                ...(project.updatedAt !== undefined ? { updatedAt: project.updatedAt } : {}),
+              }
+            : candidate),
+      });
+      if (mountedRef.current) {
+        setCatalog((current) =>
+          isStillCurrent() && current.identity === catalogScopeKey
+            ? {
+                ...current,
+                projects: current.projects.map((candidate) =>
+                  candidate.projectId === projectId ? project : candidate
+                ),
+              }
+            : current
+        );
+      }
+    } catch {
+      // Keep last-good rows. Poll/reconnect remains the bounded full recovery.
+    }
+  }, [catalog.identity, catalog.projects, catalogScopeKey, loadFull]);
+
+  const handleTeamProjectsChanged = useCallback((
+    payload?: Extract<WorkspaceInvalidationSsePayload, { type: 'team-projects-changed' }>,
+    event?: object,
+  ) => {
+    if (payload?.kind === 'metadata' && payload.projectId) {
+      void loadProjectMetadata(payload);
+      return;
+    }
+    // Production broad invalidations always supply the shared SSE payload,
+    // CustomEvent detail, or StorageEvent. A defensive direct dispatch of a
+    // plain Event still uses that Event object, never a per-listener token.
+    if (event) void loadFull(true, event);
+  }, [loadFull, loadProjectMetadata]);
 
   // Initial load + manual reload (nonce bump).
   useEffect(() => {
@@ -1649,16 +1890,40 @@ export function useTeamProjects(): TeamProjectsState {
       (workspaceContextLoading || identityChangePending)
       && !resourceReadIdentity
     ) return;
-    setLoading(true);
+    const cached = teamCatalogIdentity
+      ? cachedTeamProjects.get(teamCatalogIdentity) ?? null
+      : null;
+    if (cached) {
+      setCatalog({ identity: catalogScopeKey, projects: cached });
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     void loadFull();
-  }, [nonce, loadFull, workspaceContextLoading]);
+  }, [
+    catalogScopeKey,
+    nonce,
+    loadFull,
+    teamCatalogIdentity,
+    workspaceContextLoading,
+  ]);
 
   // Collab realtime hop-2: subscribe to the workspace SSE and re-fetch on a
   // pushed `team-projects-changed` (a teammate shared/unshared a project). The
   // daemon's workspace-invalidation poller diffs the team list and pushes only
   // on an actual change. `connected` drives poll-as-floor below.
   const { connected: sseConnected } = useWorkspaceInvalidation(
-    { 'team-projects-changed': () => void loadFull() },
+    {
+      'team-projects-changed': (payload) => {
+        if (workspaceContext) {
+          markProjectDisplaySnapshotsDirty({
+            accountGeneration: currentWorkspaceAccountGeneration(),
+            context: workspaceContext,
+          });
+        }
+        handleTeamProjectsChanged(payload, payload);
+      },
+    },
     {
       workspaceContext,
       onActive: () => void loadFull(),
@@ -1692,15 +1957,27 @@ export function useTeamProjects(): TeamProjectsState {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') void loadFull();
     };
-    const onTeamProjectsChanged = () => {
+    const onTeamProjectsChanged = (event: Event) => {
+      if (workspaceContext) {
+        markProjectDisplaySnapshotsDirty({
+          accountGeneration: currentWorkspaceAccountGeneration(),
+          context: workspaceContext,
+        });
+      }
       // A workspace switch fires this same event (see `switchWorkspace` in
       // EntryNavRail.tsx). Without forcing, an in-flight coalesced read
       // started just before the switch can resolve inside the new call's
       // coalescing window and hand back the PREVIOUS workspace's team list.
-      void loadFull(true);
+      const detail = event instanceof CustomEvent
+        ? event.detail as Extract<
+            WorkspaceInvalidationSsePayload,
+            { type: 'team-projects-changed' }
+          > | undefined
+        : undefined;
+      handleTeamProjectsChanged(detail, detail ?? event);
     };
     const onStorage = (event: StorageEvent) => {
-      if (event.key === TEAM_PROJECTS_CHANGED_STORAGE_KEY) void loadFull();
+      if (event.key === TEAM_PROJECTS_CHANGED_STORAGE_KEY) void loadFull(true, event);
     };
     window.addEventListener('focus', onFocus);
     window.addEventListener(TEAM_PROJECTS_CHANGED_EVENT, onTeamProjectsChanged);
@@ -1712,7 +1989,7 @@ export function useTeamProjects(): TeamProjectsState {
       window.removeEventListener('storage', onStorage);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [loadFull]);
+  }, [handleTeamProjectsChanged, loadFull, workspaceContext]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   const catalogMatchesIdentity = catalog.identity === catalogScopeKey;

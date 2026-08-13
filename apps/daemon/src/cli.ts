@@ -13,7 +13,6 @@ import { DESIGN_SYSTEMS_USAGE, isDesignSystemsHelpArg } from './cli-help/index.j
 import { BRAND_USAGE, isBrandHelpArg } from './cli-help/index.js';
 import { parseDesignSystemRenameArgs } from './design-systems/rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
-import { runByokToolCli } from './tools-byok-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
 import { requestJsonIpc } from '@open-design/sidecar';
@@ -147,6 +146,8 @@ const PLUGIN_STRING_FLAGS = new Set([
   'catalog',
   'host',
   'name',
+  'workspace',
+  'workspace-member',
 ]);
 const PLUGIN_PROJECT_RESOURCE_STRING_FLAGS = new Set([
   ...PLUGIN_STRING_FLAGS,
@@ -217,7 +218,7 @@ const CONFIG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const AMR_STRING_FLAGS = new Set(['daemon-url']);
 const AMR_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'refresh']);
 const COLLAB_STRING_FLAGS = new Set([
-  'daemon-url', 'project', 'member', 'name', 'role', 'design-system',
+  'daemon-url', 'project', 'member', 'name', 'role', 'client-id', 'sequence', 'design-system',
   'workspace', 'workspace-member',
 ]);
 const COLLAB_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
@@ -370,7 +371,6 @@ const SUBCOMMAND_MAP = {
   artifacts: runArtifacts,
   media: runMedia,
   mcp: runMcp,
-  byok: runByok,
   amr: runAmr,
   collab: runCollab,
   'message-center': runMessageCenter,
@@ -906,8 +906,8 @@ function printCollabHelp() {
   console.log(`Usage:
   od collab status <projectId> --workspace <id> --workspace-member <id> [--json]
   od collab presence <projectId> --workspace <id> --workspace-member <id> [--json]
-  od collab heartbeat <projectId> --workspace <id> --workspace-member <id> --member <id> [--name <name>] [--role owner|admin|member] [--json]
-  od collab leave <projectId> --workspace <id> --workspace-member <id> --member <id> [--json]
+  od collab heartbeat <projectId> --workspace <id> --workspace-member <id> --member <id> [--client-id <id> --sequence <n>] [--name <name>] [--role owner|admin|member] [--json]
+  od collab leave <projectId> --workspace <id> --workspace-member <id> --member <id> [--client-id <id> --sequence <n>] [--json]
   od collab changed <projectId> --workspace <id> --workspace-member <id> [--json]
   od collab publish <projectId> --workspace <id> --workspace-member <id> [--json]
   od collab share <projectId> --workspace <id> --workspace-member <id> [--json]
@@ -934,6 +934,8 @@ Options:
   --workspace <id>        Explicit workspace id for request authorization.
   --workspace-member <id> Explicit workspace member id for request authorization.
   --member <id>           Member id for the presence heartbeat / leave.
+  --client-id <id>        Stable id for one presence session.
+  --sequence <n>          Positive monotonic operation number for --client-id.
   --name <name>           Display name attached to a heartbeat.
   --role <role>           owner | admin | member.
   --json                  Emit raw JSON.
@@ -1115,8 +1117,10 @@ async function runCollab(args) {
         console.error('missing --member <id>');
         process.exit(2);
       }
+      const presenceSession = readCollabPresenceSessionFlags(flags);
       const memberBody = {
         memberId: flags.member,
+        ...presenceSession,
         ...(flags.name ? { name: flags.name } : {}),
         ...(flags.role ? { role: flags.role } : {}),
       };
@@ -1131,7 +1135,10 @@ async function runCollab(args) {
         console.error('missing --member <id>');
         process.exit(2);
       }
-      const body = await request('POST', '/presence/leave', { memberId: flags.member });
+      const body = await request('POST', '/presence/leave', {
+        memberId: flags.member,
+        ...readCollabPresenceSessionFlags(flags),
+      });
       return emit(body, () => console.log('left'));
     }
     case 'changed': {
@@ -1146,6 +1153,26 @@ async function runCollab(args) {
       console.error(`unknown subcommand: od collab ${sub}`);
       process.exit(2);
   }
+}
+
+function readCollabPresenceSessionFlags(flags) {
+  const clientId = typeof flags['client-id'] === 'string'
+    ? flags['client-id'].trim()
+    : '';
+  const rawSequence = typeof flags.sequence === 'string'
+    ? flags.sequence.trim()
+    : '';
+  if (!rawSequence) return clientId ? { clientId } : {};
+  if (!clientId) {
+    console.error('--sequence requires --client-id <id>');
+    process.exit(2);
+  }
+  const sequence = Number(rawSequence);
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+    console.error('--sequence must be a positive safe integer');
+    process.exit(2);
+  }
+  return { clientId, sequence };
 }
 // Subcommand: od message-center …
 // ---------------------------------------------------------------------------
@@ -1843,15 +1870,6 @@ files folder so the FileViewer can preview them immediately.`);
 }
 
 // ---------------------------------------------------------------------------
-// Subcommand: od byok
-// ---------------------------------------------------------------------------
-
-async function runByok(args) {
-  const result = await runByokToolCli(args);
-  if (result.exitCode !== 0) process.exit(result.exitCode);
-}
-
-// ---------------------------------------------------------------------------
 // Subcommand: od mcp
 // ---------------------------------------------------------------------------
 
@@ -1881,7 +1899,14 @@ async function runMcp(args) {
   });
 
   const { runMcpStdio } = await import('./mcp.js');
-  await runMcpStdio({ daemonUrl });
+  await runMcpStdio({
+    daemonUrl,
+    ...(flags['daemon-url']
+      ? {}
+      : {
+          resolveDaemonUrl: async () => await ensureMcpDaemonUrl({}),
+        }),
+  });
 }
 
 function printMcpHelp() {
@@ -1902,11 +1927,11 @@ Options:
                        restarts even when the port is ephemeral. A
                        packaged install also starts the signed Open
                        Design app in --headless mode when its daemon
-                       is stopped; no Electron window is opened.
-                       Once running, the MCP server caches the URL;
-                       restart the
-                       MCP client after a daemon restart to pick up a
-                       new port.
+                       is stopped; no Electron window is opened. The
+                       MCP server re-discovers the registered runtime
+                       before calls and safely retries reads when the
+                       daemon changes ports, so an existing task can
+                       survive an Open Design restart.
 
 Tools exposed:
   list_projects                  list every Open Design project
@@ -2684,7 +2709,15 @@ function inferGithubHost(target) {
 // targets: 'od', 'claude-plugin', 'agent-skill'.
 async function runPluginExport(rest) {
   const flags = parseFlags(rest, {
-    string: new Set(['daemon-url', 'as', 'out', 'snapshot-id', 'project']),
+    string: new Set([
+      'daemon-url',
+      'as',
+      'out',
+      'snapshot-id',
+      'project',
+      'workspace',
+      'workspace-member',
+    ]),
     boolean: new Set(['help', 'h', 'json']),
   });
   if (rest.length === 0 || flags.help || flags.h) {
@@ -2713,7 +2746,7 @@ view is the single source of truth.`);
     ? flags.out
     : process.cwd();
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
-  const resp = await fetch(`${base}/api/applied-plugins/export`, {
+  const resp = await pluginFetch(flags, `${base}/api/applied-plugins/export`, {
     method:  'POST',
     headers: { 'content-type': 'application/json' },
     body:    JSON.stringify({
@@ -2985,10 +3018,7 @@ async function runPluginSnapshots(args) {
     boolean: PLUGIN_BOOLEAN_FLAGS,
   });
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
-  const workspaceHeaders =
-    sub === 'list'
-      ? workspaceHeadersFromExplicitFlags(flags) ?? {}
-      : {};
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
   if (sub === 'show') {
     const positional = args.slice(1).filter((a) => !a.startsWith('-'));
     const id = positional[0];
@@ -2997,7 +3027,7 @@ async function runPluginSnapshots(args) {
       process.exit(2);
     }
     const url = `${base}/api/applied-plugins/${encodeURIComponent(id)}`;
-    const resp = await fetch(url);
+    const resp = await pluginFetch(flags, url);
     if (resp.status === 404) {
       console.error(`snapshot ${id} not found`);
       process.exit(72);
@@ -3018,8 +3048,8 @@ async function runPluginSnapshots(args) {
     }
     const [idA, idB] = positional;
     const [respA, respB] = await Promise.all([
-      fetch(`${base}/api/applied-plugins/${encodeURIComponent(idA)}`),
-      fetch(`${base}/api/applied-plugins/${encodeURIComponent(idB)}`),
+      pluginFetch(flags, `${base}/api/applied-plugins/${encodeURIComponent(idA)}`),
+      pluginFetch(flags, `${base}/api/applied-plugins/${encodeURIComponent(idB)}`),
     ]);
     if (respA.status === 404) { console.error(`snapshot ${idA} not found`); process.exit(72); }
     if (respB.status === 404) { console.error(`snapshot ${idB} not found`); process.exit(72); }
@@ -3173,6 +3203,15 @@ async function pluginDaemonUrl(flags) {
   return cliDaemonUrl(flags);
 }
 
+function pluginFetch(flags, input, init = {}) {
+  const scoped = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const headers = {
+    ...scoped,
+    ...(init.headers ?? {}),
+  };
+  return fetch(input, { ...init, headers });
+}
+
 // Plan §3.Y1 — filter knobs on `od plugin list` (and feeds
 // `od plugin search` below). Recognising these as string flags
 // keeps the parseFlags() argv consumer happy.
@@ -3257,7 +3296,7 @@ Prints an at-a-glance plugin + snapshot inventory:
   }
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
   const url = `${base}/api/plugins/stats`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (!resp.ok) {
     console.error(`GET ${url} failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -3307,7 +3346,7 @@ function formatTimestamp(ts) {
 
 async function fetchPluginList(flags) {
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (!resp.ok) {
     console.error(`GET /api/plugins failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -3374,13 +3413,13 @@ async function runPluginInfo(rest) {
   }
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
   const url = `${base}/api/plugins/${encodeURIComponent(id)}`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (resp.ok && !flags.version) {
     const data = await resp.json();
     process.stdout.write(JSON.stringify(data, null, 2) + '\n');
     return;
   }
-  const mpResp = await fetch(`${base}/api/marketplaces`);
+  const mpResp = await pluginFetch(flags, `${base}/api/marketplaces`);
   if (mpResp.ok) {
     const mpData = await mpResp.json().catch(() => ({}));
     const resolved = resolveMarketplacePluginFromList(
@@ -3464,7 +3503,7 @@ async function runPluginManifest(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (resp.status === 404) {
     console.error(`plugin ${id} not found`);
     process.exit(65);
@@ -3489,7 +3528,7 @@ async function runPluginManifest(rest) {
 async function runPluginSources(rest) {
   const flags = parseFlags(rest, { string: PLUGIN_STRING_FLAGS, boolean: PLUGIN_BOOLEAN_FLAGS });
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (!resp.ok) {
     console.error(`GET /api/plugins failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -3538,7 +3577,7 @@ async function runPluginInstall(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/install`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
     body: JSON.stringify({ source }),
@@ -3851,7 +3890,7 @@ Exit codes:
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
 
   // 1. Resolve the plugin record (fsPath + manifest).
-  const pluginResp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+  const pluginResp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}`);
   if (pluginResp.status === 404) {
     console.error(`plugin ${id} not found`);
     process.exit(65);
@@ -3889,7 +3928,7 @@ Exit codes:
     c === 'doctor' || c === 'simulate' || c === 'canon'));
   let doctorReport = null;
   if (enabledSet.has('doctor')) {
-    const doctorResp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}/doctor`);
+    const doctorResp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}/doctor`);
     if (doctorResp.ok) {
       doctorReport = await doctorResp.json();
     }
@@ -3927,7 +3966,8 @@ Exit codes:
       canonExpected = null;
     }
     if (canonExpected !== null) {
-      const canonResp = await fetch(
+      const canonResp = await pluginFetch(
+        flags,
         `${base}/api/applied-plugins/${encodeURIComponent(config.canon.snapshotId)}/canon`,
         { headers: { accept: 'text/plain' } },
       );
@@ -4021,7 +4061,7 @@ Closed signal vocabulary:
   // Fetch the plugin from the daemon so we get the resolved
   // manifest (including pipeline).
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
-  const resp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+  const resp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}`);
   if (resp.status === 404) {
     console.error(`plugin ${id} not found`);
     process.exit(65);
@@ -4108,7 +4148,7 @@ fixtures into a plugin's own tests/.`);
   // --check always wants the raw text output; force text/plain.
   const wantsText = !flags.json || checkPath !== null;
   const headers = { accept: wantsText ? 'text/plain' : 'application/json' };
-  const resp = await fetch(url, { headers });
+  const resp = await pluginFetch(flags, url, { headers });
   if (resp.status === 404) {
     console.error(`snapshot ${id} not found`);
     process.exit(72);
@@ -4176,8 +4216,8 @@ into 'added' / 'removed' / 'changed' with one line per field.`);
   const [idA, idB] = positional;
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
   const [respA, respB] = await Promise.all([
-    fetch(`${base}/api/plugins/${encodeURIComponent(idA)}`),
-    fetch(`${base}/api/plugins/${encodeURIComponent(idB)}`),
+    pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(idA)}`),
+    pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(idB)}`),
   ]);
   if (!respA.ok) {
     console.error(`GET /api/plugins/${idA} failed: ${respA.status}`);
@@ -4224,7 +4264,7 @@ async function runPluginUpgrade(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/upgrade`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
     body: JSON.stringify({
@@ -4290,7 +4330,7 @@ async function runPluginUninstall(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/uninstall`;
-  const resp = await fetch(url, { method: 'POST' });
+  const resp = await pluginFetch(flags, url, { method: 'POST' });
   if (!resp.ok) {
     console.error(`POST /api/plugins/${id}/uninstall failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -4339,7 +4379,7 @@ async function runPluginApply(rest) {
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/apply`;
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await pluginFetch(flags, url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ inputs, projectId: flags.project, grantCaps }),
@@ -4392,7 +4432,7 @@ async function runPluginDuplicate(rest) {
     : {};
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await pluginFetch(flags, url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -4525,7 +4565,15 @@ Lists and formalizes persisted skill-to-plugin candidates.`);
 // always under the author's control.
 async function runPluginPublish(rest) {
   const flags = parseFlags(rest, {
-    string: new Set(['daemon-url', 'to', 'snapshot-id', 'repo', 'catalog']),
+    string: new Set([
+      'daemon-url',
+      'to',
+      'snapshot-id',
+      'repo',
+      'catalog',
+      'workspace',
+      'workspace-member',
+    ]),
     boolean: new Set(['help', 'h', 'json', 'open']),
   });
   if (rest.length === 0 || flags.help || flags.h) {
@@ -4558,7 +4606,7 @@ publish from a frozen run snapshot rather than the live installed copy.`);
   // SQLite handle; everything stays loopback-mediated.
   let meta = { pluginId: id, pluginVersion: '0.0.0' };
   try {
-    const resp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+    const resp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}`);
     if (resp.ok) {
       const row = await resp.json();
       // The daemon's plugin row carries a stored `version` plus the full
@@ -5245,7 +5293,7 @@ async function runPluginDoctor(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/doctor`;
-  const resp = await fetch(url, { method: 'POST' });
+  const resp = await pluginFetch(flags, url, { method: 'POST' });
   if (!resp.ok) {
     console.error(`POST /api/plugins/${id}/doctor failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -5303,7 +5351,7 @@ async function runPluginReplay(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/runs/${encodeURIComponent(runId)}/replay`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ snapshotId }),
@@ -5348,7 +5396,7 @@ async function runPluginTrust(rest) {
   }
   const action = flags.revoke ? 'revoke' : 'grant';
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/trust`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ capabilities: caps, action }),
@@ -8912,10 +8960,11 @@ async function runSkillInstall(rest) {
     process.exit(2);
   }
   const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
   try {
     const resp = await fetch(`${base}/api/skills/install`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
       body: JSON.stringify({ source }),
     });
     const body = await resp.json().catch(() => ({}));
@@ -8949,7 +8998,11 @@ async function runSkillUninstall(rest) {
     process.exit(2);
   }
   const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
-  const resp = await fetch(`${base}/api/skills/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const resp = await fetch(`${base}/api/skills/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: workspaceHeaders,
+  });
   const body = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     if (flags.json) {

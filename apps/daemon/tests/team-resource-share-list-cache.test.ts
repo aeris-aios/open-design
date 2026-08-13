@@ -9,6 +9,7 @@ import type {
   TeamResourceShareRecord,
   TeamResourceShareService,
 } from '../src/collab/team-resource-share.js';
+import { TeamResourceAuthorityUnavailableError } from '../src/collab/team-resource-share.js';
 
 let server: http.Server | null = null;
 const SCOPE: TeamResourceRequestScope = {
@@ -102,6 +103,65 @@ const record = (id: string): TeamResourceShareRecord =>
   ({ id, localId: id, version: 1 }) as unknown as TeamResourceShareRecord;
 
 describe('team resource share /team listing', () => {
+  it('returns retryable 503 when unshare cannot read the authoritative Team index', async () => {
+    const service = {
+      async unshare() {
+        throw new TeamResourceAuthorityUnavailableError(new Error('hub offline'));
+      },
+    } as unknown as TeamResourceShareService;
+    const req = await startServer({
+      basePath: 'design-systems',
+      share: service,
+    });
+
+    const response = await req.del('/api/workspace/design-systems/user%3Abrand/share');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'WORKSPACE_RESOURCE_AUTHORITY_UNAVAILABLE',
+      message: 'team resource authority is temporarily unavailable',
+      retryable: true,
+    });
+  });
+
+  it('rejects a share when the resource-owner gate denies it', async () => {
+    let shareCalls = 0;
+    const service = {
+      async sharedResources() { return []; },
+      async share() { shareCalls += 1; return { version: 1 }; },
+      async unshare() { return false; },
+    } as unknown as TeamResourceShareService;
+    const req = await startServer({
+      basePath: 'design-systems',
+      share: service,
+      authorizeShare: () => false,
+    });
+    const response = await req.post('/api/workspace/design-systems/user%3Aprivate/share');
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('WORKSPACE_RESOURCE_SHARE_DENIED');
+    expect(shareCalls).toBe(0);
+  });
+
+  it('checks exact Personal creator ownership before invoking the share service', async () => {
+    let shareCalls = 0;
+    const service = {
+      async share() {
+        shareCalls += 1;
+        return { version: 1 };
+      },
+    } as unknown as TeamResourceShareService;
+    const req = await startServer({
+      basePath: 'plugins',
+      share: service,
+      authorizeShare: async () => false,
+    });
+
+    const response = await req.post('/api/workspace/plugins/private-plugin/share');
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('WORKSPACE_RESOURCE_SHARE_DENIED');
+    expect(shareCalls).toBe(0);
+  });
+
   it('forwards each request-resolved scope through list, share, and unshare', async () => {
     const seen: Array<{ operation: string; workspaceId: string }> = [];
     const service = {
@@ -135,6 +195,46 @@ describe('team resource share /team listing', () => {
       { operation: 'list', workspaceId: 'ws-1' },
       { operation: 'share', workspaceId: 'ws-2' },
       { operation: 'unshare', workspaceId: 'ws-1' },
+    ]);
+  });
+
+  it('fans out a committed linked mutation only after its exact list cache is invalidated', async () => {
+    const order: string[] = [];
+    const service = {
+      async share() {
+        order.push('share');
+        return { version: 1 };
+      },
+      async unshare() {
+        order.push('unshare');
+        return true;
+      },
+    } as unknown as TeamResourceShareService;
+    const listTeam = Object.assign(
+      async () => ({ ids: [], resources: [] }),
+      { invalidate: () => { order.push('invalidate-resource-list'); } },
+    );
+    const req = await startServer({
+      basePath: 'design-systems',
+      share: service,
+      listTeam,
+      onMutationCommitted: (resourceId, requestScope, visibility) => {
+        order.push(`emit:${requestScope.principal.teamId}:${resourceId}:${visibility}`);
+      },
+    });
+
+    await expect(req.post('/api/workspace/design-systems/user%3Abrand/share'))
+      .resolves.toMatchObject({ status: 200, body: { shared: true } });
+    await expect(req.del('/api/workspace/design-systems/user%3Abrand/share'))
+      .resolves.toMatchObject({ status: 200, body: { unshared: true } });
+
+    expect(order).toEqual([
+      'share',
+      'invalidate-resource-list',
+      'emit:ws-1:user:brand:team',
+      'unshare',
+      'invalidate-resource-list',
+      'emit:ws-1:user:brand:personal',
     ]);
   });
 

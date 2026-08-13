@@ -1921,6 +1921,8 @@ export const zhTW: Dict = {
   "newproj.createFromTemplate": "基於範本建立",
   "newproj.createDisabledTitle":
     "請先在任意專案內透過「分享」選單將其儲存為範本。",
+  "newproj.openFolder": "開啟資料夾",
+  "newproj.openingFolder": "正在開啟…",
   "newproj.importClaudeZip": "匯入 Claude Design ZIP",
   "newproj.importClaudeZipTitle": "匯入 Claude Design 匯出的 .zip 檔案",
   "newproj.importingClaudeZip": "正在匯入…",
@@ -4703,6 +4705,7 @@ export const zhTW: Dict = {
   "dsManager.statusDraft": "草稿",
   "dsManager.openSystemAria": "編輯 {title}",
   "dsManager.deleteSystemAria": "刪除 {title}",
+  "dsManager.deletePermissionDenied": "你沒有權限刪除此設計體系。",
   "dsManager.presetsAria": "官方設計體系預設",
   "dsManager.eyebrowLibrary": "資料庫",
   "dsManager.eyebrowTemplates": "範本",

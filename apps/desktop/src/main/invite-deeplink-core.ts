@@ -4,6 +4,9 @@
 export const INVITE_DEEPLINK_SCHEME = "opendesign";
 const INVITE_DEEPLINK_HOST = "workspace";
 const INVITE_DEEPLINK_PATH = "/invite/continue";
+const WORKSPACE_OPEN_DEEPLINK_PATH = "/open";
+/** Outcome discriminator for the payload-free `workspace/open` focus hand-off. */
+export const WORKSPACE_OPEN_FOCUS_REASON = "workspace_open_focus";
 
 interface ParsedInviteDeeplink {
   workspaceId: string;
@@ -39,6 +42,27 @@ function parseInviteDeeplink(url: string): ParsedInviteDeeplink | null {
   return { workspaceId, memberId, inviteId, nonce };
 }
 
+/**
+ * True for `opendesign://workspace/open[?...]` — the cloud device-activation
+ * page fires this after a client-originated sign-in completes in the browser,
+ * to hand the user back to the desktop app. It carries no payload on purpose:
+ * the login itself lands through the daemon's `vela login` polling, so handling
+ * this deeplink only brings the client back to the foreground.
+ */
+export function isWorkspaceOpenDeeplink(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === `${INVITE_DEEPLINK_SCHEME}:` &&
+    parsed.host === INVITE_DEEPLINK_HOST &&
+    parsed.pathname.replace(/\/+$/, "") === WORKSPACE_OPEN_DEEPLINK_PATH
+  );
+}
+
 export interface InviteDeeplinkDeps {
   /** Resolve the running daemon's base URL; rejects when it is not up yet. */
   resolveDaemonBaseUrl: () => Promise<string>;
@@ -48,6 +72,14 @@ export interface InviteDeeplinkDeps {
   focus?: () => void;
   /** Fired with the resolved workspace context on success (e.g. to nudge the web). */
   onActivated?: (context: unknown) => void;
+  /** Reports completed handling without exposing the deeplink URL. */
+  onCompleted?: (outcome: { ok: boolean; reason?: string; status?: number }) => void;
+  /**
+   * Stable installed executable used for OS protocol registration on Windows.
+   * Packaged payload executables are versioned and may be deleted after an
+   * update, so registering process.execPath would strand future deeplinks.
+   */
+  protocolClientPath?: string | null;
 }
 
 type ContinueInvite = (
@@ -102,13 +134,27 @@ export async function continueInviteFromUrl(
   url: string,
   deps: InviteDeeplinkDeps,
 ): Promise<{ ok: boolean; reason?: string; status?: number }> {
+  if (isWorkspaceOpenDeeplink(url)) {
+    // The focus dep touches runtime/window state that may be mid-teardown; a
+    // throw here must not escape into the OS url handler (this function's
+    // documented no-throw contract) and must still report completion.
+    try {
+      deps.focus?.();
+    } catch {
+      return completeInvite(deps, { ok: false, reason: "focus_failed" });
+    }
+    // Carries its own reason so the completion log (and any future consumer)
+    // can tell a payload-free focus hand-off apart from a real invite
+    // continuation, which is the only other `ok: true` outcome here.
+    return completeInvite(deps, { ok: true, reason: WORKSPACE_OPEN_FOCUS_REASON });
+  }
   const parsed = parseInviteDeeplink(url);
-  if (!parsed) return { ok: false, reason: "not_an_invite_deeplink" };
+  if (!parsed) return completeInvite(deps, { ok: false, reason: "not_an_invite_deeplink" });
   let baseUrl: string;
   try {
     baseUrl = await deps.resolveDaemonBaseUrl();
   } catch {
-    return { ok: false, reason: "daemon_unavailable" };
+    return completeInvite(deps, { ok: false, reason: "daemon_unavailable" });
   }
   const fetchImpl = deps.fetch ?? fetch;
   try {
@@ -117,14 +163,26 @@ export async function continueInviteFromUrl(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ nonce: parsed.nonce }),
     });
-    if (!response.ok) return { ok: false, reason: "consume_failed", status: response.status };
+    if (!response.ok) return completeInvite(deps, { ok: false, reason: "consume_failed", status: response.status });
     const body = (await response.json()) as { context?: unknown };
     deps.onActivated?.(body.context ?? null);
     deps.focus?.();
-    return { ok: true };
+    return completeInvite(deps, { ok: true });
   } catch {
     // The web success page keeps a retry-open affordance, so a transient failure
     // here is recoverable — never throw into the app's url handlers.
-    return { ok: false, reason: "unreachable" };
+    return completeInvite(deps, { ok: false, reason: "unreachable" });
   }
+}
+
+function completeInvite(
+  deps: InviteDeeplinkDeps,
+  outcome: { ok: boolean; reason?: string; status?: number },
+): { ok: boolean; reason?: string; status?: number } {
+  try {
+    deps.onCompleted?.(outcome);
+  } catch {
+    // Completion reporting is observational and must not break OS URL handling.
+  }
+  return outcome;
 }

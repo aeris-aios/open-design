@@ -446,7 +446,9 @@ describe('a Home auto-send identifies its caller before the project scope resolv
     );
     mockedListMessages.mockResolvedValue([]);
     mockedFetchPreviewComments.mockResolvedValue([]);
+    mockedFetchProjectFiles.mockResolvedValue([]);
     mockedFetchBrands.mockResolvedValue([]);
+    mockedStreamViaDaemon.mockResolvedValue(undefined);
     mockedCheckAmrBalanceGate.mockResolvedValue({ kind: 'allow' });
     workspaceScopeMocks.projectScope = { loading: true, scope: null };
     workspaceScopeMocks.ambientContext = CALLER_CONTEXT;
@@ -502,6 +504,58 @@ describe('a Home auto-send identifies its caller before the project scope resolv
       'a run POST with no workspace context is refused 401 WORKSPACE_CONTEXT_REQUIRED '
         + 'on a workspace-bound project',
     ).toEqual(CALLER_CONTEXT);
+  });
+
+  it('sends query and headers together for the scoped HTML fetch used by auto-open analysis', async () => {
+    workspaceScopeMocks.projectScope = {
+      loading: false,
+      scope: {
+        kind: 'team',
+        projectId: PROJECT_ID,
+        workspaceId: TEAM_WORKSPACE,
+        visibility: 'team',
+        context: CALLER_CONTEXT as WorkspaceCollabContext & { workspaceType: 'team' },
+      },
+    };
+    mockedFetchProjectFiles.mockResolvedValue([
+      { name: 'index.html', path: 'index.html', kind: 'html', size: 100, mtime: 2 },
+      { name: 'src/app.jsx', path: 'src/app.jsx', kind: 'text', size: 100, mtime: 2 },
+    ] as never);
+    mockedStreamViaDaemon.mockImplementation(async (options) => {
+      options.handlers.onAgentEvent({
+        kind: 'tool_use',
+        id: 'write-jsx',
+        name: 'Write',
+        input: { file_path: 'src/app.jsx', content: 'export default function App() {}' },
+      });
+      options.handlers.onAgentEvent({
+        kind: 'tool_result',
+        toolUseId: 'write-jsx',
+        content: 'written',
+        isError: false,
+      });
+      options.handlers.onDone('done');
+    });
+
+    renderProjectView();
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    await waitFor(() => {
+      const rawCall = fetchMock.mock.calls.find(([input]) =>
+        String(input).includes(`/api/projects/${PROJECT_ID}/raw/index.html`),
+      );
+      expect(rawCall).toBeDefined();
+      expect(String(rawCall?.[0])).toBe(
+        `/api/projects/${PROJECT_ID}/raw/index.html?workspaceId=${TEAM_WORKSPACE}`
+          + `&workspaceMemberId=${TEAM_MEMBER}`,
+      );
+      expect(rawCall?.[1]).toEqual(expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-od-workspace-id': TEAM_WORKSPACE,
+          'x-od-workspace-member-id': TEAM_MEMBER,
+        }),
+      }));
+    });
   });
 
   it('hydrates the persisted transcript without waiting for preview comments', async () => {
@@ -895,7 +949,7 @@ describe('a Home auto-send observes a project billing scope that settles after m
     await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalled());
   });
 
-  it('reconciles files with the exact Team scope when the project event stream becomes ready', async () => {
+  it('reconciles files and comments with the exact Team scope when the project event stream becomes ready', async () => {
     window.sessionStorage.removeItem(`od:auto-send-first:${PROJECT_ID}`);
     workspaceScopeMocks.projectScope = {
       loading: false,
@@ -923,6 +977,7 @@ describe('a Home auto-send observes a project billing scope that settles after m
 
     const options = mockedUseProjectFileEvents.mock.calls.at(-1)?.[3];
     mockedFetchProjectFiles.mockClear();
+    mockedFetchPreviewComments.mockClear();
     await act(async () => {
       options?.onReady?.();
     });
@@ -933,6 +988,13 @@ describe('a Home auto-send observes a project billing scope that settles after m
         requireAuthoritative: true,
         workspaceContext: CALLER_CONTEXT,
       });
+    });
+    await waitFor(() => {
+      expect(mockedFetchPreviewComments).toHaveBeenCalledWith(
+        PROJECT_ID,
+        `conv-${PROJECT_ID}`,
+        CALLER_CONTEXT,
+      );
     });
   });
 

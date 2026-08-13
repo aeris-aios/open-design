@@ -211,6 +211,90 @@ describe('collab presence routes', () => {
     ]);
   });
 
+  it('keeps a sequenced session closed when its older heartbeat finishes after leave', async () => {
+    const leases = new Map<string, string>();
+    let releaseOldHeartbeat!: () => void;
+    const oldHeartbeatGate = new Promise<void>((resolve) => {
+      releaseOldHeartbeat = resolve;
+    });
+    let markOldHeartbeatStarted!: () => void;
+    const oldHeartbeatStarted = new Promise<void>((resolve) => {
+      markOldHeartbeatStarted = resolve;
+    });
+    let heartbeatCalls = 0;
+    const roster = () => [...leases.values()].map((memberId) => ({ memberId }));
+    const cloud: CollabPresenceCloudClient = {
+      async heartbeatPresence(_projectId, input) {
+        heartbeatCalls += 1;
+        if (heartbeatCalls === 1) {
+          markOldHeartbeatStarted();
+          await oldHeartbeatGate;
+        }
+        leases.set(input.clientId ?? input.member.memberId, input.member.memberId);
+        return roster();
+      },
+      async listPresence() {
+        return roster();
+      },
+      async leavePresence(_projectId, input) {
+        leases.delete(input.clientId ?? input.memberId);
+        return roster();
+      },
+    };
+    const api = await startPresenceServer(cloud);
+
+    const oldHeartbeat = api.json('/api/projects/p1/presence/heartbeat', {
+      method: 'POST',
+      body: {
+        memberId: 'm1',
+        clientId: 'old-session',
+        sequence: 1,
+      },
+    });
+    await oldHeartbeatStarted;
+
+    const left = await api.json('/api/projects/p1/presence/leave', {
+      method: 'POST',
+      body: {
+        memberId: 'm1',
+        clientId: 'old-session',
+        sequence: 2,
+      },
+    });
+    expect(left.body.present).toEqual([]);
+    expect(leases.size).toBe(0);
+
+    // The old cloud heartbeat mutates only after leave has completed. Its
+    // response must trigger the closed-session fence instead of resurrecting
+    // the lease in the authoritative roster.
+    releaseOldHeartbeat();
+    await oldHeartbeat;
+    expect(leases.size).toBe(0);
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([]);
+
+    // A replacement mount has a distinct client id and starts its own sequence.
+    const replacement = await api.json('/api/projects/p1/presence/heartbeat', {
+      method: 'POST',
+      body: {
+        memberId: 'm1',
+        clientId: 'replacement-session',
+        sequence: 1,
+      },
+    });
+    expect(replacement.body.present).toEqual([{ memberId: 'm1' }]);
+
+    // Replaying the old session's close cannot remove the replacement lease.
+    await api.json('/api/projects/p1/presence/leave', {
+      method: 'POST',
+      body: {
+        memberId: 'm1',
+        clientId: 'old-session',
+        sequence: 2,
+      },
+    });
+    expect(leases).toEqual(new Map([['replacement-session', 'm1']]));
+  });
+
   it('does not publish presence for a project that is no longer team-shared', async () => {
     const calls: Array<{ op: string; projectId: string; input?: unknown }> = [];
     const cloud: CollabPresenceCloudClient = {
@@ -450,6 +534,63 @@ describe('collab presence routes', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
       { memberId: 'after-event' },
+    ]);
+    expect(listPresence).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets an event refresh wait for the shared stale-cache refresh without spawning another cloud read', async () => {
+    const context = teamContext();
+    let resolveRefresh:
+      | ((present: Array<{ memberId: string }>) => void)
+      | undefined;
+    const refresh = new Promise<Array<{ memberId: string }>>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const listPresence = vi
+      .fn()
+      .mockResolvedValueOnce([{ memberId: 'viewer' }])
+      .mockReturnValueOnce(refresh);
+    const api = await startPresenceServer(
+      {
+        heartbeatPresence: vi.fn(async () => []),
+        listPresence,
+        leavePresence: vi.fn(async () => []),
+      },
+      {
+        verifyWorkspaceReadRequest: async () => ({ ok: true, context }),
+        cloudAuthorizesProjectPresence: () => true,
+      },
+    );
+
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
+      { memberId: 'viewer' },
+    ]);
+    api.routes.markPresenceStale('p1', context.workspaceId);
+
+    let eventRefreshSettled = false;
+    const eventRefresh = api
+      .json('/api/projects/p1/presence?fresh=1')
+      .then((result) => {
+        eventRefreshSettled = true;
+        return result;
+      });
+    await vi.waitFor(() => expect(listPresence).toHaveBeenCalledTimes(2));
+
+    // Ordinary readers remain non-blocking and reuse the same in-flight cloud
+    // read while the event consumer waits for the authoritative result.
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
+      { memberId: 'viewer' },
+    ]);
+    expect(eventRefreshSettled).toBe(false);
+    expect(listPresence).toHaveBeenCalledTimes(2);
+
+    resolveRefresh!([
+      { memberId: 'viewer' },
+      { memberId: 'teammate' },
+    ]);
+    expect((await eventRefresh).body.present).toEqual([
+      { memberId: 'viewer' },
+      { memberId: 'teammate' },
     ]);
     expect(listPresence).toHaveBeenCalledTimes(2);
   });
@@ -754,7 +895,7 @@ describe('collab presence routes', () => {
     expect(listPresence).toHaveBeenCalledTimes(2);
   });
 
-  it('drops stale presence after a failed background refresh', async () => {
+  it('keeps the last-good roster after a failed background refresh and retries', async () => {
     let now = 1_000;
     const listPresence = vi
       .fn()
@@ -785,9 +926,49 @@ describe('collab presence routes', () => {
     ]);
     await vi.waitFor(() => expect(listPresence).toHaveBeenCalledTimes(2));
     expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
+      { memberId: 'stale' },
+    ]);
+    expect(listPresence).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(listPresence).toHaveBeenCalledTimes(3));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
       { memberId: 'recovered' },
     ]);
     expect(listPresence).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts an authoritative empty roster after a stale refresh', async () => {
+    let now = 1_000;
+    const listPresence = vi
+      .fn()
+      .mockResolvedValueOnce([{ memberId: 'departed' }])
+      .mockResolvedValueOnce([]);
+    const context = teamContext();
+    const api = await startPresenceServer(
+      {
+        heartbeatPresence: vi.fn(async () => []),
+        listPresence,
+        leavePresence: vi.fn(async () => []),
+      },
+      {
+        verifyWorkspaceReadRequest: async () => ({ ok: true, context }),
+        cloudAuthorizesProjectPresence: () => true,
+        presenceListCacheFreshMs: 1_000,
+        presenceListCacheNow: () => now,
+      },
+    );
+
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
+      { memberId: 'departed' },
+    ]);
+    now += 1_000;
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([
+      { memberId: 'departed' },
+    ]);
+    await vi.waitFor(() => expect(listPresence).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect((await api.json('/api/projects/p1/presence')).body.present).toEqual([]);
   });
 
   it('denies reads after the authority lease expires without serving cached presence', async () => {

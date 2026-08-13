@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CollabClient, type CollabSnapshot } from '../src/collab/collab-client.js';
+import {
+  CollabClient,
+  type CollabPresenceMember,
+  type CollabSnapshot,
+} from '../src/collab/collab-client.js';
 import { workspaceContextFixture } from './helpers/workspace-context';
 
 const TEAM_CONTEXT = workspaceContextFixture({
@@ -15,11 +19,15 @@ interface RecordedCall {
 }
 
 interface FakeFetchOptions {
-  present?: Array<{ memberId: string; name?: string }>;
+  present?: CollabPresenceMember[];
   publishedVersion?: number | null;
   syncState?: string | null;
   failPath?: string;
 }
+
+const PRESENCE_TEST_NOW = Date.parse('2026-08-05T00:00:00.000Z');
+const presenceTime = (offsetMs = 0) =>
+  new Date(PRESENCE_TEST_NOW + offsetMs).toISOString();
 
 function makeFetch(options: FakeFetchOptions = {}) {
   const calls: RecordedCall[] = [];
@@ -54,6 +62,7 @@ function makeFetch(options: FakeFetchOptions = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(PRESENCE_TEST_NOW);
 });
 
 afterEach(() => {
@@ -269,6 +278,322 @@ describe('CollabClient', () => {
     client.stop();
   });
 
+  it('does not launch a stopped lifecycle\'s queued cold status read after restart', async () => {
+    const { fetchImpl, calls } = makeFetch({ publishedVersion: 4 });
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: null,
+      fetch: fetchImpl,
+    });
+
+    client.start();
+    client.stop();
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      calls.filter(
+        ({ method, url }) =>
+          method === 'GET' && url.endsWith('/collab/status'),
+      ),
+    ).toHaveLength(1);
+
+    client.stop();
+  });
+
+  it('does not duplicate the queued cold read when the same client is polled explicitly', async () => {
+    const { fetchImpl, calls } = makeFetch({ publishedVersion: 4 });
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: null,
+      fetch: fetchImpl,
+    });
+
+    client.start();
+    await client.pollStatus();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      calls.filter(
+        ({ method, url }) =>
+          method === 'GET' && url.endsWith('/collab/status'),
+      ),
+    ).toHaveLength(1);
+
+    client.stop();
+  });
+
+  it('starts a scoped Team heartbeat without waiting for a slow status response', async () => {
+    let resolveStatus!: (response: Response) => void;
+    const fetchMock = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        if (pathname.endsWith('/collab/status')) {
+          return new Promise<Response>((resolve) => {
+            resolveStatus = resolve;
+          });
+        }
+        if (pathname.endsWith('/presence/heartbeat')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                present: [
+                  { memberId: 'member-viewer' },
+                  { memberId: 'member-peer' },
+                ],
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    );
+    const fetchImpl = fetchMock as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p-slow-status',
+      member: { memberId: 'member-viewer' },
+      workspaceContext: TEAM_CONTEXT,
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(resolveStatus).toBeTypeOf('function');
+    expect(fetchMock.mock.calls.some(([input]) =>
+      String(input).endsWith('/presence/heartbeat'))).toBe(true);
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'member-viewer' },
+      { memberId: 'member-peer' },
+    ]);
+
+    client.stop();
+    resolveStatus(
+      new Response(
+        JSON.stringify({ publishedVersion: 1, syncState: 'synced' }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('shows the daemon cached roster before a slow Team heartbeat settles', async () => {
+    let resolveStatus!: (response: Response) => void;
+    let resolveHeartbeat!: (response: Response) => void;
+    const requestPaths: string[] = [];
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        requestPaths.push(pathname);
+        if (pathname.endsWith('/collab/status')) {
+          return new Promise<Response>((resolve) => {
+            resolveStatus = resolve;
+          });
+        }
+        if (pathname.endsWith('/presence/heartbeat')) {
+          return new Promise<Response>((resolve) => {
+            resolveHeartbeat = resolve;
+          });
+        }
+        if (pathname.endsWith('/presence')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                present: [
+                  { memberId: 'member-viewer' },
+                  { memberId: 'member-peer' },
+                ],
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p-cached-presence',
+      member: { memberId: 'member-viewer' },
+      workspaceContext: TEAM_CONTEXT,
+      fetch: fetchImpl,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(requestPaths.indexOf('/api/projects/p-cached-presence/presence'))
+      .toBeGreaterThanOrEqual(0);
+    expect(requestPaths.indexOf('/api/projects/p-cached-presence/presence'))
+      .toBeLessThan(
+        requestPaths.indexOf('/api/projects/p-cached-presence/presence/heartbeat'),
+      );
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'member-viewer' },
+      { memberId: 'member-peer' },
+    ]);
+
+    client.stop();
+    resolveHeartbeat(
+      new Response(JSON.stringify({ present: [] }), { status: 200 }),
+    );
+    resolveStatus(
+      new Response(
+        JSON.stringify({ publishedVersion: 1, syncState: 'synced' }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('does not let a slow cached start read overwrite the heartbeat roster', async () => {
+    let resolveStatus!: (response: Response) => void;
+    let resolveCachedPresence!: (response: Response) => void;
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        if (pathname.endsWith('/collab/status')) {
+          return new Promise<Response>((resolve) => {
+            resolveStatus = resolve;
+          });
+        }
+        if (pathname.endsWith('/presence/heartbeat')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                present: [
+                  { memberId: 'member-viewer' },
+                  { memberId: 'authoritative-peer' },
+                ],
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        if (pathname.endsWith('/presence')) {
+          return new Promise<Response>((resolve) => {
+            resolveCachedPresence = resolve;
+          });
+        }
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p-ordered-presence',
+      member: { memberId: 'member-viewer' },
+      workspaceContext: TEAM_CONTEXT,
+      fetch: fetchImpl,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'member-viewer' },
+      { memberId: 'authoritative-peer' },
+    ]);
+
+    resolveCachedPresence(
+      new Response(
+        JSON.stringify({
+          present: [
+            { memberId: 'member-viewer' },
+            { memberId: 'stale-peer' },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'member-viewer' },
+      { memberId: 'authoritative-peer' },
+    ]);
+
+    client.stop();
+    resolveStatus(
+      new Response(
+        JSON.stringify({ publishedVersion: 1, syncState: 'synced' }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('does not optimistically heartbeat a Personal or unscoped session', async () => {
+    const pendingStatus = new Promise<Response>(() => {});
+    const fetchMock = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        if (pathname.endsWith('/collab/status')) return pendingStatus;
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    );
+    const fetchImpl = fetchMock as unknown as typeof fetch;
+    const personalContext = {
+      ...TEAM_CONTEXT,
+      workspaceType: 'personal' as const,
+      teamId: undefined,
+    };
+    const personal = new CollabClient({
+      projectId: 'p-personal',
+      member: { memberId: 'member-viewer' },
+      workspaceContext: personalContext,
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+    const unscoped = new CollabClient({
+      projectId: 'p-unscoped',
+      member: { memberId: 'member-viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    personal.start();
+    unscoped.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(fetchMock.mock.calls.filter(([input]) =>
+      String(input).endsWith('/presence/heartbeat'))).toHaveLength(0);
+    personal.stop();
+    unscoped.stop();
+  });
+
+  it('keeps the local roster empty when optimistic Team heartbeat authority is rejected', async () => {
+    const errors: unknown[] = [];
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        if (pathname.endsWith('/collab/status')) {
+          return new Promise<Response>(() => {});
+        }
+        if (pathname.endsWith('/presence/heartbeat')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: 'WORKSPACE_ACCESS_DENIED' }),
+              { status: 403 },
+            ),
+          );
+        }
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p-denied',
+      member: { memberId: 'member-viewer' },
+      workspaceContext: TEAM_CONTEXT,
+      fetch: fetchImpl,
+      onError: (error) => errors.push(error),
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(errors).toHaveLength(1);
+    expect(client.getSnapshot().present).toEqual([]);
+    client.stop();
+  });
+
   it('does not heartbeat for a local-only project', async () => {
     const { fetchImpl, calls } = makeFetch({ syncState: 'local_only' });
     const client = new CollabClient({
@@ -311,6 +636,441 @@ describe('CollabClient', () => {
     client.stop();
   });
 
+  it('retains a peer for the upstream lease window when self-bearing rosters briefly omit it', async () => {
+    const { fetchImpl, state } = makeFetch({
+      present: [
+        { memberId: 'viewer', name: 'Viewer', heartbeatAt: presenceTime() },
+        { memberId: 'peer', name: 'Peer', heartbeatAt: presenceTime() },
+      ],
+    });
+    const client = new CollabClient({
+      projectId: 'p-transient-roster',
+      member: { memberId: 'viewer', name: 'Viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+      statusPollMs: 5_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present).toHaveLength(2);
+
+    state.present = [{
+      memberId: 'viewer',
+      name: 'Viewer',
+      heartbeatAt: presenceTime(10_000),
+    }];
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer', 'peer']);
+
+    // The Vela presence lease is authoritative for 30 seconds from the last
+    // roster that actually contained the peer. A delayed heartbeat can make
+    // the peer absent from the 10s and 20s reads without making that last-good
+    // evidence stale. Dropping it after one interval makes the non-owner side
+    // flicker while the owner's local self witness hides the same upstream gap.
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer', 'peer']);
+
+    // At the exact upstream TTL boundary the peer is no longer retained.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer']);
+
+    client.stop();
+  });
+
+  it('never flashes a known peer when it returns before the upstream lease window ends', async () => {
+    const { fetchImpl, state } = makeFetch({
+      present: [
+        { memberId: 'viewer', name: 'Viewer', heartbeatAt: presenceTime() },
+        { memberId: 'owner', name: 'Owner', heartbeatAt: presenceTime() },
+      ],
+    });
+    const snapshots: CollabPresenceMember[][] = [];
+    const client = new CollabClient({
+      projectId: 'p-owner-transient-gap',
+      member: { memberId: 'viewer', name: 'Viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+      onUpdate: (snapshot) => snapshots.push(snapshot.present),
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer', 'owner']);
+    snapshots.length = 0;
+    state.present = [{
+      memberId: 'viewer',
+      name: 'Viewer',
+      heartbeatAt: presenceTime(10_000),
+    }];
+    await vi.advanceTimersByTimeAsync(20_000);
+    state.present = [
+      { memberId: 'viewer', name: 'Viewer', heartbeatAt: presenceTime(30_000) },
+      { memberId: 'owner', name: 'Owner', heartbeatAt: presenceTime(30_000) },
+    ];
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(snapshots.every((present) =>
+      present.some(({ memberId }) => memberId === 'owner'))).toBe(true);
+    expect(client.getSnapshot().present).toHaveLength(2);
+    client.stop();
+  });
+
+  it('does not extend a nearly expired backend lease from the local observation time', async () => {
+    vi.setSystemTime(PRESENCE_TEST_NOW + 29_000);
+    const { fetchImpl, state } = makeFetch({
+      present: [
+        { memberId: 'viewer', heartbeatAt: presenceTime(29_000) },
+        { memberId: 'owner', heartbeatAt: presenceTime() },
+      ],
+    });
+    const client = new CollabClient({
+      projectId: 'p-nearly-expired-owner',
+      member: { memberId: 'viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 1_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    state.present = [{
+      memberId: 'viewer',
+      heartbeatAt: presenceTime(30_000),
+    }];
+    await vi.advanceTimersByTimeAsync(999);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer', 'owner']);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer']);
+    client.stop();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['invalid', 'not-a-date'],
+  ])('retains a peer with %s heartbeatAt for only one fallback heartbeat window', async (_label, heartbeatAt) => {
+    const { fetchImpl, state } = makeFetch({
+      present: [
+        { memberId: 'viewer' },
+        { memberId: 'legacy-peer', heartbeatAt },
+      ],
+    });
+    const client = new CollabClient({
+      projectId: 'p-legacy-presence',
+      member: { memberId: 'viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    state.present = [{ memberId: 'viewer' }];
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer', 'legacy-peer']);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(client.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['viewer']);
+    client.stop();
+  });
+
+  it('applies an event-driven fresh roster exactly so explicit leaves stay immediate', async () => {
+    const { fetchImpl, state } = makeFetch({
+      present: [
+        { memberId: 'viewer', name: 'Viewer' },
+        { memberId: 'peer', name: 'Peer' },
+      ],
+    });
+    const client = new CollabClient({
+      projectId: 'p-explicit-leave',
+      member: { memberId: 'viewer', name: 'Viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    state.present = [{ memberId: 'viewer', name: 'Viewer' }];
+    await client.refreshPresence();
+
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'viewer', name: 'Viewer' },
+    ]);
+    client.stop();
+  });
+
+  it.each([
+    ['an empty roster', []],
+    ['a caller-less roster', [{ memberId: 'other-peer' }]],
+  ])('clears retained peers immediately for %s', async (_label, present) => {
+    const { fetchImpl, state } = makeFetch({
+      present: [{ memberId: 'viewer' }, { memberId: 'peer' }],
+    });
+    const client = new CollabClient({
+      projectId: 'p-fail-closed-roster',
+      member: { memberId: 'viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    state.present = [{ memberId: 'viewer' }];
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'viewer' },
+      { memberId: 'peer' },
+    ]);
+
+    state.present = present;
+    await client.refreshPresence();
+    expect(client.getSnapshot().present).toEqual(present);
+    client.stop();
+  });
+
+  it('clears the roster immediately when heartbeat authority is revoked', async () => {
+    let heartbeatCount = 0;
+    const errors: unknown[] = [];
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        if (pathname.endsWith('/collab/status')) {
+          return Promise.resolve(Response.json({ syncState: 'synced' }));
+        }
+        if (pathname.endsWith('/presence/heartbeat')) {
+          heartbeatCount += 1;
+          if (heartbeatCount === 1) {
+            return Promise.resolve(Response.json({
+              present: [{ memberId: 'viewer' }, { memberId: 'peer' }],
+            }));
+          }
+          return Promise.resolve(Response.json(
+            { error: 'WORKSPACE_ACCESS_DENIED' },
+            { status: 403 },
+          ));
+        }
+        if (pathname.endsWith('/presence/leave')) {
+          return Promise.resolve(Response.json({ ok: true }));
+        }
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p-revoked-roster',
+      member: { memberId: 'viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+      onError: (error) => errors.push(error),
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(client.getSnapshot().present).toEqual([]);
+    expect(errors).toHaveLength(1);
+
+    client.stop();
+  });
+
+  it('does not carry a retained roster across member identities or projects', async () => {
+    const projectA = makeFetch({
+      present: [{ memberId: 'member-a' }, { memberId: 'peer-a' }],
+    });
+    const projectB = makeFetch({
+      present: [{ memberId: 'member-b' }, { memberId: 'peer-b' }],
+    });
+    const clientA = new CollabClient({
+      projectId: 'project-a',
+      member: { memberId: 'member-a' },
+      fetch: projectA.fetchImpl,
+      heartbeatMs: 10_000,
+    });
+    const clientB = new CollabClient({
+      projectId: 'project-b',
+      member: { memberId: 'member-b' },
+      fetch: projectB.fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    clientA.start();
+    clientB.start();
+    await vi.advanceTimersByTimeAsync(0);
+    projectA.state.present = [{ memberId: 'member-a' }];
+    projectB.state.present = [{ memberId: 'member-b' }];
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(clientA.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['member-a', 'peer-a']);
+    expect(clientB.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['member-b', 'peer-b']);
+
+    projectA.state.present = [{ memberId: 'member-a-2' }];
+    clientA.setMember({ memberId: 'member-a-2' });
+    expect(clientA.getSnapshot().present).toEqual([]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(clientA.getSnapshot().present).toEqual([
+      { memberId: 'member-a-2' },
+    ]);
+    expect(clientB.getSnapshot().present.map(({ memberId }) => memberId))
+      .toEqual(['member-b', 'peer-b']);
+
+    clientA.stop();
+    clientB.stop();
+  });
+
+  it('keeps heartbeats and roster convergence alive while hidden, then refreshes fresh on visibility', async () => {
+    const visibilityListeners = new Set<() => void>();
+    const fakeDocument = {
+      visibilityState: 'hidden',
+      addEventListener: vi.fn((type: string, listener: () => void) => {
+        if (type === 'visibilitychange') visibilityListeners.add(listener);
+      }),
+      removeEventListener: vi.fn((type: string, listener: () => void) => {
+        if (type === 'visibilitychange') visibilityListeners.delete(listener);
+      }),
+    };
+    vi.stubGlobal('document', fakeDocument);
+    const { fetchImpl, calls, state } = makeFetch({
+      present: [{ memberId: 'm1' }],
+    });
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: { memberId: 'm1' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+      statusPollMs: 5_000,
+    });
+
+    try {
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      state.present = [{ memberId: 'm1' }, { memberId: 'joined' }];
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(client.getSnapshot().present).toEqual([
+        { memberId: 'm1' },
+        { memberId: 'joined' },
+      ]);
+
+      state.present = [{ memberId: 'm1' }];
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(client.getSnapshot().present).toEqual([{ memberId: 'm1' }]);
+
+      expect(calls.filter((call) =>
+        call.url.endsWith('/presence/heartbeat'))).toHaveLength(4);
+      expect(calls.filter((call) =>
+        call.url.endsWith('/collab/status'))).toHaveLength(1);
+
+      fakeDocument.visibilityState = 'visible';
+      for (const listener of visibilityListeners) listener();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Presence has the same semantics in foreground and background. The
+      // visibility transition adds a fresh read only as a convergence
+      // accelerator; it does not clear the last roster first.
+      expect(calls.filter((call) =>
+        call.url.endsWith('/presence/heartbeat'))).toHaveLength(4);
+      expect(calls.filter((call) =>
+        call.url.endsWith('/presence?fresh=1'))).toHaveLength(1);
+      expect(calls.filter((call) =>
+        call.url.endsWith('/collab/status'))).toHaveLength(2);
+      expect(client.getSnapshot().present).toEqual([{ memberId: 'm1' }]);
+
+      client.stop();
+      const afterStop = calls.length;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(calls).toHaveLength(afterStop);
+      expect(visibilityListeners.size).toBe(0);
+    } finally {
+      client.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('applies a correct slow heartbeat while a newer request is still pending', async () => {
+    const pendingHeartbeats: Array<(response: Response) => void> = [];
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        if (pathname.endsWith('/collab/status')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ publishedVersion: 1, syncState: 'synced' }),
+              { status: 200 },
+            ),
+          );
+        }
+        if (pathname.endsWith('/presence/heartbeat')) {
+          return new Promise<Response>((resolve) => {
+            pendingHeartbeats.push(resolve);
+          });
+        }
+        throw new Error(`unexpected request: ${pathname}`);
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: { memberId: 'viewer' },
+      fetch: fetchImpl,
+      heartbeatMs: 10_000,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(pendingHeartbeats).toHaveLength(2);
+
+    pendingHeartbeats[0]!(
+      new Response(
+        JSON.stringify({
+          present: [{ memberId: 'viewer' }, { memberId: 'teammate' }],
+        }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Merely issuing heartbeat #2 must not suppress heartbeat #1's valid
+    // response on a 10s+ network. The newer response can still supersede it
+    // once that newer request actually settles.
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'viewer' },
+      { memberId: 'teammate' },
+    ]);
+
+    pendingHeartbeats[1]!(
+      new Response(
+        JSON.stringify({ present: [{ memberId: 'viewer' }] }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'viewer' },
+      { memberId: 'teammate' },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(pendingHeartbeats).toHaveLength(3);
+    pendingHeartbeats[2]!(
+      new Response(
+        JSON.stringify({ present: [{ memberId: 'viewer' }] }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getSnapshot().present).toEqual([{ memberId: 'viewer' }]);
+    client.stop();
+  });
+
   it('refreshes presence with a read instead of emitting another heartbeat', async () => {
     const { fetchImpl, calls, state } = makeFetch({
       present: [{ memberId: 'm2', name: 'Teammate' }],
@@ -326,7 +1086,7 @@ describe('CollabClient', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
-      url: '/api/projects/p1/presence',
+      url: '/api/projects/p1/presence?fresh=1',
       method: 'GET',
     });
     expect(calls[0]!.headers.get('x-od-workspace-id')).toBe(
@@ -334,6 +1094,116 @@ describe('CollabClient', () => {
     );
     expect(client.getSnapshot().present).toEqual(state.present);
     expect(calls.some((call) => call.url.endsWith('/presence/heartbeat'))).toBe(false);
+  });
+
+  it('converges when an event refresh races a correct heartbeat with a stale SWR roster', async () => {
+    let resolveHeartbeat!: (response: Response) => void;
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const url = new URL(String(input), 'http://daemon.local');
+        if (url.pathname.endsWith('/collab/status')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ publishedVersion: 1, syncState: 'synced' }),
+              { status: 200 },
+            ),
+          );
+        }
+        if (url.pathname.endsWith('/presence/heartbeat')) {
+          return new Promise<Response>((resolve) => {
+            resolveHeartbeat = resolve;
+          });
+        }
+        expect(url.pathname).toBe('/api/projects/p1/presence');
+        const present = url.searchParams.get('fresh') === '1'
+          ? [{ memberId: 'viewer' }, { memberId: 'teammate' }]
+          : [{ memberId: 'viewer' }];
+        return Promise.resolve(
+          new Response(JSON.stringify({ present }), { status: 200 }),
+        );
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: { memberId: 'viewer' },
+      fetch: fetchImpl,
+    });
+
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolveHeartbeat).toBeTypeOf('function');
+
+    // The hub event arrives while the authoritative heartbeat is in flight.
+    // An ordinary daemon GET would return its stale-while-revalidate cache and
+    // the shared generation fence would then discard the heartbeat response.
+    await client.refreshPresence();
+    resolveHeartbeat(
+      new Response(
+        JSON.stringify({
+          present: [{ memberId: 'viewer' }, { memberId: 'teammate' }],
+        }),
+        { status: 200 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.getSnapshot().present).toEqual([
+      { memberId: 'viewer' },
+      { memberId: 'teammate' },
+    ]);
+    client.stop();
+  });
+
+  it('keeps known display metadata only for members retained by a sparse roster', async () => {
+    const rosters = [
+      [
+        {
+          memberId: 'viewer',
+          name: 'Viewer',
+          role: 'admin',
+          avatarUrl: 'https://example.test/viewer.png',
+        },
+        {
+          memberId: 'teammate',
+          name: 'Teammate',
+          role: 'member',
+          avatarUrl: 'https://example.test/teammate.png',
+        },
+        {
+          memberId: 'departed',
+          name: 'Departed',
+          role: 'member',
+        },
+      ],
+      [{ memberId: 'viewer' }, { memberId: 'teammate' }],
+    ];
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ present: rosters.shift() }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: null,
+      fetch: fetchImpl,
+    });
+
+    await client.refreshPresence();
+    await client.refreshPresence();
+
+    expect(client.getSnapshot().present).toEqual([
+      {
+        memberId: 'viewer',
+        name: 'Viewer',
+        role: 'admin',
+        avatarUrl: 'https://example.test/viewer.png',
+      },
+      {
+        memberId: 'teammate',
+        name: 'Teammate',
+        role: 'member',
+        avatarUrl: 'https://example.test/teammate.png',
+      },
+    ]);
   });
 
   it('does not let an older presence read overwrite a newer roster', async () => {
@@ -585,14 +1455,44 @@ describe('CollabClient', () => {
     expect(leave?.body).toMatchObject({
       memberId: 'm1',
       clientId: expect.any(String),
+      sequence: 2,
     });
     expect((leave?.body as { clientId: string }).clientId).toBe(
       (heartbeat?.body as { clientId: string }).clientId,
     );
+    expect(heartbeat?.body).toMatchObject({ sequence: 1 });
 
     const afterStop = calls.length;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(calls.length).toBe(afterStop); // timers cleared — no further polling
+  });
+
+  it('does not send leave when stop happens before any heartbeat attempt', async () => {
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(
+      (input: RequestInfo | URL): Promise<Response> => {
+        const pathname = new URL(String(input), 'http://daemon.local').pathname;
+        paths.push(pathname);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ publishedVersion: 1, syncState: 'synced' }),
+            { status: 200 },
+          ),
+        );
+      },
+    ) as unknown as typeof fetch;
+    const client = new CollabClient({
+      projectId: 'p1',
+      member: { memberId: 'm1' },
+      fetch: fetchImpl,
+    });
+
+    client.start();
+    client.stop();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(paths.some((path) => path.endsWith('/presence/heartbeat'))).toBe(false);
+    expect(paths.some((path) => path.endsWith('/presence/leave'))).toBe(false);
   });
 
   it('leaveBeacon delivers the same session lease via sendBeacon so it survives page unload', async () => {
@@ -617,6 +1517,7 @@ describe('CollabClient', () => {
     expect(JSON.parse(await beacons[0]!.body)).toEqual({
       memberId: 'm1',
       clientId: (heartbeat?.body as { clientId: string }).clientId,
+      sequence: 2,
     });
     // Beacon path used — no keepalive fetch fallback.
     expect(calls.some((c) => c.url.endsWith('/presence/leave'))).toBe(false);
@@ -625,18 +1526,22 @@ describe('CollabClient', () => {
     vi.unstubAllGlobals();
   });
 
-  it('leaveBeacon falls back to a keepalive fetch when sendBeacon is unavailable', () => {
+  it('leaveBeacon falls back to a keepalive fetch when sendBeacon is unavailable', async () => {
     const { fetchImpl, calls } = makeFetch();
     vi.stubGlobal('navigator', {});
     const client = new CollabClient({ projectId: 'p1', member: { memberId: 'm-x' }, fetch: fetchImpl });
 
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
     client.leaveBeacon();
 
+    const heartbeat = calls.find((c) => c.url.endsWith('/presence/heartbeat'));
     const leave = calls.find((c) => c.url.endsWith('/presence/leave'));
     expect(leave?.method).toBe('POST');
     expect(leave?.body).toMatchObject({
       memberId: 'm-x',
-      clientId: expect.any(String),
+      clientId: (heartbeat?.body as { clientId: string }).clientId,
+      sequence: 2,
     });
     vi.unstubAllGlobals();
   });

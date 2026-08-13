@@ -25,18 +25,16 @@
 // continuous-sync effort, priority 2) was written to fix. Instead this marks
 // `resourceState: 'deleted'` on the EXISTING `workspace_resources` row and
 // leaves `visibility: 'team'` untouched — a tombstone, not a reclassification:
-//   - `visibility` staying `'team'` means every existing `teamSynced` /
-//     "is this a team-pulled copy" read (skills.ts's `listSkills`,
-//     design-systems' `isTeamSyncedUserDesignSystem`-style checks) keeps
-//     answering the same way it always has, with ZERO code changes needed on
-//     that side — a retired resource stays excluded from "Personal" exactly
-//     like an actively-shared one already was.
+//   - `visibility` staying `'team'` preserves every `teamSynced` / "is this a
+//     team-pulled copy" attribution read. Scoped catalogs additionally gate
+//     these mirrors on `resourceState`, so a retired resource is hidden while
+//     remaining distinguishable from caller-authored Personal content.
 //   - `resourceState: 'deleted'` is this reconciler's own bookkeeping: it is
 //     what makes a second reconciliation pass a no-op instead of re-writing
 //     the same row every ~15s poll tick, and it is the auditable "this used
 //     to be team-shared, then wasn't anymore" fact a future "make this mine"
-//     reclaim action would key off. Nothing reads it as an exclusion signal
-//     today because nothing needs to: `visibility` already carries that.
+//     reclaim action would key off. Scoped Team catalogs read it as the
+//     exclusion signal without erasing that attribution.
 //   - The local FILE on disk is never touched. Retraction is a binding-table
 //     state change only — this module does not delete, move, or rewrite
 //     anything under `USER_SKILLS_DIR` / `USER_DESIGN_SYSTEMS_DIR`.
@@ -44,6 +42,11 @@
 // Scope: this module is resource-type-agnostic. Daemon wiring drives it for
 // design systems, plugins, and skills; each materializer owns creating the
 // active Team binding that this reconciler later retires.
+
+import type {
+  TeamResourcesChangedSsePayload,
+  WorkspaceTeamResourceKind,
+} from '@open-design/contracts';
 
 /** This daemon's one local `workspace_resources` row for a resource, as far
  *  as reconciliation cares. Only rows the caller has already filtered to
@@ -63,6 +66,38 @@ export interface LocalTeamResourceBinding {
  *  resource_id` directly). */
 export interface RemoteTeamResourceRef {
   resourceId: string;
+  versionId?: string;
+  version?: number;
+}
+
+/** Tracks the last authoritative listing independently by Workspace and kind. */
+export function createWorkspaceResourceSignatureTracker() {
+  const signatures = new Map<string, string>();
+  return {
+    observe(
+      workspaceId: string,
+      resourceKind: string,
+      remoteResources: readonly RemoteTeamResourceRef[],
+    ): boolean {
+      const key = JSON.stringify([workspaceId, resourceKind]);
+      const signature = JSON.stringify(
+        remoteResources
+          .map((resource) => [
+            resource.resourceId,
+            resource.versionId ?? null,
+            resource.version ?? null,
+          ] as const)
+          .sort(([left], [right]) => left.localeCompare(right)),
+      );
+      const previous = signatures.get(key);
+      signatures.set(key, signature);
+      return previous !== signature;
+    },
+  };
+}
+
+export interface MaterializedTeamResourceRef extends RemoteTeamResourceRef {
+  versionId?: string;
 }
 
 export type WorkspaceResourceReconcileAction = {
@@ -131,6 +166,7 @@ export interface WorkspaceResourcesReconcilerDeps {
 }
 
 export interface WorkspaceResourcesReconcileResult {
+  /** Number of retire actions successfully persisted. */
   retired: number;
 }
 
@@ -169,13 +205,177 @@ export async function reconcileWorkspaceResourcesWithRemote(
     localActiveTeamRows,
   });
 
+  let retired = 0;
   for (const action of actions) {
     try {
       deps.applyRetire(action.workspaceId, action.resourceId);
+      retired += 1;
     } catch (error) {
       deps.onError?.(error);
     }
   }
 
-  return { retired: actions.length };
+  return { retired };
+}
+
+const TEAM_RESOURCE_KINDS: readonly WorkspaceTeamResourceKind[] = [
+  'design_system',
+  'plugin',
+  'skill',
+];
+
+export type WorkspaceTeamResourceRefreshReason = 'push' | 'poll' | 'catch-up';
+
+export interface WorkspaceTeamResourceRefreshInput<TScope> {
+  workspaceId: string;
+  scope: TScope;
+  resourceKind?: string;
+  resourceId?: string;
+  reason: WorkspaceTeamResourceRefreshReason;
+  /**
+   * Optional compatibility-lease guard for queued prewarm work. It is checked
+   * immediately before the mutating pipeline starts. Once materialization has
+   * begun, reconcile, emit, and signature commit finish as one logical unit.
+   */
+  isRefreshCurrent?: () => boolean;
+}
+
+export interface WorkspaceTeamResourceRefreshResult {
+  processedKinds: WorkspaceTeamResourceKind[];
+  emittedKinds: WorkspaceTeamResourceKind[];
+  failedKinds: WorkspaceTeamResourceKind[];
+}
+
+export interface WorkspaceTeamResourceEventCoordinatorDeps<TScope> {
+  /** Must not resolve until every listed resource is locally materialized. */
+  materializeAndList: (input: {
+    workspaceId: string;
+    resourceKind: WorkspaceTeamResourceKind;
+    scope: TScope;
+  }) => Promise<readonly MaterializedTeamResourceRef[]>;
+  /** Reconcile against the exact listing returned by materializeAndList. */
+  reconcile: (input: {
+    workspaceId: string;
+    resourceKind: WorkspaceTeamResourceKind;
+    scope: TScope;
+    resources: readonly MaterializedTeamResourceRef[];
+  }) => Promise<WorkspaceResourcesReconcileResult>;
+  emit: (workspaceId: string, payload: TeamResourcesChangedSsePayload) => void;
+  now?: () => number;
+  onError?: (error: unknown, resourceKind: WorkspaceTeamResourceKind) => void;
+}
+
+function teamResourceSignature(resources: readonly MaterializedTeamResourceRef[]): string {
+  return resources
+    .map((resource) => `${resource.resourceId}\u0000${resource.versionId ?? ''}`)
+    .sort()
+    .join('\u0001');
+}
+
+function isWorkspaceTeamResourceKind(value: string): value is WorkspaceTeamResourceKind {
+  return TEAM_RESOURCE_KINDS.some((kind) => kind === value);
+}
+
+/**
+ * Coordinates background resource invalidation without exposing partially
+ * materialized state. Work for the same workspace/kind is serialized; polling
+ * emits only when the stable remote signature changes (or a local row retires).
+ */
+export function createWorkspaceTeamResourceEventCoordinator<TScope>(
+  deps: WorkspaceTeamResourceEventCoordinatorDeps<TScope>,
+): {
+  refresh: (
+    input: WorkspaceTeamResourceRefreshInput<TScope>,
+  ) => Promise<WorkspaceTeamResourceRefreshResult>;
+} {
+  const signatures = new Map<string, string>();
+  const pending = new Map<string, Promise<void>>();
+
+  const runKind = async (
+    input: WorkspaceTeamResourceRefreshInput<TScope>,
+    resourceKind: WorkspaceTeamResourceKind,
+  ): Promise<'emitted' | 'processed' | 'skipped' | 'failed'> => {
+    try {
+      if (input.isRefreshCurrent?.() === false) return 'skipped';
+      const resources = await deps.materializeAndList({
+        workspaceId: input.workspaceId,
+        resourceKind,
+        scope: input.scope,
+      });
+      const reconciliation = await deps.reconcile({
+        workspaceId: input.workspaceId,
+        resourceKind,
+        scope: input.scope,
+        resources,
+      });
+      const key = `${input.workspaceId}\u0000${resourceKind}`;
+      const nextSignature = teamResourceSignature(resources);
+      const previousSignature = signatures.get(key);
+      const shouldEmit = input.reason === 'push'
+        || reconciliation.retired > 0
+        || (previousSignature === undefined
+          ? resources.length > 0
+          : previousSignature !== nextSignature);
+
+      if (shouldEmit) {
+        deps.emit(input.workspaceId, {
+          type: 'team-resources-changed',
+          resourceKind,
+          ...(input.resourceId ? { resourceId: input.resourceId } : {}),
+          at: deps.now?.() ?? Date.now(),
+        });
+      }
+      signatures.set(key, nextSignature);
+      return shouldEmit ? 'emitted' : 'processed';
+    } catch (error) {
+      deps.onError?.(error, resourceKind);
+      return 'failed';
+    }
+  };
+
+  const enqueueKind = async (
+    input: WorkspaceTeamResourceRefreshInput<TScope>,
+    resourceKind: WorkspaceTeamResourceKind,
+  ): Promise<'emitted' | 'processed' | 'skipped' | 'failed'> => {
+    const key = `${input.workspaceId}\u0000${resourceKind}`;
+    const previous = pending.get(key);
+    let result: 'emitted' | 'processed' | 'skipped' | 'failed' = 'failed';
+    const run = async () => {
+      result = await runKind(input, resourceKind);
+    };
+    const current = previous
+      ? previous.catch(() => undefined).then(run)
+      : run();
+    pending.set(key, current);
+    await current;
+    if (pending.get(key) === current) pending.delete(key);
+    return result;
+  };
+
+  return {
+    async refresh(input) {
+      const kinds = input.resourceKind === undefined
+        ? TEAM_RESOURCE_KINDS
+        : isWorkspaceTeamResourceKind(input.resourceKind)
+          ? [input.resourceKind]
+          : [];
+      const outcomes = await Promise.all(
+        kinds.map(async (resourceKind) => ({
+          resourceKind,
+          outcome: await enqueueKind(input, resourceKind),
+        })),
+      );
+      return {
+        processedKinds: outcomes
+          .filter(({ outcome }) => outcome === 'processed' || outcome === 'emitted')
+          .map(({ resourceKind }) => resourceKind),
+        emittedKinds: outcomes
+          .filter(({ outcome }) => outcome === 'emitted')
+          .map(({ resourceKind }) => resourceKind),
+        failedKinds: outcomes
+          .filter(({ outcome }) => outcome === 'failed')
+          .map(({ resourceKind }) => resourceKind),
+      };
+    },
+  };
 }

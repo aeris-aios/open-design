@@ -1,25 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { coalescedGet } from '../lib/coalesced-get';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from 'react';
 import type {
   CollabCloudMemberDirectoryEntry,
-  CollabCloudMembersResponse,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { useWorkspaceContext } from './useWorkspaceContext';
 import { useWorkspaceInvalidation } from './workspace-events';
-import {
-  beginWorkspaceScopedRead,
-  workspaceIdentityCacheKey,
-  workspaceProjectHeaders,
-} from './workspace-identity';
+import { teamMembersStoreFor } from './team-members-store';
 
-// Poll cadence for the collab-cloud member directory. ~15s is light enough to
-// keep a comment author's name / role fresh (a member registers on join) without
-// a heavy loop; it mirrors `useTeamProjects`'s cadence. The read is daemon-local
-// (the daemon caches the directory) so the poll just refetches the whole list.
-const TEAM_MEMBERS_POLL_MS = 15_000;
-// Poll-as-floor cadence while the workspace SSE is connected.
-const TEAM_MEMBERS_SSE_FLOOR_MS = 60_000;
+const EMPTY_MEMBERS: CollabCloudMemberDirectoryEntry[] = [];
+const EMPTY_SUBSCRIBE = (): (() => void) => () => {};
 
 export interface TeamMembersState {
   members: CollabCloudMemberDirectoryEntry[];
@@ -73,9 +68,10 @@ export function currentUserDirectoryEntry(
 /**
  * Collab-cloud member directory read (`GET /api/workspace/members`). Returns the
  * team roster the client uses to render "琼羽 · Owner" on a comment card and the
- * owner name on the shared-project banner. Off-team / 404 degrades to an empty
- * map (never throws), so this is safe to mount unconditionally. Lightly polled so
- * a member who joins mid-session resolves without a refresh.
+ * owner name on the shared-project banner. A transient failure preserves the
+ * last successful roster for this exact workspace identity; only a successful
+ * `members: []` response clears it. Lightly polled so a member who joins
+ * mid-session resolves without a refresh.
  *
  * `currentUser` is the viewer's own entry (see {@link currentUserDirectoryEntry}),
  * which `resolve` falls back to so the signed-in user is resolvable with or
@@ -84,17 +80,8 @@ export function currentUserDirectoryEntry(
  */
 export function useTeamMembers(
   currentUser?: CollabCloudMemberDirectoryEntry | null,
+  workspaceContextOverride?: WorkspaceCollabContext | null,
 ): TeamMembersState {
-  const [roster, setRoster] = useState<{
-    identity: string;
-    members: CollabCloudMemberDirectoryEntry[];
-  }>({ identity: 'none', members: [] });
-  const mountedRef = useRef(true);
-  // A workspace switch makes an in-flight roster read describe an identity the
-  // user has left. Ordering is local to this hook instance so the late answer
-  // cannot redefine the roster the newer read already resolved.
-  const requestEpochRef = useRef(0);
-
   // The identity lives both on the request and in its cache key. When it
   // changes, the hook immediately re-reads that workspace's roster instead of
   // waiting out the 15-60s poll or relying on daemon-global active state.
@@ -103,86 +90,68 @@ export function useTeamMembers(
   // `useWorkspaceContext` shares one coalesced request and one module-level cache
   // across every mounted consumer, and both call sites of this hook already mount
   // it themselves.
-  const {
-    context: workspaceContext,
-    identityChangePending,
-  } = useWorkspaceContext();
-  const workspaceContextRef = useRef(workspaceContext);
-  workspaceContextRef.current = workspaceContext;
-  const membersCacheKey = `workspace-members:${workspaceIdentityCacheKey(workspaceContext)}`;
+  const workspaceContextState = useWorkspaceContext();
+  const hasWorkspaceContextOverride = workspaceContextOverride !== undefined;
+  const workspaceContext = hasWorkspaceContextOverride
+    ? workspaceContextOverride
+    : workspaceContextState.context;
+  const identityChangePending = hasWorkspaceContextOverride
+    ? false
+    : workspaceContextState.identityChangePending;
+  const accountGeneration = workspaceContextState.accountGeneration ?? 0;
+  // During an unseeded account transition the context still describes the
+  // account being left. Do not create or warm the next account's store until
+  // useWorkspaceContext resolves its verified context.
+  const activeWorkspaceContext =
+    !identityChangePending
+    && workspaceContext?.workspaceType === 'team'
+    && Boolean(workspaceContext.workspaceId.trim())
+    && Boolean(workspaceContext.workspaceMemberId.trim())
+      ? workspaceContext
+      : null;
+  const store = teamMembersStoreFor(
+    activeWorkspaceContext,
+    accountGeneration,
+  );
+  const consumerRef = useRef(Symbol('team-members-consumer'));
+  const membersSnapshot = useSyncExternalStore(
+    store?.subscribe ?? EMPTY_SUBSCRIBE,
+    store?.getSnapshot ?? (() => EMPTY_MEMBERS),
+    () => EMPTY_MEMBERS,
+  );
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      requestEpochRef.current += 1;
-    };
-  }, []);
+    if (!store) return;
+    return store.retain(consumerRef.current);
+  }, [store]);
 
-  const load = useCallback(async () => {
-    const read = beginWorkspaceScopedRead(workspaceContextRef.current);
-    const requestEpoch = ++requestEpochRef.current;
-    const settle = (next: CollabCloudMemberDirectoryEntry[]) => {
-      if (
-        mountedRef.current &&
-        requestEpochRef.current === requestEpoch &&
-        read.isStillCurrent(workspaceContextRef.current)
-      ) {
-        setRoster({
-          identity: workspaceIdentityCacheKey(read.context),
-          members: next,
-        });
-      }
-    };
-    const requestContext = read.context;
-    if (!requestContext) {
-      settle([]);
-      return;
-    }
-    try {
-      const members = await coalescedGet(membersCacheKey, async () => {
-        const res = await fetch('/api/workspace/members', {
-          headers: workspaceProjectHeaders(requestContext),
-        });
-        if (!res.ok) throw new Error(`members ${res.status}`);
-        const body = (await res.json()) as CollabCloudMembersResponse;
-        return body.members ?? [];
-      });
-      settle(members);
-    } catch {
-      // Personal / offline / daemon without the collab cloud: no directory.
-      settle([]);
-    }
-  }, [membersCacheKey]);
+  const load = useCallback(() => {
+    void store?.revalidate();
+  }, [store]);
+
+  const markDirty = useCallback((payload?: object) => {
+    store?.markDirty(payload);
+  }, [store]);
 
   // Collab realtime hop-2: subscribe to the workspace SSE and re-fetch on a
   // pushed `members-changed` (someone joined/left/changed role). The daemon's
   // workspace-invalidation poller diffs the roster and pushes only on an actual
   // change. `connected` drives poll-as-floor below.
   const { connected: sseConnected } = useWorkspaceInvalidation(
-    { 'members-changed': () => void load() },
+    { 'members-changed': markDirty },
     {
-      workspaceContext,
+      workspaceContext: activeWorkspaceContext,
       onActive: () => void load(),
     },
   );
 
   useEffect(() => {
-    void load();
-    // Poll-as-floor: slow the poll while the SSE is delivering, full cadence when
-    // the stream is unavailable so a non-SSE client has zero regression.
-    const intervalMs = sseConnected ? TEAM_MEMBERS_SSE_FLOOR_MS : TEAM_MEMBERS_POLL_MS;
-    const interval = setInterval(() => {
-      // Skip the poll while the tab is hidden — no point refreshing the member
-      // directory for a backgrounded window.
-      if (document.visibilityState === 'visible') void load();
-    }, intervalMs);
-    return () => clearInterval(interval);
-  }, [load, sseConnected]);
+    store?.setConnected(consumerRef.current, sseConnected);
+  }, [sseConnected, store]);
 
   const members =
-    !identityChangePending && roster.identity === workspaceIdentityCacheKey(workspaceContext)
-      ? roster.members
+    !identityChangePending && store
+      ? membersSnapshot
       : [];
   const byId = useMemo(() => {
     const map = new Map<string, CollabCloudMemberDirectoryEntry>();

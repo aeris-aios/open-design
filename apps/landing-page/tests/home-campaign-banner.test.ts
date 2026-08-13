@@ -43,8 +43,10 @@ test('home campaign banner uses the fixed seven-day activity window', () => {
   assert.match(source, /data-campaign-review-param/);
   assert.match(source, /data-home-campaign-banner[^>]*hidden/);
   assert.match(source, /home-campaign-banner-active/);
-  assert.match(source, /8 月 6 日—8 月 13 日，一周免费用/);
-  assert.match(source, /FREE all week/);
+  assert.match(source, /这次，顶级智能放开用。/);
+  assert.match(source, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用/);
+  assert.match(source, /This time, top-tier intelligence is wide open\./);
+  assert.match(source, /DeepSeek V4 Pro and V4 Flash · two weeks free/);
   assert.doesNotMatch(source, /home-campaign-banner__disclaimer/);
   assert.doesNotMatch(source, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
   assert.doesNotMatch(source, /2026-08-22T00:00:00\+08:00/);

@@ -20,11 +20,20 @@ export interface CreateWorkspaceOwnedDesignSystemDeps {
     resourceId: string,
     input: WorkspaceResourceEnvelopeInput,
   ) => unknown;
+  listReservedResourceIds?: () => Iterable<string>;
   createUserDesignSystem?: (
     root: string,
     input: UserDesignSystemInput,
   ) => Promise<DesignSystemSummary>;
   deleteUserDesignSystem?: (root: string, id: string) => Promise<boolean>;
+}
+
+export interface DeleteWorkspaceOwnedDesignSystemDeps {
+  deleteUserDesignSystem?: (root: string, id: string) => Promise<boolean>;
+  deleteWorkspaceResourceByResourceId: (
+    resourceType: 'design_system',
+    resourceId: string,
+  ) => unknown;
 }
 
 /**
@@ -48,13 +57,14 @@ export async function createWorkspaceOwnedDesignSystem(
   const remove = deps.deleteUserDesignSystem ?? deleteUserDesignSystem;
   const created = await create(root, {
     ...input,
+    reservedResourceIds: deps.listReservedResourceIds?.() ?? [],
     ...(context ? { workspaceId: context.workspaceId } : {}),
   });
 
   if (!context) return created;
 
   try {
-    deps.ensureWorkspaceResource(
+    const binding = deps.ensureWorkspaceResource(
       'design_system',
       context.workspaceId,
       created.id,
@@ -65,9 +75,42 @@ export async function createWorkspaceOwnedDesignSystem(
         updatedByWorkspaceMemberId: context.workspaceMemberId,
       },
     );
+    if (
+      !binding
+      || typeof binding !== 'object'
+      || !('workspaceId' in binding)
+      || binding.workspaceId !== context.workspaceId
+      || !('resourceId' in binding)
+      || binding.resourceId !== created.id
+      || !('visibility' in binding)
+      || binding.visibility !== 'personal'
+      || !('createdByWorkspaceMemberId' in binding)
+      || binding.createdByWorkspaceMemberId !== context.workspaceMemberId
+    ) {
+      throw new Error('DESIGN_SYSTEM_ID_CONFLICT');
+    }
     return created;
   } catch (error) {
     await remove(root, created.id).catch(() => false);
     throw error;
   }
+}
+
+/**
+ * Delete one user design system and then remove its Workspace envelope.
+ *
+ * The filesystem is the canonical payload. Keep the ownership envelope when
+ * that delete fails so callers do not expose unbound bytes through a later
+ * catalog scan. This mirrors the normal design-system DELETE route ordering.
+ */
+export async function deleteWorkspaceOwnedDesignSystem(
+  root: string,
+  id: string,
+  deps: DeleteWorkspaceOwnedDesignSystemDeps,
+): Promise<boolean> {
+  const remove = deps.deleteUserDesignSystem ?? deleteUserDesignSystem;
+  const removed = await remove(root, id);
+  if (!removed) return false;
+  deps.deleteWorkspaceResourceByResourceId('design_system', id);
+  return true;
 }

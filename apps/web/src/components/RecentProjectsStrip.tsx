@@ -12,7 +12,11 @@ import { Dialog, DialogDescription, DialogFooter, DialogTitle } from '@open-desi
 
 const MOVE_CONFIRM_SKIP_KEY = 'od.projects.moveConfirmSkip';
 import { useT } from '../i18n';
-import { fetchProjectFiles, fetchProjectFileText } from '../providers/registry';
+import {
+  fetchProjectFiles,
+  fetchProjectFileText,
+  invalidateProjectFilesCache,
+} from '../providers/registry';
 import type { DesignSystemSummary, Project, ProjectDisplayStatus, ProjectFile } from '../types';
 import { Icon } from './Icon';
 import { InviteDialog } from './InviteDialog';
@@ -34,6 +38,7 @@ import { moveWorkspaceProject, workspaceProjectMoveErrorCode } from '../state/pr
 import {
   workspaceContextHasTeamIdentity,
   type WorkspaceCollabContext,
+  type WorkspaceProjectSummary,
 } from '@open-design/contracts';
 import { useWorkspaceInvalidation } from '../collab/workspace-events';
 import {
@@ -53,6 +58,14 @@ import {
   workspaceIdentityCacheKey,
   workspaceProjectHeaders,
 } from '../collab/workspace-identity';
+import { useAnalytics } from '../analytics/provider';
+import {
+  trackProjectCollectionClick,
+  trackWorkspaceProjectActionResult,
+  trackWorkspaceSharedProjectOpenResult,
+} from '../analytics/events';
+import { countBucket, workspaceAnalyticsDimensions } from '../analytics/workspace';
+import type { ProjectCollectionClickProps } from '@open-design/contracts/analytics';
 
 /** Which project space this strip renders. Drives the per-card 共享 badge
  *  (hidden in the all-shared team space) and the "{creator}创建" line: 'recent'
@@ -95,7 +108,9 @@ interface Props {
   isSharedProject?: SharedProjectPredicate;
   /** Reported after a successful share/unshare so the caller can fold the change
    *  into its optimistic layer before the team-projects poll catches up. */
-  onProjectShared?: (projectId: string) => void;
+  onProjectShared?: (project: WorkspaceProjectSummary) => void;
+  /** Clears any optimistic owner proof when a share did not commit. */
+  onProjectShareFailed?: (projectId: string) => void;
   onProjectUnshared?: (projectId: string) => void;
   /** Which space this strip renders (see {@link SpaceKind}). Defaults to
    *  'recent' (home). 'team' hides the per-card 共享 badge since every card
@@ -314,6 +329,7 @@ export function RecentProjectsStrip({
   limit,
   isSharedProject,
   onProjectShared,
+  onProjectShareFailed,
   onProjectUnshared,
   space = 'recent',
   projectOwnerMemberIds,
@@ -324,6 +340,8 @@ export function RecentProjectsStrip({
   isActive = true,
 }: Props) {
   const t = useT();
+  const analytics = useAnalytics();
+  const analyticsPage = space === 'drafts' ? 'drafts' : space === 'team' ? 'all_projects' : 'home';
   const rowRef = useRef<HTMLDivElement | null>(null);
   // Real creator resolution (replaces the demo's mock 李娜/张伟 roster): the
   // member directory turns an ownerMemberId into a display name, and the
@@ -344,6 +362,20 @@ export function RecentProjectsStrip({
   workspaceContextLoadingRef.current = workspaceContextLoading;
   const workspaceIdentity = workspaceIdentityCacheKey(workspaceContext);
   const workspaceBilling = useWorkspaceBilling();
+  const workspaceDimensions = workspaceAnalyticsDimensions(workspaceContext);
+  function trackCollection(
+    element: ProjectCollectionClickProps['element'],
+    properties: Partial<Omit<ProjectCollectionClickProps, 'page_name' | 'area' | 'element'>> = {},
+    requestId?: string,
+  ) {
+    trackProjectCollectionClick(analytics.track, {
+      page_name: analyticsPage,
+      area: 'project_collection',
+      element,
+      ...workspaceDimensions,
+      ...properties,
+    }, requestId ? { requestId } : undefined);
+  }
   const selfMemberId = workspaceContext?.workspaceMemberId ?? null;
   // `canShareProjects` alone is a ROLE permission ("could this member share IF
   // a team existed"), not a "does a team exist" signal — a purely personal
@@ -469,7 +501,7 @@ export function RecentProjectsStrip({
   // (off-team, or a member the daemon has not seen register), never an opaque id.
   const resolveCreator = (projectId: string): { name: string; initial: string; ownedBySelf: boolean } => {
     const ownerMemberId = projectOwnerMemberIds?.get(projectId) ?? null;
-    if (!ownerMemberId || ownerMemberId === selfMemberId) {
+    if (ownerMemberId === selfMemberId || (!ownerMemberId && !isShared(projectId))) {
       const name = t('recentProjects.selfCreator');
       const initial = Array.from(name.trim())[0]?.toUpperCase() ?? 'M';
       return { name, initial, ownedBySelf: true };
@@ -519,6 +551,10 @@ export function RecentProjectsStrip({
     }
   });
   function requestMove(project: Project, action: 'to-team' | 'to-personal') {
+    trackCollection(action === 'to-team' ? 'move_to_team' : 'move_to_personal', {
+      project_key: project.id,
+      project_relation: resolveCreator(project.id).ownedBySelf ? 'self' : 'other',
+    });
     if (moveDontRemind) {
       void (action === 'to-team' ? handleShareToTeam(project) : handleUnshareFromTeam(project));
       return;
@@ -618,6 +654,7 @@ export function RecentProjectsStrip({
     project: Project,
     signal: AbortSignal,
     requestWorkspaceContext: WorkspaceCollabContext | null,
+    freshFiles = false,
   ): Promise<ProjectCoverOverride | null | undefined> => {
     // Catalog-only Team projects intentionally have no local directory until
     // the first open materializes them. Probing `/files` here can only produce
@@ -632,6 +669,7 @@ export function RecentProjectsStrip({
       files = await fetchProjectFiles(project.id, {
         signal,
         workspaceContext: requestWorkspaceContext,
+        ...(freshFiles ? { fresh: true } : {}),
       });
     } catch {
       return undefined;
@@ -727,7 +765,12 @@ export function RecentProjectsStrip({
     const controller = new AbortController();
     const promise = coverQueue.schedule(
       controller,
-      () => loadProjectCover(project, controller.signal, requestWorkspaceContext),
+      () => loadProjectCover(
+        project,
+        controller.signal,
+        requestWorkspaceContext,
+        options.force === true,
+      ),
       options.force,
     )
       .then((cover) => {
@@ -813,8 +856,12 @@ export function RecentProjectsStrip({
 
   const refreshProjectCover = useCallback((projectId: string) => {
     // A content-ready event is authoritative: the stored cover decision (any
-    // version) is void even if the card is currently offscreen or unlisted.
+    // version) and any pre-materialization file-list read are void even if the
+    // card is currently offscreen or unlisted. Invalidate the exact Workspace
+    // authority before the forced scan so another force refresh in the same
+    // burst cannot make the file-list layer reuse its earlier [] response.
     invalidateProjectCoverSnapshots(projectId);
+    invalidateProjectFilesCache(projectId, workspaceContextRef.current);
     const project = visibleProjectsRef.current.get(projectId);
     if (!project) return;
     if (!coverSentinelSeenRef.current.has(projectId)) return;
@@ -903,6 +950,10 @@ export function RecentProjectsStrip({
   function startRename(project: Project) {
     const creator = resolveCreator(project.id);
     if (!creator.ownedBySelf) return;
+    trackCollection('rename', {
+      project_key: project.id,
+      project_relation: 'self',
+    });
     setMenuOpenId(null);
     setRenameTarget({ id: project.id, original: project.name });
     setRenameInput(project.name);
@@ -925,6 +976,10 @@ export function RecentProjectsStrip({
   function requestDelete(project: Project) {
     const creator = resolveCreator(project.id);
     if (!creator.ownedBySelf) return;
+    trackCollection('delete', {
+      project_key: project.id,
+      project_relation: 'self',
+    });
     setMenuOpenId(null);
     setDeleteFailed(false);
     setConfirmTarget(project);
@@ -933,19 +988,32 @@ export function RecentProjectsStrip({
   // Promote/demote a project through the same workspace move endpoint used by
   // the full project grid so cards and in-file sharing cannot drift.
   async function handleShareToTeam(project: Project) {
+    const startedAt = performance.now();
     setShareErrorProjectId(null);
     setMenuOpenId(project.id);
     setSharingId(project.id);
     try {
-      await moveWorkspaceProject({
+      const movedProject = await moveWorkspaceProject({
         projectId: project.id,
         visibility: 'team',
         workspaceContext,
       });
-      onProjectShared?.(project.id);
+      onProjectShared?.(movedProject);
       notifyTeamProjectsChanged();
       setMenuOpenId(null);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'move_to_team',
+        result: 'success',
+        requested_count: 1,
+        succeeded_count: 1,
+        failed_count: 0,
+        duration_ms: Math.round(performance.now() - startedAt),
+        ...workspaceDimensions,
+      });
     } catch (err) {
+      onProjectShareFailed?.(project.id);
       console.warn('[RecentProjectsStrip] share project to team failed:', err);
       setShareErrorProjectId(project.id);
       setShareErrorKind(
@@ -954,12 +1022,25 @@ export function RecentProjectsStrip({
           : 'share',
       );
       setMenuOpenId(project.id);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'move_to_team',
+        result: 'failed',
+        requested_count: 1,
+        succeeded_count: 0,
+        failed_count: 1,
+        duration_ms: Math.round(performance.now() - startedAt),
+        error_code: workspaceProjectMoveErrorCode(err) ?? 'request_failed',
+        ...workspaceDimensions,
+      });
     } finally {
       setSharingId(null);
     }
   }
 
   async function handleUnshareFromTeam(project: Project) {
+    const startedAt = performance.now();
     setShareErrorProjectId(null);
     setMenuOpenId(project.id);
     setUnsharingId(project.id);
@@ -972,11 +1053,34 @@ export function RecentProjectsStrip({
       onProjectUnshared?.(project.id);
       notifyTeamProjectsChanged();
       setMenuOpenId(null);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'move_to_personal',
+        result: 'success',
+        requested_count: 1,
+        succeeded_count: 1,
+        failed_count: 0,
+        duration_ms: Math.round(performance.now() - startedAt),
+        ...workspaceDimensions,
+      });
     } catch (err) {
       console.warn('[RecentProjectsStrip] unshare project from team failed:', err);
       setShareErrorProjectId(project.id);
       setShareErrorKind('unshare');
       setMenuOpenId(project.id);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'move_to_personal',
+        result: 'failed',
+        requested_count: 1,
+        succeeded_count: 0,
+        failed_count: 1,
+        duration_ms: Math.round(performance.now() - startedAt),
+        error_code: workspaceProjectMoveErrorCode(err) ?? 'request_failed',
+        ...workspaceDimensions,
+      });
     } finally {
       setUnsharingId(null);
     }
@@ -990,15 +1094,45 @@ export function RecentProjectsStrip({
     // own defense-in-depth check.
     const creator = resolveCreator(project.id);
     if (!creator.ownedBySelf) return;
+    trackCollection('duplicate', {
+      project_key: project.id,
+      project_relation: 'self',
+    });
     setMenuOpenId(null);
-    void Promise.resolve(onDuplicate(project.id)).catch((err) => {
+    const startedAt = performance.now();
+    void Promise.resolve(onDuplicate(project.id)).then(() => {
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'duplicate',
+        result: 'success',
+        requested_count: 1,
+        succeeded_count: 1,
+        failed_count: 0,
+        duration_ms: Math.round(performance.now() - startedAt),
+        ...workspaceDimensions,
+      });
+    }).catch((err) => {
       console.warn('[RecentProjectsStrip] duplicate project failed:', err);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'duplicate',
+        result: 'failed',
+        requested_count: 1,
+        succeeded_count: 0,
+        failed_count: 1,
+        duration_ms: Math.round(performance.now() - startedAt),
+        error_code: 'request_failed',
+        ...workspaceDimensions,
+      });
     });
   }
 
   async function commitDelete() {
     if (!confirmTarget || !onDelete) return;
     const target = confirmTarget;
+    const startedAt = performance.now();
     setDeleteFailed(false);
     try {
       const result = await onDelete(target.id);
@@ -1007,13 +1141,48 @@ export function RecentProjectsStrip({
       // keep the dialog open with a visible reason instead of closing it as
       // if the project were gone (recvqbh189zBY6).
       if (result === false) {
+        trackWorkspaceProjectActionResult(analytics.track, {
+          page_name: analyticsPage,
+          area: 'project_collection',
+          action: 'delete',
+          result: 'failed',
+          requested_count: 1,
+          succeeded_count: 0,
+          failed_count: 1,
+          duration_ms: Math.round(performance.now() - startedAt),
+          error_code: 'request_failed',
+          ...workspaceDimensions,
+        });
         setDeleteFailed(true);
         return;
       }
       setConfirmTarget(null);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'delete',
+        result: 'success',
+        requested_count: 1,
+        succeeded_count: 1,
+        failed_count: 0,
+        duration_ms: Math.round(performance.now() - startedAt),
+        ...workspaceDimensions,
+      });
     } catch (err) {
       console.warn('[RecentProjectsStrip] delete project failed:', err);
       setDeleteFailed(true);
+      trackWorkspaceProjectActionResult(analytics.track, {
+        page_name: analyticsPage,
+        area: 'project_collection',
+        action: 'delete',
+        result: 'failed',
+        requested_count: 1,
+        succeeded_count: 0,
+        failed_count: 1,
+        duration_ms: Math.round(performance.now() - startedAt),
+        error_code: 'request_failed',
+        ...workspaceDimensions,
+      });
     }
   }
 
@@ -1054,6 +1223,9 @@ export function RecentProjectsStrip({
 
   function requestBulkMove(action: 'to-team' | 'to-personal') {
     if (bulkMutationDisabled) return;
+    trackCollection(action === 'to-team' ? 'bulk_move_to_team' : 'bulk_move_to_personal', {
+      selection_count_bucket: countBucket(selectedCount),
+    });
     if (moveDontRemind) {
       void commitBulkMove(action);
       return;
@@ -1066,6 +1238,7 @@ export function RecentProjectsStrip({
    *  reported per project and never abort the rest of the batch. */
   async function commitBulkMove(action: 'to-team' | 'to-personal') {
     const ids = selectedProjects.map(({ project }) => project.id);
+    const startedAt = performance.now();
     setBulkMoveAction(null);
     exitSelectionMode();
     if (ids.length === 0) return;
@@ -1073,36 +1246,69 @@ export function RecentProjectsStrip({
     const moved = await Promise.all(
       ids.map(async (id) => {
         try {
-          await moveWorkspaceProject({ projectId: id, visibility, workspaceContext });
-          return id;
+          const project = await moveWorkspaceProject({ projectId: id, visibility, workspaceContext });
+          return { id, project };
         } catch (err) {
+          if (action === 'to-team') onProjectShareFailed?.(id);
           console.warn('[RecentProjectsStrip] bulk move project failed:', err);
           return null;
         }
       }),
     );
-    const succeeded = moved.filter((id): id is string => id !== null);
-    for (const id of succeeded) {
-      if (action === 'to-team') onProjectShared?.(id);
-      else onProjectUnshared?.(id);
+    const succeeded = moved.filter(
+      (result): result is { id: string; project: WorkspaceProjectSummary } => result !== null,
+    );
+    for (const result of succeeded) {
+      if (action === 'to-team') onProjectShared?.(result.project);
+      else onProjectUnshared?.(result.id);
     }
     if (succeeded.length > 0) notifyTeamProjectsChanged();
+    const failedCount = ids.length - succeeded.length;
+    trackWorkspaceProjectActionResult(analytics.track, {
+      page_name: analyticsPage,
+      area: 'project_collection',
+      action: action === 'to-team' ? 'bulk_move_to_team' : 'bulk_move_to_personal',
+      result: failedCount === 0 ? 'success' : succeeded.length > 0 ? 'partial_success' : 'failed',
+      requested_count: ids.length,
+      succeeded_count: succeeded.length,
+      failed_count: failedCount,
+      duration_ms: Math.round(performance.now() - startedAt),
+      ...(failedCount > 0 ? { error_code: 'one_or_more_failed' } : {}),
+      ...workspaceDimensions,
+    });
   }
 
   async function commitBulkDelete() {
     const ids = selectedProjects.map(({ project }) => project.id);
+    const startedAt = performance.now();
     setBulkDeleteOpen(false);
     exitSelectionMode();
     if (!onDelete || ids.length === 0) return;
-    await Promise.all(
+    const deleted = await Promise.all(
       ids.map(async (id) => {
         try {
-          await onDelete(id);
+          const result = await onDelete(id);
+          return result === false ? null : id;
         } catch (err) {
           console.warn('[RecentProjectsStrip] bulk delete project failed:', err);
+          return null;
         }
       }),
     );
+    const succeededCount = deleted.filter((id): id is string => id !== null).length;
+    const failedCount = ids.length - succeededCount;
+    trackWorkspaceProjectActionResult(analytics.track, {
+      page_name: analyticsPage,
+      area: 'project_collection',
+      action: 'bulk_delete',
+      result: failedCount === 0 ? 'success' : succeededCount > 0 ? 'partial_success' : 'failed',
+      requested_count: ids.length,
+      succeeded_count: succeededCount,
+      failed_count: failedCount,
+      duration_ms: Math.round(performance.now() - startedAt),
+      ...(failedCount > 0 ? { error_code: 'one_or_more_failed' } : {}),
+      ...workspaceDimensions,
+    });
   }
 
   return (
@@ -1123,6 +1329,7 @@ export function RecentProjectsStrip({
                 type="button"
                 className="recent-projects__invite"
                 onClick={() => {
+                  trackCollection('invite_teammates');
                   if (inviteTarget.kind === 'vela') {
                     window.open(inviteTarget.url, '_blank', 'noopener,noreferrer');
                   } else if (inviteTarget.kind === 'local') {
@@ -1139,6 +1346,9 @@ export function RecentProjectsStrip({
                 className={`recent-projects__select-toggle${selectionMode ? ' is-active' : ''}`}
                 aria-pressed={selectionMode}
                 onClick={() => {
+                  trackCollection('multi_select_toggle', {
+                    selection_count_bucket: countBucket(selectedCount),
+                  });
                   setSelectionMode((current) => !current);
                   setSelectedProjectIds(new Set());
                   setMenuOpenId(null);
@@ -1166,6 +1376,10 @@ export function RecentProjectsStrip({
                         type="button"
                         className={ownerFilter === option.id ? 'is-active' : undefined}
                         onClick={() => {
+                          trackCollection('filter', {
+                            filter_type: 'owner',
+                            filter_value: option.id,
+                          });
                           setOwnerFilter(option.id);
                           setOpenHeaderMenu(null);
                         }}
@@ -1198,6 +1412,10 @@ export function RecentProjectsStrip({
                       type="button"
                       className={kindFilter === option.id ? 'is-active' : undefined}
                       onClick={() => {
+                        trackCollection('filter', {
+                          filter_type: 'project_type',
+                          filter_value: option.id,
+                        });
                         setKindFilter(option.id);
                         setOpenHeaderMenu(null);
                       }}
@@ -1217,6 +1435,14 @@ export function RecentProjectsStrip({
                 className="recent-projects__filter-clear"
                 data-testid="recent-projects-clear-filters"
                 onClick={() => {
+                  trackCollection('filter', {
+                    filter_type: 'owner',
+                    filter_value: 'all',
+                  });
+                  trackCollection('filter', {
+                    filter_type: 'project_type',
+                    filter_value: 'all',
+                  });
                   setOwnerFilter('all');
                   setKindFilter('all');
                   setOpenHeaderMenu(null);
@@ -1246,6 +1472,14 @@ export function RecentProjectsStrip({
                       type="button"
                       className={sort === option.id ? 'is-active' : undefined}
                       onClick={() => {
+                        trackCollection('sort', {
+                          sort_value:
+                            option.id === 'updatedAsc'
+                              ? 'updated_asc'
+                              : option.id === 'nameAsc'
+                                ? 'name_asc'
+                                : 'updated_desc',
+                        });
                         setSort(option.id);
                         setOpenHeaderMenu(null);
                       }}
@@ -1262,7 +1496,12 @@ export function RecentProjectsStrip({
                 className={`recent-projects__view-btn${view === 'grid' ? ' is-active' : ''}`}
                 aria-pressed={view === 'grid'}
                 aria-label={t('designs.viewGrid')}
-                onClick={() => setView('grid')}
+                onClick={() => {
+                  if (view !== 'grid') {
+                    trackCollection('view_toggle', { view_value: 'grid' });
+                    setView('grid');
+                  }
+                }}
               >
                 <Icon name="grid" size={15} />
               </button>
@@ -1271,7 +1510,12 @@ export function RecentProjectsStrip({
                 className={`recent-projects__view-btn${view === 'list' ? ' is-active' : ''}`}
                 aria-pressed={view === 'list'}
                 aria-label={t('recentProjects.viewList')}
-                onClick={() => setView('list')}
+                onClick={() => {
+                  if (view !== 'list') {
+                    trackCollection('view_toggle', { view_value: 'list' });
+                    setView('list');
+                  }
+                }}
               >
                 <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
                   <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
@@ -1332,7 +1576,12 @@ export function RecentProjectsStrip({
                 className="danger"
                 disabled={bulkMutationDisabled}
                 title={bulkMutationTitle}
-                onClick={() => setBulkDeleteOpen(true)}
+                onClick={() => {
+                  trackCollection('bulk_delete', {
+                    selection_count_bucket: countBucket(selectedCount),
+                  });
+                  setBulkDeleteOpen(true);
+                }}
               >
                 <Icon name="trash" size={14} /> {t('designs.deleteSelected')}
               </button>
@@ -1411,6 +1660,28 @@ export function RecentProjectsStrip({
                     return;
                   }
                   if (opening) return;
+                  const openStartedAt = performance.now();
+                  const openRequestId = analytics.newRequestId();
+                  const projectRelation = creator.ownedBySelf ? 'self' : 'other';
+                  const materialization =
+                    project.metadata?.sharedProjectPlaceholderAt != null ? 'required' : 'warm';
+                  trackCollection('project_open', {
+                    project_key: project.id,
+                    project_relation: projectRelation,
+                  }, openRequestId);
+                  const trackSharedOpenResult = (opened: boolean) => {
+                    if (!shared && space !== 'team') return;
+                    trackWorkspaceSharedProjectOpenResult(analytics.track, {
+                      page_name: analyticsPage,
+                      area: 'project_collection',
+                      result: opened ? 'success' : 'failed',
+                      project_relation: projectRelation,
+                      materialization,
+                      duration_ms: Math.round(performance.now() - openStartedAt),
+                      ...(!opened ? { error_code: 'open_failed' } : {}),
+                      ...workspaceDimensions,
+                    }, { requestId: openRequestId });
+                  };
                   // Release every background cover slot before the project view
                   // starts its foreground files/content reads. Waiting for the
                   // entry shell to unmount is too late: navigation itself needs
@@ -1425,14 +1696,22 @@ export function RecentProjectsStrip({
                     if (result && typeof result === 'object' && 'then' in result) {
                       void Promise.resolve(result).then(
                         (opened) => {
+                          trackSharedOpenResult(opened !== false);
                           if (opened === false) resumeBackgroundCoverRequests();
                         },
-                        () => resumeBackgroundCoverRequests(),
+                        () => {
+                          trackSharedOpenResult(false);
+                          resumeBackgroundCoverRequests();
+                        },
                       );
                     } else if (result === false) {
+                      trackSharedOpenResult(false);
                       resumeBackgroundCoverRequests();
+                    } else {
+                      trackSharedOpenResult(true);
                     }
                   } catch {
+                    trackSharedOpenResult(false);
                     resumeBackgroundCoverRequests();
                   }
                 }}
@@ -1553,6 +1832,10 @@ export function RecentProjectsStrip({
                   aria-expanded={menuOpenId === project.id}
                     onClick={(event) => {
                       event.stopPropagation();
+                      trackCollection('more_menu', {
+                        project_key: project.id,
+                        project_relation: creator.ownedBySelf ? 'self' : 'other',
+                      });
                       setShareErrorProjectId(null);
                       setMenuOpenId((current) => current === project.id ? null : project.id);
                     }}
@@ -1852,6 +2135,7 @@ export function RecentProjectsStrip({
           canAssignInviteRoles ?? workspaceContext?.permissions.canInviteMembers === true
         }
         availableSeats={workspaceContext?.seatSummary?.availableSeats}
+        entryFrom="all_projects"
         onUpgrade={
           inviteUpgradeUrl
             ? () => {
