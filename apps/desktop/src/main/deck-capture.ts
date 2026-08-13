@@ -1059,6 +1059,12 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
   function ensureExplicitSlideBackgrounds(slides: HTMLElement[]): void {
     for (const slide of slides) {
       slide.querySelectorAll(":scope > [data-od-pptx-bg]").forEach((el) => el.remove());
+      // preserveLayeredGradientBackgrounds owns supported layered backgrounds
+      // authored directly on a slide. Adding the usual fallback shim as well
+      // would export the same semi-transparent texture twice.
+      if (hasRasterizableLayeredGradientBackground(getComputedStyle(slide).backgroundImage || "")) {
+        continue;
+      }
       const background = effectiveBackgroundStyle(slide);
       if (!background) continue;
 
@@ -1136,7 +1142,19 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
     return layers;
   }
 
+  function hasRasterizableLayeredGradientBackground(input: string): boolean {
+    const layers = splitCssBackgroundLayers(input);
+    if (layers.length < 2) return false;
+    // Keep this allowlist aligned with html2canvas 1.4.1's
+    // SUPPORTED_IMAGE_FUNCTIONS. In particular, repeating and conic gradients
+    // are discarded by its clone parser and must remain on the authored node.
+    const supportedGradient =
+      /^(?:(?:-(?:moz|ms|o|webkit)-)?(?:linear|radial)-gradient|-webkit-gradient)\(/i;
+    return layers.every((layer) => supportedGradient.test(layer));
+  }
+
   function preserveLayeredGradientBackgrounds(slides: HTMLElement[]): void {
+    const slideElements = new Set(slides);
     const elements = new Set<HTMLElement>();
     for (const slide of slides) {
       elements.add(slide);
@@ -1145,10 +1163,9 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
 
     for (const element of elements) {
       const style = getComputedStyle(element);
-      const layers = splitCssBackgroundLayers(style.backgroundImage || "");
       if (
-        layers.length < 2 ||
-        layers.some((layer) => !/^(?:repeating-)?(?:conic|linear|radial)-gradient\(/i.test(layer))
+        !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
+        (style.position === "static" && !slideElements.has(element))
       ) {
         continue;
       }
@@ -1188,6 +1205,10 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       background.style.setProperty("background-origin", style.backgroundOrigin, "important");
       background.style.setProperty("background-clip", style.backgroundClip, "important");
 
+      // ensureExplicitSlideBackgrounds already establishes this containing-block
+      // contract for slides. Do not extend it to static nested panels because
+      // their absolutely positioned descendants may intentionally anchor to an
+      // outer slide.
       if (style.position === "static") element.style.setProperty("position", "relative", "important");
       Array.from(element.children).forEach((child) => {
         const childStyle = getComputedStyle(child);
