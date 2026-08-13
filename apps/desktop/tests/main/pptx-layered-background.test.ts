@@ -425,6 +425,16 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
   }, 30_000);
 
+  test('keeps an opaque pseudo fallback in raster media without covering native content and border', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.pseudo.pngs;
+
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([250, 0, 200]);
+    expect(media.pseudoNativeStyle.content).toBeGreaterThanOrEqual(0);
+    expect(media.pseudoNativeStyle.border).toBeGreaterThanOrEqual(0);
+    expect(media.pseudoNativeStyle.fallbackFill).toBe(-1);
+  }, 30_000);
+
   test('flattens a multiply-blended layered background against an authored pseudo backdrop', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.blended.pngs;
@@ -571,6 +581,23 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.topLeftRgb[0], JSON.stringify(image)).toBeGreaterThan(image?.topLeftRgb[1] ?? 0);
   }, 30_000);
 
+  test('propagates blended-child backdrop dependency to its opacity capture root', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.groupedBackdrop.pngs;
+
+    expect(media.groupedBackdrop, JSON.stringify(media.groupedBackdrop)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    // Chromium isolates the blend inside the opacity group, then composites
+    // that half-opacity group over the authored green backdrop.
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [128, 160, 128][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
+    expect(image?.minAlpha).toBe(255);
+  }, 30_000);
+
   test('captures a real masked element complete instead of emitting unmasked native foreground', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.masked.pngs;
@@ -640,6 +667,7 @@ type LayeredBackgroundProbe = {
   blended: LayeredBackgroundExport;
   composited: LayeredBackgroundExport;
   compositedMaskedPseudo: LayeredBackgroundExport;
+  groupedBackdrop: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   maskedNativeContent: number;
   maskedPseudoContent: LayeredBackgroundExport;
@@ -654,6 +682,7 @@ type LayeredBackgroundProbe = {
   paintOrderedBackdrop: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
+  pseudoNativeStyle: { border: number; content: number; fallbackFill: number };
   replaced: LayeredBackgroundExport;
   replacedForegroundMedia: string[];
   rootPseudo: LayeredBackgroundExport;
@@ -775,8 +804,9 @@ const styles = \`
     position: absolute;
     inset: 0;
     z-index: 5;
-    border: 2px solid white;
+    border: 2px solid rgb(17, 34, 51);
     color: white;
+    background-color: rgb(250, 0, 200);
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
   }
@@ -1021,6 +1051,23 @@ const styles = \`
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
+  .grouped-backdrop-slide::before { content: none; display: none; }
+  .grouped-backdrop,
+  .grouped-context {
+    position: absolute;
+    left: 80px;
+    top: 60px;
+    width: 96px;
+    height: 48px;
+  }
+  .grouped-backdrop { background: rgb(128, 192, 128); }
+  .grouped-context { opacity: .5; }
+  .grouped-blended-child {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
+  }
 \`;
 
 function zipEntries(pptxBase64) {
@@ -1119,6 +1166,18 @@ function inspectNativeContent(entries, content) {
   return slideXml.indexOf(content);
 }
 
+function inspectPseudoNativeStyle(entries) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  const shape = slideXml
+    .match(/<p:sp>[\\s\\S]*?<\\/p:sp>/g)
+    ?.find((entry) => entry.includes('Layered pseudo content')) || '';
+  return {
+    border: shape.indexOf('val="112233"'),
+    content: shape.indexOf('Layered pseudo content'),
+    fallbackFill: shape.indexOf('val="FA00C8"'),
+  };
+}
+
 function inspectRootPseudoLayerOrder(entries, mediaName) {
   const order = inspectPseudoLayerOrder(entries, mediaName);
   const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
@@ -1182,7 +1241,10 @@ app.whenReady().then(async () => {
       .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
       .join('');
     const slide = '<section class="slide">' + fixtureMarkup + '</section>'
-      + '<section class="slide stacking-slide" data-od-probe="stackingSlide"></section>';
+      + '<section class="slide stacking-slide" data-od-probe="stackingSlide"></section>'
+      + '<section class="slide grouped-backdrop-slide" data-od-probe="groupedBackdrop">'
+      + '<div class="grouped-backdrop"></div><div class="grouped-context"><div class="grouped-blended-child"></div></div>'
+      + '</section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     probeStage = 'normalize export DOM';
@@ -1303,6 +1365,7 @@ app.whenReady().then(async () => {
       pngs: pseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
     result.pseudoLayerOrder = inspectPseudoLayerOrder(entries, pseudoMedia[0]?.name || '');
+    result.pseudoNativeStyle = inspectPseudoNativeStyle(entries);
     result.maskedPseudoContentOrder = inspectMaskedPseudoContentOrder(
       entries,
       result.maskedPseudoContent?.media?.[0] || '',
@@ -1423,6 +1486,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.maskedPseudoContentOrder.sibling !== 'number'
     || !('composited' in value)
     || !('compositedMaskedPseudo' in value)
+    || !('groupedBackdrop' in value)
     || !('pseudoLayerOrder' in value)
     || typeof value.pseudoLayerOrder !== 'object'
     || value.pseudoLayerOrder === null
@@ -1430,6 +1494,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.pseudoLayerOrder.background !== 'number'
     || !('content' in value.pseudoLayerOrder)
     || typeof value.pseudoLayerOrder.content !== 'number'
+    || !('pseudoNativeStyle' in value)
+    || typeof value.pseudoNativeStyle !== 'object'
+    || value.pseudoNativeStyle === null
+    || !('border' in value.pseudoNativeStyle)
+    || typeof value.pseudoNativeStyle.border !== 'number'
+    || !('content' in value.pseudoNativeStyle)
+    || typeof value.pseudoNativeStyle.content !== 'number'
+    || !('fallbackFill' in value.pseudoNativeStyle)
+    || typeof value.pseudoNativeStyle.fallbackFill !== 'number'
     || !('rootPseudo' in value)
     || !('rootPseudoLayerOrder' in value)
     || typeof value.rootPseudoLayerOrder !== 'object'
@@ -1453,6 +1526,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     blended: parseLayeredBackgroundExport(value.blended),
     composited: parseLayeredBackgroundExport(value.composited),
     compositedMaskedPseudo: parseLayeredBackgroundExport(value.compositedMaskedPseudo),
+    groupedBackdrop: parseLayeredBackgroundExport(value.groupedBackdrop),
     masked: parseLayeredBackgroundExport(value.masked),
     maskedNativeContent: value.maskedNativeContent,
     maskedPseudoContent: parseLayeredBackgroundExport(value.maskedPseudoContent),
@@ -1470,6 +1544,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       background: value.pseudoLayerOrder.background,
       content: value.pseudoLayerOrder.content,
     },
+    pseudoNativeStyle: value.pseudoNativeStyle as LayeredBackgroundProbe['pseudoNativeStyle'],
     replaced: parseLayeredBackgroundExport(value.replaced),
     replacedForegroundMedia: value.replacedForegroundMedia,
     rootPseudo: parseLayeredBackgroundExport(value.rootPseudo),

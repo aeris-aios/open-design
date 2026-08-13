@@ -758,7 +758,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
           member.setAttribute("data-od-pptx-compositing-member", id);
         }
       }
-      if (dependsOnBackdrop(style)) {
+      if (dependsOnBackdrop(style) || members.some((member) => dependsOnBackdrop(getComputedStyle(member)))) {
         element.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
       }
       element.setAttribute("data-od-pptx-layer-capture-id", id);
@@ -1925,6 +1925,7 @@ export async function runDomToPptx(
   }
 
   function preserveLayeredPseudoGradientBackgrounds(elements: Set<HTMLElement>): void {
+    let nativePseudoBackgroundStyle: HTMLStyleElement | null = null;
     for (const element of elements) {
       for (const pseudo of ["::before", "::after"] as const) {
         const style = getComputedStyle(element, pseudo);
@@ -1974,6 +1975,27 @@ export async function runDomToPptx(
         );
         background.style.setProperty("pointer-events", "none", "important");
         setCaptureBoxStyles(background, style);
+
+        // The converter keeps pseudo content and borders editable, but it also
+        // emits a native solid fill from background-color while ignoring the
+        // layered background-image. The raster helper already owns both, so
+        // neutralize only that native fallback after copying its computed color.
+        element.setAttribute(
+          pseudo === "::before"
+            ? "data-od-pptx-rasterized-before-background"
+            : "data-od-pptx-rasterized-after-background",
+          "true",
+        );
+        if (!nativePseudoBackgroundStyle) {
+          nativePseudoBackgroundStyle = document.createElement("style");
+          nativePseudoBackgroundStyle.textContent = `
+            [data-od-pptx-rasterized-before-background="true"]::before,
+            [data-od-pptx-rasterized-after-background="true"]::after{
+              background-color:transparent!important;
+            }
+          `;
+          document.head.append(nativePseudoBackgroundStyle);
+        }
 
         if (pseudo === "::before") element.prepend(background);
         else element.append(background);
