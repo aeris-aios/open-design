@@ -1783,6 +1783,7 @@ export function HomeView({
       projectKind: restore.projectKind ?? undefined,
       replaceWithoutConfirmation: true,
       suppressPromptUpdate: true,
+      deferApply: true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChipRestore, pluginsLoading, plugins, active, pendingPluginUseHandoff]);
