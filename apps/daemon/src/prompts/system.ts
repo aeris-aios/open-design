@@ -47,7 +47,7 @@ import { renderPanelPrompt } from './panel.js';
 import { defaultCritiqueConfig, type CritiqueConfig } from '@open-design/contracts/critique';
 import {
   executionProfileFromStreamFormat,
-  SETTINGS_EXTERNAL_MCP_PATH,
+  INTEGRATIONS_MCP_PATH,
   SETTINGS_MEDIA_PROVIDERS_PATH,
   type ByokMediaDefaults,
   type ChatSessionMode,
@@ -1528,7 +1528,7 @@ export function renderConnectedExternalMcpDirective(
     lines.join('\n'),
     '\n\n',
     '**Do NOT call any tool whose name matches `mcp__<server>__authenticate` or `mcp__<server>__complete_authentication` for the servers above.** Those are synthetic fallback tools Claude Code exposes when its first HTTP connect briefly flipped the server into a needs-auth state. The flow they drive (a `localhost:<random>/callback` redirect) cannot complete in this environment, and the real tools (e.g. `generate_image`, `models_explore`, `balance`, …) are already reachable.\n\n',
-    `If a real tool actually fails with an auth-related error, report the exact tool name and error text and stop — the user will reconnect the server in ${SETTINGS_EXTERNAL_MCP_PATH}. Do not retry by invoking any \`*_authenticate\` tool.\n`,
+    `If a real tool actually fails with an auth-related error, report the exact tool name and error text and stop — the user will reconnect the server in ${INTEGRATIONS_MCP_PATH}. Do not retry by invoking any \`*_authenticate\` tool.\n`,
   ].join('');
 }
 
