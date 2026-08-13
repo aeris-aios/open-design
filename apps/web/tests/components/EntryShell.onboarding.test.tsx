@@ -645,6 +645,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
       onboardingCompleted: true,
       mode: 'daemon',
       agentId: 'amr',
+      model: 'claude-opus-4-5',
     });
     const props = renderHome({ config, amrLoggedIn: false });
 

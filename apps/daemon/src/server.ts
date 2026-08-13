@@ -460,6 +460,7 @@ import {
   createRunArtifactBaselines,
   diffRunArtifacts,
   snapshotProjectArtifacts,
+  snapshotProjectArtifactsAsync,
 } from './run-artifact-fs.js';
 import {
   AiHtmlVersionSnapshotError,
@@ -541,7 +542,13 @@ import {
   readAllTokens,
   setToken,
 } from './mcp-tokens.js';
-import { agentCliEnvForAgent, readAppConfig, readPluginEnvKnobs, writeAppConfig } from './app-config.js';
+import {
+  agentCliEnvForAgent,
+  readAppConfig,
+  readAppConfigSync,
+  readPluginEnvKnobs,
+  writeAppConfig,
+} from './app-config.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
 import {
@@ -553,8 +560,8 @@ import { buildMcpInstallPayload } from './mcp-install-info.js';
 import { createDiagnosticsExportHandler } from './diagnostics-export.js';
 import { DIAGNOSTICS_EXPORT_PATH } from '@open-design/diagnostics';
 import {
-  buildProjectArchive,
-  buildBatchArchive,
+  createProjectArchiveStream,
+  createBatchArchiveStream,
   createProjectFolder,
   decodeMultipartFilename,
   deleteProjectFile,
@@ -829,6 +836,7 @@ import {
   createTeamResourceListCache,
   invalidateTeamResourceListingCaches,
 } from './collab/team-resource-list-cache.js';
+import { createVelaResourcePullBatcher } from './collab/vela-cli-resource-pull-batcher.js';
 import {
   createRememberedTeamResourceScopes,
   type RememberedTeamResourceScopeLease,
@@ -925,6 +933,7 @@ import {
   CHAT_TOOL_ENDPOINTS,
   CHAT_TOOL_OPERATIONS,
   PROJECT_EXPORT_TOOL_ENDPOINT,
+  resolveChatToolTokenTtlMs,
   toolTokenRegistry,
 } from './tool-tokens.js';
 import {
@@ -964,7 +973,13 @@ import {
   seedLibraryExtensionOrigins,
 } from './library-tokens.js';
 import { listLibraryTokenOrigins } from './library-store.js';
-import { apiTokenFromEnv, isApiAuthDisabled } from './api-token-auth.js';
+import {
+  API_TOKEN_BASIC_CHALLENGE,
+  apiTokenAuthorizationMatches,
+  apiTokenFromEnv,
+  isApiAuthDisabled,
+  isApiTokenMiddlewareEnabled,
+} from './api-token-auth.js';
 import { createOpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 import { createWhatsNewService } from './services/whats-new.js';
 import { execCommandViaLoginShell } from './services/login-shell.js';
@@ -2433,6 +2448,7 @@ export interface StartServerOptions {
   port?: number;
   returnServer?: boolean;
   runtime?: DaemonRuntimeContext | null;
+  staticDir?: string;
 }
 
 export interface StartServerResult {
@@ -2450,6 +2466,7 @@ export async function startServer({
   desktopSlideRenderer = null,
   desktopArtifactExporter = null,
   runtime = null,
+  staticDir = STATIC_DIR,
 }: StartServerOptions = {}) {
   host = normalizeDaemonBindHost(host);
   let resolvedPort = port;
@@ -2469,16 +2486,13 @@ export async function startServer({
   // Loopback hosts (127.0.0.1 / ::1 / localhost) are always allowed —
   // the desktop / dev flow remains unchanged. Setting OD_API_TOKEN is
   // purely additive: when present, every /api/* request must carry a
-  // matching `Authorization: Bearer <token>` header (loopback origins
+  // matching Bearer token or browser Basic credentials (loopback origins
   // are exempted so the desktop UI keeps working).
   const apiToken = apiTokenFromEnv();
   const apiAuthDisabled = isApiAuthDisabled();
   const apiTokenAuthEnabled = apiToken.length > 0 && !apiAuthDisabled;
-  const isApiTokenAuthorization = (authorization: string | undefined): boolean => {
-    if (!apiTokenAuthEnabled) return false;
-    const match = /^Bearer\s+(\S+)\s*$/i.exec(authorization ?? '');
-    return match?.[1] === apiToken;
-  };
+  const isApiTokenAuthorization = (authorization: string | undefined): boolean =>
+    apiTokenAuthEnabled && apiTokenAuthorizationMatches(authorization, apiToken);
   if (!isLoopbackHostname(host) && apiToken.length === 0 && !apiAuthDisabled) {
     throw new Error(
       `OD_BIND_HOST=${host} requires OD_API_TOKEN to be set. ` +
@@ -2506,16 +2520,16 @@ export async function startServer({
   app.use(express.json({ limit: '4mb' }));
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
 
-  // Plan §3.K1 — bearer-token middleware.
+  // Plan §3.K1 — API-token middleware.
   //
   // Active only when OD_API_TOKEN is set and API auth is not disabled.
-  // Loopback origins skip the
-  // check (the desktop UI / local CLI never carry a bearer); every
-  // other request must present `Authorization: Bearer <token>` with a
-  // value matching `OD_API_TOKEN`. A currently valid run-scoped token may
-  // pass only an exact screenshot-export endpoint; its route rechecks the
-  // operation and project. Health / readiness / version remain open. Server-minted
-  // project preview asset scopes are also accepted for GETs so sandboxed
+  // Loopback origins skip the check (the desktop UI / local CLI never carry
+  // credentials); every other request must present a matching bearer token
+  // (CLI / proxy) or matching HTTP Basic credentials (browser UI). A currently
+  // valid run-scoped token may pass only an exact screenshot-export endpoint;
+  // its route rechecks the operation and project. Health / readiness / version
+  // remain open. Server-minted project preview asset scopes are also accepted
+  // for GETs so sandboxed
   // browser iframes can load HTML/CSS/JS without privileged headers.
   // Rich daemon status stays authenticated because it includes local
   // runtime paths.
@@ -2541,10 +2555,10 @@ export async function startServer({
       }
       // Loopback short-circuit. We ignore the proxied X-Forwarded-For
       // header here because a reverse proxy MUST always forward the
-      // bearer; the loopback bypass exists for the localhost desktop
+      // credentials; the loopback bypass exists for the localhost desktop
       // UI which has no proxy in the path.
       if (isLoopbackPeerAddress(req.socket?.remoteAddress)) return next();
-      if (isApiTokenAuthorization(req.get('authorization'))) return next();
+      if (apiTokenAuthorizationMatches(req.get('authorization'), apiToken)) return next();
       if (
         req.method === 'POST'
         && PROJECT_RUN_SCOPED_EXPORT_PATH_RE.test(req.path)
@@ -2555,9 +2569,30 @@ export async function startServer({
       ) {
         return next();
       }
+      res.setHeader('WWW-Authenticate', API_TOKEN_BASIC_CHALLENGE);
       return res.status(401).json({
-        error: { code: 'API_TOKEN_REQUIRED', message: 'Authorization: Bearer <OD_API_TOKEN> required' },
+        error: {
+          code: 'API_TOKEN_REQUIRED',
+          message: 'Authorization: Bearer <OD_API_TOKEN> or browser Basic authentication required',
+        },
       });
+    });
+
+    // Docker Desktop forwards host-browser traffic across its bridge, so the
+    // daemon correctly sees a non-loopback peer. Challenge the SPA document
+    // navigation before serving any shell bytes; browsers then cache the Basic
+    // credentials for same-origin /api requests. Static assets do not need a
+    // separate challenge because the authenticated shell is the only entry
+    // point and API routes still enforce credentials independently.
+    app.use((req, res, next) => {
+      if (isLoopbackPeerAddress(req.socket?.remoteAddress)) return next();
+      if (resolveStaticSpaFallbackPath(req, staticDir) === null) return next();
+      if (apiTokenAuthorizationMatches(req.get('authorization'), apiToken)) return next();
+
+      res.setHeader('WWW-Authenticate', API_TOKEN_BASIC_CHALLENGE);
+      return res.status(401).type('text/plain').send(
+        'Open Design authentication required. Use username "open-design" and OD_API_TOKEN as the password.',
+      );
     });
   }
 
@@ -2766,7 +2801,9 @@ export async function startServer({
     PLUGIN_LOCKFILE_PATH,
     PLUGIN_UPLOAD_MAX_BYTES,
   });
-  const mediaTaskStore = createMediaTaskStore(db);
+  const mediaTaskStore = createMediaTaskStore(db, {
+    isRunActive: (runId) => toolTokenRegistry.activeRunTokenCount(runId) > 0,
+  });
   const {
     authorizeToolRequest,
     optionalToolGrantFromRequest,
@@ -2962,8 +2999,8 @@ export async function startServer({
     console.warn('[od] Failed to recover stale live artifact refreshes:', error);
   });
 
-  if (fs.existsSync(STATIC_DIR)) {
-    app.use(express.static(STATIC_DIR));
+  if (fs.existsSync(staticDir)) {
+    app.use(express.static(staticDir));
   }
 
   // ---- Projects (DB-backed) -------------------------------------------------
@@ -3018,12 +3055,20 @@ export async function startServer({
   // recorded in — and a project-scoped collab call may only be pinned to — a
   // workspace that can actually host a team plane. See collab/team-share-scope.ts.
   const workspaceTypes = createWorkspaceTypeRegistry();
+  const configuredAmrEnv = () =>
+    agentCliEnvForAgent(readAppConfigSync(RUNTIME_DATA_DIR).agentCliEnv, 'amr');
   const workspaceDirectoryAuthority = createWorkspaceDirectoryAuthorityBroker({
     fetchDirectory: async () => {
-      const result = await fetchVelaWorkspaceDirectory();
+      const result = await fetchVelaWorkspaceDirectory({
+        configuredEnv: configuredAmrEnv(),
+      });
       if (result.ok) workspaceTypes.learn(result.items);
       return result;
     },
+    identityKey: () => velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    ),
     onDecision: (input) => recordWorkspaceAuthorityDecision({
       mode: workspaceAuthorityCacheMode,
       ...input,
@@ -3283,7 +3328,10 @@ export async function startServer({
   );
   const workspaceExactContextCache = createWorkspaceExactContextCache({
     provider: workspaceContext,
-    identity: () => velaWorkspaceDirectoryIdentity(),
+    identity: () => velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    ),
     onDecision: (input) => recordWorkspaceAuthorityDecision({
       mode: workspaceAuthorityCacheMode,
       ...input,
@@ -5605,7 +5653,6 @@ export async function startServer({
     }
 
     try {
-      const { runVelaResourceCommand } = await import('./collab/vela-cli-resource-adapter.js');
       const materialized = await materializeWorkspaceScopedTeamResource({
         kindRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
         storageName: resource.id,
@@ -5616,15 +5663,13 @@ export async function startServer({
           hubResourceId,
         },
         pullInto: (stagedFolder) =>
-          runVelaResourceCommand([
-            'pull',
-            'plugin',
-            hubResourceId,
-            stagedFolder,
-            '--ref',
-            'published',
-            '--json',
-          ], workspaceId).then(() => undefined),
+          teamResourcePullBatcher.pull({
+            workspaceId,
+            kind: 'plugin',
+            resourceId: hubResourceId,
+            dir: stagedFolder,
+            ref: 'published',
+          }),
         verifyWorkspaceScope: () => teamResourceScopeStillAuthorized(scope),
         verifyStillShared: () => teamResourceStillShared('plugin', resource, scope),
       });
@@ -5765,7 +5810,6 @@ export async function startServer({
       return;
     }
     try {
-      const { runVelaResourceCommand } = await import('./collab/vela-cli-resource-adapter.js');
       const materialized = await materializeWorkspaceScopedTeamResource({
         kindRoot: USER_DESIGN_SYSTEMS_DIR,
         storageName: dirId,
@@ -5776,15 +5820,13 @@ export async function startServer({
           hubResourceId,
         },
         pullInto: (stagedFolder) =>
-          runVelaResourceCommand([
-            'pull',
-            'design_system',
-            hubResourceId,
-            stagedFolder,
-            '--ref',
-            'published',
-            '--json',
-          ], workspaceId).then(() => undefined),
+          teamResourcePullBatcher.pull({
+            workspaceId,
+            kind: 'design_system',
+            resourceId: hubResourceId,
+            dir: stagedFolder,
+            ref: 'published',
+          }),
         verifyWorkspaceScope: () => teamResourceScopeStillAuthorized(scope),
         verifyStillShared: () =>
           teamResourceStillShared('design_system', resource, scope),
@@ -5895,7 +5937,6 @@ export async function startServer({
     }
 
     try {
-      const { runVelaResourceCommand } = await import('./collab/vela-cli-resource-adapter.js');
       const materialized = await materializeWorkspaceScopedTeamResource({
         kindRoot: USER_SKILLS_DIR,
         storageName: dirId,
@@ -5906,15 +5947,13 @@ export async function startServer({
           hubResourceId,
         },
         pullInto: (stagedFolder) =>
-          runVelaResourceCommand([
-            'pull',
-            'skill',
-            hubResourceId,
-            stagedFolder,
-            '--ref',
-            'published',
-            '--json',
-          ], workspaceId).then(() => undefined),
+          teamResourcePullBatcher.pull({
+            workspaceId,
+            kind: 'skill',
+            resourceId: hubResourceId,
+            dir: stagedFolder,
+            ref: 'published',
+          }),
         verifyWorkspaceScope: () => teamResourceScopeStillAuthorized(scope),
         verifyStillShared: () => teamResourceStillShared('skill', resource, scope),
       });
@@ -6003,6 +6042,7 @@ export async function startServer({
   const teamResourceMaterializationGate = new ConcurrencyGate(
     COLLAB_VELA_FANOUT_CONCURRENCY,
   );
+  const teamResourcePullBatcher = createVelaResourcePullBatcher();
   const cachedTeamResourceList = (
     share: TeamResourceShareService,
     sync?: (
@@ -7028,8 +7068,8 @@ export async function startServer({
   const projectEventDeps = { subscribeFileEvents, activeProjectEventSinks };
   const importDeps = { importClaudeDesignZip, projectDir, detectEntryFile };
   const projectExportDeps = {
-    buildProjectArchive,
-    buildBatchArchive,
+    createProjectArchiveStream,
+    createBatchArchiveStream,
     buildDesktopPdfExportInput,
     buildDesktopArtifactExportInput,
     desktopPdfExporter,
@@ -9405,12 +9445,15 @@ export async function startServer({
         };
       }
     }
+    const inactivityTimeoutMs = resolveChatRunInactivityTimeoutMs(def.inactivityTimeoutMs);
+    const toolTokenTtlMs = resolveChatToolTokenTtlMs(inactivityTimeoutMs);
     const toolTokenGrant = cwd && typeof projectId === 'string' && projectId
       ? toolTokenRegistry.mint({
           runId,
           projectId,
           allowedEndpoints: CHAT_TOOL_ENDPOINTS,
           allowedOperations: CHAT_TOOL_OPERATIONS,
+          ttlMs: toolTokenTtlMs,
           ...(pluginGrantContext ?? {}),
         })
       : null;
@@ -9638,7 +9681,13 @@ export async function startServer({
     // not the user's artifacts — those fall back to the tool-stream count.
     if (run?.id && cwd) {
       try {
-        runArtifactBaselines.remember(run.id, cwd, snapshotProjectArtifacts(cwd));
+        const before = await snapshotProjectArtifactsAsync(cwd);
+        // Async I/O lets cancellation/finalization interleave with the scan.
+        // In that case onFinalize already recorded the fallback outcome, so
+        // do not leave a stale baseline behind for a completed run.
+        if (!run.artifactOutcome && !design.runs.isTerminal(run.status)) {
+          runArtifactBaselines.remember(run.id, cwd, before);
+        }
       } catch {
         // Snapshotting is best-effort; finish falls back to the tool-stream count.
       }
@@ -9671,7 +9720,7 @@ export async function startServer({
             : null;
       return requestPrompt ? { prompt: requestPrompt, promptSource: 'message' as const } : { prompt: null };
     };
-    const resolveRunArtifactOutcomeBeforeFinish = () => {
+    const resolveRunArtifactOutcomeBeforeFinish = (afterSnapshot?: ReturnType<typeof snapshotProjectArtifacts>) => {
       if (!run?.id) return null;
       if (run.artifactOutcome) return run.artifactOutcome;
 
@@ -9688,7 +9737,7 @@ export async function startServer({
         try {
           const diff = diffRunArtifacts(
             artifactBaseline.before,
-            snapshotProjectArtifacts(artifactBaseline.cwd),
+            afterSnapshot ?? snapshotProjectArtifacts(artifactBaseline.cwd),
           );
           outcome = {
             artifactCount: diff.touched,
@@ -9716,6 +9765,18 @@ export async function startServer({
       run.artifactOutcome = outcome;
       return outcome;
     };
+    const resolveRunArtifactOutcomeBeforeFinishAsync = async () => {
+      if (!run?.id || run.artifactOutcome) return resolveRunArtifactOutcomeBeforeFinish();
+      const artifactBaseline = runArtifactBaselines.peek(run.id);
+      if (!artifactBaseline || artifactBaseline.contended) {
+        return resolveRunArtifactOutcomeBeforeFinish();
+      }
+      // Keep the baseline registered until the async read completes. A direct
+      // cancellation may finalize synchronously in the meantime; the resolver
+      // below then observes run.artifactOutcome and discards this late result.
+      const afterSnapshot = await snapshotProjectArtifactsAsync(artifactBaseline.cwd);
+      return resolveRunArtifactOutcomeBeforeFinish(afterSnapshot);
+    };
     const snapshotAiHtmlVersionsBeforeSuccess = async () => {
       const origin = artifactOriginForRun({
         runId: run.id,
@@ -9727,7 +9788,7 @@ export async function startServer({
         run.artifactOriginStatus = 'missing_version';
         run.artifactVersionId = undefined;
       }
-      const outcome = resolveRunArtifactOutcomeBeforeFinish();
+      const outcome = await resolveRunArtifactOutcomeBeforeFinishAsync();
       if (!outcome?.diff || !outcome.projectRoot || !run.projectId) return;
       const promptInfo = latestRunPromptForHtmlVersionSnapshot();
       const result = await snapshotAiHtmlVersionsForRun({
@@ -11267,7 +11328,6 @@ export async function startServer({
     // here; on this branch `send` was hoisted into the AMR preflight
     // earlier, so we keep only the new `runStartTimeMs` declaration.
     const runStartTimeMs = Date.now();
-    const inactivityTimeoutMs = resolveChatRunInactivityTimeoutMs(def.inactivityTimeoutMs);
     const firstOutputTimeoutMs =
       resolveChatRunFirstOutputTimeoutMs(def.firstOutputTimeoutMs);
     const artifactQuietPeriodMs = resolveChatRunArtifactQuietPeriodMs();
@@ -11487,6 +11547,9 @@ export async function startServer({
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
       run.lastAgentActivityAt = Date.now();
+      if (toolTokenGrant) {
+        toolTokenRegistry.refreshToken(toolTokenGrant.token, { ttlMs: toolTokenTtlMs });
+      }
       const delay = activeInactivityTimeoutMs();
       if (delay <= 0) return;
       clearInactivityWatchdog();
@@ -14173,7 +14236,7 @@ export async function startServer({
     telemetry: { reportFinalizedMessage, reportFeedback },
   });
 
-  registerStaticSpaFallback(app, STATIC_DIR);
+  registerStaticSpaFallback(app, staticDir);
 
   // Wait for `listen` to bind so callers always see the resolved URL —
   // critical when port=0 (ephemeral port) and when the embedding sidecar
