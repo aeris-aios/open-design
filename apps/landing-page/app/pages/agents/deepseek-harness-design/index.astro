@@ -14,7 +14,8 @@
 import Layout from '../../../_components/sub-page-layout.astro';
 import { getInfoPageCopy } from '../../../info-page-i18n';
 import { localeFromPath, localizedHref } from '../../../i18n';
-import { downloadFirstCtas } from '../../../cta-actions';
+import { deepseekHarnessHeroCtas, downloadFirstCtas } from '../../../cta-actions';
+import { deepseekHarnessTutorialCopy } from '../../../deepseek-harness-page';
 
 const SLUG = 'deepseek-harness';
 const SITE = Astro.site?.toString() ?? 'https://open-design.ai/';
@@ -26,33 +27,12 @@ const common = copy.common;
 // Compact locales fall back to the English guide rather than crash on undefined.
 const page = copy.agentGuides[SLUG] ?? getInfoPageCopy('en').agentGuides[SLUG]!;
 const rich = page.rich;
+const tutorial = deepseekHarnessTutorialCopy(page);
 
 // This is an Open Design acquisition page: the hero download is the primary
 // action in every locale, while the upstream Harness repository remains a
 // secondary reference. Match by stable href so translated labels are kept.
-const translatedDownload = rich?.heroCtaActions.find((action) =>
-  action.href === '/download/' ||
-  action.href === 'https://github.com/nexu-io/open-design/releases'
-);
-const translatedHarnessRepo = rich?.heroCtaActions.find(
-  (action) => action.href === 'https://github.com/deepseek-ai/deepseek-harness'
-);
-const heroCtas = rich
-  ? [
-      {
-        ...(translatedDownload ?? { label: 'Download Open Design' }),
-        href: '/download/',
-        external: false,
-        variant: 'primary' as const,
-      },
-      {
-        ...(translatedHarnessRepo ?? { label: 'Open DeepSeek Harness on GitHub' }),
-        href: 'https://github.com/deepseek-ai/deepseek-harness',
-        external: true,
-        variant: 'ghost' as const,
-      },
-    ]
-  : [];
+const heroCtas = rich ? deepseekHarnessHeroCtas(rich.heroCtaActions) : [];
 const finalCtas = rich ? downloadFirstCtas(rich.ctaActions) : [];
 
 // Make the how-to journey the primary narrative in every locale while keeping
@@ -126,7 +106,7 @@ const jsonLd = [
   {
     '@context': 'https://schema.org',
     '@type': 'WebPage',
-    name: page.title,
+    name: tutorial.title,
     description: page.description,
     url: pageUrl,
     isPartOf: { '@id': `${SITE}#website` },
@@ -155,7 +135,7 @@ const jsonLd = [
 ];
 ---
 
-<Layout title={page.title} description={page.description} active="agent" jsonLd={jsonLd}>
+<Layout title={tutorial.title} description={page.description} active="agent" jsonLd={jsonLd}>
   <nav class="breadcrumb" aria-label={common.breadcrumbAria}>
     <a href={href('/')}>Open Design</a>
     <span>/</span>
@@ -171,8 +151,8 @@ const jsonLd = [
             then a full-width hero banner. One measure / one left edge so the
             heading never wraps mid-word and the body never feels offset. */}
         <header class="catalog-head agent-rich-head">
-          <h1 class="display">{page.heading}</h1>
-          <p class="lead">{page.lead}</p>
+          <h1 class="display">{tutorial.heading}</h1>
+          <p class="lead">{tutorial.lead}</p>
           <div class="solution-hero-cta">
             {heroCtas.map((a) => (
               <a
@@ -200,8 +180,8 @@ const jsonLd = [
         ) : null}
 
         <div class="agent-intro">
-          <p class="agent-hero-lead">{rich.heroCtaLead}</p>
-          {rich.intro.map((p) => (<p>{p}</p>))}
+          <p class="agent-hero-lead">{tutorial.heroCtaLead}</p>
+          {tutorial.intro.map((p) => (<p>{p}</p>))}
         </div>
 
         {orderedSections.map((section) => (
