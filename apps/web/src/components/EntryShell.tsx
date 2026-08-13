@@ -1580,9 +1580,6 @@ export function EntryShell({
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
-<<<<<<< HEAD
-          context={workspaceContext}
-=======
           topRightSlot={
             view === 'home' && deepSeekV4FlashCampaignAudience !== 'unknown' ? (
               <button
@@ -1597,8 +1594,7 @@ export function EntryShell({
               </button>
             ) : null
           }
-          context={railWorkspaceContext}
->>>>>>> 698a17aac (feat(web): refresh home and preview workspace controls (#6692))
+          context={workspaceContext}
           billing={workspaceBilling}
           balanceUsd={workspaceBalanceUsd}
           onOpenSettings={onOpenSettings}

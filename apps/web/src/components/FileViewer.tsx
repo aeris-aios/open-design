@@ -8896,15 +8896,11 @@ function HtmlViewer({
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
-<<<<<<< HEAD
-  const localCommentSideDockActive = commentPanelOpen && !commentPortalHost;
-=======
   // A configured portal is an overlay contract from the first render, even
   // before the host DOM node has been resolved. Treating that lookup window as
   // a local dock briefly shrinks the preview and shifts centered desktop or
   // mobile content left before the floating card appears.
   const localCommentSideDockActive = commentPanelOpen && !commentPortalId;
->>>>>>> 698a17aac (feat(web): refresh home and preview workspace controls (#6692))
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
     sidePanelCollapsed: commentSidePanelCollapsed,
