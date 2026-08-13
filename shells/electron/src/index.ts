@@ -179,7 +179,9 @@ async function main(): Promise<void> {
   const shellConfig = shellRuntime.config;
   const paths = shellRuntime.paths;
   const shellVersion = shellConfig.shellVersion;
+  const releaseVersion = shellConfig.releaseVersion;
   if (shellVersion == null) throw new Error("Electron Shell version is unavailable");
+  if (releaseVersion == null) throw new Error("Standalone release version is unavailable");
   const mcpBootstrap = resolvePackagedMcpBootstrapLaunch({
     installedLaunchPath: shellRuntime.installedLaunchPath,
   });
@@ -251,6 +253,7 @@ async function main(): Promise<void> {
         resourceRoot: paths.resourceRoot,
         runtimeRoot: paths.runtimeRoot,
       },
+      releaseVersion,
       repositoryConfigPath: join(shellConfig.resourceRoot, "standalone", "repository.json"),
       schemaVersion: 1,
       scope: { channel: shellRuntime.launcherPaths.channel, namespace },
@@ -357,8 +360,9 @@ async function main(): Promise<void> {
     async readStandaloneStatus() {
       return await standalone.readStatus();
     },
+    standaloneLifecycle: standalone.lifecycle,
     update: {
-      currentVersion: shellVersion,
+      currentVersion: binding.descriptor.release.version,
       downloadRoot: paths.updateRoot,
       installerObservationRoot: paths.installerObservationRoot,
       launcherLaunchPath: shellRuntime.installedLaunchPath,
