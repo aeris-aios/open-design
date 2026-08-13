@@ -331,7 +331,6 @@ describe('FileViewer version download actions', () => {
 
     await waitFor(() => {
       expect(exportProjectAsHtmlMock).toHaveBeenCalledWith(expect.objectContaining({
-        fallbackHtml: priorContent,
         fallbackTitle: 'index-v1',
         filePath: 'index.html',
         projectId: 'project-1',
@@ -364,7 +363,6 @@ describe('FileViewer version download actions', () => {
 
     await waitFor(() => {
       expect(exportProjectAsHtmlMock).toHaveBeenCalledWith(expect.objectContaining({
-        fallbackHtml: '<html><body><h1>Current</h1></body></html>',
         fallbackTitle: 'index',
         filePath: 'index.html',
         projectId: 'project-1',

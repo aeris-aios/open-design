@@ -13562,7 +13562,6 @@ function HtmlViewer({
     fireShareExport('html', () => exportProjectAsHtml({
       projectId,
       filePath: file.name,
-      fallbackHtml: context?.content ?? source ?? '',
       fallbackTitle: context?.title ?? exportTitle,
       workspaceContext,
       ...(context?.versionId ? { versionId: context.versionId } : {}),
@@ -15655,7 +15654,6 @@ function HtmlViewer({
                       fireShareExport('html', () => exportProjectAsHtml({
                         projectId,
                         filePath: file.name,
-                        fallbackHtml: source ?? '',
                         fallbackTitle: exportTitle,
                         workspaceContext,
                       }));
