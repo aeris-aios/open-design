@@ -1,12 +1,14 @@
 import { optional, required } from "./common.ts";
 import {
   assertInstallationVersionFloorSatisfiable,
+  requireInstallationVersionFloor,
   resolveInstallationVersionFloor,
 } from "./installation-version-floor.ts";
 import { parseReleaseVersion, releaseChannelDescriptor } from "@open-design/release";
 import { readFile } from "node:fs/promises";
 import { parseReleaseNotePublication, releaseNoteMetadataFromPublication } from "../release-note/publication.ts";
 import { validateClosureDistributionPublication } from "./closure-distribution-metadata.ts";
+import { releaseParameterMatrixFromEnv, signModeForTarget } from "../channel/parameter-matrix.ts";
 
 const releaseDescriptor = releaseChannelDescriptor(required("RELEASE_CHANNEL"));
 const releaseChannel = releaseDescriptor.channel;
@@ -28,6 +30,7 @@ const metadata = (metadataPath.length > 0
       return response.json();
     })()) as {
   channel?: string;
+  parameterMatrix?: unknown;
   closure?: unknown;
   control?: {
     launcher?: { version?: { min?: string; url?: string } };
@@ -54,6 +57,7 @@ const metadata = (metadataPath.length > 0
       type?: string;
       version?: string;
     };
+    signMode?: string;
     status?: string;
   }>;
   [key: string]: unknown;
@@ -62,6 +66,11 @@ const metadata = (metadataPath.length > 0
 const closureRequired = process.env.RELEASE_CLOSURE_REQUIRED === "true";
 const closureDistributionRequired = process.env.RELEASE_CLOSURE_DISTRIBUTION_REQUIRED === "true";
 const shellRequired = process.env.RELEASE_SHELL_REQUIRED === "true";
+const parameterMatrix = releaseParameterMatrixFromEnv();
+
+if (JSON.stringify(metadata.parameterMatrix) !== JSON.stringify(parameterMatrix)) {
+  throw new Error("metadata parameterMatrix does not match the requested release parameters");
+}
 
 if (metadata.channel !== releaseChannel) {
   throw new Error(`metadata channel mismatch: expected ${releaseChannel}, got ${String(metadata.channel)}`);
@@ -75,7 +84,10 @@ if (metadata[versionField] !== releaseVersion) {
 // The published control.shell.installation.version block must match the channel policy
 // resolved from the same repo-vars pairs the publish step consumed; unknown
 // fields would otherwise pass silently.
-const expectedInstallationVersionFloor = resolveInstallationVersionFloor(releaseChannel);
+const legacyInstallationMigrationRequired = process.env.RELEASE_LEGACY_INSTALLATION_MIGRATION_REQUIRED === "true";
+const expectedInstallationVersionFloor = legacyInstallationMigrationRequired
+  ? requireInstallationVersionFloor(releaseChannel)
+  : resolveInstallationVersionFloor(releaseChannel);
 if (expectedInstallationVersionFloor != null) {
   assertInstallationVersionFloorSatisfiable(expectedInstallationVersionFloor, releaseVersion);
 }
@@ -142,6 +154,11 @@ if (metadata.closure != null) {
     expectedTargets: expectedClosureDistributionTargets,
     publicOrigin: metadata.r2.publicOrigin,
     releaseVersion,
+    selectedShells: Object.values(metadata.releaseTargets ?? {}).flatMap((target) => (
+      target.status !== "published" || target.shell?.type == null || target.shell.version == null
+        ? []
+        : [{ type: target.shell.type, version: target.shell.version }]
+    )),
     value: metadata.closure,
   });
 }
@@ -155,6 +172,10 @@ for (const target of ["mac_arm64", "win_x64", "mac_x64"]) {
     throw new Error(`metadata target ${target} is not published: ${String(status)}`);
   }
   if (result !== "success" || targetMetadata == null) continue;
+  const expectedSignMode = signModeForTarget(target as "mac_arm64" | "mac_x64" | "win_x64", parameterMatrix);
+  if (targetMetadata.signMode !== expectedSignMode) {
+    throw new Error(`metadata target ${target} signMode mismatch: expected ${expectedSignMode}, got ${String(targetMetadata.signMode)}`);
+  }
   if ((target === "mac_arm64" || target === "win_x64") && targetMetadata.artifacts?.payload?.url == null) {
     throw new Error(`metadata target ${target} is missing launcher payload artifact`);
   }

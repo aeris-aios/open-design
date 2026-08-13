@@ -41,7 +41,7 @@ function createConfig(root: string, portable: boolean): ToolPackConfig {
       },
       toolPackRoot: join(root, "tools-pack"),
     },
-    signed: false,
+    signMode: "unsigned",
     shell: "electron",
     silent: true,
     to: "nsis",
