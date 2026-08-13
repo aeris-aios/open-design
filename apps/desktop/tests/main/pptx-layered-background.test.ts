@@ -436,6 +436,16 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
   }, 30_000);
 
+  test('flattens a multiply-blended layered background against nested backdrop descendants', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.nestedBlended.pngs;
+
+    expect(media.nestedBlended, JSON.stringify(media.nestedBlended)).toMatchObject({
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
+  }, 30_000);
+
   test('aligns a captured layered background with native content after export normalization', async () => {
     const media = await probeLayeredBackgroundMedia();
 
@@ -544,6 +554,7 @@ type LayeredBackgroundProbe = {
   composited: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   materializedBackgroundBlend: LayeredBackgroundExport;
+  nestedBlended: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
   replaced: LayeredBackgroundExport;
@@ -605,6 +616,7 @@ const fixtures = {
   supported: '<div class="supported"></div>',
   pseudo: '<div class="pseudo"></div>',
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
+  nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
@@ -683,6 +695,24 @@ const styles = \`
     top: 66px;
     width: 80px;
     height: 40px;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
+  }
+  .nested-blended-backdrop,
+  .nested-blended {
+    position: absolute;
+    left: 36px;
+    top: 68px;
+    width: 72px;
+    height: 36px;
+  }
+  .nested-blended-backdrop { background: rgb(20, 40, 60); }
+  .nested-blended-texture {
+    position: absolute;
+    inset: 0;
+    background: rgb(128, 192, 128);
+  }
+  .nested-blended {
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
@@ -1071,6 +1101,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('backdropFiltered' in value)
     || !('backgroundBlendPseudo' in value)
     || !('materializedBackgroundBlend' in value)
+    || !('nestedBlended' in value)
     || !('alignmentGeometry' in value)
     || typeof value.alignmentGeometry !== 'object'
     || value.alignmentGeometry === null
@@ -1112,6 +1143,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     composited: parseLayeredBackgroundExport(value.composited),
     masked: parseLayeredBackgroundExport(value.masked),
     materializedBackgroundBlend: parseLayeredBackgroundExport(value.materializedBackgroundBlend),
+    nestedBlended: parseLayeredBackgroundExport(value.nestedBlended),
     pseudo: parseLayeredBackgroundExport(value.pseudo),
     pseudoLayerOrder: {
       background: value.pseudoLayerOrder.background,

@@ -736,6 +736,15 @@ export function isolateLayeredPptxBackground(
   const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
   const blendBackdropElements = new Set<HTMLElement>();
   const blendBackdropPseudos = new Map<HTMLElement, Set<"::before" | "::after">>();
+  const addBlendBackdropSubtree = (root: HTMLElement): void => {
+    for (const element of [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]) {
+      blendBackdropElements.add(element);
+      const pseudos = blendBackdropPseudos.get(element) ?? new Set<"::before" | "::after">();
+      pseudos.add("::before");
+      pseudos.add("::after");
+      blendBackdropPseudos.set(element, pseudos);
+    }
+  };
   if (flattenBackdrop) {
     const materializedPseudo = target.getAttribute("data-od-pptx-materialized-pseudo");
     for (let branch: HTMLElement | null = target; branch && branch !== slide; branch = branch.parentElement) {
@@ -747,8 +756,7 @@ export function isolateLayeredPptxBackground(
         sibling = sibling.nextElementSibling
       ) {
         if (!(sibling instanceof HTMLElement)) continue;
-        blendBackdropElements.add(sibling);
-        blendBackdropPseudos.set(sibling, new Set(["::before", "::after"]));
+        addBlendBackdropSubtree(sibling);
       }
       blendBackdropElements.add(parent);
       // An ancestor's ::before paints before its child content and is part of
