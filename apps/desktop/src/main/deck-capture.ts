@@ -1157,6 +1157,85 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
     return splitCssBackgroundLayers(input).some((layer) => layer.toLowerCase() === "text");
   }
 
+  function hasCssMask(style: CSSStyleDeclaration): boolean {
+    const maskImages = [
+      style.maskImage || style.getPropertyValue("mask-image"),
+      style.webkitMaskImage || style.getPropertyValue("-webkit-mask-image"),
+    ];
+    return maskImages.some((image) => image && image.trim().toLowerCase() !== "none");
+  }
+
+  function setCaptureBoxStyles(background: HTMLElement, style: CSSStyleDeclaration): void {
+    background.style.setProperty("box-sizing", "border-box", "important");
+    background.style.setProperty(
+      "padding",
+      `${style.paddingTop || "0px"} ${style.paddingRight || "0px"} ${style.paddingBottom || "0px"} ${style.paddingLeft || "0px"}`,
+      "important",
+    );
+    background.style.setProperty(
+      "border-width",
+      `${style.borderTopWidth || "0px"} ${style.borderRightWidth || "0px"} ${style.borderBottomWidth || "0px"} ${style.borderLeftWidth || "0px"}`,
+      "important",
+    );
+    background.style.setProperty("border-style", "solid", "important");
+    background.style.setProperty("border-color", "transparent", "important");
+    background.style.setProperty("border-radius", style.borderRadius || "0px", "important");
+    background.style.setProperty("background-color", style.backgroundColor, "important");
+    background.style.setProperty("background-image", style.backgroundImage, "important");
+    background.style.setProperty("background-position", style.backgroundPosition, "important");
+    background.style.setProperty("background-size", style.backgroundSize, "important");
+    background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
+    background.style.setProperty("background-origin", style.backgroundOrigin, "important");
+    background.style.setProperty("background-clip", style.backgroundClip, "important");
+  }
+
+  function preserveLayeredPseudoGradientBackgrounds(elements: Set<HTMLElement>): void {
+    for (const element of elements) {
+      for (const pseudo of ["::before", "::after"] as const) {
+        const style = getComputedStyle(element, pseudo);
+        const content = (style.content || "").trim().toLowerCase();
+        const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
+        if (
+          !isGenerated ||
+          (style.position !== "absolute" && style.position !== "fixed") ||
+          !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
+          hasTextBackgroundClip(style.backgroundClip || "") ||
+          hasTextBackgroundClip(style.webkitBackgroundClip || "") ||
+          hasCssMask(style)
+        ) {
+          continue;
+        }
+
+        // dom-to-pptx only reads pseudo-element content, color, and border. A
+        // background-only custom element enters its existing html2canvas path,
+        // preserving the layered image while the native pseudo handling keeps
+        // any authored text or border editable.
+        const background = document.createElement("od-pptx-layered-background");
+        background.setAttribute("data-od-pptx-layered-bg", "true");
+        background.setAttribute("data-od-pptx-pseudo", pseudo);
+        background.setAttribute("aria-hidden", "true");
+        background.style.setProperty("position", style.position, "important");
+        background.style.setProperty("top", style.top || "auto", "important");
+        background.style.setProperty("right", style.right || "auto", "important");
+        background.style.setProperty("bottom", style.bottom || "auto", "important");
+        background.style.setProperty("left", style.left || "auto", "important");
+        background.style.setProperty("width", style.width || "auto", "important");
+        background.style.setProperty("height", style.height || "auto", "important");
+        background.style.setProperty("z-index", style.zIndex || "auto", "important");
+        background.style.setProperty("opacity", style.opacity || "1", "important");
+        background.style.setProperty("transform", style.transform || "none", "important");
+        background.style.setProperty("transform-origin", style.transformOrigin || "50% 50%", "important");
+        background.style.setProperty("mix-blend-mode", style.mixBlendMode || "normal", "important");
+        background.style.setProperty("filter", style.filter || "none", "important");
+        background.style.setProperty("pointer-events", "none", "important");
+        setCaptureBoxStyles(background, style);
+
+        if (pseudo === "::before") element.prepend(background);
+        else element.append(background);
+      }
+    }
+  }
+
   function preserveLayeredGradientBackgrounds(slides: HTMLElement[]): void {
     const slideElements = new Set(slides);
     const elements = new Set<HTMLElement>();
@@ -1170,7 +1249,11 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       if (
         !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
         hasTextBackgroundClip(style.backgroundClip || "") ||
-        hasTextBackgroundClip(style.webkitBackgroundClip || "")
+        hasTextBackgroundClip(style.webkitBackgroundClip || "") ||
+        // html2canvas 1.4.1 does not parse CSS masks. Leave these on the
+        // converter's existing native path instead of exporting a newly
+        // introduced, visibly unmasked Chromium rectangle.
+        hasCssMask(style)
       ) {
         continue;
       }
@@ -1189,27 +1272,7 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       background.style.setProperty("inset", "0", "important");
       background.style.setProperty("z-index", "0", "important");
       background.style.setProperty("pointer-events", "none", "important");
-      background.style.setProperty("box-sizing", "border-box", "important");
-      background.style.setProperty(
-        "padding",
-        `${style.paddingTop || "0px"} ${style.paddingRight || "0px"} ${style.paddingBottom || "0px"} ${style.paddingLeft || "0px"}`,
-        "important",
-      );
-      background.style.setProperty(
-        "border-width",
-        `${style.borderTopWidth || "0px"} ${style.borderRightWidth || "0px"} ${style.borderBottomWidth || "0px"} ${style.borderLeftWidth || "0px"}`,
-        "important",
-      );
-      background.style.setProperty("border-style", "solid", "important");
-      background.style.setProperty("border-color", "transparent", "important");
-      background.style.setProperty("border-radius", style.borderRadius || "0px", "important");
-      background.style.setProperty("background-color", style.backgroundColor, "important");
-      background.style.setProperty("background-image", style.backgroundImage, "important");
-      background.style.setProperty("background-position", style.backgroundPosition, "important");
-      background.style.setProperty("background-size", style.backgroundSize, "important");
-      background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
-      background.style.setProperty("background-origin", style.backgroundOrigin, "important");
-      background.style.setProperty("background-clip", style.backgroundClip, "important");
+      setCaptureBoxStyles(background, style);
 
       if (isStaticNestedElement) {
         // A static panel and its absolutely positioned descendants share the
@@ -1241,6 +1304,8 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       element.style.setProperty("background-image", "none", "important");
       element.prepend(background);
     }
+
+    preserveLayeredPseudoGradientBackgrounds(elements);
   }
 
   function stabilizeLargeSingleLineText(slides: HTMLElement[]): void {

@@ -1,6 +1,16 @@
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { runDomToPptx } from '../../src/main/deck-capture.js';
+import { cjkPromotedFontFamily, runDomToPptx } from '../../src/main/deck-capture.js';
+
+const execFileP = promisify(execFile);
+const desktopRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 class FakeStyle {
   private readonly values = new Map<string, { priority: string; value: string }>();
@@ -33,6 +43,10 @@ function fakeElement(tagName = 'DIV'): HTMLElement {
     offsetTop: 32,
     offsetWidth: 160,
     parentElement: null,
+    append: (child: HTMLElement) => {
+      (child as unknown as { parentElement: HTMLElement | null }).parentElement = element as unknown as HTMLElement;
+      children.push(child);
+    },
     prepend: (child: HTMLElement) => {
       (child as unknown as { parentElement: HTMLElement | null }).parentElement = element as unknown as HTMLElement;
       children.unshift(child);
@@ -86,6 +100,10 @@ function computedStyle(element: HTMLElement, overrides: Partial<ComputedStyle> =
     borderRadius: '0px',
     borderRightWidth: '0px',
     borderTopWidth: '0px',
+    content: 'none',
+    display: 'block',
+    maskImage: 'none',
+    webkitMaskImage: 'none',
     fontFamily: 'sans-serif',
     overflow: 'visible',
     paddingBottom: '0px',
@@ -120,7 +138,9 @@ function stubExportDom(slide: HTMLElement, styles: Map<HTMLElement, Partial<Comp
   };
 
   vi.stubGlobal('document', fakeDocument);
-  vi.stubGlobal('getComputedStyle', (element: HTMLElement) => computedStyle(element, styles.get(element)));
+  vi.stubGlobal('getComputedStyle', (element: HTMLElement, pseudo?: string) =>
+    pseudo ? computedStyle(element, { backgroundImage: 'none', content: 'none' }) : computedStyle(element, styles.get(element)),
+  );
   vi.stubGlobal('Node', class FakeNode { static readonly TEXT_NODE = 3; });
   vi.stubGlobal('NodeFilter', class FakeNodeFilter { static readonly SHOW_TEXT = 4; });
 
@@ -301,4 +321,156 @@ describe('editable PPTX layered backgrounds', () => {
     expect(created.filter((element) => element.tagName === 'OD-PPTX-LAYERED-BACKGROUND')).toHaveLength(1);
     expect(created.filter((element) => element.getAttribute('data-od-pptx-bg') === 'true')).toHaveLength(0);
   });
+
+  test('emits fidelity-preserving PPTX media for layered, pseudo, and masked backgrounds', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.supported).toEqual({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
+    expect(media.pseudo).toEqual({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
+    expect(media.masked.captures).toBe(0);
+    expect(media.masked.media).toContainEqual(expect.stringMatching(/\.svg$/));
+  }, 30_000);
 });
+
+type LayeredBackgroundProbe = {
+  masked: LayeredBackgroundExport;
+  pseudo: LayeredBackgroundExport;
+  supported: LayeredBackgroundExport;
+};
+
+type LayeredBackgroundExport = { captures: number; media: string[] };
+
+async function probeLayeredBackgroundMedia(): Promise<LayeredBackgroundProbe> {
+  const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-probe-'));
+  const invocationSource = `(() => {
+    const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()};
+    return (${runDomToPptx.toString()})(".slide");
+  })()`;
+  await writeFile(join(probeDir, 'package.json'), '{"main":"main.cjs"}\n');
+  await writeFile(
+    join(probeDir, 'main.cjs'),
+    `
+const { app, BrowserWindow } = require('electron');
+const { readFile } = require('node:fs/promises');
+const { gunzipSync } = require('node:zlib');
+
+const fixtures = {
+  supported: '<div class="supported"></div>',
+  pseudo: '<div class="pseudo"></div>',
+  masked: '<div class="masked"></div>',
+};
+const styles = \`
+  html, body { margin: 0; }
+  .slide { position: relative; width: 320px; height: 180px; overflow: hidden; background: #111; }
+  .supported, .pseudo, .masked { position: absolute; inset: 20px; }
+  .supported {
+    background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .pseudo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .masked {
+    background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
+    background-size: 24px 24px;
+    -webkit-mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
+    mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
+  }
+\`;
+
+function mediaNames(pptxBase64) {
+  const archive = Buffer.from(pptxBase64, 'base64').toString('latin1');
+  return [...new Set(archive.match(/ppt\\/media\\/[A-Za-z0-9_-]+\\.(?:gif|jpe?g|png|svg)/g) || [])].sort();
+}
+
+app.whenReady().then(async () => {
+  const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
+  const window = new BrowserWindow({
+    show: false,
+    webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: true },
+  });
+  try {
+    const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + styles + '</style></head><body></body></html>';
+    await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await window.webContents.executeJavaScript(bundle, true);
+    const result = {};
+    for (const [name, markup] of Object.entries(fixtures)) {
+      await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify('<section class="slide">' + markup + '</section>'), true);
+      await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
+      const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)}, true);
+      if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
+      result[name] = {
+        captures: await window.webContents.executeJavaScript('document.querySelectorAll("[data-od-pptx-layered-bg]").length', true),
+        media: mediaNames(exported.b64),
+      };
+    }
+    process.stdout.write('OD_PPTX_LAYER_PROBE:' + JSON.stringify(result) + '\\n');
+  } finally {
+    window.destroy();
+    app.quit();
+  }
+}).catch((error) => {
+  process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
+  app.exit(1);
+});
+`,
+  );
+
+  try {
+    const electronRelativePath = (await readFile(
+      join(desktopRoot, 'node_modules', 'electron', 'path.txt'),
+      'utf8',
+    )).trim();
+    const electronPath = join(desktopRoot, 'node_modules', 'electron', 'dist', electronRelativePath);
+    const electronArgs = [probeDir, '--no-sandbox', '--disable-gpu'];
+    const command = process.platform === 'linux' ? 'xvfb-run' : electronPath;
+    const args = process.platform === 'linux' ? ['-a', electronPath, ...electronArgs] : electronArgs;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      OD_PPTX_LAYER_BUNDLE: join(desktopRoot, 'vendor', 'dom-to-pptx', 'dom-to-pptx.bundle.js.gz'),
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const { stderr, stdout } = await execFileP(command, args, { env, timeout: 20_000 });
+    const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_PPTX_LAYER_PROBE:'));
+    if (!marker) throw new Error(`Electron renderer probe returned no result: ${stdout || stderr}`);
+    return parseLayeredBackgroundProbe(JSON.parse(marker.slice('OD_PPTX_LAYER_PROBE:'.length)));
+  } finally {
+    await rm(probeDir, { force: true, recursive: true });
+  }
+}
+
+function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
+  if (
+    typeof value !== 'object'
+    || value === null
+    || !('supported' in value)
+    || !('pseudo' in value)
+    || !('masked' in value)
+  ) {
+    throw new Error('Electron renderer probe returned an invalid result');
+  }
+  return {
+    masked: parseLayeredBackgroundExport(value.masked),
+    pseudo: parseLayeredBackgroundExport(value.pseudo),
+    supported: parseLayeredBackgroundExport(value.supported),
+  };
+}
+
+function parseLayeredBackgroundExport(value: unknown): LayeredBackgroundExport {
+  if (
+    typeof value !== 'object'
+    || value === null
+    || !('captures' in value)
+    || typeof value.captures !== 'number'
+    || !('media' in value)
+    || !Array.isArray(value.media)
+    || !value.media.every((item) => typeof item === 'string')
+  ) {
+    throw new Error('Electron renderer probe returned an invalid export');
+  }
+  return { captures: value.captures, media: value.media };
+}
