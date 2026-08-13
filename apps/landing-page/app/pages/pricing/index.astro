@@ -700,7 +700,8 @@ const jsonLd = [
       const campaignReviewParam = campaign?.getAttribute('data-campaign-review-param');
       const campaignPreview = new URLSearchParams(window.location.search).get('campaign') === campaignReviewParam;
       const campaignPreviewEndAt = Date.now() + 14 * 24 * 60 * 60 * 1000;
-      let campaignActive = false;
+      let campaignEligible = false;
+      let campaignVisible = false;
       const formatCampaignRemaining = (remainingMs) => {
         const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
         const days = Math.floor(totalSeconds / 86400);
@@ -711,12 +712,13 @@ const jsonLd = [
       };
       const updateCampaignCountdown = () => {
         const now = Date.now();
-        campaignActive = campaignPreview || (now >= campaignStartAt && now < campaignEndAt);
-        campaignSurfaces.forEach((surface) => { surface.hidden = !campaignActive; });
-        if (!campaignActive || !campaignCountdown) return campaignActive;
+        campaignEligible = now >= campaignStartAt && now < campaignEndAt;
+        campaignVisible = campaignPreview || campaignEligible;
+        campaignSurfaces.forEach((surface) => { surface.hidden = !campaignVisible; });
+        if (!campaignVisible || !campaignCountdown) return campaignVisible;
         const remainingMs = (campaignPreview ? campaignPreviewEndAt : campaignEndAt) - now;
         campaignCountdown.textContent = formatCampaignRemaining(remainingMs);
-        return campaignActive;
+        return campaignVisible;
       };
       updateCampaignCountdown();
       const campaignCountdownTimer = window.setInterval(updateCampaignCountdown, 1000);
@@ -747,7 +749,7 @@ const jsonLd = [
         const target = new URL(billingPlanUrl);
         if (inboundWorkspaceId) target.searchParams.set('workspaceId', inboundWorkspaceId);
         // od_campaign_id is intentionally NOT forwarded from the inbound URL:
-        // campaign membership is re-decided by campaignActive on this click and
+        // campaign membership is re-decided by campaignEligible on this click and
         // written only through __odAttributedUrl so a closed window cannot
         // inherit a desktop-badge campaign id into Cloud checkout.
         for (const key of [
@@ -791,7 +793,7 @@ const jsonLd = [
       // ── Creator / Team audience toggle ─────────────────────────────────
       let lastCampaignBenefitAudience = null;
       const trackCampaignBenefit = (audience) => {
-        if (!campaignActive) return;
+        if (!campaignVisible) return;
         if (lastCampaignBenefitAudience === audience) return;
         lastCampaignBenefitAudience = audience;
         track('surface_view', {
@@ -853,13 +855,14 @@ const jsonLd = [
       else trackCampaignBenefit('creator');
 
       // Campaign impressions must fire when the surfaces become visible, which
-      // happens either on load (window already open) or mid-session when the
-      // countdown loop flips `campaignActive` at startAt. A one-time flag +
-      // the same 1s cadence as the reveal loop covers both paths; the benefit
-      // impression reuses trackCampaignBenefit's own audience dedupe.
+      // happens either on load (window already open), via review preview, or
+      // mid-session when the countdown loop flips `campaignVisible` at startAt.
+      // A one-time flag + the same 1s cadence as the reveal loop covers both
+      // paths; the benefit impression reuses trackCampaignBenefit's own audience
+      // dedupe. Preview never grants conversion eligibility.
       let campaignBannerImpressionTracked = false;
       const trackCampaignImpressionsOnce = () => {
-        if (!campaignActive || campaignBannerImpressionTracked) return;
+        if (!campaignVisible || campaignBannerImpressionTracked) return;
         campaignBannerImpressionTracked = true;
         track('surface_view', {
           area: 'campaign_banner',
@@ -1101,7 +1104,7 @@ const jsonLd = [
           // the window may not count toward it.
           const attribution = window.__odRecordCampaignEntry?.(
             audience === 'team' ? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',
-            campaignActive ? 'deepseek_v4_pro' : undefined,
+            campaignEligible ? 'deepseek_v4_pro' : undefined,
           );
           const props = {
             page_name: 'pricing',
@@ -1110,7 +1113,7 @@ const jsonLd = [
             tier: cta.getAttribute('data-tier') || 'unknown',
             interval: root.getAttribute('data-interval') || 'monthly',
             audience,
-            ...(campaignActive ? { campaign_id: 'deepseek_v4_pro' } : {}),
+            ...(campaignEligible ? { campaign_id: 'deepseek_v4_pro' } : {}),
             user_state: 'unknown',
             ...(attribution || {}),
           };

@@ -18,6 +18,7 @@ import {
 } from "../app/_lib/pricing-team-content.ts";
 import { PREMIUM_MODELS } from "../app/_lib/pricing-content.ts";
 import { LANDING_LOCALES } from "../app/i18n.ts";
+import { DEEPSEEK_V4_PRO_CAMPAIGN } from "../app/_lib/deepseek-v4-pro-campaign.ts";
 
 const CONTRACT_PATH = new URL("../public/pricing/plans.json", import.meta.url);
 const HEADERS_PATH = new URL("../public/_headers", import.meta.url);
@@ -119,7 +120,7 @@ describe("pricing contract", () => {
     assert.match(page, /'landing_pricing_team_plan'\s*:\s*'landing_pricing_personal_plan'/);
     assert.match(page, /'deepseek_v4_pro'/);
     // First-touch envelope + device id survive Pricing → Cloud. Campaign id is
-    // re-decided by campaignActive and written only via __odAttributedUrl.
+    // re-decided by campaignEligible and written only via __odAttributedUrl.
     assert.match(page, /'od_conversion_source',\s*'od_device_id'/);
     assert.match(page, /od_campaign_id is intentionally NOT forwarded/);
     assert.match(page, /window\.__odTrack\('ui_click', props\)/);
@@ -140,26 +141,47 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /限时抢购/);
   });
 
-  it("decides campaign visibility by the real window or explicit review parameter", async () => {
+  it("preview reveals campaign UI but never stamps attribution outside the real window", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
-    assert.match(page, /campaignActive = campaignPreview \|\| \(now >= campaignStartAt && now < campaignEndAt\)/);
+    assert.match(page, /campaignEligible = now >= campaignStartAt && now < campaignEndAt/);
+    assert.match(page, /campaignVisible = campaignPreview \|\| campaignEligible/);
+    assert.match(page, /surface\.hidden = !campaignVisible/);
     assert.match(page, /data-campaign-review-param/);
     assert.match(page, /campaignPreview/);
+    assert.doesNotMatch(
+      page,
+      /campaignActive = campaignPreview \|\| \(now >= campaignStartAt && now < campaignEndAt\)/,
+    );
+    assert.doesNotMatch(page, /campaignActive \? 'deepseek_v4_pro'/);
+    assert.doesNotMatch(
+      page,
+      /campaignVisible \? 'deepseek_v4_pro'|campaignPreview \? 'deepseek_v4_pro'/,
+    );
+
+    const startAt = Date.parse(DEEPSEEK_V4_PRO_CAMPAIGN.startAt);
+    const endAt = Date.parse(DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive);
+    const afterClose = Date.parse("2026-08-27T20:00:00+08:00");
+    const campaignPreview = true;
+    const campaignEligible = afterClose >= startAt && afterClose < endAt;
+    const campaignVisible = campaignPreview || campaignEligible;
+    assert.equal(campaignVisible, true);
+    assert.equal(campaignEligible, false);
+    assert.equal(campaignEligible ? "deepseek_v4_pro" : undefined, undefined);
   });
 
   it("stamps campaign attribution on subscribe CTAs only inside the activity window", async () => {
     // Clicks outside the fixed window must not count toward the campaign:
     // the CTA keeps recording od_entry_* attribution, but the minted entry
-    // and the ui_click props carry the campaign id only while campaignActive
-    // is true.
+    // and the ui_click props carry the campaign id only while campaignEligible
+    // is true. Review preview may reveal the UI without granting membership.
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
     assert.match(
       page,
-      /__odRecordCampaignEntry\?\.\(\s*audience === 'team' \? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',\s*campaignActive \? 'deepseek_v4_pro' : undefined,\s*\)/,
+      /__odRecordCampaignEntry\?\.\(\s*audience === 'team' \? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',\s*campaignEligible \? 'deepseek_v4_pro' : undefined,\s*\)/,
     );
-    assert.match(page, /\.\.\.\(campaignActive \? \{ campaign_id: 'deepseek_v4_pro' \} : \{\}\)/);
+    assert.match(page, /\.\.\.\(campaignEligible \? \{ campaign_id: 'deepseek_v4_pro' \} : \{\}\)/);
     assert.doesNotMatch(
       page,
       /element: 'subscribe',[\s\S]{0,300}?\n\s*campaign_id: 'deepseek_v4_pro',/,

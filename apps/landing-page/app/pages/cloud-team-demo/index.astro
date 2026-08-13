@@ -155,7 +155,8 @@ const teamPlans = [
   const campaignPreviewEndAt = Date.now() + 14 * 24 * 60 * 60 * 1000;
   let trackedPlanSurface = false;
   let trackedCampaignBenefit = false;
-  let campaignActive = false;
+  let campaignEligible = false;
+  let campaignVisible = false;
 
   function track(name: 'surface_view' | 'ui_click', props: Record<string, unknown>) {
     window.__odTrack?.(name, {
@@ -174,7 +175,7 @@ const teamPlans = [
         plan_audience: 'team',
       });
     }
-    if (campaignActive && !trackedCampaignBenefit) {
+    if (campaignVisible && !trackedCampaignBenefit) {
       trackedCampaignBenefit = true;
       track('surface_view', {
         element: 'deepseek_v4_pro_benefit',
@@ -185,10 +186,11 @@ const teamPlans = [
 
   function updateCampaignCountdown() {
     const now = Date.now();
-    campaignActive = campaignPreview || (now >= campaignStartAt && now < campaignEndAt);
-    campaignSurfaces.forEach((surface) => { surface.hidden = !campaignActive; });
+    campaignEligible = now >= campaignStartAt && now < campaignEndAt;
+    campaignVisible = campaignPreview || campaignEligible;
+    campaignSurfaces.forEach((surface) => { surface.hidden = !campaignVisible; });
     recordTeamSurfaces();
-    if (!campaignActive || !campaignCountdown) return;
+    if (!campaignVisible || !campaignCountdown) return;
     const countdownEndsAt = campaignPreview ? campaignPreviewEndAt : campaignEndAt;
     const totalSeconds = Math.max(0, Math.ceil((countdownEndsAt - now) / 1000));
     const days = Math.floor(totalSeconds / 86400);
@@ -209,7 +211,10 @@ const teamPlans = [
         return;
       }
       const source = 'landing_pricing_team_plan';
-      const attribution = window.__odRecordCampaignEntry?.(source, 'deepseek_v4_pro');
+      const attribution = window.__odRecordCampaignEntry?.(
+        source,
+        campaignEligible ? 'deepseek_v4_pro' : undefined,
+      );
       track('ui_click', {
         element: 'upgrade',
         plan_audience: 'team',
@@ -224,7 +229,10 @@ const teamPlans = [
     event.preventDefault();
     const link = event.currentTarget as HTMLAnchorElement;
     const source = 'landing_pricing_team_plan';
-    const attribution = window.__odRecordCampaignEntry?.(source, 'deepseek_v4_pro');
+    const attribution = window.__odRecordCampaignEntry?.(
+      source,
+      campaignEligible ? 'deepseek_v4_pro' : undefined,
+    );
     track('ui_click', {
       area: 'campaign_badge',
       element: 'open_pricing',
