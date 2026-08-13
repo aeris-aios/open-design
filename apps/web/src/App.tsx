@@ -133,6 +133,10 @@ import { resolvePlanTier } from './collab/team-plan';
 import { deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
 import { CommunityView } from './components/CommunityView';
 import { seedHomeComposerPrompt } from './components/HomeView';
+import {
+  createPluginUseHandoff,
+  stashHomePromptHandoff,
+} from './components/home-hero/plugin-authoring';
 import { goBack, navigate, useRoute, type Route } from './router';
 import {
   fetchDaemonConfig,
@@ -4925,10 +4929,21 @@ function AppInner() {
             }
           })();
         }}
-        onUsePrompt={(prompt) => {
-          // Seed the Home composer with the template's starting prompt, then hand
-          // the user into Home to review + send it (instead of dropping the pick).
-          seedHomeComposerPrompt(prompt);
+        onUsePrompt={(target) => {
+          seedHomeComposerPrompt(target.prompt);
+          stashHomePromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
+            action: 'use',
+            chipId: target.chipId,
+            projectKind: target.projectKind,
+          }));
+          navigate({ kind: 'home', view: 'home' });
+        }}
+        onUsePlugin={(record, action, target) => {
+          stashHomePromptHandoff(createPluginUseHandoff(Date.now(), record.id, {
+            action,
+            chipId: target.chipId,
+            projectKind: target.projectKind,
+          }));
           navigate({ kind: 'home', view: 'home' });
         }}
       />

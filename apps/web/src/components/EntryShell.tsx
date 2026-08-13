@@ -84,6 +84,7 @@ import type {
   DesignSystemSummary,
   ExecMode,
   Project,
+  ProjectKind,
   ProjectMetadata,
   ProjectTemplate,
   PromptTemplateSummary,
@@ -1211,9 +1212,10 @@ export function EntryShell({
   function usePluginFromLibrary(
     record: InstalledPluginRecord,
     action: PluginUseAction = 'use',
+    homeType?: { chipId: string; projectKind: ProjectKind },
   ) {
     setHomePromptHandoff(
-      createPluginUseHandoff(Date.now(), record.id, { action }),
+      createPluginUseHandoff(Date.now(), record.id, { action, ...homeType }),
     );
     changeView('home');
   }
@@ -1871,18 +1873,28 @@ export function EntryShell({
                     }
                   })();
                 }}
-                onUsePrompt={(prompt) => {
+                onUsePrompt={(target) => {
                   // Seed the Home composer with the template's starting prompt,
                   // then switch to Home to review + send it (keep in sync with
                   // the standalone /community branch in App.tsx).
-                  seedHomeComposerPrompt(prompt);
+                  seedHomeComposerPrompt(target.prompt);
+                  setHomePromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
+                    action: 'use',
+                    chipId: target.chipId,
+                    projectKind: target.projectKind,
+                  }));
                   changeView('home');
                 }}
                 // The gallery card's full details modal routes Use through the
                 // same Home hand-off the plugin library uses, so the plugin
                 // becomes the composer's active driver instead of only seeding
                 // prompt text.
-                onUsePlugin={usePluginFromLibrary}
+                onUsePlugin={(record, action, target) => {
+                  usePluginFromLibrary(record, action, {
+                    chipId: target.chipId,
+                    projectKind: target.projectKind,
+                  });
+                }}
               />
             ) : null}
             {/* Team destinations — the entry shell owns the nav frame only; each
