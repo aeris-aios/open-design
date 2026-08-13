@@ -120,10 +120,10 @@ const GPT_5_5_SERVICE_TIER_OPTIONS: RuntimeModelOption[] = [
 // prompt can see the documented `$OD_NODE_BIN` / `$OD_BIN` invocation yet the
 // actual command expands both paths to empty strings.
 //
-// Start from the daemon-built process environment, then allow only the small
-// cross-platform shell baseline plus the run-scoped wrapper contract. This is
-// deliberately narrower than `inherit = "all"`: credentials inherited by the
-// daemon remain unavailable unless they are one of the explicit Open Design
+// Start from the daemon-built process environment, then use Codex's
+// `include_only` policy to retain only the small cross-platform shell baseline
+// plus the run-scoped wrapper contract. Credentials inherited by the daemon
+// remain unavailable unless they are one of the explicit Open Design
 // capabilities below. `OD_TOOL_TOKEN` stays in the environment channel rather
 // than being copied into argv, process listings, or Codex config files.
 const CODEX_SHELL_ENVIRONMENT_INCLUDE_KEYS = [
