@@ -103,4 +103,24 @@ describe('@open-design/dsh-runtime protocol', () => {
     assert.deepEqual(internals.terminalOutput(''), {});
     assert.deepEqual(internals.terminalOutput('done'), { output: 'done' });
   });
+
+  test('normalizes every failed terminal reason to a wire error', () => {
+    assert.deepEqual(internals.resultError({ kind: 'blocked' }), {
+      code: 'DSH_PROFILE_TURN_BLOCKED',
+      message: 'DeepSeek Harness blocked the turn before it completed.',
+    });
+    assert.deepEqual(internals.resultError({
+      kind: 'error',
+      error: new Error('provider unavailable') as never,
+    }), {
+      code: 'DSH_PROFILE_TURN_FAILED',
+      message: 'provider unavailable',
+    });
+    assert.deepEqual(internals.resultError(undefined), {
+      code: 'DSH_PROFILE_MISSING_TURN_END',
+      message: 'DeepSeek Harness became idle without reporting how the turn ended.',
+    });
+    assert.equal(internals.resultError({ kind: 'completed' }), undefined);
+    assert.equal(internals.resultError({ kind: 'aborted', reason: { kind: 'user' } }), undefined);
+  });
 });

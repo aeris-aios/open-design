@@ -70,6 +70,27 @@ function resultStatus(reason: TurnEndReason | undefined): 'completed' | 'cancell
   return 'failed';
 }
 
+function resultError(reason: TurnEndReason | undefined): { code: string; message: string } | undefined {
+  if (resultStatus(reason) !== 'failed') return undefined;
+  if (!reason) {
+    return {
+      code: 'DSH_PROFILE_MISSING_TURN_END',
+      message: 'DeepSeek Harness became idle without reporting how the turn ended.',
+    };
+  }
+  if (reason.kind === 'error') return errorFacts(reason.error, 'DSH_PROFILE_TURN_FAILED');
+  if (reason.kind === 'blocked') {
+    return {
+      code: 'DSH_PROFILE_TURN_BLOCKED',
+      message: 'DeepSeek Harness blocked the turn before it completed.',
+    };
+  }
+  return {
+    code: 'DSH_PROFILE_TURN_FAILED',
+    message: `DeepSeek Harness ended the turn with reason "${reason.kind}".`,
+  };
+}
+
 function terminalOutput(output: string): { output: string } | Record<string, never> {
   return output === '' ? {} : { output };
 }
@@ -179,21 +200,22 @@ async function execute(
     : baseSelection;
   const sessionId = SessionId(request.resume_session_id ?? `od-${randomUUID()}`);
   let handle: AgentHandle | undefined;
-  let firstSeq = 0;
+  let firstSeq = Number.POSITIVE_INFINITY;
   let turnEnd: SessionEvent<'turn/end'> | undefined;
   let assistantOutput = '';
   const setup = (agentCtx: Context) => {
     const selected: ModelSelectionRef = { current: selection, assembled: undefined };
     installModelSelection(agentCtx, selected);
   };
-  const disposeEvent = ctx.on('session/event', (session, event) => {
+  let disposeEvent = () => {};
+  const onSessionEvent = (session: { id: unknown }, event: SessionEvent) => {
     if (String(session.id) !== String(sessionId) || event.seq < firstSeq) return;
     emitSessionEvent(output, request, selection.provider, selection.model, event);
     if (event.type === 'assistant/chunk' && event.data.chunk.type === 'text-delta') {
       assistantOutput += event.data.chunk.text;
     }
     if (event.type === 'turn/end') turnEnd = event;
-  });
+  };
 
   try {
     try {
@@ -242,8 +264,9 @@ async function execute(
       resumed: Boolean(request.resume_session_id),
     });
     await handle.agent.whenIdle();
-    firstSeq = handle.agent.session.seq;
-    handle.agent.followup(createUserMessage({
+    firstSeq = handle.agent.session.seq + 1;
+    disposeEvent = ctx.on('session/event', onSessionEvent);
+    await handle.agent.followup(createUserMessage({
       content: [{ type: 'text', text: request.prompt }],
       source: { kind: 'user' },
     }));
@@ -252,7 +275,7 @@ async function execute(
 
     const reason = turnEnd?.data.reason;
     const status = resultStatus(reason);
-    const failed = reason?.kind === 'error' ? reason.error : undefined;
+    const failed = resultError(reason);
     writeFrame(output, {
       v: 1,
       type: 'result',
@@ -373,5 +396,6 @@ export const internals = {
   emitSessionEvent,
   listModelCatalog,
   resultStatus,
+  resultError,
   terminalOutput,
 };
