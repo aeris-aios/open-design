@@ -16,6 +16,7 @@ import { spawnEnvForAgent } from './runtimes/env.js';
 import { execAgentFile } from './runtimes/invocation.js';
 import { applyAgentLaunchEnv, resolveAgentLaunch } from './runtimes/launch.js';
 import { getAgentDef } from './runtimes/registry.js';
+import { hasOpenDesignProfile } from './runtimes/defs/deepseek-harness.js';
 
 const execFileAsync = promisify(execFile);
 const DSH_AGENT_ID = 'deepseek-harness';
@@ -183,6 +184,7 @@ async function installDeepSeekHarnessCompanionOnce(options: {
     spawnEnvForAgent(DSH_AGENT_ID, process.env, configuredEnv),
     launch,
   );
+  const profileWasPresent = hasOpenDesignProfile(childEnv);
   try {
     await execAgentFile(
       launch.launchPath,
@@ -203,8 +205,6 @@ async function installDeepSeekHarnessCompanionOnce(options: {
       'The connection component was installed, but its compatibility check did not pass.',
     );
   }
-  const action: AgentCompanionSetupAction = before.diagnostics?.some(
-    (diagnostic) => diagnostic.reason === 'runtime-profile-incompatible',
-  ) ? 'repaired' : 'installed';
+  const action: AgentCompanionSetupAction = profileWasPresent ? 'repaired' : 'installed';
   return { action, agent: after, ok: true, packageVersion: manifest.version };
 }

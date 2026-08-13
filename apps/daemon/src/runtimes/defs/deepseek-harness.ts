@@ -29,7 +29,7 @@ function parseModels(stdout: string) {
   ];
 }
 
-function hasOpenDesignProfile(env: NodeJS.ProcessEnv): boolean {
+export function hasOpenDesignProfile(env: NodeJS.ProcessEnv): boolean {
   const configuredHome = env.DSH_HOME?.trim();
   const dshHome = configuredHome
     ? path.resolve(configuredHome)
