@@ -536,6 +536,23 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       .some((mode) => mode.trim().toLowerCase() !== "normal");
   }
 
+  function hasCssMask(style: CSSStyleDeclaration): boolean {
+    const images = [
+      style.maskImage || style.getPropertyValue("mask-image"),
+      style.webkitMaskImage || style.getPropertyValue("-webkit-mask-image"),
+    ];
+    return images.some((image) => image && image.trim().toLowerCase() !== "none");
+  }
+
+  function copyComputedMaskStyles(background: HTMLElement, style: CSSStyleDeclaration): void {
+    for (let index = 0; index < style.length; index += 1) {
+      const property = style.item(index);
+      if (!property.startsWith("mask-") && !property.startsWith("-webkit-mask-")) continue;
+      const value = style.getPropertyValue(property);
+      if (value) background.style.setProperty(property, value, "important");
+    }
+  }
+
   function materializeLayeredPseudoBackground(
     element: HTMLElement,
     pseudo: "::before" | "::after",
@@ -547,7 +564,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       !isGenerated ||
       (style.position !== "absolute" && style.position !== "fixed") ||
       !isSupportedLayeredGradient(style.backgroundImage || "") ||
-      (!dependsOnBackdrop(style) && !hasNonNormalBackgroundBlendMode(style)) ||
+      (!dependsOnBackdrop(style) && !hasNonNormalBackgroundBlendMode(style) && !hasCssMask(style)) ||
       hasTextClip(style)
     ) {
       return null;
@@ -593,6 +610,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("background-clip", style.backgroundClip, "important");
     background.style.setProperty("background-blend-mode", style.backgroundBlendMode || "normal", "important");
     background.style.setProperty("clip-path", style.clipPath || "none", "important");
+    copyComputedMaskStyles(background, style);
     background.style.setProperty("filter", style.filter || "none", "important");
     const backdropFilter =
       style.backdropFilter ||
@@ -736,28 +754,56 @@ export function isolateLayeredPptxBackground(
   const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
   const blendBackdropElements = new Set<HTMLElement>();
   const blendBackdropPseudos = new Map<HTMLElement, Set<"::before" | "::after">>();
-  const addBlendBackdropSubtree = (root: HTMLElement): void => {
-    for (const element of [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]) {
-      blendBackdropElements.add(element);
-      const pseudos = blendBackdropPseudos.get(element) ?? new Set<"::before" | "::after">();
-      pseudos.add("::before");
-      pseudos.add("::after");
-      blendBackdropPseudos.set(element, pseudos);
+  const addBlendBackdropElement = (element: HTMLElement): void => {
+    blendBackdropElements.add(element);
+    const pseudos = blendBackdropPseudos.get(element) ?? new Set<"::before" | "::after">();
+    pseudos.add("::before");
+    pseudos.add("::after");
+    blendBackdropPseudos.set(element, pseudos);
+  };
+  const paintsBehindTarget = (element: HTMLElement): boolean => {
+    const rect = element.getBoundingClientRect();
+    const intersection = {
+      bottom: Math.min(bottom, rect.bottom),
+      left: Math.max(left, rect.left),
+      right: Math.min(right, rect.right),
+      top: Math.max(top, rect.top),
+    };
+    if (intersection.right - intersection.left < 1 || intersection.bottom - intersection.top < 1) {
+      return false;
     }
+    const insetX = Math.min(1, (intersection.right - intersection.left) / 4);
+    const insetY = Math.min(1, (intersection.bottom - intersection.top) / 4);
+    const points: Array<[number, number]> = [
+      [(intersection.left + intersection.right) / 2, (intersection.top + intersection.bottom) / 2],
+      [intersection.left + insetX, intersection.top + insetY],
+      [intersection.right - insetX, intersection.top + insetY],
+      [intersection.left + insetX, intersection.bottom - insetY],
+      [intersection.right - insetX, intersection.bottom - insetY],
+    ];
+    return points.some(([x, y]) => {
+      const paintStack = document.elementsFromPoint(x, y);
+      const targetIndex = paintStack.indexOf(target);
+      const elementIndex = paintStack.indexOf(element);
+      return targetIndex >= 0 && elementIndex > targetIndex;
+    });
   };
   if (flattenBackdrop) {
+    // Hit testing is Chromium's public view of the effective paint stack. Make
+    // pointer-events:none export shims participate temporarily, then use their
+    // actual order rather than assuming that DOM order is paint order.
+    for (const element of allElements) {
+      element.style.setProperty("pointer-events", "auto", "important");
+    }
+    for (const element of [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))]) {
+      if (element === target || element.contains(target) || target.contains(element)) continue;
+      if (paintsBehindTarget(element)) addBlendBackdropElement(element);
+    }
+
     const materializedPseudo = target.getAttribute("data-od-pptx-materialized-pseudo");
     for (let branch: HTMLElement | null = target; branch && branch !== slide; branch = branch.parentElement) {
       const parent: HTMLElement | null = branch.parentElement;
       if (!parent) break;
-      for (
-        let sibling: Element | null = parent.firstElementChild;
-        sibling && sibling !== branch;
-        sibling = sibling.nextElementSibling
-      ) {
-        if (!(sibling instanceof HTMLElement)) continue;
-        addBlendBackdropSubtree(sibling);
-      }
       blendBackdropElements.add(parent);
       // An ancestor's ::before paints before its child content and is part of
       // that child's blend backdrop. For a materialized ::before target, the

@@ -446,6 +446,27 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
   }, 30_000);
 
+  test('uses CSS paint order when selecting a blended background backdrop', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.paintOrderedBackdrop.pngs;
+
+    expect(media.paintOrderedBackdrop, JSON.stringify(media.paintOrderedBackdrop)).toMatchObject({
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
+  }, 30_000);
+
+  test('includes an explicit slide background behind a materialized layered pseudo', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.stackingSlide.pngs;
+
+    expect(media.stackingSlide, JSON.stringify(media.stackingSlide)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
+  }, 30_000);
+
   test('aligns a captured layered background with native content after export normalization', async () => {
     const media = await probeLayeredBackgroundMedia();
 
@@ -541,6 +562,34 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.maxAlpha).toBeGreaterThan(50);
     expect(image?.maxAlpha).toBeLessThan(128);
   }, 30_000);
+
+  test('preserves mask geometry on a normal layered pseudo background', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.normalMaskedPseudo.pngs;
+
+    expect(media.normalMaskedPseudo, JSON.stringify(media.normalMaskedPseudo)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image).toBeDefined();
+    expect(image?.minAlpha).toBe(0);
+    expect(image?.maxAlpha).toBe(255);
+    expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(image?.opaquePixels ?? 0);
+  }, 30_000);
+
+  test('preserves mask geometry on a background-blended layered pseudo', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.compositedMaskedPseudo.pngs;
+
+    expect(media.compositedMaskedPseudo, JSON.stringify(media.compositedMaskedPseudo)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image).toBeDefined();
+    expect(image?.minAlpha).toBe(0);
+    expect(image?.maxAlpha).toBe(255);
+    expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(image?.opaquePixels ?? 0);
+  }, 30_000);
 });
 
 type LayeredBackgroundProbe = {
@@ -552,9 +601,12 @@ type LayeredBackgroundProbe = {
   backgroundBlendPseudo: LayeredBackgroundExport;
   blended: LayeredBackgroundExport;
   composited: LayeredBackgroundExport;
+  compositedMaskedPseudo: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   materializedBackgroundBlend: LayeredBackgroundExport;
   nestedBlended: LayeredBackgroundExport;
+  normalMaskedPseudo: LayeredBackgroundExport;
+  paintOrderedBackdrop: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
   replaced: LayeredBackgroundExport;
@@ -562,6 +614,7 @@ type LayeredBackgroundProbe = {
   rootPseudo: LayeredBackgroundExport;
   rootPseudoLayerOrder: { background: number; content: number; slideBackground: number };
   skippedTargets: number;
+  stackingSlide: LayeredBackgroundExport;
   supported: LayeredBackgroundExport;
 };
 
@@ -617,6 +670,9 @@ const fixtures = {
   pseudo: '<div class="pseudo"></div>',
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
+  normalMaskedPseudo: '<div class="normal-masked-pseudo"></div>',
+  compositedMaskedPseudo: '<div class="composited-masked-pseudo"></div>',
+  paintOrderedBackdrop: '<div class="paint-above"></div><div class="paint-target"></div><div class="paint-below"></div>',
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
@@ -716,6 +772,65 @@ const styles = \`
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
+  .paint-above,
+  .paint-target,
+  .paint-below {
+    position: absolute;
+    left: 218px;
+    top: 112px;
+    width: 78px;
+    height: 38px;
+  }
+  .paint-above { z-index: 2; background: rgb(255, 64, 64); }
+  .paint-target {
+    z-index: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
+  }
+  .paint-below { z-index: -1; background: rgb(128, 192, 128); }
+  .normal-masked-pseudo {
+    position: absolute;
+    left: 8px;
+    top: 138px;
+    width: 62px;
+    height: 34px;
+  }
+  .normal-masked-pseudo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255)), linear-gradient(transparent, transparent);
+    -webkit-mask-image: linear-gradient(black, black);
+    mask-image: linear-gradient(black, black);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 50% 50%;
+    mask-size: 50% 50%;
+  }
+  .composited-masked-pseudo {
+    position: absolute;
+    left: 76px;
+    top: 136px;
+    width: 64px;
+    height: 36px;
+  }
+  .composited-masked-pseudo::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(rgb(128, 192, 128), rgb(128, 192, 128));
+    background-blend-mode: multiply;
+    -webkit-mask-image: linear-gradient(black, black);
+    mask-image: linear-gradient(black, black);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 50% 50%;
+    mask-size: 50% 50%;
+  }
   .filtered-backdrop,
   .backdrop-filtered {
     position: absolute;
@@ -783,6 +898,21 @@ const styles = \`
   .visibility-hidden { visibility: hidden; }
   .zero-sized { width: 0; height: 0; }
   .off-slide { left: 400px; top: 20px; }
+  .stacking-slide {
+    background-color: rgb(20, 40, 60);
+    background-image: linear-gradient(rgb(128, 192, 128), rgb(128, 192, 128));
+  }
+  .stacking-slide::before {
+    content: '';
+    position: absolute;
+    left: 60px;
+    top: 40px;
+    width: 82px;
+    height: 42px;
+    z-index: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
+  }
 \`;
 
 function zipEntries(pptxBase64) {
@@ -919,7 +1049,8 @@ app.whenReady().then(async () => {
     const fixtureMarkup = fixtureEntries
       .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
       .join('');
-    const slide = '<section class="slide">' + fixtureMarkup + '</section>';
+    const slide = '<section class="slide">' + fixtureMarkup + '</section>'
+      + '<section class="slide stacking-slide" data-od-probe="stackingSlide"></section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     probeStage = 'normalize export DOM';
@@ -983,6 +1114,13 @@ app.whenReady().then(async () => {
         pngs: exportedImage.png ? [exportedImage.png] : [],
       };
     }
+    if (!result.normalMaskedPseudo) {
+      result.normalMaskedPseudo = {
+        captures: captureCounts.normalMaskedPseudo,
+        media: [],
+        pngs: [],
+      };
+    }
     if (!result.blended) {
       const blendedMedia = media.find(({ name, png }) =>
         !usedMedia.has(name)
@@ -1026,6 +1164,8 @@ app.whenReady().then(async () => {
     result.pseudoLayerOrder = inspectPseudoLayerOrder(entries, pseudoMedia[0]?.name || '');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
+    ).filter(
+      ({ name }) => inspectPseudoLayerOrder(entries, name).background >= 0,
     );
     result.rootPseudo = {
       captures: rootPseudoCaptureCount,
@@ -1102,6 +1242,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('backgroundBlendPseudo' in value)
     || !('materializedBackgroundBlend' in value)
     || !('nestedBlended' in value)
+    || !('normalMaskedPseudo' in value)
+    || !('paintOrderedBackdrop' in value)
     || !('alignmentGeometry' in value)
     || typeof value.alignmentGeometry !== 'object'
     || value.alignmentGeometry === null
@@ -1113,6 +1255,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !value.replacedForegroundMedia.every((item) => typeof item === 'string')
     || !('masked' in value)
     || !('composited' in value)
+    || !('compositedMaskedPseudo' in value)
     || !('pseudoLayerOrder' in value)
     || typeof value.pseudoLayerOrder !== 'object'
     || value.pseudoLayerOrder === null
@@ -1132,6 +1275,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.rootPseudoLayerOrder.slideBackground !== 'number'
     || !('skippedTargets' in value)
     || typeof value.skippedTargets !== 'number'
+    || !('stackingSlide' in value)
   ) {
     throw new Error(`Electron renderer probe returned an invalid result: ${JSON.stringify(value)}`);
   }
@@ -1141,9 +1285,12 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     backgroundBlendPseudo: parseLayeredBackgroundExport(value.backgroundBlendPseudo),
     blended: parseLayeredBackgroundExport(value.blended),
     composited: parseLayeredBackgroundExport(value.composited),
+    compositedMaskedPseudo: parseLayeredBackgroundExport(value.compositedMaskedPseudo),
     masked: parseLayeredBackgroundExport(value.masked),
     materializedBackgroundBlend: parseLayeredBackgroundExport(value.materializedBackgroundBlend),
     nestedBlended: parseLayeredBackgroundExport(value.nestedBlended),
+    normalMaskedPseudo: parseLayeredBackgroundExport(value.normalMaskedPseudo),
+    paintOrderedBackdrop: parseLayeredBackgroundExport(value.paintOrderedBackdrop),
     pseudo: parseLayeredBackgroundExport(value.pseudo),
     pseudoLayerOrder: {
       background: value.pseudoLayerOrder.background,
@@ -1158,6 +1305,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       slideBackground: value.rootPseudoLayerOrder.slideBackground,
     },
     skippedTargets: value.skippedTargets,
+    stackingSlide: parseLayeredBackgroundExport(value.stackingSlide),
     supported: parseLayeredBackgroundExport(value.supported),
   };
 }
