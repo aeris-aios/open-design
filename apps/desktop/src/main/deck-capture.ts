@@ -1096,6 +1096,115 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
     }
   }
 
+  function splitCssBackgroundLayers(input: string): string[] {
+    const layers: string[] = [];
+    let current = "";
+    let depth = 0;
+    let quote = "";
+    let escaped = false;
+    for (const char of input) {
+      if (escaped) {
+        current += char;
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        current += char;
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        current += char;
+        if (char === quote) quote = "";
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        current += char;
+        quote = char;
+        continue;
+      }
+      if (char === "(") depth += 1;
+      else if (char === ")") depth = Math.max(0, depth - 1);
+      if (char === "," && depth === 0) {
+        if (current.trim()) layers.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim()) layers.push(current.trim());
+    return layers;
+  }
+
+  function preserveLayeredGradientBackgrounds(slides: HTMLElement[]): void {
+    const elements = new Set<HTMLElement>();
+    for (const slide of slides) {
+      elements.add(slide);
+      slide.querySelectorAll<HTMLElement>("*").forEach((el) => elements.add(el));
+    }
+
+    for (const element of elements) {
+      const style = getComputedStyle(element);
+      const layers = splitCssBackgroundLayers(style.backgroundImage || "");
+      if (
+        layers.length < 2 ||
+        layers.some((layer) => !/^(?:repeating-)?(?:conic|linear|radial)-gradient\(/i.test(layer))
+      ) {
+        continue;
+      }
+
+      // dom-to-pptx's native gradient parser assumes one linear-gradient and
+      // greedily merges layered gradients into one invalid SVG. Its custom-
+      // element path already uses html2canvas, so move only the background to
+      // a background-only custom element. The converter rasterizes that layer
+      // with Chromium while continuing to emit the authored children as native
+      // editable text and shapes.
+      const background = document.createElement("od-pptx-layered-background");
+      background.setAttribute("data-od-pptx-layered-bg", "true");
+      background.setAttribute("aria-hidden", "true");
+      background.style.setProperty("position", "absolute", "important");
+      background.style.setProperty("inset", "0", "important");
+      background.style.setProperty("z-index", "0", "important");
+      background.style.setProperty("pointer-events", "none", "important");
+      background.style.setProperty("box-sizing", "border-box", "important");
+      background.style.setProperty(
+        "padding",
+        `${style.paddingTop || "0px"} ${style.paddingRight || "0px"} ${style.paddingBottom || "0px"} ${style.paddingLeft || "0px"}`,
+        "important",
+      );
+      background.style.setProperty(
+        "border-width",
+        `${style.borderTopWidth || "0px"} ${style.borderRightWidth || "0px"} ${style.borderBottomWidth || "0px"} ${style.borderLeftWidth || "0px"}`,
+        "important",
+      );
+      background.style.setProperty("border-style", "solid", "important");
+      background.style.setProperty("border-color", "transparent", "important");
+      background.style.setProperty("border-radius", style.borderRadius || "0px", "important");
+      background.style.setProperty("background-color", style.backgroundColor, "important");
+      background.style.setProperty("background-image", style.backgroundImage, "important");
+      background.style.setProperty("background-position", style.backgroundPosition, "important");
+      background.style.setProperty("background-size", style.backgroundSize, "important");
+      background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
+      background.style.setProperty("background-origin", style.backgroundOrigin, "important");
+      background.style.setProperty("background-clip", style.backgroundClip, "important");
+
+      if (style.position === "static") element.style.setProperty("position", "relative", "important");
+      Array.from(element.children).forEach((child) => {
+        const childStyle = getComputedStyle(child);
+        const childElement = child as HTMLElement;
+        if (childStyle.position === "static") {
+          childElement.style.setProperty("position", "relative", "important");
+        }
+        if (childStyle.zIndex === "auto") {
+          childElement.style.setProperty("z-index", "1", "important");
+        }
+      });
+
+      element.style.setProperty("background-image", "none", "important");
+      element.prepend(background);
+    }
+  }
+
   function stabilizeLargeSingleLineText(slides: HTMLElement[]): void {
     for (const slide of slides) {
       slide.querySelectorAll<HTMLElement>("*").forEach((el) => {
@@ -1171,6 +1280,7 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       .filter((el) => !(el as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb"));
     if (slides.length === 0) return { error: "no slides to export" };
     ensureExplicitSlideBackgrounds(slides as HTMLElement[]);
+    preserveLayeredGradientBackgrounds(slides as HTMLElement[]);
     stabilizeLargeSingleLineText(slides as HTMLElement[]);
     promoteCjkTypefaces(slides as HTMLElement[]);
     // dom-to-pptx assumes `node.className` is a string, but SVG elements expose
