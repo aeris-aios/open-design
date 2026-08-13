@@ -102,6 +102,7 @@ describe("pricing contract", () => {
     assert.match(campaign, /FREE for two weeks/);
     assert.match(campaign, /body: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
     assert.match(campaign, /body: 'DeepSeek V4 Pro and V4 Flash · FREE for two weeks'/);
+    assert.match(campaign, /body: 'DeepSeek V4 Pro 與 V4 Flash · 兩週免費用'/);
     assert.doesNotMatch(campaign, /body: ['\"][^'\"]*20:00/);
     assert.match(campaign, /paidBenefitNote: '8月13日—8月27日 · 两周免费用'/);
     assert.match(campaign, /teamBenefitNote: '8月13日—8月27日 · 两周免费用'/);

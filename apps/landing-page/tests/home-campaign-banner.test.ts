@@ -62,6 +62,7 @@ test('home campaign banner uses the fixed two-week activity window', () => {
   assert.match(source, /data-home-campaign-banner[^>]*hidden/);
   assert.match(source, /home-campaign-banner-active/);
   assert.match(homeCampaign, /这次，顶级智能放开用。/);
+  assert.match(homeCampaign, /這次，頂級智能放開用。/);
   assert.match(homeCampaign, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用/);
   assert.match(homeCampaign, /最高峰の知性/);
   assert.match(campaign, /DeepSeek V4 Pro and V4 Flash · FREE for two weeks/);

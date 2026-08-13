@@ -8,6 +8,7 @@ export interface HomeCampaignContent {
 export const HOME_CAMPAIGN_CONTENT_BY_LOCALE = {
   en: { title: 'Put top-tier intelligence to work—without limits.', detail: 'DeepSeek V4 Pro and V4 Flash · FREE for two weeks' },
   zh: { title: '这次，顶级智能放开用。', detail: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用' },
+  'zh-tw': { title: '這次，頂級智能放開用。', detail: 'DeepSeek V4 Pro 與 V4 Flash · 兩週免費用' },
   ja: { title: '最高峰の知性を、思いきり使おう。', detail: 'DeepSeek V4 Pro と V4 Flash · 2週間無料' },
   ko: { title: '최고 수준의 지능을 마음껏 사용하세요.', detail: 'DeepSeek V4 Pro 및 V4 Flash · 2주 무료' },
   de: { title: 'Spitzenintelligenz – ohne Zurückhaltung.', detail: 'DeepSeek V4 Pro und V4 Flash · zwei Wochen kostenlos' },

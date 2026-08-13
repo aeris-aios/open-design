@@ -39,6 +39,18 @@ export const PRICING_CAMPAIGN_CONTENT_BY_LOCALE = {
     disclaimer: '套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用；无法在MCP/CLI/API及其他场景使用。部分模型高峰期需要排队。解释权归官方所有。',
     linkLabel: '查看活动权益', closeLabel: '关闭活动横幅',
   },
+  'zh-tw': {
+    badge: '無限使用',
+    headline: '這次，頂級智能放開用。',
+    body: 'DeepSeek V4 Pro 與 V4 Flash · 兩週免費用',
+    windowLabel: '活動倒數',
+    dayUnit: '天',
+    modelBenefits: ['DeepSeek V4 Pro 無限使用', 'DeepSeek V4 Flash 無限使用'],
+    paidBenefitNote: '8月13日—8月27日 · 兩週免費用',
+    teamBenefitNote: '8月13日—8月27日 · 兩週免費用',
+    disclaimer: '方案內的無限制模型額度與免費生成次數，僅可透過 Open Design 使用；無法在 MCP/CLI/API 及其他場景使用。部分模型在高峰時段可能需要排隊。最終解釋權歸官方所有。',
+    linkLabel: '查看活動權益', closeLabel: '關閉活動橫幅',
+  },
   ja: {
     badge: '無制限',
     headline: 'DeepSeek V4 Proを、思いきり使おう。',
