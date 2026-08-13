@@ -17,6 +17,8 @@ import {
 
 const execFileP = promisify(execFile);
 const desktopRoot = fileURLToPath(new URL('../..', import.meta.url));
+const electronProbeProcessTimeoutMs = 45_000;
+const electronProbeTestTimeoutMs = 60_000;
 
 class FakeStyle {
   private readonly values = new Map<string, { priority: string; value: string }>();
@@ -382,8 +384,25 @@ describe('editable PPTX layered backgrounds', () => {
     const media = await probeLayeredBackgroundMedia();
 
     expect(media.supported).toMatchObject({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
-    expect(media.pseudo).toMatchObject({ captures: 1, media: [expect.stringMatching(/\.png$/)] });
-  }, 30_000);
+    expect(media.pseudo, JSON.stringify(media.pseudo)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+  }, electronProbeTestTimeoutMs);
+
+  test('keeps layered pseudo backgrounds behind native pseudo content', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.pseudoLayerOrder.background, JSON.stringify(media.pseudoLayerOrder)).toBeGreaterThanOrEqual(0);
+    expect(media.pseudoLayerOrder.content).toBeGreaterThanOrEqual(0);
+    expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
+  }, electronProbeTestTimeoutMs);
+
+  test('skips hidden, zero-sized, and off-slide layered backgrounds without aborting export', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.skippedTargets).toBe(0);
+  }, electronProbeTestTimeoutMs);
 
   test('preserves clipping and effective opacity in the exported layered-background pixels', async () => {
     const media = await probeLayeredBackgroundMedia();
@@ -394,7 +413,7 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
     expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
     expect(image?.maxAlpha).toBeLessThanOrEqual(136);
-  }, 30_000);
+  }, electronProbeTestTimeoutMs);
 
   test('preserves a CSS mask as decoded alpha in the exported PNG', async () => {
     const media = await probeLayeredBackgroundMedia();
@@ -407,13 +426,15 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.translucentPixels).toBeGreaterThan(0);
     expect(image?.maxAlpha).toBeGreaterThan(50);
     expect(image?.maxAlpha).toBeLessThan(128);
-  }, 30_000);
+  }, electronProbeTestTimeoutMs);
 });
 
 type LayeredBackgroundProbe = {
   composited: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
+  pseudoLayerOrder: { background: number; content: number };
+  skippedTargets: number;
   supported: LayeredBackgroundExport;
 };
 
@@ -462,6 +483,7 @@ const fixtures = {
   pseudo: '<div class="pseudo"></div>',
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
+  skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
 };
 const styles = \`
   html, body { margin: 0; }
@@ -477,9 +499,11 @@ const styles = \`
   }
   .pseudo { left: 176px; top: 12px; }
   .pseudo::before {
-    content: '';
+    content: 'Layered pseudo content';
     position: absolute;
     inset: 0;
+    border: 2px solid white;
+    color: white;
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
   }
@@ -501,6 +525,16 @@ const styles = \`
     opacity: .5;
     transform: translate(-12px, 0) rotate(8deg) scale(.9);
   }
+  .hidden-layer, .zero-sized, .off-slide {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    background-image: linear-gradient(red, blue), radial-gradient(circle, white, black);
+  }
+  .display-none { display: none; }
+  .visibility-hidden { visibility: hidden; }
+  .zero-sized { width: 0; height: 0; }
+  .off-slide { left: 400px; top: 20px; }
 \`;
 
 function zipEntries(pptxBase64) {
@@ -557,6 +591,22 @@ function inspectPng(data, name) {
   return { height, maxAlpha, minAlpha, name, opaquePixels, translucentPixels, transparentPixels, width };
 }
 
+function inspectPseudoLayerOrder(entries, mediaName) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  const relationships = entries
+    .find(({ name }) => name === 'ppt/slides/_rels/slide1.xml.rels')
+    ?.data.toString('utf8') || '';
+  const targetName = mediaName.split('/').pop() || '';
+  const relationship = relationships
+    .match(/<Relationship\\b[^>]*>/g)
+    ?.find((entry) => entry.includes(targetName)) || '';
+  const relationshipId = relationship.match(/\\bId="([^"]+)"/)?.[1] || '';
+  return {
+    background: relationshipId ? slideXml.indexOf('r:embed="' + relationshipId + '"') : -1,
+    content: slideXml.indexOf('Layered pseudo content'),
+  };
+}
+
 let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
@@ -584,6 +634,10 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
+    const targetCounts = await window.webContents.executeJavaScript(
+      'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-probe]"), (probe) => [probe.getAttribute("data-od-probe"), probe.querySelectorAll("[data-od-pptx-layer-capture-id]").length]))',
+      true,
+    );
     const probeByTarget = await window.webContents.executeJavaScript(
       'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-pptx-layer-capture-id]"), (target) => [target.getAttribute("data-od-pptx-layer-capture-id"), target.closest("[data-od-probe]").getAttribute("data-od-probe")]))',
       true,
@@ -608,6 +662,7 @@ app.whenReady().then(async () => {
       'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-probe]"), (probe) => [probe.getAttribute("data-od-probe"), probe.querySelectorAll("[data-od-pptx-layered-bg]").length]))',
       true,
     );
+    const entries = zipEntries(exported.b64);
     const media = inspectMedia(exported.b64);
     const usedMedia = new Set();
     const result = {};
@@ -630,12 +685,16 @@ app.whenReady().then(async () => {
         pngs: exportedImage.png ? [exportedImage.png] : [],
       };
     }
-    const pseudoMedia = media.filter(({ name }) => !usedMedia.has(name));
+    const pseudoMedia = media.filter(
+      ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) > 100 && (png?.height ?? 0) > 40,
+    );
     result.pseudo = {
       captures: captureCounts.pseudo,
       media: pseudoMedia.map(({ name }) => name).sort(),
       pngs: pseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
+    result.pseudoLayerOrder = inspectPseudoLayerOrder(entries, pseudoMedia[0]?.name || '');
+    result.skippedTargets = targetCounts.skipped;
     probeResult = result;
   } finally {
     if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
@@ -675,7 +734,7 @@ app.whenReady().then(async () => {
     let stderr: string;
     let stdout: string;
     try {
-      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: 20_000 }));
+      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: electronProbeProcessTimeoutMs }));
     } catch (error) {
       const failure = error as Error & { stderr?: string; stdout?: string };
       throw new Error(
@@ -702,6 +761,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('pseudo' in value)
     || !('masked' in value)
     || !('composited' in value)
+    || !('pseudoLayerOrder' in value)
+    || typeof value.pseudoLayerOrder !== 'object'
+    || value.pseudoLayerOrder === null
+    || !('background' in value.pseudoLayerOrder)
+    || typeof value.pseudoLayerOrder.background !== 'number'
+    || !('content' in value.pseudoLayerOrder)
+    || typeof value.pseudoLayerOrder.content !== 'number'
+    || !('skippedTargets' in value)
+    || typeof value.skippedTargets !== 'number'
   ) {
     throw new Error('Electron renderer probe returned an invalid result');
   }
@@ -709,6 +777,11 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     composited: parseLayeredBackgroundExport(value.composited),
     masked: parseLayeredBackgroundExport(value.masked),
     pseudo: parseLayeredBackgroundExport(value.pseudo),
+    pseudoLayerOrder: {
+      background: value.pseudoLayerOrder.background,
+      content: value.pseudoLayerOrder.content,
+    },
+    skippedTargets: value.skippedTargets,
     supported: parseLayeredBackgroundExport(value.supported),
   };
 }

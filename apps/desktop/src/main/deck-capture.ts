@@ -499,6 +499,39 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       .some((value) => value.toLowerCase() === "text");
   }
 
+  function isRenderedInsideSlide(
+    element: HTMLElement,
+    slide: HTMLElement,
+    style: CSSStyleDeclaration,
+  ): boolean {
+    for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+      const currentStyle = current === element ? style : getComputedStyle(current);
+      const visibility = currentStyle.visibility.toLowerCase();
+      if (
+        currentStyle.display === "none" ||
+        visibility === "hidden" ||
+        visibility === "collapse" ||
+        Number.parseFloat(currentStyle.opacity) === 0
+      ) {
+        return false;
+      }
+      if (current === slide) break;
+    }
+
+    const targetRect = element.getBoundingClientRect();
+    if (targetRect.width < 1 || targetRect.height < 1) return false;
+    const slideRect = slide.getBoundingClientRect();
+    const hasVisualOverflow = style.filter && style.filter !== "none";
+    const padding = hasVisualOverflow
+      ? Math.min(192, Math.max(64, Math.ceil(Math.max(targetRect.width, targetRect.height) / 4)))
+      : 0;
+    const width = Math.min(slideRect.right, targetRect.right + padding)
+      - Math.max(slideRect.left, targetRect.left - padding);
+    const height = Math.min(slideRect.bottom, targetRect.bottom + padding)
+      - Math.max(slideRect.top, targetRect.top - padding);
+    return width >= 1 && height >= 1;
+  }
+
   const slides = Array.prototype.slice
     .call(document.querySelectorAll(slideSelector))
     .filter((element) => !(element as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb")) as HTMLElement[];
@@ -508,7 +541,13 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const elements = [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))];
     for (const element of elements) {
       const style = getComputedStyle(element);
-      if (!isSupportedLayeredGradient(style.backgroundImage || "") || hasTextClip(style)) continue;
+      if (
+        !isSupportedLayeredGradient(style.backgroundImage || "") ||
+        hasTextClip(style) ||
+        !isRenderedInsideSlide(element, slide, style)
+      ) {
+        continue;
+      }
       const id = `od-pptx-layer-${nextId++}`;
       element.setAttribute("data-od-pptx-layer-capture-id", id);
       targets.push({ id });
@@ -1487,7 +1526,14 @@ export async function runDomToPptx(
         background.style.setProperty("left", style.left || "auto", "important");
         background.style.setProperty("width", style.width || "auto", "important");
         background.style.setProperty("height", style.height || "auto", "important");
-        background.style.setProperty("z-index", style.zIndex || "auto", "important");
+        // The converter fixes native ::before content at the host's -1,000,000
+        // sort slot. Keep its raster background one slot lower so editable
+        // pseudo text and borders remain above the captured image.
+        background.style.setProperty(
+          "z-index",
+          pseudo === "::before" ? "-1000001" : style.zIndex || "auto",
+          "important",
+        );
         background.style.setProperty("pointer-events", "none", "important");
         setCaptureBoxStyles(background, style);
 
