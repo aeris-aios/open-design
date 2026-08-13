@@ -528,6 +528,23 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.compositedPseudoContentNativeContent).toBe(-1);
   }, 30_000);
 
+  test('captures a real blended target with its Chromium-painted foreground', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.realBlend, JSON.stringify(media.realBlend)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    const comparisonContext = JSON.stringify({
+      chromium: media.realBlendChromium,
+      exported: media.realBlend.pngs[0],
+      comparison: media.realBlendChromiumComparison,
+    });
+    expect(media.realBlendChromiumComparison.meanChannelDelta, comparisonContext).toBeLessThanOrEqual(10);
+    expect(media.realBlendChromiumComparison.maxChannelDelta, comparisonContext).toBeLessThanOrEqual(64);
+    expect(media.realBlendNativeContent).toBe(-1);
+  }, 30_000);
+
   test('keeps a materialized pseudo fallback in its PNG without a duplicate native fill', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.materializedOpaquePseudo.pngs;
@@ -611,6 +628,25 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.nestedOpacityNativeContent).toBeGreaterThanOrEqual(0);
     expect(media.nestedOpacityNativeShape).toBeGreaterThanOrEqual(0);
     expect(image?.topLeftRgb[0], JSON.stringify(image)).toBeGreaterThan(image?.topLeftRgb[1] ?? 0);
+  }, 30_000);
+
+  test('captures intermediate compositor paint with a partially transparent layered child', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.nestedCompositor.pngs;
+
+    expect(media.nestedCompositor, JSON.stringify(media.nestedCompositor)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    // Chromium composites the half-transparent red child over the intermediate
+    // green fill, applies brightness(.5), then applies the outer half opacity.
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [25, 25, 0][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
+    expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
+    expect(image?.maxAlpha).toBeLessThanOrEqual(136);
+    expect(media.nestedCompositorNativeFill).toBe(-1);
   }, 30_000);
 
   test('captures a compositor root solid background below its native foreground', async () => {
@@ -747,6 +783,8 @@ type LayeredBackgroundProbe = {
   materializedOpaquePseudo: LayeredBackgroundExport;
   materializedOpaquePseudoNativeFill: number;
   nestedBlended: LayeredBackgroundExport;
+  nestedCompositor: LayeredBackgroundExport;
+  nestedCompositorNativeFill: number;
   nestedOpacity: LayeredBackgroundExport;
   nestedOpacityNativeContent: number;
   nestedOpacityNativeShape: number;
@@ -755,6 +793,10 @@ type LayeredBackgroundProbe = {
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
   pseudoNativeStyle: { border: number; content: number; fallbackFill: number };
+  realBlend: LayeredBackgroundExport;
+  realBlendChromium: PngProbe;
+  realBlendChromiumComparison: PngComparison;
+  realBlendNativeContent: number;
   replaced: LayeredBackgroundExport;
   replacedForegroundMedia: string[];
   rootPseudo: LayeredBackgroundExport;
@@ -824,6 +866,7 @@ const fixtures = {
   pseudo: '<div class="pseudo"></div>',
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
+  nestedCompositor: '<div class="nested-compositor"><div class="nested-compositor-intermediate"><div class="nested-compositor-child"></div></div></div>',
   nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div><div class="nested-opacity-label">Native nested opacity label</div><div class="nested-opacity-shape"></div></div>',
   solidCompositor: '<div class="solid-compositor"><div class="solid-compositor-child"></div><div class="solid-compositor-label">Solid compositor label</div></div>',
   ancestorBlend: '<div class="ancestor-blend-backdrop"></div><div class="ancestor-blend-context"><div class="ancestor-blend-child"></div></div>',
@@ -841,6 +884,7 @@ const fixtures = {
   materializedBackgroundBlend: '<div class="materialized-background-blend"></div>',
   materializedOpaquePseudo: '<div class="materialized-opaque-pseudo"></div>',
   alignment: '<div class="alignment-layer"><div class="alignment-native">Alignment native</div></div>',
+  realBlend: '<div class="real-blend-backdrop"></div><div class="real-blend-target">MM</div>',
 };
 const styles = \`
   html, body { margin: 0; }
@@ -961,6 +1005,25 @@ const styles = \`
     width: 10px;
     height: 10px;
     background: rgb(0, 255, 0);
+  }
+  .nested-compositor {
+    position: absolute;
+    left: 18px;
+    top: 112px;
+    width: 88px;
+    height: 44px;
+    opacity: .5;
+  }
+  .nested-compositor-intermediate {
+    position: absolute;
+    inset: 0;
+    background: rgb(0, 200, 0);
+    filter: brightness(.5);
+  }
+  .nested-compositor-child {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(200, 0, 0, .5), rgba(200, 0, 0, .5)), linear-gradient(transparent, transparent);
   }
   .solid-compositor {
     position: absolute;
@@ -1145,6 +1208,30 @@ const styles = \`
     font: 700 9px sans-serif;
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(rgb(128, 192, 128), rgb(128, 192, 128));
     background-blend-mode: multiply;
+    mix-blend-mode: multiply;
+  }
+  .real-blend-backdrop,
+  .real-blend-target {
+    position: absolute;
+    left: 8px;
+    top: 6px;
+    width: 96px;
+    height: 48px;
+  }
+  .real-blend-backdrop {
+    z-index: 19;
+    background: rgb(64, 192, 96);
+  }
+  .real-blend-target {
+    z-index: 20;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 4px solid white;
+    color: white;
+    font: 700 30px/1 sans-serif;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
   .replaced {
@@ -1463,6 +1550,21 @@ app.whenReady().then(async () => {
       compositedPseudoContentChromiumData,
       'chromium-composited-pseudo-content.png',
     );
+    const realBlendCapture = await window.webContents.executeJavaScript(
+      '(() => { const rect = document.querySelector(".real-blend-target").getBoundingClientRect(); return { geometry: { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
+      true,
+    );
+    const realBlendScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
+      captureBeyondViewport: true,
+      clip: {
+        ...realBlendCapture.geometry,
+        scale: 2 / realBlendCapture.pixelRatio,
+      },
+      format: 'png',
+      fromSurface: true,
+    });
+    const realBlendChromiumData = Buffer.from(realBlendScreenshot.data, 'base64');
+    const realBlendChromium = inspectPng(realBlendChromiumData, 'chromium-real-blend.png');
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
     const targetCounts = await window.webContents.executeJavaScript(
@@ -1584,6 +1686,7 @@ app.whenReady().then(async () => {
     );
     result.nestedOpacityNativeContent = inspectNativeContent(entries, 'Native nested opacity label');
     result.nestedOpacityNativeShape = inspectNativeContent(entries, 'val="00FF00"');
+    result.nestedCompositorNativeFill = inspectNativeContent(entries, 'val="00C800"');
     result.maskedNativeContent = inspectNativeContent(entries, 'Masked real content');
     result.compositedPseudoContentChromium = compositedPseudoContentChromium;
     const compositedPseudoContentMedia = media.find(
@@ -1595,6 +1698,11 @@ app.whenReady().then(async () => {
       compositedPseudoContentMedia.data,
     );
     result.compositedPseudoContentNativeContent = inspectNativeContent(entries, 'BlendX');
+    result.realBlendChromium = realBlendChromium;
+    const realBlendMedia = media.find(({ name }) => name === result.realBlend?.media?.[0]);
+    if (!realBlendMedia) throw new Error('Missing exported real blend media');
+    result.realBlendChromiumComparison = comparePng(realBlendChromiumData, realBlendMedia.data);
+    result.realBlendNativeContent = inspectNativeContent(entries, 'MM');
     result.materializedOpaquePseudoNativeFill = inspectNativeContent(entries, 'val="F232A0"');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
@@ -1684,6 +1792,9 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('materializedOpaquePseudoNativeFill' in value)
     || typeof value.materializedOpaquePseudoNativeFill !== 'number'
     || !('nestedBlended' in value)
+    || !('nestedCompositor' in value)
+    || !('nestedCompositorNativeFill' in value)
+    || typeof value.nestedCompositorNativeFill !== 'number'
     || !('nestedOpacity' in value)
     || !('nestedOpacityNativeContent' in value)
     || typeof value.nestedOpacityNativeContent !== 'number'
@@ -1743,6 +1854,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.pseudoNativeStyle.content !== 'number'
     || !('fallbackFill' in value.pseudoNativeStyle)
     || typeof value.pseudoNativeStyle.fallbackFill !== 'number'
+    || !('realBlend' in value)
+    || !('realBlendChromium' in value)
+    || typeof value.realBlendChromium !== 'object'
+    || value.realBlendChromium === null
+    || !('realBlendChromiumComparison' in value)
+    || typeof value.realBlendChromiumComparison !== 'object'
+    || value.realBlendChromiumComparison === null
+    || !('realBlendNativeContent' in value)
+    || typeof value.realBlendNativeContent !== 'number'
     || !('rootPseudo' in value)
     || !('rootPseudoLayerOrder' in value)
     || typeof value.rootPseudoLayerOrder !== 'object'
@@ -1792,6 +1912,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     materializedOpaquePseudo: parseLayeredBackgroundExport(value.materializedOpaquePseudo),
     materializedOpaquePseudoNativeFill: value.materializedOpaquePseudoNativeFill,
     nestedBlended: parseLayeredBackgroundExport(value.nestedBlended),
+    nestedCompositor: parseLayeredBackgroundExport(value.nestedCompositor),
+    nestedCompositorNativeFill: value.nestedCompositorNativeFill,
     nestedOpacity: parseLayeredBackgroundExport(value.nestedOpacity),
     nestedOpacityNativeContent: value.nestedOpacityNativeContent,
     nestedOpacityNativeShape: value.nestedOpacityNativeShape,
@@ -1803,6 +1925,10 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       content: value.pseudoLayerOrder.content,
     },
     pseudoNativeStyle: value.pseudoNativeStyle as LayeredBackgroundProbe['pseudoNativeStyle'],
+    realBlend: parseLayeredBackgroundExport(value.realBlend),
+    realBlendChromium: value.realBlendChromium as PngProbe,
+    realBlendChromiumComparison: value.realBlendChromiumComparison as PngComparison,
+    realBlendNativeContent: value.realBlendNativeContent,
     replaced: parseLayeredBackgroundExport(value.replaced),
     replacedForegroundMedia: value.replacedForegroundMedia,
     rootPseudo: parseLayeredBackgroundExport(value.rootPseudo),

@@ -697,12 +697,12 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     return hasOpacity || hasFilter || hasTransform || dependsOnBackdrop(style);
   }
 
-  function outermostCompositingAncestor(element: HTMLElement, slide: HTMLElement): HTMLElement | null {
-    let root: HTMLElement | null = null;
+  function compositingAncestors(element: HTMLElement, slide: HTMLElement): HTMLElement[] {
+    const ancestors: HTMLElement[] = [];
     for (let ancestor = element.parentElement; ancestor && ancestor !== slide; ancestor = ancestor.parentElement) {
-      if (establishesCompositingContext(getComputedStyle(ancestor))) root = ancestor;
+      if (establishesCompositingContext(getComputedStyle(ancestor))) ancestors.push(ancestor);
     }
-    return root;
+    return ancestors;
   }
 
   const slides = Array.prototype.slice
@@ -727,12 +727,12 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       );
       if (
         capturesLayer &&
-        hasCssMask(style) &&
+        (hasCssMask(style) || hasNonNormalBlendMode(style)) &&
         !element.hasAttribute("data-od-pptx-materialized-pseudo")
       ) {
-        // The native converter does not serialize CSS masks. A real masked
-        // element therefore has to keep its foreground and border in the same
-        // Chromium capture as its layered background.
+        // The native converter serializes neither CSS masks nor mix-blend-mode.
+        // Both affect the complete painted element, so keep real foregrounds
+        // and borders in the same Chromium capture as the layered background.
         element.setAttribute("data-od-pptx-capture-entire-element", "true");
       }
       return capturesLayer;
@@ -742,9 +742,14 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       // PPTX has no equivalent of a DOM ancestor compositing group here. When
       // an ancestor effect encloses layered descendants, capture that outermost
       // context once instead of baking the effect into each background image.
-      const root = outermostCompositingAncestor(element, slide) ?? element;
+      // Every intermediate compositor participates in that same flattened paint
+      // and must have its native background cleared after capture as well.
+      const ancestors = compositingAncestors(element, slide);
+      const root = ancestors.at(-1) ?? element;
       const members = captureGroups.get(root) ?? [];
-      members.push(element);
+      for (const member of [element, ...ancestors]) {
+        if (!members.includes(member)) members.push(member);
+      }
       captureGroups.set(root, members);
     }
 
@@ -843,10 +848,21 @@ export function isolateLayeredPptxBackground(
         ? [target]
         : [],
   );
-  const entirePaintVisibilities = new Map<HTMLElement, string>();
+  const entirePaintStyles = new Map<HTMLElement, {
+    color: string;
+    textFillColor: string;
+    textShadow: string;
+    visibility: string;
+  }>();
   for (const root of entirePaintRoots) {
     for (const element of [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]) {
-      entirePaintVisibilities.set(element, getComputedStyle(element).visibility);
+      const style = getComputedStyle(element);
+      entirePaintStyles.set(element, {
+        color: style.color,
+        textFillColor: style.getPropertyValue("-webkit-text-fill-color") || style.color,
+        textShadow: style.textShadow || "none",
+        visibility: style.visibility,
+      });
     }
   }
   const blendBackdropElements = new Set<HTMLElement>();
@@ -977,7 +993,7 @@ export function isolateLayeredPptxBackground(
     if (entirePaintRoot) {
       descendant.style.setProperty(
         "visibility",
-        entirePaintVisibilities.get(descendant) || "visible",
+        entirePaintStyles.get(descendant)?.visibility || "visible",
         "important",
       );
       continue;
@@ -1025,6 +1041,12 @@ export function isolateLayeredPptxBackground(
     target.style.setProperty("color", "transparent", "important");
     target.style.setProperty("text-shadow", "none", "important");
     target.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+  }
+  for (const [element, style] of entirePaintStyles) {
+    element.style.setProperty("visibility", style.visibility, "important");
+    element.style.setProperty("color", style.color, "important");
+    element.style.setProperty("text-shadow", style.textShadow, "important");
+    element.style.setProperty("-webkit-text-fill-color", style.textFillColor, "important");
   }
   for (const root of [document.documentElement, document.body]) {
     if (!root) continue;
