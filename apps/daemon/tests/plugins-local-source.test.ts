@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from '../src/db.js';
+import {
+  ensureWorkspaceResource,
+  openDatabase,
+  updateWorkspaceResource,
+} from '../src/db.js';
 import {
   materializeWorkspaceScopedTeamResource,
   teamResourceMaterializationDir,
@@ -13,6 +17,7 @@ import {
   resolvePluginFolder,
   resolvePluginSnapshot,
   upsertInstalledPlugin,
+  workspaceTeamPluginBindingResourceId,
 } from '../src/plugins/index.js';
 
 const roots: string[] = [];
@@ -126,6 +131,44 @@ describe('resolveLocalPluginBySource', () => {
       id: 'shared-id',
       source: 'team:plugin:workspace-forged:shared-id',
       userPluginsRoot: path.join(dataDir, 'plugins'),
+    })).resolves.toBeNull();
+  });
+
+  it('rejects a Team source after its local binding is tombstoned', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-local-plugin-source-'));
+    roots.push(root);
+    const dataDir = path.join(root, 'data');
+    const pluginsRoot = path.join(dataDir, 'plugins');
+    const db = openDatabase(root, { dataDir });
+    const source = 'team:plugin:workspace-a:shared-id';
+
+    await materializeWorkspaceScopedTeamResource({
+      kindRoot: pluginsRoot,
+      identity: {
+        kind: 'plugin',
+        workspaceId: 'workspace-a',
+        resourceId: 'shared-id',
+        hubResourceId: 'hub-team-shared-id',
+      },
+      storageName: 'shared-id',
+      pullInto: (dir) => pluginManifest(dir, 'Retired Team copy'),
+      verifyWorkspaceScope: async () => true,
+      verifyStillShared: async () => true,
+    });
+    const bindingId = workspaceTeamPluginBindingResourceId('workspace-a', 'shared-id');
+    ensureWorkspaceResource(db, 'plugin', 'workspace-a', bindingId, {
+      visibility: 'team',
+      resourceState: 'active',
+    });
+    updateWorkspaceResource(db, 'plugin', 'workspace-a', bindingId, {
+      resourceState: 'deleted',
+    });
+
+    await expect(resolveLocalPluginBySource({
+      db,
+      id: 'shared-id',
+      source,
+      userPluginsRoot: pluginsRoot,
     })).resolves.toBeNull();
   });
 });

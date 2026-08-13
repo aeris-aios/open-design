@@ -2456,30 +2456,11 @@ export async function applyPlugin(
         body: requestBody,
       },
     );
-    // Old daemons have no apply-local route. Only id-only/local records fall
-    // back; a Team mirror cannot be identified safely by the legacy route
-    // without the Workspace context that originally produced the catalogue.
-    const localApplyUnsupported = Boolean(
-      options.pluginSource
-      && resp.status === 404
-      && resp.headers.get('x-od-plugin-apply-local') !== '1',
-    );
-    const legacyFallbackCanResolveSelectedSource = Boolean(
-      !options.pluginSource?.startsWith('team:plugin:')
-      || options.workspaceContext,
-    );
-    if (localApplyUnsupported && legacyFallbackCanResolveSelectedSource) {
-      resp = await fetch(`${pluginUrl}/apply`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.workspaceContext
-            ? workspaceProjectHeaders(options.workspaceContext)
-            : {}),
-        },
-        body: requestBody,
-      });
-    }
+    // Exact-source requests must never degrade to the legacy ID-only route:
+    // its response cannot prove which same-ID local record it applied. New
+    // daemons still accept old ID-only clients through /apply; during the brief
+    // new-Web/old-daemon upgrade window, omitting the plugin is safer than
+    // silently substituting different local bytes.
     if (!resp.ok) return null;
     const json = (await resp.json()) as ApplyResult & { ok?: boolean };
     return json;

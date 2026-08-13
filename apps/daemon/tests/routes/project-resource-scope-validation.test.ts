@@ -361,4 +361,43 @@ describe('project resource selection uses the persisted exact member', () => {
     expect(getLocalPluginBySource).toHaveBeenCalledWith('shared-id', source);
     expect(insertProject).not.toHaveBeenCalled();
   });
+
+  it('does not create a project when an exact source retires during registry loading', async () => {
+    const insertProject = vi.fn();
+    const insertConversation = vi.fn();
+    const source = `team:plugin:${WORKSPACE_ID}:shared-id`;
+    let bindingLive = true;
+    const getLocalPluginBySource = vi.fn(async () =>
+      bindingLive ? { id: 'shared-id', source } : null,
+    );
+    const loadRegistry = vi.fn(async () => {
+      bindingLive = false;
+      return { skills: [], designSystems: [], craft: [], atoms: [], scenarios: [] };
+    });
+    const baseUrl = await start(buildDeps({
+      insertProject,
+      insertConversation,
+      getLocalPluginBySource,
+      loadRegistry,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        id: 'retired-during-registry-load',
+        name: 'Retired during registry load',
+        pluginId: 'shared-id',
+        pluginSource: source,
+      }),
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'PLUGIN_NOT_FOUND' },
+    });
+    expect(getLocalPluginBySource).toHaveBeenCalledTimes(2);
+    expect(insertProject).not.toHaveBeenCalled();
+    expect(insertConversation).not.toHaveBeenCalled();
+  });
 });

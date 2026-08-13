@@ -52,6 +52,8 @@ import {
   getInstalledPlugin,
   listInstalledPlugins,
   resolvePluginSnapshot,
+  type ResolveSnapshotError,
+  type ResolveSnapshotOk,
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
@@ -3590,7 +3592,24 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const initialSessionMode = normalizeChatSessionMode(
         req.body?.conversationMode ?? req.body?.sessionMode,
       );
+      const explicitPlugin =
+        typeof req.body?.pluginId === 'string' && req.body.pluginId.trim().length > 0
+          ? true
+          : typeof req.body?.appliedPluginSnapshotId === 'string'
+            && req.body.appliedPluginSnapshotId.trim().length > 0;
+      let resolveBody =
+        explicitPlugin ? (req.body as Record<string, unknown>) : null;
+      if (!resolveBody && initialSessionMode === 'design') {
+        const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(projectMetadata);
+        if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
+          resolveBody = { ...(req.body || {}), pluginId: fallbackPluginId };
+        }
+      }
       let project;
+      const pluginResolutionState: {
+        snapshot: ResolveSnapshotOk | null;
+        failure: ResolveSnapshotError | null;
+      } = { snapshot: null, failure: null };
       try {
         if (externalProjectDir) {
           await writeProjectManifest(externalProjectDir, {
@@ -3602,6 +3621,31 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             skillId: normalizedSkillId,
             designSystemId: normalizedDesignSystemId,
           });
+        }
+        const registry = resolveBody
+          ? await loadPluginRegistryView(
+              selectedLocalPlugin
+                ? localPluginRegistryScope(selectedLocalPlugin)
+                : creationWorkspaceScope,
+            )
+          : null;
+        let pluginForSnapshot = selectedLocalPlugin;
+        if (requestedPluginId && requestedPluginSource) {
+          // All preparation above is asynchronous. Re-resolve the exact local
+          // source immediately before the synchronous SQLite transaction so a
+          // reconciliation tombstone cannot leave a project/conversation or
+          // snapshot behind. This is local catalogue freshness only: do not
+          // turn it into a remote membership or current-Workspace gate.
+          pluginForSnapshot = await ctx.pluginScope?.getLocalPluginBySource?.(
+            requestedPluginId,
+            requestedPluginSource,
+          ) ?? null;
+          if (!pluginForSnapshot) {
+            if (externalProjectDir) {
+              await rm(externalProjectDir, { recursive: true, force: true }).catch(() => {});
+            }
+            return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
+          }
         }
         project = db.transaction(() => {
           const createdProject = insertProject(db, {
@@ -3634,6 +3678,33 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             id,
             now,
           );
+          if (resolveBody && registry) {
+            const resolved = resolvePluginSnapshot({
+              db,
+              body: resolveBody,
+              projectId: id,
+              conversationId: cid,
+              registry,
+              activeProjectDesignSystem:
+                typeof normalizedDesignSystemId === 'string' && normalizedDesignSystemId.length > 0
+                  ? { id: normalizedDesignSystemId }
+                  : undefined,
+              connectorProbe: buildConnectorProbe(connectorService),
+              ...(pluginForSnapshot ? { plugin: pluginForSnapshot } : {}),
+            });
+            if (resolved && !resolved.ok) {
+              if (!explicitPlugin) {
+                console.warn(
+                  `[plugins] default-scenario fallback skipped for project ${id}: ${resolved.body?.error?.code ?? 'unknown'}`,
+                );
+              } else {
+                pluginResolutionState.failure = resolved;
+                throw new Error('explicit plugin resolution failed');
+              }
+            } else {
+              pluginResolutionState.snapshot = resolved;
+            }
+          }
           return createdProject;
         })();
       } catch (err) {
@@ -3643,55 +3714,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         if (externalProjectDir) {
           await rm(externalProjectDir, { recursive: true, force: true }).catch(() => {});
         }
+        if (pluginResolutionState.failure) {
+          return res
+            .status(pluginResolutionState.failure.status)
+            .json(pluginResolutionState.failure.body);
+        }
         throw err;
-      }
-      const explicitPlugin =
-        typeof req.body?.pluginId === 'string' && req.body.pluginId.trim().length > 0
-          ? true
-          : typeof req.body?.appliedPluginSnapshotId === 'string'
-            && req.body.appliedPluginSnapshotId.trim().length > 0;
-      let resolveBody =
-        explicitPlugin ? (req.body as Record<string, unknown>) : null;
-      if (!resolveBody && initialSessionMode === 'design') {
-        const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(projectMetadata);
-        if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
-          resolveBody = { ...(req.body || {}), pluginId: fallbackPluginId };
-        }
-      }
-      let resolvedSnapshot = null;
-      if (resolveBody) {
-        // The exact plugin source also identifies the local registry partition
-        // for its referenced Skill/Design System records. This is provenance,
-        // not a project-Workspace match or remote authorization decision.
-        const registry = await loadPluginRegistryView(
-          selectedLocalPlugin
-            ? localPluginRegistryScope(selectedLocalPlugin)
-            : creationWorkspaceScope,
-        );
-        const resolved = resolvePluginSnapshot({
-          db,
-          body: resolveBody,
-          projectId: id,
-          conversationId: cid,
-          registry,
-          activeProjectDesignSystem:
-            typeof normalizedDesignSystemId === 'string' && normalizedDesignSystemId.length > 0
-              ? { id: normalizedDesignSystemId }
-              : undefined,
-          connectorProbe: buildConnectorProbe(connectorService),
-          ...(selectedLocalPlugin ? { plugin: selectedLocalPlugin } : {}),
-        });
-        if (resolved && !resolved.ok) {
-          if (!explicitPlugin) {
-            console.warn(
-              `[plugins] default-scenario fallback skipped for project ${id}: ${resolved.body?.error?.code ?? 'unknown'}`,
-            );
-          } else {
-            return res.status(resolved.status).json(resolved.body);
-          }
-        } else {
-          resolvedSnapshot = resolved;
-        }
       }
       // For "from template" projects, seed the chosen template's snapshot
       // HTML into the new project folder so the agent can Read/edit files
@@ -3731,7 +3759,9 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         }
       }
       /** @type {import('@open-design/contracts').CreateProjectResponse} */
-      const createdProject = resolvedSnapshot?.ok ? getProject(db, id) ?? project : project;
+      const createdProject = pluginResolutionState.snapshot
+        ? getProject(db, id) ?? project
+        : project;
       const body = {
         // The binding above is part of the same transaction as the project and
         // seed conversation. Return that authority immediately so the Web can
@@ -3742,8 +3772,8 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           ? { ...createdProject, workspaceId: createWorkspace.context.workspaceId }
           : createdProject,
         conversationId: cid,
-        ...(resolvedSnapshot?.ok
-          ? { appliedPluginSnapshotId: resolvedSnapshot.snapshotId }
+        ...(pluginResolutionState.snapshot
+          ? { appliedPluginSnapshotId: pluginResolutionState.snapshot.snapshotId }
           : {}),
       };
       res.json(body);

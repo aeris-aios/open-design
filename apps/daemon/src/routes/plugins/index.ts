@@ -631,7 +631,16 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       const registry = await helpers.loadPluginRegistryView(
         localPluginRegistryScope(plugin),
       );
-      return applyResolvedPlugin(req, res, plugin, registry);
+      // Registry loading walks local Skill/Design System files asynchronously.
+      // Re-resolve immediately before apply so a local reconciliation tombstone
+      // that landed during that walk cannot activate stale plugin bytes.
+      const currentPlugin = await plugins.getLocalPluginBySource(
+        db,
+        req.params.id,
+        source,
+      );
+      if (!currentPlugin) return res.status(404).json({ error: 'plugin not found' });
+      return applyResolvedPlugin(req, res, currentPlugin, registry);
     } catch (err: unknown) {
       if (err instanceof plugins.MissingInputError) {
         return res.status(422).json({ error: 'missing_inputs', fields: err.fields });

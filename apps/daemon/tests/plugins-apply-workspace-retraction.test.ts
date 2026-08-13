@@ -170,6 +170,77 @@ describe('Team plugin apply retraction gate', () => {
     expect(applyPlugin).toHaveBeenCalledTimes(1);
   });
 
+  it('does not apply an exact local source retired while registry loading is pending', async () => {
+    const app = express();
+    app.use(express.json());
+    let bindingLive = true;
+    let finishRegistryLoad!: (value: Record<string, never>) => void;
+    const registryGate = new Promise<Record<string, never>>((resolve) => {
+      finishRegistryLoad = resolve;
+    });
+    let registryLoadStarted!: () => void;
+    const registryStarted = new Promise<void>((resolve) => {
+      registryLoadStarted = resolve;
+    });
+    const applyPlugin = vi.fn(() => ({
+      result: { capabilitiesGranted: [], appliedPlugin: { capabilitiesGranted: [] } },
+      warnings: [],
+    }));
+    const getLocalPluginBySource = vi.fn(async (_db: unknown, id: string, source: string) =>
+      bindingLive ? { id, source } : null,
+    );
+    const middleware: express.RequestHandler = (_req, _res, next) => next();
+
+    registerPluginRoutes(app, {
+      db: {
+        prepare: () => ({ all: () => [], get: () => null, run: () => undefined }),
+        transaction: (run: () => unknown) => () => run(),
+      },
+      paths: { PROJECTS_DIR: '', PLUGIN_REGISTRY_ROOTS: [], PLUGIN_LOCKFILE_PATH: '' },
+      ids: { randomId: () => 'unused' },
+      projectStore: {},
+      conversations: {},
+      plugins: {
+        getInstalledPlugin: () => null,
+        getWorkspacePlugin: async () => null,
+        getLocalPluginBySource,
+        listInstalledPlugins: () => [],
+        applyPlugin,
+        MissingInputError: class MissingInputError extends Error { fields: string[] = []; },
+      },
+      helpers: {
+        requireLocalDaemonRequest: middleware,
+        pluginUpload: { single: () => middleware, array: () => middleware },
+        loadPluginRegistryView: async () => {
+          registryLoadStarted();
+          return registryGate;
+        },
+        buildConnectorProbe: () => ({}),
+        connectorService: {},
+        sendApiError: (res: express.Response, status: number, code: string, message: string) =>
+          res.status(status).json({ error: { code, message } }),
+      },
+    } as unknown as Parameters<typeof registerPluginRoutes>[1]);
+
+    const server = app.listen(0, '127.0.0.1');
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const { port } = server.address() as AddressInfo;
+    const responsePromise = fetch(`http://127.0.0.1:${port}/api/plugins/shared-id/apply-local`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'team:plugin:workspace-a:shared-id' }),
+    });
+    await registryStarted;
+    bindingLive = false;
+    finishRegistryLoad({});
+
+    const response = await responsePromise;
+    expect(response.status).toBe(404);
+    expect(getLocalPluginBySource).toHaveBeenCalledTimes(2);
+    expect(applyPlugin).not.toHaveBeenCalled();
+  });
+
   it('omits a locally tombstoned Team Design System from exact local apply context', async () => {
     const app = express();
     app.use(express.json());

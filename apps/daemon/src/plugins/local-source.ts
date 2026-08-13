@@ -5,7 +5,12 @@ import {
   teamResourceMaterializationDir,
 } from '../collab/team-resource-materialization.js';
 import { isSafePluginId } from './installer.js';
-import { getInstalledPlugin, resolvePluginFolder } from './registry.js';
+import {
+  getInstalledPlugin,
+  resolvePluginFolder,
+  resolveWorkspaceTeamPluginWithBindingGate,
+  workspaceTeamPluginBindingAllowsRead,
+} from './registry.js';
 
 const TEAM_PLUGIN_SOURCE_PREFIX = 'team:plugin:';
 
@@ -59,30 +64,43 @@ export async function resolveLocalPluginBySource(input: {
 }): Promise<InstalledPluginRecord | null> {
   const { db, id, source, userPluginsRoot } = input;
   const installed = getInstalledPlugin(db, id);
-  if (installed?.source === source) return installed;
+  const workspaceId = workspaceIdFromTeamPluginSource(source, id);
+  if (installed?.source === source) {
+    return workspaceId && !workspaceTeamPluginBindingAllowsRead(db, workspaceId, id)
+      ? null
+      : installed;
+  }
 
   if (!isSafePluginId(id)) return null;
-  const workspaceId = workspaceIdFromTeamPluginSource(source, id);
   if (!workspaceId) return null;
-  const marker = await readTeamResourceMaterialization(
-    userPluginsRoot,
-    workspaceId,
-    id,
-    id,
-  );
-  if (
-    !marker
-    || marker.kind !== 'plugin'
-    || marker.resourceId !== id
-    || marker.workspaceId !== workspaceId
-    || marker.sourceKey !== source
-  ) return null;
+  // A tombstone is a local catalogue fact, not a remote authorization check.
+  // Reconciliation intentionally keeps the materialized directory recoverable,
+  // so fence both sides of async filesystem parsing to prevent stale bytes from
+  // becoming a new apply/project after the local binding has retired.
+  return resolveWorkspaceTeamPluginWithBindingGate({
+    bindingAllowsRead: () => workspaceTeamPluginBindingAllowsRead(db, workspaceId, id),
+    resolve: async () => {
+      const marker = await readTeamResourceMaterialization(
+        userPluginsRoot,
+        workspaceId,
+        id,
+        id,
+      );
+      if (
+        !marker
+        || marker.kind !== 'plugin'
+        || marker.resourceId !== id
+        || marker.workspaceId !== workspaceId
+        || marker.sourceKey !== source
+      ) return null;
 
-  const resolved = await resolvePluginFolder({
-    folder: teamResourceMaterializationDir(userPluginsRoot, workspaceId, id, id),
-    folderId: id,
-    sourceKind: 'user',
-    source,
+      const resolved = await resolvePluginFolder({
+        folder: teamResourceMaterializationDir(userPluginsRoot, workspaceId, id, id),
+        folderId: id,
+        sourceKind: 'user',
+        source,
+      });
+      return resolved.ok ? resolved.record : null;
+    },
   });
-  return resolved.ok ? resolved.record : null;
 }

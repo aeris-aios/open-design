@@ -349,7 +349,7 @@ describe('applyPlugin', () => {
     });
   });
 
-  it('falls back only when an old daemon lacks local apply', async () => {
+  it('does not let an old daemon substitute an exact selected source', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (String(url).endsWith('/apply-local')) return new Response('not found', { status: 404 });
       return new Response(JSON.stringify({ ok: true }), {
@@ -359,11 +359,12 @@ describe('applyPlugin', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await applyPlugin('bundled-plugin', { pluginSource: 'bundled:bundled-plugin' });
+    await expect(applyPlugin('bundled-plugin', {
+      pluginSource: 'bundled:bundled-plugin',
+    })).resolves.toBeNull();
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/plugins/bundled-plugin/apply-local',
-      '/api/plugins/bundled-plugin/apply',
     ]);
   });
 
