@@ -54,6 +54,20 @@ describe('PlaceholderCarousel — paused while the editor has focus (#118)', () 
     expect(container.textContent).toBe('');
   });
 
+  it('reports the current scenario while paused so empty-composer Send stays enabled', () => {
+    const onScenarioChange = vi.fn();
+    render(
+      <PlaceholderCarousel
+        scenarios={[...SCENARIOS]}
+        active
+        paused
+        onScenarioChange={onScenarioChange}
+      />,
+    );
+
+    expect(onScenarioChange).toHaveBeenCalledWith(SCENARIOS[0]);
+  });
+
   it('keeps animating while unpaused', () => {
     vi.useFakeTimers();
     render(
