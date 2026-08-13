@@ -8196,9 +8196,6 @@ describe('FileViewer tweaks toolbar', () => {
       'comment-preview-layer-with-side-dock',
     );
     expect(container.querySelector('.comment-preview-layer > .comment-side-panel')).toBeNull();
-    expect(screen.getByTestId('comment-preview-layout').className).not.toContain(
-      'comment-preview-layer-with-side-dock',
-    );
   });
 
   it('closes a floating comment card in one action and restores focus for button and Escape dismissals', async () => {
