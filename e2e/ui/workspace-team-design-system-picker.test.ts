@@ -46,6 +46,7 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
   const commonEnv = {
     OD_COLLAB_TRANSPORT: 'vela-cli',
     OD_RESOURCE_TRANSPORT: 'vela-cli',
+    OD_TEAM_PROJECTS_TRANSPORT: 'vela-cli',
     OD_WORKSPACE_CONTEXT_SOURCE: 'vela',
     VELA_API_URL: hub.url,
     VELA_BIN: velaBin,
@@ -111,6 +112,39 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
       },
     );
     expect(workspaceResponse.ok(), await workspaceResponse.text()).toBeTruthy();
+    const workspace = await workspaceResponse.json() as { project?: { id?: string } };
+    const projectId = workspace.project?.id;
+    expect(projectId).toBeTruthy();
+
+    await writeLogoProjectFile(
+      ownerPage,
+      projectId!,
+      'brand.json',
+      JSON.stringify(sharedLogoBrand()),
+    );
+    await writeLogoProjectFile(ownerPage, projectId!, 'assets/logo.svg', sharedLogoSvg());
+    const syncResponse = await ownerPage.request.post(
+      `/api/design-systems/${encodeURIComponent(designSystemId!)}/sync-assets`,
+      { headers: workspaceHeaders(OWNER), timeout: T.long },
+    );
+    expect(syncResponse.ok(), await syncResponse.text()).toBeTruthy();
+
+    await ownerPage.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+    await ownerPage.getByTestId('design-system-project-tab').click();
+    await expectSharedLogo(
+      ownerPage.getByTestId('design-system-project-kit'),
+      'Shared Product Language',
+      OWNER.memberId,
+    );
+
+    await gotoDesignSystems(ownerPage);
+    await ownerPage.getByRole('tab', { name: /Your systems/i }).click();
+    await ownerPage.getByTestId(`design-system-card-${designSystemId}`).click();
+    await expectSharedLogo(
+      ownerPage.getByTestId(`design-system-detail-${designSystemId}`),
+      'Shared Product Language',
+      OWNER.memberId,
+    );
 
     const shareResponse = await ownerPage.request.post(
       `/api/workspace/design-systems/${encodeURIComponent(designSystemId!)}/share`,
@@ -153,6 +187,25 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
     const teamOption = picker.getByTestId(`project-ds-picker-option-${designSystemId}`);
     await expect(teamOption).toContainText('Shared Product Language');
     await teamOption.click();
+    await expect(memberPage.getByTestId('home-hero-design-system-trigger')).toContainText(
+      'Shared Product Language',
+    );
+
+    await gotoDesignSystems(memberPage);
+    await memberPage.getByRole('tab', { name: /^Team/ }).click();
+    const memberCard = memberPage.getByTestId(`design-system-card-${designSystemId}`);
+    await expect(memberCard).toBeVisible({ timeout: T.xlong });
+    await memberCard.click();
+    await expectSharedLogo(
+      memberPage.getByTestId(`design-system-detail-${designSystemId}`),
+      'Shared Product Language',
+      MEMBER.memberId,
+    );
+    await gotoHome(memberPage);
+    await ensureRailOpen(memberPage);
+    await expect(memberPage.getByTestId('workspace-switcher')).toContainText(
+      'Design System Team',
+    );
     await expect(memberPage.getByTestId('home-hero-design-system-trigger')).toContainText(
       'Shared Product Language',
     );
@@ -349,147 +402,6 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
   }
 });
 
-test('[P0] shared design-system logos render for an isolated team member', async ({
-  browser,
-}, testInfo) => {
-  const hubRoot = testInfo.outputPath('fake-team-design-system-logo-hub');
-  await mkdir(hubRoot, { recursive: true });
-  const hub = await startFakeCollabHub({
-    root: hubRoot,
-    workspaceId: WORKSPACE_ID,
-    workspaceName: 'Design System Team',
-    clients: [OWNER, MEMBER],
-    includePersonalWorkspace: true,
-  });
-  const velaBin = await hub.writeVelaBin(testInfo.outputPath('fake-vela-team-design-system-logo'));
-  const commonEnv = {
-    OD_COLLAB_TRANSPORT: 'vela-cli',
-    OD_RESOURCE_TRANSPORT: 'vela-cli',
-    OD_TEAM_PROJECTS_TRANSPORT: 'vela-cli',
-    OD_WORKSPACE_CONTEXT_SOURCE: 'vela',
-    VELA_API_URL: hub.url,
-    VELA_BIN: velaBin,
-  };
-  let cluster: CollabCluster | undefined;
-  let failed = false;
-
-  try {
-    cluster = await createCollabCluster(browser, testInfo, [
-      {
-        id: 'owner-design-system-logo',
-        env: { ...commonEnv, VELA_CONTROL_KEY: OWNER.controlKey },
-      },
-      {
-        id: 'member-design-system-logo',
-        env: { ...commonEnv, VELA_CONTROL_KEY: MEMBER.controlKey },
-      },
-    ]);
-    const ownerPage = cluster.clients['owner-design-system-logo']!.page;
-    const memberPage = cluster.clients['member-design-system-logo']!.page;
-    await Promise.all([applyStandardMocks(ownerPage), applyStandardMocks(memberPage)]);
-    await Promise.all([
-      pinWorkspace(ownerPage, OWNER.memberId),
-      pinWorkspace(memberPage, MEMBER.memberId),
-    ]);
-
-    const createResponse = await ownerPage.request.post('/api/design-systems', {
-      data: {
-        title: 'Shared Logo Language',
-        summary: 'A Team-owned design system with a real logo asset.',
-        category: 'Custom',
-        status: 'published',
-      },
-      headers: workspaceHeaders(OWNER),
-      timeout: T.long,
-    });
-    expect(createResponse.ok(), await createResponse.text()).toBeTruthy();
-    const created = await createResponse.json() as {
-      id?: string;
-      designSystem?: { id?: string };
-    };
-    const designSystemId = created.id ?? created.designSystem?.id;
-    expect(designSystemId).toBeTruthy();
-
-    const workspaceResponse = await ownerPage.request.post(
-      `/api/design-systems/${encodeURIComponent(designSystemId!)}/workspace`,
-      { headers: workspaceHeaders(OWNER), timeout: T.long },
-    );
-    expect(workspaceResponse.ok(), await workspaceResponse.text()).toBeTruthy();
-    const workspace = await workspaceResponse.json() as { project?: { id?: string } };
-    const projectId = workspace.project?.id;
-    expect(projectId).toBeTruthy();
-
-    await writeLogoProjectFile(
-      ownerPage,
-      projectId!,
-      'brand.json',
-      JSON.stringify(sharedLogoBrand()),
-    );
-    await writeLogoProjectFile(ownerPage, projectId!, 'assets/logo.svg', sharedLogoSvg());
-    const syncResponse = await ownerPage.request.post(
-      `/api/design-systems/${encodeURIComponent(designSystemId!)}/sync-assets`,
-      { headers: workspaceHeaders(OWNER), timeout: T.long },
-    );
-    expect(syncResponse.ok(), await syncResponse.text()).toBeTruthy();
-
-    await ownerPage.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
-    await ownerPage.getByTestId('design-system-project-tab').click();
-    await expectSharedLogo(
-      ownerPage.getByTestId('design-system-project-kit'),
-      'Shared Logo Language',
-      OWNER.memberId,
-    );
-
-    await gotoDesignSystems(ownerPage);
-    await ownerPage.getByRole('tab', { name: /Your systems/i }).click();
-    await ownerPage.getByTestId(`design-system-card-${designSystemId}`).click();
-    await expectSharedLogo(
-      ownerPage.getByTestId(`design-system-detail-${designSystemId}`),
-      'Shared Logo Language',
-      OWNER.memberId,
-    );
-
-    await ownerPage.getByTestId('design-kit-more-actions').click();
-    const shareResponse = ownerPage.waitForResponse((response) => {
-      const request = response.request();
-      const url = new URL(response.url());
-      return request.method() === 'POST'
-        && url.pathname === `/api/workspace/design-systems/${designSystemId}/share`;
-    });
-    await ownerPage.getByRole('menuitem', { name: /Share to team/i }).click();
-    expect((await shareResponse).ok()).toBeTruthy();
-    await expect(
-      ownerPage.getByRole('tab', { name: /^Team/ }),
-    ).toContainText('1', { timeout: T.long });
-
-    await gotoDesignSystems(memberPage);
-    await memberPage.getByTestId('workspace-switcher').click();
-    await memberPage.getByRole('menuitem', { name: 'Design System Team' }).click();
-    await expect(memberPage.getByTestId('workspace-switcher')).toContainText(
-      'Design System Team',
-    );
-    await memberPage.getByRole('tab', { name: /^Team/ }).click();
-    const memberCard = memberPage.getByTestId(`design-system-card-${designSystemId}`);
-    await expect(memberCard).toBeVisible({ timeout: T.xlong });
-    await memberCard.click();
-    await expectSharedLogo(
-      memberPage.getByTestId(`design-system-detail-${designSystemId}`),
-      'Shared Logo Language',
-      MEMBER.memberId,
-    );
-  } catch (error) {
-    failed = true;
-    await testInfo.attach('fake-team-design-system-logo-hub-log', {
-      body: JSON.stringify({ commands: hub.commandLog, events: hub.eventLog }, null, 2),
-      contentType: 'application/json',
-    });
-    throw error;
-  } finally {
-    await cluster?.close({ preserve: failed });
-    await hub.close();
-  }
-});
-
 async function pinWorkspace(page: Page, workspaceMemberId: string): Promise<void> {
   const response = await page.request.put('/api/workspace/active', {
     data: { workspaceId: WORKSPACE_ID, workspaceMemberId },
@@ -569,7 +481,7 @@ function sharedLogoSvg(): string {
 
 function sharedLogoBrand() {
   return {
-    name: 'Shared Logo Language',
+    name: 'Shared Product Language',
     tagline: 'One visual language for the Team.',
     description: 'A Team-owned design system with a real logo asset.',
     sourceUrl: '',
