@@ -96,7 +96,10 @@ import { DesignsTab } from './DesignsTab';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
-import { ProjectSearchModal } from './ProjectSearchModal';
+import {
+  buildProjectSearchCatalog,
+  ProjectSearchModal,
+} from './ProjectSearchModal';
 import {
   CloudSignInTip,
   RailAccountRecoveryTip,
@@ -784,6 +787,7 @@ export function EntryShell({
     sharedFallbackName: t('recentProjects.sharedProjectFallbackName'),
     isShared: isSharedProject,
   });
+  const projectSearchProjects = buildProjectSearchCatalog(draftProjectsList, allProjectsList);
   const homeProjectsList = useMemo(
     () => reconcileSharedProjectCatalogFields({
       projects,
@@ -1618,10 +1622,9 @@ export function EntryShell({
         />
         {projectSearchOpen ? (
           <ProjectSearchModal
-            // The same merged catalog as the All Projects grid (own + team-
-            // shared cards), opened through the pull-first handler so a shared
-            // project the member has not pulled yet still opens.
-            projects={allProjectsList}
+            // Search spans personal drafts plus the shared workspace catalog.
+            // The pull-first handler still opens not-yet-local shared projects.
+            projects={projectSearchProjects}
             workspaceContext={workspaceContext}
             onOpenProject={handleOpenAllProjects}
             onClose={() => setProjectSearchOpen(false)}
