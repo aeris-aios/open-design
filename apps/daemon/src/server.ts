@@ -1857,7 +1857,13 @@ export function composeChatUserRequestForAgent(
   // session memory provides the rest. See
   // `RuntimeAgentDef.resumesSessionViaCli`.
   const skip = options.skipTranscript === true;
-  const bodySource = skip ? currentPrompt : message;
+  // Native-session clients normally provide `currentPrompt`, but headless
+  // callers such as `od run start --message` only populate `message`. On a
+  // resumed session that value is the latest turn, not a rendered transcript,
+  // so dropping it would send the misleading empty-turn placeholder instead.
+  const bodySource = skip
+    ? (typeof currentPrompt === 'string' ? currentPrompt : message)
+    : message;
   const body =
     typeof bodySource === 'string' && bodySource.trim()
       ? bodySource
