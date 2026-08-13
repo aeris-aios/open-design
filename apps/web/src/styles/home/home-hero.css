@@ -3192,7 +3192,8 @@
 /* List replacement for the former radial (pie) menu: compact icon + name
    rows (no descriptions, at most 12 kinds — per product), selected row
    carries a soft fill and a trailing check. Portaled to <body>, fixed at
-   the trigger's captured anchor, opening downward from the trigger. */
+   the trigger's captured anchor, normally below and flipped above when the
+   remaining lower viewport cannot fit one complete row. */
 .home-hero__template-list {
   position: fixed;
   z-index: 1900;

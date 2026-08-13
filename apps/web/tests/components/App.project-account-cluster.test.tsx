@@ -6,15 +6,19 @@
 // into a fixed top-right cluster owned by EntryNavRail — which unmounts with
 // EntryShell the moment a project tab opens. Product: the avatar and credits
 // stay visible on the project view too, in the same top-right spot. App.tsx
-// therefore mounts `WorkspaceTopRightAccountCluster` (the self-wiring variant
-// of `EntryTopRightCluster`) whenever `route.kind === 'project'`.
+// therefore mounts `WorkspaceTopRightAccountCluster` with the route-owned
+// Workspace authority whenever `route.kind === 'project'`.
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '../../src/App';
 import type { Route } from '../../src/router';
 import type { AppConfig, Project } from '../../src/types';
+import type {
+  WorkspaceCollabContext,
+  WorkspaceDirectoryItem,
+} from '@open-design/contracts';
 import {
   fetchComposioConfigFromDaemon,
   fetchDaemonConfig,
@@ -45,11 +49,22 @@ const PROJECT_ROUTE: Route = {
   fileName: null,
 };
 const useRouteMock = vi.fn<() => Route>(() => PROJECT_ROUTE);
+const useProjectRouteWorkspaceContextMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/router', () => ({
   navigate: vi.fn(),
   useRoute: () => useRouteMock(),
 }));
+
+vi.mock('../../src/collab/useProjectRouteWorkspaceContext', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../src/collab/useProjectRouteWorkspaceContext')
+  >();
+  return {
+    ...actual,
+    useProjectRouteWorkspaceContext: useProjectRouteWorkspaceContextMock,
+  };
+});
 
 vi.mock('../../src/components/EntryView', () => ({
   EntryView: () => <div>Entry view</div>,
@@ -157,31 +172,64 @@ const project: Project = {
   customInstructions: '',
   createdAt: 1,
   updatedAt: 1,
+  workspaceId: 'ws-project',
 };
 
-// One personal workspace, so `chooseWorkspaceForTab` selects it without any
-// sessionStorage seeding, and the billing summary passes through unpartitioned.
-const DIRECTORY_ITEM = {
-  workspaceId: 'ws-1',
-  workspaceMemberId: 'wm-1',
-  workspaceName: 'Workspace One',
+const PROJECT_DIRECTORY_ITEM: WorkspaceDirectoryItem = {
+  workspaceId: 'ws-project',
+  workspaceMemberId: 'wm-project',
+  workspaceName: 'Project Workspace',
   workspaceType: 'personal',
   role: 'owner',
   memberStatus: 'active',
   lifecycleState: 'active',
 };
 
-const WORKSPACE_CONTEXT = {
-  ...DIRECTORY_ITEM,
-  displayName: 'Nova',
-  billingState: 'active',
-  planId: 'pro',
-  permissions: { canInviteMembers: false, canViewWorkspaceSettings: false },
+const AMBIENT_DIRECTORY_ITEM: WorkspaceDirectoryItem = {
+  workspaceId: 'ws-ambient',
+  workspaceMemberId: 'wm-ambient',
+  workspaceName: 'Ambient Workspace',
+  workspaceType: 'personal',
+  role: 'owner',
+  memberStatus: 'active',
+  lifecycleState: 'active',
 };
 
-const BILLING_RESPONSE = {
+const PROJECT_WORKSPACE_CONTEXT: WorkspaceCollabContext = {
+  ...PROJECT_DIRECTORY_ITEM,
+  displayName: 'Project Nova',
+  billingState: 'active',
+  planId: 'pro',
+  providerMode: 'platform_credits',
+  seatSummary: {
+    seatLimit: 0,
+    usedSeats: 0,
+    availableSeats: 0,
+    isSeatFull: false,
+  },
+  permissions: {
+    canManageMembers: false,
+    canManageBilling: true,
+    canInviteMembers: false,
+    canManageAutoRecharge: true,
+    canShareProjects: false,
+    canWriteSyncedFiles: false,
+    canViewWorkspaceSettings: false,
+    canManageSharedResources: false,
+  },
+  workspaceSettingsUrl: 'https://cloud.example/settings?workspaceId=ws-project',
+};
+
+const AMBIENT_WORKSPACE_CONTEXT: WorkspaceCollabContext = {
+  ...PROJECT_WORKSPACE_CONTEXT,
+  ...AMBIENT_DIRECTORY_ITEM,
+  displayName: 'Ambient Bea',
+  workspaceSettingsUrl: 'https://cloud.example/settings?workspaceId=ws-ambient',
+};
+
+const PROJECT_BILLING_RESPONSE = {
   summary: {
-    workspaceId: 'ws-1',
+    workspaceId: 'ws-project',
     membershipTier: 'pro',
     totalAvailableCredits: 0,
     subscriptionCredits: 0,
@@ -192,9 +240,24 @@ const BILLING_RESPONSE = {
   },
   workspaceBalance: {
     billingScopeVersion: 2,
-    workspaceId: 'ws-1',
-    workspaceMemberId: 'wm-1',
+    workspaceId: 'ws-project',
+    workspaceMemberId: 'wm-project',
     balanceUsd: '12.34',
+  },
+};
+
+const AMBIENT_BILLING_RESPONSE = {
+  ...PROJECT_BILLING_RESPONSE,
+  summary: {
+    ...PROJECT_BILLING_RESPONSE.summary,
+    workspaceId: 'ws-ambient',
+    balanceUsd: '98.76',
+  },
+  workspaceBalance: {
+    ...PROJECT_BILLING_RESPONSE.workspaceBalance,
+    workspaceId: 'ws-ambient',
+    workspaceMemberId: 'wm-ambient',
+    balanceUsd: '98.76',
   },
 };
 
@@ -205,11 +268,13 @@ function stubFetchByUrl() {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const body = url.includes('/api/workspace/directory')
-        ? { items: [DIRECTORY_ITEM] }
+        ? { items: [PROJECT_DIRECTORY_ITEM, AMBIENT_DIRECTORY_ITEM] }
         : url.includes('/api/workspace/context')
-          ? { context: WORKSPACE_CONTEXT }
+          ? { context: AMBIENT_WORKSPACE_CONTEXT }
           : url.includes('/api/workspace/billing')
-            ? BILLING_RESPONSE
+            ? url.includes('workspaceId=ws-project')
+              ? PROJECT_BILLING_RESPONSE
+              : AMBIENT_BILLING_RESPONSE
             : {};
       return new Response(JSON.stringify(body), { status: 200 });
     }),
@@ -236,6 +301,11 @@ describe('project route — floating account cluster', () => {
     vi.mocked(fetchMediaProvidersFromDaemon).mockResolvedValue({ status: 'ok', providers: {} });
     vi.mocked(mergeDaemonConfig).mockImplementation((local) => local);
     vi.mocked(loadConfig).mockReturnValue({ ...baseConfig });
+    useProjectRouteWorkspaceContextMock.mockReturnValue({
+      context: PROJECT_WORKSPACE_CONTEXT,
+      loading: false,
+      retry: vi.fn(),
+    });
     stubFetchByUrl();
     window.history.replaceState(null, '', '/projects/project-1');
   });
@@ -250,6 +320,7 @@ describe('project route — floating account cluster', () => {
   });
 
   it('keeps the avatar and credits pill mounted on an open project', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     render(<App />);
 
     // Both cluster members ride the portal on document.body; they appear once
@@ -260,12 +331,23 @@ describe('project route — floating account cluster', () => {
     await waitFor(() => {
       expect(screen.getByTestId('entry-top-right-credits')).toBeTruthy();
     });
+    expect(avatar.getAttribute('aria-label')).toBe('Project Nova');
     expect(
       screen.getByTestId('entry-top-right-credits').textContent,
     ).toContain('$12.34');
+    expect(screen.getByTestId('entry-top-right-credits').textContent).not.toContain('$98.76');
+
+    fireEvent.click(screen.getByTestId('entry-top-right-credits'));
+    expect(open).toHaveBeenCalledOnce();
+    expect(open.mock.calls[0]?.[0]).toContain('/dashboard?workspaceId=ws-project');
   });
 
   it('renders no cluster while signed out (context resolves to null)', async () => {
+    useProjectRouteWorkspaceContextMock.mockReturnValue({
+      context: null,
+      loading: false,
+      retry: vi.fn(),
+    });
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })),

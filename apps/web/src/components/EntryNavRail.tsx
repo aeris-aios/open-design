@@ -1120,21 +1120,31 @@ export function EntryTopRightCluster({
   );
 }
 
-/**
- * Self-wiring workspace-view variant: pulls the shared workspace context and
- * billing projections itself, so `App.tsx` can drop the avatar + credits onto
- * the project route — where `EntryShell` (the usual data owner) is unmounted —
- * without hoisting billing state into the app shell for every route.
- */
+/** Project-view variant. Bound projects pass their route-owned Workspace
+ * authority explicitly; an unbound local project deliberately falls back to
+ * the shell's ambient account context. */
 export function WorkspaceTopRightAccountCluster({
   onOpenSettings,
   onSignedOut,
+  workspaceContextOverride,
+  workspaceContextLoading,
 }: {
   onOpenSettings?: (section?: EntrySettingsSection) => void;
   onSignedOut?: () => void | Promise<void>;
+  workspaceContextOverride?: WorkspaceCollabContext | null;
+  workspaceContextLoading?: boolean;
 }) {
-  const { context } = useWorkspaceContext();
-  const billingResponse = useWorkspaceBillingResponse();
+  const ambient = useWorkspaceContext();
+  const hasExplicitWorkspaceContext = workspaceContextOverride !== undefined;
+  const context = hasExplicitWorkspaceContext
+    ? workspaceContextOverride
+    : ambient.context;
+  const billingResponse = useWorkspaceBillingResponse({
+    context,
+    loading: hasExplicitWorkspaceContext
+      ? workspaceContextLoading === true
+      : ambient.loading,
+  });
   // Plan and money are both workspace-scoped questions, so both go through a
   // context-partitioned projection — `response.summary` on its own is an
   // ACCOUNT read (`workspaceId: null` by contract). Same rule as EntryShell.

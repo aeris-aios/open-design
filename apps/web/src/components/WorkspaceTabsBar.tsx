@@ -852,6 +852,9 @@ export function WorkspaceTabsBar({
     () => subscribeWorkspaceTabsDock(() => setTabsDockEl(getWorkspaceTabsDock())),
     [],
   );
+  useEffect(() => {
+    if (!tabsDockEl) setDockMenuOpen(false);
+  }, [tabsDockEl]);
 
   // Refresh the fallback cache from whatever this fetch actually returned,
   // before `displayTabFor` below reads it — same render pass, so a tab

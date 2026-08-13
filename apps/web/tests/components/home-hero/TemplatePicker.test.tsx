@@ -11,6 +11,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 const templates = HOME_HERO_CHIPS.filter((chip) => chip.group === 'create');
@@ -38,6 +39,21 @@ function renderPicker(activeChipId: string | null) {
       />,
     ),
   };
+}
+
+function mockPickerRect(top: number, bottom: number) {
+  const picker = screen.getByTestId('home-hero-template-picker');
+  vi.spyOn(picker, 'getBoundingClientRect').mockReturnValue({
+    x: 100,
+    y: top,
+    left: 100,
+    right: 240,
+    top,
+    bottom,
+    width: 140,
+    height: bottom - top,
+    toJSON: () => ({}),
+  });
 }
 
 describe('TemplatePicker', () => {
@@ -82,5 +98,32 @@ describe('TemplatePicker', () => {
     // "Creation type" kicker alone reads as the empty state, and the label slot
     // only appears once a template is selected.
     expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Creation type');
+  });
+
+  it('caps a tall viewport at six visible rows', () => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(900);
+    renderPicker('deck');
+    mockPickerRect(160, 200);
+
+    fireEvent.click(screen.getByTestId('home-hero-template-trigger'));
+
+    const menu = screen.getByTestId('home-hero-template-menu');
+    expect(menu.style.top).toBe('208px');
+    expect(menu.style.bottom).toBe('');
+    expect(menu.style.maxHeight).toBe('286px');
+  });
+
+  it('flips above the trigger when the space below cannot fit one row', () => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(300);
+    renderPicker('deck');
+    mockPickerRect(220, 260);
+
+    fireEvent.click(screen.getByTestId('home-hero-template-trigger'));
+
+    const menu = screen.getByTestId('home-hero-template-menu');
+    expect(menu.style.top).toBe('');
+    expect(menu.style.bottom).toBe('88px');
+    expect(menu.style.maxHeight).toBe('196px');
+    expect(menu.style.transformOrigin).toBe('bottom left');
   });
 });

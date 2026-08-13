@@ -35,6 +35,12 @@ interface Props {
 // Rendered menu width (see .home-hero__template-list) — used to clamp the
 // anchor so the whole panel stays inside the viewport.
 const MENU_W = 340;
+const MENU_MAX_H = 286;
+const MENU_GAP = 8;
+const VIEWPORT_MARGIN = 16;
+// One 44px row plus the list's 6px top/bottom padding. When less than this is
+// available below the trigger, prefer the roomier side above it.
+const MENU_MIN_USABLE_H = 56;
 
 // Per product: the menu lists at most this many kinds (rows beyond it are
 // simply not shown — the catalog stays whole for the rail/carousel).
@@ -56,10 +62,15 @@ export function TemplatePicker({
   // these coords instead of tracking the trigger: the composer around the
   // trigger reflows asynchronously (template apply, placeholder animation) and
   // sits inside transformed ancestors that would both drift an anchored menu
-  // mid-gesture and degrade fixed positioning. It opens DOWNWARD from the
-  // trigger (per product), so the anchor is a left/top pair.
+  // mid-gesture and degrade fixed positioning. It normally opens downward,
+  // but flips above when the lower viewport cannot fit one complete row.
   const [anchor, setAnchor] = useState<
-    { left: number; top: number; maxHeight: number } | null
+    {
+      left: number;
+      edge: number;
+      maxHeight: number;
+      placement: 'above' | 'below';
+    } | null
   >(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -69,12 +80,27 @@ export function TemplatePicker({
       if (v) return false;
       const rect = wrapRef.current?.getBoundingClientRect();
       if (rect) {
+        const availableBelow = Math.max(
+          0,
+          window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_MARGIN,
+        );
+        const availableAbove = Math.max(
+          0,
+          rect.top - MENU_GAP - VIEWPORT_MARGIN,
+        );
+        const placement =
+          availableBelow < MENU_MIN_USABLE_H && availableAbove > availableBelow
+            ? 'above'
+            : 'below';
+        const available = placement === 'above' ? availableAbove : availableBelow;
         setAnchor({
           left: Math.min(Math.max(rect.x, 8), Math.max(8, window.innerWidth - MENU_W - 8)),
-          top: rect.bottom + 8,
-          // Opening downward: the panel may use at most the space between the
-          // trigger and the viewport bottom.
-          maxHeight: Math.max(200, window.innerHeight - rect.bottom - 24),
+          edge:
+            placement === 'above'
+              ? window.innerHeight - rect.top + MENU_GAP
+              : rect.bottom + MENU_GAP,
+          maxHeight: Math.min(MENU_MAX_H, available),
+          placement,
         });
       } else {
         setAnchor(null);
@@ -211,7 +237,15 @@ export function TemplatePicker({
           data-testid="home-hero-template-menu"
           style={
             anchor
-              ? { left: anchor.left, top: anchor.top, maxHeight: anchor.maxHeight }
+              ? {
+                  left: anchor.left,
+                  ...(anchor.placement === 'above'
+                    ? { bottom: anchor.edge }
+                    : { top: anchor.edge }),
+                  maxHeight: anchor.maxHeight,
+                  transformOrigin:
+                    anchor.placement === 'above' ? 'bottom left' : 'top left',
+                }
               : undefined
           }
         >
