@@ -39,6 +39,7 @@ import {
   type StableSectionHashes,
 } from './prompts/stable-sections.js';
 import { emittedRenderableQuestionForm } from './question-form-detect.js';
+import { runHadFailedDesignSystemWrapper } from './runtimes/run-artifacts.js';
 import { resolveProjectRoot } from './project-root.js';
 import { OPEN_DESIGN_PLUGIN_ID } from './mcp-observability.js';
 import {
@@ -13211,6 +13212,29 @@ export async function startServer({
           runArtifactSideEffects.artifactWriteSeen ||
           runArtifactSideEffects.liveArtifactSeen,
       });
+      // Codex reports shell failures as ordinary command_execution items and
+      // can still close the overall turn with code 0. For a structured DS run,
+      // a failed read/resolve/validate wrapper followed by zero artifacts is a
+      // failed delivery, not a successful text-only turn. Resolve the
+      // filesystem diff before finalizing so the run cannot surface as green
+      // merely because the agent explained why it stopped. A later successful
+      // retry that produced an artifact remains a normal success.
+      if (
+        status === 'succeeded'
+        && runHadFailedDesignSystemWrapper(run.events)
+        && !emittedRenderableQuestionForm(clarifyingQuestionText)
+      ) {
+        const artifactOutcome = await resolveRunArtifactOutcomeBeforeFinishAsync();
+        if (!artifactOutcome || artifactOutcome.artifactCount <= 0) {
+          markRpcCloseReason('design_system_wrapper_failed');
+          send('error', createSseErrorPayload(
+            'AGENT_EXECUTION_FAILED',
+            'The agent could not access the active design-system runtime and produced no deliverable. Retry after checking the local agent tool environment.',
+            { retryable: true },
+          ));
+          return finishWithRetryDecision('failed', code, signal);
+        }
+      }
       // Skip the close-handler failure emit when the run is already
       // terminal: the inactivity watchdog (failForInactivity) finishes the
       // run — sending its error and clearing run.clients/eventsLogStream —
