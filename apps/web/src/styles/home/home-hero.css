@@ -2726,6 +2726,7 @@
    height + title-row height to prototype/HyperFrames/image tiles. */
 .home-hero__plugin-preset[data-od-mode="deck"] .home-hero__plugin-preset-preview {
   aspect-ratio: auto;
+  background: var(--bg-panel);
   --deck-preview-scale: 0.166;
 }
 .home-hero__plugin-preset[data-od-mode="deck"] .plugins-home__html-frame {
@@ -2748,6 +2749,31 @@
   width: 1280px;
   height: 720px;
   transform: translate(-50%, -50%) scale(var(--deck-preview-scale));
+}
+
+/* Baked deck posters/clips use the gallery's 1.31:1 capture frame, with the
+   actual 16:9 slide centered inside it. Put that media in its native 16:9 box
+   before object-fit crops it, otherwise the capture's dark stage background
+   survives as a black strip above the slide. Keep the deck out of the generic
+   poster zoom below as well: once the 16:9 crop removes the baked letterbox,
+   another scale would cut real slide content off all four edges. */
+.home-hero__plugin-preset[data-od-mode="deck"] .plugins-home__preview--media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel);
+}
+.home-hero__plugin-preset[data-od-mode="deck"] .plugins-home__media {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.home-hero__plugin-preset[data-od-mode="deck"] .plugins-home__media-img,
+.home-hero__plugin-preset[data-od-mode="deck"] .plugins-home__media-video {
+  object-position: center;
+  transform: none;
 }
 
 /* Baseline zoom — a FRAMING transform, not a hover effect (the hover cover
