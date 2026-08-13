@@ -285,6 +285,35 @@ describe('editable PPTX layered backgrounds', () => {
     expect((outerAnchoredChild.style as unknown as FakeStyle).getPropertyValue('position')).toBe('');
   });
 
+  test('copies background blending onto the no-capture fallback layer', async () => {
+    const slide = fakeElement();
+    const panel = fakeElement();
+    slide.prepend(panel);
+    const styles = new Map<HTMLElement, Partial<ComputedStyle>>([
+      [slide, { position: 'relative' }],
+      [
+        panel,
+        {
+          backgroundBlendMode: 'multiply, screen',
+          backgroundImage: 'linear-gradient(white, transparent), radial-gradient(circle, white, black)',
+          position: 'absolute',
+        },
+      ],
+    ]);
+    stubExportDom(slide, styles);
+
+    let layeredBackground: HTMLElement | undefined;
+    await runExport(() => {
+      layeredBackground = Array.from(panel.children).find(
+        (child) => child.getAttribute('data-od-pptx-layered-bg') === 'true',
+      ) as HTMLElement | undefined;
+    });
+
+    expect((layeredBackground?.style as unknown as FakeStyle).getPropertyValue('background-blend-mode')).toBe(
+      'multiply, screen',
+    );
+  });
+
   test('does not turn static content wrappers into containing blocks', async () => {
     const slide = fakeElement();
     const panel = fakeElement();
@@ -407,6 +436,35 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
   }, 30_000);
 
+  test('aligns a captured layered background with native content after export normalization', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.alignmentGeometry, JSON.stringify(media.alignmentGeometry)).toEqual({
+      background: { height: 971550, width: 2171700, x: 1314450, y: 1028700 },
+      content: { height: 971550, width: 2171700, x: 1314450, y: 1028700 },
+    });
+  }, 30_000);
+
+  test('flattens a backdrop-filtered layered background against its authored backdrop', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.backdropFiltered.pngs;
+
+    expect(media.backdropFiltered, JSON.stringify(media.backdropFiltered)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([96, 223, 223]);
+  }, 30_000);
+
+  test('preserves background blending for standard and backdrop-dependent pseudos', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [standard] = media.backgroundBlendPseudo.pngs;
+    const [materialized] = media.materializedBackgroundBlend.pngs;
+
+    expect(standard?.centerRgb, JSON.stringify(standard)).toEqual([64, 96, 64]);
+    expect(materialized?.centerRgb, JSON.stringify(materialized)).toEqual([64, 96, 64]);
+  }, 30_000);
+
   test('captures only the layered background pixels from a replaced element', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.replaced.pngs;
@@ -471,9 +529,16 @@ describe('editable PPTX layered backgrounds', () => {
 });
 
 type LayeredBackgroundProbe = {
+  alignmentGeometry: {
+    background: PptxGeometry | null;
+    content: PptxGeometry | null;
+  };
+  backdropFiltered: LayeredBackgroundExport;
+  backgroundBlendPseudo: LayeredBackgroundExport;
   blended: LayeredBackgroundExport;
   composited: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
+  materializedBackgroundBlend: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
   replaced: LayeredBackgroundExport;
@@ -483,6 +548,8 @@ type LayeredBackgroundProbe = {
   skippedTargets: number;
   supported: LayeredBackgroundExport;
 };
+
+type PptxGeometry = { height: number; width: number; x: number; y: number };
 
 type LayeredBackgroundExport = { captures: number; media: string[]; pngs: PngProbe[] };
 
@@ -509,8 +576,12 @@ async function runLayeredBackgroundMediaProbe(): Promise<LayeredBackgroundProbe>
   const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-probe-'));
   const invocationSource = `(captures => {
     const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()};
-    return (${runDomToPptx.toString()})(".slide", captures);
+    return (${runDomToPptx.toString()})(".slide", captures, "export-prepared");
   })`;
+  const prepareSource = `(() => {
+    const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()};
+    return (${runDomToPptx.toString()})(".slide", {}, "prepare");
+  })()`;
   const collectSource = `(${collectLayeredPptxBackgroundTargets.toString()})(".slide")`;
   const isolateSource = `(id => {
     const restoreLayeredPptxBackgroundIsolation = ${restoreLayeredPptxBackgroundIsolation.toString()};
@@ -533,6 +604,10 @@ const fixtures = {
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
   skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
+  backdropFiltered: '<div class="filtered-backdrop"></div><div class="backdrop-filtered"></div>',
+  backgroundBlendPseudo: '<div class="background-blend-pseudo"></div>',
+  materializedBackgroundBlend: '<div class="materialized-background-blend"></div>',
+  alignment: '<div class="alignment-layer"><div class="alignment-native">Alignment native</div></div>',
 };
 const styles = \`
   html, body { margin: 0; }
@@ -544,6 +619,25 @@ const styles = \`
     z-index: 0;
     color: white;
     background-image: radial-gradient(circle at 20% 20%, rgba(88,166,255,.5), transparent 30%), radial-gradient(circle at 80% 80%, rgba(163,113,247,.5), transparent 30%);
+  }
+  [data-od-probe="alignment"] {
+    width: 96px;
+    height: 54px;
+    margin-left: 36px;
+    margin-top: 24px;
+  }
+  .alignment-layer {
+    position: absolute;
+    left: 10px;
+    top: 12px;
+    width: 76px;
+    height: 34px;
+    background-image: linear-gradient(rgb(44, 82, 130), rgb(44, 82, 130)), linear-gradient(transparent, transparent);
+  }
+  .alignment-native {
+    position: absolute;
+    inset: 0;
+    color: white;
   }
   .card { position: absolute; left: 170px; top: 90px; width: 140px; height: 80px; background: #24506f; }
   .supported, .pseudo, .masked, .composited { position: absolute; width: 120px; height: 60px; }
@@ -587,6 +681,37 @@ const styles = \`
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
+  .filtered-backdrop,
+  .backdrop-filtered {
+    position: absolute;
+    left: 240px;
+    top: 76px;
+    width: 66px;
+    height: 32px;
+  }
+  .filtered-backdrop { background: rgb(200, 40, 40); }
+  .backdrop-filtered {
+    background-image: linear-gradient(rgba(255, 255, 255, .2), rgba(255, 255, 255, .2)), linear-gradient(transparent, transparent);
+    -webkit-backdrop-filter: invert(1);
+    backdrop-filter: invert(1);
+  }
+  .background-blend-pseudo,
+  .materialized-background-blend {
+    position: absolute;
+    top: 140px;
+    background: white;
+  }
+  .background-blend-pseudo { left: 122px; width: 54px; height: 28px; }
+  .materialized-background-blend { left: 180px; width: 58px; height: 30px; }
+  .background-blend-pseudo::after,
+  .materialized-background-blend::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(rgb(128, 192, 128), rgb(128, 192, 128));
+    background-blend-mode: multiply;
+  }
+  .materialized-background-blend::after { mix-blend-mode: multiply; }
   .replaced {
     position: absolute;
     left: 160px;
@@ -709,6 +834,30 @@ function inspectRootPseudoLayerOrder(entries, mediaName) {
   };
 }
 
+function inspectAlignmentGeometry(entries, mediaName) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  const relationships = entries
+    .find(({ name }) => name === 'ppt/slides/_rels/slide1.xml.rels')
+    ?.data.toString('utf8') || '';
+  const targetName = mediaName.split('/').pop() || '';
+  const relationship = relationships
+    .match(/<Relationship\\b[^>]*>/g)
+    ?.find((entry) => entry.includes(targetName)) || '';
+  const relationshipId = relationship.match(/\\bId="([^"]+)"/)?.[1] || '';
+  const picture = relationshipId
+    ? slideXml.match(/<p:pic>[\\s\\S]*?<\\/p:pic>/g)?.find((entry) => entry.includes('r:embed="' + relationshipId + '"')) || ''
+    : '';
+  const content = slideXml.match(/<p:sp>[\\s\\S]*?<\\/p:sp>/g)?.find((entry) => entry.includes('Alignment native')) || '';
+  const geometry = (xml) => {
+    const offset = xml.match(/<a:off x="(\\d+)" y="(\\d+)"\\/>/);
+    const extent = xml.match(/<a:ext cx="(\\d+)" cy="(\\d+)"\\/>/);
+    return offset && extent
+      ? { height: Number(extent[2]), width: Number(extent[1]), x: Number(offset[1]), y: Number(offset[2]) }
+      : null;
+  };
+  return { background: geometry(picture), content: geometry(content) };
+}
+
 let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
@@ -737,6 +886,10 @@ app.whenReady().then(async () => {
       .join('');
     const slide = '<section class="slide">' + fixtureMarkup + '</section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
+    await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
+    probeStage = 'normalize export DOM';
+    const prepared = await window.webContents.executeJavaScript(${JSON.stringify(prepareSource)}, true);
+    if (!prepared?.prepared || prepared.error) throw new Error(prepared?.error || 'PPTX DOM normalization failed');
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
@@ -816,6 +969,16 @@ app.whenReady().then(async () => {
       && png.opaquePixels === png.width * png.height) : [];
     replacedForegroundMedia.forEach(({ name }) => usedMedia.add(name));
     result.replacedForegroundMedia = replacedForegroundMedia.map(({ name }) => name);
+    if (!result.backgroundBlendPseudo) {
+      const backgroundBlendPseudoMedia = media.find(({ name, png }) =>
+        !usedMedia.has(name) && png?.width === 54 && png?.height === 28);
+      if (backgroundBlendPseudoMedia) usedMedia.add(backgroundBlendPseudoMedia.name);
+      result.backgroundBlendPseudo = {
+        captures: captureCounts.backgroundBlendPseudo,
+        media: backgroundBlendPseudoMedia ? [backgroundBlendPseudoMedia.name] : [],
+        pngs: backgroundBlendPseudoMedia?.png ? [backgroundBlendPseudoMedia.png] : [],
+      };
+    }
     const pseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) > 100 && (png?.height ?? 0) > 40
         && (png?.width ?? 0) < 300 && (png?.height ?? 0) < 170,
@@ -835,6 +998,7 @@ app.whenReady().then(async () => {
       pngs: rootPseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
     result.rootPseudoLayerOrder = inspectRootPseudoLayerOrder(entries, rootPseudoMedia[0]?.name || '');
+    result.alignmentGeometry = inspectAlignmentGeometry(entries, result.alignment?.media?.[0] || '');
     result.skippedTargets = targetCounts.skipped;
     probeResult = result;
   } finally {
@@ -899,6 +1063,12 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     typeof value !== 'object'
     || value === null
     || !('blended' in value)
+    || !('backdropFiltered' in value)
+    || !('backgroundBlendPseudo' in value)
+    || !('materializedBackgroundBlend' in value)
+    || !('alignmentGeometry' in value)
+    || typeof value.alignmentGeometry !== 'object'
+    || value.alignmentGeometry === null
     || !('supported' in value)
     || !('pseudo' in value)
     || !('replaced' in value)
@@ -927,12 +1097,16 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('skippedTargets' in value)
     || typeof value.skippedTargets !== 'number'
   ) {
-    throw new Error('Electron renderer probe returned an invalid result');
+    throw new Error(`Electron renderer probe returned an invalid result: ${JSON.stringify(value)}`);
   }
   return {
+    alignmentGeometry: value.alignmentGeometry as LayeredBackgroundProbe['alignmentGeometry'],
+    backdropFiltered: parseLayeredBackgroundExport(value.backdropFiltered),
+    backgroundBlendPseudo: parseLayeredBackgroundExport(value.backgroundBlendPseudo),
     blended: parseLayeredBackgroundExport(value.blended),
     composited: parseLayeredBackgroundExport(value.composited),
     masked: parseLayeredBackgroundExport(value.masked),
+    materializedBackgroundBlend: parseLayeredBackgroundExport(value.materializedBackgroundBlend),
     pseudo: parseLayeredBackgroundExport(value.pseudo),
     pseudoLayerOrder: {
       background: value.pseudoLayerOrder.background,

@@ -404,11 +404,23 @@ async function renderEditablePptx(
   );
   await nextFrames(window);
   await window.webContents.executeJavaScript(await loadDomToPptxBundle(), true);
+  const prepared = (await window.webContents.executeJavaScript(
+    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, {}, "prepare"); })()`,
+    true,
+  )) as { error?: string; prepared?: boolean };
+  if (!prepared?.prepared || prepared.error) {
+    return {
+      ok: false,
+      error: prepared?.error || "editable PPTX export DOM normalization failed",
+      errorCode: "RENDER_FAILED",
+    };
+  }
+  await nextFrames(window);
   const layeredBackgrounds = await captureEditablePptxLayeredBackgrounds(window);
   // runDomToPptx calls cjkPromotedFontFamily by name; define it in the same scope
   // as the serialized body so the reference resolves inside the render window.
   const out = (await window.webContents.executeJavaScript(
-    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(layeredBackgrounds)}); })()`,
+    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(layeredBackgrounds)}, "export-prepared"); })()`,
     true,
   )) as { b64?: string; error?: string };
   if (!out || out.error || !out.b64) {
@@ -504,7 +516,27 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     return mode !== "" && mode !== "normal";
   }
 
-  function materializeBlendedPseudoBackground(
+  function hasBackdropFilter(style: CSSStyleDeclaration): boolean {
+    const value = (
+      style.backdropFilter ||
+      style.getPropertyValue?.("backdrop-filter") ||
+      style.getPropertyValue?.("-webkit-backdrop-filter") ||
+      "none"
+    ).trim().toLowerCase();
+    return value !== "" && value !== "none";
+  }
+
+  function dependsOnBackdrop(style: CSSStyleDeclaration): boolean {
+    return hasNonNormalBlendMode(style) || hasBackdropFilter(style);
+  }
+
+  function hasNonNormalBackgroundBlendMode(style: CSSStyleDeclaration): boolean {
+    return (style.backgroundBlendMode || "normal")
+      .split(",")
+      .some((mode) => mode.trim().toLowerCase() !== "normal");
+  }
+
+  function materializeLayeredPseudoBackground(
     element: HTMLElement,
     pseudo: "::before" | "::after",
   ): HTMLElement | null {
@@ -515,19 +547,21 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       !isGenerated ||
       (style.position !== "absolute" && style.position !== "fixed") ||
       !isSupportedLayeredGradient(style.backgroundImage || "") ||
-      !hasNonNormalBlendMode(style) ||
+      (!dependsOnBackdrop(style) && !hasNonNormalBackgroundBlendMode(style)) ||
       hasTextClip(style)
     ) {
       return null;
     }
 
-    // html2canvas rasterizes custom elements without their backdrop and does
-    // not parse mix-blend-mode. Materialize only blended pseudos in the live
-    // Chromium page so the main-process capture can flatten the authored
-    // backdrop into the resulting PNG.
+    // Materialize pseudo backgrounds whose compositing is not faithfully
+    // represented by the html2canvas fallback. Chromium retains internal
+    // background blending, and backdrop-dependent pseudos additionally mark
+    // the authored backdrop for flattening into the same PNG.
     const background = document.createElement("od-pptx-layered-background");
     background.setAttribute("data-od-pptx-materialized-pseudo", pseudo);
-    background.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
+    if (dependsOnBackdrop(style)) {
+      background.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
+    }
     background.setAttribute("aria-hidden", "true");
     background.style.setProperty("position", style.position, "important");
     background.style.setProperty("top", style.top || "auto", "important");
@@ -557,8 +591,16 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
     background.style.setProperty("background-origin", style.backgroundOrigin, "important");
     background.style.setProperty("background-clip", style.backgroundClip, "important");
+    background.style.setProperty("background-blend-mode", style.backgroundBlendMode || "normal", "important");
     background.style.setProperty("clip-path", style.clipPath || "none", "important");
     background.style.setProperty("filter", style.filter || "none", "important");
+    const backdropFilter =
+      style.backdropFilter ||
+      style.getPropertyValue?.("backdrop-filter") ||
+      style.getPropertyValue?.("-webkit-backdrop-filter") ||
+      "none";
+    background.style.setProperty("backdrop-filter", backdropFilter, "important");
+    background.style.setProperty("-webkit-backdrop-filter", backdropFilter, "important");
     background.style.setProperty("opacity", style.opacity || "1", "important");
     background.style.setProperty("mix-blend-mode", style.mixBlendMode, "important");
     background.style.setProperty("transform", style.transform || "none", "important");
@@ -616,7 +658,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const authoredElements = [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))];
     const materializedPseudos = authoredElements.flatMap((element) =>
       (["::before", "::after"] as const)
-        .map((pseudo) => materializeBlendedPseudoBackground(element, pseudo))
+        .map((pseudo) => materializeLayeredPseudoBackground(element, pseudo))
         .filter((element): element is HTMLElement => element !== null),
     );
     const elements = [...authoredElements, ...materializedPseudos];
@@ -630,7 +672,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
         continue;
       }
       const id = `od-pptx-layer-${nextId++}`;
-      if (hasNonNormalBlendMode(style)) {
+      if (dependsOnBackdrop(style)) {
         element.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
       }
       element.setAttribute("data-od-pptx-layer-capture-id", id);
@@ -679,7 +721,7 @@ export function isolateLayeredPptxBackground(
   if (slideIndex < 0) return null;
   const slide = slides[slideIndex]!;
   const targetStyle = getComputedStyle(target);
-  const flattenBlendBackdrop = target.getAttribute("data-od-pptx-flatten-blend-backdrop") === "true";
+  const flattenBackdrop = target.getAttribute("data-od-pptx-flatten-blend-backdrop") === "true";
   const targetRect = target.getBoundingClientRect();
   const slideRect = slide.getBoundingClientRect();
   const hasVisualOverflow = targetStyle.filter && targetStyle.filter !== "none";
@@ -694,7 +736,7 @@ export function isolateLayeredPptxBackground(
   const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
   const blendBackdropElements = new Set<HTMLElement>();
   const blendBackdropPseudos = new Map<HTMLElement, Set<"::before" | "::after">>();
-  if (flattenBlendBackdrop) {
+  if (flattenBackdrop) {
     const materializedPseudo = target.getAttribute("data-od-pptx-materialized-pseudo");
     for (let branch: HTMLElement | null = target; branch && branch !== slide; branch = branch.parentElement) {
       const parent: HTMLElement | null = branch.parentElement;
@@ -758,7 +800,7 @@ export function isolateLayeredPptxBackground(
   for (let ancestor: HTMLElement | null = target; ancestor; ancestor = ancestor.parentElement) {
     ancestor.style.setProperty("visibility", "visible", "important");
     if (ancestor !== target) {
-      if (!flattenBlendBackdrop) {
+      if (!flattenBackdrop) {
         ancestor.style.setProperty("background", "transparent", "important");
         ancestor.style.setProperty("border-color", "transparent", "important");
         ancestor.style.setProperty("box-shadow", "none", "important");
@@ -785,7 +827,7 @@ export function isolateLayeredPptxBackground(
   for (const root of [document.documentElement, document.body]) {
     if (!root) continue;
     root.style.setProperty("visibility", "visible", "important");
-    if (!flattenBlendBackdrop) root.style.setProperty("background", "transparent", "important");
+    if (!flattenBackdrop) root.style.setProperty("background", "transparent", "important");
   }
 
   return {
@@ -1452,13 +1494,16 @@ export function cjkPromotedFontFamily(fontFamily: string, text: string): string 
   return [families[firstCjk], ...families.filter((_, i) => i !== firstCjk)].join(", ");
 }
 
-// Serialized into the page: runs the injected dom-to-pptx engine over every real
-// slide and returns the .pptx bytes as base64 (or an error). Fonts are
-// auto-detected + embedded; SVGs stay vector (editable in PowerPoint).
+// Serialized into the page: `prepare` applies every geometry-affecting export
+// normalization before Chromium capture, while `export-prepared` consumes those
+// measurements without moving the DOM again. The default phase retains the
+// single-call test/integration seam. Fonts are auto-detected + embedded; SVGs
+// stay vector (editable in PowerPoint).
 export async function runDomToPptx(
   slideSelector: string,
   layeredBackgrounds: Record<string, LayeredPptxBackgroundCapture> = {},
-): Promise<{ b64?: string; error?: string }> {
+  phase: "export" | "prepare" | "export-prepared" = "export",
+): Promise<{ b64?: string; error?: string; prepared?: boolean }> {
   // dom-to-pptx fixes native ::before content at -1,000,000. Reserve the two
   // preceding slots for its raster background and the slide background below
   // it so a slide-root pseudo remains visible over an opaque slide fill.
@@ -1622,6 +1667,16 @@ export async function runDomToPptx(
     return mode !== "" && mode !== "normal";
   }
 
+  function hasBackdropFilter(style: CSSStyleDeclaration): boolean {
+    const value = (
+      style.backdropFilter ||
+      style.getPropertyValue?.("backdrop-filter") ||
+      style.getPropertyValue?.("-webkit-backdrop-filter") ||
+      "none"
+    ).trim().toLowerCase();
+    return value !== "" && value !== "none";
+  }
+
   function hasCssMask(style: CSSStyleDeclaration): boolean {
     const maskImages = [
       style.maskImage || style.getPropertyValue("mask-image"),
@@ -1652,8 +1707,16 @@ export async function runDomToPptx(
     background.style.setProperty("background-repeat", style.backgroundRepeat, "important");
     background.style.setProperty("background-origin", style.backgroundOrigin, "important");
     background.style.setProperty("background-clip", style.backgroundClip, "important");
+    background.style.setProperty("background-blend-mode", style.backgroundBlendMode || "normal", "important");
     background.style.setProperty("clip-path", style.clipPath || "none", "important");
     background.style.setProperty("filter", style.filter || "none", "important");
+    const backdropFilter =
+      style.backdropFilter ||
+      style.getPropertyValue?.("backdrop-filter") ||
+      style.getPropertyValue?.("-webkit-backdrop-filter") ||
+      "none";
+    background.style.setProperty("backdrop-filter", backdropFilter, "important");
+    background.style.setProperty("-webkit-backdrop-filter", backdropFilter, "important");
     background.style.setProperty("opacity", style.opacity || "1", "important");
     background.style.setProperty("mix-blend-mode", style.mixBlendMode || "normal", "important");
     background.style.setProperty("transform", style.transform || "none", "important");
@@ -1681,6 +1744,7 @@ export async function runDomToPptx(
           // The html2canvas custom-element path has no blend-mode parser and
           // cannot reproduce this background without its authored backdrop.
           hasNonNormalBlendMode(style.mixBlendMode || "") ||
+          hasBackdropFilter(style) ||
           hasTextBackgroundClip(style.backgroundClip || "") ||
           hasTextBackgroundClip(style.webkitBackgroundClip || "") ||
           hasCssMask(style)
@@ -1911,27 +1975,30 @@ export async function runDomToPptx(
       .call(document.querySelectorAll(slideSelector))
       .filter((el) => !(el as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb"));
     if (slides.length === 0) return { error: "no slides to export" };
-    ensureExplicitSlideBackgrounds(slides as HTMLElement[]);
-    preserveLayeredGradientBackgrounds(slides as HTMLElement[]);
-    stabilizeLargeSingleLineText(slides as HTMLElement[]);
-    promoteCjkTypefaces(slides as HTMLElement[]);
-    // dom-to-pptx assumes `node.className` is a string, but SVG elements expose
-    // an SVGAnimatedString, so its DOM walk throws on decks containing inline SVG.
-    // Normalize those to a plain string in this throwaway render window.
-    document.querySelectorAll("*").forEach((el) => {
-      const cn = (el as { className?: unknown }).className;
-      if (cn != null && typeof cn !== "string") {
-        try {
-          Object.defineProperty(el, "className", {
-            value: (cn as { baseVal?: string }).baseVal ?? "",
-            configurable: true,
-            writable: true,
-          });
-        } catch {
-          // Leave it; dom-to-pptx may still handle this node.
+    if (phase !== "export-prepared") {
+      ensureExplicitSlideBackgrounds(slides as HTMLElement[]);
+      stabilizeLargeSingleLineText(slides as HTMLElement[]);
+      promoteCjkTypefaces(slides as HTMLElement[]);
+      // dom-to-pptx assumes `node.className` is a string, but SVG elements expose
+      // an SVGAnimatedString, so its DOM walk throws on decks containing inline SVG.
+      // Normalize those to a plain string in this throwaway render window.
+      document.querySelectorAll("*").forEach((el) => {
+        const cn = (el as { className?: unknown }).className;
+        if (cn != null && typeof cn !== "string") {
+          try {
+            Object.defineProperty(el, "className", {
+              value: (cn as { baseVal?: string }).baseVal ?? "",
+              configurable: true,
+              writable: true,
+            });
+          } catch {
+            // Leave it; dom-to-pptx may still handle this node.
+          }
         }
-      }
-    });
+      });
+    }
+    if (phase === "prepare") return { prepared: true };
+    preserveLayeredGradientBackgrounds(slides as HTMLElement[]);
     const blob = await w.domToPptx.exportToPptx(slides, {
       fileName: "deck.pptx",
       skipDownload: true,
