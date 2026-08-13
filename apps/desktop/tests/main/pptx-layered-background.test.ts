@@ -566,9 +566,12 @@ describe('editable PPTX layered backgrounds', () => {
     ).toBe(true);
     expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
     expect(image?.maxAlpha).toBeLessThanOrEqual(136);
+    expect(media.nestedOpacityNativeContent).toBeGreaterThanOrEqual(0);
+    expect(media.nestedOpacityNativeShape).toBeGreaterThanOrEqual(0);
+    expect(image?.topLeftRgb[0], JSON.stringify(image)).toBeGreaterThan(image?.topLeftRgb[1] ?? 0);
   }, 30_000);
 
-  test('preserves a CSS mask as decoded alpha in the exported PNG', async () => {
+  test('captures a real masked element complete instead of emitting unmasked native foreground', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.masked.pngs;
 
@@ -577,8 +580,8 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image).toBeDefined();
     expect(image?.transparentPixels).toBeGreaterThan(0);
     expect(image?.translucentPixels).toBeGreaterThan(0);
-    expect(image?.maxAlpha).toBeGreaterThan(50);
-    expect(image?.maxAlpha).toBeLessThan(128);
+    expect(image?.maxAlpha).toBeGreaterThan(240);
+    expect(media.maskedNativeContent).toBe(-1);
   }, 30_000);
 
   test('preserves mask geometry on a normal layered pseudo background', async () => {
@@ -620,6 +623,7 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
     expect(image?.translucentPixels, JSON.stringify(image)).toBeGreaterThan(0);
     expect(image?.opaquePixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(media.maskedPseudoContentMediaCount).toBe(1);
     expect(media.maskedPseudoContentOrder.image).toBeGreaterThanOrEqual(0);
     expect(media.maskedPseudoContentOrder.nativeContent).toBe(-1);
     expect(media.maskedPseudoContentOrder.image).toBeLessThan(media.maskedPseudoContentOrder.sibling);
@@ -637,11 +641,15 @@ type LayeredBackgroundProbe = {
   composited: LayeredBackgroundExport;
   compositedMaskedPseudo: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
+  maskedNativeContent: number;
   maskedPseudoContent: LayeredBackgroundExport;
+  maskedPseudoContentMediaCount: number;
   maskedPseudoContentOrder: { image: number; nativeContent: number; sibling: number };
   materializedBackgroundBlend: LayeredBackgroundExport;
   nestedBlended: LayeredBackgroundExport;
   nestedOpacity: LayeredBackgroundExport;
+  nestedOpacityNativeContent: number;
+  nestedOpacityNativeShape: number;
   normalMaskedPseudo: LayeredBackgroundExport;
   paintOrderedBackdrop: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
@@ -668,6 +676,7 @@ type PngProbe = {
   opaquePixels: number;
   translucentPixels: number;
   transparentPixels: number;
+  topLeftRgb: [number, number, number];
   width: number;
 };
 
@@ -707,13 +716,13 @@ const fixtures = {
   pseudo: '<div class="pseudo"></div>',
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
-  nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div></div>',
+  nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div><div class="nested-opacity-label">Native nested opacity label</div><div class="nested-opacity-shape"></div></div>',
   normalMaskedPseudo: '<div class="normal-masked-pseudo"></div>',
   compositedMaskedPseudo: '<div class="composited-masked-pseudo"></div>',
   maskedPseudoContent: '<div class="masked-pseudo-content"></div><div class="masked-pseudo-sibling">Native after mask</div>',
   paintOrderedBackdrop: '<div class="paint-above"></div><div class="paint-target"></div><div class="paint-below"></div>',
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
-  masked: '<div class="masked"></div>',
+  masked: '<div class="masked">Masked real content</div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
   skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
   backdropFiltered: '<div class="filtered-backdrop"></div><div class="backdrop-filtered"></div>',
@@ -824,6 +833,21 @@ const styles = \`
     position: absolute;
     inset: 8px 10px;
     background-image: linear-gradient(rgba(0, 0, 200, .5), rgba(0, 0, 200, .5)), linear-gradient(transparent, transparent);
+  }
+  .nested-opacity-label {
+    position: absolute;
+    left: 1px;
+    top: 1px;
+    color: white;
+    font: 1px/1px sans-serif;
+  }
+  .nested-opacity-shape {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 10px;
+    height: 10px;
+    background: rgb(0, 255, 0);
   }
   .paint-above,
   .paint-target,
@@ -957,6 +981,10 @@ const styles = \`
     height: 50px;
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
+    box-sizing: border-box;
+    border: 4px solid white;
+    color: white;
+    font: 10px sans-serif;
     -webkit-mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
     mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
   }
@@ -1048,7 +1076,9 @@ function inspectPng(data, name) {
   }
   const centerOffset = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
   const centerRgb = [bitmap[centerOffset + 2], bitmap[centerOffset + 1], bitmap[centerOffset]];
-  return { centerRgb, height, maxAlpha, minAlpha, name, opaquePixels, translucentPixels, transparentPixels, width };
+  const topLeftOffset = (Math.min(height - 1, 8) * width + Math.min(width - 1, 8)) * 4;
+  const topLeftRgb = [bitmap[topLeftOffset + 2], bitmap[topLeftOffset + 1], bitmap[topLeftOffset]];
+  return { centerRgb, height, maxAlpha, minAlpha, name, opaquePixels, topLeftRgb, translucentPixels, transparentPixels, width };
 }
 
 function inspectPseudoLayerOrder(entries, mediaName) {
@@ -1082,6 +1112,11 @@ function inspectMaskedPseudoContentOrder(entries, mediaName) {
     nativeContent: slideXml.indexOf('Masked pseudo content'),
     sibling: slideXml.indexOf('Native after mask'),
   };
+}
+
+function inspectNativeContent(entries, content) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  return slideXml.indexOf(content);
 }
 
 function inspectRootPseudoLayerOrder(entries, mediaName) {
@@ -1239,6 +1274,15 @@ app.whenReady().then(async () => {
       && png.opaquePixels === png.width * png.height) : [];
     replacedForegroundMedia.forEach(({ name }) => usedMedia.add(name));
     result.replacedForegroundMedia = replacedForegroundMedia.map(({ name }) => name);
+    const maskedPseudoContentCapture = Object.entries(captures)
+      .find(([targetId]) => probeByTarget[targetId] === 'maskedPseudoContent')?.[1];
+    result.maskedPseudoContentMediaCount = maskedPseudoContentCapture
+      ? media.filter(({ png }) => png
+        && [maskedPseudoContentCapture.width, maskedPseudoContentCapture.width * 2]
+          .some((width) => Math.abs(png.width - width) <= 1)
+        && [maskedPseudoContentCapture.height, maskedPseudoContentCapture.height * 2]
+          .some((height) => Math.abs(png.height - height) <= 1)).length
+      : 0;
     if (!result.backgroundBlendPseudo) {
       const backgroundBlendPseudoMedia = media.find(({ name, png }) =>
         !usedMedia.has(name) && png?.width === 54 && png?.height === 28);
@@ -1263,6 +1307,9 @@ app.whenReady().then(async () => {
       entries,
       result.maskedPseudoContent?.media?.[0] || '',
     );
+    result.nestedOpacityNativeContent = inspectNativeContent(entries, 'Native nested opacity label');
+    result.nestedOpacityNativeShape = inspectNativeContent(entries, 'val="00FF00"');
+    result.maskedNativeContent = inspectNativeContent(entries, 'Masked real content');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
     ).filter(
@@ -1344,6 +1391,10 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('materializedBackgroundBlend' in value)
     || !('nestedBlended' in value)
     || !('nestedOpacity' in value)
+    || !('nestedOpacityNativeContent' in value)
+    || typeof value.nestedOpacityNativeContent !== 'number'
+    || !('nestedOpacityNativeShape' in value)
+    || typeof value.nestedOpacityNativeShape !== 'number'
     || !('normalMaskedPseudo' in value)
     || !('paintOrderedBackdrop' in value)
     || !('alignmentGeometry' in value)
@@ -1356,7 +1407,11 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !Array.isArray(value.replacedForegroundMedia)
     || !value.replacedForegroundMedia.every((item) => typeof item === 'string')
     || !('masked' in value)
+    || !('maskedNativeContent' in value)
+    || typeof value.maskedNativeContent !== 'number'
     || !('maskedPseudoContent' in value)
+    || !('maskedPseudoContentMediaCount' in value)
+    || typeof value.maskedPseudoContentMediaCount !== 'number'
     || !('maskedPseudoContentOrder' in value)
     || typeof value.maskedPseudoContentOrder !== 'object'
     || value.maskedPseudoContentOrder === null
@@ -1399,11 +1454,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     composited: parseLayeredBackgroundExport(value.composited),
     compositedMaskedPseudo: parseLayeredBackgroundExport(value.compositedMaskedPseudo),
     masked: parseLayeredBackgroundExport(value.masked),
+    maskedNativeContent: value.maskedNativeContent,
     maskedPseudoContent: parseLayeredBackgroundExport(value.maskedPseudoContent),
+    maskedPseudoContentMediaCount: value.maskedPseudoContentMediaCount,
     maskedPseudoContentOrder: value.maskedPseudoContentOrder as LayeredBackgroundProbe['maskedPseudoContentOrder'],
     materializedBackgroundBlend: parseLayeredBackgroundExport(value.materializedBackgroundBlend),
     nestedBlended: parseLayeredBackgroundExport(value.nestedBlended),
     nestedOpacity: parseLayeredBackgroundExport(value.nestedOpacity),
+    nestedOpacityNativeContent: value.nestedOpacityNativeContent,
+    nestedOpacityNativeShape: value.nestedOpacityNativeShape,
     normalMaskedPseudo: parseLayeredBackgroundExport(value.normalMaskedPseudo),
     paintOrderedBackdrop: parseLayeredBackgroundExport(value.paintOrderedBackdrop),
     pseudo: parseLayeredBackgroundExport(value.pseudo),

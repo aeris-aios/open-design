@@ -720,11 +720,22 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const elements = [...authoredElements, ...materializedPseudos];
     const layeredElements = elements.filter((element) => {
       const style = getComputedStyle(element);
-      return (
+      const capturesLayer = (
         isSupportedLayeredGradient(style.backgroundImage || "") &&
         !hasTextClip(style) &&
         isRenderedInsideSlide(element, slide, style)
       );
+      if (
+        capturesLayer &&
+        hasCssMask(style) &&
+        !element.hasAttribute("data-od-pptx-materialized-pseudo")
+      ) {
+        // The native converter does not serialize CSS masks. A real masked
+        // element therefore has to keep its foreground and border in the same
+        // Chromium capture as its layered background.
+        element.setAttribute("data-od-pptx-capture-entire-element", "true");
+      }
+      return capturesLayer;
     });
     const captureGroups = new Map<HTMLElement, HTMLElement[]>();
     for (const element of layeredElements) {
@@ -743,6 +754,9 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       const id = `od-pptx-layer-${nextId++}`;
       if (members.some((member) => member !== element)) {
         element.setAttribute("data-od-pptx-compositing-context", "true");
+        for (const member of members) {
+          member.setAttribute("data-od-pptx-compositing-member", id);
+        }
       }
       if (dependsOnBackdrop(style)) {
         element.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
@@ -796,6 +810,7 @@ export function isolateLayeredPptxBackground(
   const flattenBackdrop = target.getAttribute("data-od-pptx-flatten-blend-backdrop") === "true";
   const flattenCompositingContext = target.getAttribute("data-od-pptx-compositing-context") === "true";
   const materializesEntirePseudo = target.getAttribute("data-od-pptx-materialized-entire-pseudo") === "true";
+  const capturesEntireElement = target.getAttribute("data-od-pptx-capture-entire-element") === "true";
   const targetRect = target.getBoundingClientRect();
   const slideRect = slide.getBoundingClientRect();
   const hasVisualOverflow = targetStyle.filter && targetStyle.filter !== "none";
@@ -808,10 +823,25 @@ export function isolateLayeredPptxBackground(
 
   const allElements = Array.from(document.querySelectorAll<HTMLElement>("*"));
   const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
-  const contextDescendantVisibilities = new Map<HTMLElement, string>();
-  if (flattenCompositingContext) {
-    for (const descendant of Array.from(target.querySelectorAll<HTMLElement>("*"))) {
-      contextDescendantVisibilities.set(descendant, getComputedStyle(descendant).visibility);
+  const compositingMembers = new Set(
+    flattenCompositingContext
+      ? Array.from(document.querySelectorAll<HTMLElement>(`[data-od-pptx-compositing-member="${id}"]`))
+      : [],
+  );
+  const entirePaintRoots = new Set(
+    flattenCompositingContext
+      ? Array.from(compositingMembers).filter((element) =>
+          element.hasAttribute("data-od-pptx-capture-entire-element") ||
+          element.hasAttribute("data-od-pptx-materialized-entire-pseudo"),
+        )
+      : capturesEntireElement || materializesEntirePseudo
+        ? [target]
+        : [],
+  );
+  const entirePaintVisibilities = new Map<HTMLElement, string>();
+  for (const root of entirePaintRoots) {
+    for (const element of [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]) {
+      entirePaintVisibilities.set(element, getComputedStyle(element).visibility);
     }
   }
   const blendBackdropElements = new Set<HTMLElement>();
@@ -888,6 +918,9 @@ export function isolateLayeredPptxBackground(
     if (pseudos.has("::after")) element.setAttribute("data-od-pptx-blend-backdrop-after", id);
   }
   const pseudoStyle = document.createElement("style");
+  const entireElementPseudoScope = flattenCompositingContext
+    ? `[data-od-pptx-compositing-member="${id}"][data-od-pptx-capture-entire-element="true"]`
+    : `[data-od-pptx-layer-capture-id="${id}"][data-od-pptx-capture-entire-element="true"]`;
   pseudoStyle.textContent = `
     *::before,*::after{visibility:hidden!important}
     [data-od-pptx-blend-backdrop-before="${id}"]::before,
@@ -897,11 +930,11 @@ export function isolateLayeredPptxBackground(
       text-shadow:none!important;
       -webkit-text-fill-color:transparent!important;
     }
-    ${flattenCompositingContext ? `
-      [data-od-pptx-layer-capture-id="${id}"]::before,
-      [data-od-pptx-layer-capture-id="${id}"]::after,
-      [data-od-pptx-layer-capture-id="${id}"] *::before,
-      [data-od-pptx-layer-capture-id="${id}"] *::after{
+    ${capturesEntireElement || Array.from(entirePaintRoots).some((element) => element.hasAttribute("data-od-pptx-capture-entire-element")) ? `
+      ${entireElementPseudoScope}::before,
+      ${entireElementPseudoScope}::after,
+      ${entireElementPseudoScope} *::before,
+      ${entireElementPseudoScope} *::after{
         visibility:visible!important;
       }
     ` : ""}
@@ -935,29 +968,53 @@ export function isolateLayeredPptxBackground(
     }
   }
   for (const descendant of Array.from(target.querySelectorAll<HTMLElement>("*"))) {
-    descendant.style.setProperty(
-      "visibility",
-      flattenCompositingContext
-        ? contextDescendantVisibilities.get(descendant) || "visible"
-        : "hidden",
-      "important",
-    );
-    if (
-      flattenCompositingContext &&
-      descendant.hasAttribute("data-od-pptx-materialized-pseudo")
-    ) {
-      // The authored pseudo is visible in a full-context capture. Its temporary
-      // materialized helper would paint the same layer a second time.
-      descendant.style.setProperty("display", "none", "important");
+    const entirePaintRoot = Array.from(entirePaintRoots).find((root) => root === descendant || root.contains(descendant));
+    if (entirePaintRoot) {
+      descendant.style.setProperty(
+        "visibility",
+        entirePaintVisibilities.get(descendant) || "visible",
+        "important",
+      );
+      continue;
     }
+    if (!flattenCompositingContext) {
+      descendant.style.setProperty("visibility", "hidden", "important");
+      continue;
+    }
+    const carriesCapturedBackground = compositingMembers.has(descendant);
+    const containsCapturedBackground = Array.from(compositingMembers).some((member) => descendant.contains(member));
+    if (!carriesCapturedBackground && !containsCapturedBackground) {
+      descendant.style.setProperty("visibility", "hidden", "important");
+      continue;
+    }
+    descendant.style.setProperty("visibility", "visible", "important");
+    if (!carriesCapturedBackground) {
+      descendant.style.setProperty("background", "transparent", "important");
+    }
+    descendant.style.setProperty("border-color", "transparent", "important");
+    descendant.style.setProperty("box-shadow", "none", "important");
+    descendant.style.setProperty("color", "transparent", "important");
+    descendant.style.setProperty("outline", "none", "important");
+    descendant.style.setProperty("text-shadow", "none", "important");
+    descendant.style.setProperty("-webkit-text-fill-color", "transparent", "important");
   }
   // Replaced content is painted by the target itself rather than a descendant.
   // Move that object outside its content box for this screenshot while leaving
   // the target's CSS background visible; restore replays the saved inline style.
-  if (["IMG", "CANVAS", "VIDEO"].includes(target.tagName)) {
+  if (!capturesEntireElement && ["IMG", "CANVAS", "VIDEO"].includes(target.tagName)) {
     target.style.setProperty("object-position", "1000000px 1000000px", "important");
   }
-  if (!flattenCompositingContext && !materializesEntirePseudo) {
+  if (flattenCompositingContext && !entirePaintRoots.has(target)) {
+    if (!compositingMembers.has(target)) {
+      target.style.setProperty("background", "transparent", "important");
+    }
+    target.style.setProperty("border-color", "transparent", "important");
+    target.style.setProperty("box-shadow", "none", "important");
+    target.style.setProperty("color", "transparent", "important");
+    target.style.setProperty("outline", "none", "important");
+    target.style.setProperty("text-shadow", "none", "important");
+    target.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+  } else if (!materializesEntirePseudo && !capturesEntireElement) {
     target.style.setProperty("border-color", "transparent", "important");
     target.style.setProperty("box-shadow", "none", "important");
     target.style.setProperty("color", "transparent", "important");
@@ -1945,7 +2002,8 @@ export async function runDomToPptx(
       slide.querySelectorAll<HTMLElement>("*").forEach((el) => elements.add(el));
     }
 
-    const flattenedContexts = new Set<HTMLElement>();
+    const capturedCompositingMembers = new Set<HTMLElement>();
+    const capturedEntirePaintRoots = new Set<HTMLElement>();
     for (const element of elements) {
       if (element.getAttribute("data-od-pptx-compositing-context") !== "true") continue;
       const captureId = element.getAttribute("data-od-pptx-layer-capture-id") || "";
@@ -1955,9 +2013,9 @@ export async function runDomToPptx(
       if (!slide) continue;
 
       const style = getComputedStyle(element);
-      // The PNG already contains this context's opacity/filter/transform and
-      // descendants. Export it beside the context and suppress the native
-      // subtree so those effects are not applied independently a second time.
+      // The PNG contains only the context's layered CSS backgrounds with its
+      // opacity/filter/transform applied. Export it beside the context, then
+      // remove those backgrounds while retaining authored foreground objects.
       const image = document.createElement("img");
       image.setAttribute("data-od-pptx-layered-bg", "true");
       image.setAttribute("aria-hidden", "true");
@@ -1988,14 +2046,26 @@ export async function runDomToPptx(
         } as DOMRect;
       };
       element.parentElement?.insertBefore(image, element);
-      element.style.setProperty("display", "none", "important");
-      flattenedContexts.add(element);
+      document
+        .querySelectorAll<HTMLElement>(`[data-od-pptx-compositing-member="${captureId}"]`)
+        .forEach((member) => {
+          if (
+            member.hasAttribute("data-od-pptx-materialized-pseudo") ||
+            member.hasAttribute("data-od-pptx-capture-entire-element")
+          ) {
+            member.style.setProperty("display", "none", "important");
+            capturedEntirePaintRoots.add(member);
+          } else {
+            member.style.setProperty("background-image", "none", "important");
+            member.style.setProperty("background-color", "transparent", "important");
+          }
+          capturedCompositingMembers.add(member);
+        });
     }
 
     for (const element of elements) {
-      if (Array.from(flattenedContexts).some((root) => root === element || root.contains(element))) {
-        continue;
-      }
+      if (capturedCompositingMembers.has(element)) continue;
+      if (Array.from(capturedEntirePaintRoots).some((root) => root.contains(element))) continue;
       const style = getComputedStyle(element);
       const captureId = element.getAttribute("data-od-pptx-layer-capture-id") || "";
       const captured = layeredBackgrounds[captureId];
@@ -2015,6 +2085,7 @@ export async function runDomToPptx(
         const slide = slides[captured.slideIndex];
         if (!slide) continue;
         const materializedPseudo = element.getAttribute("data-od-pptx-materialized-pseudo");
+        const capturesEntireElement = element.getAttribute("data-od-pptx-capture-entire-element") === "true";
         const background = document.createElement("img");
         background.setAttribute("data-od-pptx-layered-bg", "true");
         if (materializedPseudo) background.setAttribute("data-od-pptx-pseudo", materializedPseudo);
@@ -2059,6 +2130,13 @@ export async function runDomToPptx(
         element.style.setProperty("background-color", "transparent", "important");
         if (element === slide) slide.prepend(background);
         else element.parentElement?.insertBefore(background, element);
+        if (materializedPseudo || capturesEntireElement) {
+          // The helper exists only to give Chromium a real capture target. Its
+          // raster image now owns that paint; leaving the custom element in the
+          // converter walk would emit the same pseudo as a second media layer.
+          element.style.setProperty("display", "none", "important");
+          capturedEntirePaintRoots.add(element);
+        }
         continue;
       }
 
