@@ -396,12 +396,12 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
   }, 30_000);
 
-  test('flattens a multiply-blended pseudo background against its authored backdrop', async () => {
+  test('flattens a multiply-blended layered background against an authored pseudo backdrop', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.blended.pngs;
 
     expect(media.blended, JSON.stringify(media.blended)).toMatchObject({
-      captures: 1,
+      captures: 2,
       media: [expect.stringMatching(/\.png$/)],
     });
     expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
@@ -528,7 +528,7 @@ const { gunzipSync, inflateRawSync } = require('node:zlib');
 const fixtures = {
   supported: '<div class="supported"></div>',
   pseudo: '<div class="pseudo"></div>',
-  blended: '<div class="blended"></div>',
+  blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked"></div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
@@ -565,18 +565,25 @@ const styles = \`
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
   }
-  .blended {
+  .blended-backdrop {
     position: absolute;
     left: 120px;
     top: 64px;
-    width: 80px;
-    height: 40px;
-    background: rgb(128, 192, 128);
+    width: 84px;
+    height: 44px;
   }
-  .blended::before {
+  .blended-backdrop::before {
     content: '';
     position: absolute;
     inset: 0;
+    background-image: linear-gradient(rgb(128, 192, 128), rgb(128, 192, 128)), linear-gradient(transparent, transparent);
+  }
+  .blended {
+    position: absolute;
+    left: 122px;
+    top: 66px;
+    width: 80px;
+    height: 40px;
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }

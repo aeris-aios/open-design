@@ -642,6 +642,11 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
 
 type LayeredPptxIsolationState = {
   inlineStyles: Array<{ cssText: string; element: HTMLElement }>;
+  pseudoBackdropAttributes: Array<{
+    after: string | null;
+    before: string | null;
+    element: HTMLElement;
+  }>;
   pseudoStyle: HTMLStyleElement;
 };
 
@@ -650,6 +655,12 @@ export function restoreLayeredPptxBackgroundIsolation(): void {
     .__odPptxLayerIsolation;
   if (!state) return;
   for (const { cssText, element } of state.inlineStyles) element.style.cssText = cssText;
+  for (const { after, before, element } of state.pseudoBackdropAttributes) {
+    if (before === null) element.removeAttribute("data-od-pptx-blend-backdrop-before");
+    else element.setAttribute("data-od-pptx-blend-backdrop-before", before);
+    if (after === null) element.removeAttribute("data-od-pptx-blend-backdrop-after");
+    else element.setAttribute("data-od-pptx-blend-backdrop-after", after);
+  }
   state.pseudoStyle.remove();
   delete (window as unknown as { __odPptxLayerIsolation?: LayeredPptxIsolationState }).__odPptxLayerIsolation;
 }
@@ -681,15 +692,69 @@ export function isolateLayeredPptxBackground(
 
   const allElements = Array.from(document.querySelectorAll<HTMLElement>("*"));
   const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
+  const blendBackdropElements = new Set<HTMLElement>();
+  const blendBackdropPseudos = new Map<HTMLElement, Set<"::before" | "::after">>();
+  if (flattenBlendBackdrop) {
+    const materializedPseudo = target.getAttribute("data-od-pptx-materialized-pseudo");
+    for (let branch: HTMLElement | null = target; branch && branch !== slide; branch = branch.parentElement) {
+      const parent: HTMLElement | null = branch.parentElement;
+      if (!parent) break;
+      for (
+        let sibling: Element | null = parent.firstElementChild;
+        sibling && sibling !== branch;
+        sibling = sibling.nextElementSibling
+      ) {
+        if (!(sibling instanceof HTMLElement)) continue;
+        blendBackdropElements.add(sibling);
+        blendBackdropPseudos.set(sibling, new Set(["::before", "::after"]));
+      }
+      blendBackdropElements.add(parent);
+      // An ancestor's ::before paints before its child content and is part of
+      // that child's blend backdrop. For a materialized ::before target, the
+      // immediate parent's pseudo is the source layer itself, not its backdrop.
+      if (!(branch === target && materializedPseudo === "::before")) {
+        const pseudos = blendBackdropPseudos.get(parent) ?? new Set<"::before" | "::after">();
+        pseudos.add("::before");
+        blendBackdropPseudos.set(parent, pseudos);
+      }
+    }
+  }
+  const pseudoBackdropAttributes = Array.from(blendBackdropPseudos, ([element, pseudos]) => ({
+    after: element.getAttribute("data-od-pptx-blend-backdrop-after"),
+    before: element.getAttribute("data-od-pptx-blend-backdrop-before"),
+    element,
+    pseudos,
+  }));
+  for (const { element, pseudos } of pseudoBackdropAttributes) {
+    if (pseudos.has("::before")) element.setAttribute("data-od-pptx-blend-backdrop-before", id);
+    if (pseudos.has("::after")) element.setAttribute("data-od-pptx-blend-backdrop-after", id);
+  }
   const pseudoStyle = document.createElement("style");
-  pseudoStyle.textContent = `*::before,*::after{visibility:hidden!important}`;
+  pseudoStyle.textContent = `
+    *::before,*::after{visibility:hidden!important}
+    [data-od-pptx-blend-backdrop-before="${id}"]::before,
+    [data-od-pptx-blend-backdrop-after="${id}"]::after{
+      visibility:visible!important;
+      color:transparent!important;
+      text-shadow:none!important;
+      -webkit-text-fill-color:transparent!important;
+    }
+  `;
   document.head.append(pseudoStyle);
   (window as unknown as { __odPptxLayerIsolation?: LayeredPptxIsolationState }).__odPptxLayerIsolation = {
     inlineStyles,
+    pseudoBackdropAttributes,
     pseudoStyle,
   };
 
   for (const element of allElements) element.style.setProperty("visibility", "hidden", "important");
+  for (const element of blendBackdropElements) {
+    element.style.setProperty("visibility", "visible", "important");
+    element.style.setProperty("color", "transparent", "important");
+    element.style.setProperty("outline", "none", "important");
+    element.style.setProperty("text-shadow", "none", "important");
+    element.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+  }
   for (let ancestor: HTMLElement | null = target; ancestor; ancestor = ancestor.parentElement) {
     ancestor.style.setProperty("visibility", "visible", "important");
     if (ancestor !== target) {
