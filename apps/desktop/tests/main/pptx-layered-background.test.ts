@@ -608,7 +608,12 @@ function inspectPseudoLayerOrder(entries, mediaName) {
 }
 
 let probeStage = 'startup';
+function setProbeStage(stage) {
+  probeStage = stage;
+  process.stderr.write('[DEBUG-pptx-layer-probe] ' + stage + '\\n');
+}
 app.whenReady().then(async () => {
+  setProbeStage('load bundle');
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
   const window = new BrowserWindow({
     show: false,
@@ -618,6 +623,7 @@ app.whenReady().then(async () => {
   try {
     const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + styles + '</style></head><body></body></html>';
     await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    setProbeStage('install exporter bundle');
     await window.webContents.executeJavaScript(bundle, true);
     const dbg = window.webContents.debugger;
     dbg.attach('1.3');
@@ -632,6 +638,7 @@ app.whenReady().then(async () => {
     const slide = '<section class="slide">' + fixtureMarkup + '</section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
+    setProbeStage('collect targets');
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
     const targetCounts = await window.webContents.executeJavaScript(
@@ -643,7 +650,7 @@ app.whenReady().then(async () => {
       true,
     );
     for (const target of targets) {
-      probeStage = 'isolate target ' + target.id;
+      setProbeStage('isolate target ' + target.id);
       const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
       await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
       const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
@@ -655,9 +662,10 @@ app.whenReady().then(async () => {
       captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
       await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
     }
-    probeStage = 'export deck';
+    setProbeStage('export deck');
     const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)} + '(' + JSON.stringify(captures) + ')', true);
     if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
+    setProbeStage('inspect export');
     const captureCounts = await window.webContents.executeJavaScript(
       'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-probe]"), (probe) => [probe.getAttribute("data-od-probe"), probe.querySelectorAll("[data-od-pptx-layered-bg]").length]))',
       true,
