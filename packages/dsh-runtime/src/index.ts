@@ -65,6 +65,10 @@ function resultStatus(reason: TurnEndReason | undefined): 'completed' | 'cancell
   return 'failed';
 }
 
+function terminalOutput(output: string): { output: string } | Record<string, never> {
+  return output === '' ? {} : { output };
+}
+
 function usageFrame(requestId: string, provider: string, model: string, usage: TokenUsage) {
   return {
     v: 1,
@@ -237,7 +241,7 @@ async function execute(
       request_id: request.request_id,
       status,
       session_id: String(sessionId),
-      output: assistantOutput,
+      ...terminalOutput(assistantOutput),
       stop_reason: reason?.kind ?? 'unknown',
       resume_rejected: false,
       ...(failed === undefined ? {} : { error: failed }),
@@ -351,4 +355,5 @@ export const internals = {
   emitSessionEvent,
   listModelCatalog,
   resultStatus,
+  terminalOutput,
 };

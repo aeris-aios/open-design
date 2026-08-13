@@ -11,6 +11,10 @@ import {
 } from '../../src/runtimes/defs/deepseek-harness.js';
 import { detectAgent, getDetectedRuntimeVersions } from '../../src/runtimes/detection.js';
 import { resolveAgentExecutable } from '../../src/runtimes/executables.js';
+import {
+  classifyAgentAuthFailure,
+  deepseekHarnessAuthGuidance,
+} from '../../src/runtimes/auth.js';
 import { minimalAgentDef } from './helpers/test-helpers.js';
 import {
   collectProcessTreePids,
@@ -98,6 +102,18 @@ describe('DeepSeek Harness Windows carrier', () => {
     ['preview', null],
   ])('normalizes version output %s', (raw, expected) => {
     expect(parseDeepSeekHarnessVersion(raw)).toBe(expected);
+  });
+
+  it('classifies a missing provider credential with actionable Harness guidance', () => {
+    expect(classifyAgentAuthFailure(
+      'deepseek-harness',
+      'MISSING_CREDENTIAL: no API key for provider route "deepseek-official"; export DEEPSEEK_API_KEY',
+    )).toEqual({
+      status: 'missing',
+      message: deepseekHarnessAuthGuidance(),
+    });
+    expect(deepseekHarnessAuthGuidance()).toMatch(/Models page/);
+    expect(deepseekHarnessAuthGuidance()).toMatch(/DEEPSEEK_API_KEY/);
   });
 
   it.runIf(process.platform === 'win32')(

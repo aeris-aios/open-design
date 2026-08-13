@@ -84,5 +84,7 @@ describe('@open-design/dsh-runtime protocol', () => {
         content: [{ type: 'text', text: 'two' }],
       },
     ]), 'onetwo');
+    assert.deepEqual(internals.terminalOutput(''), {});
+    assert.deepEqual(internals.terminalOutput('done'), { output: 'done' });
   });
 });
