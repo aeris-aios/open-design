@@ -564,6 +564,7 @@ app.whenReady().then(async () => {
     show: false,
     webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: true },
   });
+  let probeResult;
   try {
     const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + styles + '</style></head><body></body></html>';
     await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
@@ -635,12 +636,21 @@ app.whenReady().then(async () => {
       media: pseudoMedia.map(({ name }) => name).sort(),
       pngs: pseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
-    process.stdout.write('OD_PPTX_LAYER_PROBE:' + JSON.stringify(result) + '\\n');
+    probeResult = result;
   } finally {
     if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
     window.destroy();
-    app.quit();
   }
+  await new Promise((resolve, reject) => {
+    process.stdout.write('OD_PPTX_LAYER_PROBE:' + JSON.stringify(probeResult) + '\\n', (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  // dom-to-pptx can leave renderer work queued after the result is complete.
+  // Exit the disposable probe explicitly instead of waiting for Electron's
+  // graceful shutdown to drain those test-only handles under Linux CI load.
+  app.exit(0);
 }).catch((error) => {
   process.stderr.write(probeStage + ': ' + String(error && error.stack ? error.stack : error) + '\\n');
   app.exit(1);
@@ -662,7 +672,20 @@ app.whenReady().then(async () => {
       OD_PPTX_LAYER_BUNDLE: join(desktopRoot, 'vendor', 'dom-to-pptx', 'dom-to-pptx.bundle.js.gz'),
     };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stderr, stdout } = await execFileP(command, args, { env, timeout: 20_000 });
+    let stderr: string;
+    let stdout: string;
+    try {
+      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: 20_000 }));
+    } catch (error) {
+      const failure = error as Error & { stderr?: string; stdout?: string };
+      throw new Error(
+        [
+          failure.message,
+          failure.stdout ? `stdout:\n${failure.stdout}` : '',
+          failure.stderr ? `stderr:\n${failure.stderr}` : '',
+        ].filter(Boolean).join('\n'),
+      );
+    }
     const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_PPTX_LAYER_PROBE:'));
     if (!marker) throw new Error(`Electron renderer probe returned no result: ${stdout || stderr}`);
     return parseLayeredBackgroundProbe(JSON.parse(marker.slice('OD_PPTX_LAYER_PROBE:'.length)));
