@@ -17,8 +17,6 @@ import {
 
 const execFileP = promisify(execFile);
 const desktopRoot = fileURLToPath(new URL('../..', import.meta.url));
-const electronProbeProcessTimeoutMs = 45_000;
-const electronProbeTestTimeoutMs = 60_000;
 
 class FakeStyle {
   private readonly values = new Map<string, { priority: string; value: string }>();
@@ -388,7 +386,7 @@ describe('editable PPTX layered backgrounds', () => {
       captures: 1,
       media: [expect.stringMatching(/\.png$/)],
     });
-  }, electronProbeTestTimeoutMs);
+  }, 30_000);
 
   test('keeps layered pseudo backgrounds behind native pseudo content', async () => {
     const media = await probeLayeredBackgroundMedia();
@@ -396,13 +394,13 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoLayerOrder.background, JSON.stringify(media.pseudoLayerOrder)).toBeGreaterThanOrEqual(0);
     expect(media.pseudoLayerOrder.content).toBeGreaterThanOrEqual(0);
     expect(media.pseudoLayerOrder.background).toBeLessThan(media.pseudoLayerOrder.content);
-  }, electronProbeTestTimeoutMs);
+  }, 30_000);
 
   test('skips hidden, zero-sized, and off-slide layered backgrounds without aborting export', async () => {
     const media = await probeLayeredBackgroundMedia();
 
     expect(media.skippedTargets).toBe(0);
-  }, electronProbeTestTimeoutMs);
+  }, 30_000);
 
   test('preserves clipping and effective opacity in the exported layered-background pixels', async () => {
     const media = await probeLayeredBackgroundMedia();
@@ -413,7 +411,7 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
     expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
     expect(image?.maxAlpha).toBeLessThanOrEqual(136);
-  }, electronProbeTestTimeoutMs);
+  }, 30_000);
 
   test('preserves a CSS mask as decoded alpha in the exported PNG', async () => {
     const media = await probeLayeredBackgroundMedia();
@@ -426,7 +424,7 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.translucentPixels).toBeGreaterThan(0);
     expect(image?.maxAlpha).toBeGreaterThan(50);
     expect(image?.maxAlpha).toBeLessThan(128);
-  }, electronProbeTestTimeoutMs);
+  }, 30_000);
 });
 
 type LayeredBackgroundProbe = {
@@ -608,12 +606,7 @@ function inspectPseudoLayerOrder(entries, mediaName) {
 }
 
 let probeStage = 'startup';
-function setProbeStage(stage) {
-  probeStage = stage;
-  process.stderr.write('[DEBUG-pptx-layer-probe] ' + stage + '\\n');
-}
 app.whenReady().then(async () => {
-  setProbeStage('load bundle');
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
   const window = new BrowserWindow({
     show: false,
@@ -623,7 +616,10 @@ app.whenReady().then(async () => {
   try {
     const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + styles + '</style></head><body></body></html>';
     await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    setProbeStage('install exporter bundle');
+    // Match the production render-window lifecycle so Chromium paints frames
+    // under Linux/Xvfb instead of suspending rAF for a hidden window.
+    window.setOpacity(0);
+    window.showInactive();
     await window.webContents.executeJavaScript(bundle, true);
     const dbg = window.webContents.debugger;
     dbg.attach('1.3');
@@ -638,7 +634,6 @@ app.whenReady().then(async () => {
     const slide = '<section class="slide">' + fixtureMarkup + '</section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-    setProbeStage('collect targets');
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
     const targetCounts = await window.webContents.executeJavaScript(
@@ -650,7 +645,7 @@ app.whenReady().then(async () => {
       true,
     );
     for (const target of targets) {
-      setProbeStage('isolate target ' + target.id);
+      probeStage = 'isolate target ' + target.id;
       const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
       await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
       const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
@@ -662,10 +657,9 @@ app.whenReady().then(async () => {
       captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
       await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
     }
-    setProbeStage('export deck');
+    probeStage = 'export deck';
     const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)} + '(' + JSON.stringify(captures) + ')', true);
     if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
-    setProbeStage('inspect export');
     const captureCounts = await window.webContents.executeJavaScript(
       'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-probe]"), (probe) => [probe.getAttribute("data-od-probe"), probe.querySelectorAll("[data-od-pptx-layered-bg]").length]))',
       true,
@@ -742,7 +736,7 @@ app.whenReady().then(async () => {
     let stderr: string;
     let stdout: string;
     try {
-      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: electronProbeProcessTimeoutMs }));
+      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: 20_000 }));
     } catch (error) {
       const failure = error as Error & { stderr?: string; stdout?: string };
       throw new Error(
