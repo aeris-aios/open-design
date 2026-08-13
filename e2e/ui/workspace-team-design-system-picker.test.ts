@@ -138,9 +138,8 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
     expect(syncResponse.ok(), await syncResponse.text()).toBeTruthy();
 
     await ownerPage.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
-    await ownerPage.getByTestId('design-system-project-tab').click();
-    await expectSharedLogo(
-      ownerPage.getByTestId('design-system-project-kit'),
+    await expectProjectSharedLogo(
+      ownerPage,
       'Shared Product Language',
       OWNER.memberId,
     );
@@ -464,6 +463,50 @@ async function expectSharedLogo(
     })),
     { timeout: T.long },
   ).toEqual({ complete: true, width: 320, height: 160, workspaceMemberId });
+}
+
+async function expectProjectSharedLogo(
+  page: Page,
+  alt: string,
+  workspaceMemberId: string,
+): Promise<void> {
+  const tab = page.getByTestId('design-system-project-tab');
+  const panel = page.getByTestId('design-system-project-tab-panel');
+  const logo = page
+    .getByTestId('design-system-project-kit')
+    .getByTestId('design-kit-logo-section')
+    .getByRole('img', { name: alt });
+  let matchingSince = 0;
+
+  await expect.poll(async () => {
+    const tabReady = await tab.getAttribute('aria-selected') === 'true'
+      && await panel.isVisible();
+    if (!tabReady) {
+      matchingSince = 0;
+      await tab.click({ timeout: T.short });
+      return 0;
+    }
+
+    const image = await logo.evaluate((element: HTMLImageElement) => ({
+      complete: element.complete,
+      width: element.naturalWidth,
+      height: element.naturalHeight,
+      workspaceMemberId: new URL(element.src).searchParams.get('workspaceMemberId'),
+    })).catch(() => null);
+    const matches = image?.complete === true
+      && image.width === 320
+      && image.height === 160
+      && image.workspaceMemberId === workspaceMemberId;
+    if (!matches) {
+      matchingSince = 0;
+      return 0;
+    }
+    if (matchingSince === 0) matchingSince = Date.now();
+    return Date.now() - matchingSince;
+  }, {
+    message: 'project Design system tab and scoped logo should survive workspace restoration',
+    timeout: T.xlong,
+  }).toBeGreaterThanOrEqual(500);
 }
 
 function workspaceHeaders(identity: typeof OWNER | typeof MEMBER): Record<string, string> {
