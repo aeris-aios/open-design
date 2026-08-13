@@ -25,35 +25,31 @@ function attributedCloudUrl(
   return target.toString();
 }
 
-function demoUpgradeAttribution(now: number, preview: boolean) {
+function demoUpgradeAttribution(now: number) {
   const startAt = Date.parse(DEEPSEEK_V4_PRO_CAMPAIGN.startAt);
   const endAt = Date.parse(DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive);
   const campaignEligible = now >= startAt && now < endAt;
-  const campaignVisible = preview || campaignEligible;
   const attribution = {
     campaign_id: campaignEligible ? "deepseek_v4_pro" : undefined,
   };
   return {
-    campaignVisible,
+    campaignVisible: campaignEligible,
     campaignEligible,
     url: attributedCloudUrl(CLOUD_CONSOLE_URL, attribution),
   };
 }
 
 describe("cloud team demo campaign attribution", () => {
-  it("keeps preview visibility separate from conversion eligibility", async () => {
+  it("uses only the real activity window and has no preview backdoor", async () => {
     const page = await readFile(DEMO_PAGE_PATH, "utf8");
 
     assert.match(
       page,
       /campaignEligible = now >= campaignStartAt && now < campaignEndAt/,
     );
-    assert.match(page, /campaignVisible = campaignPreview \|\| campaignEligible/);
+    assert.match(page, /campaignVisible = campaignEligible/);
     assert.match(page, /surface\.hidden = !campaignVisible/);
-    assert.doesNotMatch(
-      page,
-      /campaignActive = campaignPreview \|\| \(now >= campaignStartAt && now < campaignEndAt\)/,
-    );
+    assert.doesNotMatch(page, /campaignReviewParam|campaignPreview|previewEndAt/);
   });
 
   it("stamps the campaign on Upgrade only while the real clock window is open", async () => {
@@ -73,7 +69,7 @@ describe("cloud team demo campaign attribution", () => {
     );
   });
 
-  it("omits od_campaign_id from an out-of-window Upgrade Cloud URL, even in preview", async () => {
+  it("omits od_campaign_id from an out-of-window Upgrade Cloud URL", async () => {
     const tracker = await readFile(TRACKER_PATH, "utf8");
     assert.match(
       tracker,
@@ -81,24 +77,24 @@ describe("cloud team demo campaign attribution", () => {
     );
 
     const afterClose = Date.parse("2026-08-27T20:00:00+08:00");
-    const previewAfterClose = demoUpgradeAttribution(afterClose, true);
-    assert.equal(previewAfterClose.campaignVisible, true);
-    assert.equal(previewAfterClose.campaignEligible, false);
+    const afterCloseUpgrade = demoUpgradeAttribution(afterClose);
+    assert.equal(afterCloseUpgrade.campaignVisible, false);
+    assert.equal(afterCloseUpgrade.campaignEligible, false);
     assert.equal(
-      new URL(previewAfterClose.url).searchParams.get("od_campaign_id"),
+      new URL(afterCloseUpgrade.url).searchParams.get("od_campaign_id"),
       null,
     );
 
     const beforeOpen = Date.parse("2026-08-05T23:59:59+08:00");
-    const previewBeforeOpen = demoUpgradeAttribution(beforeOpen, true);
-    assert.equal(previewBeforeOpen.campaignVisible, true);
+    const beforeOpenUpgrade = demoUpgradeAttribution(beforeOpen);
+    assert.equal(beforeOpenUpgrade.campaignVisible, false);
     assert.equal(
-      new URL(previewBeforeOpen.url).searchParams.get("od_campaign_id"),
+      new URL(beforeOpenUpgrade.url).searchParams.get("od_campaign_id"),
       null,
     );
 
     const insideWindow = Date.parse("2026-08-13T12:00:00+08:00");
-    const liveClick = demoUpgradeAttribution(insideWindow, false);
+    const liveClick = demoUpgradeAttribution(insideWindow);
     assert.equal(liveClick.campaignEligible, true);
     assert.equal(
       new URL(liveClick.url).searchParams.get("od_campaign_id"),

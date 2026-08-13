@@ -25,7 +25,7 @@ test('home campaign banner keeps only the arrow visible while preserving an acce
   assert.match(campaign, /windowLabel: '活动倒计时'/);
   assert.match(source, /home-campaign-banner__badge/);
   assert.match(source, /data-home-campaign-countdown/);
-  assert.match(source, /活动剩余/);
+  assert.match(source, /data-campaign-window-label/);
   assert.doesNotMatch(source, /距开始/);
   assert.match(source, /background:\s*#68f22e/);
   assert.match(source, /home-campaign-banner__cta/);
@@ -41,17 +41,18 @@ test('home campaign banner can be dismissed without nesting a button in its link
   assert.match(source, /window\.__odTrack\('surface_view'/);
   assert.match(source, /area:\s*'campaign_banner'/);
   assert.match(source, /window\.__odRecordCampaignEntry\?\.\('landing_home_banner', 'deepseek_v4_pro'\)/);
+  assert.match(source, /const eligible = Date\.now\(\) >= startAt && Date\.now\(\) < endAt/);
+  assert.match(source, /\.\.\.\(eligible \? \{ campaign_id: 'deepseek_v4_pro' \} : \{\}\)/);
   assert.match(source, /window\.__odAttributedUrl/);
   assert.match(source, /localStorage\.setItem\(dismissKey, '1'\)/);
   assert.match(source, /<div class="home-campaign-banner"/);
   assert.doesNotMatch(source, /<a class="home-campaign-banner"/);
 });
 
-test('home campaign banner supports the explicit campaign review parameter', () => {
-  assert.match(source, /data-campaign-review-param/);
-  assert.match(source, /reviewParam/);
-  assert.match(source, /campaignPreview|preview/);
-  assert.match(source, /reviewParam \|\| 'deepseek-v4-pro'/);
+test('home campaign banner has no review preview backdoor', () => {
+  assert.doesNotMatch(source, /data-campaign-review-param/);
+  assert.doesNotMatch(source, /reviewParam|campaignPreview|previewEndAt/);
+  assert.doesNotMatch(campaignConfig, /reviewParam/);
 });
 
 test('home campaign banner uses the fixed two-week activity window', () => {

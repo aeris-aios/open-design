@@ -141,40 +141,20 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /限时抢购/);
   });
 
-  it("preview reveals campaign UI but never stamps attribution outside the real window", async () => {
+  it("does not expose a campaign review preview backdoor", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
     assert.match(page, /campaignEligible = now >= campaignStartAt && now < campaignEndAt/);
-    assert.match(page, /campaignVisible = campaignPreview \|\| campaignEligible/);
+    assert.match(page, /campaignVisible = campaignEligible/);
     assert.match(page, /surface\.hidden = !campaignVisible/);
-    assert.match(page, /data-campaign-review-param/);
-    assert.match(page, /campaignPreview/);
-    assert.doesNotMatch(
-      page,
-      /campaignActive = campaignPreview \|\| \(now >= campaignStartAt && now < campaignEndAt\)/,
-    );
-    assert.doesNotMatch(page, /campaignActive \? 'deepseek_v4_pro'/);
-    assert.doesNotMatch(
-      page,
-      /campaignVisible \? 'deepseek_v4_pro'|campaignPreview \? 'deepseek_v4_pro'/,
-    );
-
-    const startAt = Date.parse(DEEPSEEK_V4_PRO_CAMPAIGN.startAt);
-    const endAt = Date.parse(DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive);
-    const afterClose = Date.parse("2026-08-27T20:00:00+08:00");
-    const campaignPreview = true;
-    const campaignEligible = afterClose >= startAt && afterClose < endAt;
-    const campaignVisible = campaignPreview || campaignEligible;
-    assert.equal(campaignVisible, true);
-    assert.equal(campaignEligible, false);
-    assert.equal(campaignEligible ? "deepseek_v4_pro" : undefined, undefined);
+    assert.doesNotMatch(page, /data-campaign-review-param|campaignPreview|previewEndAt/);
   });
 
   it("stamps campaign attribution on subscribe CTAs only inside the activity window", async () => {
     // Clicks outside the fixed window must not count toward the campaign:
     // the CTA keeps recording od_entry_* attribution, but the minted entry
     // and the ui_click props carry the campaign id only while campaignEligible
-    // is true. Review preview may reveal the UI without granting membership.
+    // is true.
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
     assert.match(

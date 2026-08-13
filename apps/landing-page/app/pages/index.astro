@@ -128,6 +128,8 @@ const campaignCopy = {
   badge: campaignContent.windowLabel,
   title: homeCampaignContent.title,
   detail: homeCampaignContent.detail,
+  windowLabel: campaignContent.windowLabel,
+  dayUnit: campaignContent.dayUnit,
   linkLabel: campaignContent.linkLabel,
   closeLabel: campaignContent.closeLabel,
 };
@@ -228,7 +230,7 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
     <script is:inline type="application/ld+json" set:html={JSON.stringify(homepageGraph)} />
   </head>
   <body>
-    <div class="home-campaign-banner" data-home-campaign-banner data-campaign-locale={locale.startsWith('zh') ? 'zh' : 'en'} data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt} data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive} data-campaign-review-param={DEEPSEEK_V4_PRO_CAMPAIGN.reviewParam} hidden>
+    <div class="home-campaign-banner" data-home-campaign-banner data-campaign-window-label={campaignCopy.windowLabel} data-campaign-day-unit={campaignCopy.dayUnit} data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt} data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive} hidden>
       <a class="home-campaign-banner__link" href={campaignPricingHref} aria-label={`${campaignCopy.title} · ${campaignCopy.linkLabel}`}>
         <span class="home-campaign-banner__badge" data-home-campaign-countdown>{campaignCopy.badge}</span>
         <span class="home-campaign-banner__divider" aria-hidden="true">|</span>
@@ -341,12 +343,10 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
         const campaignLink = banner?.querySelector('.home-campaign-banner__link');
         const countdown = document.querySelector('[data-home-campaign-countdown]');
         const close = document.querySelector('[data-home-campaign-close]');
-        const isZh = banner?.getAttribute('data-campaign-locale') === 'zh';
+        const windowLabel = banner?.getAttribute('data-campaign-window-label') || 'Ends in';
+        const dayUnit = banner?.getAttribute('data-campaign-day-unit') || 'd';
         const startAt = Date.parse(banner?.getAttribute('data-campaign-start-at') || '');
         const endAt = Date.parse(banner?.getAttribute('data-campaign-end-at') || '');
-        const reviewParam = banner?.getAttribute('data-campaign-review-param');
-        const preview = new URLSearchParams(window.location.search).get('campaign') === reviewParam;
-        const previewEndAt = Date.now() + 14 * 24 * 60 * 60 * 1000;
 
         const formatRemaining = (remainingMs) => {
           const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -354,7 +354,7 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
           const hours = Math.floor((totalSeconds % 86400) / 3600);
           const minutes = Math.floor((totalSeconds % 3600) / 60);
           const seconds = totalSeconds % 60;
-          const time = `${days}${isZh ? '天' : 'd'} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+          const time = `${days}${dayUnit} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
           return time;
         };
 
@@ -368,13 +368,13 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
         let impressionTracked = false;
         const updateCampaignVisibility = () => {
           const now = Date.now();
-          const active = preview || (now >= startAt && now < endAt);
+          const active = now >= startAt && now < endAt;
           const visible = active && !dismissed;
           if (banner) banner.hidden = !visible;
           document.documentElement.classList.toggle('home-campaign-banner-active', visible);
           if (!active || !countdown) return active;
-          const remainingMs = (preview ? previewEndAt : endAt) - now;
-          countdown.textContent = `${isZh ? '活动剩余' : 'Ends in'} ${formatRemaining(remainingMs)}`;
+          const remainingMs = endAt - now;
+          countdown.textContent = `${windowLabel} ${formatRemaining(remainingMs)}`;
           if (visible && !impressionTracked && typeof window.__odTrack === 'function') {
             impressionTracked = true;
             window.__odTrack('surface_view', {
@@ -388,18 +388,16 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
         updateCampaignVisibility();
         const campaignTimer = window.setInterval(updateCampaignVisibility, 1000);
         window.addEventListener('pagehide', () => window.clearInterval(campaignTimer), { once: true });
-        if (preview && campaignLink) {
-          const previewUrl = new URL(campaignLink.href);
-          previewUrl.searchParams.set('campaign', reviewParam || 'deepseek-v4-pro');
-          campaignLink.href = previewUrl.toString();
-        }
         campaignLink?.addEventListener('click', (event) => {
-          const attribution = window.__odRecordCampaignEntry?.('landing_home_banner', 'deepseek_v4_pro');
+          const eligible = Date.now() >= startAt && Date.now() < endAt;
+          const attribution = eligible
+            ? window.__odRecordCampaignEntry?.('landing_home_banner', 'deepseek_v4_pro')
+            : undefined;
           window.__odTrack?.('ui_click', {
             page_name: 'landing_home',
             area: 'campaign_banner',
             element: 'open_pricing',
-            campaign_id: 'deepseek_v4_pro',
+            ...(eligible ? { campaign_id: 'deepseek_v4_pro' } : {}),
             user_state: 'unknown',
             ...(attribution || {}),
           });
@@ -409,11 +407,12 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
           }
         });
         close?.addEventListener('click', () => {
+          const eligible = Date.now() >= startAt && Date.now() < endAt;
           window.__odTrack?.('ui_click', {
             page_name: 'landing_home',
             area: 'campaign_banner',
             element: 'close',
-            campaign_id: 'deepseek_v4_pro',
+            ...(eligible ? { campaign_id: 'deepseek_v4_pro' } : {}),
             user_state: 'unknown',
           });
           document.documentElement.classList.add('home-campaign-banner-dismissed');

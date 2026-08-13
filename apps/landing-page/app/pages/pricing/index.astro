@@ -221,7 +221,7 @@ const jsonLd = [
   </nav>
 
   <article class="info-page pr-page" data-pricing-root data-audience="creator" data-interval="yearly">
-    <aside class="pr-campaign" aria-label="DeepSeek V4 Pro and V4 Flash campaign" data-pricing-campaign-surface data-campaign-day-unit={deepSeekCampaign.dayUnit} data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt} data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive} data-campaign-review-param={DEEPSEEK_V4_PRO_CAMPAIGN.reviewParam} hidden>
+    <aside class="pr-campaign" aria-label="DeepSeek V4 Pro and V4 Flash campaign" data-pricing-campaign-surface data-campaign-day-unit={deepSeekCampaign.dayUnit} data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt} data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive} hidden>
       <span class="pr-campaign-badge">{deepSeekCampaign.badge}</span>
       <div class="pr-campaign-copy">
         <strong>{deepSeekCampaign.headline}</strong>
@@ -697,9 +697,6 @@ const jsonLd = [
       const campaignDayUnit = campaign?.getAttribute('data-campaign-day-unit') || 'd';
       const campaignStartAt = Date.parse(campaign?.getAttribute('data-campaign-start-at') || '');
       const campaignEndAt = Date.parse(campaign?.getAttribute('data-campaign-end-at') || '');
-      const campaignReviewParam = campaign?.getAttribute('data-campaign-review-param');
-      const campaignPreview = new URLSearchParams(window.location.search).get('campaign') === campaignReviewParam;
-      const campaignPreviewEndAt = Date.now() + 14 * 24 * 60 * 60 * 1000;
       let campaignEligible = false;
       let campaignVisible = false;
       const formatCampaignRemaining = (remainingMs) => {
@@ -713,10 +710,10 @@ const jsonLd = [
       const updateCampaignCountdown = () => {
         const now = Date.now();
         campaignEligible = now >= campaignStartAt && now < campaignEndAt;
-        campaignVisible = campaignPreview || campaignEligible;
+        campaignVisible = campaignEligible;
         campaignSurfaces.forEach((surface) => { surface.hidden = !campaignVisible; });
         if (!campaignVisible || !campaignCountdown) return campaignVisible;
-        const remainingMs = (campaignPreview ? campaignPreviewEndAt : campaignEndAt) - now;
+        const remainingMs = campaignEndAt - now;
         campaignCountdown.textContent = formatCampaignRemaining(remainingMs);
         return campaignVisible;
       };
@@ -855,11 +852,11 @@ const jsonLd = [
       else trackCampaignBenefit('creator');
 
       // Campaign impressions must fire when the surfaces become visible, which
-      // happens either on load (window already open), via review preview, or
-      // mid-session when the countdown loop flips `campaignVisible` at startAt.
+      // happens either on load (window already open) or mid-session when the
+      // countdown loop flips `campaignVisible` at startAt.
       // A one-time flag + the same 1s cadence as the reveal loop covers both
       // paths; the benefit impression reuses trackCampaignBenefit's own audience
-      // dedupe. Preview never grants conversion eligibility.
+      // dedupe.
       let campaignBannerImpressionTracked = false;
       const trackCampaignImpressionsOnce = () => {
         if (!campaignVisible || campaignBannerImpressionTracked) return;

@@ -11,7 +11,7 @@ const campaignCopy = getPricingCampaignContent(locale);
 const campaignBenefitTitle = locale === 'zh'
   ? 'DeepSeek V4 Pro与DeepSeek V4 Flash 无限使用'
   : campaignCopy.modelBenefits.join(' · ');
-const campaignPricingHref = `${localePath(locale, '/pricing/')}?campaign=deepseek-v4-pro`;
+const campaignPricingHref = localePath(locale, '/pricing/');
 
 const benefits = [
   '项目、设计系统与插件，团队统一共享与管理',
@@ -40,7 +40,7 @@ const teamPlans = [
     <SiteAnalytics />
   </head>
   <body>
-    <main class="cloud-shell" data-campaign-root data-upgrade-url={CLOUD_CONSOLE_URL} data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt} data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive} data-campaign-review-param={DEEPSEEK_V4_PRO_CAMPAIGN.reviewParam} data-campaign-window-label={campaignCopy.windowLabel} data-campaign-day-unit={campaignCopy.dayUnit}>
+    <main class="cloud-shell" data-campaign-root data-upgrade-url={CLOUD_CONSOLE_URL} data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt} data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive} data-campaign-window-label={campaignCopy.windowLabel} data-campaign-day-unit={campaignCopy.dayUnit}>
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">OD</span><strong>Open Design</strong></div>
         <nav>
@@ -148,11 +148,8 @@ const teamPlans = [
   const campaignCountdown = document.querySelector<HTMLElement>('[data-campaign-countdown]');
   const campaignStartAt = Date.parse(campaignRoot?.dataset.campaignStartAt || '');
   const campaignEndAt = Date.parse(campaignRoot?.dataset.campaignEndAt || '');
-  const campaignReviewParam = campaignRoot?.dataset.campaignReviewParam;
-  const campaignPreview = new URLSearchParams(window.location.search).get('campaign') === campaignReviewParam;
   const campaignWindowLabel = campaignRoot?.dataset.campaignWindowLabel || '';
   const campaignDayUnit = campaignRoot?.dataset.campaignDayUnit || '';
-  const campaignPreviewEndAt = Date.now() + 14 * 24 * 60 * 60 * 1000;
   let trackedPlanSurface = false;
   let trackedCampaignBenefit = false;
   let campaignEligible = false;
@@ -162,7 +159,6 @@ const teamPlans = [
     window.__odTrack?.(name, {
       page_name: 'cloud_team_demo',
       area: 'upgrade_modal',
-      campaign_id: 'deepseek_v4_pro',
       ...props,
     });
   }
@@ -180,6 +176,7 @@ const teamPlans = [
       track('surface_view', {
         element: 'deepseek_v4_pro_benefit',
         plan_audience: 'team',
+        campaign_id: 'deepseek_v4_pro',
       });
     }
   }
@@ -187,11 +184,11 @@ const teamPlans = [
   function updateCampaignCountdown() {
     const now = Date.now();
     campaignEligible = now >= campaignStartAt && now < campaignEndAt;
-    campaignVisible = campaignPreview || campaignEligible;
+    campaignVisible = campaignEligible;
     campaignSurfaces.forEach((surface) => { surface.hidden = !campaignVisible; });
     recordTeamSurfaces();
     if (!campaignVisible || !campaignCountdown) return;
-    const countdownEndsAt = campaignPreview ? campaignPreviewEndAt : campaignEndAt;
+    const countdownEndsAt = campaignEndAt;
     const totalSeconds = Math.max(0, Math.ceil((countdownEndsAt - now) / 1000));
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
