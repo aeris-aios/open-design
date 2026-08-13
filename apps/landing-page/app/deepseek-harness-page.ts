@@ -46,15 +46,13 @@ export const deepseekHarnessTutorialCopy = (
     };
   }
 
-  const setup = rich.sections.find(({ id }) => id === 'setup');
   const designContract = firstParagraph(rich, 'why-design');
   const workflow = firstParagraph(rich, 'design-workflow');
   const localizedContext = rich.intro[1];
-  const heading = setup?.heading ?? page.heading;
 
   return {
-    title: `${heading} | Open Design`,
-    heading,
+    title: page.title,
+    heading: page.heading,
     lead: designContract ?? page.lead,
     heroCtaLead: workflow ?? rich.heroCtaLead,
     intro: localizedContext ? [localizedContext] : rich.intro.slice(1),

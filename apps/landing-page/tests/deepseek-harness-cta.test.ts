@@ -44,6 +44,13 @@ test('DeepSeek Harness opens with localized tutorial-first copy in every active 
     assert.ok(page, `${code}: missing DeepSeek Harness guide`);
 
     const tutorial = deepseekHarnessTutorialCopy(page);
+    assert.equal(tutorial.title, page.title, `${code}: localized document title changed`);
+    assert.equal(tutorial.heading, page.heading, `${code}: localized H1 changed`);
+    assert.notEqual(
+      tutorial.heading,
+      page.rich?.sections.find(({ id }) => id === 'setup')?.heading,
+      `${code}: H1 repeats the first setup section heading`,
+    );
     for (const [field, value] of Object.entries(tutorial)) {
       if (Array.isArray(value)) {
         assert.ok(value.length > 0, `${code}: ${field} is empty`);
