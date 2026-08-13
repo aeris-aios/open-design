@@ -407,14 +407,10 @@ test('[P0] completed BYOK setup resumes after passive Cloud reauthentication wit
   await clickCloudPrimary(page);
   await expectOnboardingFinished(page);
   await expect(page.getByRole('heading', { name: /Choose your model source|选择模型来源/i })).toHaveCount(0);
-<<<<<<< HEAD
-  await expect.poll(() => page.evaluate(() => window.__amrOnboardingLoginCalls ?? 0)).toBe(1);
-=======
   // PRODUCT INVARIANT: Cloud identity gates Open Design Cloud execution only.
   // A configured BYOK runtime neither redirects to onboarding nor starts a
   // passive Cloud login merely because the independent AMR status is signed out.
   await expect.poll(() => page.evaluate(() => window.__amrOnboardingLoginCalls ?? 0)).toBe(0);
->>>>>>> b55d443b4 (fix(web): streamline Home submit preflight (#6756))
   await pollStoredConfig(page).toMatchObject({
     mode: 'api',
     apiKey: 'persisted-byok-key',
