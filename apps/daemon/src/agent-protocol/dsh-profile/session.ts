@@ -241,6 +241,10 @@ export function attachDshProfileSession({
         }
         ready = true;
         onReady?.();
+        if (aborted) {
+          finish('cancelled');
+          return;
+        }
         sendExecute();
         return;
       }

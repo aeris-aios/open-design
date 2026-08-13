@@ -433,6 +433,30 @@ describe('DeepSeek Harness profile session controller', () => {
     assert.deepEqual(writes.at(-1), { v: 1, type: 'cancel', request_id: 'run-cancel' });
   });
 
+  test('abort before ready cancels without sending execute', () => {
+    const child = new FakeDshChild();
+    const writes: Array<Record<string, unknown>> = [];
+    child.stdin.on('data', (chunk) => {
+      for (const line of String(chunk).trim().split('\n')) {
+        if (line) writes.push(JSON.parse(line) as Record<string, unknown>);
+      }
+    });
+    const controller = attachDshProfileSession({
+      child: child as never,
+      requestId: 'run-cancel-startup',
+      prompt: 'must not start',
+      cwd: '/project',
+      send: () => {},
+    });
+
+    controller.abort();
+    child.emitFrame(readyFrame);
+
+    assert.equal(controller.executeWasSent(), false);
+    assert.equal(writes.some(({ type }) => type === 'execute'), false);
+    assert.equal(controller.getTerminalStatus(), 'cancelled');
+  });
+
   test('EOF without a terminal result is a fatal failure', () => {
     const child = new FakeDshChild();
     const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
