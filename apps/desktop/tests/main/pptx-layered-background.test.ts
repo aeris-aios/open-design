@@ -523,10 +523,26 @@ function zipEntries(pptxBase64) {
   return entries;
 }
 
-function inspectMedia(pptxBase64) {
-  const media = zipEntries(pptxBase64).filter(({ name }) => /^ppt\\/media\\/.+\\.(?:gif|jpe?g|png|svg)$/.test(name));
-  const pngs = media.filter(({ name }) => name.endsWith('.png')).map(({ data, name }) => inspectPng(data, name));
-  return { media: media.map(({ name }) => name).sort(), pngs };
+function inspectSlideMedia(pptxBase64) {
+  const entries = zipEntries(pptxBase64);
+  const entriesByName = new Map(entries.map((entry) => [entry.name, entry]));
+  return entries
+    .map(({ name }) => /^ppt\\/slides\\/slide(\\d+)\\.xml$/.exec(name))
+    .filter(Boolean)
+    .sort((left, right) => Number(left[1]) - Number(right[1]))
+    .map((match) => {
+      const relationships = entriesByName.get('ppt/slides/_rels/slide' + match[1] + '.xml.rels');
+      const media = relationships
+        ? Array.from(relationships.data.toString('utf8').matchAll(/Target="([^"]+)"/g), (target) => target[1])
+            .filter((target) => target.startsWith('../media/'))
+            .map((target) => entriesByName.get('ppt/media/' + target.slice('../media/'.length)))
+            .filter(Boolean)
+        : [];
+      const pngs = media
+        .filter(({ name }) => name.endsWith('.png'))
+        .map(({ data, name }) => inspectPng(data, name));
+      return { media: media.map(({ name }) => name).sort(), pngs };
+    });
 }
 
 function inspectPng(data, name) {
@@ -563,31 +579,39 @@ app.whenReady().then(async () => {
     dbg.attach('1.3');
     await dbg.sendCommand('Page.enable');
     await dbg.sendCommand('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
-    const result = {};
-    for (const [name, markup] of Object.entries(fixtures)) {
-      await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify('<section class="slide">' + markup + '</section>'), true);
+    // Keep one real exporter invocation: four serial PPTX archive builds made
+    // this probe hit its Linux workspace-test timeout under concurrent load.
+    const fixtureEntries = Object.entries(fixtures);
+    const slides = fixtureEntries
+      .map(([name, markup]) => '<section class="slide" data-od-probe="' + name + '">' + markup + '</section>')
+      .join('');
+    await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slides), true);
+    await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
+    const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
+    const captures = {};
+    for (const target of targets) {
+      const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
       await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-      const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
-      const captures = {};
-      for (const target of targets) {
-        const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
-        await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-        const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
-          captureBeyondViewport: true,
-          clip: { x: geometry.pageX, y: geometry.pageY, width: geometry.width, height: geometry.height, scale: 2 },
-          format: 'png',
-          fromSurface: true,
-        });
-        captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
-        await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
-      }
-      const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)} + '(' + JSON.stringify(captures) + ')', true);
-      if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
-      result[name] = {
-        captures: await window.webContents.executeJavaScript('document.querySelectorAll("[data-od-pptx-layered-bg]").length', true),
-        ...inspectMedia(exported.b64),
-      };
+      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+        captureBeyondViewport: true,
+        clip: { x: geometry.pageX, y: geometry.pageY, width: geometry.width, height: geometry.height, scale: 2 },
+        format: 'png',
+        fromSurface: true,
+      });
+      captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
+      await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
     }
+    const exported = await window.webContents.executeJavaScript(${JSON.stringify(invocationSource)} + '(' + JSON.stringify(captures) + ')', true);
+    if (!exported || exported.error || !exported.b64) throw new Error(exported?.error || 'PPTX export returned no bytes');
+    const captureCounts = await window.webContents.executeJavaScript(
+      'Array.from(document.querySelectorAll("[data-od-probe]"), (slide) => slide.querySelectorAll("[data-od-pptx-layered-bg]").length)',
+      true,
+    );
+    const slideMedia = inspectSlideMedia(exported.b64);
+    const result = Object.fromEntries(fixtureEntries.map(([name], index) => [
+      name,
+      { captures: captureCounts[index], ...slideMedia[index] },
+    ]));
     process.stdout.write('OD_PPTX_LAYER_PROBE:' + JSON.stringify(result) + '\\n');
   } finally {
     if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
