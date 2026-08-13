@@ -34,7 +34,7 @@ export const deepseekHarnessAgentDef = {
   buildArgs: () => ['--profile', 'open-design', '--stdio'],
   promptViaStdin: true,
   streamFormat: 'dsh-profile-jsonl',
-  resumesSessionViaCli: true,
+  resumesSessionViaProfileStdio: true,
   capturesSessionIdFromStream: true,
   supportsCustomModel: false,
 } satisfies RuntimeAgentDef;

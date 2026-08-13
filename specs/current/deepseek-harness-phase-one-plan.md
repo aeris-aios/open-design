@@ -72,10 +72,11 @@ The UI supplies accurate installation guidance and actionable probe errors.
 - current-turn-only input after healthy resume;
 - exact resumed-session-id assertion;
 - explicit missing/corrupt resume failure without silent reseed;
-- persistence scoped through the daemon's resolved data-root flow without OD
-  editing Harness session files or replacing the user's `DSH_HOME`;
-- pass a fixed profile session-root environment variable derived by the daemon
-  from `RUNTIME_DATA_DIR`; do not accept a client-selected persistence path.
+- Harness persists native session history under the user's `DSH_HOME`; OD does
+  not edit those files or replace that home;
+- OD stores only the opaque Harness session id and its compatibility metadata
+  in the daemon database derived from `RUNTIME_DATA_DIR`; clients cannot choose
+  either storage path.
 
 ### Events and artifacts
 
@@ -148,7 +149,7 @@ The shared implementation remains in the isolated worktree and branch:
 
 ```text
 /Users/elian/Documents/od-wt-deepseek-harness-sdk-impl
-feat/deepseek-harness-sdk
+feat/deepseek-harness-profile
 ```
 
 The dirty primary checkout is not modified.

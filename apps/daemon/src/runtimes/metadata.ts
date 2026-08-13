@@ -81,7 +81,7 @@ const AGENT_INSTALL_LINKS: Record<
   },
   'deepseek-harness': {
     installUrl: 'https://www.npmjs.com/package/@deepseek-ai/dsh',
-    docsUrl: 'https://github.com/deepseek-ai/deepseek-harness',
+    docsUrl: 'https://github.com/nexu-io/open-design/blob/main/docs/agent-adapters.md#512-deepseek-harness',
   },
   codebuddy: {
     installUrl: 'https://www.codebuddy.cn',

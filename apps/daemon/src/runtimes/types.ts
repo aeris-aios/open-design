@@ -56,13 +56,13 @@ export type RuntimeContext = {
   // the prompt via argv or stdin. The daemon creates the file before
   // buildArgs and removes it after the child exits.
   promptFilePath?: string;
-  // Resume-capable adapters (resumesSessionViaCli) read these to decide
-  // whether to continue the CLI's own session. `resumeSessionId` is the
-  // stored id for this (conversation, agent) when a prior session exists;
-  // the adapter passes it to the CLI's resume flag and the daemon sends
-  // only the latest user turn. When it is null/absent the adapter starts
-  // a new session using `newSessionId` (a freshly minted UUID the daemon
-  // also persists) and the daemon seeds it with the full transcript.
+  // Native-resume adapters read these to decide whether to continue the
+  // external runtime's own session. `resumeSessionId` is the stored id for
+  // this (conversation, agent) when a prior session exists; the adapter sends
+  // it through its transport and the daemon sends only the latest user turn.
+  // When it is null/absent the adapter starts a new session; specify-style CLI
+  // adapters may use `newSessionId` (a freshly minted UUID the daemon also
+  // persists), while capture-style transports report their own id.
   resumeSessionId?: string | null;
   newSessionId?: string;
   // Per-run plugin isolation for agent subprocesses. External Plugin entry
@@ -211,8 +211,12 @@ export type RuntimeAgentDef = {
   // RuntimeContext.hasPriorAssistantTurn comment for why double-context
   // is the discovery-form loop's root cause.
   resumesSessionViaCli?: boolean;
-  // How the resumable session id is obtained, for `resumesSessionViaCli`
-  // adapters. The default (undefined/false) is "specify-style": the daemon
+  // Profile-stdio analogue of `resumesSessionViaCli`. The executable starts
+  // fresh for every OD run, while the profile wire protocol accepts and
+  // reports a durable session id. No CLI resume flag is involved.
+  resumesSessionViaProfileStdio?: boolean;
+  // How the resumable session id is obtained. For `resumesSessionViaCli`, the
+  // default (undefined/false) is "specify-style": the daemon
   // mints `RuntimeContext.newSessionId` and the CLI is told to use it (claude
   // `--session-id`), so the id the daemon stores is the id it generated. When
   // `true` the adapter is "capture-style": the CLI generates its OWN session
@@ -220,7 +224,8 @@ export type RuntimeAgentDef = {
   // daemon must capture that id from the parsed stream (surfaced as a
   // `status` event's `sessionId`) and persist THAT as the resume handle —
   // `newSessionId` is not passed to the CLI. See server.ts capture-and-store
-  // path and `agent-cli-session-resume.md`.
+  // path and `agent-cli-session-resume.md`. Profile-stdio transports can also
+  // capture the id from a validated protocol status frame.
   capturesSessionIdFromStream?: boolean;
   // ACP-runtime analogue of capture-style resume: the agent talks `acp-json-rpc`
   // (today only AMR/vela) and supports resuming via `session/load`. The daemon
@@ -321,3 +326,9 @@ export type DetectedAgent = Omit<
 export type RuntimeExecOptions = ExecFileOptions & {
   env?: NodeJS.ProcessEnv;
 };
+
+export function runtimeResumesSessionById(
+  def: Pick<RuntimeAgentDef, 'resumesSessionViaCli' | 'resumesSessionViaProfileStdio'>,
+): boolean {
+  return def.resumesSessionViaCli === true || def.resumesSessionViaProfileStdio === true;
+}

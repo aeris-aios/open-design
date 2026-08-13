@@ -301,11 +301,11 @@ and delivery paths remain authoritative.
 
 OD must not replace `DSH_HOME` to isolate a run. That home is the user's
 official Harness installation boundary and contains the installed
-`open-design` profile and Harness-managed credentials. The profile bundle
-instead accepts one fixed, OD-owned session-root environment variable whose
-value the daemon derives from `RUNTIME_DATA_DIR`. The client cannot choose this
-path. Only session persistence is redirected; profile resolution and
-credentials continue to use the user's Harness home.
+`open-design` profile, Harness-managed credentials, and native session history.
+OD treats that history as external-tool state and never parses or edits it. OD
+persists only the opaque session id plus compatibility metadata in its own
+database under the daemon's resolved `RUNTIME_DATA_DIR`; clients cannot choose
+either location.
 
 The initial product proof is intentionally artifact-oriented:
 
@@ -403,10 +403,10 @@ carrier and does not fork the profile protocol.
 - The profile uses the official Harness workspace confinement and unattended
   permission policy selected for OD; it must not mount an unconfined example
   composition by accident.
-- Session state derives from the daemon's resolved data-root contract when OD
-  supplies the profile's fixed isolated session root. `DSH_HOME` is not
-  repurposed for this isolation, and documentation does not invent a concrete
-  daemon data path.
+- OD-owned session mapping metadata derives from the daemon's resolved
+  data-root contract. Harness-owned session history remains under the user's
+  `DSH_HOME`; OD neither repurposes that home nor invents another Harness
+  persistence location.
 - Stdout contains protocol frames only.
 - Bounded stderr excludes prompts, credentials, and full raw tool output.
 - A client cannot supply arbitrary credential destinations, plugin packages,

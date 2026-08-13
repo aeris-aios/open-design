@@ -120,7 +120,7 @@ export function buildCompatibilityDiagnostic(
     reason: 'runtime-profile-incompatible',
     severity: 'error',
     message: `${def.name} is installed, but its Open Design profile is missing or incompatible.`,
-    detail: 'Install or update @open-design/dsh-runtime in the open-design profile, then rescan.',
+    detail: 'Install the pinned Open Design profile bundle in Harness profile `open-design`, then rescan.',
     fixActions: [
       { kind: 'openDocs' },
       { kind: 'rescan' },

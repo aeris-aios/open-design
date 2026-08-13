@@ -144,6 +144,7 @@ definitions currently group by transport as follows:
 | `qoder-stream-json` | `qoder` |
 | `acp-json-rpc` | `amr` (Vela), `devin`, `hermes`, `kimi`, `kiro`, `kilo`, `reasonix`, `trae-cli`, `vibe` |
 | `pi-rpc` | `pi` |
+| `dsh-profile-jsonl` | `deepseek-harness` |
 | `plain` | `aider`, `antigravity`, `atomcode`, `deepseek`, `grok-build`, `qwen` |
 
 `byok-opencode` is the API-backed OpenCode-compatible profile rather than an
@@ -350,7 +351,38 @@ the active-run staging implementation is in
   shared failure classifier emits DeepSeek-specific guidance for those two
   configuration paths instead of returning the raw non-actionable error.
 
-### 5.12 Plain stream artifact handoff
+### 5.12 DeepSeek Harness
+
+- Open Design launches the user's official `dsh` installation; it does not
+  bundle Harness or Node. Install the tested DSH release first and use
+  `DSH_BIN` only when its executable is outside the daemon's PATH.
+- The adapter also requires an Open Design-owned Harness profile named
+  `open-design`. The package source lives at
+  [`packages/dsh-runtime`](../packages/dsh-runtime). Until
+  `@open-design/dsh-runtime` is published, repository developers install its
+  packed tarball; user-facing setup must not claim the npm package is already
+  available. Once published, pin the exact version supported by that OD build:
+
+  ```sh
+  dsh plugin --profile open-design add @open-design/dsh-runtime@0.1.0
+  dsh --profile open-design --probe
+  ```
+
+- Detection first checks `dsh --version`, then requires the profile's strict
+  protocol-generation handshake. A missing/incompatible profile keeps the
+  agent unavailable and the Settings card explains that the profile must be
+  installed before rescanning.
+- Each OD run starts a fresh `dsh --profile open-design --stdio` process. The
+  JSONL profile protocol creates a Harness session on the first turn and cold
+  resumes that exact session on later turns. This is profile-stdio resume, not
+  a CLI resume flag and not ACP.
+- Text, thinking, tool calls/results, usage, cancellation, and terminal status
+  are structured. Harness writes ordinary files in the OD project cwd, so the
+  existing watcher and artifact preview own delivery.
+- Phase one uses credentials already configured for Harness or inherited as
+  `DEEPSEEK_API_KEY`; Open Design neither stores nor reads back the secret.
+
+### 5.13 Plain stream artifact handoff
 
 Adapters with `streamFormat: 'plain'` do not expose structured file-write tool calls to the daemon. Their stdout is still a valid artifact handoff when the model emits Anthropic-style source blocks:
 

@@ -449,6 +449,7 @@ import { importFigmaFromBytes } from './figma/figma-import.js';
 import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
+import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
   runLifecycleMarkersForStreamEvent,
@@ -1848,14 +1849,13 @@ export function composeChatUserRequestForAgent(
   currentPrompt,
   options: { skipTranscript?: boolean } = {},
 ) {
-  // When the adapter resumes its own session (today: `agy -c`), the
+  // When the adapter resumes its own session, the
   // daemon-rendered `## user` / `## assistant` transcript is a duplicate
   // of what the upstream CLI already has in memory — and the embedded
   // copy carries the literal `<question-form>` markup the agent emitted
   // on turn 1, which the model then re-emits on turn 2. Send only the
-  // latest user turn (`currentPrompt`) in that case; the upstream
-  // session memory provides the rest. See
-  // `RuntimeAgentDef.resumesSessionViaCli`.
+  // latest user turn (`currentPrompt`) in that case; the external runtime's
+  // native session memory provides the rest.
   const skip = options.skipTranscript === true;
   // Native-session clients normally provide `currentPrompt`, but headless
   // callers such as `od run start --message` only populate `message`. On a
@@ -10038,7 +10038,7 @@ export async function startServer({
     // prompt-composition skipTranscript choice, the buildArgs flags, and the
     // create-turn persistence below.
     const agentSupportsSessionResume =
-      def.resumesSessionViaCli === true ||
+      runtimeResumesSessionById(def) ||
       def.streamFormat === 'pi-rpc' ||
       def.resumesSessionViaAcpLoad === true;
     // Capture-style adapters (codex) mint their OWN session id and report it on
@@ -10164,7 +10164,7 @@ export async function startServer({
     // directly. Public chat requests cannot reach this branch.
     const forceInternalResume =
       pendingNativeSessionContinue != null &&
-      def.resumesSessionViaCli === true &&
+      runtimeResumesSessionById(def) &&
       pendingNativeSessionContinue.sessionId.length > 0;
     const agentResumeCtx = forceInternalResume
       ? {
@@ -10741,7 +10741,7 @@ export async function startServer({
           run.nativeSessionContinueAttemptCount ?? 0,
         totalRetryAttemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
-        supportsNativeSessionContinue: def.resumesSessionViaCli === true,
+        supportsNativeSessionContinue: runtimeResumesSessionById(def),
         hasNativeSession: !!run.conversationId && !!liveSessionId,
       });
       if (
@@ -10851,7 +10851,7 @@ export async function startServer({
       );
       const resumableFailure =
         result === 'failed' &&
-        def.resumesSessionViaCli === true &&
+        runtimeResumesSessionById(def) &&
         !!run.conversationId &&
         !!liveSessionId &&
         committedWorkSeen &&
@@ -11440,7 +11440,7 @@ export async function startServer({
     }
 
     let persistDeliveredAgentSessionState = () => {};
-    if (def.resumesSessionViaCli === true && run.conversationId) {
+    if (runtimeResumesSessionById(def) && run.conversationId) {
       let persisted = false;
       persistDeliveredAgentSessionState = () => {
         if (persisted) return;
@@ -12724,7 +12724,7 @@ export async function startServer({
           // resume_failed suppression below; the close handler stays the sole
           // authority on how a resume failure ends.
           if (
-            (def.resumesSessionViaCli === true || def.resumesSessionViaAcpLoad === true) &&
+            (runtimeResumesSessionById(def) || def.resumesSessionViaAcpLoad === true) &&
             agentResumeCtx.isResuming &&
             !run.resumeAutoReseeded &&
             isAgentResumeFailure(def.id, agentStderrTail, agentStdoutTail)
@@ -13171,7 +13171,7 @@ export async function startServer({
       // re-seed the full transcript: one cold turn, never a broken conversation.
       if (
         !run.cancelRequested &&
-        (def.resumesSessionViaCli === true || def.resumesSessionViaAcpLoad === true) &&
+        (runtimeResumesSessionById(def) || def.resumesSessionViaAcpLoad === true) &&
         agentResumeCtx.isResuming &&
         run.conversationId &&
         isAgentResumeFailure(def.id, agentStderrTail, agentStdoutTail)

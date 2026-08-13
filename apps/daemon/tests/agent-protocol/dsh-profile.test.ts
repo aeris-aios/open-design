@@ -14,6 +14,7 @@ import {
   type DshProfileRuntimeFrame,
   type DshProfileStreamError,
 } from '../../src/agent-protocol/index.js';
+import { deepseekHarnessAgentDef } from '../../src/runtimes/defs/deepseek-harness.js';
 
 const requiredCapabilities = {
   session_resume: true,
@@ -31,6 +32,11 @@ const readyFrame = {
 } as const;
 
 describe('DeepSeek Harness profile frame validation', () => {
+  test('declares profile-stdio resume instead of CLI-argument resume', () => {
+    assert.equal(deepseekHarnessAgentDef.resumesSessionViaProfileStdio, true);
+    assert.equal('resumesSessionViaCli' in deepseekHarnessAgentDef, false);
+  });
+
   test('accepts required identity and execute shapes', () => {
     assert.deepEqual(parseDshProfileRuntimeFrame(readyFrame), readyFrame);
     assert.deepEqual(

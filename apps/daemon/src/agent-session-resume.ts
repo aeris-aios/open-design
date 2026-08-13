@@ -292,7 +292,7 @@ export function isOpencodeResumeFailure(text: string): boolean {
 
 /**
  * Per-agent dispatch for "the session/thread I asked to resume is gone".
- * Generalizes the resume-fallback so every `resumesSessionViaCli` adapter
+ * Generalizes resume-fallback classification so every native-resume adapter
  * routes through one decision point in server.ts. Unknown agents return false
  * (no fallback) — a new resume-capable adapter must opt in here explicitly.
  *
