@@ -180,7 +180,7 @@ describe('server.ts wiring (source boundary)', () => {
   const source = fs.readFileSync(serverSourcePath, 'utf8');
 
   function extractOnEventSwitchBody(): string {
-    const anchor = 'onEvent: (event) => {';
+    const anchor = 'onEvent: (event, connection) => {';
     const start = source.indexOf(anchor);
     expect(start, 'expected to find the hub events onEvent handler in server.ts').toBeGreaterThan(-1);
     const switchStart = source.indexOf('switch (event.type) {', start);
@@ -394,7 +394,7 @@ describe('server.ts wiring (source boundary)', () => {
       start,
     );
     const body = source.slice(start, end);
-    const reconnectStart = body.indexOf('onReconnect: () => {');
+    const reconnectStart = body.indexOf('onReconnect: (connection) => {');
     const sourceGapStart = body.indexOf('onSourceGap:', reconnectStart);
     const errorStart = body.indexOf('onError:', sourceGapStart);
     expect(reconnectStart).toBeGreaterThan(-1);
