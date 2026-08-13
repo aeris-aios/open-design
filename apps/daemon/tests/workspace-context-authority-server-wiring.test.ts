@@ -65,14 +65,20 @@ afterEach(async () => {
 describe('server workspace context authority wiring', () => {
   it('keeps directory Team authority after a conflicting exact context cache becomes healthy', async () => {
     scratch = await mkdtemp(join(tmpdir(), 'od-context-authority-wiring-'));
+    let directoryReads = 0;
     let currentReads = 0;
     let observeCatchUpCurrent!: () => void;
     const catchUpCurrentObserved = new Promise<void>((resolve) => {
       observeCatchUpCurrent = resolve;
     });
-    const authorityUrl = await startAuthority(() => {
-      currentReads += 1;
-      if (currentReads >= 2) observeCatchUpCurrent();
+    const authorityUrl = await startAuthority({
+      onDirectory: () => {
+        directoryReads += 1;
+      },
+      onCurrent: () => {
+        currentReads += 1;
+        if (currentReads >= 2) observeCatchUpCurrent();
+      },
     });
     const velaBin = await writeVelaStub(scratch);
     setEnv({
@@ -129,6 +135,12 @@ describe('server workspace context authority wiring', () => {
       teamId: WORKSPACE_ID,
       planId: 'team_pro',
     });
+    const directoryReadsAfterCatchUp = directoryReads;
+    const currentReadsAfterCatchUp = currentReads;
+    await getWorkspaceContext();
+    await getWorkspaceContext();
+    expect(directoryReads).toBe(directoryReadsAfterCatchUp);
+    expect(currentReads).toBe(currentReadsAfterCatchUp);
   }, 60_000);
 });
 
@@ -162,9 +174,13 @@ async function getWorkspaceContext(): Promise<Record<string, unknown>> {
   return body.context;
 }
 
-async function startAuthority(onCurrent: () => void): Promise<string> {
+async function startAuthority(callbacks: {
+  onDirectory: () => void;
+  onCurrent: () => void;
+}): Promise<string> {
   authority = createServer((req, res) => {
     if (req.url === '/api/v1/workspaces' && req.method === 'GET') {
+      callbacks.onDirectory();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         items: [{
@@ -180,7 +196,7 @@ async function startAuthority(onCurrent: () => void): Promise<string> {
       return;
     }
     if (req.url?.startsWith('/api/v1/workspaces/current') && req.method === 'GET') {
-      onCurrent();
+      callbacks.onCurrent();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         workspaceId: WORKSPACE_ID,

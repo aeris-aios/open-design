@@ -276,6 +276,8 @@ export interface HubEventsSubscriberOptions {
   heartbeatTimeoutMs?: number;
   backoffMinMs?: number;
   backoffMaxMs?: number;
+  /** Injectable jitter source for deterministic reconnect tests. */
+  random?: () => number;
 }
 
 export interface HubEventsSubscriber {
@@ -290,6 +292,7 @@ export function startHubEventsSubscriber(options: HubEventsSubscriberOptions): H
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 45_000;
   const backoffMinMs = options.backoffMinMs ?? 1_000;
   const backoffMaxMs = options.backoffMaxMs ?? 30_000;
+  const random = options.random ?? Math.random;
 
   let stopped = false;
   let isConnected = false;
@@ -319,6 +322,13 @@ export function startHubEventsSubscriber(options: HubEventsSubscriberOptions): H
         resolve();
       };
     });
+  const jitteredBackoff = (ms: number): number =>
+    Math.max(
+      1,
+      Math.floor(
+        ms * (1 + Math.min(0.999_999, Math.max(0, random())) * 0.5),
+      ),
+    );
 
   async function consumeStream(
     endpoint: HubEventsEndpoint,
@@ -592,7 +602,7 @@ export function startHubEventsSubscriber(options: HubEventsSubscriberOptions): H
         if (generation !== endpointGeneration) continue;
         if (!endpoint) {
           // Signed out / no team workspace — idle at max backoff, keep probing.
-          await sleep(backoffMaxMs);
+          await sleep(jitteredBackoff(backoffMaxMs));
           continue;
         }
         const outcome = await consumeStream(endpoint);
@@ -615,7 +625,7 @@ export function startHubEventsSubscriber(options: HubEventsSubscriberOptions): H
         backoffMs = backoffMinMs;
         continue;
       }
-      await sleep(backoffMs);
+      await sleep(jitteredBackoff(backoffMs));
       backoffMs = Math.min(backoffMs * 2, backoffMaxMs);
     }
   })();

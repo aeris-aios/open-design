@@ -32,7 +32,229 @@ const MEMBER = {
   role: 'member' as const,
 };
 
+const ADAPTIVE_AUTHORITY_HEALTHY_SERIES =
+  'open_design_workspace_authority_decisions_total' +
+  '{mode="adaptive",source="sse",reason="healthy",outcome="allow"}';
+const ADAPTIVE_AUTHORITY_UNHEALTHY_SERIES =
+  'open_design_workspace_authority_decisions_total' +
+  '{mode="adaptive",source="sse",reason="unhealthy",outcome="fallback"}';
+
 test.describe.configure({ timeout: T.xlong * 5 });
+
+test('[P0] strict SSE health suppresses authority reads and bounds event storms per account', async ({
+  browser,
+}, testInfo) => {
+  const hubRoot = testInfo.outputPath('fake-authority-cache-hub');
+  await mkdir(hubRoot, { recursive: true });
+  const hub = await startFakeCollabHub({
+    root: hubRoot,
+    workspaceId: WORKSPACE_ID,
+    workspaceName: 'Multi-client team',
+    clients: [OWNER, MEMBER],
+    strictAuthorityEvents: true,
+  });
+  const velaBin = await hub.writeVelaBin(testInfo.outputPath('fake-vela-authority-cache'));
+  const commonEnv = {
+    OD_COLLAB_TRANSPORT: 'vela-cli',
+    OD_RESOURCE_TRANSPORT: 'vela-cli',
+    OD_TEAM_PROJECTS_TRANSPORT: 'vela-cli',
+    OD_WORKSPACE_AUTHORITY_CACHE_MODE: 'adaptive',
+    OD_WORKSPACE_CONTEXT_SOURCE: 'vela',
+    VELA_API_URL: hub.url,
+    VELA_BIN: velaBin,
+  };
+  let cluster: CollabCluster | undefined;
+  let failed = false;
+  try {
+    cluster = await test.step('start isolated owner and member clients', async () =>
+      await createCollabCluster(browser, testInfo, [
+        {
+          id: 'authority-owner',
+          env: { ...commonEnv, VELA_CONTROL_KEY: OWNER.controlKey },
+        },
+        {
+          id: 'authority-member',
+          env: { ...commonEnv, VELA_CONTROL_KEY: MEMBER.controlKey },
+        },
+      ]));
+    const owner = cluster.clients['authority-owner']!;
+    const member = cluster.clients['authority-member']!;
+
+    await test.step('establish exact team interests and strict producer health', async () => {
+      await Promise.all([
+        pinWorkspace(owner.page, OWNER.memberId),
+        pinWorkspace(member.page, MEMBER.memberId),
+      ]);
+      await Promise.all([
+        registerWorkspaceEventInterest(owner.page, 'authority-owner', OWNER.memberId),
+        registerWorkspaceEventInterest(member.page, 'authority-member', MEMBER.memberId),
+      ]);
+      await expect.poll(
+        () => [
+          hub.eventSubscriberCount(OWNER.memberId),
+          hub.eventSubscriberCount(MEMBER.memberId),
+        ],
+        { timeout: T.long },
+      ).toEqual([1, 1]);
+      await Promise.all([
+        expectMetricGreaterThan(
+          owner.runtime.url.daemon(),
+          ADAPTIVE_AUTHORITY_HEALTHY_SERIES,
+          0,
+        ),
+        expectMetricGreaterThan(
+          member.runtime.url.daemon(),
+          ADAPTIVE_AUTHORITY_HEALTHY_SERIES,
+          0,
+        ),
+      ]);
+      await Promise.all([
+        waitForHubRequestCountToSettle(hub, OWNER.memberId, '/api/v1/workspaces'),
+        waitForHubRequestCountToSettle(hub, MEMBER.memberId, '/api/v1/workspaces'),
+      ]);
+    });
+
+    await test.step('serve concurrent exact-scoped display reads without touching AMR', async () => {
+      const before = workspaceDirectoryCounts(hub);
+      await Promise.all([
+        readWorkspaceContextBurst(owner.page, OWNER, 50),
+        readWorkspaceContextBurst(member.page, MEMBER, 50),
+        readWorkspaceTeamDataBurst(owner.page, OWNER, 25),
+        readWorkspaceTeamDataBurst(member.page, MEMBER, 25),
+      ]);
+      expect(workspaceDirectoryCounts(hub)).toEqual(before);
+    });
+
+    await test.step('collapse duplicate billing invalidations into one fetch per account', async () => {
+      const before = billingCommandCounts(hub, 'summary');
+      for (let index = 0; index < 100; index += 1) {
+        hub.emitEvent({
+          type: 'billing-changed',
+          workspaceId: WORKSPACE_ID,
+          revision: 'billing-storm-1',
+        });
+      }
+      await Promise.all([
+        readAccountBillingBurst(owner.page, 50),
+        readAccountBillingBurst(member.page, 50),
+      ]);
+      expect(billingCommandCounts(hub, 'summary')).toEqual({
+        [OWNER.memberId]: (before[OWNER.memberId] ?? 0) + 1,
+        [MEMBER.memberId]: (before[MEMBER.memberId] ?? 0) + 1,
+      });
+    });
+
+    await test.step('bound duplicate workspace invalidations and return to zero-read steady state', async () => {
+      const beforeStorm = workspaceDirectoryCounts(hub);
+      for (let index = 0; index < 100; index += 1) {
+        hub.emitEvent({
+          type: 'workspace-context-changed',
+          workspaceId: WORKSPACE_ID,
+          revision: 'workspace-storm-1',
+        });
+      }
+      await Promise.all([
+        waitForHubRequestCountToSettle(hub, OWNER.memberId, '/api/v1/workspaces'),
+        waitForHubRequestCountToSettle(hub, MEMBER.memberId, '/api/v1/workspaces'),
+      ]);
+      // An event can invalidate the exact cache after its leading refresh has
+      // already started. The first post-storm read is then the one bounded
+      // trailing revalidation; include it in the storm budget.
+      await Promise.all([
+        readWorkspaceContextBurst(owner.page, OWNER, 50),
+        readWorkspaceContextBurst(member.page, MEMBER, 50),
+      ]);
+      await Promise.all([
+        waitForHubRequestCountToSettle(hub, OWNER.memberId, '/api/v1/workspaces'),
+        waitForHubRequestCountToSettle(hub, MEMBER.memberId, '/api/v1/workspaces'),
+      ]);
+      const afterRecovery = workspaceDirectoryCounts(hub);
+      expect((afterRecovery[OWNER.memberId] ?? 0) - (beforeStorm[OWNER.memberId] ?? 0))
+        .toBeLessThanOrEqual(3);
+      expect((afterRecovery[MEMBER.memberId] ?? 0) - (beforeStorm[MEMBER.memberId] ?? 0))
+        .toBeLessThanOrEqual(3);
+
+      await Promise.all([
+        readWorkspaceContextBurst(owner.page, OWNER, 50),
+        readWorkspaceContextBurst(member.page, MEMBER, 50),
+      ]);
+      expect(workspaceDirectoryCounts(hub)).toEqual(afterRecovery);
+    });
+
+    await test.step('degrade only the disconnected account to the legacy authority floor', async () => {
+      const ownerUnhealthyBefore = await readMetricCounter(
+        owner.runtime.url.daemon(),
+        ADAPTIVE_AUTHORITY_UNHEALTHY_SERIES,
+      );
+      hub.setEventsAvailable(OWNER.memberId, false);
+      await expect.poll(
+        () => hub.eventSubscriberCount(OWNER.memberId),
+        { timeout: T.long },
+      ).toBe(0);
+      await expectMetricGreaterThan(
+        owner.runtime.url.daemon(),
+        ADAPTIVE_AUTHORITY_UNHEALTHY_SERIES,
+        ownerUnhealthyBefore,
+      );
+
+      const before = workspaceDirectoryCounts(hub);
+      // Keep asking the exact same read. The first requests may still use the
+      // valid 15s lease; once it expires, the disconnected account must resume
+      // a real directory verification instead of trusting stale SSE state.
+      await expect.poll(
+        async () => {
+          await readWorkspaceContextBurst(owner.page, OWNER, 1);
+          return workspaceDirectoryCounts(hub)[OWNER.memberId] ?? 0;
+        },
+        { timeout: T.long },
+      ).toBeGreaterThan(before[OWNER.memberId] ?? 0);
+
+      const memberBefore = workspaceDirectoryCounts(hub)[MEMBER.memberId] ?? 0;
+      await readWorkspaceContextBurst(member.page, MEMBER, 50);
+      expect(workspaceDirectoryCounts(hub)[MEMBER.memberId] ?? 0).toBe(memberBefore);
+    });
+
+    await test.step('reconnect, catch up, and restore the zero-read steady state', async () => {
+      const ownerHealthyBefore = await readMetricCounter(
+        owner.runtime.url.daemon(),
+        ADAPTIVE_AUTHORITY_HEALTHY_SERIES,
+      );
+      hub.setEventsAvailable(OWNER.memberId, true);
+      await expect.poll(
+        () => hub.eventSubscriberCount(OWNER.memberId),
+        { timeout: T.long },
+      ).toBe(1);
+      await expectMetricGreaterThan(
+        owner.runtime.url.daemon(),
+        ADAPTIVE_AUTHORITY_HEALTHY_SERIES,
+        ownerHealthyBefore,
+      );
+      await waitForHubRequestCountToSettle(
+        hub,
+        OWNER.memberId,
+        '/api/v1/workspaces',
+      );
+
+      const before = workspaceDirectoryCounts(hub)[OWNER.memberId] ?? 0;
+      await readWorkspaceContextBurst(owner.page, OWNER, 50);
+      expect(workspaceDirectoryCounts(hub)[OWNER.memberId] ?? 0).toBe(before);
+    });
+  } catch (error) {
+    failed = true;
+    await testInfo.attach('fake-authority-cache-hub-log', {
+      body: JSON.stringify({
+        commands: hub.commandLog,
+        events: hub.eventLog,
+        requests: hub.requestLog,
+      }, null, 2),
+      contentType: 'application/json',
+    });
+    throw error;
+  } finally {
+    await cluster?.close({ preserve: failed });
+    await hub.close();
+  }
+});
 
 test('[P0] two isolated clients converge live content, presence, and owner unshare', async ({
   browser,
@@ -519,6 +741,139 @@ async function expectRosterRole(page: Page, role: 'admin' | 'member'): Promise<v
     },
     { timeout: T.long },
   ).toMatchObject({ memberId: MEMBER.memberId, role });
+}
+
+async function readWorkspaceContextBurst(
+  page: Page,
+  identity: typeof OWNER | typeof MEMBER,
+  count: number,
+): Promise<void> {
+  const responses = await Promise.all(
+    Array.from({ length: count }, () => page.request.get('/api/workspace/context', {
+      headers: workspaceHeaders(identity),
+      timeout: T.long,
+    })),
+  );
+  for (const response of responses) {
+    const raw = await response.text();
+    expect(response.ok(), raw).toBeTruthy();
+    const body = JSON.parse(raw) as {
+      context?: { workspaceId?: string; workspaceMemberId?: string } | null;
+    };
+    expect(body.context).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      workspaceMemberId: identity.memberId,
+    });
+  }
+}
+
+async function readWorkspaceTeamDataBurst(
+  page: Page,
+  client: typeof OWNER | typeof MEMBER,
+  count: number,
+): Promise<void> {
+  const responses = await Promise.all(
+    Array.from({ length: count }, (_, index) => page.request.get(
+      index % 2 === 0
+        ? '/api/workspace/projects/team'
+        : '/api/workspace/members',
+      {
+        headers: workspaceHeaders(client),
+        timeout: T.long,
+      },
+    )),
+  );
+  for (const response of responses) {
+    const raw = await response.text();
+    expect(response.ok(), raw).toBeTruthy();
+  }
+}
+
+async function readAccountBillingBurst(page: Page, count: number): Promise<void> {
+  const responses = await Promise.all(
+    Array.from({ length: count }, () => page.request.get(
+      '/api/workspace/billing?scope=account',
+      { timeout: T.long },
+    )),
+  );
+  for (const response of responses) {
+    const raw = await response.text();
+    expect(response.ok(), raw).toBeTruthy();
+    const body = JSON.parse(raw) as {
+      summary?: { membershipTier?: string } | null;
+    };
+    expect(body.summary?.membershipTier).toBe('team_plus');
+  }
+}
+
+function workspaceDirectoryCounts(hub: Awaited<ReturnType<typeof startFakeCollabHub>>):
+  Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const request of hub.requestLog) {
+    if (request.path !== '/api/v1/workspaces' || !request.memberId) continue;
+    counts[request.memberId] = (counts[request.memberId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function billingCommandCounts(
+  hub: Awaited<ReturnType<typeof startFakeCollabHub>>,
+  command: string,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const entry of hub.commandLog) {
+    if (entry.args[0] !== 'billing' || entry.args[1] !== command) continue;
+    counts[entry.memberId] = (counts[entry.memberId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+async function waitForHubRequestCountToSettle(
+  hub: Awaited<ReturnType<typeof startFakeCollabHub>>,
+  memberId: string,
+  path: string,
+): Promise<void> {
+  let previous = -1;
+  let stableSamples = 0;
+  await expect.poll(
+    () => {
+      const current = hub.requestLog.filter(
+        (request) => request.memberId === memberId && request.path === path,
+      ).length;
+      stableSamples = current === previous ? stableSamples + 1 : 0;
+      previous = current;
+      return stableSamples;
+    },
+    // One event lane may legally run a leading refresh, one trailing refresh,
+    // and a billing-member reconnect. Require a real quiescence window after
+    // all three, rather than sampling only the first short gap between them.
+    { intervals: [100], timeout: T.medium },
+  ).toBeGreaterThanOrEqual(20);
+}
+
+async function readMetricCounter(
+  daemonUrl: string,
+  series: string,
+): Promise<number> {
+  const response = await fetch(new URL('/api/metrics', daemonUrl));
+  if (!response.ok) {
+    throw new Error(`metrics ${response.status}: ${await response.text()}`);
+  }
+  const line = (await response.text())
+    .split('\n')
+    .find((entry) => entry.startsWith(`${series} `));
+  return Number(line?.slice(series.length + 1).trim() ?? 0);
+}
+
+async function expectMetricGreaterThan(
+  daemonUrl: string,
+  series: string,
+  floor: number,
+): Promise<void> {
+  await expect.poll(
+    () => readMetricCounter(daemonUrl, series),
+    { timeout: T.long },
+  ).toBeGreaterThan(floor);
 }
 
 async function createProject(page: Page): Promise<string> {

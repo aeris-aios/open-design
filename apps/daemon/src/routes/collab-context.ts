@@ -96,8 +96,8 @@ export function emitWorkspaceEventToScope(
 
 export interface RegisterCollabContextRoutesDeps {
   workspaceContext: WorkspaceContextProvider;
-  /** Optional settled verifier for the pure context GET. Mutations and SSE
-   * subscriptions retain their fresh directory verification below. */
+  /** Optional settled verifier for exact-scoped display GETs. Mutations and
+   * SSE subscriptions retain their fresh directory verification below. */
   verifyWorkspaceReadAuthority?: (
     req: Request,
   ) => Promise<VerifiedWorkspaceRequestContextResult>;
@@ -602,16 +602,24 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
   // their exact-scope last-good catalog instead of treating the outage as an
   // authoritative removal of every project.
   app.get('/api/workspace/projects/team', async (req, res) => {
-    const verified = await verifyWorkspaceRequestContext({
-      req,
-      fetchWorkspaceDirectory,
-      requireTeam: true,
-    });
+    const verified = deps.verifyWorkspaceReadAuthority
+      ? await deps.verifyWorkspaceReadAuthority(req)
+      : await verifyWorkspaceRequestContext({
+          req,
+          fetchWorkspaceDirectory,
+          requireTeam: true,
+        });
     if (!verified.ok) {
       return res.status(verified.status).json({
         error: verified.code,
         message: verified.message,
         ...(verified.retryable ? { retryable: true } : {}),
+      });
+    }
+    if (verified.context.workspaceType !== 'team') {
+      return res.status(403).json({
+        error: 'WORKSPACE_ACCESS_DENIED',
+        message: 'the requested workspace is not available to this member',
       });
     }
     let projects: TeamProject[];
@@ -636,12 +644,22 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
   // represented as an authoritative empty roster: clients retain last-good
   // display metadata until a successful response says members really left.
   app.get('/api/workspace/members', async (req, res) => {
-    const verified = await verifyWorkspaceRequestContext({
-      req,
-      fetchWorkspaceDirectory,
-      requireTeam: true,
-    });
+    const verified = deps.verifyWorkspaceReadAuthority
+      ? await deps.verifyWorkspaceReadAuthority(req)
+      : await verifyWorkspaceRequestContext({
+          req,
+          fetchWorkspaceDirectory,
+          requireTeam: true,
+        });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);
+    if (verified.context.workspaceType !== 'team') {
+      return sendWorkspaceVerificationFailure(res, {
+        ok: false,
+        status: 403,
+        code: 'WORKSPACE_ACCESS_DENIED',
+        message: 'the requested workspace is not available to this member',
+      });
+    }
     try {
       const members = await listMembers(verified.context);
       const body: CollabCloudMembersResponse = { members };

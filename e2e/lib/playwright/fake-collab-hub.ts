@@ -58,10 +58,18 @@ type CommandLog = {
   workspaceId: string;
 };
 
+type RequestLog = {
+  method: string;
+  path: string;
+  memberId: string | null;
+  workspaceId: string;
+};
+
 type Subscriber = {
   response: ServerResponse;
   workspaceId: string;
   memberId: string;
+  heartbeat: ReturnType<typeof setInterval> | null;
 };
 
 export type FakeCollabHub = {
@@ -69,6 +77,7 @@ export type FakeCollabHub = {
   workspaceId: string;
   commandLog: CommandLog[];
   eventLog: HubEvent[];
+  requestLog: RequestLog[];
   writeVelaBin: (path: string) => Promise<string>;
   waitForCommand: (
     predicate: (entry: CommandLog) => boolean,
@@ -80,6 +89,7 @@ export type FakeCollabHub = {
   ) => Promise<HubEvent>;
   setEventsAvailable: (memberId: string, available: boolean) => void;
   eventSubscriberCount: (memberId: string) => number;
+  emitEvent: (event: HubEvent) => void;
   removeMember: (memberId: string) => void;
   setMemberRole: (memberId: string, role: ClientIdentity['role']) => void;
   setWorkspaceBalance: (memberId: string, balanceUsd: string) => void;
@@ -92,6 +102,8 @@ export async function startFakeCollabHub(options: {
   workspaceName: string;
   clients: readonly ClientIdentity[];
   includePersonalWorkspace?: boolean;
+  /** Opt into the producer-health contract used by authority-cache E2E. */
+  strictAuthorityEvents?: boolean;
 }): Promise<FakeCollabHub> {
   const resourcesRoot = join(options.root, 'resources');
   await mkdir(resourcesRoot, { recursive: true });
@@ -112,6 +124,14 @@ export async function startFakeCollabHub(options: {
   );
   const commandLog: CommandLog[] = [];
   const eventLog: HubEvent[] = [];
+  const requestLog: RequestLog[] = [];
+
+  const closeSubscriber = (subscriber: Subscriber): void => {
+    if (subscriber.heartbeat) clearInterval(subscriber.heartbeat);
+    subscriber.heartbeat = null;
+    subscribers.delete(subscriber);
+    subscriber.response.end();
+  };
 
   const server: Server = createServer(async (request, response) => {
     try {
@@ -125,6 +145,48 @@ export async function startFakeCollabHub(options: {
         : null;
       const workspaceId =
         headerValue(request.headers['x-vela-workspace-id']) || options.workspaceId;
+      requestLog.push({
+        method: request.method ?? 'GET',
+        path: url.pathname,
+        memberId: identity?.memberId ?? null,
+        workspaceId,
+      });
+
+      if (url.pathname === '/__e2e/stats' && request.method === 'GET') {
+        return json(response, 200, {
+          commands: commandLog,
+          events: eventLog,
+          requests: requestLog,
+          subscribers: [...subscribers].map((subscriber) => ({
+            memberId: subscriber.memberId,
+            workspaceId: subscriber.workspaceId,
+          })),
+        });
+      }
+      if (url.pathname === '/__e2e/event' && request.method === 'POST') {
+        const body = await readJsonBody(request) as HubEvent;
+        emit(body);
+        return json(response, 200, { ok: true });
+      }
+      if (url.pathname === '/__e2e/events-available' && request.method === 'POST') {
+        const body = await readJsonBody(request) as {
+          available?: unknown;
+          memberId?: unknown;
+        };
+        const memberId = typeof body.memberId === 'string' ? body.memberId.trim() : '';
+        if (!memberId || typeof body.available !== 'boolean') {
+          return json(response, 400, { error: 'invalid_events_available_input' });
+        }
+        if (body.available) {
+          blockedEventMembers.delete(memberId);
+        } else {
+          blockedEventMembers.add(memberId);
+          for (const subscriber of [...subscribers]) {
+            if (subscriber.memberId === memberId) closeSubscriber(subscriber);
+          }
+        }
+        return json(response, 200, { ok: true });
+      }
 
       if (url.pathname === '/api/v1/workspaces/current' && request.method === 'GET') {
         if (!identity) return json(response, 401, { error: 'unauthorized' });
@@ -168,15 +230,49 @@ export async function startFakeCollabHub(options: {
           connection: 'keep-alive',
           'content-type': 'text/event-stream; charset=utf-8',
         });
-        const subscriber = { response, workspaceId, memberId: identity.memberId };
+        const subscriber: Subscriber = {
+          response,
+          workspaceId,
+          memberId: identity.memberId,
+          heartbeat: null,
+        };
         subscribers.add(subscriber);
+        const listenerStatus = {
+          listenerEpoch: `fake-hub-${identity.memberId}`,
+          listenerHealth: 'healthy',
+          sourceGap: false,
+        } as const;
         response.write(
           `event: ready\ndata: ${JSON.stringify({
             workspaceId,
-            capabilities: ['authoritative-project-presence-v1'],
+            capabilities: options.strictAuthorityEvents
+              ? [
+                  'authoritative-project-presence-v1',
+                  'workspace-member-events-v1',
+                  'workspace-event-listener-status-v1',
+                  'billing-revision-clocks-v1',
+                ]
+              : ['authoritative-project-presence-v1'],
+            ...(options.strictAuthorityEvents ? listenerStatus : {}),
           })}\n\n`,
         );
-        request.on('close', () => subscribers.delete(subscriber));
+        if (options.strictAuthorityEvents) {
+          const writeHeartbeat = () => {
+            if (!subscribers.has(subscriber)) return;
+            response.write(
+              `event: heartbeat\ndata: ${JSON.stringify(listenerStatus)}\n\n`,
+            );
+          };
+          // `ready` is deliberately not sufficient for authority health. The
+          // immediate post-ready heartbeat proves the producer listener has
+          // crossed its membership revalidation boundary.
+          writeHeartbeat();
+          subscriber.heartbeat = setInterval(writeHeartbeat, 5_000);
+          subscriber.heartbeat.unref?.();
+        }
+        request.on('close', () => {
+          if (subscribers.has(subscriber)) closeSubscriber(subscriber);
+        });
         return;
       }
       if (url.pathname === '/__e2e/command' && request.method === 'POST') {
@@ -239,6 +335,7 @@ export async function startFakeCollabHub(options: {
     workspaceId: options.workspaceId,
     commandLog,
     eventLog,
+    requestLog,
     writeVelaBin: async (path) => {
       await writeFile(path, fakeVelaScript(), 'utf8');
       await chmod(path, 0o755);
@@ -256,12 +353,12 @@ export async function startFakeCollabHub(options: {
       blockedEventMembers.add(memberId);
       for (const subscriber of [...subscribers]) {
         if (subscriber.memberId !== memberId) continue;
-        subscribers.delete(subscriber);
-        subscriber.response.end();
+        closeSubscriber(subscriber);
       }
     },
     eventSubscriberCount: (memberId) =>
       [...subscribers].filter((subscriber) => subscriber.memberId === memberId).length,
+    emitEvent: emit,
     removeMember: (memberId) => {
       removedMembers.add(memberId);
       for (const roster of presence.values()) {
@@ -290,7 +387,7 @@ export async function startFakeCollabHub(options: {
       });
     },
     close: async () => {
-      for (const subscriber of subscribers) subscriber.response.end();
+      for (const subscriber of [...subscribers]) closeSubscriber(subscriber);
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(resourcesRoot, { force: true, recursive: true });
     },

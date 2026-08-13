@@ -263,14 +263,25 @@ describe('createCachedWorkspaceDirectoryFetcher', () => {
     await expect(refreshed).resolves.toEqual({ ok: true, items: [] });
   });
 
-  it('does not cache a failed directory read', async () => {
+  it('backs off a failed directory read and probes again after the outage lease', async () => {
+    let now = 0;
     const fetchDirectory = vi
       .fn()
       .mockResolvedValueOnce({ ok: false, items: [] })
       .mockResolvedValueOnce({ ok: true, items: [] });
-    const read = createCachedWorkspaceDirectoryFetcher({ fetchDirectory });
+    const read = createCachedWorkspaceDirectoryFetcher({
+      fetchDirectory,
+      failureBackoffMinMs: 100,
+      failureBackoffMaxMs: 100,
+      now: () => now,
+      random: () => 0,
+    });
 
     await expect(read()).resolves.toEqual({ ok: false, items: [] });
+    await expect(read()).resolves.toEqual({ ok: false, items: [] });
+    expect(fetchDirectory).toHaveBeenCalledOnce();
+
+    now = 100;
     await expect(read()).resolves.toEqual({ ok: true, items: [] });
     expect(fetchDirectory).toHaveBeenCalledTimes(2);
   });
@@ -426,9 +437,11 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
           (resolve) => pending.push(resolve),
         ),
     );
+    const onAcceptedResult = vi.fn();
     const authority = createWorkspaceDirectoryAuthorityBroker({
       fetchDirectory,
       identityKey: () => 'account-a:config-a',
+      onAcceptedResult,
     });
 
     const staleRead = authority.read();
@@ -439,6 +452,7 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
     const stale = { ok: true as const, items: [{ ...B_DIRECTORY_ITEM }] };
     pending[0]!(stale);
     await expect(staleRead).resolves.toEqual(stale);
+    expect(onAcceptedResult).not.toHaveBeenCalled();
 
     let currentSettled = false;
     void currentRead.then(() => {
@@ -453,6 +467,11 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
     };
     pending[1]!(current);
     await expect(currentRead).resolves.toEqual(current);
+    expect(onAcceptedResult).toHaveBeenCalledOnce();
+    expect(onAcceptedResult).toHaveBeenCalledWith(
+      current,
+      'account-a:config-a',
+    );
     await expect(authority.read()).resolves.toEqual(current);
     expect(fetchDirectory).toHaveBeenCalledTimes(2);
   });
@@ -497,7 +516,7 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
     expect(fetchDirectory).toHaveBeenCalledTimes(1);
   });
 
-  it('single-flights shell and project bootstrap reads per account generation without caching failures', async () => {
+  it('single-flights shell and project bootstrap reads per account generation and shares outage backoff', async () => {
     let identity = 'account-a:config-a';
     const fetchDirectory = vi.fn(async () => ({
       ok: true as const,
@@ -528,7 +547,133 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
     });
     await failedAuthority.read();
     await failedAuthority.read();
-    expect(failedFetch).toHaveBeenCalledTimes(2);
+    expect(failedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('uses one account-wide exponential outage circuit across read and fresh callers', async () => {
+    let now = 0;
+    const onDecision = vi.fn();
+    const onSuppressedRequest = vi.fn();
+    const networkFailure = {
+      ok: false as const,
+      items: [],
+      reason: 'network' as const,
+    };
+    const recovered = { ok: true as const, items: [{ ...B_DIRECTORY_ITEM }] };
+    const fetchDirectory = vi
+      .fn()
+      .mockResolvedValueOnce(networkFailure)
+      .mockResolvedValueOnce(networkFailure)
+      .mockResolvedValueOnce(recovered);
+    const authority = createWorkspaceDirectoryAuthorityBroker({
+      fetchDirectory,
+      identityKey: () => 'account-a:config-a',
+      failureBackoffMinMs: 100,
+      failureBackoffMaxMs: 400,
+      now: () => now,
+      random: () => 0,
+      onDecision,
+      onSuppressedRequest,
+    });
+
+    await expect(authority.read()).resolves.toEqual(networkFailure);
+    await expect(Promise.all([
+      authority.read(),
+      authority.backgroundFresh(),
+      authority.read(),
+    ])).resolves.toEqual([networkFailure, networkFailure, networkFailure]);
+    expect(fetchDirectory).toHaveBeenCalledOnce();
+    expect(onDecision).toHaveBeenCalledWith({
+      source: 'cache',
+      reason: 'failure_backoff',
+      outcome: 'unavailable',
+    });
+    expect(onSuppressedRequest).toHaveBeenCalledWith({
+      source: 'directory',
+      reason: 'failure_backoff',
+    });
+
+    now = 99;
+    await authority.read();
+    expect(fetchDirectory).toHaveBeenCalledOnce();
+    now = 100;
+    await authority.backgroundFresh();
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+
+    // The second failed probe doubles the floor to 200ms. Positive jitter never
+    // probes faster than that floor.
+    now = 299;
+    await authority.read();
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+    now = 300;
+    await expect(authority.read()).resolves.toEqual(recovered);
+    expect(fetchDirectory).toHaveBeenCalledTimes(3);
+
+    // A genuine recovery rewinds both the failure depth and the normal success
+    // lease, so later reads return immediately without another upstream call.
+    await expect(authority.read()).resolves.toEqual(recovered);
+    expect(fetchDirectory).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets a user-initiated fresh authority read recover immediately through an open read circuit', async () => {
+    const networkFailure = {
+      ok: false as const,
+      items: [],
+      reason: 'network' as const,
+    };
+    const recovered = { ok: true as const, items: [{ ...B_DIRECTORY_ITEM }] };
+    const fetchDirectory = vi
+      .fn()
+      .mockResolvedValueOnce(networkFailure)
+      .mockResolvedValueOnce(recovered);
+    const authority = createWorkspaceDirectoryAuthorityBroker({
+      fetchDirectory,
+      identityKey: () => 'account-a:config-a',
+      failureBackoffMinMs: 120_000,
+      random: () => 0,
+    });
+
+    await expect(authority.read()).resolves.toEqual(networkFailure);
+    await expect(authority.fresh()).resolves.toEqual(recovered);
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+    await expect(authority.read()).resolves.toEqual(recovered);
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not outage-cache authorization rejection and lets authoritative invalidation probe immediately', async () => {
+    let now = 0;
+    const unauthorized = {
+      ok: false as const,
+      items: [],
+      reason: 'unauthorized' as const,
+      status: 401,
+    };
+    const networkFailure = {
+      ok: false as const,
+      items: [],
+      reason: 'network' as const,
+    };
+    const recovered = { ok: true as const, items: [{ ...B_DIRECTORY_ITEM }] };
+    const fetchDirectory = vi
+      .fn()
+      .mockResolvedValueOnce(unauthorized)
+      .mockResolvedValueOnce(networkFailure)
+      .mockResolvedValueOnce(recovered);
+    const authority = createWorkspaceDirectoryAuthorityBroker({
+      fetchDirectory,
+      identityKey: () => 'account-a:config-a',
+      failureBackoffMinMs: 100,
+      now: () => now,
+      random: () => 0,
+    });
+
+    await expect(authority.read()).resolves.toEqual(unauthorized);
+    await expect(authority.read()).resolves.toEqual(networkFailure);
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+
+    authority.invalidate('catch_up');
+    await expect(authority.fresh()).resolves.toEqual(recovered);
+    expect(fetchDirectory).toHaveBeenCalledTimes(3);
   });
 
   it('bounds 30s of status polls while every heartbeat mutation stays fresh', async () => {

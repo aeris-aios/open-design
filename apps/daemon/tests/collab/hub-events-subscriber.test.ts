@@ -196,6 +196,35 @@ describe('parseHubWorkspaceEvent', () => {
 });
 
 describe('startHubEventsSubscriber', () => {
+  it('jitters transport reconnects so simultaneous daemons do not retry in lockstep', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new TypeError('fetch failed'));
+    subscriber = startHubEventsSubscriber({
+      resolveEndpoint: async () => ({ url: 'https://hub/events', headers: {} }),
+      onEvent: () => undefined,
+      fetchImpl,
+      backoffMinMs: 1_000,
+      backoffMaxMs: 8_000,
+      random: () => 0.5,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_249);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    // The un-jittered cursor still doubles to 2s; the deterministic draw turns
+    // the next retry into 2.5s and proves the fleet phase is randomized.
+    await vi.advanceTimersByTimeAsync(2_499);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it('uses revision clocks only when the ready frame advertises the capability', async () => {
     const clockEvent =
       'event: workspace-event\ndata: {"type":"billing-subscription-changed","workspaceId":"w1","revision":"billing:v1:2","revisionClock":{"epoch":"billing-epoch-a","counter":"2"}}\n\n';

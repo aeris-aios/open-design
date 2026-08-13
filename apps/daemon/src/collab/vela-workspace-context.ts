@@ -43,6 +43,13 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 // Mutations never consume this lease: `fresh()` below always performs (or joins)
 // an unsettled authoritative read.
 const DEFAULT_DIRECTORY_CACHE_TTL_MS = 15_000;
+// A failed authority read must not turn every visible fallback surface into a
+// fresh upstream attempt. The first failure opens a short, jittered process-
+// local circuit; repeated failed probes grow to a two-minute base plus bounded
+// positive jitter. Successful reads and authoritative invalidations reset the
+// circuit immediately.
+const DEFAULT_DIRECTORY_FAILURE_BACKOFF_MIN_MS = 15_000;
+const DEFAULT_DIRECTORY_FAILURE_BACKOFF_MAX_MS = 120_000;
 // After a failed legacy default-workspace bootstrap, avoid repeating the
 // directory read on every compatibility request.
 const BOOTSTRAP_FAILURE_COOLDOWN_MS = 60_000;
@@ -557,38 +564,55 @@ export function velaWorkspaceDirectoryIdentity(
  * One daemon-owned authority broker shared by idempotent reads and mutations.
  *
  * Successful authority reads seed a bounded display-read lease. General
- * mutations ignore that settled lease and always perform a fresh directory
- * read, while still sharing an already-unsettled request from the same Vela
- * session. The cached-only accessor never starts I/O; its one production
- * consumer may use a valid same-session lease for personal local-only project
- * cleanup, then falls back to fresh authority on every miss. This keeps the 5s
- * status poll off the control plane without weakening Team/hub mutation
- * freshness, and prevents a status/heartbeat boundary from launching duplicate
- * directory requests.
+ * mutations ignore that settled success lease and perform a fresh directory
+ * read, while still sharing an already-unsettled request and a short outage
+ * circuit from the same Vela session. The cached-only accessor never starts
+ * I/O; its one production consumer may use a valid same-session lease for
+ * personal local-only project cleanup, then falls back to fresh authority on
+ * every miss. This keeps the 5s status poll off the control plane without
+ * weakening Team/hub mutation freshness, and prevents a status/heartbeat
+ * boundary from launching duplicate directory requests.
  */
 export function createWorkspaceDirectoryAuthorityBroker(options: {
   fetchDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   identityKey?: () => string;
   ttlMs?: number;
+  failureBackoffMinMs?: number;
+  failureBackoffMaxMs?: number;
   now?: () => number;
+  random?: () => number;
   onDecision?: (input: {
     source: 'cache' | 'directory';
-    reason: 'cold' | 'lease_hit' | 'lease_expired' | 'in_flight' | 'fresh';
+    reason:
+      | 'cold'
+      | 'lease_hit'
+      | 'lease_expired'
+      | 'in_flight'
+      | 'failure_backoff'
+      | 'fresh';
     outcome: 'allow' | 'deny' | 'unavailable' | 'fallback';
     ageMs?: number;
   }) => void;
   onSuppressedRequest?: (input: {
     source: 'directory';
-    reason: 'lease_hit' | 'in_flight';
+    reason: 'lease_hit' | 'in_flight' | 'failure_backoff';
   }) => void;
   onInvalidation?: (input: {
     source: 'cache';
     reason: 'mutation' | 'event_dirty' | 'auth_reject' | 'catch_up';
   }) => void;
+  /** Called only when a successful result belongs to the current generation. */
+  onAcceptedResult?: (
+    result: WorkspaceDirectoryFetchResult,
+    identity: string,
+  ) => void;
 } = {}): {
   cached: () => Promise<WorkspaceDirectoryFetchResult>;
   read: () => Promise<WorkspaceDirectoryFetchResult>;
+  /** User-initiated authority probe: ignores a settled outage circuit. */
   fresh: () => Promise<WorkspaceDirectoryFetchResult>;
+  /** Background fresh read: shares the account-wide outage circuit. */
+  backgroundFresh: () => Promise<WorkspaceDirectoryFetchResult>;
   invalidate: (reason?: 'event_dirty' | 'auth_reject' | 'catch_up') => void;
   refreshAfterMutation: () => Promise<WorkspaceDirectoryFetchResult>;
 } {
@@ -596,7 +620,16 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
     options.fetchDirectory ?? (() => fetchVelaWorkspaceDirectory());
   const identityKey = options.identityKey ?? velaWorkspaceDirectoryIdentity;
   const ttlMs = Math.max(0, options.ttlMs ?? DEFAULT_DIRECTORY_CACHE_TTL_MS);
+  const failureBackoffMinMs = Math.max(
+    1,
+    options.failureBackoffMinMs ?? DEFAULT_DIRECTORY_FAILURE_BACKOFF_MIN_MS,
+  );
+  const failureBackoffMaxMs = Math.max(
+    failureBackoffMinMs,
+    options.failureBackoffMaxMs ?? DEFAULT_DIRECTORY_FAILURE_BACKOFF_MAX_MS,
+  );
   const now = options.now ?? Date.now;
+  const random = options.random ?? Math.random;
   const cached = new Map<
     string,
     {
@@ -613,6 +646,14 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
     }
   >();
   const generations = new Map<string, number>();
+  const failures = new Map<
+    string,
+    {
+      result: WorkspaceDirectoryFetchResult;
+      retryAt: number;
+      nextDelayMs: number;
+    }
+  >();
 
   const generationFor = (identity: string): number =>
     generations.get(identity) ?? 0;
@@ -620,6 +661,56 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
   const invalidateIdentity = (identity: string): void => {
     generations.set(identity, generationFor(identity) + 1);
     cached.delete(identity);
+    failures.delete(identity);
+  };
+
+  const failureBackoffHit = (
+    identity: string,
+  ): WorkspaceDirectoryFetchResult | null => {
+    const failure = failures.get(identity);
+    if (!failure) return null;
+    if (now() >= failure.retryAt) return null;
+    recordDecision({
+      source: 'cache',
+      reason: 'failure_backoff',
+      outcome: 'unavailable',
+    });
+    options.onSuppressedRequest?.({
+      source: 'directory',
+      reason: 'failure_backoff',
+    });
+    return failure.result;
+  };
+
+  const rememberFailure = (
+    identity: string,
+    result: WorkspaceDirectoryFetchResult,
+  ): void => {
+    // Authentication rejection has its own credential-revision state machine.
+    // Do not hide a newly refreshed credential behind the old identity's
+    // transport circuit if an integration returns the same fingerprint.
+    if (result.reason === 'unauthorized') {
+      failures.delete(identity);
+      return;
+    }
+    const prior = failures.get(identity);
+    const delayMs = prior?.nextDelayMs ?? failureBackoffMinMs;
+    // Positive jitter in [100%, 150%) spreads a fleet-wide outage without ever
+    // retrying faster than the configured base floor. `failureBackoffMaxMs`
+    // caps the exponential base; keeping jitter above that base is what avoids
+    // every daemon re-synchronizing once the streak reaches its ceiling.
+    const jitteredDelayMs = Math.max(
+      1,
+      Math.floor(
+        delayMs
+        * (1 + Math.min(0.999_999, Math.max(0, random())) * 0.5),
+      ),
+    );
+    failures.set(identity, {
+      result,
+      retryAt: now() + jitteredDelayMs,
+      nextDelayMs: Math.min(delayMs * 2, failureBackoffMaxMs),
+    });
   };
 
   const recordDecision = (
@@ -641,11 +732,15 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
     const request = fetchDirectory()
       .then((result) => {
         if (result.ok && generationFor(identity) === generation) {
+          failures.delete(identity);
           cached.set(identity, {
             generation,
             expiresAt: now() + ttlMs,
             result,
           });
+          options.onAcceptedResult?.(result, identity);
+        } else if (!result.ok && generationFor(identity) === generation) {
+          rememberFailure(identity, result);
         }
         recordDecision({
           source: 'directory',
@@ -691,7 +786,6 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
         return Promise.resolve(cachedEntry.result);
       }
       const reason = cachedEntry ? 'lease_expired' : 'cold';
-      cached.delete(identity);
       recordDecision({ source: 'cache', reason, outcome: 'fallback' });
       return Promise.resolve({ ok: false, items: [] });
     },
@@ -713,11 +807,20 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
         options.onSuppressedRequest?.({ source: 'directory', reason: 'lease_hit' });
         return Promise.resolve(cachedEntry.result);
       }
+      const backoffResult = failureBackoffHit(identity);
+      if (backoffResult) return Promise.resolve(backoffResult);
       const reason = cachedEntry ? 'lease_expired' : 'cold';
       cached.delete(identity);
       return start(identity, reason);
     },
     fresh: () => start(identityKey(), 'fresh'),
+    backgroundFresh: () => {
+      const identity = identityKey();
+      const backoffResult = failureBackoffHit(identity);
+      return backoffResult
+        ? Promise.resolve(backoffResult)
+        : start(identity, 'fresh');
+    },
     invalidate: (reason = 'event_dirty') => {
       invalidateIdentity(identityKey());
       options.onInvalidation?.({ source: 'cache', reason });
@@ -727,6 +830,10 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
       // after the mutation commits. Drain it, then deliberately start another
       // fetch so the settled lease is based on post-mutation authority.
       const identity = identityKey();
+      // The mutation has already succeeded upstream, which is a stronger
+      // recovery signal than the old failed directory probe. Refresh its
+      // authority immediately instead of waiting behind the read circuit.
+      failures.delete(identity);
       const pending = inFlight.get(identity)?.request;
       if (pending) await pending.catch(() => undefined);
       invalidateIdentity(identity);
@@ -744,7 +851,10 @@ export function createCachedWorkspaceDirectoryFetcher(options: {
   fetchDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   identityKey?: () => string;
   ttlMs?: number;
+  failureBackoffMinMs?: number;
+  failureBackoffMaxMs?: number;
   now?: () => number;
+  random?: () => number;
 } = {}): () => Promise<WorkspaceDirectoryFetchResult> {
   return createWorkspaceDirectoryAuthorityBroker(options).read;
 }
