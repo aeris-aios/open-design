@@ -13,6 +13,12 @@ function hasOpenDesignProfile(env: NodeJS.ProcessEnv): boolean {
   return existsSync(path.join(dshHome, 'profiles', 'open-design', 'package.json'));
 }
 
+const DSH_VERSION_RE = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/u;
+
+export function parseDeepSeekHarnessVersion(raw: string): string | null {
+  return DSH_VERSION_RE.exec(raw.trim())?.[1] ?? null;
+}
+
 export const deepseekHarnessAgentDef = {
   id: 'deepseek-harness',
   name: 'DeepSeek Harness',
@@ -21,6 +27,7 @@ export const deepseekHarnessAgentDef = {
   versionPolicy: {
     supportedVersions: ['0.1.0-rc.6'],
     requireVersion: true,
+    parse: parseDeepSeekHarnessVersion,
   },
   compatibilityProbe: {
     args: ['--profile', 'open-design', '--probe'],

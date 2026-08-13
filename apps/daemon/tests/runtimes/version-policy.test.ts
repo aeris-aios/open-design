@@ -8,6 +8,7 @@ import {
   buildVersionDiagnostic,
 } from '../../src/runtimes/diagnostics.js';
 import type { RuntimeAgentDef } from '../../src/runtimes/types.js';
+import { parseDeepSeekHarnessVersion } from '../../src/runtimes/defs/deepseek-harness.js';
 
 const versionedDef: RuntimeAgentDef = {
   id: 'deepseek-harness',
@@ -17,10 +18,11 @@ const versionedDef: RuntimeAgentDef = {
   versionPolicy: {
     requireVersion: true,
     supportedVersions: ['0.1.0-rc.5', '0.1.0-rc.6'],
+    parse: parseDeepSeekHarnessVersion,
   },
   fallbackModels: [{ id: 'default', label: 'Default' }],
   buildArgs: () => [],
-  streamFormat: 'dsh-sdk-json-rpc',
+  streamFormat: 'dsh-profile-jsonl',
 };
 
 function writeVersionBin(dir: string, version: string): string {
@@ -48,6 +50,7 @@ function writeProfileBin(dir: string, compatible: boolean): string {
       structured_events: true,
     },
   });
+
   if (process.platform === 'win32') {
     writeFileSync(bin, compatible
       ? `@echo off\r\nif "%1"=="--version" (echo 0.1.0-rc.6) else (echo ${probe})\r\n`
@@ -74,6 +77,19 @@ describe('runtime version policy', () => {
       expect(detected.available).toBe(available);
       expect(detected.version).toBe(version);
       expect(detected.diagnostics?.[0]?.reason).toBe(reason);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['not-a-version', 'DeepSeek Harness preview'])('rejects unparseable version output %s', async (version) => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'od-runtime-version-'));
+    try {
+      const detected = await detectAgent(versionedDef, {
+        DSH_BIN: writeVersionBin(dir, version),
+      });
+      expect(detected.available).toBe(false);
+      expect(detected.diagnostics?.[0]?.reason).toBe('version-probe-failed');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

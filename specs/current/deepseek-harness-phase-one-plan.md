@@ -150,7 +150,6 @@ explicit profile-stdio resume capability.
 The shared implementation remains in the isolated worktree and branch:
 
 ```text
-/Users/elian/Documents/od-wt-deepseek-harness-sdk-impl
 feat/deepseek-harness-profile
 ```
 
@@ -159,7 +158,7 @@ The dirty primary checkout is not modified.
 The Windows lane branches from a committed and pushed Checkpoint A:
 
 ```text
-feat/deepseek-harness-sdk-windows
+feat/deepseek-harness-profile-windows
 ```
 
 Common owns protocol behavior and fixtures. Windows owns executable launch

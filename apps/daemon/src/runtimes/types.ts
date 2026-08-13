@@ -100,6 +100,8 @@ export type RuntimeVersionPolicy = {
   supportedVersions: string[];
   /** Fail closed when the version probe fails or returns no usable version. */
   requireVersion: true;
+  /** Normalize and validate the first output line; null means unusable. */
+  parse?: (raw: string) => string | null;
 };
 
 export type RuntimeCompatibilityProbe = {

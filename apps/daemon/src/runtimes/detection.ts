@@ -155,7 +155,10 @@ async function probeVersionAtPath(
       env,
       timeout: def.versionProbeTimeoutMs ?? 3000,
     });
-    const version = String(stdout).trim().split('\n')[0]?.trim() || null;
+    const rawVersion = String(stdout).trim().split('\n')[0]?.trim() || null;
+    const version = rawVersion && def.versionPolicy?.parse
+      ? def.versionPolicy.parse(rawVersion)
+      : rawVersion;
     return { kind: 'spawned', version };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
