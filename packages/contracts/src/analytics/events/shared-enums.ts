@@ -91,7 +91,10 @@ export type TrackingAmrEntrySource =
   | 'artifact_success_upgrade'
   | 'home_artifact_upgrade';
 
-export type TrackingCampaignId = 'deepseek_v4_flash';
+// `deepseek_v4_flash` is the finished 8/6-8/13 free week; `deepseek_v4_pro`
+// is the 8/13-8/27 two-model window that follows it. Both stay declared so
+// the finished campaign's rows keep a valid id in the warehouse.
+export type TrackingCampaignId = 'deepseek_v4_flash' | 'deepseek_v4_pro';
 export type TrackingCampaignUserState = 'paid' | 'unpaid';
 export type TrackingCampaignConversionSource =
   | 'deepseek_unpaid_modal'

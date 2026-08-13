@@ -1159,8 +1159,8 @@ export function EntryShell({
     trackDeepSeekCampaignBadgeSurfaceView(analytics.track, {
       page_name: 'home',
       area: 'campaign_badge',
-      element: 'deepseek_v4_flash',
-      campaign_id: 'deepseek_v4_flash',
+      element: 'deepseek_v4_pro',
+      campaign_id: 'deepseek_v4_pro',
       user_state: deepSeekV4FlashCampaignAudience,
     });
   }, [analytics.track, deepSeekV4FlashCampaignAudience, view]);
@@ -1170,7 +1170,7 @@ export function EntryShell({
       page_name: 'home',
       area: 'campaign_badge',
       element: 'open_pricing',
-      campaign_id: 'deepseek_v4_flash',
+      campaign_id: 'deepseek_v4_pro',
       user_state: deepSeekV4FlashCampaignAudience,
     });
     const attribution = recordAmrEntry(
@@ -1179,7 +1179,7 @@ export function EntryShell({
       new Date(),
       {
         metricsConsent: config.telemetry?.metrics === true,
-        campaignId: 'deepseek_v4_flash',
+        campaignId: 'deepseek_v4_pro',
         conversionSource: 'deepseek_workbench_badge',
       },
     );
