@@ -535,7 +535,7 @@ describe('HomeView prompt handoff', () => {
     });
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Failed to start the run. Make sure the daemon is reachable, then try again.',
+      'Failed to start the run. Try again.',
     );
     expect(homeHeroPromptValue()).toBe('Create an image of a quiet reading room.');
     expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('false');
