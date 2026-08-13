@@ -2192,7 +2192,29 @@ export function ProjectView({
   useEffect(() => {
     if (!streaming) setLiveToolInput((prev) => (Object.keys(prev).length ? {} : prev));
   }, [streaming]);
-  const [error, setError] = useState<string | null>(null);
+  const [paneError, setPaneError] = useState<{
+    message: string;
+    sourceAssistantId: string | null;
+  } | null>(null);
+  const error = paneError?.message ?? null;
+  const errorSourceAssistantId = paneError?.sourceAssistantId ?? null;
+  const setError = useCallback((next: SetStateAction<string | null>) => {
+    setPaneError((current) => {
+      const currentMessage = current?.message ?? null;
+      const message = typeof next === 'function' ? next(currentMessage) : next;
+      if (message == null) return null;
+      return {
+        message,
+        sourceAssistantId:
+          typeof next === 'function' && message === currentMessage
+            ? current?.sourceAssistantId ?? null
+            : null,
+      };
+    });
+  }, []);
+  const setRunError = useCallback((message: string, sourceAssistantId: string) => {
+    setPaneError({ message, sourceAssistantId });
+  }, []);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
   const [filesRefresh, setFilesRefresh] = useState(0);
   const filesRefreshRequestKeyRef = useRef(0);
@@ -3526,17 +3548,25 @@ export function ProjectView({
       const artifactToPersist = persistedHtml === art.html ? art : { ...art, html: persistedHtml };
       const baseName = artifactBaseNameFor(art);
       const ext = artifactExtensionFor(art);
-      // Pick a name that doesn't collide with an existing project file.
-      // The first run uses `<base>.<ext>`; subsequent runs append `-2`, `-3`…
-      // so prior artifacts aren't silently overwritten.
       const currentProjectFiles = projectFilesSnapshot ?? projectFilesRef.current;
       const existing = new Set(currentProjectFiles.map((f) => f.name));
       let fileName = `${baseName}${ext}`;
+      // A non-empty identifier is stable artifact identity: when its canonical
+      // filename already exists, update that file in place. Title- and
+      // fallback-derived names still suffix collisions so new artifacts cannot
+      // silently replace unrelated project files.
+      const updatesExplicitlyIdentifiedFile =
+        Boolean(art.identifier?.trim()) && existing.has(fileName);
+      let collisionFileName = fileName;
       let n = 2;
-      while (existing.has(fileName) && savedArtifactRef.current !== fileName) {
-        fileName = `${baseName}-${n}${ext}`;
+      while (
+        existing.has(collisionFileName) &&
+        savedArtifactRef.current !== collisionFileName
+      ) {
+        collisionFileName = `${baseName}-${n}${ext}`;
         n += 1;
       }
+      if (!updatesExplicitlyIdentifiedFile) fileName = collisionFileName;
       if (ext === '.html') {
         const pointerProjectFiles = filterProjectFilesByMinMtime(
           currentProjectFiles,
@@ -3544,7 +3574,7 @@ export function ProjectView({
         );
         const pointerTarget = resolveHtmlPointerArtifactTarget({
           content: artifactToPersist.html,
-          candidateFileName: fileName,
+          candidateFileName: collisionFileName,
           projectFiles: pointerProjectFiles,
         });
         if (pointerTarget) {
@@ -5462,6 +5492,7 @@ export function ProjectView({
           || spuriouslyFailedPending
           || recoverableGenericDisconnectFailed;
         void reattachDaemonRun({
+          agentId: message.agentId,
           runId,
           projectId: project.id,
           conversationId: reattachConversationId,
@@ -5698,7 +5729,7 @@ export function ProjectView({
               textBuffer.cancel();
               unregisterTextBuffer();
               if (runMayFinalize) {
-                setError(err.message);
+                setRunError(err.message, message.id);
                 appendAssistantErrorEvent(message.id, err.message, errorCode, failure);
                 updateMessageById(
                   message.id,
@@ -5769,9 +5800,11 @@ export function ProjectView({
                     if (
                       shouldPublishRunFinishedEvent
                       && latestRunStatus?.status === 'succeeded'
+                      && latestRunStatus.agentId === 'amr'
                       && typeof latestRunStatus.artifactCount === 'number'
                     ) {
                       publishDaemonRunFinishedEvent({
+                        agentId: latestRunStatus.agentId,
                         runId,
                         projectId: project.id,
                         conversationId: reattachConversationId,
@@ -5862,9 +5895,11 @@ export function ProjectView({
                   } else if (latestRunStatus.status === 'succeeded') {
                     if (
                       shouldPublishRunFinishedEvent
+                      && latestRunStatus.agentId === 'amr'
                       && typeof latestRunStatus.artifactCount === 'number'
                     ) {
                       publishDaemonRunFinishedEvent({
+                        agentId: latestRunStatus.agentId,
                         runId,
                         projectId: project.id,
                         conversationId: reattachConversationId,
@@ -6006,7 +6041,7 @@ export function ProjectView({
               !supersededRunsRef.current.has(controller);
             if ((err as Error).name !== 'AbortError' && runMayFinalize) {
               const msg = err instanceof Error ? err.message : String(err);
-              setError(msg);
+              setRunError(msg, message.id);
               appendAssistantErrorEvent(message.id, msg);
               updateMessageById(
                 message.id,
@@ -6241,8 +6276,12 @@ export function ProjectView({
   }, [project.id]);
 
   const enqueueChatSend = useCallback((item: QueuedChatSend) => {
+    if (queuedChatSendsRef.current.some((candidate) => candidate.id === item.id)) {
+      return false;
+    }
     const next = [...queuedChatSendsRef.current, item];
     commitQueuedChatSends(next);
+    return true;
   }, [commitQueuedChatSends]);
 
   const removeQueuedChatSend = useCallback((id: string) => {
@@ -6306,9 +6345,13 @@ export function ProjectView({
     meta?: ProjectChatSendMeta;
     prompt: string;
   }) => {
-    const queuedMeta = stripQueueOnlyFromMeta(input.meta);
-    enqueueChatSend({
-      id: randomUUID(),
+    const clientRequestId = input.meta?.clientRequestId ?? randomUUID();
+    const queuedMeta = stripQueueOnlyFromMeta({
+      ...(input.meta ?? {}),
+      clientRequestId,
+    });
+    const enqueued = enqueueChatSend({
+      id: clientRequestId,
       conversationId: input.conversationId,
       prompt: input.prompt,
       attachments: input.attachments,
@@ -6316,6 +6359,7 @@ export function ProjectView({
       ...(queuedMeta === undefined ? {} : { meta: queuedMeta }),
       createdAt: Date.now(),
     });
+    if (!enqueued) return;
     if (input.commentAttachments.length > 0) {
       const reservedCommentIds = new Set(
         input.commentAttachments
@@ -6358,6 +6402,11 @@ export function ProjectView({
     ) => {
       if (!activeConversationId) return false;
       if (messagesConversationIdRef.current !== activeConversationId) return false;
+      const clientRequestId = meta?.clientRequestId ?? randomUUID();
+      meta = {
+        ...(meta ?? {}),
+        clientRequestId,
+      };
       const runSessionMode = meta?.sessionMode ?? activeSessionMode;
       const retryTarget = meta?.retryOfAssistantId
         ? resolveRetryTarget(messages, meta.retryOfAssistantId)
@@ -6880,10 +6929,24 @@ export function ProjectView({
       // consuming a replacement run's colliding tool id.
       const pendingWrites = new Map<string, string>();
       const traceTouchedFilePaths = new Set<string>();
+      // Per-write file-list reads are intentionally fire-and-forget so a file
+      // can open while the run is still streaming. Once terminal completion
+      // has selected a turn-level artifact, however, an older Write refresh
+      // must not move focus again.
+      let completionSelectedAutoOpen = false;
       const clearTraceTouchedFilePaths = () => {
         pendingWrites.clear();
         traceTouchedFilePaths.clear();
       };
+      const provenTraceTouchedFiles = () => [...traceTouchedFilePaths]
+        .map((touchedPath, index) => {
+          const name = provenProjectRelativeToolPath(
+            touchedPath,
+            projectDetail.resolvedDir,
+          );
+          return name ? { name, path: name, mtime: index } : null;
+        })
+        .filter((file): file is { name: string; path: string; mtime: number } => file !== null);
 
       const parser = createArtifactParser();
       let parsedArtifact: Artifact | null = null;
@@ -6966,6 +7029,26 @@ export function ProjectView({
             pendingWrites.delete(ev.toolUseId);
             if (!ev.isError) {
               traceTouchedFilePaths.add(filePath);
+              // Absolute daemon tool paths can prove containment before the
+              // asynchronous file-list refresh completes. Open the best
+              // proven touched artifact immediately so a terminal status and
+              // an external `/files` observer cannot outrun the workspace UI.
+              const immediateFileName = provenProjectRelativeToolPath(
+                filePath,
+                projectDetail.resolvedDir,
+              );
+              const immediateTouchedFiles = provenTraceTouchedFiles();
+              const immediateArtifact = selectAutoOpenProducedArtifact(
+                immediateTouchedFiles,
+                autoOpenArtifactOptions,
+              );
+              if (
+                !completionSelectedAutoOpen
+                && immediateFileName
+                && immediateArtifact === immediateFileName
+              ) {
+                requestOpenFile(immediateFileName);
+              }
               // Refresh first so FileWorkspace's file list (and the tab
               // body) sees the new content before we ask it to focus.
               // Only auto-open if the file actually landed in the project's
@@ -6981,7 +7064,31 @@ export function ProjectView({
                 const decision = decideAutoOpenAfterWrite(filePath, nextFiles, {
                   moduleFileNames,
                 });
-                if (decision.shouldOpen && decision.fileName) {
+                // Several Write refreshes can settle together after the UI
+                // already renders the run as Done but before the stream's
+                // onDone callback arrives. Rank every file touched so far and
+                // let only the best artifact open; otherwise a trailing
+                // support-file write (plan.md) immediately replaces the
+                // generated deliverable (index.html).
+                const bestTouchedArtifact = selectAutoOpenProducedArtifact(
+                  provenTraceTouchedFiles(),
+                  autoOpenArtifactOptions,
+                ) ?? selectAutoOpenTurnArtifact([], nextFiles, {
+                    ...autoOpenArtifactOptions,
+                    turnStartedAt: startedAt,
+                    agentTouchedFileNames: resolveAgentTouchedFileNames(
+                      [...traceTouchedFilePaths],
+                      nextFiles,
+                      project.id,
+                      projectDetail.resolvedDir,
+                    ),
+                  });
+                if (
+                  !completionSelectedAutoOpen
+                  && bestTouchedArtifact === decision.fileName
+                  && decision.shouldOpen
+                  && decision.fileName
+                ) {
                   requestOpenFile(decision.fileName);
                 }
               }).catch(() => {
@@ -7187,7 +7294,11 @@ export function ProjectView({
           // chips.
           void (async () => {
             try {
-              let nextFiles = await refreshProjectFiles();
+              // A settled shared file-list read from before the daemon exit can
+              // otherwise win the race with the file-change invalidation and
+              // make this turn persist an empty producedFiles list. Completion
+              // attribution needs a fresh post-run snapshot.
+              let nextFiles = await refreshProjectFiles({ fresh: true });
               let artifactPersistenceSucceeded = false;
               let artifactPersistenceError: string | undefined;
               const finalText = streamedText || fullText;
@@ -7217,12 +7328,13 @@ export function ProjectView({
                 if (sameTurnWrite) {
                   artifactPersistenceSucceeded = true;
                   savedArtifactRef.current = sameTurnWrite.name;
+                  completionSelectedAutoOpen = true;
                   requestOpenFile(sameTurnWrite.name);
                 } else {
                   const persistence = await persistArtifact(artifactToPersist, nextFiles, finalText);
                   if (persistence.ok) artifactPersistenceSucceeded = true;
                   else artifactPersistenceError = persistence.error;
-                  nextFiles = await refreshProjectFiles();
+                  nextFiles = await refreshProjectFiles({ fresh: true });
                 }
               }
               const produced = computeProducedFiles(
@@ -7264,7 +7376,7 @@ export function ProjectView({
                 project.id,
                 projectDetail.resolvedDir,
               ) ?? [];
-              const producedArtifactToOpen = selectAutoOpenTurnArtifact(produced, nextFiles, {
+              const turnArtifactToOpen = selectAutoOpenTurnArtifact(produced, nextFiles, {
                 ...autoOpenArtifactOptions,
                 turnStartedAt: startedAt,
                 turnEndedAt: endedAt ?? null,
@@ -7278,7 +7390,22 @@ export function ProjectView({
                   projectDetail.resolvedDir,
                 ),
               });
-              if (producedArtifactToOpen) requestOpenFile(producedArtifactToOpen);
+              const producedArtifactToOpen = selectAutoOpenProducedArtifact(
+                [
+                  ...provenTraceTouchedFiles(),
+                  ...(turnArtifactToOpen
+                    ? [
+                        nextFiles.find((file) => file.name === turnArtifactToOpen)
+                          ?? { name: turnArtifactToOpen, path: turnArtifactToOpen },
+                      ]
+                    : []),
+                ],
+                autoOpenArtifactOptions,
+              );
+              if (producedArtifactToOpen) {
+                completionSelectedAutoOpen = true;
+                requestOpenFile(producedArtifactToOpen);
+              }
               const deliveryCandidate: ChatMessage = {
                 ...latestAssistantMsg,
                 endedAt,
@@ -7360,7 +7487,7 @@ export function ProjectView({
           textBuffer.cancel();
           cancelSendTextBuffer();
           if (runMayFinalize) {
-            setError(err.message);
+            setRunError(err.message, assistantId);
             appendAssistantErrorEvent(assistantId, err.message, errorCode, failure);
             updateAssistant((prev) => ({
               ...prev,
@@ -7416,8 +7543,12 @@ export function ProjectView({
                 }
                 if (!latestRunStatus || isActiveRunStatus(latestRunStatus.status)) {
                 } else if (latestRunStatus.status === 'succeeded') {
-                  if (typeof latestRunStatus.artifactCount === 'number') {
+                  if (
+                    latestRunStatus.agentId === 'amr'
+                    && typeof latestRunStatus.artifactCount === 'number'
+                  ) {
                     publishDaemonRunFinishedEvent({
+                      agentId: latestRunStatus.agentId,
                       runId: runIdForGenericDisconnect,
                       projectId: project.id,
                       conversationId: runConversationId,
@@ -7525,7 +7656,7 @@ export function ProjectView({
             ...(authoritativeArtifactPaths ?? []),
           ];
           void (async () => {
-            const nextFiles = await refreshProjectFiles();
+            const nextFiles = await refreshProjectFiles({ fresh: true });
             if (authoritativeArtifactPaths === undefined) return;
             const produced = computeProducedFiles(
               beforeFileNames,
@@ -7644,7 +7775,7 @@ export function ProjectView({
           conversationId: runConversationId,
           userMessageId: userMsg.id,
           assistantMessageId: assistantId,
-          clientRequestId: randomUUID(),
+          clientRequestId,
           skillId: project.skillId ?? null,
           skillIds: Array.isArray(meta?.skillIds) ? meta.skillIds : [],
           context: runContext,
@@ -7819,7 +7950,7 @@ export function ProjectView({
           conversationId: runConversationId,
           userMessageId: userMsg.id,
           assistantMessageId: assistantId,
-          clientRequestId: randomUUID(),
+          clientRequestId,
           skillId: project.skillId ?? null,
           skillIds: Array.isArray(meta?.skillIds) ? meta.skillIds : [],
           context: runContext,
@@ -7969,7 +8100,11 @@ export function ProjectView({
       commentAttachments: ChatCommentAttachment[],
       meta?: ChatSendMeta,
     ): Promise<ChatSendOutcome> => {
-      if (activeConversationId) {
+      if (
+        activeConversationId
+        && config.mode === 'daemon'
+        && config.agentId === 'amr'
+      ) {
         const decision = await requestAmrArtifactUpgrade({
           projectId: project.id,
           conversationId: activeConversationId,
@@ -7979,7 +8114,7 @@ export function ProjectView({
       }
       void handleSend(prompt, attachments, commentAttachments, meta);
     },
-    [activeConversationId, handleSend, project.id],
+    [activeConversationId, config.agentId, config.mode, handleSend, project.id],
   );
 
   // Cancel every in-flight run for the current conversation (the user's own
@@ -9263,6 +9398,8 @@ export function ProjectView({
 	            sendDisabled: currentConversationSendDisabled,
             queuedItems: currentConversationQueuedItems,
             error: conversationLoadError ?? error,
+            errorSourceAssistantId:
+              conversationLoadError ? null : errorSourceAssistantId,
             onSend: handleComposerSend,
             onRetry: handleRetry,
             onStop: handleStop,
@@ -9282,6 +9419,7 @@ export function ProjectView({
 	      currentConversationLoading,
 	      currentConversationControlStreaming,
       error,
+      errorSourceAssistantId,
       handleAssistantFeedback,
       handleRetry,
       handleComposerSend,
@@ -10729,6 +10867,9 @@ export function ProjectView({
               }
               queuedItems={currentConversationQueuedItems}
               error={conversationLoadError ?? error}
+              errorSourceAssistantId={
+                conversationLoadError ? null : errorSourceAssistantId
+              }
               projectId={project.id}
               sessionMode={activeSessionMode}
               onSessionModeChange={handleActiveConversationSessionModeChange}
@@ -11555,7 +11696,15 @@ function loadQueuedChatSends(projectId: string): QueuedChatSend[] {
     const raw = window.localStorage.getItem(queuedChatSendsStorageKey(projectId));
     const parsed = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isQueuedChatSend).slice(0, 100);
+    const seenIds = new Set<string>();
+    return parsed
+      .filter(isQueuedChatSend)
+      .filter((item) => {
+        if (seenIds.has(item.id)) return false;
+        seenIds.add(item.id);
+        return true;
+      })
+      .slice(0, 100);
   } catch {
     return [];
   }
@@ -11825,17 +11974,31 @@ export function computeProducedFiles(
   projectId?: string,
   projectRoot?: string | null,
 ): ProjectFile[] | undefined {
+  const beforeSet = beforeNames
+    ? beforeNames instanceof Set
+      ? beforeNames
+      : new Set(beforeNames)
+    : null;
   if (authoritativePaths !== undefined) {
     const byName = new Map<string, ProjectFile>();
+    // The daemon's authoritative list intentionally covers user-facing
+    // artifacts and render dependencies, not every file an agent can create
+    // (for example plugin manifests and Markdown). Preserve all files that are
+    // provably new from the turn baseline, then use authoritative paths to add
+    // modified existing artifacts without attributing untouched inputs.
+    if (beforeSet) {
+      for (const file of next) {
+        if (!beforeSet.has(file.name)) byName.set(file.name, file);
+      }
+    }
     for (const rawPath of authoritativePaths) {
       const file = findTouchedProjectFile(rawPath, next, projectId, projectRoot);
       if (file) byName.set(file.name, file);
     }
     return filterImplicitProducedFiles([...byName.values()]);
   }
-  if (!beforeNames) return undefined;
-  const set = beforeNames instanceof Set ? beforeNames : new Set(beforeNames);
-  return filterImplicitProducedFiles(next.filter((f) => !set.has(f.name)));
+  if (!beforeSet) return undefined;
+  return filterImplicitProducedFiles(next.filter((f) => !beforeSet.has(f.name)));
 }
 
 export function computeTraceObjectFiles(
@@ -11940,6 +12103,27 @@ function findTouchedProjectFile(
     candidates.some((candidate) => candidate.split('/').pop() === basename),
   );
   return basenameMatches.length === 1 ? basenameMatches[0]!.file : null;
+}
+
+// Return a project-relative tool path only when an absolute Write/Edit path
+// can be proven to live under the resolved project root. This runs before the
+// refreshed inventory is available, so aliases, relative paths, and paths with
+// only a matching `projects/<id>` suffix must wait for that later authoritative
+// match instead of creating a persistent placeholder tab.
+function provenProjectRelativeToolPath(
+  rawPath: string,
+  projectRoot?: string | null,
+): string | null {
+  const slashed = rawPath.replace(/\\/g, '/');
+  if (!isAbsoluteToolPath(slashed) || !projectRoot) return null;
+  const segments = lexicallyNormalizePathSegments(slashed);
+  if (!segments || segments.length === 0) return null;
+  const rootSegments = lexicallyNormalizePathSegments(projectRoot.replace(/\\/g, '/'));
+  if (!rootSegments || segments.length <= rootSegments.length) return null;
+  for (let index = 0; index < rootSegments.length; index += 1) {
+    if (segments[index] !== rootSegments[index]) return null;
+  }
+  return segments.slice(rootSegments.length).join('/') || null;
 }
 
 function relativePathFromManagedProjectAlias(

@@ -27,6 +27,7 @@ import {
   applyJsonInstall,
   removeJsonInstall,
 } from './mcp-agent-install.js';
+import { resolveMcpWorkspaceContext } from './mcp-workspace-context.js';
 
 const argv = process.argv.slice(2);
 
@@ -788,6 +789,7 @@ async function runAmr(args) {
   if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
   od amr login [--json]
+  od amr logout [--json]
   od amr status [--refresh] [--json]
 
 Options:
@@ -800,6 +802,20 @@ Options:
   const flags = parseFlags(rest, { string: AMR_STRING_FLAGS, boolean: AMR_BOOLEAN_FLAGS });
   const base = await cliDaemonBaseUrl(flags);
   switch (sub) {
+    case 'logout': {
+      const logoutResp = await fetch(`${base}/api/integrations/vela/logout`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      if (!logoutResp.ok) return structuredHttpFailure(logoutResp);
+      const result = await logoutResp.json();
+      if (flags.json) {
+        return process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      }
+      console.log('AMR account\tsigned out');
+      return;
+    }
     case 'login': {
       const loginResp = await fetch(`${base}/api/integrations/vela/login`, {
         method: 'POST',
@@ -6602,15 +6618,48 @@ Common options:
     boolean: PROJECT_BOOLEAN_FLAGS,
   });
   const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
-  const workspaceHeaders =
-    workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const explicitWorkspaceHeaders = workspaceHeadersFromExplicitFlags(flags);
+  const workspaceHeaders = explicitWorkspaceHeaders ?? {};
   switch (sub) {
     case 'list': {
-      const resp = await fetch(`${base}/api/projects`, {
-        headers: workspaceHeaders,
-      });
-      if (!resp.ok) return structuredHttpFailure(resp);
-      const data = await resp.json();
+      // After 0.18.0's workspace isolation, GET /api/projects is the NO-SCOPE
+      // catalog: it only returns projects that were never adopted into a
+      // workspace. Every project `od project import-folder` creates is
+      // immediately workspace-bound, so a headerless `od project list` shows
+      // an empty list while the UI keeps listing them (#6679). #6595 fixed
+      // this for the MCP bridge by resolving the signed-in workspace once
+      // and routing to GET /api/workspaces/:id/projects; mirror that here.
+      // BOTH the implicit signed-in path AND an explicit
+      // --workspace/--workspace-member pair route to the workspace-scoped
+      // catalog. The signed-out / non-vela / no-directory cases fall back to
+      // the original headerless catalog so `od project list` still returns
+      // unbound projects there. Passing --workspace to /api/projects does
+      // NOT scope it (#6679 repro), so the explicit path needs the same
+      // workspace-scoped endpoint as the implicit path.
+      let listResp: any = null;
+      let scopeHeaders: Record<string, string> = {};
+      if (explicitWorkspaceHeaders) {
+        const workspaceId = String(flags.workspace).trim();
+        scopeHeaders = explicitWorkspaceHeaders;
+        listResp = await fetch(
+          `${base}/api/workspaces/${encodeURIComponent(workspaceId)}/projects`,
+          { headers: scopeHeaders },
+        );
+      } else {
+        const ctx = await resolveMcpWorkspaceContext(base);
+        if (ctx) {
+          scopeHeaders = ctx.headers;
+          listResp = await fetch(
+            `${base}/api/workspaces/${encodeURIComponent(ctx.workspaceId)}/projects`,
+            { headers: scopeHeaders },
+          );
+        }
+      }
+      if (!listResp) {
+        listResp = await fetch(`${base}/api/projects`, { headers: workspaceHeaders });
+      }
+      if (!listResp.ok) return structuredHttpFailure(listResp);
+      const data = await listResp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       const projects = data?.projects ?? [];
       if (projects.length === 0) {

@@ -373,6 +373,7 @@ import {
   registerBuiltInAtomWorkers,
   registerBundledPlugins,
   registryRootsForDataDir,
+  resolveLocalPluginBySource,
   restoreProjectSnapshotLink,
   resolvePluginSnapshot,
   runPipelineForRun,
@@ -460,6 +461,7 @@ import {
   createRunArtifactBaselines,
   diffRunArtifacts,
   snapshotProjectArtifacts,
+  snapshotProjectArtifactsAsync,
 } from './run-artifact-fs.js';
 import {
   AiHtmlVersionSnapshotError,
@@ -541,7 +543,13 @@ import {
   readAllTokens,
   setToken,
 } from './mcp-tokens.js';
-import { agentCliEnvForAgent, readAppConfig, readPluginEnvKnobs, writeAppConfig } from './app-config.js';
+import {
+  agentCliEnvForAgent,
+  readAppConfig,
+  readAppConfigSync,
+  readPluginEnvKnobs,
+  writeAppConfig,
+} from './app-config.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
 import {
@@ -553,8 +561,8 @@ import { buildMcpInstallPayload } from './mcp-install-info.js';
 import { createDiagnosticsExportHandler } from './diagnostics-export.js';
 import { DIAGNOSTICS_EXPORT_PATH } from '@open-design/diagnostics';
 import {
-  buildProjectArchive,
-  buildBatchArchive,
+  createProjectArchiveStream,
+  createBatchArchiveStream,
   createProjectFolder,
   decodeMultipartFilename,
   deleteProjectFile,
@@ -597,9 +605,10 @@ import {
   getConversation,
   getDeployment,
   getDeploymentById,
-  getProjectCommentAnchorConversationId,
+  getMessage,
   getMessageTelemetryFinalizationState,
   getPreviewComment,
+  getProjectCommentAnchorConversationId,
   getProjectPreviewComment,
   getProject,
   countWorkspaceProjectRefs,
@@ -767,6 +776,7 @@ import {
   createWorkspaceDirectoryAuthorityBroker,
   createWorkspaceContextProviderFromEnv,
   fetchVelaWorkspaceDirectory,
+  velaWorkspaceDirectoryIdentity,
   workspaceContextFromDirectoryItem,
 } from './collab/vela-workspace-context.js';
 import { verifyWorkspaceRequestContext } from './collab/request-workspace-context.js';
@@ -779,6 +789,17 @@ import {
   AUTHORITATIVE_PROJECT_PRESENCE_CAPABILITY,
   startHubEventsSubscriber,
 } from './collab/hub-events-subscriber.js';
+import {
+  createWorkspaceAuthorityHealthCoordinator,
+  resolveWorkspaceAuthorityCacheMode,
+} from './collab/workspace-authority-health.js';
+import {
+  recordWorkspaceAuthorityDecision,
+  recordWorkspaceAuthorityInvalidation,
+  recordWorkspaceAuthorityRealtimeTransition,
+  recordWorkspaceAuthorityRevocationClear,
+  recordWorkspaceAuthoritySuppressedRequest,
+} from './metrics/workspace-authority.js';
 import {
   createWorkspaceHubSubscriptionManager,
   type WorkspaceHubSubscriptionManager,
@@ -816,12 +837,16 @@ import {
   createTeamResourceListCache,
   invalidateTeamResourceListingCaches,
 } from './collab/team-resource-list-cache.js';
+import { createVelaResourcePullBatcher } from './collab/vela-cli-resource-pull-batcher.js';
 import {
   createRememberedTeamResourceScopes,
   type RememberedTeamResourceScopeLease,
 } from './collab/remembered-team-resource-scopes.js';
 import { readVelaControlApiContext } from './integrations/vela.js';
-import { fetchVelaWorkspaceBillingProjection } from './integrations/vela-billing.js';
+import {
+  fetchVelaWorkspaceBillingProjection,
+  isVelaWorkspaceAuthorizationError,
+} from './integrations/vela-billing.js';
 import { createCollabPublishWatcher } from './collab/collab-publish-watcher.js';
 import {
   isUnmaterializedSharedPlaceholder,
@@ -859,6 +884,7 @@ import {
   createCommentRelayOutboxStore,
 } from './collab/comment-relay-outbox.js';
 import { createWorkspaceInvalidationPoller } from './collab/workspace-invalidation-poller.js';
+import { createWorkspaceExactContextCache } from './collab/workspace-exact-context-cache.js';
 import {
   handleHubProjectMetadataChanged,
   handleHubTeamProjectsChanged,
@@ -908,6 +934,7 @@ import {
   CHAT_TOOL_ENDPOINTS,
   CHAT_TOOL_OPERATIONS,
   PROJECT_EXPORT_TOOL_ENDPOINT,
+  resolveChatToolTokenTtlMs,
   toolTokenRegistry,
 } from './tool-tokens.js';
 import {
@@ -947,7 +974,13 @@ import {
   seedLibraryExtensionOrigins,
 } from './library-tokens.js';
 import { listLibraryTokenOrigins } from './library-store.js';
-import { apiTokenFromEnv, isApiAuthDisabled } from './api-token-auth.js';
+import {
+  API_TOKEN_BASIC_CHALLENGE,
+  apiTokenAuthorizationMatches,
+  apiTokenFromEnv,
+  isApiAuthDisabled,
+  isApiTokenMiddlewareEnabled,
+} from './api-token-auth.js';
 import { createOpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 import { createWhatsNewService } from './services/whats-new.js';
 import { execCommandViaLoginShell } from './services/login-shell.js';
@@ -1390,7 +1423,32 @@ function emitWorkspaceEvent(
 export function handleHubWorkspaceContextChanged(
   workspaceId: string,
   pollWorkspaceInvalidation: () => Promise<void>,
+  invalidateWorkspaceDirectory: () => void = () => undefined,
 ): void {
+  // Retire the settled authority generation before either the web or the
+  // daemon can start a refresh. A directory request that began before this
+  // event is allowed to finish for its original caller, but the broker will
+  // not let it repopulate the post-event generation.
+  invalidateWorkspaceDirectory();
+  emitWorkspaceEvent(
+    workspaceId,
+    { type: 'workspace-context-changed', at: Date.now() },
+  );
+  void pollWorkspaceInvalidation().catch(() => undefined);
+}
+
+/** Terminal counterpart to workspace-context-changed. Vela has already
+ * re-derived the stream principal and is closing the connection, so local
+ * directory and billing projections must be retired synchronously before any
+ * reconciliation I/O starts. */
+export function handleHubWorkspaceAccessRevoked(
+  workspaceId: string,
+  pollWorkspaceInvalidation: () => Promise<void>,
+  invalidateWorkspaceDirectory: () => void,
+  revokeWorkspaceBilling: (workspaceId: string) => void,
+): void {
+  invalidateWorkspaceDirectory();
+  revokeWorkspaceBilling(workspaceId);
   emitWorkspaceEvent(
     workspaceId,
     { type: 'workspace-context-changed', at: Date.now() },
@@ -2392,6 +2450,7 @@ export interface StartServerOptions {
   port?: number;
   returnServer?: boolean;
   runtime?: DaemonRuntimeContext | null;
+  staticDir?: string;
 }
 
 export interface StartServerResult {
@@ -2409,11 +2468,15 @@ export async function startServer({
   desktopSlideRenderer = null,
   desktopArtifactExporter = null,
   runtime = null,
+  staticDir = STATIC_DIR,
 }: StartServerOptions = {}) {
   host = normalizeDaemonBindHost(host);
   let resolvedPort = port;
   let daemonShuttingDown = false;
   const extraAllowedOrigins = configuredAllowedOrigins();
+  const workspaceAuthorityCacheMode = resolveWorkspaceAuthorityCacheMode(
+    process.env.OD_WORKSPACE_AUTHORITY_CACHE_MODE,
+  );
 
   // Plan §3.K1 / spec §15.7 — bound-API-token guard.
   //
@@ -2425,16 +2488,13 @@ export async function startServer({
   // Loopback hosts (127.0.0.1 / ::1 / localhost) are always allowed —
   // the desktop / dev flow remains unchanged. Setting OD_API_TOKEN is
   // purely additive: when present, every /api/* request must carry a
-  // matching `Authorization: Bearer <token>` header (loopback origins
+  // matching Bearer token or browser Basic credentials (loopback origins
   // are exempted so the desktop UI keeps working).
   const apiToken = apiTokenFromEnv();
   const apiAuthDisabled = isApiAuthDisabled();
   const apiTokenAuthEnabled = apiToken.length > 0 && !apiAuthDisabled;
-  const isApiTokenAuthorization = (authorization: string | undefined): boolean => {
-    if (!apiTokenAuthEnabled) return false;
-    const match = /^Bearer\s+(\S+)\s*$/i.exec(authorization ?? '');
-    return match?.[1] === apiToken;
-  };
+  const isApiTokenAuthorization = (authorization: string | undefined): boolean =>
+    apiTokenAuthEnabled && apiTokenAuthorizationMatches(authorization, apiToken);
   if (!isLoopbackHostname(host) && apiToken.length === 0 && !apiAuthDisabled) {
     throw new Error(
       `OD_BIND_HOST=${host} requires OD_API_TOKEN to be set. ` +
@@ -2462,16 +2522,16 @@ export async function startServer({
   app.use(express.json({ limit: '4mb' }));
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
 
-  // Plan §3.K1 — bearer-token middleware.
+  // Plan §3.K1 — API-token middleware.
   //
   // Active only when OD_API_TOKEN is set and API auth is not disabled.
-  // Loopback origins skip the
-  // check (the desktop UI / local CLI never carry a bearer); every
-  // other request must present `Authorization: Bearer <token>` with a
-  // value matching `OD_API_TOKEN`. A currently valid run-scoped token may
-  // pass only an exact screenshot-export endpoint; its route rechecks the
-  // operation and project. Health / readiness / version remain open. Server-minted
-  // project preview asset scopes are also accepted for GETs so sandboxed
+  // Loopback origins skip the check (the desktop UI / local CLI never carry
+  // credentials); every other request must present a matching bearer token
+  // (CLI / proxy) or matching HTTP Basic credentials (browser UI). A currently
+  // valid run-scoped token may pass only an exact screenshot-export endpoint;
+  // its route rechecks the operation and project. Health / readiness / version
+  // remain open. Server-minted project preview asset scopes are also accepted
+  // for GETs so sandboxed
   // browser iframes can load HTML/CSS/JS without privileged headers.
   // Rich daemon status stays authenticated because it includes local
   // runtime paths.
@@ -2497,10 +2557,10 @@ export async function startServer({
       }
       // Loopback short-circuit. We ignore the proxied X-Forwarded-For
       // header here because a reverse proxy MUST always forward the
-      // bearer; the loopback bypass exists for the localhost desktop
+      // credentials; the loopback bypass exists for the localhost desktop
       // UI which has no proxy in the path.
       if (isLoopbackPeerAddress(req.socket?.remoteAddress)) return next();
-      if (isApiTokenAuthorization(req.get('authorization'))) return next();
+      if (apiTokenAuthorizationMatches(req.get('authorization'), apiToken)) return next();
       if (
         req.method === 'POST'
         && PROJECT_RUN_SCOPED_EXPORT_PATH_RE.test(req.path)
@@ -2511,9 +2571,30 @@ export async function startServer({
       ) {
         return next();
       }
+      res.setHeader('WWW-Authenticate', API_TOKEN_BASIC_CHALLENGE);
       return res.status(401).json({
-        error: { code: 'API_TOKEN_REQUIRED', message: 'Authorization: Bearer <OD_API_TOKEN> required' },
+        error: {
+          code: 'API_TOKEN_REQUIRED',
+          message: 'Authorization: Bearer <OD_API_TOKEN> or browser Basic authentication required',
+        },
       });
+    });
+
+    // Docker Desktop forwards host-browser traffic across its bridge, so the
+    // daemon correctly sees a non-loopback peer. Challenge the SPA document
+    // navigation before serving any shell bytes; browsers then cache the Basic
+    // credentials for same-origin /api requests. Static assets do not need a
+    // separate challenge because the authenticated shell is the only entry
+    // point and API routes still enforce credentials independently.
+    app.use((req, res, next) => {
+      if (isLoopbackPeerAddress(req.socket?.remoteAddress)) return next();
+      if (resolveStaticSpaFallbackPath(req, staticDir) === null) return next();
+      if (apiTokenAuthorizationMatches(req.get('authorization'), apiToken)) return next();
+
+      res.setHeader('WWW-Authenticate', API_TOKEN_BASIC_CHALLENGE);
+      return res.status(401).type('text/plain').send(
+        'Open Design authentication required. Use username "open-design" and OD_API_TOKEN as the password.',
+      );
     });
   }
 
@@ -2722,7 +2803,9 @@ export async function startServer({
     PLUGIN_LOCKFILE_PATH,
     PLUGIN_UPLOAD_MAX_BYTES,
   });
-  const mediaTaskStore = createMediaTaskStore(db);
+  const mediaTaskStore = createMediaTaskStore(db, {
+    isRunActive: (runId) => toolTokenRegistry.activeRunTokenCount(runId) > 0,
+  });
   const {
     authorizeToolRequest,
     optionalToolGrantFromRequest,
@@ -2918,8 +3001,8 @@ export async function startServer({
     console.warn('[od] Failed to recover stale live artifact refreshes:', error);
   });
 
-  if (fs.existsSync(STATIC_DIR)) {
-    app.use(express.static(STATIC_DIR));
+  if (fs.existsSync(staticDir)) {
+    app.use(express.static(staticDir));
   }
 
   // ---- Projects (DB-backed) -------------------------------------------------
@@ -2974,12 +3057,32 @@ export async function startServer({
   // recorded in — and a project-scoped collab call may only be pinned to — a
   // workspace that can actually host a team plane. See collab/team-share-scope.ts.
   const workspaceTypes = createWorkspaceTypeRegistry();
+  const configuredAmrEnv = () =>
+    agentCliEnvForAgent(readAppConfigSync(RUNTIME_DATA_DIR).agentCliEnv, 'amr');
   const workspaceDirectoryAuthority = createWorkspaceDirectoryAuthorityBroker({
     fetchDirectory: async () => {
-      const result = await fetchVelaWorkspaceDirectory();
+      const result = await fetchVelaWorkspaceDirectory({
+        configuredEnv: configuredAmrEnv(),
+      });
       if (result.ok) workspaceTypes.learn(result.items);
       return result;
     },
+    identityKey: () => velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    ),
+    onDecision: (input) => recordWorkspaceAuthorityDecision({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
+    onSuppressedRequest: (input) => recordWorkspaceAuthoritySuppressedRequest({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
+    onInvalidation: (input) => recordWorkspaceAuthorityInvalidation({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
   });
   const fetchWorkspaceDirectory = workspaceDirectoryAuthority.read;
   const fetchFreshMutationWorkspaceDirectory =
@@ -3225,6 +3328,51 @@ export async function startServer({
       clearLocalSelection: () => activeWorkspace.clear(),
     }),
   );
+  const workspaceExactContextCache = createWorkspaceExactContextCache({
+    provider: workspaceContext,
+    identity: () => velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    ),
+    onDecision: (input) => recordWorkspaceAuthorityDecision({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
+    onSuppressedRequest: (input) => recordWorkspaceAuthoritySuppressedRequest({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
+    onInvalidation: (input) => recordWorkspaceAuthorityInvalidation({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
+  });
+  const workspaceContextProvider = workspaceExactContextCache.provider;
+  const cachedWorkspaceContextForRequest = (
+    req: unknown,
+    requestedWorkspaceId?: string,
+  ): WorkspaceCollabContext | null => {
+    const claimed = workspaceResourceContextFromRequest(req);
+    if (!claimed || claimed === 'missing') return null;
+    if (
+      requestedWorkspaceId &&
+      claimed.workspaceId !== requestedWorkspaceId.trim()
+    ) {
+      return null;
+    }
+    const cached = workspaceExactContextCache.cached(claimed.workspaceId);
+    return cached &&
+      cached.workspaceMemberId === claimed.workspaceMemberId &&
+      cached.memberStatus === 'active' &&
+      cached.lifecycleState !== 'deleted'
+      ? cached
+      : null;
+  };
+  const verifyWorkspaceContextReadAuthority = async (req: unknown) => {
+    const cached = cachedWorkspaceContextForRequest(req);
+    if (cached) return { ok: true as const, context: cached };
+    return verifyWorkspaceReadAuthority(req);
+  };
   /**
    * Where a created project belongs for the surfaces with no authorization gate
    * of their own. An explicit pair is verified through the same fresh directory
@@ -3327,7 +3475,7 @@ export async function startServer({
     _workspaceId?: string,
   ): void => {};
   const collab = createCollabRuntime({
-    workspaceContext,
+    workspaceContext: workspaceContextProvider,
     canPublishProjectContent: (projectId) =>
       !projectIsUnmaterializedSharedPlaceholder(projectId),
     resolveProjectDir: async (projectId) => {
@@ -4670,22 +4818,22 @@ export async function startServer({
   };
   let workspaceHubSubscriptions: WorkspaceHubSubscriptionManager | null = null;
   const workspaceBillingRuntime = createWorkspaceBillingRuntimeCoordinator({
-    fetchProjection: async ({ workspaceId, workspaceMemberId }) => {
-      const directory = await fetchWorkspaceDirectory();
-      if (!directory.ok) {
-        throw Object.assign(new Error('workspace directory unavailable'), {
-          code: 'workspace_directory_unavailable',
-        });
+    fetchProjection: async ({ workspaceId }) => {
+      try {
+        // The Vela CLI sends only the Bearer credential plus workspace-id
+        // candidate. Vela re-derives the member principal server-side, and
+        // the runtime validates the returned member id before accepting it.
+        return await fetchVelaWorkspaceBillingProjection(workspaceId);
+      } catch (error) {
+        if (isVelaWorkspaceAuthorizationError(error)) {
+          throw new WorkspaceBillingAccessRevokedError();
+        }
+        throw error;
       }
-      const membership = directory.items.find(
-        (item) =>
-          item.workspaceId === workspaceId &&
-          item.workspaceMemberId === workspaceMemberId &&
-          item.memberStatus === 'active' &&
-          item.lifecycleState === 'active',
-      );
-      if (!membership) throw new WorkspaceBillingAccessRevokedError();
-      return fetchVelaWorkspaceBillingProjection(workspaceId);
+    },
+    onAccessRevoked: ({ workspaceId }) => {
+      workspaceDirectoryAuthority.invalidate('auth_reject');
+      workspaceExactContextCache.invalidate(workspaceId, 'auth_reject');
     },
     onStateChange: (state) => {
       // The request that created a runtime already receives this state in its
@@ -4704,6 +4852,11 @@ export async function startServer({
         interests.map((interest) => interest.workspaceId),
       );
     },
+    onPollSuppressed: () => recordWorkspaceAuthoritySuppressedRequest({
+      mode: workspaceAuthorityCacheMode,
+      source: 'billing',
+      reason: 'safety_floor',
+    }),
   });
   /**
    * Warm or revalidate both digest faces for one exact directory-verified
@@ -4739,6 +4892,8 @@ export async function startServer({
   let workspaceAnalyticsService: AnalyticsService | null = null;
   registerCollabContextRoutes(app, {
     workspaceContext: collab.workspaceContext,
+    verifyWorkspaceReadAuthority: verifyWorkspaceContextReadAuthority,
+    readCachedWorkspaceAuthority: cachedWorkspaceContextForRequest,
     activeWorkspace,
     // A tab-local selection leaves this exact Workspace's scoped caches cold.
     // Warm only the directory-verified id announced by that request; the
@@ -4809,6 +4964,11 @@ export async function startServer({
         },
         onTeamProjectsObserved: ({ workspaceId: observedWorkspaceId }) =>
           proactiveContentPull.advanceRecoveryFloor(observedWorkspaceId),
+        onPollSuppressed: () => recordWorkspaceAuthoritySuppressedRequest({
+          mode: workspaceAuthorityCacheMode,
+          source: 'directory',
+          reason: 'safety_floor',
+        }),
         onError: (error) =>
           console.warn(
             `[od] workspace ${workspaceId} invalidation recovery error:`,
@@ -4826,6 +4986,44 @@ export async function startServer({
     if (!workspaceId) return Promise.resolve();
     return workspaceInvalidationPollerFor(workspaceId).pollOnce();
   };
+  const workspaceAuthorityHealth = createWorkspaceAuthorityHealthCoordinator({
+    mode: workspaceAuthorityCacheMode,
+    catchUp: async (workspaceId) => {
+      // A healthy transport is not enough to suppress legacy polling. First
+      // cross a fresh directory boundary and close the exact Workspace gap.
+      workspaceDirectoryAuthority.invalidate('catch_up');
+      workspaceExactContextCache.invalidate(workspaceId, 'catch_up');
+      const exactContext = await workspaceExactContextCache.refresh(
+        { workspaceId },
+        'catch_up',
+      );
+      if (!exactContext || exactContext.workspaceId !== workspaceId) {
+        throw new Error('exact workspace catch-up was unavailable');
+      }
+      await refreshWorkspaceDigestFaces(workspaceId, {
+        revalidate: true,
+        freshAuthority: true,
+      });
+      await pollWorkspaceInvalidationForWorkspace(workspaceId);
+      workspaceBillingRuntime.reconnect(workspaceId);
+    },
+    setDirectoryPollingHealthy: (workspaceId, healthy) =>
+      workspaceInvalidationPollerFor(workspaceId).setRealtimeHealthy(healthy),
+    setBillingPollingHealthy: (workspaceId, healthy) =>
+      workspaceBillingRuntime.setRealtimeHealthy(workspaceId, healthy),
+    setContextCachingHealthy: (workspaceId, healthy) =>
+      workspaceExactContextCache.setRealtimeHealthy(workspaceId, healthy),
+    onDecision: (input) => recordWorkspaceAuthorityDecision({
+      mode: workspaceAuthorityCacheMode,
+      ...input,
+    }),
+    onError: (error) => {
+      console.warn(
+        '[od] workspace authority catch-up failed; retaining legacy polling:',
+        String(error),
+      );
+    },
+  });
   // Collab realtime hop-1: cloud hub → daemon push channel. The hub emits the
   // same thin invalidation signals the web would otherwise discover by
   // polling. Every upstream stream comes from an explicit leased Workspace
@@ -4883,6 +5081,26 @@ export async function startServer({
       }
       console.info(`[od] hub events channel ${state}`);
     },
+    onAuthorityHealthChange: ({
+      workspaceId,
+      healthy,
+      capabilities,
+      listenerStatus,
+    }) => {
+      recordWorkspaceAuthorityRealtimeTransition({
+        mode: workspaceAuthorityCacheMode,
+        healthy,
+        memberEvents: capabilities.includes('workspace-member-events-v1'),
+        listenerStatus: capabilities.includes(
+          'workspace-event-listener-status-v1',
+        ),
+        sourceGap: listenerStatus?.sourceGap === true,
+      });
+      void workspaceAuthorityHealth.update({
+        workspaceId: workspaceId ?? subscribedWorkspaceId,
+        healthy,
+      });
+    },
     onConnect: ({ reconnect, workspaceId, capabilities }) => {
       const verifiedWorkspaceId = workspaceId ?? subscribedWorkspaceId;
       if (capabilities.includes(AUTHORITATIVE_PROJECT_PRESENCE_CAPABILITY)) {
@@ -4909,6 +5127,33 @@ export async function startServer({
         `[od] hub event dropped reason=${reason} event=${eventName} ` +
           `expectedWorkspaceId=${expectedWorkspaceId ?? 'unknown'} ` +
           `actualWorkspaceId=${actualWorkspaceId ?? 'unknown'}`,
+      );
+    },
+    onAccessRevoked: ({ workspaceId, reason }) => {
+      const revocationReceivedAt = performance.now();
+      const exactWorkspaceId = workspaceId ?? subscribedWorkspaceId;
+      console.info(
+        `[od] hub workspace access revoked workspaceId=${exactWorkspaceId} reason=${reason ?? 'unknown'}`,
+      );
+      handleHubWorkspaceAccessRevoked(
+        exactWorkspaceId,
+        () => pollWorkspaceInvalidationForWorkspace(exactWorkspaceId),
+        () => {
+          workspaceDirectoryAuthority.invalidate('auth_reject');
+          workspaceExactContextCache.invalidate(
+            exactWorkspaceId,
+            'auth_reject',
+          );
+        },
+        (revokedWorkspaceId) =>
+          workspaceBillingRuntime.revokeWorkspace(
+            revokedWorkspaceId,
+            'vela-access-revoked',
+          ),
+      );
+      recordWorkspaceAuthorityRevocationClear(
+        workspaceAuthorityCacheMode,
+        performance.now() - revocationReceivedAt,
       );
     },
     onEvent: (event) => {
@@ -5066,10 +5311,34 @@ export async function startServer({
           handleHubWorkspaceContextChanged(
             eventWorkspaceId,
             () => pollWorkspaceInvalidationForWorkspace(subscribedWorkspaceId),
+            () => {
+              workspaceDirectoryAuthority.invalidate('event_dirty');
+              workspaceExactContextCache.invalidate(
+                eventWorkspaceId,
+                'event_dirty',
+              );
+            },
           );
           // Revalidate exact membership before the next billing projection.
           // A removed/rebound member must clear money and entitlement state,
           // even when no billing-specific event accompanies the roster change.
+          workspaceBillingRuntime.reconnect(subscribedWorkspaceId);
+          break;
+        case 'workspace-members-changed':
+          handleHubWorkspaceContextChanged(
+            eventWorkspaceId,
+            () => pollWorkspaceInvalidationForWorkspace(subscribedWorkspaceId),
+            () => {
+              workspaceDirectoryAuthority.invalidate('event_dirty');
+              workspaceExactContextCache.invalidate(
+                eventWorkspaceId,
+                'event_dirty',
+              );
+            },
+          );
+          // A role update or removal changes both authorization and the
+          // billing member projection even when no billing event accompanies
+          // the roster mutation.
           workspaceBillingRuntime.reconnect(subscribedWorkspaceId);
           break;
         case 'billing-changed':
@@ -5386,7 +5655,6 @@ export async function startServer({
     }
 
     try {
-      const { runVelaResourceCommand } = await import('./collab/vela-cli-resource-adapter.js');
       const materialized = await materializeWorkspaceScopedTeamResource({
         kindRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
         storageName: resource.id,
@@ -5397,15 +5665,13 @@ export async function startServer({
           hubResourceId,
         },
         pullInto: (stagedFolder) =>
-          runVelaResourceCommand([
-            'pull',
-            'plugin',
-            hubResourceId,
-            stagedFolder,
-            '--ref',
-            'published',
-            '--json',
-          ], workspaceId).then(() => undefined),
+          teamResourcePullBatcher.pull({
+            workspaceId,
+            kind: 'plugin',
+            resourceId: hubResourceId,
+            dir: stagedFolder,
+            ref: 'published',
+          }),
         verifyWorkspaceScope: () => teamResourceScopeStillAuthorized(scope),
         verifyStillShared: () => teamResourceStillShared('plugin', resource, scope),
       });
@@ -5546,7 +5812,6 @@ export async function startServer({
       return;
     }
     try {
-      const { runVelaResourceCommand } = await import('./collab/vela-cli-resource-adapter.js');
       const materialized = await materializeWorkspaceScopedTeamResource({
         kindRoot: USER_DESIGN_SYSTEMS_DIR,
         storageName: dirId,
@@ -5557,15 +5822,13 @@ export async function startServer({
           hubResourceId,
         },
         pullInto: (stagedFolder) =>
-          runVelaResourceCommand([
-            'pull',
-            'design_system',
-            hubResourceId,
-            stagedFolder,
-            '--ref',
-            'published',
-            '--json',
-          ], workspaceId).then(() => undefined),
+          teamResourcePullBatcher.pull({
+            workspaceId,
+            kind: 'design_system',
+            resourceId: hubResourceId,
+            dir: stagedFolder,
+            ref: 'published',
+          }),
         verifyWorkspaceScope: () => teamResourceScopeStillAuthorized(scope),
         verifyStillShared: () =>
           teamResourceStillShared('design_system', resource, scope),
@@ -5676,7 +5939,6 @@ export async function startServer({
     }
 
     try {
-      const { runVelaResourceCommand } = await import('./collab/vela-cli-resource-adapter.js');
       const materialized = await materializeWorkspaceScopedTeamResource({
         kindRoot: USER_SKILLS_DIR,
         storageName: dirId,
@@ -5687,15 +5949,13 @@ export async function startServer({
           hubResourceId,
         },
         pullInto: (stagedFolder) =>
-          runVelaResourceCommand([
-            'pull',
-            'skill',
-            hubResourceId,
-            stagedFolder,
-            '--ref',
-            'published',
-            '--json',
-          ], workspaceId).then(() => undefined),
+          teamResourcePullBatcher.pull({
+            workspaceId,
+            kind: 'skill',
+            resourceId: hubResourceId,
+            dir: stagedFolder,
+            ref: 'published',
+          }),
         verifyWorkspaceScope: () => teamResourceScopeStillAuthorized(scope),
         verifyStillShared: () => teamResourceStillShared('skill', resource, scope),
       });
@@ -5784,6 +6044,7 @@ export async function startServer({
   const teamResourceMaterializationGate = new ConcurrencyGate(
     COLLAB_VELA_FANOUT_CONCURRENCY,
   );
+  const teamResourcePullBatcher = createVelaResourcePullBatcher();
   const cachedTeamResourceList = (
     share: TeamResourceShareService,
     sync?: (
@@ -6784,6 +7045,7 @@ export async function startServer({
     listConversations,
     updateConversation,
     deleteConversation,
+    getMessage,
     listMessages,
     upsertMessage,
     listPreviewComments,
@@ -6808,8 +7070,8 @@ export async function startServer({
   const projectEventDeps = { subscribeFileEvents, activeProjectEventSinks };
   const importDeps = { importClaudeDesignZip, projectDir, detectEntryFile };
   const projectExportDeps = {
-    buildProjectArchive,
-    buildBatchArchive,
+    createProjectArchiveStream,
+    createBatchArchiveStream,
     buildDesktopPdfExportInput,
     buildDesktopArtifactExportInput,
     desktopPdfExporter,
@@ -7057,6 +7319,11 @@ export async function startServer({
         options.workspaceId,
         options.workspaceMemberId,
       ),
+      getLocalPluginBySource: (id, source) => getLocalPluginBySource(
+        db,
+        id,
+        source,
+      ),
     },
     events: projectEventDeps,
     ids: idDeps,
@@ -7300,6 +7567,7 @@ export async function startServer({
     db,
     http: httpDeps,
     paths: pathDeps,
+    verifyWorkspaceReadAuthority,
     verifyWorkspaceRequestAuthority,
     teamResources: collab.teamResources,
     resources: {
@@ -7964,6 +8232,16 @@ export async function startServer({
       (plugin) => plugin.id === id,
     ) ?? null;
   };
+  const getLocalPluginBySource = async (
+    dbHandle,
+    id: string,
+    source: string,
+  ) => resolveLocalPluginBySource({
+    db: dbHandle,
+    id,
+    source,
+    userPluginsRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
+  });
 
   registerPluginRoutes(app, {
     db,
@@ -7974,6 +8252,7 @@ export async function startServer({
     projectStore: projectStoreDeps,
     conversations: conversationDeps,
     fetchProjectCreationWorkspaceDirectory,
+    verifyWorkspaceReadAuthority,
     verifyWorkspaceRequestAuthority,
     workspaceResources: {
       getWorkspaceResource,
@@ -7985,6 +8264,7 @@ export async function startServer({
       listInstalledPlugins: listWorkspacePlugins,
       getInstalledPlugin,
       getWorkspacePlugin: getWorkspacePluginForRequest,
+      getLocalPluginBySource,
       installPlugin,
       isSafePluginId,
       uninstallPlugin,
@@ -8106,8 +8386,33 @@ export async function startServer({
       typeof projectWorkspaceBinding?.createdByWorkspaceMemberId === 'string'
         ? projectWorkspaceBinding.createdByWorkspaceMemberId.trim()
         : '';
+    const metadata = project?.metadata;
+    const localCatalogScope = (value) => {
+      const workspaceId = typeof value?.workspaceId === 'string'
+        ? value.workspaceId.trim()
+        : '';
+      const workspaceMemberId = typeof value?.workspaceMemberId === 'string'
+        ? value.workspaceMemberId.trim()
+        : '';
+      return workspaceId && workspaceMemberId
+        ? { workspaceId, workspaceMemberId }
+        : null;
+    };
+    // Resource provenance is intentionally independent from project
+    // attribution. A Home selection can be staged while Workspace identity is
+    // transitioning; the daemon persists the local catalogue partition so
+    // the first run reads the same local record without waiting for identity
+    // discovery or treating this as remote membership authority.
+    const skillCatalogScope = localCatalogScope(metadata?.localCatalogScopes?.skill);
+    const designSystemCatalogScope = localCatalogScope(
+      metadata?.localCatalogScopes?.designSystem,
+    );
+    const designSystemWorkspaceId =
+      designSystemCatalogScope?.workspaceId ?? projectWorkspaceId;
+    const designSystemMemberId =
+      designSystemCatalogScope?.workspaceMemberId ?? projectCreatorMemberId;
     const projectDesignSystemBinding = (summary) => {
-      if (!projectWorkspaceId || summary?.source === 'built-in') return null;
+      if (!designSystemWorkspaceId || summary?.source === 'built-in') return null;
       const logicalResourceId =
         typeof summary?.id === 'string' ? summary.id.trim() : '';
       if (!logicalResourceId) return null;
@@ -8115,9 +8420,9 @@ export async function startServer({
         const canonicalTeamBinding = getWorkspaceResource(
           db,
           'design_system',
-          projectWorkspaceId,
+          designSystemWorkspaceId,
           workspaceTeamDesignSystemBindingResourceId(
-            projectWorkspaceId,
+            designSystemWorkspaceId,
             logicalResourceId,
           ),
         );
@@ -8128,7 +8433,7 @@ export async function startServer({
       return getWorkspaceResource(
         db,
         'design_system',
-        projectWorkspaceId,
+        designSystemWorkspaceId,
         logicalResourceId,
       ) ?? null;
     };
@@ -8137,7 +8442,7 @@ export async function startServer({
       // A truly unbound local project is the legacy CLI/BYOK lane. Bound
       // projects must resolve resources from their persisted project scope;
       // shell/current Workspace state never participates.
-      if (!projectWorkspaceId) return true;
+      if (!designSystemWorkspaceId) return true;
       const binding = projectDesignSystemBinding(summary);
       if (
         !binding
@@ -8147,8 +8452,8 @@ export async function startServer({
       }
       if (binding.visibility === 'team') return true;
       return binding.visibility === 'personal'
-        && Boolean(projectCreatorMemberId)
-        && binding.createdByWorkspaceMemberId?.trim() === projectCreatorMemberId;
+        && Boolean(designSystemMemberId)
+        && binding.createdByWorkspaceMemberId?.trim() === designSystemMemberId;
     };
     let appConfigForPrompt = null;
     try {
@@ -8173,7 +8478,6 @@ export async function startServer({
     }
     const effectiveSkillId =
       typeof skillId === 'string' && skillId ? skillId : project?.skillId;
-    const metadata = project?.metadata;
     // Website Clone runs reproduce someone else's site: the fidelity target
     // is the original page. Treating a project/app design system as
     // authoritative would overwrite the cloned site's palette/typography
@@ -8199,16 +8503,21 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getWorkspaceProjectByProjectId(db, projectId)
         : null;
-    let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
-    const loadAllSkills = async () => {
-      allSkillsPromise ??= projectResourceScope?.workspaceId
-        ? listAllSkillLikeEntries({
+    const skillResourceScope = skillCatalogScope ?? (
+      projectResourceScope?.workspaceId
+        ? {
             workspaceId: String(projectResourceScope.workspaceId),
             workspaceMemberId:
               typeof projectResourceScope.createdByWorkspaceMemberId === 'string'
                 ? projectResourceScope.createdByWorkspaceMemberId
                 : null,
-          })
+          }
+        : null
+    );
+    let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
+    const loadAllSkills = async () => {
+      allSkillsPromise ??= skillResourceScope
+        ? listAllSkillLikeEntries(skillResourceScope)
         : listAllSkillLikeEntries();
       return await allSkillsPromise;
     };
@@ -8466,10 +8775,10 @@ export async function startServer({
     let activeDesignSystemId = null;
     let designSystemDigest = null;
     if (effectiveDesignSystemId) {
-      const designSystemListOptions = projectWorkspaceId
+      const designSystemListOptions = designSystemWorkspaceId
         ? {
-            workspaceId: projectWorkspaceId,
-            workspaceMemberId: projectCreatorMemberId || null,
+            workspaceId: designSystemWorkspaceId,
+            workspaceMemberId: designSystemMemberId || null,
           }
         : {};
       let systems = await listAllDesignSystems(designSystemListOptions);
@@ -8510,8 +8819,8 @@ export async function startServer({
         // from real disk fixtures (see `tests/design-system-assets.test.ts`).
         const resourceBinding = projectDesignSystemBinding(summary);
         const scopedUserDesignSystemsRoot =
-          projectWorkspaceId && resourceBinding?.visibility === 'team'
-            ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, projectWorkspaceId)
+          designSystemWorkspaceId && resourceBinding?.visibility === 'team'
+            ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, designSystemWorkspaceId)
             : USER_DESIGN_SYSTEMS_DIR;
         const assets = await resolveDesignSystemAssets(
           effectiveDesignSystemId,
@@ -9167,12 +9476,15 @@ export async function startServer({
         };
       }
     }
+    const inactivityTimeoutMs = resolveChatRunInactivityTimeoutMs(def.inactivityTimeoutMs);
+    const toolTokenTtlMs = resolveChatToolTokenTtlMs(inactivityTimeoutMs);
     const toolTokenGrant = cwd && typeof projectId === 'string' && projectId
       ? toolTokenRegistry.mint({
           runId,
           projectId,
           allowedEndpoints: CHAT_TOOL_ENDPOINTS,
           allowedOperations: CHAT_TOOL_OPERATIONS,
+          ttlMs: toolTokenTtlMs,
           ...(pluginGrantContext ?? {}),
         })
       : null;
@@ -9400,7 +9712,13 @@ export async function startServer({
     // not the user's artifacts — those fall back to the tool-stream count.
     if (run?.id && cwd) {
       try {
-        runArtifactBaselines.remember(run.id, cwd, snapshotProjectArtifacts(cwd));
+        const before = await snapshotProjectArtifactsAsync(cwd);
+        // Async I/O lets cancellation/finalization interleave with the scan.
+        // In that case onFinalize already recorded the fallback outcome, so
+        // do not leave a stale baseline behind for a completed run.
+        if (!run.artifactOutcome && !design.runs.isTerminal(run.status)) {
+          runArtifactBaselines.remember(run.id, cwd, before);
+        }
       } catch {
         // Snapshotting is best-effort; finish falls back to the tool-stream count.
       }
@@ -9433,7 +9751,7 @@ export async function startServer({
             : null;
       return requestPrompt ? { prompt: requestPrompt, promptSource: 'message' as const } : { prompt: null };
     };
-    const resolveRunArtifactOutcomeBeforeFinish = () => {
+    const resolveRunArtifactOutcomeBeforeFinish = (afterSnapshot?: ReturnType<typeof snapshotProjectArtifacts>) => {
       if (!run?.id) return null;
       if (run.artifactOutcome) return run.artifactOutcome;
 
@@ -9450,7 +9768,7 @@ export async function startServer({
         try {
           const diff = diffRunArtifacts(
             artifactBaseline.before,
-            snapshotProjectArtifacts(artifactBaseline.cwd),
+            afterSnapshot ?? snapshotProjectArtifacts(artifactBaseline.cwd),
           );
           outcome = {
             artifactCount: diff.touched,
@@ -9478,6 +9796,18 @@ export async function startServer({
       run.artifactOutcome = outcome;
       return outcome;
     };
+    const resolveRunArtifactOutcomeBeforeFinishAsync = async () => {
+      if (!run?.id || run.artifactOutcome) return resolveRunArtifactOutcomeBeforeFinish();
+      const artifactBaseline = runArtifactBaselines.peek(run.id);
+      if (!artifactBaseline || artifactBaseline.contended) {
+        return resolveRunArtifactOutcomeBeforeFinish();
+      }
+      // Keep the baseline registered until the async read completes. A direct
+      // cancellation may finalize synchronously in the meantime; the resolver
+      // below then observes run.artifactOutcome and discards this late result.
+      const afterSnapshot = await snapshotProjectArtifactsAsync(artifactBaseline.cwd);
+      return resolveRunArtifactOutcomeBeforeFinish(afterSnapshot);
+    };
     const snapshotAiHtmlVersionsBeforeSuccess = async () => {
       const origin = artifactOriginForRun({
         runId: run.id,
@@ -9489,7 +9819,7 @@ export async function startServer({
         run.artifactOriginStatus = 'missing_version';
         run.artifactVersionId = undefined;
       }
-      const outcome = resolveRunArtifactOutcomeBeforeFinish();
+      const outcome = await resolveRunArtifactOutcomeBeforeFinishAsync();
       if (!outcome?.diff || !outcome.projectRoot || !run.projectId) return;
       const promptInfo = latestRunPromptForHtmlVersionSnapshot();
       const result = await snapshotAiHtmlVersionsForRun({
@@ -11029,7 +11359,6 @@ export async function startServer({
     // here; on this branch `send` was hoisted into the AMR preflight
     // earlier, so we keep only the new `runStartTimeMs` declaration.
     const runStartTimeMs = Date.now();
-    const inactivityTimeoutMs = resolveChatRunInactivityTimeoutMs(def.inactivityTimeoutMs);
     const firstOutputTimeoutMs =
       resolveChatRunFirstOutputTimeoutMs(def.firstOutputTimeoutMs);
     const artifactQuietPeriodMs = resolveChatRunArtifactQuietPeriodMs();
@@ -11249,6 +11578,9 @@ export async function startServer({
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
       run.lastAgentActivityAt = Date.now();
+      if (toolTokenGrant) {
+        toolTokenRegistry.refreshToken(toolTokenGrant.token, { ttlMs: toolTokenTtlMs });
+      }
       const delay = activeInactivityTimeoutMs();
       if (delay <= 0) return;
       clearInactivityWatchdog();
@@ -13935,7 +14267,7 @@ export async function startServer({
     telemetry: { reportFinalizedMessage, reportFeedback },
   });
 
-  registerStaticSpaFallback(app, STATIC_DIR);
+  registerStaticSpaFallback(app, staticDir);
 
   // Wait for `listen` to bind so callers always see the resolved URL —
   // critical when port=0 (ephemeral port) and when the embedding sidecar
