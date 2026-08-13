@@ -453,7 +453,12 @@ describe('editable PPTX layered backgrounds', () => {
       captures: 1,
       media: [expect.stringMatching(/\.png$/)],
     });
-    expect(image?.centerRgb, JSON.stringify(image)).toEqual([96, 223, 223]);
+    // Chromium's backdrop-filter color rounding can differ by one channel
+    // level across platforms while preserving the same rendered color.
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [96, 223, 223][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
   }, 30_000);
 
   test('preserves background blending for standard and backdrop-dependent pseudos', async () => {
