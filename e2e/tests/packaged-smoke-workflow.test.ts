@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -2711,7 +2712,9 @@ process.stdin.on("end", () => {
             GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
             RELEASE_CHANNEL: "stable",
             RELEASE_PUBLIC_ORIGIN: envName === "RELEASE_PUBLIC_ORIGIN" ? origin : "",
-            RELEASE_SIGNED: "true",
+            RELEASE_MAC_ARM64_SIGN_MODE: "notarized",
+            RELEASE_MAC_X64_SIGN_MODE: "notarized",
+            RELEASE_WIN_X64_SIGN_MODE: "unsigned",
             RELEASE_VERSION: "0.13.0",
             RUNNER_TEMP: runnerTemp,
             VERSION_TAG: "open-design-v0.13.0",
@@ -2733,11 +2736,13 @@ process.stdin.on("end", () => {
     const prereleaseVersion = `${baseVersion}-prerelease.12`;
     const objects: Record<string, unknown> = {};
     const fixture = await startStablePrereleaseMetadataServer(objects);
-    objects[`prerelease/versions/${prereleaseVersion}/metadata.json`] = stablePrereleaseMetadataFixture(
+    const metadata = stablePrereleaseMetadataFixture(
       baseVersion,
       prereleaseVersion,
       fixture.origin,
     );
+    objects[`prerelease/versions/${prereleaseVersion}/metadata.json`] = metadata;
+    objects[`prerelease/versions/${prereleaseVersion}/qualification.json`] = stableQualificationFixture(metadata, fixture.origin);
     const runnerTemp = await mkdtemp(join(tmpdir(), "od-release-stable-dry-run-"));
 
     try {
@@ -2916,7 +2921,7 @@ process.stdin.on("end", () => {
     expect(workflow).toContain("full 40-character commit SHA; abbreviated SHA");
     expect(publishJob).toContain("RELEASE_ACTIVATE_LATEST: ${{ inputs.enable_win_x64 && 'false' || 'true' }}");
     expect(publishJob).toContain('RELEASE_LATEST_CAS_REQUIRED: "true"');
-    expect(publishJob).toContain("RELEASE_SIGNED: ${{ !inputs.enable_win_x64 && 'true' || 'false' }}");
+    expect(publishJob).toContain("RELEASE_WIN_X64_SIGN_MODE: ${{ inputs.win_x64_sign_mode }}");
     expect(publishJob).toContain("Observe directly activated beta public feed");
     expect(publishJob).toContain("if: ${{ !inputs.enable_win_x64 }}");
     expect(sectionBetween(
@@ -2978,6 +2983,7 @@ process.stdin.on("end", () => {
         join(platformManifestRoot, "mac_arm64.json"),
         `${JSON.stringify(
           {
+        amrProfile: "",
         artifacts: {
           dmg: {
             url: "https://releases.open-design.ai/beta/versions/1.2.3-beta.3.unsigned/Open Design Beta.dmg",
@@ -2996,7 +3002,7 @@ process.stdin.on("end", () => {
           versionPrefix: "beta/versions/1.2.3-beta.3.unsigned",
         },
         releaseVersion: "1.2.3-beta.3",
-        signed: false,
+        signMode: "notarized",
         status: "published",
       },
           null,
@@ -3023,7 +3029,6 @@ process.stdin.on("end", () => {
             RELEASE_METADATA_DIR: join(runnerTemp, "release-metadata"),
             RELEASE_OUTPUTS_PATH: join(runnerTemp, "release-metadata", "outputs.json"),
             RELEASE_PUBLIC_ORIGIN: "https://releases.open-design.ai",
-            RELEASE_SIGNED: "false",
             RELEASE_STORAGE_ACCESS_KEY_ID: "test-access-key",
             RELEASE_STORAGE_BUCKET: fixture.bucket,
             RELEASE_STORAGE_ENDPOINT: fixture.endpointUrl,
@@ -3061,6 +3066,7 @@ process.stdin.on("end", () => {
         join(platformManifestRoot, "mac_arm64.json"),
         `${JSON.stringify(
           {
+        amrProfile: "",
         artifacts: {
           dmg: {
             url: "https://releases.open-design.ai/beta/versions/1.2.3-beta.4.unsigned/Open Design Beta.dmg",
@@ -3079,7 +3085,7 @@ process.stdin.on("end", () => {
           versionPrefix: "beta/versions/1.2.3-beta.4.unsigned",
         },
         releaseVersion: "1.2.3-beta.4",
-        signed: false,
+        signMode: "notarized",
         status: "published",
       },
           null,
@@ -3106,7 +3112,6 @@ process.stdin.on("end", () => {
             RELEASE_METADATA_DIR: join(runnerTemp, "release-metadata"),
             RELEASE_OUTPUTS_PATH: join(runnerTemp, "release-metadata", "outputs.json"),
             RELEASE_PUBLIC_ORIGIN: "https://releases.open-design.ai",
-            RELEASE_SIGNED: "false",
             RELEASE_STORAGE_ACCESS_KEY_ID: "test-access-key",
             RELEASE_STORAGE_BUCKET: fixture.bucket,
             RELEASE_STORAGE_ENDPOINT: fixture.endpointUrl,
@@ -3144,6 +3149,7 @@ process.stdin.on("end", () => {
         join(platformManifestRoot, "mac_arm64.json"),
         `${JSON.stringify(
           {
+        amrProfile: "",
         artifacts: {
           dmg: {
             url: "https://releases.open-design.ai/beta/versions/1.2.3-beta.4.unsigned/Open Design Beta.dmg",
@@ -3162,7 +3168,7 @@ process.stdin.on("end", () => {
           versionPrefix: "beta/versions/1.2.3-beta.4.unsigned",
         },
         releaseVersion: "1.2.3-beta.4",
-        signed: false,
+        signMode: "notarized",
         status: "published",
       },
           null,
@@ -3186,7 +3192,6 @@ process.stdin.on("end", () => {
           RELEASE_METADATA_DIR: join(runnerTemp, "release-metadata"),
           RELEASE_OUTPUTS_PATH: join(runnerTemp, "release-metadata", "outputs.json"),
           RELEASE_PUBLIC_ORIGIN: "https://releases.open-design.ai",
-          RELEASE_SIGNED: "false",
           RELEASE_STORAGE_ACCESS_KEY_ID: "test-access-key",
           RELEASE_STORAGE_BUCKET: fixture.bucket,
           RELEASE_STORAGE_ENDPOINT: fixture.endpointUrl,
@@ -3222,6 +3227,7 @@ process.stdin.on("end", () => {
         join(platformManifestRoot, "win_x64.json"),
         `${JSON.stringify(
           {
+            amrProfile: "",
             artifacts: {
               installer: {
                 url: "https://releases.open-design.ai/beta/versions/1.2.3-beta.4.unsigned/open-design-1.2.3-beta.4.unsigned-win-x64-setup.exe",
@@ -3245,7 +3251,7 @@ process.stdin.on("end", () => {
             r2: {
               versionPrefix: "beta/versions/1.2.3-beta.4.unsigned",
             },
-            signed: false,
+            signMode: "unsigned",
             status: "published",
           },
           null,
@@ -3270,7 +3276,6 @@ process.stdin.on("end", () => {
           RELEASE_METADATA_DIR: join(runnerTemp, "release-metadata"),
           RELEASE_OUTPUTS_PATH: join(runnerTemp, "release-metadata", "outputs.json"),
           RELEASE_PUBLIC_ORIGIN: "https://releases.open-design.ai",
-          RELEASE_SIGNED: "false",
           RELEASE_STORAGE_ACCESS_KEY_ID: "test-access-key",
           RELEASE_STORAGE_BUCKET: fixture.bucket,
           RELEASE_STORAGE_ENDPOINT: fixture.endpointUrl,
@@ -3313,6 +3318,7 @@ process.stdin.on("end", () => {
         join(platformManifestRoot, "mac_arm64.json"),
         `${JSON.stringify(
           {
+            amrProfile: "",
             artifacts: {
               dmg: {
                 url: "https://releases.open-design.ai/beta/versions/1.2.3-beta.4.unsigned/open-design-1.2.3-beta.4.unsigned-mac-arm64.dmg",
@@ -3336,7 +3342,7 @@ process.stdin.on("end", () => {
             r2: {
               versionPrefix: "beta/versions/1.2.3-beta.4.unsigned",
             },
-            signed: false,
+            signMode: "notarized",
             status: "published",
           },
           null,
@@ -3347,6 +3353,7 @@ process.stdin.on("end", () => {
         join(platformManifestRoot, "win_x64.json"),
         `${JSON.stringify(
           {
+            amrProfile: "",
             artifacts: {
               installer: {
                 url: "https://releases.open-design.ai/beta/versions/1.2.3-beta.4.unsigned/open-design-1.2.3-beta.4.unsigned-win-x64-setup.exe",
@@ -3374,7 +3381,7 @@ process.stdin.on("end", () => {
             r2: {
               versionPrefix: "beta/versions/1.2.3-beta.4.unsigned",
             },
-            signed: false,
+            signMode: "unsigned",
             status: "published",
           },
           null,
@@ -3399,7 +3406,6 @@ process.stdin.on("end", () => {
           RELEASE_METADATA_DIR: join(runnerTemp, "release-metadata"),
           RELEASE_OUTPUTS_PATH: join(runnerTemp, "release-metadata", "outputs.json"),
           RELEASE_PUBLIC_ORIGIN: "https://releases.open-design.ai",
-          RELEASE_SIGNED: "false",
           RELEASE_STORAGE_ACCESS_KEY_ID: "test-access-key",
           RELEASE_STORAGE_BUCKET: fixture.bucket,
           RELEASE_STORAGE_ENDPOINT: fixture.endpointUrl,
@@ -3482,7 +3488,7 @@ function expectWindowsUpdaterSmokeContract(workflow: string, channel: "beta" | "
     expect(workflow).toContain("Build stable win_x64 update fixture");
     expect(workflow).toContain('full Windows stable smoke requires stable version x.y.z');
     expect(workflow).toContain('pnpm.cmd exec tools-pack win cleanup --dir $toolsPackDir --namespace "${{ needs.metadata.outputs.win_namespace }}" --json');
-    expect(workflow).toContain("--cache-dir $cacheDir `");
+    expect(workflow).toContain('"--cache-dir", $cacheDir,');
     expect(workflow).toContain('pnpm.cmd exec tools-pack win validate-payload --namespace "${{ needs.metadata.outputs.win_namespace }}" --payload-path $build.payloadPath --expected-version "${{ needs.metadata.outputs.release_version }}" --json');
   } else {
     expect(workflow).toContain(`Build ${channel} win_x64 update fixture`);
@@ -3566,47 +3572,61 @@ function stablePrereleaseMetadataFixture(baseVersion: string, prereleaseVersion:
   const versionPrefix = `prerelease/versions/${prereleaseVersion}`;
   const versionUrl = `${publicOrigin}/${versionPrefix}`;
   const artifact = (name: string) => ({
+    digest: `sha256:${createHash("sha256").update(name).digest("hex")}`,
     sha256Url: `${versionUrl}/${name}.sha256`,
     url: `${versionUrl}/${name}`,
   });
 
+  const github = {
+    branch: `release/v${baseVersion}`,
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    repository: "nexu-io/open-design",
+    workflow: "release-prerelease",
+  };
+  const mac = {
+    arch: "arm64",
+    artifacts: {
+      dmg: artifact("Open Design.dmg"),
+      zip: artifact("Open Design-mac-arm64.zip"),
+    },
+    enabled: true,
+    r2: { versionManifestUrl: `${versionUrl}/platforms/mac_arm64.json` },
+    signMode: "notarized",
+  };
+  const macIntel = {
+    arch: "x64",
+    artifacts: {
+      dmg: artifact("Open Design Intel.dmg"),
+      zip: artifact("Open Design-mac-x64.zip"),
+    },
+    enabled: true,
+    r2: { versionManifestUrl: `${versionUrl}/platforms/mac_x64.json` },
+    signMode: "notarized",
+  };
+  const win = {
+    arch: "x64",
+    artifacts: { installer: artifact("Open Design Setup.exe") },
+    enabled: true,
+    r2: { versionManifestUrl: `${versionUrl}/platforms/win_x64.json` },
+    signMode: "unsigned",
+  };
   return {
+    amrProfile: "prod",
     baseVersion,
     channel: "prerelease",
-    github: {
-      branch: `release/v${baseVersion}`,
-      commit: "0123456789abcdef0123456789abcdef01234567",
-      repository: "nexu-io/open-design",
-      workflow: "release-prerelease",
+    generatedAt: "2026-08-13T00:00:00.000Z",
+    github,
+    parameterMatrix: {
+      mac_arm64: { signMode: "notarized" },
+      mac_x64: { signMode: "notarized" },
+      win_x64: { signMode: "unsigned" },
     },
     prereleaseNumber: 12,
     prereleaseVersion,
     platforms: {
-      mac: {
-        arch: "arm64",
-        artifacts: {
-          dmg: artifact("Open Design.dmg"),
-          zip: artifact("Open Design-mac-arm64.zip"),
-        },
-        enabled: true,
-        signed: true,
-      },
-      macIntel: {
-        arch: "x64",
-        artifacts: {
-          dmg: artifact("Open Design Intel.dmg"),
-          zip: artifact("Open Design-mac-x64.zip"),
-        },
-        enabled: true,
-        signed: true,
-      },
-      win: {
-        arch: "x64",
-        artifacts: {
-          installer: artifact("Open Design Setup.exe"),
-        },
-        enabled: true,
-      },
+      mac,
+      macIntel,
+      win,
     },
     r2: {
       report: {
@@ -3617,8 +3637,50 @@ function stablePrereleaseMetadataFixture(baseVersion: string, prereleaseVersion:
       versionMetadataUrl: `${versionUrl}/metadata.json`,
       versionPrefix,
     },
+    releaseState: "complete",
+    releaseTargets: { mac_arm64: mac, mac_x64: macIntel, win_x64: win },
     releaseVersion: prereleaseVersion,
-    signed: true,
+  };
+}
+
+function stableQualificationFixture(metadata: Record<string, unknown>, publicOrigin: string): Record<string, unknown> {
+  const releaseVersion = String(metadata.releaseVersion);
+  const releaseTargets = metadata.releaseTargets as Record<string, { artifacts: Record<string, { digest: string }> }>;
+  const target = (name: string) => ({
+    artifacts: Object.fromEntries(Object.entries(releaseTargets[name].artifacts).map(([artifactName, value]) => [artifactName, value.digest])),
+    manifest: {
+      digest: `sha256:${"0".repeat(64)}`,
+      url: `${publicOrigin}/prerelease/versions/${releaseVersion}/platforms/${name}.json`,
+    },
+  });
+  return {
+    amrProfile: "prod",
+    baseVersion: metadata.baseVersion,
+    channel: "prerelease",
+    github: metadata.github,
+    metadata: {
+      digest: `sha256:${createHash("sha256").update(JSON.stringify(metadata)).digest("hex")}`,
+      url: `${publicOrigin}/prerelease/versions/${releaseVersion}/metadata.json`,
+    },
+    parameterMatrix: metadata.parameterMatrix,
+    policy: "stable-promotion-v1",
+    qualifiedAt: metadata.generatedAt,
+    releaseVersion,
+    schemaVersion: 1,
+    smoke: {
+      profile: "core",
+      targets: {
+        mac_arm64: { result: "success" },
+        mac_x64: { result: "success" },
+        win_x64: { result: "success" },
+      },
+    },
+    status: "qualified",
+    targets: {
+      mac_arm64: target("mac_arm64"),
+      mac_x64: target("mac_x64"),
+      win_x64: target("win_x64"),
+    },
   };
 }
 
