@@ -558,8 +558,10 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     pseudo: "::before" | "::after",
   ): HTMLElement | null {
     const style = getComputedStyle(element, pseudo);
-    const content = (style.content || "").trim().toLowerCase();
+    const rawContent = (style.content || "").trim();
+    const content = rawContent.toLowerCase();
     const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
+    const materializeEntirePseudo = hasCssMask(style);
     if (
       !isGenerated ||
       (style.position !== "absolute" && style.position !== "fixed") ||
@@ -576,6 +578,13 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     // the authored backdrop for flattening into the same PNG.
     const background = document.createElement("od-pptx-layered-background");
     background.setAttribute("data-od-pptx-materialized-pseudo", pseudo);
+    if (materializeEntirePseudo) {
+      background.setAttribute("data-od-pptx-materialized-entire-pseudo", "true");
+      element.setAttribute(
+        pseudo === "::before" ? "data-od-pptx-suppress-before" : "data-od-pptx-suppress-after",
+        "true",
+      );
+    }
     if (dependsOnBackdrop(style)) {
       background.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
     }
@@ -628,6 +637,18 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("rotate", style.rotate || "none", "important");
     background.style.setProperty("scale", style.scale || "none", "important");
     background.style.setProperty("z-index", style.zIndex || "auto", "important");
+    if (materializeEntirePseudo) {
+      // A CSS mask applies to the pseudo's complete painted output, including
+      // generated text and borders. Copy the computed pseudo style onto the
+      // real capture helper so Chromium rasterizes that output as one layer.
+      for (let index = 0; index < style.length; index += 1) {
+        const property = style.item(index);
+        if (property === "content") continue;
+        const value = style.getPropertyValue(property);
+        if (value) background.style.setProperty(property, value, "important");
+      }
+      background.textContent = rawContent.replace(/^['"]|['"]$/g, "");
+    }
     background.style.setProperty("pointer-events", "none", "important");
     if (pseudo === "::before") element.prepend(background);
     else element.append(background);
@@ -667,6 +688,23 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     return width >= 1 && height >= 1;
   }
 
+  function establishesCompositingContext(style: CSSStyleDeclaration): boolean {
+    const opacity = Number.parseFloat(style.opacity || "1");
+    const hasOpacity = Number.isFinite(opacity) && opacity > 0 && opacity < 1;
+    const hasFilter = Boolean(style.filter && style.filter !== "none");
+    const hasTransform = [style.transform, style.translate, style.rotate, style.scale]
+      .some((value) => Boolean(value && value !== "none"));
+    return hasOpacity || hasFilter || hasTransform;
+  }
+
+  function outermostCompositingAncestor(element: HTMLElement, slide: HTMLElement): HTMLElement | null {
+    let root: HTMLElement | null = null;
+    for (let ancestor = element.parentElement; ancestor && ancestor !== slide; ancestor = ancestor.parentElement) {
+      if (establishesCompositingContext(getComputedStyle(ancestor))) root = ancestor;
+    }
+    return root;
+  }
+
   const slides = Array.prototype.slice
     .call(document.querySelectorAll(slideSelector))
     .filter((element) => !(element as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb")) as HTMLElement[];
@@ -680,16 +718,32 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
         .filter((element): element is HTMLElement => element !== null),
     );
     const elements = [...authoredElements, ...materializedPseudos];
-    for (const element of elements) {
+    const layeredElements = elements.filter((element) => {
       const style = getComputedStyle(element);
-      if (
-        !isSupportedLayeredGradient(style.backgroundImage || "") ||
-        hasTextClip(style) ||
-        !isRenderedInsideSlide(element, slide, style)
-      ) {
-        continue;
-      }
+      return (
+        isSupportedLayeredGradient(style.backgroundImage || "") &&
+        !hasTextClip(style) &&
+        isRenderedInsideSlide(element, slide, style)
+      );
+    });
+    const captureGroups = new Map<HTMLElement, HTMLElement[]>();
+    for (const element of layeredElements) {
+      // PPTX has no equivalent of a DOM ancestor compositing group here. When
+      // an ancestor effect encloses layered descendants, capture that outermost
+      // context once instead of baking the effect into each background image.
+      const root = outermostCompositingAncestor(element, slide) ?? element;
+      const members = captureGroups.get(root) ?? [];
+      members.push(element);
+      captureGroups.set(root, members);
+    }
+
+    for (const [element, members] of captureGroups) {
+      const style = getComputedStyle(element);
+      if (!isRenderedInsideSlide(element, slide, style)) continue;
       const id = `od-pptx-layer-${nextId++}`;
+      if (members.some((member) => member !== element)) {
+        element.setAttribute("data-od-pptx-compositing-context", "true");
+      }
       if (dependsOnBackdrop(style)) {
         element.setAttribute("data-od-pptx-flatten-blend-backdrop", "true");
       }
@@ -740,6 +794,8 @@ export function isolateLayeredPptxBackground(
   const slide = slides[slideIndex]!;
   const targetStyle = getComputedStyle(target);
   const flattenBackdrop = target.getAttribute("data-od-pptx-flatten-blend-backdrop") === "true";
+  const flattenCompositingContext = target.getAttribute("data-od-pptx-compositing-context") === "true";
+  const materializesEntirePseudo = target.getAttribute("data-od-pptx-materialized-entire-pseudo") === "true";
   const targetRect = target.getBoundingClientRect();
   const slideRect = slide.getBoundingClientRect();
   const hasVisualOverflow = targetStyle.filter && targetStyle.filter !== "none";
@@ -752,6 +808,12 @@ export function isolateLayeredPptxBackground(
 
   const allElements = Array.from(document.querySelectorAll<HTMLElement>("*"));
   const inlineStyles = allElements.map((element) => ({ cssText: element.style.cssText, element }));
+  const contextDescendantVisibilities = new Map<HTMLElement, string>();
+  if (flattenCompositingContext) {
+    for (const descendant of Array.from(target.querySelectorAll<HTMLElement>("*"))) {
+      contextDescendantVisibilities.set(descendant, getComputedStyle(descendant).visibility);
+    }
+  }
   const blendBackdropElements = new Set<HTMLElement>();
   const blendBackdropPseudos = new Map<HTMLElement, Set<"::before" | "::after">>();
   const addBlendBackdropElement = (element: HTMLElement): void => {
@@ -835,6 +897,14 @@ export function isolateLayeredPptxBackground(
       text-shadow:none!important;
       -webkit-text-fill-color:transparent!important;
     }
+    ${flattenCompositingContext ? `
+      [data-od-pptx-layer-capture-id="${id}"]::before,
+      [data-od-pptx-layer-capture-id="${id}"]::after,
+      [data-od-pptx-layer-capture-id="${id}"] *::before,
+      [data-od-pptx-layer-capture-id="${id}"] *::after{
+        visibility:visible!important;
+      }
+    ` : ""}
   `;
   document.head.append(pseudoStyle);
   (window as unknown as { __odPptxLayerIsolation?: LayeredPptxIsolationState }).__odPptxLayerIsolation = {
@@ -865,7 +935,21 @@ export function isolateLayeredPptxBackground(
     }
   }
   for (const descendant of Array.from(target.querySelectorAll<HTMLElement>("*"))) {
-    descendant.style.setProperty("visibility", "hidden", "important");
+    descendant.style.setProperty(
+      "visibility",
+      flattenCompositingContext
+        ? contextDescendantVisibilities.get(descendant) || "visible"
+        : "hidden",
+      "important",
+    );
+    if (
+      flattenCompositingContext &&
+      descendant.hasAttribute("data-od-pptx-materialized-pseudo")
+    ) {
+      // The authored pseudo is visible in a full-context capture. Its temporary
+      // materialized helper would paint the same layer a second time.
+      descendant.style.setProperty("display", "none", "important");
+    }
   }
   // Replaced content is painted by the target itself rather than a descendant.
   // Move that object outside its content box for this screenshot while leaving
@@ -873,11 +957,13 @@ export function isolateLayeredPptxBackground(
   if (["IMG", "CANVAS", "VIDEO"].includes(target.tagName)) {
     target.style.setProperty("object-position", "1000000px 1000000px", "important");
   }
-  target.style.setProperty("border-color", "transparent", "important");
-  target.style.setProperty("box-shadow", "none", "important");
-  target.style.setProperty("color", "transparent", "important");
-  target.style.setProperty("text-shadow", "none", "important");
-  target.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+  if (!flattenCompositingContext && !materializesEntirePseudo) {
+    target.style.setProperty("border-color", "transparent", "important");
+    target.style.setProperty("box-shadow", "none", "important");
+    target.style.setProperty("color", "transparent", "important");
+    target.style.setProperty("text-shadow", "none", "important");
+    target.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+  }
   for (const root of [document.documentElement, document.body]) {
     if (!root) continue;
     root.style.setProperty("visibility", "visible", "important");
@@ -1839,6 +1925,19 @@ export async function runDomToPptx(
   }
 
   function preserveLayeredGradientBackgrounds(slides: HTMLElement[]): void {
+    if (document.querySelectorAll("[data-od-pptx-suppress-before], [data-od-pptx-suppress-after]").length > 0) {
+      const suppressedPseudoStyle = document.createElement("style");
+      suppressedPseudoStyle.textContent = `
+        [data-od-pptx-suppress-before="true"]::before,
+        [data-od-pptx-suppress-after="true"]::after{
+          content:none!important;
+          display:none!important;
+          border:0!important;
+          background:none!important;
+        }
+      `;
+      document.head.append(suppressedPseudoStyle);
+    }
     const slideElements = new Set(slides);
     const elements = new Set<HTMLElement>();
     for (const slide of slides) {
@@ -1846,7 +1945,57 @@ export async function runDomToPptx(
       slide.querySelectorAll<HTMLElement>("*").forEach((el) => elements.add(el));
     }
 
+    const flattenedContexts = new Set<HTMLElement>();
     for (const element of elements) {
+      if (element.getAttribute("data-od-pptx-compositing-context") !== "true") continue;
+      const captureId = element.getAttribute("data-od-pptx-layer-capture-id") || "";
+      const captured = layeredBackgrounds[captureId];
+      if (!captured) continue;
+      const slide = slides[captured.slideIndex];
+      if (!slide) continue;
+
+      const style = getComputedStyle(element);
+      // The PNG already contains this context's opacity/filter/transform and
+      // descendants. Export it beside the context and suppress the native
+      // subtree so those effects are not applied independently a second time.
+      const image = document.createElement("img");
+      image.setAttribute("data-od-pptx-layered-bg", "true");
+      image.setAttribute("aria-hidden", "true");
+      image.src = captured.dataUrl;
+      image.style.setProperty("position", "absolute", "important");
+      image.style.setProperty("left", `${captured.left}px`, "important");
+      image.style.setProperty("top", `${captured.top}px`, "important");
+      image.style.setProperty("width", `${captured.width}px`, "important");
+      image.style.setProperty("height", `${captured.height}px`, "important");
+      image.style.setProperty("display", "block", "important");
+      image.style.setProperty("object-fit", "fill", "important");
+      image.style.setProperty("pointer-events", "none", "important");
+      image.style.setProperty("z-index", style.zIndex || "auto", "important");
+      image.getBoundingClientRect = () => {
+        const slideRect = slide.getBoundingClientRect();
+        const left = slideRect.left + captured.left;
+        const top = slideRect.top + captured.top;
+        return {
+          bottom: top + captured.height,
+          height: captured.height,
+          left,
+          right: left + captured.width,
+          top,
+          width: captured.width,
+          x: left,
+          y: top,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+      element.parentElement?.insertBefore(image, element);
+      element.style.setProperty("display", "none", "important");
+      flattenedContexts.add(element);
+    }
+
+    for (const element of elements) {
+      if (Array.from(flattenedContexts).some((root) => root === element || root.contains(element))) {
+        continue;
+      }
       const style = getComputedStyle(element);
       const captureId = element.getAttribute("data-od-pptx-layer-capture-id") || "";
       const captured = layeredBackgrounds[captureId];

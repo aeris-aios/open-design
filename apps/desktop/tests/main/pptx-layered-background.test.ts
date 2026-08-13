@@ -550,6 +550,24 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.maxAlpha).toBeLessThanOrEqual(136);
   }, 30_000);
 
+  test('flattens nested layered backgrounds through ancestor opacity once', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.nestedOpacity.pngs;
+
+    expect(media.nestedOpacity, JSON.stringify(media.nestedOpacity)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    // Electron's bitmap is premultiplied: the authored [50, 0, 100] group
+    // color appears at half intensity alongside the ancestor's 0.5 alpha.
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [25, 0, 50][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
+    expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
+    expect(image?.maxAlpha).toBeLessThanOrEqual(136);
+  }, 30_000);
+
   test('preserves a CSS mask as decoded alpha in the exported PNG', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.masked.pngs;
@@ -590,6 +608,22 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.maxAlpha).toBe(255);
     expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(image?.opaquePixels ?? 0);
   }, 30_000);
+
+  test('masks pseudo content and border in the captured layer without native duplicates', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.maskedPseudoContent.pngs;
+
+    expect(media.maskedPseudoContent, JSON.stringify(media.maskedPseudoContent)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.transparentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(image?.translucentPixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(image?.opaquePixels, JSON.stringify(image)).toBeGreaterThan(0);
+    expect(media.maskedPseudoContentOrder.image).toBeGreaterThanOrEqual(0);
+    expect(media.maskedPseudoContentOrder.nativeContent).toBe(-1);
+    expect(media.maskedPseudoContentOrder.image).toBeLessThan(media.maskedPseudoContentOrder.sibling);
+  }, 30_000);
 });
 
 type LayeredBackgroundProbe = {
@@ -603,8 +637,11 @@ type LayeredBackgroundProbe = {
   composited: LayeredBackgroundExport;
   compositedMaskedPseudo: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
+  maskedPseudoContent: LayeredBackgroundExport;
+  maskedPseudoContentOrder: { image: number; nativeContent: number; sibling: number };
   materializedBackgroundBlend: LayeredBackgroundExport;
   nestedBlended: LayeredBackgroundExport;
+  nestedOpacity: LayeredBackgroundExport;
   normalMaskedPseudo: LayeredBackgroundExport;
   paintOrderedBackdrop: LayeredBackgroundExport;
   pseudo: LayeredBackgroundExport;
@@ -670,8 +707,10 @@ const fixtures = {
   pseudo: '<div class="pseudo"></div>',
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
+  nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div></div>',
   normalMaskedPseudo: '<div class="normal-masked-pseudo"></div>',
   compositedMaskedPseudo: '<div class="composited-masked-pseudo"></div>',
+  maskedPseudoContent: '<div class="masked-pseudo-content"></div><div class="masked-pseudo-sibling">Native after mask</div>',
   paintOrderedBackdrop: '<div class="paint-above"></div><div class="paint-target"></div><div class="paint-below"></div>',
   replaced: '<img class="replaced" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2260%22%3E%3Crect width=%22120%22 height=%2260%22 fill=%22%23ff00ff%22/%3E%3C/svg%3E">',
   masked: '<div class="masked"></div>',
@@ -772,6 +811,20 @@ const styles = \`
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
+  .nested-opacity {
+    position: absolute;
+    left: 146px;
+    top: 106px;
+    width: 68px;
+    height: 38px;
+    opacity: .5;
+    background-image: linear-gradient(rgb(100, 0, 0), rgb(100, 0, 0)), linear-gradient(transparent, transparent);
+  }
+  .nested-opacity-child {
+    position: absolute;
+    inset: 8px 10px;
+    background-image: linear-gradient(rgba(0, 0, 200, .5), rgba(0, 0, 200, .5)), linear-gradient(transparent, transparent);
+  }
   .paint-above,
   .paint-target,
   .paint-below {
@@ -830,6 +883,33 @@ const styles = \`
     mask-repeat: no-repeat;
     -webkit-mask-size: 50% 50%;
     mask-size: 50% 50%;
+  }
+  .masked-pseudo-content {
+    position: absolute;
+    left: 222px;
+    top: 18px;
+    width: 86px;
+    height: 46px;
+  }
+  .masked-pseudo-content::before {
+    content: 'Masked pseudo content';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    box-sizing: border-box;
+    border: 4px solid white;
+    color: white;
+    font: 10px sans-serif;
+    background-image: linear-gradient(rgba(255, 255, 255, .25), rgba(255, 255, 255, .25)), linear-gradient(transparent, transparent);
+    -webkit-mask-image: linear-gradient(to right, black 50%, transparent 50%);
+    mask-image: linear-gradient(to right, black 50%, transparent 50%);
+  }
+  .masked-pseudo-sibling {
+    position: absolute;
+    left: 222px;
+    top: 18px;
+    z-index: 1;
+    color: white;
   }
   .filtered-backdrop,
   .backdrop-filtered {
@@ -984,6 +1064,23 @@ function inspectPseudoLayerOrder(entries, mediaName) {
   return {
     background: relationshipId ? slideXml.indexOf('r:embed="' + relationshipId + '"') : -1,
     content: slideXml.indexOf('Layered pseudo content'),
+  };
+}
+
+function inspectMaskedPseudoContentOrder(entries, mediaName) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  const relationships = entries
+    .find(({ name }) => name === 'ppt/slides/_rels/slide1.xml.rels')
+    ?.data.toString('utf8') || '';
+  const targetName = mediaName.split('/').pop() || '';
+  const relationship = relationships
+    .match(/<Relationship\\b[^>]*>/g)
+    ?.find((entry) => entry.includes(targetName)) || '';
+  const relationshipId = relationship.match(/\\bId="([^"]+)"/)?.[1] || '';
+  return {
+    image: relationshipId ? slideXml.indexOf('r:embed="' + relationshipId + '"') : -1,
+    nativeContent: slideXml.indexOf('Masked pseudo content'),
+    sibling: slideXml.indexOf('Native after mask'),
   };
 }
 
@@ -1162,6 +1259,10 @@ app.whenReady().then(async () => {
       pngs: pseudoMedia.flatMap(({ png }) => png ? [png] : []),
     };
     result.pseudoLayerOrder = inspectPseudoLayerOrder(entries, pseudoMedia[0]?.name || '');
+    result.maskedPseudoContentOrder = inspectMaskedPseudoContentOrder(
+      entries,
+      result.maskedPseudoContent?.media?.[0] || '',
+    );
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
     ).filter(
@@ -1242,6 +1343,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('backgroundBlendPseudo' in value)
     || !('materializedBackgroundBlend' in value)
     || !('nestedBlended' in value)
+    || !('nestedOpacity' in value)
     || !('normalMaskedPseudo' in value)
     || !('paintOrderedBackdrop' in value)
     || !('alignmentGeometry' in value)
@@ -1254,6 +1356,16 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !Array.isArray(value.replacedForegroundMedia)
     || !value.replacedForegroundMedia.every((item) => typeof item === 'string')
     || !('masked' in value)
+    || !('maskedPseudoContent' in value)
+    || !('maskedPseudoContentOrder' in value)
+    || typeof value.maskedPseudoContentOrder !== 'object'
+    || value.maskedPseudoContentOrder === null
+    || !('image' in value.maskedPseudoContentOrder)
+    || typeof value.maskedPseudoContentOrder.image !== 'number'
+    || !('nativeContent' in value.maskedPseudoContentOrder)
+    || typeof value.maskedPseudoContentOrder.nativeContent !== 'number'
+    || !('sibling' in value.maskedPseudoContentOrder)
+    || typeof value.maskedPseudoContentOrder.sibling !== 'number'
     || !('composited' in value)
     || !('compositedMaskedPseudo' in value)
     || !('pseudoLayerOrder' in value)
@@ -1287,8 +1399,11 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     composited: parseLayeredBackgroundExport(value.composited),
     compositedMaskedPseudo: parseLayeredBackgroundExport(value.compositedMaskedPseudo),
     masked: parseLayeredBackgroundExport(value.masked),
+    maskedPseudoContent: parseLayeredBackgroundExport(value.maskedPseudoContent),
+    maskedPseudoContentOrder: value.maskedPseudoContentOrder as LayeredBackgroundProbe['maskedPseudoContentOrder'],
     materializedBackgroundBlend: parseLayeredBackgroundExport(value.materializedBackgroundBlend),
     nestedBlended: parseLayeredBackgroundExport(value.nestedBlended),
+    nestedOpacity: parseLayeredBackgroundExport(value.nestedOpacity),
     normalMaskedPseudo: parseLayeredBackgroundExport(value.normalMaskedPseudo),
     paintOrderedBackdrop: parseLayeredBackgroundExport(value.paintOrderedBackdrop),
     pseudo: parseLayeredBackgroundExport(value.pseudo),
