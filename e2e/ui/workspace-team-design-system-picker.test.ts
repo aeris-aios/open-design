@@ -138,8 +138,16 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
     );
 
     await gotoDesignSystems(ownerPage);
+    await ensureRailOpen(ownerPage);
+    await ownerPage.getByTestId('workspace-switcher').click();
+    await ownerPage.getByRole('menuitem', { name: 'Design System Team' }).click();
+    await expect(ownerPage.getByTestId('workspace-switcher')).toContainText(
+      'Design System Team',
+    );
     await ownerPage.getByRole('tab', { name: /Your systems/i }).click();
-    await ownerPage.getByTestId(`design-system-card-${designSystemId}`).click();
+    const ownerCard = ownerPage.getByTestId(`design-system-card-${designSystemId}`);
+    await expect(ownerCard).toBeVisible({ timeout: T.xlong });
+    await ownerCard.click();
     await expectSharedLogo(
       ownerPage.getByTestId(`design-system-detail-${designSystemId}`),
       'Shared Product Language',
