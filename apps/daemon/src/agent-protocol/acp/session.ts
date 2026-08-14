@@ -59,6 +59,7 @@ import {
   modelSelectionErrorIsRecoverable,
 } from './models.js';
 import { buildAcpSessionNewParams, buildPromptBlocks, type AcpMcpServerInput } from './session-params.js';
+import { createVelaChildEvidenceConsumer } from '../../runtimes/vela-child-evidence.js';
 
 /**
  * Options for `attachAcpSession`. All fields except `child`, `prompt`, and
@@ -172,6 +173,7 @@ export function attachAcpSession({
   let emittedTextBuffer = '';
   let rawAcpShapeDiagnosticCount = 0;
   let artifactSuppressionDiagnosticCount = 0;
+  let velaChildRejectionDiagnosticCount = 0;
   let amrStderrRetryTail = '';
   let finished = false;
   let fatal = false;
@@ -196,6 +198,22 @@ export function attachAcpSession({
     openedBlocks: 0,
     closedBlocks: 0,
   };
+  // The AMR discriminator is deliberately required here. A generic ACP agent
+  // advertising a same-named extension must not silently expand the daemon's
+  // accepted protocol surface.
+  const velaChildEvidenceConsumer = modelUnavailableErrorCode
+    ? createVelaChildEvidenceConsumer({
+        onFact: (fact) => {
+          send('agent', {
+            type: 'diagnostic',
+            name: 'vela_opencode_child_agent_lifecycle',
+            source: 'amr-opencode',
+            elapsedMs: Date.now() - runStartedAt,
+            ...fact,
+          });
+        },
+      })
+    : null;
   const acpArtifactWriteToolCallIds = new Set<string>();
   // Per toolCallId: accumulate name/input/path/result across partial ACP frames
   // and emit exactly one tool_use + one tool_result at terminal status (or on
@@ -712,6 +730,30 @@ export function attachAcpSession({
           return;
         }
       }
+      const velaChildResult = velaChildEvidenceConsumer?.observe({
+        expectedAcpSessionId: sessionId,
+        envelopeAcpSessionId: params?.sessionId,
+        update,
+      });
+      if (velaChildResult?.handled) {
+        if (
+          velaChildResult.reason &&
+          velaChildRejectionDiagnosticCount < ACP_RAW_EVENT_SHAPE_DIAGNOSTIC_LIMIT
+        ) {
+          velaChildRejectionDiagnosticCount += 1;
+          send('agent', {
+            type: 'diagnostic',
+            name: 'vela_opencode_child_evidence_rejected',
+            source: 'amr-opencode',
+            elapsedMs: Date.now() - runStartedAt,
+            reason: velaChildResult.reason,
+          });
+        }
+        // Accepted facts are emitted by onFact. Rejected child frames must not
+        // fall through to generic status/raw diagnostics, which could copy
+        // unallowlisted producer fields.
+        return;
+      }
       if (emitAcpExecutionObservability(update)) {
         return;
       }
@@ -912,6 +954,16 @@ export function attachAcpSession({
       return;
     }
     if (expectedId === 1) {
+      const negotiation = velaChildEvidenceConsumer?.negotiate(result);
+      if (negotiation?.advertised) {
+        send('agent', {
+          type: 'diagnostic',
+          name: 'vela_opencode_child_evidence_capability',
+          source: 'amr-opencode',
+          elapsedMs: Date.now() - runStartedAt,
+          ...negotiation,
+        });
+      }
       expectedId = nextId;
       if (resumeSessionId) {
         // Resume the prior upstream session instead of creating a fresh one.

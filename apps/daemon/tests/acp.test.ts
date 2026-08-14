@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { PassThrough } from 'node:stream';
 import path from 'node:path';
-import { test, vi } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { attachAcpSession, buildAcpSessionNewParams, createJsonLineStream, normalizeModels } from '../src/agent-protocol/index.js';
 import {
   acpTelemetryToolCallId,
@@ -647,6 +647,216 @@ test('attachAcpSession preserves AMR assistant and model-step lifecycle diagnost
     assistantMessageIndex: 1,
     startedAtMs: 1_700_000_000_000,
   });
+});
+
+test('attachAcpSession consumes negotiated Vela child evidence only on the AMR path', () => {
+  const child = new FakeAcpChild();
+  const events: Array<{ event: string; payload: unknown }> = [];
+
+  attachAcpSession({
+    child: child as never,
+    prompt: 'delegate research',
+    cwd: '/tmp/od-project',
+    model: null,
+    mcpServers: [],
+    modelUnavailableErrorCode: 'AMR_MODEL_UNAVAILABLE',
+    send: (event, payload) => events.push({ event, payload }),
+  });
+
+  writeAcpResult(child, 1, {
+    protocolVersion: 1,
+    agentInfo: { name: 'Vela OpenCode', version: '0.0.0' },
+    agentCapabilities: {
+      extensions: {
+        'vela.opencode.child_agent_lifecycle': { schemaVersion: 1 },
+      },
+    },
+  });
+  writeAcpResult(child, 2, { sessionId: 'session-1' });
+  writeVelaAcpUpdate(child, {
+    sessionUpdate: 'child_agent_lifecycle',
+    extension: 'vela.opencode.child_agent_lifecycle',
+    schemaVersion: 1,
+    evidenceId: 'evidence-start',
+    phase: 'start',
+    status: 'running',
+    childSessionId: 'child-1',
+    parentSessionId: 'root-1',
+    toolCallId: 'task-1',
+    startedAtMs: 100,
+    timingEvidence: 'source_timestamp',
+    lifecycleCompleteness: 'complete',
+    sourceEvidence: ['root_task_metadata', 'session.created'],
+    prompt: {
+      availability: 'hash_only',
+      sha256: 'a'.repeat(64),
+      bytes: 4,
+    },
+    usage: {
+      availability: 'unavailable',
+      completeness: 'unavailable',
+    },
+  });
+  writeVelaAcpUpdate(child, {
+    sessionUpdate: 'child_agent_lifecycle',
+    extension: 'vela.opencode.child_agent_lifecycle',
+    schemaVersion: 1,
+    evidenceId: 'evidence-1',
+    phase: 'end',
+    status: 'completed',
+    childSessionId: 'child-1',
+    parentSessionId: 'root-1',
+    toolCallId: 'task-1',
+    startedAtMs: 100,
+    endedAtMs: 200,
+    timingEvidence: 'source_timestamp',
+    lifecycleCompleteness: 'complete',
+    sourceEvidence: [
+      'root_task_metadata',
+      'session.created',
+      'child_session_status',
+      'unknown-secret-source',
+    ],
+    prompt: {
+      availability: 'hash_only',
+      sha256: 'a'.repeat(64),
+      bytes: 4,
+      text: 'do not forward this Prompt',
+    },
+    usage: {
+      availability: 'available',
+      completeness: 'complete',
+      source: 'child_step_finish',
+      inputTokens: 2,
+      outputTokens: 1,
+      totalTokens: 3,
+      authorization: 'Bearer do-not-forward',
+    },
+    privateLog: '/Users/alice/private.log',
+  });
+  writeAcpUpdate(child, {
+    sessionUpdate: 'agent_message_chunk',
+    content: { text: 'Research complete.' },
+  });
+  writeAcpResult(child, 3, { usage: { inputTokens: 5, outputTokens: 2 } });
+
+  const diagnostics = events
+    .filter((entry) => entry.event === 'agent')
+    .map((entry) => entry.payload as Record<string, unknown>)
+    .filter((payload) => payload.type === 'diagnostic');
+  expect(diagnostics.find((payload) => payload.name === 'vela_opencode_child_evidence_capability'))
+    .toMatchObject({
+      supported: true,
+      schemaVersion: 1,
+      candidatePublished: false,
+      candidateCommit: '1d52465dd24878ef430ebba56fb63a4327a48554',
+    });
+  expect(diagnostics.find((payload) => (
+    payload.name === 'vela_opencode_child_agent_lifecycle' && payload.state === 'completed'
+  )))
+    .toMatchObject({
+      state: 'completed',
+      rootSessionId: 'root-1',
+      childSessionId: 'child-1',
+      toolCallId: 'task-1',
+      evidenceLevel: 'L2',
+      l3Eligible: false,
+      usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+    });
+  const serialized = JSON.stringify(events);
+  expect(serialized).not.toContain('do not forward this Prompt');
+  expect(serialized).not.toContain('Bearer do-not-forward');
+  expect(serialized).not.toContain('/Users/alice/private.log');
+  expect(events).toContainEqual(expect.objectContaining({
+    event: 'agent',
+    payload: expect.objectContaining({
+      type: 'usage',
+      usage: { input_tokens: 5, output_tokens: 2 },
+    }),
+  }));
+});
+
+test('attachAcpSession keeps old AMR child evidence unknown without changing root usage', () => {
+  const child = new FakeAcpChild();
+  const events: Array<{ event: string; payload: unknown }> = [];
+
+  attachAcpSession({
+    child: child as never,
+    prompt: 'ordinary turn',
+    cwd: '/tmp/od-project',
+    model: null,
+    mcpServers: [],
+    modelUnavailableErrorCode: 'AMR_MODEL_UNAVAILABLE',
+    send: (event, payload) => events.push({ event, payload }),
+  });
+  writeAcpResult(child, 1, { protocolVersion: 1 });
+  writeAcpResult(child, 2, { sessionId: 'session-1' });
+  writeVelaAcpUpdate(child, {
+    sessionUpdate: 'child_agent_lifecycle',
+    extension: 'vela.opencode.child_agent_lifecycle',
+    schemaVersion: 1,
+    malicious: 'must-not-fall-through',
+  });
+  writeAcpUpdate(child, {
+    sessionUpdate: 'agent_message_chunk',
+    content: { text: 'Ordinary answer.' },
+  });
+  writeAcpResult(child, 3, { usage: { inputTokens: 8, outputTokens: 3 } });
+
+  const diagnostics = events
+    .filter((entry) => entry.event === 'agent')
+    .map((entry) => entry.payload as Record<string, unknown>)
+    .filter((payload) => payload.type === 'diagnostic');
+  expect(diagnostics).toContainEqual(expect.objectContaining({
+    name: 'vela_opencode_child_evidence_rejected',
+    reason: 'capability_not_negotiated',
+  }));
+  expect(diagnostics.some((payload) => payload.name === 'vela_opencode_child_agent_lifecycle'))
+    .toBe(false);
+  expect(JSON.stringify(events)).not.toContain('must-not-fall-through');
+  expect(events).toContainEqual(expect.objectContaining({
+    event: 'agent',
+    payload: expect.objectContaining({
+      type: 'usage',
+      usage: { input_tokens: 8, output_tokens: 3 },
+    }),
+  }));
+});
+
+test('attachAcpSession does not enable the Vela extension for generic ACP agents', () => {
+  const child = new FakeAcpChild();
+  const events: Array<{ event: string; payload: unknown }> = [];
+
+  attachAcpSession({
+    child: child as never,
+    prompt: 'generic ACP turn',
+    cwd: '/tmp/od-project',
+    model: null,
+    mcpServers: [],
+    send: (event, payload) => events.push({ event, payload }),
+  });
+  writeAcpResult(child, 1, {
+    agentCapabilities: {
+      extensions: {
+        'vela.opencode.child_agent_lifecycle': { schemaVersion: 1 },
+      },
+    },
+  });
+  writeAcpResult(child, 2, { sessionId: 'session-1' });
+  writeVelaAcpUpdate(child, {
+    sessionUpdate: 'child_agent_lifecycle',
+    extension: 'vela.opencode.child_agent_lifecycle',
+    schemaVersion: 1,
+  });
+  writeAcpResult(child, 3, {});
+
+  const diagnostics = events
+    .filter((entry) => entry.event === 'agent')
+    .map((entry) => entry.payload as Record<string, unknown>)
+    .filter((payload) => payload.type === 'diagnostic');
+  expect(diagnostics.some((payload) => String(payload.name).startsWith('vela_opencode_child')))
+    .toBe(false);
+  expect(hasAgentStatus(events, 'child_agent_lifecycle')).toBe(true);
 });
 
 test('a truly PATHLESS ACP write is NOT coerced into an artifact (no false positive)', () => {
@@ -2101,6 +2311,13 @@ function writeAcpError(child: FakeAcpChild, id: number, error: unknown): void {
 
 function writeAcpUpdate(child: FakeAcpChild, update: unknown): void {
   child.stdout.write(`${JSON.stringify({ method: 'session/update', params: { update } })}\n`);
+}
+
+function writeVelaAcpUpdate(child: FakeAcpChild, update: unknown): void {
+  child.stdout.write(`${JSON.stringify({
+    method: 'session/update',
+    params: { sessionId: 'session-1', update },
+  })}\n`);
 }
 
 function agentModelStatuses(events: Array<{ event: string; payload: unknown }>): unknown[] {
