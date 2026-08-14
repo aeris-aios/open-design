@@ -332,14 +332,14 @@ test('[P0] sending preview comments opens the refreshed follow-up artifact', asy
   await expect(artifactPreview(page)).toBeVisible();
 
   await page.getByTestId('board-mode-toggle').click();
-  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
   await clickCommentTargetInPreview(page, '[data-od-id="hero-title"]');
   await expect(page.getByTestId('comment-popover')).toBeVisible();
   await page.getByTestId('comment-popover-input').fill('Make the headline more specific.');
   await page.getByTestId('comment-popover-save').click();
   await expect(page.getByTestId('comment-saved-marker-hero-title')).toBeVisible();
 
-  const sidePanel = page.getByTestId('comment-side-panel');
+  const sidePanel = await openCommentSidePanelAfterSave(page);
   await expect(sidePanel).toBeVisible();
   await expect(sidePanel.getByTestId('comment-side-item').filter({ hasText: 'Make the headline more specific.' }).first()).toBeVisible();
   await expect
@@ -951,12 +951,26 @@ async function clickCommentTargetInPreview(page: Page, selector: string) {
   await target.click({ force: true });
 }
 
+async function openCommentSidePanelAfterSave(page: Page): Promise<Locator> {
+  await expect(page.getByTestId('comment-side-panel')).toHaveCount(0);
+  const commentsButton = page.getByTestId('comment-panel-toggle');
+  // Saving leaves the comment-create tool active while intentionally keeping
+  // the side panel closed. The first click exits that tool; the second opens
+  // the comments panel through its current user-facing contract.
+  await commentsButton.click();
+  await expect(commentsButton).toHaveAttribute('aria-pressed', 'false');
+  await commentsButton.click();
+  const sidePanel = page.getByTestId('comment-side-panel');
+  await expect(sidePanel).toBeVisible();
+  return sidePanel;
+}
+
 async function runCommentAttachmentFlow(
   page: Page,
   entry: UiScenario,
 ) {
   await page.getByTestId('board-mode-toggle').click();
-  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
   await clickCommentTargetInPreview(page, '[data-od-id="hero-title"]');
   await expect(page.getByTestId('comment-popover')).toBeVisible();
   await page.getByTestId('comment-popover-input').fill('Make the headline more specific.');
@@ -966,8 +980,7 @@ async function runCommentAttachmentFlow(
   await expect(page.getByTestId('staged-comment-attachments')).toHaveCount(0);
   await expect(page.getByTestId('comment-popover')).toHaveCount(0);
 
-  const sidePanel = page.getByTestId('comment-side-panel');
-  await expect(sidePanel).toBeVisible();
+  const sidePanel = await openCommentSidePanelAfterSave(page);
   await expect(sidePanel).toContainText('Make the headline more specific.');
   await expect(sidePanel.getByTestId('comment-side-item').filter({ hasText: 'Make the headline more specific.' }).first()).toBeVisible();
   await expect
