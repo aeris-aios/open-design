@@ -713,6 +713,9 @@ importers:
 
   shells/electron:
     dependencies:
+      '@open-design/closure':
+        specifier: workspace:*
+        version: link:../../packages/closure
       '@open-design/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -741,9 +744,6 @@ importers:
         specifier: workspace:*
         version: link:../../apps/standalone
     devDependencies:
-      '@open-design/closure':
-        specifier: workspace:*
-        version: link:../../packages/closure
       '@types/node':
         specifier: 24.12.2
         version: 24.12.2
