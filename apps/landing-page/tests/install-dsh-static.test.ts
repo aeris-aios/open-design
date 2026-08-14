@@ -40,7 +40,7 @@ test('publishes pinned cross-platform DeepSeek Harness installers', () => {
 
   assert.match(cmd, /^@echo off\r?\n/);
   assert.match(cmd, /powershell\.exe/);
-  assert.match(cmd, /https:\/\/open-design\.ai\/install-dsh\.ps1/);
+  assert.match(cmd, /https:\/\/releases\.open-design\.ai\/bootstrap\/dsh\/v1\/install-dsh\.ps1/);
   assert.doesNotMatch(cmd, /DEEPSEEK_API_KEY/);
 });
 
