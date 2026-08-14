@@ -35,8 +35,14 @@ const OPEN_DESIGN_ACTIONS_ZH = [
 const DEEPSEEK_HARNESS_HERO_ACTIONS = [
   { label: 'Download Open Design', href: '/download/', variant: 'primary' as const },
   {
-    label: 'Open DeepSeek Harness on GitHub',
-    href: 'https://github.com/deepseek-ai/deepseek-harness',
+    label: 'Join Open Design Discord',
+    href: 'https://discord.gg/mHAjSMV6gz',
+    variant: 'ghost' as const,
+    external: true,
+  },
+  {
+    label: 'Join the Feishu group',
+    href: 'https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=76ao915b-3a37-43dd-ba0e-152ae1aae78d',
     variant: 'ghost' as const,
     external: true,
   },
@@ -45,25 +51,31 @@ const DEEPSEEK_HARNESS_HERO_ACTIONS = [
 const DEEPSEEK_HARNESS_HERO_ACTIONS_ZH = [
   { label: '下载 Open Design', href: '/download/', variant: 'primary' as const },
   {
-    label: '在 GitHub 打开 DeepSeek Harness',
-    href: 'https://github.com/deepseek-ai/deepseek-harness',
+    label: '加入 Discord',
+    href: 'https://discord.gg/mHAjSMV6gz',
+    variant: 'ghost' as const,
+    external: true,
+  },
+  {
+    label: '加入飞书群',
+    href: 'https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=76ao915b-3a37-43dd-ba0e-152ae1aae78d',
     variant: 'ghost' as const,
     external: true,
   },
 ];
 
 export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
-  title: 'How to Use DeepSeek Harness for Design | Open Design',
+  title: 'How to Use DeepSeek Harness for UI Design | Open Design',
   description:
-    'Use DeepSeek Harness (dsh) to design and build UI. Set up its Web UI, add a design contract and skills, generate frontend code, and verify the result.',
+    'Learn how to use DeepSeek Harness for UI design, then connect dsh to Open Design for design systems, reusable skills, model sync, and local previews.',
   breadcrumb: 'DeepSeek Harness',
   label: 'Agent · DeepSeek Harness',
   heading: 'Design with DeepSeek Harness.',
   lead:
-    'Turn DeepSeek Harness into a local UI workspace with project rules, reusable skills, model routing, and a browser verification loop.',
+    'DeepSeek Harness can build and edit interfaces in a real repository. Connect dsh to Open Design to guide that work with design systems, reusable skills, and local artifact previews.',
   tldrTitle: 'TL;DR',
   tldrBody:
-    'Run DeepSeek Harness with npx @deepseek-ai/dsh web, add your model key, choose a workspace, and give the agent design rules through AGENTS.md, CLAUDE.md, and skills. DeepSeek’s native route is text-only, so screenshot work needs an image-capable provider. Open Design can supply the design-system and artifact layer alongside dsh today; a dedicated dsh adapter is not shipped yet.',
+    'DeepSeek Harness can do design work: it can read project instructions, use frontend skills, edit real UI code, and run checks. The practical path is to connect your dsh installation to Open Design, which adds the design systems, skills, model sync, previews, and review surface around the Harness while keeping credentials and files local.',
   toc: [
     'What is DeepSeek Harness',
     'Why it fits design work',
@@ -72,33 +84,33 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
     'Plugins, skills, and context',
     'Comparison',
     'Pitfalls',
-    'With Open Design',
+    'Connect Open Design',
     'FAQ',
   ],
   rich: {
     heroCtaLead:
-      'Start dsh, open your repository, load a design contract, generate the interface, then verify it in the browser.',
+      'DeepSeek Harness can generate and refine UI. Open Design turns that capability into a repeatable design workflow with visual rules, skills, previews, and review.',
     heroCtaActions: DEEPSEEK_HARNESS_HERO_ACTIONS,
     intro: [
-      'DeepSeek Harness, or dsh, becomes useful for design when you treat it as the runtime around a repeatable UI process. The model edits the code, project files hold the visual contract, skills encode the craft, and browser checks decide whether the result is acceptable.',
-      'This guide follows that process from setup to visual review. Product architecture, provider limits, and tool comparisons are included only where they change how you design with the harness.',
+      'DeepSeek Harness, or dsh, can work as a design agent because it combines a model with project instructions, files, shell tools, skills, sessions, and a verification loop. It can turn a written brief into frontend code, iterate on a real interface, and keep the work inside your repository.',
+      'The model still needs visual direction. The simplest way to supply it is to connect DeepSeek Harness to Open Design: Open Design provides the design system, frontend skills, artifact preview, and review surface; dsh performs the coding work. This guide covers that workflow from the official [DeepSeek Harness product page](https://www.deepseek.com/harness/) and [source repository](https://github.com/deepseek-ai/deepseek-harness) to a finished interface.',
     ],
     heroImage: {
-      src: '/agents/deepseek-harness-design/deepseek-harness-design-hero.webp',
-      alt: 'DeepSeek Harness plugin streams converging on the official DeepSeek fish mark before branching into a local design workspace',
+      src: '/agents/deepseek-harness-design/deepseek-harness-design-dsh-web-ui.webp',
+      alt: 'DeepSeek Harness local Web UI running at 127.0.0.1:3080 with a workspace and model selector',
       caption:
-        'The harness is the middle layer: plugins bring models, tools, skills, and policy together; the workspace turns them into visible, reviewable output.',
+        'Do not continue until dsh can start locally and the Web UI can see the model you want to use.',
     },
     tocLabel: 'On this page',
     toc: [
-      { id: 'setup', label: 'Build the design workspace' },
-      { id: 'why-design', label: 'Give the agent a design contract' },
+      { id: 'why-design', label: 'Can DeepSeek Harness do design?' },
+      { id: 'setup', label: '1. Install and configure DeepSeek Harness' },
+      { id: 'open-design', label: '2–5. Connect and use it in Open Design' },
       { id: 'design-workflow', label: 'Run the UI build and review loop' },
       { id: 'plugins', label: 'Make the workflow reusable' },
       { id: 'pitfalls', label: 'Avoid weak visual output' },
       { id: 'what-is-deepseek-harness', label: 'What the harness contributes' },
-      { id: 'vs', label: 'When to choose DeepSeek Harness' },
-      { id: 'open-design', label: 'Add the Open Design layer' },
+      { id: 'vs', label: 'DeepSeek Harness vs other agents' },
       { id: 'faq', label: 'FAQ' },
     ],
     sections: [
@@ -108,7 +120,7 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
         blocks: [
           {
             kind: 'p',
-            text: 'DeepSeek Harness (`dsh`) is an [MIT-licensed agent harness developed by DeepSeek AI](https://github.com/deepseek-ai/deepseek-harness). The public developer preview ships a local Web UI and a headless runner. It is not a model and it is not merely a terminal skin: it is the runtime that assembles a model, tools, context, permissions, sessions, and user interface into an agent.',
+            text: 'DeepSeek Harness (`dsh`) is an [MIT-licensed agent harness developed by DeepSeek AI](https://github.com/deepseek-ai/deepseek-harness). The [official product page](https://www.deepseek.com/harness/) presents the project; the GitHub repository carries the source, release history, and maintained guides. The public developer preview ships a local Web UI and headless profiles.',
           },
           {
             kind: 'p',
@@ -144,11 +156,11 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'why-design',
-        heading: 'Give the agent a design contract',
+        heading: 'Can DeepSeek Harness do design?',
         blocks: [
           {
             kind: 'p',
-            text: 'A model can write JSX, but a useful design agent needs more than model output. It needs brand rules, references, tools, permissions, and a loop that renders and checks the result. DeepSeek Harness exposes those surrounding pieces instead of hiding them.',
+            text: 'DeepSeek Harness can build landing pages, product interfaces, dashboards, and frontend prototypes because it can read a repository, edit real UI code, run commands, load project instructions, and keep a session across iterations. What it does not supply on its own is visual taste: useful design work still needs brand rules, references, tools, permissions, and a loop that renders and checks the result.',
           },
           {
             kind: 'steps',
@@ -182,36 +194,37 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'setup',
-        heading: 'Build your DeepSeek Harness design workspace',
+        heading: 'Step 1: Install and configure DeepSeek Harness',
         blocks: [
           {
             kind: 'p',
-            text: 'The public preview requires Node.js `^22.19.0` or `>=24.0.0`. The npm command initializes the web profile on first use, so you can reach a working local UI without cloning the repository.',
+            text: 'Start by making sure DeepSeek Harness works on its own. Install the tested dsh release, then open its local Web UI to configure the API key and model before opening Open Design. The developer preview requires Node.js `^22.19.0` or `>=24.0.0`.',
           },
           {
             kind: 'code',
             lang: 'bash',
-            code: '# 1. Start the official DeepSeek Harness Web UI\n# Requires Node.js ^22.19.0 or >=24.0.0\nnpx @deepseek-ai/dsh web\n\n# 2. Open the local UI (default)\n# http://127.0.0.1:3080\n\n# 3. In Settings → Models, add a DeepSeek API key\n#    or configure another supported provider.\n\n# 4. Choose the project directory as your workspace.\n\n# Optional: run one headless job after the profile is initialized\nnpx @deepseek-ai/dsh --profile headless "Audit this UI against AGENTS.md"',
-          },
-          {
-            kind: 'image',
-            src: '/agents/deepseek-harness-design/deepseek-harness-design-setup-flow.webp',
-            alt: 'Five-step setup flow: launch dsh, configure a model, choose a workspace, add design context, and verify output',
-            caption:
-              'Launch → add a model → choose a workspace → load design rules and skills → verify the rendered result.',
+            code: '# Open Design currently tests DeepSeek Harness 0.1.0-rc.6\n# Requires Node.js ^22.19.0 or >=24.0.0\nnpm install -g @deepseek-ai/dsh@0.1.0-rc.6\n\n# Verify the local executable\ndsh --version\n\n# Start the local Web UI and configure a provider and model\ndsh web\n# Open http://127.0.0.1:3080',
           },
           {
             kind: 'steps',
             items: [
               {
-                label: 'Credentials stay referenced',
-                body: 'The Web UI stores provider secrets in `$DSH_HOME/.credentials.yaml`; settings keep a credential reference, and the UI receives a redacted descriptor rather than the literal key.',
+                label: 'Open the Harness Web UI',
+                body: 'Run `dsh web`. It normally opens `http://127.0.0.1:3080`; if the browser does not open, copy the address printed by the terminal and use that exact address.',
               },
               {
-                label: 'Treat the preview as pinned infrastructure',
-                body: 'The maintainers explicitly warn that compatibility-breaking changes will happen. Pin the version for a team workflow and review release changes before updating.',
+                label: 'Add the DeepSeek API key',
+                body: 'Continue past the preview notice, then save or apply the key when prompted. If the prompt does not appear, open Settings → Models → DeepSeek → API Key. Paste only the key — not `DEEPSEEK_API_KEY=...` and not quotes. The change takes effect immediately; you do not need to restart `dsh web`. Create one on the [DeepSeek Platform](https://platform.deepseek.com/api_keys) if needed.',
+              },
+              {
+                label: 'Confirm the model, then close the setup UI',
+                body: 'The DeepSeek provider should show as configured and its models should appear in the selector. If you see `MISSING_CREDENTIAL`, reopen the DeepSeek card and save the key again. After a test prompt works, press `Ctrl+C`; `dsh web` does not need to stay open while you use Open Design.',
               },
             ],
+          },
+          {
+            kind: 'p',
+            text: 'DeepSeek Harness stores provider credentials as write-only secrets: the UI can report whether a key is configured, but cannot read or display the plaintext key. Open Design reuses this user-installed dsh and its model configuration without copying the key into Open Design. For a dependable workflow, keep dsh pinned to the tested `0.1.0-rc.6` release. See the [official provider guide](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md) for the upstream credential behavior.',
           },
         ],
       },
@@ -285,11 +298,11 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'vs',
-        heading: 'When to choose DeepSeek Harness',
+        heading: 'DeepSeek Harness, DeepSeek TUI, and Open Design',
         blocks: [
           {
             kind: 'p',
-            text: 'The names are easy to conflate. DeepSeek Harness and the DeepSeek TUI currently listed in Open Design are separate projects with different executables and integration status.',
+            text: 'DeepSeek Harness and DeepSeek TUI are separate projects with different executables. Open Design now supports both as local agents, so the choice is about which runtime you want — not whether either can enter the design workspace.',
           },
           {
             kind: 'table',
@@ -297,13 +310,13 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
             rows: [
               [
                 'DeepSeek Harness (`dsh`)',
-                'Official DeepSeek AI plugin-first harness with local Web UI and headless profiles; developer preview',
-                'Teams that want to compose the runtime, skills, providers, policy, and UI around a design workflow',
+                'Official DeepSeek AI plugin-first harness with local Web UI and headless profiles; first-party Open Design adapter',
+                'Using Harness sessions, providers, and plugin composition inside Open Design’s artifact workflow',
               ],
               [
                 'DeepSeek TUI (`deepseek` / `codewhale`)',
-                'A separate terminal coding agent and the DeepSeek adapter Open Design currently supports',
-                'Using DeepSeek from inside Open Design today',
+                'A separate terminal coding agent with its own Open Design adapter',
+                'A terminal-first DeepSeek workflow without the Harness profile architecture',
               ],
               [
                 'OpenCode',
@@ -324,7 +337,7 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
           },
           {
             kind: 'p',
-            text: 'Choose dsh when the harness itself is what you want to extend. Choose [DeepSeek TUI inside Open Design](/agents/deepseek-design/) when you want the currently supported DeepSeek adapter and a ready design layer. They may converge through a future adapter, but they are not interchangeable today.',
+            text: 'Choose DeepSeek Harness when you want its official Web UI, profile system, model catalog, and resumable Harness sessions. Choose [DeepSeek TUI inside Open Design](/agents/deepseek-design/) when you prefer that agent’s terminal-first workflow. They remain distinct runtimes even though Open Design can now wrap either one in the same design process.',
           },
         ],
       },
@@ -365,24 +378,57 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'open-design',
-        heading: 'Add Open Design as the design layer',
+        heading: 'Steps 2–5: Connect DeepSeek Harness to Open Design',
         blocks: [
           {
             kind: 'p',
-            text: 'Open Design and DeepSeek Harness occupy adjacent layers. dsh composes an agent runtime; Open Design curates the [design systems](/plugins/systems/), [skills](/plugins/skills/), and local artifact workflow that make an agent useful for visual work. Open Design does not yet ship a dedicated `dsh` adapter, so the accurate workflow today is side by side.',
+            text: 'Once dsh works locally, the rest happens in Open Design. DeepSeek Harness integration is available in Open Design 0.19.1 and later.',
           },
           {
-            kind: 'ol',
+            kind: 'steps',
             items: [
-              'Install [Open Design](/download/) and use its design systems and skills to establish the visual contract for the project.',
-              'Keep the resulting `DESIGN.md`, references, and project instructions in the same repository DeepSeek Harness opens as its workspace.',
-              'Run dsh for plugin-first experiments and code tasks; reuse the same tokens, rules, assets, and validation criteria rather than maintaining a second design brief.',
-              'When you need DeepSeek directly inside Open Design today, select the existing [DeepSeek TUI adapter](/agents/deepseek-design/). Treat a future dsh adapter as a separate integration, not as current behavior.',
+              {
+                label: '2 · Download Open Design 0.19.1 or later',
+                body: 'Get the current desktop build from the [Open Design download page](/download/), install it, and launch the app.',
+              },
+              {
+                label: '3 · Detect DeepSeek Harness',
+                body: 'Open Settings → Models & providers → Local CLI, then choose Rescan. Restart Open Design or rescan again if it was already open during installation. The DeepSeek Harness card appears when Open Design finds the `dsh` executable from step 1.',
+              },
+              {
+                label: '4 · Connect the Open Design profile',
+                body: 'Select the DeepSeek Harness card. If it says “Connection setup required,” confirm “Install and select.” Open Design verifies its own component, asks dsh to install it into the `open-design` profile, rescans, and tests the connection.',
+              },
+              {
+                label: '5 · Start a design task',
+                body: 'Confirm the card shows the Harness version and “Synced from CLI,” then click Test. After the test passes, open or create a project, choose DeepSeek Harness and a synced model, and send your design request.',
+              },
             ],
           },
           {
+            kind: 'image',
+            src: '/agents/deepseek-harness-design/deepseek-harness-design-open-design-settings.webp',
+            alt: 'Open Design Models and providers settings showing DeepSeek Harness installed, synced from CLI, and ready to test',
+            caption: 'This is the checkpoint: detected Harness version, “Synced from CLI,” and a working Test action.',
+          },
+          {
             kind: 'p',
-            text: 'The result is one owned codebase and one portable design contract across two local-first tools. Open Design remains independent from DeepSeek AI; DeepSeek and DeepSeek Harness are trademarks of their respective owner.',
+            text: 'That completes the connection. The UI and `od agent setup deepseek-harness --json` use the same local setup path; each run starts `dsh --profile open-design --stdio`, while Harness keeps the session identity for later turns.',
+          },
+          {
+            kind: 'code',
+            lang: 'text',
+            code: 'Create a polished product landing page in this workspace.\nUse DESIGN.md, AGENTS.md, and the installed frontend skill as the visual contract.\nReuse the project tokens and components; include desktop and mobile states.\nRun the app, inspect the rendered result, fix visible spacing and hierarchy issues,\nand leave the final HTML and assets in the project for Open Design to preview.',
+          },
+          {
+            kind: 'image',
+            src: '/agents/deepseek-harness-design/deepseek-harness-design-open-design-workspace.webp',
+            alt: 'Open Design workspace showing a DeepSeek Harness task beside a generated branded landing page preview',
+            caption: 'DeepSeek Harness edits the real workspace; Open Design keeps the request, progress, preview, and final artifact together.',
+          },
+          {
+            kind: 'p',
+            text: 'The boundary stays simple: Harness owns dsh, credentials, models, and sessions; Open Design owns the verified connection profile and design workspace. Open Design is independent from DeepSeek AI, and DeepSeek and DeepSeek Harness are trademarks of their respective owner.',
           },
         ],
       },
@@ -395,7 +441,7 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         name: 'How do I install and run DeepSeek Harness?',
-        text: 'Install a supported Node.js version, then run `npx @deepseek-ai/dsh web`. It starts the local Web UI at `http://127.0.0.1:3080` by default. Add a model under Settings → Models, choose a workspace, and start a session.',
+        text: 'Install the tested CLI with `npm install -g @deepseek-ai/dsh@0.1.0-rc.6`, then run `dsh web`. Continue past the preview notice and save only the API key itself under Settings → Models → DeepSeek → API Key. Confirm the provider and model work, stop the Web UI with `Ctrl+C`, install Open Design 0.19.1 or later, rescan Local CLI agents, connect the Harness card, and click Test.',
       },
       {
         name: 'Is DeepSeek Harness an official DeepSeek project?',
@@ -415,16 +461,16 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         name: 'Does Open Design support DeepSeek Harness?',
-        text: 'Not as a dedicated first-party adapter yet. Open Design currently supports the separate DeepSeek TUI adapter. You can still use Open Design’s design systems, skills, DESIGN.md files, and artifacts alongside dsh in the same local repository.',
+        text: 'Yes. Open Design detects your official dsh installation, installs a verified Open Design-owned profile component after explicit confirmation, syncs the Harness model catalog, and runs DeepSeek Harness as a first-party local agent. Open Design does not install dsh or receive the provider secrets managed by Harness.',
       },
       {
         name: 'Where does DeepSeek Harness store my API key?',
-        text: 'The official model guide says provider keys are stored in `$DSH_HOME/.credentials.yaml`. Settings keep only a credential reference, and the Web UI receives a redacted descriptor rather than the literal secret.',
+        text: 'Configure the key in DeepSeek Harness, not Open Design. The official model guide says provider keys are stored in `$DSH_HOME/.credentials.yaml` as write-only secrets: the UI can see whether a key is configured but cannot read or display its plaintext value. Open Design does not ask you to paste the key into the app or write it into Open Design configuration.',
       },
     ],
-    ctaTitle: 'Build the design layer around your DeepSeek workflow.',
+    ctaTitle: 'Design with DeepSeek Harness in Open Design.',
     ctaBody:
-      'Use Open Design’s local design systems, skills, and artifact workflow today, and keep the same project contract ready for whichever agent runtime you choose next.',
+      'Install the official dsh runtime, connect it once, then use Open Design’s design systems, skills, synced models, and local artifact previews in one workflow.',
     ctaActions: OPEN_DESIGN_ACTIONS,
     hubLinkLabel: 'See all supported agents',
   },
@@ -432,7 +478,7 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
   aboutBody: [
     'DeepSeek Harness (`dsh`) is the official open-source agent harness from DeepSeek AI. Its local Web UI and headless runner compose models, tools, sessions, permissions, filesystems, skills, subagents, and UI as Cordis plugins.',
     'The project is MIT-licensed and currently in developer preview. Its maintainers explicitly expect compatibility-breaking changes.',
-    'DeepSeek Harness is separate from the DeepSeek TUI adapter that Open Design currently supports.',
+    'Open Design supports DeepSeek Harness and the separate DeepSeek TUI as distinct first-party local agents.',
   ],
   vendorLabel: 'Developer',
   vendor: 'DeepSeek AI (official)',
@@ -449,6 +495,11 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
   linksTitle: 'Official DeepSeek Harness resources',
   linksLead: 'Start with the official repository and its maintained documentation:',
   links: [
+    {
+      label: 'DeepSeek Harness official website',
+      href: 'https://www.deepseek.com/harness/',
+      source: 'Website · DeepSeek AI',
+    },
     {
       label: 'deepseek-ai/deepseek-harness',
       href: 'https://github.com/deepseek-ai/deepseek-harness',
@@ -467,63 +518,63 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
   ],
   withOdTitle: 'DeepSeek Harness + Open Design',
   withOdLead:
-    'Use Open Design as the design-system, skill, and artifact layer alongside dsh. A dedicated DeepSeek Harness adapter is not shipped yet.',
+    'Open Design treats the user-installed dsh as a first-party local agent and adds a verified connection profile, design systems, skills, and artifact previews around it.',
   withOdSteps: [
-    'Use Open Design to choose a design system and frontend skill.',
-    'Keep DESIGN.md, assets, and project instructions in the repository.',
-    'Open the same repository as a DeepSeek Harness workspace.',
-    'Use the existing DeepSeek TUI adapter when you need DeepSeek inside Open Design today.',
+    'Install the tested official dsh package and configure a provider model.',
+    'Open Settings → Models & providers → Local CLI in Open Design and rescan.',
+    'Select DeepSeek Harness and confirm the one-time Open Design profile setup.',
+    'Open a project, choose a synced Harness model, and build against DESIGN.md and your selected skills.',
   ],
-  withOdClosing: 'One repository and one portable design contract, without pretending the two runtimes are already integrated.',
+  withOdClosing: 'One local runtime, one owned repository, and one reviewable design workflow.',
   faqTitle: 'FAQ',
   faq: [
     { name: 'Is DeepSeek Harness official?', text: 'Yes. It is developed by DeepSeek AI and published under the MIT license.' },
     { name: 'Is it stable?', text: 'No. It is a developer preview and compatibility-breaking changes are expected.' },
     {
       name: 'Is it supported inside Open Design?',
-      text: 'Not through a dedicated dsh adapter yet. Open Design currently supports the separate DeepSeek TUI.',
+      text: 'Yes. Open Design detects the user-installed dsh and adds its own verified profile component after explicit confirmation.',
     },
   ],
-  ctaTitle: 'Build the design layer around your DeepSeek workflow.',
-  ctaBody: 'Bring the same design systems, skills, and project contract to whichever local agent runtime you use.',
+  ctaTitle: 'Design with DeepSeek Harness in Open Design.',
+  ctaBody: 'Connect the official dsh runtime and keep design systems, skills, models, previews, and files in one local workflow.',
 };
 
 export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
-  title: '如何用 DeepSeek Harness 做设计 | Open Design',
+  title: 'DeepSeek Harness 怎么做设计？接入 Open Design 教程',
   description:
-    '用 DeepSeek Harness（dsh）设计并构建 UI：配置 Web UI、注入设计契约与 Skill、生成前端代码，并在浏览器中验证结果。',
+    '了解如何用 DeepSeek Harness 做 UI 设计，再把 dsh 接入 Open Design，使用设计系统、可复用 Skill、模型同步与本地预览完成界面。',
   breadcrumb: 'DeepSeek Harness',
   label: 'Agent · DeepSeek Harness',
   heading: '用 DeepSeek Harness 做设计。',
   lead:
-    '把 DeepSeek Harness 变成一套本地 UI 工作台：加载项目规则与 Skill，选择模型路由，生成界面，再用浏览器完成视觉验收。',
+    'DeepSeek Harness 可以在真实项目中生成并修改界面。把 dsh 接入 Open Design，就能用设计系统、可复用 Skill 与本地产物预览来约束和验收设计结果。',
   tldrTitle: '简要结论',
   tldrBody:
-    '运行 npx @deepseek-ai/dsh web，添加模型凭证、选择工作区，再通过 AGENTS.md、CLAUDE.md 与 Skill 给 Agent 注入设计规则。DeepSeek 原生路由只支持文本，截图任务需要支持图片的模型供应方。Open Design 目前可在 dsh 旁边提供设计系统与产物层，但尚未发布专用 dsh 适配器。',
-  toc: ['DeepSeek Harness 是什么', '为什么适合设计', '配置', '设计工作流', '插件、Skill 与上下文', '对比', '常见坑', '与 Open Design 配合', '常见问题'],
+    'DeepSeek Harness 能读取项目指令、调用前端 Skill、修改真实 UI 代码并运行检查。更实用的做法是把你安装的 dsh 接入 Open Design，让 Open Design 在 Harness 外层补上设计系统、Skill、模型同步、预览与审阅界面，同时让凭证和文件继续留在本机。',
+  toc: ['DeepSeek Harness 是什么', '为什么适合设计', '安装 dsh', '设计工作流', '插件、Skill 与上下文', '对比', '常见坑', '接入 Open Design', '常见问题'],
   rich: {
     heroCtaLead:
-      '启动 dsh，打开代码仓库，加载设计契约，生成界面，然后在浏览器里验证结果。',
+      'DeepSeek Harness 可以生成和迭代 UI；Open Design 再用视觉规则、Skill、预览与审阅，把这种能力变成可重复的设计工作流。',
     heroCtaActions: DEEPSEEK_HARNESS_HERO_ACTIONS_ZH,
     intro: [
-      '要用 DeepSeek Harness 做设计，关键不是让模型随手写一段 JSX，而是把它放进一套可重复的 UI 流程：模型修改代码，项目文件保存视觉契约，Skill 固化前端工艺，浏览器检查决定结果是否通过。',
-      '本文按这条路径从配置讲到视觉验收。插件架构、模型限制和工具对比只在它们会影响实际设计工作时出现，不再喧宾夺主。',
+      'DeepSeek Harness（dsh）可以成为设计 Agent，因为它把模型与项目指令、文件、Shell 工具、Skill、会话和验证闭环组合在一起。它能把文字需求变成前端代码，在真实界面上持续迭代，并把工作保留在你的仓库里。',
+      '模型仍然需要明确的视觉方向。最直接的做法是把 DeepSeek Harness 接入 Open Design：Open Design 提供设计系统、前端 Skill、产物预览与审阅界面，dsh 负责实际编码。本文从 [DeepSeek Harness 官网](https://www.deepseek.com/harness/)与[官方源码仓库](https://github.com/deepseek-ai/deepseek-harness)开始，完整演示从接入到生成界面的流程。',
     ],
     heroImage: {
-      src: '/agents/deepseek-harness-design/deepseek-harness-design-hero.webp',
-      alt: 'DeepSeek Harness 的插件流汇聚到官方 DeepSeek 鱼形标识，再分支进入本地设计工作区',
-      caption: 'Harness 是中间层：插件把模型、工具、Skill 与策略组合起来，工作区再把它们变成可见、可审阅的产物。',
+      src: '/agents/deepseek-harness-design/deepseek-harness-design-dsh-web-ui.webp',
+      alt: 'DeepSeek Harness 本地 Web UI 运行在 127.0.0.1:3080，并显示工作区与模型选择器',
+      caption: '确认 dsh 能在本机启动，而且 Web UI 已经看到你要使用的模型，再继续下一步。',
     },
     tocLabel: '本页目录',
     toc: [
-      { id: 'setup', label: '搭建设计工作台' },
-      { id: 'why-design', label: '给 Agent 一份设计契约' },
+      { id: 'why-design', label: 'DeepSeek Harness 能做设计吗？' },
+      { id: 'setup', label: '1. 安装并配置 DeepSeek Harness' },
+      { id: 'open-design', label: '2–5. 接入 Open Design 并开始设计' },
       { id: 'design-workflow', label: '执行 UI 构建与验收闭环' },
       { id: 'plugins', label: '把工作流固化下来' },
       { id: 'pitfalls', label: '避免低质量视觉输出' },
       { id: 'what-is-deepseek-harness', label: 'Harness 在流程中的作用' },
-      { id: 'vs', label: '什么时候选择 DeepSeek Harness' },
-      { id: 'open-design', label: '接入 Open Design 设计层' },
+      { id: 'vs', label: 'DeepSeek Harness 与其他 Agent 的区别' },
       { id: 'faq', label: '常见问题' },
     ],
     sections: [
@@ -533,7 +584,7 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
         blocks: [
           {
             kind: 'p',
-            text: 'DeepSeek Harness（`dsh`）是 [DeepSeek AI 开发、采用 MIT 许可的 Agent Harness](https://github.com/deepseek-ai/deepseek-harness)。公开的开发者预览版提供本地 Web UI 与无头运行器。它不是模型，也不只是终端皮肤；它是把模型、工具、上下文、权限、会话和用户界面组装成 Agent 的运行时。',
+            text: 'DeepSeek Harness（`dsh`）是 [DeepSeek AI 开发、采用 MIT 许可的 Agent Harness](https://github.com/deepseek-ai/deepseek-harness)。[官方产品页](https://www.deepseek.com/harness/)用于了解产品，[GitHub 仓库](https://github.com/deepseek-ai/deepseek-harness)提供源码、版本记录与维护中的文档。公开开发者预览版包含本地 Web UI 与 headless profile。',
           },
           {
             kind: 'p',
@@ -552,9 +603,9 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'why-design',
-        heading: '给 Agent 一份设计契约',
+        heading: 'DeepSeek Harness 能做设计吗？',
         blocks: [
-          { kind: 'p', text: '模型会写 JSX，但真正好用的设计 Agent 还需要品牌规则、参考、工具、权限，以及渲染和检查结果的闭环。DeepSeek Harness 把这些外围能力暴露出来，而不是藏在固定产品里。' },
+          { kind: 'p', text: 'DeepSeek Harness 能读取仓库、修改真实 UI 代码、运行命令、加载项目指令，并在多轮迭代中保留会话，因此可以用来制作落地页、产品界面、仪表盘与前端原型。但它不会凭空提供设计品味：真正好用的设计流程仍然需要品牌规则、参考、工具、权限，以及渲染和检查结果的闭环。' },
           {
             kind: 'steps',
             items: [
@@ -574,26 +625,25 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'setup',
-        heading: '搭建 DeepSeek Harness 设计工作台',
+        heading: '第 1 步：安装并配置 DeepSeek Harness',
         blocks: [
-          { kind: 'p', text: '公开预览版要求 Node.js `^22.19.0` 或 `>=24.0.0`。npm 命令会在首次运行时初始化 web profile，因此无需克隆仓库也能打开本地 UI。' },
+          { kind: 'p', text: '先确保 DeepSeek Harness 可以独立运行。安装经过测试的 dsh 版本，然后打开本地 Web UI，配置好 API Key 与模型，再打开 Open Design。开发者预览版要求 Node.js `^22.19.0` 或 `>=24.0.0`。' },
           {
             kind: 'code',
             lang: 'bash',
-            code: '# 1. 启动官方 DeepSeek Harness Web UI\n# 需要 Node.js ^22.19.0 或 >=24.0.0\nnpx @deepseek-ai/dsh web\n\n# 2. 打开本地 UI（默认地址）\n# http://127.0.0.1:3080\n\n# 3. 在 Settings → Models 中添加 DeepSeek API key\n#    或配置其他受支持的模型供应方。\n\n# 4. 把项目目录选为 workspace。\n\n# 可选：Profile 初始化后运行一次无头任务\nnpx @deepseek-ai/dsh --profile headless "Audit this UI against AGENTS.md"',
-          },
-          {
-            kind: 'image',
-            src: '/agents/deepseek-harness-design/deepseek-harness-design-setup-flow.webp',
-            alt: '五步配置流程：启动 dsh、配置模型、选择工作区、添加设计上下文并验证输出',
-            caption: '启动 → 添加模型 → 选择工作区 → 加载设计规则与 Skill → 验证渲染结果。',
+            code: '# Open Design 当前完整测试 DeepSeek Harness 0.1.0-rc.6\n# 需要 Node.js ^22.19.0 或 >=24.0.0\nnpm install -g @deepseek-ai/dsh@0.1.0-rc.6\n\n# 验证本地命令\ndsh --version\n\n# 启动本地 Web UI，并配置供应方与模型\ndsh web\n# 打开 http://127.0.0.1:3080',
           },
           {
             kind: 'steps',
             items: [
-              { label: '凭证只保留引用', body: 'Web UI 将供应方密钥存入 `$DSH_HOME/.credentials.yaml`；设置中只保留凭证引用，UI 收到的是脱敏描述，而不是明文 key。' },
-              { label: '把预览版当作需锁版本的基础设施', body: '维护者明确说明会有破坏兼容性的改动。团队工作流应锁定版本，并在升级前审阅发布变化。' },
+              { label: '打开 Harness Web UI', body: '运行 `dsh web`。默认会打开 `http://127.0.0.1:3080`；如果浏览器没有自动打开，请复制终端实际打印的地址，并以该地址为准。' },
+              { label: '填写 DeepSeek API Key', body: '先通过“内测声明”，再按提示保存或应用 Key。如果没有出现弹窗，请进入“设置 → 模型 → DeepSeek → API 密钥”。只粘贴 Key 本身，不要包含 `DEEPSEEK_API_KEY=...`，也不要加引号。配置会立即生效，无需重启 `dsh web`。没有 Key 时可前往 [DeepSeek 开放平台](https://platform.deepseek.com/api_keys)创建。' },
+              { label: '确认模型并关闭配置页面', body: 'DeepSeek 提供方应显示为已配置，相应模型也会出现在选择器中。如果看到 `MISSING_CREDENTIAL`，请重新打开 DeepSeek 卡片并保存 Key。测试请求成功后可按 `Ctrl+C`；日常使用 Open Design 时不需要让 `dsh web` 常驻。' },
             ],
+          },
+          {
+            kind: 'p',
+            text: 'DeepSeek Harness 会以只写方式保存供应方凭证：页面可以判断 Key 是否已配置，但无法重新读取或显示明文。Open Design 会复用这套由用户安装的 dsh 与模型配置，不会把 Key 复制进 Open Design。为了稳定使用，建议把 dsh 锁定在已测试的 `0.1.0-rc.6`。凭证行为以[官方供应方配置指南](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md)为准。',
           },
         ],
       },
@@ -640,21 +690,21 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'vs',
-        heading: '什么时候选择 DeepSeek Harness',
+        heading: 'DeepSeek Harness、DeepSeek TUI 与 Open Design',
         blocks: [
-          { kind: 'p', text: '这些名称很容易混淆。DeepSeek Harness 与 Open Design 当前列出的 DeepSeek TUI 是两个不同项目，命令和集成状态也不同。' },
+          { kind: 'p', text: 'DeepSeek Harness 与 DeepSeek TUI 是两个使用不同命令的独立项目。Open Design 现在同时把两者作为本地 Agent 支持，因此选择依据是你想使用哪套运行时，而不是哪一套能否进入设计工作区。' },
           {
             kind: 'table',
             columns: ['工具', '它是什么', '最适合的设计场景'],
             rows: [
-              ['DeepSeek Harness（`dsh`）', 'DeepSeek AI 官方的插件优先 Harness，含本地 Web UI 与 headless profile；开发者预览版', '想自行组合运行时、Skill、模型供应方、策略与 UI 的团队'],
-              ['DeepSeek TUI（`deepseek` / `codewhale`）', '另一套终端编程 Agent，也是 Open Design 当前支持的 DeepSeek 适配器', '今天就在 Open Design 内使用 DeepSeek'],
+              ['DeepSeek Harness（`dsh`）', 'DeepSeek AI 官方的插件优先 Harness，含本地 Web UI、headless profile 与 Open Design 一等适配器', '在 Open Design 的产物流程中使用 Harness 会话、模型供应方与插件组合'],
+              ['DeepSeek TUI（`deepseek` / `codewhale`）', '另一套终端编程 Agent，也有独立的 Open Design 适配器', '不依赖 Harness profile 架构的终端优先 DeepSeek 工作流'],
               ['OpenCode', '成熟、开源、与模型供应方无关的终端 Agent', '在稳定 TUI 工作流中切换模型，并使用 AGENTS.md 与 MCP'],
               ['Claude Code', '覆盖终端、IDE、桌面与 Web 的成熟编程 Agent', '前端推理、图片密集型参考与成熟设计集成'],
               ['Open Design', '围绕受支持编程 Agent 的 Agent-Native Design Workspace 与资源库', '精选设计系统、Skill、视觉产物，以及不绑定单一模型厂商的本地工作流'],
             ],
           },
-          { kind: 'p', text: '当你想扩展 Harness 本身时选择 dsh；当你需要当前已支持的 DeepSeek 适配器与现成设计层时，选择 [Open Design 内的 DeepSeek TUI](/agents/deepseek-design/)。未来两者可能通过新适配器汇合，但今天不能互换。' },
+          { kind: 'p', text: '需要官方 Web UI、Profile 系统、模型目录与可恢复 Harness 会话时选择 DeepSeek Harness；偏好另一套终端优先体验时选择 [Open Design 内的 DeepSeek TUI](/agents/deepseek-design/)。两者仍是独立运行时，但现在都能复用同一套 Open Design 设计流程。' },
         ],
       },
       {
@@ -676,35 +726,53 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'open-design',
-        heading: '把 Open Design 作为设计层接入',
+        heading: '第 2–5 步：把 DeepSeek Harness 接入 Open Design',
         blocks: [
-          { kind: 'p', text: 'Open Design 与 DeepSeek Harness 位于相邻层。dsh 负责组合 Agent 运行时；Open Design 负责策展让 Agent 真正适合视觉工作的[设计系统](/plugins/systems/)、[Skill](/plugins/skills/)与本地产物流程。Open Design 尚未发布专用 `dsh` 适配器，所以今天准确的用法是并行配合。' },
+          { kind: 'p', text: 'dsh 在本机正常运行后，剩下的操作都在 Open Design 里完成。DeepSeek Harness 接入能力从 Open Design 0.19.1 开始提供。' },
           {
-            kind: 'ol',
+            kind: 'steps',
             items: [
-              '安装 [Open Design](/download/)，用其中的设计系统与 Skill 为项目建立视觉契约。',
-              '把生成的 `DESIGN.md`、参考与项目指令保存在 DeepSeek Harness 打开的同一个仓库中。',
-              '用 dsh 做插件优先实验与代码任务；复用同一套 token、规则、资产与验收标准，不要再维护第二份设计 brief。',
-              '如果今天就需要在 Open Design 内直接用 DeepSeek，请选择现有 [DeepSeek TUI 适配器](/agents/deepseek-design/)。把未来 dsh 适配器当成另一项集成，不要误写成现有能力。',
+              { label: '2 · 下载 Open Design 0.19.1 或更高版本', body: '从 [Open Design 下载页](/download/)获取当前桌面版本，完成安装并启动应用。' },
+              { label: '3 · 探测 DeepSeek Harness', body: '进入“设置 → 模型与提供商 → 本机 CLI”，点击“重新扫描”。如果安装时 Open Design 已经打开，请重启应用或再次扫描。找到第 1 步安装的 `dsh` 后，就会显示 DeepSeek Harness 卡片。' },
+              { label: '4 · 接入 Open Design Profile', body: '选择 DeepSeek Harness 卡片。若显示“需要安装连接组件”，确认“安装并选择”。Open Design 会校验自己的组件，通过 dsh 安装到 `open-design` profile，然后重新扫描并测试连接。' },
+              { label: '5 · 开始设计任务', body: '确认卡片显示 Harness 版本和“已从 CLI 同步”，然后点击“测试”。测试通过后，打开或新建项目，选择 DeepSeek Harness 与同步过来的模型，再发送设计需求。' },
             ],
           },
-          { kind: 'p', text: '最终得到的是同一个自有代码库与一份可移植设计契约，横跨两款本地优先工具。Open Design 独立于 DeepSeek AI；DeepSeek 与 DeepSeek Harness 商标归各自权利人所有。' },
+          {
+            kind: 'image',
+            src: '/agents/deepseek-harness-design/deepseek-harness-design-open-design-settings.webp',
+            alt: 'Open Design 的模型与提供商设置显示 DeepSeek Harness 已安装、已从 CLI 同步并可测试',
+            caption: '这里是连接成功的检查点：已识别 Harness 版本、显示“已从 CLI 同步”，并且“测试”可以正常通过。',
+          },
+          { kind: 'p', text: '到这里接入就完成了。界面与 `od agent setup deepseek-harness --json` 使用同一条本地设置路径；每次运行都会启动 `dsh --profile open-design --stdio`，Harness 会保留会话标识供后续轮次继续使用。' },
+          {
+            kind: 'code',
+            lang: 'text',
+            code: '在当前工作区创建一页精致的产品落地页。\n把 DESIGN.md、AGENTS.md 与已安装的前端 Skill 作为视觉契约。\n复用项目中的 token 与组件，同时覆盖桌面端和移动端状态。\n运行应用、检查渲染结果，修复可见的间距与层级问题，\n最后把 HTML 与素材留在项目中，供 Open Design 直接预览。',
+          },
+          {
+            kind: 'image',
+            src: '/agents/deepseek-harness-design/deepseek-harness-design-open-design-workspace.webp',
+            alt: 'Open Design 工作区左侧显示 DeepSeek Harness 任务，右侧预览生成的品牌落地页',
+            caption: 'DeepSeek Harness 修改真实工作区，Open Design 把需求、进度、预览与最终产物放在一起。',
+          },
+          { kind: 'p', text: '边界很简单：Harness 管理 dsh、凭证、模型与会话；Open Design 管理经过校验的连接 profile 与设计工作区。Open Design 独立于 DeepSeek AI；DeepSeek 与 DeepSeek Harness 商标归各自权利人所有。' },
         ],
       },
     ],
     faqTitle: '用 DeepSeek Harness 做设计：常见问题',
     faq: [
       { name: 'DeepSeek Harness 是什么？', text: 'DeepSeek Harness（`dsh`）是 DeepSeek AI 官方开源的 Agent Harness。它通过 Cordis 插件树组合模型、工具、上下文、会话、策略、编排与 UI。公开版本目前采用 MIT 许可，仍处于开发者预览阶段。' },
-      { name: '如何安装并运行 DeepSeek Harness？', text: '安装受支持的 Node.js 版本，然后运行 `npx @deepseek-ai/dsh web`。默认会在 `http://127.0.0.1:3080` 启动本地 Web UI。进入 Settings → Models 添加模型，选择工作区后即可开始会话。' },
+      { name: '如何安装并运行 DeepSeek Harness？', text: '先用 `npm install -g @deepseek-ai/dsh@0.1.0-rc.6` 安装经过测试的 CLI，再运行 `dsh web`。通过“内测声明”后，进入“设置 → 模型 → DeepSeek → API 密钥”，只保存 Key 本身。确认供应方与模型正常后，用 `Ctrl+C` 关闭 Web UI。安装 Open Design 0.19.1 或更高版本，重新扫描本机 CLI Agent，连接 Harness 卡片并点击“测试”。' },
       { name: 'DeepSeek Harness 是 DeepSeek 官方项目吗？', text: '是。仓库发布在 `deepseek-ai` GitHub 组织下，并明确说明 dsh 由 DeepSeek AI 开发。项目采用 MIT 许可，也明确标记为开发者预览版。' },
       { name: 'DeepSeek Harness 能根据截图构建 UI 吗？', text: '只有所选模型路由声明支持图片输入时才可以。dsh 中 DeepSeek 自身的 chat-completions 路由只支持文本；在纯文本路由中，Harness 会在发送前拒绝图片。截图任务请选择支持图片的供应方，或通过代码、DOM、token 与书面规格描述目标。' },
       { name: 'DeepSeek Harness 支持 AGENTS.md 与 Skill 吗？', text: '支持。它的指令插件会加载兼容 AGENTS.md 与 CLAUDE.md 的项目文件；文件系统 Skill 供应方会从 `.dsh/skills`、`.agents/skills` 以及配置的用户与内置目录中发现 Skill。' },
       { name: 'DeepSeek Harness 与 DeepSeek TUI 有什么区别？', text: '它们是不同工具。DeepSeek Harness 使用 `dsh` 命令，是 DeepSeek AI 官方的插件优先 Web UI/headless 运行时。DeepSeek TUI 使用 `deepseek` 或 `codewhale` 调度器，是 Open Design 当前支持的另一套 DeepSeek 适配器。' },
-      { name: 'Open Design 支持 DeepSeek Harness 吗？', text: '目前尚未提供专用的一等适配器。Open Design 当前支持另一套 DeepSeek TUI。你仍可让 Open Design 的设计系统、Skill、DESIGN.md 与产物和 dsh 并行使用，并保存在同一个本地仓库里。' },
-      { name: 'DeepSeek Harness 把 API key 存在哪里？', text: '官方模型指南说明，供应方 key 存在 `$DSH_HOME/.credentials.yaml`。设置中只保留凭证引用，Web UI 收到的是脱敏描述，不是明文 secret。' },
+      { name: 'Open Design 支持 DeepSeek Harness 吗？', text: '支持。Open Design 会发现你安装的官方 dsh，在用户明确确认后安装由 Open Design 维护且经过校验的 profile 组件，同步 Harness 模型目录，并把 DeepSeek Harness 作为一等本地 Agent 运行。Open Design 不会安装 dsh，也不会接收 Harness 管理的供应方 secret。' },
+      { name: 'DeepSeek Harness 把 API key 存在哪里？', text: '请在 DeepSeek Harness 中配置 Key，而不是在 Open Design 中配置。官方模型指南说明，供应方 Key 以只写 Secret 的方式保存在 `$DSH_HOME/.credentials.yaml`：页面可以知道 Key 是否已配置，但无法读取或显示明文。Open Design 不会要求你把 Key 粘贴到应用内，也不会把 Key 写入 Open Design 配置。' },
     ],
-    ctaTitle: '为你的 DeepSeek 工作流补上设计层。',
-    ctaBody: '今天就使用 Open Design 的本地设计系统、Skill 与产物流程，并让同一份项目契约适配你下一步选择的任何 Agent 运行时。',
+    ctaTitle: '在 Open Design 中使用 DeepSeek Harness 做设计。',
+    ctaBody: '安装官方 dsh，一次完成连接，然后在同一流程里使用 Open Design 的设计系统、Skill、同步模型与本地产物预览。',
     ctaActions: OPEN_DESIGN_ACTIONS_ZH,
     hubLinkLabel: '查看所有受支持的 Agent',
   },
@@ -712,7 +780,7 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
   aboutBody: [
     'DeepSeek Harness（`dsh`）是 DeepSeek AI 官方开源的 Agent Harness。本地 Web UI 与无头运行器会把模型、工具、会话、权限、文件系统、Skill、子 Agent 与 UI 组合成 Cordis 插件。',
     '项目采用 MIT 许可，目前处于开发者预览阶段。维护者明确说明未来会出现破坏兼容性的改动。',
-    'DeepSeek Harness 与 Open Design 当前支持的 DeepSeek TUI 适配器是两个不同项目。',
+    'Open Design 同时支持 DeepSeek Harness 与独立的 DeepSeek TUI，它们是两套不同的一等本地 Agent。',
   ],
   vendorLabel: '开发者',
   vendor: 'DeepSeek AI（官方）',
@@ -729,20 +797,21 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
   linksTitle: 'DeepSeek Harness 官方资源',
   linksLead: '从官方仓库与持续维护的文档开始：',
   links: [
+    { label: 'DeepSeek Harness 官方网站', href: 'https://www.deepseek.com/harness/', source: '官网 · DeepSeek AI' },
     { label: 'deepseek-ai/deepseek-harness', href: 'https://github.com/deepseek-ai/deepseek-harness', source: 'GitHub · DeepSeek AI' },
     { label: 'DeepSeek Harness Web UI 指南', href: 'https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/index.md', source: 'GitHub · 官方文档' },
     { label: 'DeepSeek Harness 架构', href: 'https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md', source: 'GitHub · 官方文档' },
   ],
   withOdTitle: 'DeepSeek Harness + Open Design',
-  withOdLead: '把 Open Design 作为 dsh 旁边的设计系统、Skill 与产物层使用。目前尚未发布专用 DeepSeek Harness 适配器。',
-  withOdSteps: ['用 Open Design 选择设计系统与前端 Skill。', '把 DESIGN.md、资产与项目指令留在仓库中。', '在 DeepSeek Harness 中打开同一个仓库作为工作区。', '需要今天就在 Open Design 内使用 DeepSeek 时，选择现有 DeepSeek TUI 适配器。'],
-  withOdClosing: '同一个仓库与一份可移植设计契约，同时不把尚未存在的集成写成事实。',
+  withOdLead: 'Open Design 会把用户安装的 dsh 识别为一等本地 Agent，并在它外围补上经过校验的连接 profile、设计系统、Skill 与产物预览。',
+  withOdSteps: ['安装经过测试的官方 dsh，并在 Harness 中配置供应方模型。', '在 Open Design 打开“设置 → 模型与供应方 → 本地 CLI”，然后重新扫描。', '选择 DeepSeek Harness，并确认一次性的 Open Design profile 设置。', '打开项目，选择同步过来的 Harness 模型，结合 DESIGN.md 与所选 Skill 开始生成设计。'],
+  withOdClosing: '一套本地运行时、一个自己掌控的仓库，以及一条可以审查的设计工作流。',
   faqTitle: '常见问题',
   faq: [
     { name: 'DeepSeek Harness 是官方项目吗？', text: '是。它由 DeepSeek AI 开发，采用 MIT 许可。' },
     { name: '它稳定吗？', text: '还不稳定。当前是开发者预览版，预计会有破坏兼容性的改动。' },
-    { name: 'Open Design 内已经支持它了吗？', text: '尚未提供专用 dsh 适配器。Open Design 当前支持另一套 DeepSeek TUI。' },
+    { name: 'Open Design 内已经支持它了吗？', text: '支持。Open Design 会发现用户安装的 dsh，并在用户明确确认后添加自己维护且经过校验的 profile 组件。' },
   ],
-  ctaTitle: '为你的 DeepSeek 工作流补上设计层。',
-  ctaBody: '把同一套设计系统、Skill 与项目契约带到你选择的任何本地 Agent 运行时。',
+  ctaTitle: '在 Open Design 中使用 DeepSeek Harness 做设计。',
+  ctaBody: '连接官方 dsh，把设计系统、Skill、模型、预览与文件留在同一条本地工作流中。',
 };

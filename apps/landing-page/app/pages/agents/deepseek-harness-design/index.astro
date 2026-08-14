@@ -30,22 +30,22 @@ const rich = page.rich;
 const tutorial = deepseekHarnessTutorialCopy(page);
 
 // This is an Open Design acquisition page: the hero download is the primary
-// action in every locale, while the upstream Harness repository remains a
-// secondary reference. Match by stable href so translated labels are kept.
+// action in every locale, followed by the Discord and Feishu community rooms.
+// Match by stable href so translated labels are kept.
 const heroCtas = rich ? deepseekHarnessHeroCtas(rich.heroCtaActions) : [];
 const finalCtas = rich ? downloadFirstCtas(rich.ctaActions) : [];
 
 // Make the how-to journey the primary narrative in every locale while keeping
 // the existing section IDs stable for inbound links and SEO.
 const DESIGN_SECTION_ORDER = [
-  'setup',
   'why-design',
+  'setup',
+  'open-design',
   'design-workflow',
   'plugins',
   'pitfalls',
   'what-is-deepseek-harness',
   'vs',
-  'open-design',
 ];
 const sectionRank = (id: string) => {
   const rank = DESIGN_SECTION_ORDER.indexOf(id);
@@ -175,7 +175,7 @@ const jsonLd = [
 
         {rich.heroImage ? (
           <figure class="agent-hero-banner">
-            <img src={rich.heroImage.src} alt={rich.heroImage.alt} loading="eager" decoding="async" width={1536} height={1024} />
+            <img src={rich.heroImage.src} alt={rich.heroImage.alt} loading="eager" decoding="async" width={1188} height={814} />
           </figure>
         ) : null}
 

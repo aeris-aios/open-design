@@ -4278,8 +4278,12 @@ dialog.tpl-share-popover .detail-share-dialog-text {
 }
 
 .agent-rich--deepseek-harness .agent-hero-banner > img {
-  aspect-ratio: 3 / 2;
-  object-fit: cover;
+  aspect-ratio: auto;
+  object-fit: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .agent-rich--deepseek-harness .agent-intro,
@@ -4354,8 +4358,14 @@ dialog.tpl-share-popover .detail-share-dialog-text {
 }
 
 .agent-rich--deepseek-harness .agent-rich-main .agent-section-img img {
-  aspect-ratio: 3 / 2;
-  object-fit: cover;
+  width: 100%;
+  height: auto;
+  aspect-ratio: auto;
+  object-fit: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .agent-rich--deepseek-harness .agent-rich-main .agent-code,
