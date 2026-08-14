@@ -949,7 +949,7 @@ export function isolateLayeredPptxBackground(
     };
     if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
 
-    const hasPaintClip = (candidate: HTMLElement): boolean => {
+    const paintClipState = (candidate: HTMLElement): { hasClipPath: boolean; hasMask: boolean } => {
       const style = getComputedStyle(candidate);
       const clipPath = (style.clipPath || style.getPropertyValue?.("clip-path") || "none")
         .trim()
@@ -958,32 +958,38 @@ export function isolateLayeredPptxBackground(
         style.maskImage || style.getPropertyValue?.("mask-image"),
         style.webkitMaskImage || style.getPropertyValue?.("-webkit-mask-image"),
       ].some((value) => Boolean(value && value.trim().toLowerCase() !== "none"));
-      return (clipPath !== "" && clipPath !== "none") || hasMask;
+      return { hasClipPath: clipPath !== "" && clipPath !== "none", hasMask };
+    };
+    const hasPaintClip = (candidate: HTMLElement): boolean => {
+      const state = paintClipState(candidate);
+      return state.hasClipPath || state.hasMask;
     };
     if (!hasPaintClip(element) && !hasPaintClip(target)) return false;
 
     // A clip path or mask can confine real paint to a narrow stripe or ring
-    // that misses every fixed sample. Temporarily remove only those paint clips
-    // to ask Chromium for the boxes' relative paint order, then restore the
-    // authored styles before capture. The real clip/mask still shapes the PNG;
-    // this probe only decides whether its paint belongs to the target backdrop.
-    const paintClipProperties = [
-      "clip-path",
-      "-webkit-clip-path",
-      "mask-image",
-      "-webkit-mask-image",
-    ];
+    // that misses every fixed sample. Expand those clips for the paint-order
+    // probe without removing them: clip-path and masks establish stacking
+    // contexts, so setting them to `none` can reorder the boxes and invert the
+    // result we are trying to measure. The authored styles are restored before
+    // capture, where the real clip/mask still shapes the PNG.
     const paintClipStyles = [element, target]
       .filter((candidate, index, candidates) => hasPaintClip(candidate) && candidates.indexOf(candidate) === index)
-      .flatMap((candidate) => paintClipProperties.map((property) => ({
+      .map((candidate) => ({
         candidate,
-        priority: candidate.style.getPropertyPriority(property),
-        property,
-        value: candidate.style.getPropertyValue(property),
-      })));
+        cssText: candidate.style.cssText,
+        ...paintClipState(candidate),
+      }));
     try {
-      for (const { candidate, property } of paintClipStyles) {
-        candidate.style.setProperty(property, "none", "important");
+      for (const { candidate, hasClipPath, hasMask } of paintClipStyles) {
+        if (hasClipPath) {
+          candidate.style.setProperty("clip-path", "inset(0)", "important");
+          candidate.style.setProperty("-webkit-clip-path", "inset(0)", "important");
+        }
+        if (hasMask) {
+          for (const property of ["mask", "-webkit-mask"]) {
+            candidate.style.setProperty(property, "linear-gradient(#000, #000)", "important");
+          }
+        }
       }
       sampledTogether = false;
       if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
@@ -993,9 +999,8 @@ export function isolateLayeredPptxBackground(
       // paint when coverage remains uncertain.
       return true;
     } finally {
-      for (const { candidate, priority, property, value } of paintClipStyles) {
-        if (value) candidate.style.setProperty(property, value, priority);
-        else candidate.style.removeProperty(property);
+      for (const { candidate, cssText } of paintClipStyles) {
+        candidate.style.cssText = cssText;
       }
     }
   };
