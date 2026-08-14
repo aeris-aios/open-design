@@ -4087,13 +4087,13 @@ function buildBlocks(events: AgentEvent[]): Block[] {
         ev.label === "streaming" ||
         ev.label === "starting" ||
         ev.label === "running" ||
-        // Runtime lifecycle markers are transport telemetry, not assistant
-        // content. The footer and terminal run badge already own this state;
-        // keeping a persisted `working` / `completed` pill after cancellation
-        // makes a correctly canceled turn look contradictory on reload.
-        ev.label === "working" ||
-        ev.label === "done" ||
-        ev.label === "completed" ||
+        // Bare runtime lifecycle markers are transport telemetry, not
+        // assistant content. Detail-bearing rows are product workflow badges
+        // and must remain visible (for example plugin share/contribute).
+        ((ev.label === "working" ||
+          ev.label === "done" ||
+          ev.label === "completed") &&
+          !ev.detail?.trim()) ||
         ev.label === "requesting" ||
         ev.label === "thinking" ||
         ev.label === "empty_response" ||

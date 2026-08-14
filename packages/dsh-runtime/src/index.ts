@@ -40,6 +40,10 @@ const PLUGIN_VERSION = '0.1.0';
 type Output = { write(chunk: string): unknown };
 type ExitFallbackTimer = { unref(): unknown };
 type ExitFallbackScheduler = (callback: () => void, delayMs: number) => ExitFallbackTimer;
+type CancellationLatch = {
+  activate(requestId: string, controller: AbortController): void;
+  cancel(requestId: string): void;
+};
 
 const PROCESS_EXIT_FALLBACK_MS = 1_000;
 
@@ -127,6 +131,34 @@ function requestProfileExit(
   // The agent handle and session flush have already settled here, so retain a
   // bounded process fallback below OD's three-second cancellation grace.
   schedule(forceExit, PROCESS_EXIT_FALLBACK_MS).unref();
+}
+
+function createCancellationLatch(cancelActiveAgent: () => void): CancellationLatch {
+  const pendingRequestIds = new Set<string>();
+  let activeRequest: { requestId: string; controller: AbortController } | undefined;
+
+  const cancelActive = () => {
+    if (!activeRequest || activeRequest.controller.signal.aborted) return;
+    activeRequest.controller.abort();
+    cancelActiveAgent();
+  };
+
+  return {
+    activate(requestId, controller) {
+      activeRequest = { requestId, controller };
+      if (pendingRequestIds.delete(requestId)) cancelActive();
+    },
+    cancel(requestId) {
+      if (activeRequest?.requestId === requestId) {
+        cancelActive();
+        return;
+      }
+      // The host can cancel during the child-spawn/profile-handshake window,
+      // before the execute line has created its AbortController. Retain that
+      // request-scoped intent and replay it as soon as execute becomes active.
+      pendingRequestIds.add(requestId);
+    },
+  };
 }
 
 function usageFrame(requestId: string, provider: string, model: string, usage: TokenUsage) {
@@ -349,7 +381,9 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
   let requestId: string | null = null;
   let handle: AgentHandle | undefined;
   let task: Promise<void> | undefined;
-  let taskAbort: AbortController | undefined;
+  const cancellation = createCancellationLatch(() => {
+    handle?.agent.cancel({ kind: 'user' });
+  });
   await new Promise<void>((resolve) => {
     let settled = false;
     const settle = () => {
@@ -375,10 +409,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
         return;
       }
       if (command.type === 'cancel') {
-        if (command.request_id === requestId && taskAbort && !taskAbort.signal.aborted) {
-          taskAbort.abort();
-          handle?.agent.cancel({ kind: 'user' });
-        }
+        cancellation.cancel(command.request_id);
         return;
       }
       if (task) {
@@ -392,7 +423,8 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
         return;
       }
       requestId = command.request_id;
-      taskAbort = new AbortController();
+      const taskAbort = new AbortController();
+      cancellation.activate(requestId, taskAbort);
       task = execute(
         ctx,
         command,
@@ -433,6 +465,7 @@ export function apply(ctx: Context): void {
 
 export const internals = {
   contentText,
+  createCancellationLatch,
   errorFacts,
   emitSessionEvent,
   execute,

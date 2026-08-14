@@ -663,12 +663,14 @@ describe('AssistantMessage tool status', () => {
     expect(container.querySelector('.status-pill')).toBeNull();
   });
 
-  it('still renders status rows that carry a displayable detail', () => {
+  it('still renders lifecycle and model status rows that carry a displayable detail', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
         conversationId="conv-1"
         message={messageWithEvents([
+          { kind: 'status', label: 'working', detail: 'Publishing plugin' },
+          { kind: 'status', label: 'done', detail: 'CLI command finished' },
           { kind: 'status', label: 'model', detail: 'claude-opus-4-7-high' },
         ])}
         streaming={false}
@@ -676,8 +678,13 @@ describe('AssistantMessage tool status', () => {
       />,
     );
 
-    expect(container.querySelector('[data-status="model"]')).not.toBeNull();
-    expect(container.querySelector('.status-detail')?.textContent).toContain('claude-opus-4-7-high');
+    expect(container.querySelector('[data-status="working"]')).not.toBeNull();
+    expect(container.querySelector('[data-status="done"]')).not.toBeNull();
+    expect(container.textContent).toContain('Publishing plugin');
+    expect(container.textContent).toContain('CLI command finished');
+    const modelStatus = container.querySelector('[data-status="model"]');
+    expect(modelStatus).not.toBeNull();
+    expect(modelStatus?.querySelector('.status-detail')?.textContent).toContain('claude-opus-4-7-high');
   });
 
   it('renders URLs in JSON-like status details without trailing structural characters', () => {

@@ -160,6 +160,22 @@ describe('@open-design/dsh-runtime protocol', () => {
     assert.deepEqual(calls, ['managed:0', 'scheduled:1000', 'unref', 'forced']);
   });
 
+  test('replays cancellation that arrives before the request AbortController exists', () => {
+    let activeAgentCancelCalls = 0;
+    const cancellation = internals.createCancellationLatch(() => {
+      activeAgentCancelCalls += 1;
+    });
+    const abort = new AbortController();
+
+    cancellation.cancel('run-handshake-cancel');
+    assert.equal(abort.signal.aborted, false);
+
+    cancellation.activate('run-handshake-cancel', abort);
+
+    assert.equal(abort.signal.aborted, true);
+    assert.equal(activeAgentCancelCalls, 1);
+  });
+
   test('cancels a resumed request during restore without starting its follow-up turn', async () => {
     let finishRestore!: () => void;
     const restoring = new Promise<void>((resolveRestore) => { finishRestore = resolveRestore; });
