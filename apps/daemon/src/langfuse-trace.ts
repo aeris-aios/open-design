@@ -22,6 +22,11 @@ import type { TelemetryPrefs } from './app-config.js';
 import { normalizeOpenDesignTelemetryRelayUrl } from './integrations/telemetry-relay.js';
 import { readVelaControlApiContext } from './integrations/vela.js';
 import {
+  deriveRunTelemetryExportExpectation,
+  exportRunObservation,
+  type RunObservationExporter,
+} from './observability/run-exporter.js';
+import {
   buildPromptStackFlatMetadata,
   promptStackWithoutContent,
   structuredPromptStackInput,
@@ -486,25 +491,12 @@ export function deriveLangfuseDeliveryState(
   prefs: TelemetryPrefs,
   sink: RunTelemetrySinkConfig | null,
 ): LangfuseDeliveryState {
-  if (prefs.metrics !== true) {
+  const expectation = deriveRunTelemetryExportExpectation(prefs, sink !== null);
+  if (!expectation.expected) {
     return {
       langfuse_expected: false,
       langfuse_delivery_status: 'not_expected',
-      langfuse_drop_reason: 'metrics_consent_off',
-    };
-  }
-  if (prefs.content !== true) {
-    return {
-      langfuse_expected: false,
-      langfuse_delivery_status: 'not_expected',
-      langfuse_drop_reason: 'content_consent_off',
-    };
-  }
-  if (!sink) {
-    return {
-      langfuse_expected: false,
-      langfuse_delivery_status: 'not_expected',
-      langfuse_drop_reason: 'missing_sink_config',
+      langfuse_drop_reason: expectation.reason,
     };
   }
   return {
@@ -2386,7 +2378,7 @@ function objectRegistrationBatch(batch: unknown[]): unknown[] {
   ];
 }
 
-export async function reportRunCompleted(
+async function exportLegacyLangfuseRun(
   ctx: ReportContext,
   opts: ReportRunOpts = {},
 ): Promise<LangfuseDeliveryState> {
@@ -2461,6 +2453,27 @@ export async function reportRunCompleted(
     return postRelayBatch(config, serialized, fetchImpl);
   }
   return postLangfuseBatch(config, batch, fetchImpl);
+}
+
+/**
+ * Compatibility exporter for the current single-Run legacy ingestion shape.
+ * All provider event assembly and transport remain owned by this adapter;
+ * callers enter through the protocol-neutral exporter seam above.
+ */
+export const legacyLangfuseRunExporter: RunObservationExporter<
+  ReportContext,
+  ReportRunOpts,
+  LangfuseDeliveryState
+> = {
+  id: 'legacy-langfuse-ingestion-v1',
+  exportRun: exportLegacyLangfuseRun,
+};
+
+export function reportRunCompleted(
+  ctx: ReportContext,
+  opts: ReportRunOpts = {},
+): Promise<LangfuseDeliveryState> {
+  return exportRunObservation(legacyLangfuseRunExporter, ctx, opts);
 }
 
 // Build a Langfuse `score-create` batch for a user-supplied turn rating.
