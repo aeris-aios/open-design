@@ -148,8 +148,13 @@ class StandaloneBundler {
   ): Promise<string> {
     const $ = load(html, { sourceCodeLocationInfo: true });
     const replacements = new ReplacementCollector(html, this.limits.outputBytes, chain);
+    const documentOwnerPath = this.effectiveDocumentOwnerPath($, ownerPath, chain);
     const modulePaths = new Set<string>();
     const wholeNodeReplacements = new Set<any>();
+
+    for (const node of $('base[href]').toArray() as any[]) {
+      pushAttributeRemoval(html, node, 'href', replacements);
+    }
 
     for (const node of $('script').toArray() as any[]) {
       const location = node.sourceCodeLocation;
@@ -158,7 +163,7 @@ class StandaloneBundler {
       const src = attrs.get('src');
       const type = (attrs.get('type') ?? '').trim().toLowerCase();
       if (src) {
-        const resolution = this.resolveReference(ownerPath, src, chain, { allowBare: false });
+        const resolution = this.resolveReference(documentOwnerPath, src, chain, { allowBare: false });
         if (resolution.kind === 'external') {
           this.externalDependencies.add(resolution.value);
           continue;
@@ -181,7 +186,7 @@ class StandaloneBundler {
           );
         }
         const inlineStyle = attrs.get('style');
-        if (inlineStyle) attrs.set('style', await this.rewriteCssUrls(inlineStyle, ownerPath, chain));
+        if (inlineStyle) attrs.set('style', await this.rewriteCssUrls(inlineStyle, documentOwnerPath, chain));
         const externalTiming = type !== 'module' && (attrs.has('defer') || attrs.has('async'));
         replacements.push({
           start: location.startOffset,
@@ -203,10 +208,10 @@ class StandaloneBundler {
       const body = html.slice(bodyStart, bodyEnd);
       if (!body.trim()) continue;
       if (type === 'module') {
-        const rewritten = await this.rewriteJavaScript(body, ownerPath, chain, modulePaths, 'module');
+        const rewritten = await this.rewriteJavaScript(body, documentOwnerPath, chain, modulePaths, 'module');
         replacements.push({ start: bodyStart, end: bodyEnd, value: escapeScriptBody(rewritten) });
       } else if (!type || /(?:java|ecma)script/u.test(type)) {
-        const rewritten = await this.rewriteJavaScript(body, ownerPath, chain, modulePaths, 'classic');
+        const rewritten = await this.rewriteJavaScript(body, documentOwnerPath, chain, modulePaths, 'classic');
         if (rewritten !== body) replacements.push({ start: bodyStart, end: bodyEnd, value: escapeScriptBody(rewritten) });
       }
     }
@@ -220,7 +225,7 @@ class StandaloneBundler {
       replacements.push({
         start: bodyStart,
         end: bodyEnd,
-        value: await this.bundleCss(css, ownerPath, chain, new Set()),
+        value: await this.bundleCss(css, documentOwnerPath, chain, new Set()),
       });
     }
 
@@ -232,7 +237,7 @@ class StandaloneBundler {
       if (!href) continue;
       const rel = (attrs.get('rel') ?? '').toLowerCase();
       if (/\bstylesheet\b/u.test(rel)) {
-        const resolution = this.resolveReference(ownerPath, href, chain, { allowBare: false });
+        const resolution = this.resolveReference(documentOwnerPath, href, chain, { allowBare: false });
         if (resolution.kind === 'external') {
           this.externalDependencies.add(resolution.value);
           continue;
@@ -247,7 +252,7 @@ class StandaloneBundler {
           new Set([local.projectPath]),
         );
         const inlineStyle = attrs.get('style');
-        if (inlineStyle) attrs.set('style', await this.rewriteCssUrls(inlineStyle, ownerPath, chain));
+        if (inlineStyle) attrs.set('style', await this.rewriteCssUrls(inlineStyle, documentOwnerPath, chain));
         const kept = renderAttributes(attrs, ['rel', 'href', 'type', 'integrity', 'crossorigin', 'referrerpolicy']);
         replacements.push({
           start: location.startOffset,
@@ -256,7 +261,7 @@ class StandaloneBundler {
         });
         wholeNodeReplacements.add(node);
       } else {
-        await this.rewriteAttribute(html, node, 'href', ownerPath, chain, replacements);
+        await this.rewriteAttribute(html, node, 'href', documentOwnerPath, chain, replacements);
       }
     }
 
@@ -275,7 +280,7 @@ class StandaloneBundler {
     for (const [selector, names] of assetAttributes) {
       for (const node of $(selector).toArray() as any[]) {
         for (const name of names) {
-          await this.rewriteAttribute(html, node, name, ownerPath, chain, replacements);
+          await this.rewriteAttribute(html, node, name, documentOwnerPath, chain, replacements);
         }
       }
     }
@@ -284,7 +289,7 @@ class StandaloneBundler {
       const attrs = attributesFor(node);
       const srcset = attrs.get('srcset');
       if (!srcset) continue;
-      const rewritten = await this.rewriteSrcset(srcset, ownerPath, chain);
+      const rewritten = await this.rewriteSrcset(srcset, documentOwnerPath, chain);
       pushAttributeReplacement(html, node, 'srcset', rewritten, replacements);
     }
 
@@ -293,7 +298,7 @@ class StandaloneBundler {
       const attrs = attributesFor(node);
       const style = attrs.get('style');
       if (!style) continue;
-      const rewritten = await this.rewriteCssUrls(style, ownerPath, chain);
+      const rewritten = await this.rewriteCssUrls(style, documentOwnerPath, chain);
       pushAttributeReplacement(html, node, 'style', rewritten, replacements);
     }
 
@@ -301,7 +306,7 @@ class StandaloneBundler {
       const attrs = attributesFor(node);
       const src = attrs.get('src');
       if (!src) continue;
-      const resolution = this.resolveReference(ownerPath, src, chain, { allowBare: false });
+      const resolution = this.resolveReference(documentOwnerPath, src, chain, { allowBare: false });
       if (resolution.kind === 'external') {
         this.externalDependencies.add(resolution.value);
         continue;
@@ -333,6 +338,52 @@ class StandaloneBundler {
     let output = applyReplacements(html, replacements.values);
     if (modulePaths.size > 0) output = this.injectImportMap(output, modulePaths, chain);
     return output;
+  }
+
+  private effectiveDocumentOwnerPath($: any, ownerPath: string, chain: string[]): string {
+    const firstBase = $('base[href]').first();
+    if (firstBase.length === 0) return ownerPath;
+    const href = String(firstBase.attr('href') ?? '').trim();
+    const { pathname } = splitReference(href);
+    if (!pathname) return ownerPath;
+    if (
+      /^(?:data:|about:|blob:)/iu.test(pathname)
+      || /^(?:https?:)?\/\//iu.test(pathname)
+      || /^[a-z][a-z0-9+.-]*:/iu.test(pathname)
+      || /^\/(?:api|artifacts|frames)(?:\/|$)/u.test(pathname)
+    ) {
+      throw new StandaloneHtmlExportError(
+        `Document base URL cannot be persisted in standalone HTML: ${href}`,
+        'unpersistable-url',
+        href,
+        chain,
+      );
+    }
+
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      throw new StandaloneHtmlExportError(
+        `Invalid URL encoding in document base: ${href}`,
+        'invalid-source',
+        href,
+        chain,
+      );
+    }
+    const joined = decoded.startsWith('/')
+      ? decoded.replace(/^\/+/, '')
+      : path.posix.join(path.posix.dirname(ownerPath), decoded);
+    const basePath = normalizeProjectBasePath(joined, chain);
+    const directoryBase = decoded.endsWith('/')
+      || decoded === '.'
+      || decoded === '..'
+      || decoded.endsWith('/.')
+      || decoded.endsWith('/..');
+    if (!directoryBase) return normalizeProjectPath(joined, chain);
+    return basePath
+      ? path.posix.join(basePath, '__od_standalone_base__.html')
+      : '__od_standalone_base__.html';
   }
 
   injectExternalDependencyManifest(html: string, chain: string[]): string {
@@ -475,11 +526,24 @@ class StandaloneBundler {
     try {
       ast = parse(source, {
         sourceType: mode === 'classic' ? 'unambiguous' : 'module',
-        plugins: ['dynamicImport', 'importAttributes', 'importMeta', 'jsx', 'topLevelAwait', 'typescript'],
+        plugins: ['dynamicImport', 'importAttributes', 'importMeta', 'topLevelAwait'],
       });
-    } catch (error) {
+    } catch (runtimeError) {
+      try {
+        parse(source, {
+          sourceType: mode === 'classic' ? 'unambiguous' : 'module',
+          plugins: ['dynamicImport', 'importAttributes', 'importMeta', 'jsx', 'topLevelAwait', 'typescript'],
+        });
+      } catch {
+        throw new StandaloneHtmlExportError(
+          `Could not parse JavaScript in ${ownerPath}: ${runtimeError instanceof Error ? runtimeError.message : String(runtimeError)}`,
+          'invalid-source',
+          ownerPath,
+          chain,
+        );
+      }
       throw new StandaloneHtmlExportError(
-        `Could not parse JavaScript in ${ownerPath}: ${error instanceof Error ? error.message : String(error)}`,
+        `TypeScript or JSX source cannot be emitted as browser JavaScript in standalone HTML: ${ownerPath}`,
         'invalid-source',
         ownerPath,
         chain,
@@ -792,13 +856,27 @@ class StandaloneBundler {
 }
 
 function countLegacyFirstLevelCandidates(html: string): number {
-  const links = [...html.matchAll(/<link\b[^>]*>/giu)].filter((match) => {
-    const tag = match[0];
-    return /\srel\s*=\s*(['"])[^'"]*\bstylesheet\b[^'"]*\1/iu.test(tag)
-      && /\shref\s*=\s*(['"])[^'"]+\1/iu.test(tag);
+  const $ = load(html);
+  const links = $('link[href]').toArray().filter((node: any) => {
+    const rel = attributesFor(node).get('rel') ?? '';
+    return /\bstylesheet\b/iu.test(rel);
   }).length;
-  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*(['"])[^'"]+\1[^>]*>/giu)].length;
+  const scripts = $('script[src]').length;
   return links + scripts;
+}
+
+function normalizeProjectBasePath(value: string, chain: string[]): string {
+  const normalized = path.posix.normalize(value.replace(/\\/gu, '/')).replace(/^\.\//u, '');
+  if (normalized === '.' || normalized === '') return '';
+  if (normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) {
+    throw new StandaloneHtmlExportError(
+      `Document base path escapes the project root: ${value}`,
+      'path-outside-project',
+      value,
+      chain,
+    );
+  }
+  return normalized;
 }
 
 function normalizeProjectPath(value: string, chain: string[]): string {
@@ -940,6 +1018,22 @@ function pushAttributeReplacement(
     start: location.startOffset,
     end: location.endOffset,
     value: [rawName, '="', escapeHtmlAttribute(value), '"'],
+  });
+}
+
+function pushAttributeRemoval(
+  html: string,
+  node: any,
+  name: string,
+  replacements: ReplacementSink,
+): void {
+  const attrs = node.sourceCodeLocation?.attrs ?? {};
+  const location = attrs[name] ?? attrs[name.toLowerCase()];
+  if (!location) return;
+  replacements.push({
+    start: location.startOffset,
+    end: location.endOffset,
+    value: '',
   });
 }
 

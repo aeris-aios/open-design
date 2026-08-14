@@ -850,7 +850,10 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         if (standaloneError.kind === 'limit-exceeded') {
           return sendApiError(res, 413, 'PAYLOAD_TOO_LARGE', standaloneError.message, { details });
         }
-        const status = standaloneError.kind === 'missing-local-dependency' ? 422 : 400;
+        const status = standaloneError.kind === 'missing-local-dependency'
+          || standaloneError.kind === 'invalid-source'
+          ? 422
+          : 400;
         const code = status === 422 ? 'VALIDATION_FAILED' : 'BAD_REQUEST';
         return sendApiError(res, status, code, standaloneError.message, { details });
       }

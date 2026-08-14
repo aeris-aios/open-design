@@ -806,6 +806,10 @@ describe('POST /api/projects/:id/export/html route', () => {
       'import { start } from "./motion.js"; const icon = new URL("../assets/icon.svg", import.meta.url); start(icon);',
     );
     await writeFile(path.join(root, 'scripts', 'motion.js'), 'export const start = (icon) => document.body.dataset.motion = icon.href;');
+    await writeFile(
+      path.join(root, 'scripts', 'invalid.tsx'),
+      'const label: string = "offline"; document.body.append(<div>{label}</div>);',
+    );
     await writeFile(path.join(root, 'assets', 'hero.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await writeFile(path.join(root, 'assets', 'hero@2x.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x32]));
     await writeFile(path.join(root, 'assets', 'bg.svg'), '<svg id="shape"/>');
@@ -814,6 +818,10 @@ describe('POST /api/projects/:id/export/html route', () => {
     await writeFile(
       path.join(root, 'pages', 'missing.html'),
       '<!doctype html><img src="../assets/does-not-exist.png">',
+    );
+    await writeFile(
+      path.join(root, 'pages', 'invalid-source.html'),
+      '<!doctype html><script type="module" src="../scripts/invalid.tsx"></script>',
     );
   });
 
@@ -859,6 +867,20 @@ describe('POST /api/projects/:id/export/html route', () => {
       kind: 'missing-local-dependency',
       dependency: 'assets/does-not-exist.png',
       chain: ['pages/missing.html', 'assets/does-not-exist.png'],
+    });
+  });
+
+  it('returns 422 for TypeScript or JSX that cannot execute directly in a browser', async () => {
+    const response = await postExport({ fileName: 'pages/invalid-source.html' });
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as {
+      error: { code: string; details: { kind: string; dependency: string; chain: string[] } };
+    };
+    expect(body.error.code).toBe('VALIDATION_FAILED');
+    expect(body.error.details).toEqual({
+      kind: 'invalid-source',
+      dependency: 'scripts/invalid.tsx',
+      chain: ['pages/invalid-source.html', 'scripts/invalid.tsx'],
     });
   });
 

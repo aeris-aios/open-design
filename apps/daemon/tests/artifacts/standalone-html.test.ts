@@ -117,6 +117,43 @@ describe('bundleStandaloneHtml', () => {
     expect(result.html).not.toContain('assets/hero.png');
   });
 
+  it('resolves document resources against the first local base href and strips base hrefs', async () => {
+    const result = await bundleStandaloneHtml({
+      entryPath: 'pages/index.html',
+      html: `<!doctype html><html><head>
+        <base href="../assets/">
+        <base href="../wrong/">
+        <style>.hero { background: url('background.svg') }</style>
+      </head><body><img src="logo.png"></body></html>`,
+      readAsset: assetReader({
+        'assets/logo.png': { body: 'right-logo', mime: 'image/png' },
+        'assets/background.svg': { body: '<svg id="right"/>', mime: 'image/svg+xml' },
+        'pages/logo.png': { body: 'wrong-logo', mime: 'image/png' },
+      }),
+    });
+
+    expect(result.html).toContain('data:image/png;base64,cmlnaHQtbG9nbw==');
+    expect(result.html).toContain('data:image/svg+xml;base64,PHN2ZyBpZD0icmlnaHQiLz4=');
+    expect(result.html).not.toMatch(/<base\b[^>]*\bhref\s*=/iu);
+  });
+
+  it('rejects TypeScript and JSX sources instead of emitting browser-invalid JavaScript', async () => {
+    await expect(bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: '<script type="module" src="scripts/main.tsx"></script>',
+      readAsset: assetReader({
+        'scripts/main.tsx': {
+          body: 'const label: string = "offline"; document.body.append(<div>{label}</div>);',
+          mime: 'text/javascript',
+        },
+      }),
+    })).rejects.toMatchObject({
+      kind: 'invalid-source',
+      dependency: 'scripts/main.tsx',
+      chain: ['index.html', 'scripts/main.tsx'],
+    });
+  });
+
   it('preserves defer timing by keeping the rewritten classic script external as a data URL', async () => {
     const result = await bundleStandaloneHtml({
       entryPath: 'index.html',
@@ -237,6 +274,22 @@ describe('bundleStandaloneHtml', () => {
     expect(MAX_STANDALONE_FIRST_LEVEL_CANDIDATES).toBeGreaterThanOrEqual(500);
     expect(MAX_STANDALONE_RAW_BYTES).toBeGreaterThanOrEqual(52 * 1024 * 1024);
     expect(MAX_STANDALONE_OUTPUT_BYTES).toBeGreaterThan(50 * 1024 * 1024);
+  });
+
+  it('counts unquoted first-level script attributes before reading dependencies', async () => {
+    let reads = 0;
+    await expect(bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: '<script src=app.js></script>'.repeat(MAX_STANDALONE_FIRST_LEVEL_CANDIDATES + 1),
+      readAsset: async () => {
+        reads += 1;
+        return { buffer: Buffer.from(''), mime: 'text/javascript', size: 0 };
+      },
+    })).rejects.toMatchObject({
+      kind: 'limit-exceeded',
+      limit: 'firstLevelCandidates',
+    });
+    expect(reads).toBe(0);
   });
 
   it('rejects repeated composite references before assembling an oversized output and reads the asset once', async () => {
