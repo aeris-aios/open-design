@@ -381,6 +381,7 @@ import {
   registerBundledPlugins,
   registryRootsForDataDir,
   resolveLocalPluginBySource,
+  resolveOdNextStrategyRequestRecipeV2,
   restoreProjectSnapshotLink,
   resolvePluginSnapshot,
   runPipelineForRun,
@@ -9214,6 +9215,7 @@ export async function startServer({
     if (appConfigForPrompt?.customInstructions) {
       userInstructions = appConfigForPrompt.customInstructions;
     }
+    const projectInstructions = project?.customInstructions ?? '';
 
     let designSystemBody;
     let designSystemTitle;
@@ -9544,7 +9546,10 @@ export async function startServer({
       try {
         const snap = getSnapshot(db, appliedPluginSnapshotId);
         const stages = snap?.pipeline?.stages ?? [];
-        if (stages.length > 0) {
+        // Strategy snapshots use the strict loader below, after their exact
+        // pipeline and package binding have been revalidated. Keep this
+        // legacy warn/fallback path only for ordinary snapshots.
+        if (!snap?.strategy && stages.length > 0) {
           const { loadAtomBodies } = await import('./plugins/atom-bodies.js');
           const { renderActiveStageBlocks } = await import('@open-design/contracts');
           const stageViews = [];
@@ -9563,11 +9568,38 @@ export async function startServer({
       }
     }
 
+    // OD Next is selected from the persisted Strategy Binding, never from a
+    // plugin id or manifest text alone. Resolve the hidden shipped package,
+    // re-check its live content against the apply-time package/profile
+    // digests, and fail closed on any drift. Ordinary snapshots return null
+    // and continue through the byte-stable default composer below.
+    let odNextStrategyRecipe;
+    if (
+      typeof appliedPluginSnapshotId === 'string'
+      && appliedPluginSnapshotId.length > 0
+    ) {
+      const snapshot = getSnapshot(db, appliedPluginSnapshotId);
+      if (snapshot?.strategy) {
+        odNextStrategyRecipe = await resolveOdNextStrategyRequestRecipeV2({
+          bundledPluginsDir: BUNDLED_PLUGINS_DIR,
+          snapshot,
+          executionProfile: executionProfileFromStreamFormat(streamFormat),
+          atomPromptsEnabled: bundledAtomPromptsEnabled,
+          loadAtomBodies: async (atomIds) => {
+            const { loadBundledAtomBodiesStrict } = await import(
+              './plugins/atom-bodies.js'
+            );
+            return loadBundledAtomBodiesStrict(db, atomIds);
+          },
+        });
+      }
+    }
+
     // Hoisted verbatim out of the composeSystemPrompt() call so the exact same
     // object both composes the prompt and feeds section-level drift
     // attribution — a second, hand-maintained copy of these inputs would drift
     // from the real ones and mislabel the telemetry it exists to explain.
-    const systemPromptInputs = {
+    const defaultSystemPromptInputs = {
       agentId,
       skillBody,
       skillName,
@@ -9623,6 +9655,33 @@ export async function startServer({
       // do NOT carry this flip into a PR against main.
       promptCoreVariant: process.env.OD_PROMPT_CORE === 'classic' ? undefined : 'slim',
     };
+    const systemPromptInputs = odNextStrategyRecipe
+      ? {
+          odNextStrategyRecipe,
+          agentId,
+          streamFormat,
+          executionProfile: executionProfileFromStreamFormat(streamFormat),
+          metadata,
+          template,
+          designSystemBody,
+          designSystemTitle,
+          designSystemUsageMd,
+          designSystemTokensCss,
+          designSystemComponentsManifest,
+          designSystemFixtureHtml,
+          designSystemPullIndex,
+          designSystemIntentIndex,
+          designSystemRuntimeIssue,
+          designSystemImportMode,
+          craftBody,
+          craftSections,
+          memoryBody,
+          locale: typeof locale === 'string' ? locale : undefined,
+          sessionMode: normalizeConversationSessionMode(sessionMode),
+          userInstructions,
+          projectInstructions,
+        }
+      : defaultSystemPromptInputs;
     const prompt = composeSystemPrompt(systemPromptInputs);
     // The chat handler also needs to know where the active skill lives
     // on disk so it can stage a per-project copy of its side files
@@ -9633,8 +9692,8 @@ export async function startServer({
     return {
       prompt,
       activeSkillDir,
-      activeSkillDirs,
-      critiqueShouldRun,
+      activeSkillDirs: odNextStrategyRecipe ? [] : activeSkillDirs,
+      critiqueShouldRun: odNextStrategyRecipe ? false : critiqueShouldRun,
       designSystemSelection: {
         id: activeDesignSystemId,
         requestedId: effectiveDesignSystemId,
@@ -9642,9 +9701,27 @@ export async function startServer({
         digest: designSystemDigest,
       },
       promptTelemetryParts: {
-        skillPrompt: skillBody ?? '',
-        designSystemPrompt: designSystemBody ?? '',
-        pluginStagePrompt: [pluginBlock, ...(activeStageBlocks ?? [])]
+        skillPrompt: odNextStrategyRecipe?.taskSkill ?? skillBody ?? '',
+        designSystemPrompt: odNextStrategyRecipe
+          ? [
+              designSystemTitle,
+              designSystemBody,
+              designSystemUsageMd,
+              designSystemTokensCss,
+              designSystemComponentsManifest,
+              designSystemFixtureHtml,
+              designSystemPullIndex,
+              designSystemIntentIndex,
+              designSystemRuntimeIssue,
+              designSystemImportMode,
+            ]
+              .filter((part) => typeof part === 'string' && part.trim().length > 0)
+              .join('\n\n---\n\n')
+          : designSystemBody ?? '',
+        pluginStagePrompt: [
+          ...(odNextStrategyRecipe ? [] : [pluginBlock]),
+          ...(odNextStrategyRecipe?.activeStageBlocks ?? activeStageBlocks ?? []),
+        ]
           .filter((part) => typeof part === 'string' && part.trim().length > 0)
           .join('\n\n---\n\n'),
       },

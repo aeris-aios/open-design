@@ -48,6 +48,7 @@ import {
   isInternalBundledStrategyV2,
   validateBundledStrategyActivationV2,
 } from './strategy-provenance.js';
+import { enforceOdNextStrategyPipelineV2 } from './strategy-stage-policy.js';
 
 export class MissingInputError extends Error {
   readonly fields: string[];
@@ -162,12 +163,18 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   // anti-slop) stages, so the five-stage main flow is stable whether the
   // artifact came from a free-form prompt or a plugin. Pure media stays
   // generate-only. See ensure-core-stages.ts for the full rationale.
-  const appliedPipeline = ensureCoreQualityStages({
-    pipeline: pipelineResolution.pipeline,
-    taskKind,
-    mode: manifest.od?.mode,
-    source: pipelineResolution.source,
-  });
+  const appliedPipeline = strategy
+    ? enforceOdNextStrategyPipelineV2({
+        plugin: input.plugin,
+        binding: strategy,
+        pipeline: pipelineResolution.pipeline,
+      })
+    : ensureCoreQualityStages({
+        pipeline: pipelineResolution.pipeline,
+        taskKind,
+        mode: manifest.od?.mode,
+        source: pipelineResolution.source,
+      });
 
   const declaredSurfaces = manifest.od?.genui?.surfaces ?? [];
   const autoOAuth = input.connectorProbe

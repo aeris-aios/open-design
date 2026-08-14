@@ -5,6 +5,8 @@ export const OD_NEXT_PROMPT_RECIPE_ID = 'od-next-plan-build-v2' as const;
 export const OD_NEXT_APPLIED_STRATEGY_SCHEMA = 'open-design.applied-strategy/v2' as const;
 export const OD_NEXT_PLAN_CONTRACT_SCHEMA = 'open-design.plan-contract/v2' as const;
 export const OD_NEXT_RUNTIME_STATE_SCHEMA = 'open-design.strategy-state/v2' as const;
+export const OD_NEXT_PLAN_CONTRACT_BLOCK = 'open-design-plan-contract' as const;
+export const OD_NEXT_RUNTIME_STATE_BLOCK = 'open-design-runtime-state' as const;
 export const OD_NEXT_BUNDLED_STRATEGY_SCHEMA = 'open-design.bundled-strategy/v2' as const;
 
 export const StrategyTaskTypeV2Schema = z.enum([

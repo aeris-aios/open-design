@@ -39,6 +39,13 @@ export class StrategyPackageAssetPathError extends StrategyPackageIdentityError 
   }
 }
 
+export interface BundledStrategyPromptAssetsV2 {
+  binding: AppliedStrategyBindingV2;
+  coreStrategy: string;
+  generalOrchestration: string;
+  taskSkill: string;
+}
+
 /**
  * Daemon-owned I/O edge for the internal OD Next strategy. The manifest
  * supplies declared assets and this owner explicitly adds the mandatory package
@@ -48,6 +55,61 @@ export function createBundledStrategyBindingV2(input: {
   plugin: InstalledPluginRecord;
   taskType: SelectableStrategyTaskTypeV2;
 }): AppliedStrategyBindingV2 {
+  return readBundledStrategyPackageV2(input).binding;
+}
+
+/**
+ * Re-read the exact explicit roster and require it to match the persisted
+ * apply-time binding before returning prompt text. Content drift therefore
+ * fails closed instead of pairing an old snapshot identity with new files.
+ */
+export function loadBundledStrategyPromptAssetsV2(input: {
+  plugin: InstalledPluginRecord;
+  binding: AppliedStrategyBindingV2;
+}): BundledStrategyPromptAssetsV2 {
+  const loaded = readBundledStrategyPackageV2({
+    plugin: input.plugin,
+    taskType: input.binding.selectedTaskProfile.taskType,
+  });
+  if (JSON.stringify(loaded.binding) !== JSON.stringify(input.binding)) {
+    throw new StrategyPackageIdentityError(
+      'Bundled strategy prompt content no longer matches the applied snapshot identity.',
+    );
+  }
+  const decode = (assetPath: string): string => {
+    const normalized = normalizeStrategyAssetPath(assetPath);
+    const bytes = loaded.assets.get(normalized);
+    if (!bytes) {
+      throw new StrategyPackageIdentityError(
+        `Bundled strategy prompt asset is missing from the verified roster: ${normalized}`,
+      );
+    }
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      throw new StrategyPackageIdentityError(
+        `Bundled strategy prompt asset is not valid UTF-8: ${normalized}`,
+      );
+    }
+  };
+  return {
+    binding: loaded.binding,
+    coreStrategy: decode(loaded.corePath),
+    generalOrchestration: decode(loaded.orchestrationPath),
+    taskSkill: decode(loaded.selectedProfilePath),
+  };
+}
+
+function readBundledStrategyPackageV2(input: {
+  plugin: InstalledPluginRecord;
+  taskType: SelectableStrategyTaskTypeV2;
+}): {
+  binding: AppliedStrategyBindingV2;
+  assets: Map<string, Uint8Array>;
+  corePath: string;
+  orchestrationPath: string;
+  selectedProfilePath: string;
+} {
   const provenance = inspectBundledStrategyProvenanceV2(input.plugin);
   if (provenance.kind === 'none') {
     throw new StrategyPackageIdentityError('Plugin is not an internal bundled strategy.');
@@ -87,13 +149,20 @@ export function createBundledStrategyBindingV2(input: {
     selectedProfile.path,
     declaration.assets.taskProfileMapping.path,
   ];
+  const assets = new Map<string, Uint8Array>();
   let identity;
   let selectedPath: string;
   try {
+    for (const assetPath of declaredPaths) {
+      assets.set(
+        normalizeStrategyAssetPath(assetPath),
+        readControlledStrategyAsset(root, assetPath),
+      );
+    }
     identity = buildStrategyPackageIdentity({
-      assets: declaredPaths.map((assetPath) => ({
+      assets: Array.from(assets, ([assetPath, bytes]) => ({
         path: assetPath,
-        bytes: readControlledStrategyAsset(root, assetPath),
+        bytes,
       })),
     });
     selectedPath = normalizeStrategyAssetPath(selectedProfile.path);
@@ -128,7 +197,13 @@ export function createBundledStrategyBindingV2(input: {
   if (!parsed.success) {
     throw new StrategyPackageIdentityError('Computed strategy binding failed schema validation.');
   }
-  return parsed.data;
+  return {
+    binding: parsed.data,
+    assets,
+    corePath: normalizeStrategyAssetPath(declaration.assets.core.path),
+    orchestrationPath: normalizeStrategyAssetPath(declaration.assets.orchestration.path),
+    selectedProfilePath: selectedPath,
+  };
 }
 
 function readControlledStrategyAsset(pluginRoot: string, assetPath: string): Uint8Array {
