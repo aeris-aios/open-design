@@ -2628,13 +2628,20 @@ app.whenReady().then(async () => {
       'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-pptx-layer-capture-id]"), (target) => [target.getAttribute("data-od-pptx-layer-capture-id"), target.closest("[data-od-probe]").getAttribute("data-od-probe")]))',
       true,
     );
+    const devicePixelRatio = await window.webContents.executeJavaScript('window.devicePixelRatio || 1', true);
     for (const target of targets) {
       probeStage = 'isolate target ' + target.id;
       const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
       await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
       const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
         captureBeyondViewport: true,
-        clip: { x: geometry.pageX, y: geometry.pageY, width: geometry.width, height: geometry.height, scale: 2 },
+        clip: {
+          x: geometry.pageX,
+          y: geometry.pageY,
+          width: geometry.width,
+          height: geometry.height,
+          scale: Math.min(2, 2 / devicePixelRatio),
+        },
         format: 'png',
         fromSurface: true,
       });
