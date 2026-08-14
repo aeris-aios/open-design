@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/cordis-plugin-loader';
 import {
@@ -375,9 +376,15 @@ async function execute(
   }
 }
 
-async function serve(ctx: Context, output: Output, exit: (code: number) => void): Promise<void> {
+async function serve(
+  ctx: Context,
+  output: Output,
+  exit: (code: number) => void,
+  input: Readable = process.stdin,
+  finishProfile: (exitCallback: (code: number) => void) => void = requestProfileExit,
+): Promise<void> {
   writeFrame(output, identityFrame('ready', PLUGIN_VERSION));
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const lines = createInterface({ input, crlfDelay: Infinity });
   let requestId: string | null = null;
   let handle: AgentHandle | undefined;
   let task: Promise<void> | undefined;
@@ -390,7 +397,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
       if (settled) return;
       settled = true;
       lines.close();
-      process.stdin.destroy();
+      input.destroy();
       resolve();
     };
     lines.on('line', (line) => {
@@ -438,7 +445,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
       if (!task) settle();
     });
   });
-  requestProfileExit(exit);
+  finishProfile(exit);
 }
 
 export function apply(ctx: Context): void {
@@ -473,5 +480,6 @@ export const internals = {
   requestProfileExit,
   resultStatus,
   resultError,
+  serve,
   terminalOutput,
 };
