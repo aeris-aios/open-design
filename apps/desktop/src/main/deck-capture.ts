@@ -951,7 +951,12 @@ export function isolateLayeredPptxBackground(
 
     const paintClipState = (candidate: HTMLElement): { hasClipPath: boolean; hasMask: boolean } => {
       const style = getComputedStyle(candidate);
-      const clipPath = (style.clipPath || style.getPropertyValue?.("clip-path") || "none")
+      const clipPath = (
+        style.clipPath ||
+        style.getPropertyValue?.("clip-path") ||
+        style.getPropertyValue?.("-webkit-clip-path") ||
+        "none"
+      )
         .trim()
         .toLowerCase();
       const hasMask = [
@@ -964,21 +969,30 @@ export function isolateLayeredPptxBackground(
       const state = paintClipState(candidate);
       return state.hasClipPath || state.hasMask;
     };
-    if (!hasPaintClip(element) && !hasPaintClip(target)) return false;
+    const paintClipChain = (candidate: HTMLElement): HTMLElement[] => {
+      const clips: HTMLElement[] = [];
+      for (let current: HTMLElement | null = candidate; current; current = current.parentElement) {
+        if (hasPaintClip(current)) clips.push(current);
+        if (current === slide) break;
+      }
+      return clips;
+    };
+    const clippedPaintBoxes = [...paintClipChain(element), ...paintClipChain(target)]
+      .filter((candidate, index, candidates) => candidates.indexOf(candidate) === index);
+    if (clippedPaintBoxes.length === 0) return false;
 
-    // A clip path or mask can confine real paint to a narrow stripe or ring
-    // that misses every fixed sample. Expand those clips for the paint-order
-    // probe without removing them: clip-path and masks establish stacking
-    // contexts, so setting them to `none` can reorder the boxes and invert the
-    // result we are trying to measure. The authored styles are restored before
-    // capture, where the real clip/mask still shapes the PNG.
-    const paintClipStyles = [element, target]
-      .filter((candidate, index, candidates) => hasPaintClip(candidate) && candidates.indexOf(candidate) === index)
-      .map((candidate) => ({
-        candidate,
-        cssText: candidate.style.cssText,
-        ...paintClipState(candidate),
-      }));
+    // A clip path or mask on either box or one of its ancestors can confine
+    // real paint to a narrow stripe or ring that misses every fixed sample.
+    // Expand those clips for the paint-order probe without removing them:
+    // clip-path and masks establish stacking contexts, so setting them to
+    // `none` can reorder the boxes and invert the result we are trying to
+    // measure. The authored styles are restored before capture, where the real
+    // clip/mask still shapes the PNG.
+    const paintClipStyles = clippedPaintBoxes.map((candidate) => ({
+      candidate,
+      cssText: candidate.style.cssText,
+      ...paintClipState(candidate),
+    }));
     try {
       for (const { candidate, hasClipPath, hasMask } of paintClipStyles) {
         if (hasClipPath) {

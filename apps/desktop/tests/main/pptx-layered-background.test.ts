@@ -1503,7 +1503,7 @@ const fixtures = {
   masked: '<div class="masked">Masked real content</div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
   compositedPseudoContent: '<div class="composited-pseudo-content"></div>',
-  clippedStripeBackdrop: '<div class="clipped-stripe-backdrop"></div><div class="clipped-stripe-target"></div>',
+  clippedStripeBackdrop: '<div class="clipped-stripe-clip"><div class="clipped-stripe-backdrop"></div></div><div class="clipped-stripe-target"></div>',
   skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
   backdropFiltered: '<div class="filtered-backdrop"></div><div class="backdrop-filtered"></div>',
   backgroundBlendPseudo: '<div class="background-blend-pseudo"></div>',
@@ -2032,7 +2032,7 @@ const styles = \`
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
-  .clipped-stripe-backdrop,
+  .clipped-stripe-clip,
   .clipped-stripe-target {
     position: absolute;
     left: 112px;
@@ -2040,9 +2040,13 @@ const styles = \`
     width: 96px;
     height: 48px;
   }
+  .clipped-stripe-clip {
+    -webkit-clip-path: polygon(18% 0, 22% 0, 22% 100%, 18% 100%);
+  }
   .clipped-stripe-backdrop {
+    position: absolute;
+    inset: 0;
     background: rgb(128, 192, 128);
-    clip-path: polygon(18% 0, 22% 0, 22% 100%, 18% 100%);
   }
   .clipped-stripe-target {
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
