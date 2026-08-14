@@ -67,6 +67,11 @@ import {
   validatePluginWorkflowId,
 } from '../mcp-observability.js';
 import {
+  createInternalRunCreationService,
+  type InternalRunCreateInput,
+  type InternalRunCreationService,
+} from '../services/internal-run-service.js';
+import {
   buildConnectorProbe,
   getInstalledPlugin,
   resolvePluginSnapshot,
@@ -119,7 +124,6 @@ import {
   BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
 } from '../runtimes/byok-opencode.js';
 import { resolveChatRunInactivityTimeoutMs } from '../runtimes/chat-run-lifecycle.js';
-import { TERMINAL_RUN_STATUSES } from '../runtimes/runs.js';
 import {
   deriveActivationMilestones,
   runAskedUserQuestion,
@@ -370,7 +374,7 @@ interface ChatRun {
   };
 }
 
-interface RunCreateMeta extends JsonRecord {
+interface RunCreateMeta extends InternalRunCreateInput, JsonRecord {
   projectId?: string;
   conversationId?: string;
   userMessageId?: string;
@@ -557,6 +561,13 @@ export interface RegisterRunRoutesDeps {
       run: ChatRun,
     ) => void;
   };
+  /**
+   * Process-owned physical Run seam. The composition root supplies one shared
+   * instance so non-HTTP coordinators can reuse the exact create/claim/start
+   * path. Route-only fixtures may omit it and receive an equivalent local
+   * instance around their injected run registry.
+   */
+  internalRuns?: InternalRunCreationService<RunCreateMeta, ChatRun>;
   /**
    * Workspace-identity gate for POST /api/runs and POST /api/chat — this
    * file's two "create a run" entry points. Until this fix both had ZERO
@@ -923,6 +934,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     pinAssistantMessageOnRunCreate,
     reconcileAssistantMessageOnRunEnd,
   } = ctx.messages;
+  const internalRuns = ctx.internalRuns ?? createInternalRunCreationService({
+    runs: design.runs,
+    claimAssistantMessage: (run, options) =>
+      pinAssistantMessageOnRunCreate(db, run, options),
+  });
 
   /** Authorize every bound run mutation before plugin or snapshot resolution. */
   async function authorizeRunProjectBeforePluginResolution(
@@ -1770,16 +1786,25 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         updateProject(db, meta.projectId, {});
       }
     };
-    const isRunActiveForAssistantClaim = (runId: string): boolean => {
-      const existingRun = design.runs.get(runId);
-      return Boolean(existingRun && !TERMINAL_RUN_STATUSES.has(existingRun.status));
-    };
     meta.requestFingerprint = runRequestFingerprint(
       meta,
       resolvedSnapshot?.ok ? resolvedSnapshot.snapshot : null,
     );
-    const creation = design.runs.createOrReuse(meta);
-    if (creation.kind === 'conflict') {
+    const preparedRun = internalRuns.prepare({
+      meta,
+      ...(runUserSeed ? { beforeClaimCommit: seedRunUserMessage } : {}),
+      resume: {
+        requested: requestBody.resume === true,
+        canResume: (candidate) =>
+          candidate.status === 'failed'
+          && candidate.agentId === 'amr'
+          && (
+            candidate.failureAction === 'recharge'
+            || candidate.errorCode === 'AMR_INSUFFICIENT_BALANCE'
+          ),
+      },
+    });
+    if (preparedRun.kind === 'idempotency_conflict') {
       return sendApiError(
         res,
         409,
@@ -1787,105 +1812,47 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'clientRequestId is already associated with a different logical run request',
       );
     }
-    const run = creation.run;
+    const run = preparedRun.run;
     const analyticsAttributionMismatch =
-      creation.kind === 'reused'
+      (preparedRun.kind !== 'ready' || preparedRun.creationKind === 'reused')
       && externalPluginAttributionMismatch(
         run.externalPluginAnalytics,
         meta.analyticsHints,
       );
-    let resumed = false;
-    if (creation.kind === 'reused') {
-      const resumeRequested = requestBody.resume === true;
-      const rechargeFailure =
-        run.status === 'failed'
-        && run.agentId === 'amr'
-        && (
-          run.failureAction === 'recharge'
-          || run.errorCode === 'AMR_INSUFFICIENT_BALANCE'
-        );
-      if (!resumeRequested) {
-        return res.status(202).json({
-          runId: run.id,
-          conversationId: run.conversationId ?? null,
-          assistantMessageId: run.assistantMessageId ?? null,
-          clientRequestId: run.clientRequestId ?? null,
-          reused: true,
-          resumed: false,
-          ...(analyticsAttributionMismatch
-            ? { analyticsAttributionMismatch: true }
-            : {}),
-          ...(run.appliedPluginSnapshotId
-            ? { appliedPluginSnapshotId: run.appliedPluginSnapshotId }
-            : {}),
-          ...(run.pluginId ? { pluginId: run.pluginId } : {}),
-        });
-      }
-      if (!rechargeFailure) {
-        return sendApiError(
-          res,
-          409,
-          'RUN_NOT_RECHARGE_RESUMABLE',
-          'Only a failed Open Design Cloud run waiting for recharge can be resumed with the same request',
-        );
-      }
-      // Claim BEFORE arming the restart. On a conflict the reused run stays
-      // terminal + resumable (never dropped) and the request is rejected —
-      // the claim writes the post-restart `queued` intent so the message row
-      // does not stay terminal while the run is being resumed (#6418).
-      const resumeClaim = pinAssistantMessageOnRunCreate(db, run, {
-        status: 'queued',
-        isRunActive: isRunActiveForAssistantClaim,
+    if (preparedRun.kind === 'reused') {
+      return res.status(202).json({
+        runId: run.id,
+        conversationId: run.conversationId ?? null,
+        assistantMessageId: run.assistantMessageId ?? null,
+        clientRequestId: run.clientRequestId ?? null,
+        reused: true,
+        resumed: false,
+        ...(analyticsAttributionMismatch
+          ? { analyticsAttributionMismatch: true }
+          : {}),
+        ...(run.appliedPluginSnapshotId
+          ? { appliedPluginSnapshotId: run.appliedPluginSnapshotId }
+          : {}),
+        ...(run.pluginId ? { pluginId: run.pluginId } : {}),
       });
-      if (!resumeClaim.ok) {
-        return sendApiError(
-          res,
-          409,
-          'RUN_IN_PROGRESS',
-          'assistantMessageId is already bound to an active run',
-        );
-      }
-      if (!design.runs.prepareRestart(run)) {
-        return sendApiError(
-          res,
-          409,
-          'RUN_NOT_RECHARGE_RESUMABLE',
-          'Only a failed Open Design Cloud run waiting for recharge can be resumed with the same request',
-        );
-      }
-      resumed = true;
     }
-    // Atomic ownership claim runs BEFORE any message seeding: a rejected run
-    // never leaves an orphan user turn (nettee on #6418). Only a freshly
-    // created run is dropped on failure — a resumed loser is the client's own
-    // idempotent run and must survive.
-    if (creation.kind === 'created') {
-      let claimed: { ok: boolean; reason?: 'active' | 'scope' };
-      try {
-        const claimOptions = runUserSeed
-          ? {
-              beforeClaimCommit: () => {
-                seedRunUserMessage();
-              },
-              isRunActive: isRunActiveForAssistantClaim,
-            }
-          : { isRunActive: isRunActiveForAssistantClaim };
-        claimed = pinAssistantMessageOnRunCreate(db, run, claimOptions);
-      } catch (err) {
-        // Never let an unclaimed run start.
-        design.runs.drop(run);
-        throw err;
-      }
-      if (!claimed.ok) {
-        design.runs.drop(run);
-        return sendApiError(
-          res,
-          409,
-          'RUN_IN_PROGRESS',
-          'assistantMessageId is already bound to an active run',
-        );
-      }
+    if (preparedRun.kind === 'resume_not_allowed') {
+      return sendApiError(
+        res,
+        409,
+        'RUN_NOT_RECHARGE_RESUMABLE',
+        'Only a failed Open Design Cloud run waiting for recharge can be resumed with the same request',
+      );
     }
+    if (preparedRun.kind === 'assistant_claim_conflict') {
+      return sendApiError(
+        res,
+        409,
+        'RUN_IN_PROGRESS',
+        'assistantMessageId is already bound to an active run',
+      );
+    }
+    const resumed = preparedRun.resumed;
     const declaredClient = String(req.get('x-od-client') ?? '').toLowerCase();
     if (requestAnalyticsContext?.clientType === 'external_mcp') {
       run.clientType = 'external_mcp';
@@ -1908,7 +1875,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       conversationId: run.conversationId ?? null,
       assistantMessageId: run.assistantMessageId ?? null,
       clientRequestId: run.clientRequestId ?? null,
-      reused: creation.kind === 'reused',
+      reused: preparedRun.creationKind === 'reused',
       resumed,
       ...(analyticsAttributionMismatch
         ? { analyticsAttributionMismatch: true }
@@ -1945,7 +1912,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ? { byokProvider: requestBody.byokProvider }
         : {}),
     };
-    design.runs.start(run, () => startChatRun(executionMeta, run));
+    internalRuns.start(run, () => startChatRun(executionMeta, run));
 
     const reqBody = requestBody;
     const analyticsHints =
@@ -2295,7 +2262,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                 run.externalPluginAnalytics.briefState,
               generation_slo_window_ms:
                 run.externalPluginAnalytics.generationSloWindowMs,
-              deduplicated: creation.kind === 'reused',
+              deduplicated: preparedRun.creationKind === 'reused',
               resume: resumed,
               attempt_count: (run.manualResumeAttemptCount ?? 0) + 1,
               recharge_wait_duration_ms:
@@ -3247,8 +3214,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       )
     ) return;
     meta.requestFingerprint = runRequestFingerprint(meta);
-    const creation = design.runs.createOrReuse(meta);
-    if (creation.kind === 'conflict') {
+    const preparedRun = internalRuns.prepare({ meta });
+    if (preparedRun.kind === 'idempotency_conflict') {
       return sendApiError(
         res,
         409,
@@ -3256,33 +3223,25 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'clientRequestId is already associated with a different logical run request',
       );
     }
-    const run = creation.run;
-    if (creation.kind === 'reused') {
+    const run = preparedRun.run;
+    if (preparedRun.kind === 'reused') {
       design.runs.stream(run, req, res);
       return;
     }
-    const isRunActiveForAssistantClaim = (runId: string): boolean => {
-      const existingRun = design.runs.get(runId);
-      return Boolean(existingRun && !TERMINAL_RUN_STATUSES.has(existingRun.status));
-    };
-    // Atomic ownership claim (#6418): a created run must acquire the assistant
-    // message before streaming — otherwise drop the run and reject.
-    let claimed: { ok: boolean; reason?: 'active' | 'scope' };
-    try {
-      claimed = pinAssistantMessageOnRunCreate(db, run, {
-        isRunActive: isRunActiveForAssistantClaim,
-      });
-    } catch (err) {
-      design.runs.drop(run);
-      throw err;
-    }
-    if (!claimed.ok) {
-      design.runs.drop(run);
+    if (preparedRun.kind === 'assistant_claim_conflict') {
       return sendApiError(
         res,
         409,
         'RUN_IN_PROGRESS',
         'assistantMessageId is already bound to an active run',
+      );
+    }
+    if (preparedRun.kind === 'resume_not_allowed') {
+      return sendApiError(
+        res,
+        409,
+        'RUN_NOT_RECHARGE_RESUMABLE',
+        'Only a failed Open Design Cloud run waiting for recharge can be resumed with the same request',
       );
     }
     design.runs.stream(run, req, res);
@@ -3293,7 +3252,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ? { byokProvider: requestBody.byokProvider }
         : {}),
     };
-    design.runs.start(run, () => startChatRun(executionMeta, run));
+    internalRuns.start(run, () => startChatRun(executionMeta, run));
   });
 }
 

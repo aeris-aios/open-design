@@ -451,6 +451,7 @@ import { importFigmaFromBytes } from './figma/figma-import.js';
 import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
+import { createInternalRunCreationService } from './services/internal-run-service.js';
 import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
@@ -7059,6 +7060,11 @@ export async function startServer({
     getAppVersion: () => telemetry.getCachedAppVersion()?.version ?? '0.0.0',
     readAnalyticsContext,
   };
+  const internalRunCreation = createInternalRunCreationService({
+    runs: design.runs,
+    claimAssistantMessage: (run, options) =>
+      pinAssistantMessageOnRunCreate(db, run, options),
+  });
 
   // Runs are process-local, but their terminal obligations are durable. On a
   // fresh daemon boot, repair stale message rows and replay any PostHog or
@@ -14380,6 +14386,7 @@ export async function startServer({
       pinAssistantMessageOnRunCreate,
       reconcileAssistantMessageOnRunEnd,
     },
+    internalRuns: internalRunCreation,
     // POST /api/runs and POST /api/chat are this file's "create a run" entry
     // points — see RegisterRunRoutesDeps.enforceWorkspaceProjectMutation.
     // Same provider `collab` was built with (collab.workspaceContext ===
