@@ -640,6 +640,29 @@ describe('AssistantMessage tool status', () => {
     expect(container.querySelector('.status-pill')).toBeNull();
   });
 
+  it('hides persisted lifecycle status rows after a run reaches a terminal state', () => {
+    const { container } = render(
+      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
+        message={{
+          ...messageWithEvents([
+            { kind: 'status', label: 'working' },
+            { kind: 'status', label: 'completed' },
+          ]),
+          runStatus: 'canceled',
+          endedAt: 2,
+        }}
+        streaming={false}
+        projectId="project-1"
+      />,
+    );
+
+    expect(container.querySelector('[data-status="working"]')).toBeNull();
+    expect(container.querySelector('[data-status="completed"]')).toBeNull();
+    expect(container.querySelector('.status-pill')).toBeNull();
+  });
+
   it('still renders status rows that carry a displayable detail', () => {
     const { container } = render(
       <AssistantMessage

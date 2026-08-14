@@ -845,6 +845,7 @@ const HIDDEN_BRAND_ASSISTANT_STATUS_LABELS = new Set([
   'streaming',
   'starting',
   'running',
+  'working',
   'requesting',
   'thinking',
   'empty_response',
