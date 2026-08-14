@@ -788,6 +788,7 @@ describe('POST /api/projects/:id/export/html route', () => {
       mkdir(path.join(root, 'scripts'), { recursive: true }),
       mkdir(path.join(root, 'assets'), { recursive: true }),
     ]);
+    await mkdir(path.join(root, 'pages', 'dist', 'index.html'), { recursive: true });
     await writeFile(
       path.join(root, 'pages', 'index.html'),
       '<!doctype html><html><head>' +
@@ -822,6 +823,10 @@ describe('POST /api/projects/:id/export/html route', () => {
     await writeFile(
       path.join(root, 'pages', 'invalid-source.html'),
       '<!doctype html><script type="module" src="../scripts/invalid.tsx"></script>',
+    );
+    await writeFile(
+      path.join(root, 'pages', 'vite-dist-read-error.html'),
+      '<!doctype html><script type="module" src="/src/main.tsx"></script>',
     );
   });
 
@@ -882,6 +887,14 @@ describe('POST /api/projects/:id/export/html route', () => {
       dependency: 'scripts/invalid.tsx',
       chain: ['pages/invalid-source.html', 'scripts/invalid.tsx'],
     });
+  });
+
+  it('reports a Vite dist read failure instead of silently falling back to dev HTML', async () => {
+    const response = await postExport({ fileName: 'pages/vite-dist-read-error.html' });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('BAD_REQUEST');
+    expect(body.error.message).toContain('EISDIR');
   });
 
   it('rejects historical entries until their dependency graph is versioned', async () => {

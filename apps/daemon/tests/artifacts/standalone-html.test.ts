@@ -252,6 +252,45 @@ describe('bundleStandaloneHtml', () => {
     });
   });
 
+  it('embeds non-HTML iframe resources with their original media type', async () => {
+    const image = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const pdf = Buffer.from('%PDF-1.7');
+    const result = await bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: '<iframe src="preview.png#crop"></iframe><iframe src="report.pdf#page=2"></iframe>',
+      readAsset: assetReader({
+        'preview.png': { body: image, mime: 'image/png' },
+        'report.pdf': { body: pdf, mime: 'application/pdf' },
+      }),
+    });
+
+    expect(result.html).toContain(`src="data:image/png;base64,${image.toString('base64')}#crop"`);
+    expect(result.html).toContain(`src="data:application/pdf;base64,${pdf.toString('base64')}#page=2"`);
+    expect(result.html).not.toContain('data:text/html');
+  });
+
+  it('rewrites resource links without requiring navigation or metadata links as files', async () => {
+    const result = await bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: `<link rel="canonical" href="/products/demo">
+        <link rel="alternate" href="next.html">
+        <link rel="icon" href="assets/icon.png">
+        <link rel="manifest" href="app.webmanifest">
+        <link rel="modulepreload" href="scripts/chunk.js">`,
+      readAsset: assetReader({
+        'assets/icon.png': { body: 'icon', mime: 'image/png' },
+        'app.webmanifest': { body: '{}', mime: 'application/manifest+json' },
+        'scripts/chunk.js': { body: 'export {};', mime: 'text/javascript' },
+      }),
+    });
+
+    expect(result.html).toContain('rel="canonical" href="/products/demo"');
+    expect(result.html).toContain('rel="alternate" href="next.html"');
+    expect(result.html).toContain('rel="icon" href="data:image/png;base64,');
+    expect(result.html).toContain('rel="manifest" href="data:application/manifest+json;base64,');
+    expect(result.html).toContain('rel="modulepreload" href="data:text/javascript;base64,');
+  });
+
   it('leaves remote dependencies untouched and lists them in the document', async () => {
     const result = await bundleStandaloneHtml({
       entryPath: 'index.html',

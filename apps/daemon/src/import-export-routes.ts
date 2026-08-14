@@ -1709,8 +1709,9 @@ async function resolveHtmlExportSource({
       html: rewriteViteDistRootAssetUrls(distFile.buffer.toString('utf8')),
       relPath: distRelPath,
     };
-  } catch {
-    return { html, relPath };
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return { html, relPath };
+    throw error;
   }
 }
 

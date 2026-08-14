@@ -89,6 +89,15 @@ const DEFAULT_LIMITS: StandaloneHtmlLimits = {
 const TEXT_JAVASCRIPT_MIME = 'text/javascript';
 const PROJECT_MODULE_PREFIX = 'od-project:/';
 const IMPORT_RE = /^\s*(?:url\(\s*)?(?:(['"])(.*?)\1|([^\s)'";]+))\s*\)?([\s\S]*)$/u;
+const EMBEDDABLE_LINK_RELATIONS = new Set([
+  'apple-touch-icon',
+  'apple-touch-startup-image',
+  'icon',
+  'manifest',
+  'mask-icon',
+  'modulepreload',
+  'preload',
+]);
 
 export async function bundleStandaloneHtml(options: StandaloneHtmlOptions): Promise<StandaloneHtmlResult> {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
@@ -262,7 +271,7 @@ class StandaloneBundler {
           value: `<style data-od-inline-asset="${escapeHtmlAttribute(href)}"${kept}>${escapeStyleBody(css)}</style>`,
         });
         wholeNodeReplacements.add(node);
-      } else {
+      } else if (hasEmbeddableLinkRelation(rel)) {
         await this.rewriteAttribute(html, node, 'href', documentOwnerPath, chain, replacements);
       }
     }
@@ -730,6 +739,10 @@ class StandaloneBundler {
     if (cached) return cached;
     const pending = (async () => {
       const loaded = await this.load(projectPath, chain);
+      if (!isHtmlMimeType(loaded.mime)) {
+        loaded.dataUrl ??= this.checkedDataUrl(loaded.mime, loaded.buffer, chain);
+        return loaded.dataUrl;
+      }
       const nested = await this.bundleDocument(
         loaded.buffer.toString('utf8'),
         projectPath,
@@ -932,6 +945,15 @@ function classifyScriptType(type: string): 'classic' | 'data' | 'module' {
   if (type === 'module') return 'module';
   if (!type || isJavaScriptMimeType(type)) return 'classic';
   return 'data';
+}
+
+function hasEmbeddableLinkRelation(rel: string): boolean {
+  return rel.split(/\s+/u).some((token) => EMBEDDABLE_LINK_RELATIONS.has(token));
+}
+
+function isHtmlMimeType(mime: string): boolean {
+  const essence = mime.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return essence === 'text/html' || essence === 'application/xhtml+xml';
 }
 
 function isJavaScriptMimeType(type: string): boolean {
