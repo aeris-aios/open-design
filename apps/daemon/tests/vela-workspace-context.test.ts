@@ -10,10 +10,13 @@ import {
   createVelaWorkspaceContextProvider,
   fetchVelaWorkspaceDirectory,
   mapVelaWorkspaceContext,
+  resolveVelaWorkspaceHubEventsEndpoint,
+  velaWorkspaceDirectoryIdentityForSession,
   workspaceContextFromDirectoryItem,
 } from '../src/collab/vela-workspace-context.js';
 import {
   clearVelaAuthorizationState,
+  readVelaControlApiContext,
   readVelaLoginStatus,
 } from '../src/integrations/vela.js';
 
@@ -159,6 +162,35 @@ describe('mapVelaWorkspaceContext', () => {
 });
 
 describe('createCachedWorkspaceDirectoryFetcher', () => {
+  it('builds hub URL, authorization, and identity from the same merged session', () => {
+    const inherited = {
+      VELA_API_URL: 'https://account-a.example',
+      VELA_CONTROL_KEY: 'account-a-control-key',
+    } as NodeJS.ProcessEnv;
+    const configured = { VELA_API_URL: 'https://account-b.example' };
+    const accountA = readVelaControlApiContext(inherited);
+    const accountB = readVelaControlApiContext(inherited, configured);
+
+    const endpoint = resolveVelaWorkspaceHubEventsEndpoint(
+      ' workspace-b ',
+      inherited,
+      configured,
+    );
+
+    expect(endpoint).toEqual({
+      url: 'https://account-b.example/api/v1/collab/events',
+      workspaceId: 'workspace-b',
+      identityKey: velaWorkspaceDirectoryIdentityForSession(accountB),
+      headers: {
+        authorization: 'Bearer account-a-control-key',
+        'x-vela-workspace-id': 'workspace-b',
+      },
+    });
+    expect(endpoint?.identityKey).not.toBe(
+      velaWorkspaceDirectoryIdentityForSession(accountA),
+    );
+  });
+
   it('treats a missing local session as authoritative signed-out, not an outage', async () => {
     await expect(
       fetchVelaWorkspaceDirectory({ readSession: () => null }),
@@ -478,6 +510,32 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
     await expect(authority.read()).resolves.toEqual(first);
     authority.invalidate();
     await expect(authority.read()).resolves.toEqual(second);
+    expect(fetchDirectory).toHaveBeenCalledTimes(2);
+  });
+
+  it('retires every settled lease across an observed A -> B -> A identity round trip', async () => {
+    let identity = 'account-a:config-a';
+    const accountA = {
+      ok: true as const,
+      items: [{ ...B_DIRECTORY_ITEM }],
+    };
+    const refreshedAccountA = { ok: true as const, items: [] };
+    const fetchDirectory = vi
+      .fn()
+      .mockResolvedValueOnce(accountA)
+      .mockResolvedValueOnce(refreshedAccountA);
+    const authority = createWorkspaceDirectoryAuthorityBroker({
+      fetchDirectory,
+      identityKey: () => identity,
+    });
+
+    await expect(authority.read()).resolves.toEqual(accountA);
+    authority.setRealtimeHealthy(true);
+    identity = 'account-b:config-b';
+    authority.resetIdentity();
+    identity = 'account-a:config-a';
+
+    await expect(authority.read()).resolves.toEqual(refreshedAccountA);
     expect(fetchDirectory).toHaveBeenCalledTimes(2);
   });
 

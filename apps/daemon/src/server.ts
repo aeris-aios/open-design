@@ -783,6 +783,7 @@ import {
   createWorkspaceDirectoryAuthorityBroker,
   createWorkspaceContextProviderFromEnv,
   fetchVelaWorkspaceDirectory,
+  resolveVelaWorkspaceHubEventsEndpoint,
   velaWorkspaceDirectoryIdentity,
   workspaceContextFromDirectoryItem,
 } from './collab/vela-workspace-context.js';
@@ -3435,7 +3436,8 @@ export async function startServer({
     readVelaControlApiContext,
     configuredAmrEnv(),
   );
-  const resetWorkspaceExactIdentityCaches = (): void => {
+  const resetWorkspaceIdentityCaches = (): void => {
+    workspaceDirectoryAuthority.resetIdentity();
     workspaceExactAuthorityCache.resetIdentity();
     workspaceExactContextCache.resetIdentity();
   };
@@ -3446,8 +3448,7 @@ export async function startServer({
     );
     if (currentIdentity === workspaceHubAccountIdentity) return;
     workspaceHubAccountIdentity = currentIdentity;
-    resetWorkspaceExactIdentityCaches();
-    workspaceDirectoryAuthority.setRealtimeHealthy(false);
+    resetWorkspaceIdentityCaches();
     workspaceHubSubscriptions?.refreshEndpoints();
   };
   const fetchWorkspaceDirectoryForAccountSurface = () => {
@@ -3459,6 +3460,7 @@ export async function startServer({
     req: unknown,
     requestedWorkspaceId?: string,
   ): WorkspaceCollabContext | null => {
+    refreshWorkspaceHubAccountIdentity();
     const claimed = workspaceResourceContextFromRequest(req);
     if (!claimed || claimed === 'missing') return null;
     if (
@@ -3476,6 +3478,7 @@ export async function startServer({
       : null;
   };
   const verifyWorkspaceContextReadAuthority = async (req: unknown) => {
+    refreshWorkspaceHubAccountIdentity();
     const claimed = workspaceResourceContextFromRequest(req);
     if (claimed && claimed !== 'missing') {
       const cached = workspaceExactAuthorityCache.cached(
@@ -5265,17 +5268,11 @@ export async function startServer({
       // Same gating as the workspace-context provider: only the vela source
       // has a hub to subscribe to (dev daemons must not dial production).
       if (process.env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() !== 'vela') return null;
-      const session = readVelaControlApiContext(process.env);
-      if (!session?.controlKey || !session.apiUrl) return null;
-      return {
-        url: new URL('/api/v1/collab/events', session.apiUrl).toString(),
-        workspaceId: subscribedWorkspaceId,
-        identityKey: currentWorkspaceDirectoryIdentity(),
-        headers: {
-          authorization: `Bearer ${session.controlKey}`,
-          'x-vela-workspace-id': subscribedWorkspaceId,
-        },
-      };
+      return resolveVelaWorkspaceHubEventsEndpoint(
+        subscribedWorkspaceId,
+        process.env,
+        configuredAmrEnv(),
+      );
     },
     onStateChange: (state, connection) => {
       if (state === 'disconnected') {
@@ -7506,6 +7503,10 @@ export async function startServer({
     readAppConfig,
     writeAppConfig,
     onAppConfigWritten: () => {
+      // AMR credentials may be overridden through Settings. Observe every
+      // completed write so even an A -> B -> A transition with no intervening
+      // directory/status read fences exact authority from the old A session.
+      refreshWorkspaceHubAccountIdentity();
       void attributionService.processPending().catch((err: unknown) => {
         console.warn('[attribution] pending claim failed', err);
       });

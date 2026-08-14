@@ -18,8 +18,10 @@ import type {
 import {
   markVelaAuthorizationExpired,
   readVelaControlApiContext,
+  type VelaControlApiContext,
   type VelaUser,
 } from '../integrations/vela.js';
+import type { HubEventsEndpoint } from './hub-events-subscriber.js';
 import {
   createDevWorkspaceContextProvider,
   resolveWorkspaceSettingsUrl,
@@ -546,6 +548,18 @@ export function velaWorkspaceDirectoryIdentity(
   configuredEnv: Record<string, string> = {},
 ): string {
   const session = readSession(process.env, configuredEnv);
+  return velaWorkspaceDirectoryIdentityForSession(session);
+}
+
+/**
+ * Derive the cache/stream identity from an already captured control session.
+ * Callers that also build an authenticated request should use this form so the
+ * URL, credential, and identity can never be assembled from different env
+ * snapshots.
+ */
+export function velaWorkspaceDirectoryIdentityForSession(
+  session: VelaControlApiContext | null,
+): string {
   if (!session?.controlKey || !session.apiUrl) return 'signed-out';
   const credentialFingerprint = createHash('sha256')
     .update(session.controlKey)
@@ -558,6 +572,39 @@ export function velaWorkspaceDirectoryIdentity(
     session.configMtimeMs ?? '',
     credentialFingerprint,
   ].join(':');
+}
+
+/** Build one Vela hub endpoint from one captured control session. */
+function createVelaWorkspaceHubEventsEndpoint(
+  session: VelaControlApiContext | null,
+  workspaceIdInput: string,
+): HubEventsEndpoint | null {
+  const workspaceId = workspaceIdInput.trim();
+  if (!workspaceId || !session?.controlKey || !session.apiUrl) return null;
+  return {
+    url: new URL('/api/v1/collab/events', session.apiUrl).toString(),
+    workspaceId,
+    identityKey: velaWorkspaceDirectoryIdentityForSession(session),
+    headers: {
+      authorization: `Bearer ${session.controlKey}`,
+      'x-vela-workspace-id': workspaceId,
+    },
+  };
+}
+
+/**
+ * Resolve a single merged session, then derive every authenticated hub field
+ * from that immutable snapshot.
+ */
+export function resolveVelaWorkspaceHubEventsEndpoint(
+  workspaceId: string,
+  env: NodeJS.ProcessEnv = process.env,
+  configuredEnv: Record<string, string> = {},
+): HubEventsEndpoint | null {
+  return createVelaWorkspaceHubEventsEndpoint(
+    readVelaControlApiContext(env, configuredEnv),
+    workspaceId,
+  );
 }
 
 /**
@@ -615,6 +662,8 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
   backgroundFresh: () => Promise<WorkspaceDirectoryFetchResult>;
   /** Keep successful display reads alive while account-directory SSE is strict. */
   setRealtimeHealthy: (healthy: boolean) => void;
+  /** Retire every identity partition and fence all unsettled directory reads. */
+  resetIdentity: () => void;
   invalidate: (reason?: 'event_dirty' | 'auth_reject' | 'catch_up') => void;
   refreshAfterMutation: () => Promise<WorkspaceDirectoryFetchResult>;
 } {
@@ -668,6 +717,17 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
     generations.set(identity, generationFor(identity) + 1);
     cached.delete(identity);
     if (!preserveFailure) failures.delete(identity);
+  };
+
+  const resetIdentity = (): void => {
+    const identities = new Set([
+      ...generations.keys(),
+      ...cached.keys(),
+      ...inFlight.keys(),
+      ...failures.keys(),
+    ]);
+    for (const identity of identities) invalidateIdentity(identity);
+    realtimeHealthyIdentity = null;
   };
 
   const failureBackoffHit = (
@@ -834,6 +894,7 @@ export function createWorkspaceDirectoryAuthorityBroker(options: {
       const identity = identityKey();
       realtimeHealthyIdentity = healthy ? identity : null;
     },
+    resetIdentity,
     invalidate: (reason = 'event_dirty') => {
       // A dirty event voids successful state, but a sustained event storm must
       // not punch through the account-wide outage circuit on every frame.
