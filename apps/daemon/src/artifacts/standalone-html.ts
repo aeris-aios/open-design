@@ -88,7 +88,6 @@ const DEFAULT_LIMITS: StandaloneHtmlLimits = {
 
 const TEXT_JAVASCRIPT_MIME = 'text/javascript';
 const PROJECT_MODULE_PREFIX = 'od-project:/';
-const URL_FUNCTION_RE = /url\(\s*(?:(['"])(.*?)\1|([^)'"\s][^)]*?))\s*\)/giu;
 const IMPORT_RE = /^\s*(?:url\(\s*)?(?:(['"])(.*?)\1|([^\s)'";]+))\s*\)?([\s\S]*)$/u;
 
 export async function bundleStandaloneHtml(options: StandaloneHtmlOptions): Promise<StandaloneHtmlResult> {
@@ -162,6 +161,7 @@ class StandaloneBundler {
       const attrs = attributesFor(node);
       const src = attrs.get('src');
       const type = (attrs.get('type') ?? '').trim().toLowerCase();
+      const scriptKind = classifyScriptType(type);
       if (src) {
         const resolution = this.resolveReference(documentOwnerPath, src, chain, { allowBare: false });
         if (resolution.kind === 'external') {
@@ -173,10 +173,10 @@ class StandaloneBundler {
         const loaded = await this.load(local.projectPath, [...chain, local.projectPath]);
         const source = loaded.buffer.toString('utf8');
         let body: string;
-        if (type === 'module') {
+        if (scriptKind === 'module') {
           await this.ensureModule(local.projectPath, [...chain, local.projectPath], modulePaths);
           body = `import ${JSON.stringify(moduleSpecifier(local.projectPath))};`;
-        } else {
+        } else if (scriptKind === 'classic') {
           body = await this.rewriteJavaScript(
             source,
             local.projectPath,
@@ -184,10 +184,12 @@ class StandaloneBundler {
             modulePaths,
             'classic',
           );
+        } else {
+          body = source;
         }
         const inlineStyle = attrs.get('style');
         if (inlineStyle) attrs.set('style', await this.rewriteCssUrls(inlineStyle, documentOwnerPath, chain));
-        const externalTiming = type !== 'module' && (attrs.has('defer') || attrs.has('async'));
+        const externalTiming = scriptKind === 'classic' && (attrs.has('defer') || attrs.has('async'));
         replacements.push({
           start: location.startOffset,
           end: location.endOffset,
@@ -207,10 +209,10 @@ class StandaloneBundler {
       const bodyEnd = location.endTag.startOffset;
       const body = html.slice(bodyStart, bodyEnd);
       if (!body.trim()) continue;
-      if (type === 'module') {
+      if (scriptKind === 'module') {
         const rewritten = await this.rewriteJavaScript(body, documentOwnerPath, chain, modulePaths, 'module');
         replacements.push({ start: bodyStart, end: bodyEnd, value: escapeScriptBody(rewritten) });
-      } else if (!type || /(?:java|ecma)script/u.test(type)) {
+      } else if (scriptKind === 'classic') {
         const rewritten = await this.rewriteJavaScript(body, documentOwnerPath, chain, modulePaths, 'classic');
         if (rewritten !== body) replacements.push({ start: bodyStart, end: bodyEnd, value: escapeScriptBody(rewritten) });
       }
@@ -500,14 +502,13 @@ class StandaloneBundler {
 
   private async rewriteCssUrls(value: string, ownerPath: string, chain: string[]): Promise<string> {
     const replacements: Replacement[] = [];
-    for (const match of value.matchAll(URL_FUNCTION_RE)) {
-      const reference = match[2] ?? match[3];
-      if (!reference || match.index === undefined) continue;
+    for (const token of findCssUrlFunctions(value)) {
+      const reference = token.reference;
       const rewritten = await this.referenceToDataUrl(ownerPath, reference.trim(), chain);
       if (rewritten === null || rewritten === reference) continue;
       replacements.push({
-        start: match.index,
-        end: match.index + match[0].length,
+        start: token.start,
+        end: token.end,
         value: ['url("', escapeCssString(rewritten), '")'],
       });
     }
@@ -925,6 +926,119 @@ function parseSrcset(value: string): Array<{ url: string; descriptor: string }> 
     if (value[cursor] === ',') cursor += 1;
   }
   return candidates;
+}
+
+function classifyScriptType(type: string): 'classic' | 'data' | 'module' {
+  if (type === 'module') return 'module';
+  if (!type || isJavaScriptMimeType(type)) return 'classic';
+  return 'data';
+}
+
+function isJavaScriptMimeType(type: string): boolean {
+  const essence = type.split(';', 1)[0]?.trim() ?? '';
+  return /^(?:(?:application|text)\/(?:x-)?(?:java|ecma)script|text\/(?:javascript1\.[0-5]|jscript|livescript))$/u
+    .test(essence);
+}
+
+function findCssUrlFunctions(value: string): Array<{ start: number; end: number; reference: string }> {
+  const tokens: Array<{ start: number; end: number; reference: string }> = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    const char = value[cursor] ?? '';
+    if (char === '/' && value[cursor + 1] === '*') {
+      cursor = skipCssComment(value, cursor);
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      cursor = skipCssString(value, cursor, char);
+      continue;
+    }
+    if (
+      value.slice(cursor, cursor + 3).toLowerCase() === 'url'
+      && !isCssIdentifierChar(value[cursor - 1] ?? '')
+    ) {
+      const parsed = parseCssUrlFunction(value, cursor);
+      if (parsed) {
+        tokens.push(parsed);
+        cursor = parsed.end;
+        continue;
+      }
+    }
+    cursor += 1;
+  }
+  return tokens;
+}
+
+function parseCssUrlFunction(
+  value: string,
+  start: number,
+): { start: number; end: number; reference: string } | null {
+  let cursor = start + 3;
+  if (value[cursor] !== '(') return null;
+  cursor += 1;
+  cursor = skipCssSpaceAndComments(value, cursor);
+
+  let reference = '';
+  const quote = value[cursor] ?? '';
+  if (quote === '"' || quote === "'") {
+    const contentStart = cursor + 1;
+    const stringEnd = skipCssString(value, cursor, quote);
+    if (value[stringEnd - 1] !== quote) return null;
+    reference = value.slice(contentStart, stringEnd - 1);
+    cursor = skipCssSpaceAndComments(value, stringEnd);
+  } else {
+    const contentStart = cursor;
+    while (cursor < value.length && value[cursor] !== ')') {
+      if (value[cursor] === '\\') {
+        cursor = Math.min(value.length, cursor + 2);
+        continue;
+      }
+      if (value[cursor] === '"' || value[cursor] === "'") return null;
+      cursor += 1;
+    }
+    reference = value.slice(contentStart, cursor).trim();
+  }
+
+  if (value[cursor] !== ')' || !reference) return null;
+  return { start, end: cursor + 1, reference };
+}
+
+function skipCssSpaceAndComments(value: string, start: number): number {
+  let cursor = start;
+  while (cursor < value.length) {
+    if (/\s/u.test(value[cursor] ?? '')) {
+      cursor += 1;
+      continue;
+    }
+    if (value[cursor] === '/' && value[cursor + 1] === '*') {
+      cursor = skipCssComment(value, cursor);
+      continue;
+    }
+    break;
+  }
+  return cursor;
+}
+
+function skipCssComment(value: string, start: number): number {
+  const end = value.indexOf('*/', start + 2);
+  return end < 0 ? value.length : end + 2;
+}
+
+function skipCssString(value: string, start: number, quote: string): number {
+  let cursor = start + 1;
+  while (cursor < value.length) {
+    if (value[cursor] === '\\') {
+      cursor = Math.min(value.length, cursor + 2);
+      continue;
+    }
+    cursor += 1;
+    if (value[cursor - 1] === quote) return cursor;
+  }
+  return cursor;
+}
+
+function isCssIdentifierChar(char: string): boolean {
+  return /[\w\u0080-\u{10ffff}-]/u.test(char) || char === '\\';
 }
 
 function wrapImportedCss(nodes: ChildNode[], tail: string): ChildNode {

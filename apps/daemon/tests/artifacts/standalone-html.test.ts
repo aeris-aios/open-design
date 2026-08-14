@@ -166,6 +166,40 @@ describe('bundleStandaloneHtml', () => {
     expect(result.html).not.toContain('src="scripts/app.js"');
   });
 
+  it('embeds external JSON-LD as data instead of parsing it as JavaScript', async () => {
+    const result = await bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: '<script type="application/ld+json" src="schema.json"></script>',
+      readAsset: assetReader({
+        'schema.json': {
+          body: '{"@context":"https://schema.org","name":"Offline"}',
+          mime: 'application/ld+json',
+        },
+      }),
+    });
+
+    expect(result.html).toContain('<script type="application/ld+json">');
+    expect(result.html).toContain('{"@context":"https://schema.org","name":"Offline"}');
+    expect(result.html).not.toContain('src="schema.json"');
+  });
+
+  it('rewrites real CSS URL tokens while ignoring URL-looking strings and comments', async () => {
+    const result = await bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: `<div style="content:'url(missing-string.png)';
+        --commented: /* url(missing-comment.png) */ none;
+        --asset: url('assets/real.png'); background-image: var(--asset)"></div>`,
+      readAsset: assetReader({
+        'assets/real.png': { body: 'real-image', mime: 'image/png' },
+      }),
+    });
+
+    expect(result.html).toContain('url(missing-string.png)');
+    expect(result.html).toContain('url(missing-comment.png)');
+    expect(result.html).toContain('--asset: url(&quot;data:image/png;base64,cmVhbC1pbWFnZQ==&quot;)');
+    expect(result.html).not.toContain("url('assets/real.png')");
+  });
+
   it('rewrites style attributes together with whole script and stylesheet node replacements', async () => {
     const result = await bundleStandaloneHtml({
       entryPath: 'index.html',
