@@ -2550,7 +2550,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByRole('menuitem', { name: /export as image/i })).toBeTruthy();
   });
 
-  it('restores captured URL preview state once after the matching prewarmed document is ready', async () => {
+  it('restores captured URL preview state once after the matching prewarmed document is verified', async () => {
     const file = baseFile({
       name: 'page.html',
       path: 'page.html',
@@ -2597,13 +2597,24 @@ describe('FileViewer SVG artifacts', () => {
     const srcDocFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement | null;
     expect(srcDocFrame?.getAttribute('data-od-active')).toBe('false');
     expect(srcDocFrame?.srcdoc).toContain('__odArtifactBootCount');
+    const srcDocPostSpy = vi.spyOn(srcDocFrame!.contentWindow!, 'postMessage');
     fireEvent.load(srcDocFrame!);
 
     const readyGeneration = srcDocFrame?.srcdoc.match(
       /data-od-srcdoc-transport-activation>[\s\S]*?var generation = "([^"]+)";/,
     )?.[1];
     expect(readyGeneration).toBeTruthy();
+    const readinessProbe = srcDocPostSpy.mock.calls.find(
+      ([message]) => (
+        (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe'
+        && (message as { generation?: unknown }).generation === readyGeneration
+      ),
+    )?.[0] as { generation?: string; probeId?: string } | undefined;
+    expect(readinessProbe?.generation).toBe(readyGeneration);
+    expect(readinessProbe?.probeId).toBeTruthy();
     act(() => {
+      // The eager head acknowledgement is provisional and must not consume
+      // URL runtime state before the challenged witness arrives.
       window.dispatchEvent(new MessageEvent('message', {
         source: srcDocFrame?.contentWindow,
         data: {
@@ -2623,7 +2634,6 @@ describe('FileViewer SVG artifacts', () => {
     });
 
     const urlPostSpy = vi.spyOn(urlFrame.contentWindow!, 'postMessage');
-    const srcDocPostSpy = vi.spyOn(srcDocFrame!.contentWindow!, 'postMessage');
     fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
 
     const captureRequest = await waitFor(() => {
@@ -2691,6 +2701,24 @@ describe('FileViewer SVG artifacts', () => {
     expect(srcDocFrameAfter).toBe(srcDocFrame);
     expect(srcDocFrameAfter?.srcdoc).toContain('__odArtifactBootCount');
     expect(srcDocFrameAfter?.srcdoc).toContain('data-od-edit-bridge');
+
+    const restoreCalls = () => srcDocPostSpy.mock.calls.filter(([message]) => (
+      typeof message === 'object'
+      && message !== null
+      && (message as { type?: unknown }).type === 'od:preview-runtime-state-restore'
+    ));
+    expect(restoreCalls()).toHaveLength(0);
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: srcDocFrameAfter?.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: readinessProbe!.generation,
+          probeId: readinessProbe!.probeId,
+        },
+      }));
+    });
     await waitFor(() => {
       expect(srcDocPostSpy).toHaveBeenCalledWith(
         { type: 'od:preview-runtime-state-restore', state: capturedState },
@@ -2698,11 +2726,6 @@ describe('FileViewer SVG artifacts', () => {
       );
     });
 
-    const restoreCalls = () => srcDocPostSpy.mock.calls.filter(([message]) => (
-      typeof message === 'object'
-      && message !== null
-      && (message as { type?: unknown }).type === 'od:preview-runtime-state-restore'
-    ));
     expect(restoreCalls()).toHaveLength(1);
 
     srcDocPostSpy.mockClear();
@@ -7648,6 +7671,7 @@ describe('FileViewer tweaks toolbar', () => {
     // happens only after the user enters an interactive mode.
     const initialSrcDocFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement;
     expect(initialSrcDocFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
+    const postMessage = vi.spyOn(initialSrcDocFrame.contentWindow!, 'postMessage');
 
     // Materialize once via Draw. The manual-edit bridge must already be present
     // even though Edit is NOT active — it boots dormant and only acts on the
@@ -7661,11 +7685,17 @@ describe('FileViewer tweaks toolbar', () => {
       return f.srcdoc;
     });
     const materializedFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement;
-    const postMessage = vi.spyOn(materializedFrame.contentWindow!, 'postMessage');
+    const materializedGeneration = materializedFrame.srcdoc.match(
+      /data-od-srcdoc-transport-activation>[\s\S]*?var generation = "([^"]+)";/,
+    )?.[1];
+    expect(materializedGeneration).toBeTruthy();
     fireEvent.load(materializedFrame);
     const probe = await waitFor(() => {
       const value = postMessage.mock.calls.find(
-        ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+        ([message]) => (
+          (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe'
+          && (message as { generation?: unknown }).generation === materializedGeneration
+        ),
       )?.[0] as { generation?: string; probeId?: string } | undefined;
       expect(value?.generation).toBeTruthy();
       expect(value?.probeId).toBeTruthy();

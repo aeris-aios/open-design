@@ -10205,16 +10205,17 @@ function HtmlViewer({
     frame: HTMLIFrameElement;
     generation: string;
     probeId: string;
+    recoverOnFailure: boolean;
   } | null>(null);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
     if (!workspaceActive) return;
     const win = target?.contentWindow;
     if (!win) return;
-    const ready = readySrcDocTransportRef.current;
+    const verified = verifiedSrcDocTransportRef.current;
     if (
       target === srcDocPreviewIframeRef.current
-      && ready?.frame === target
-      && ready.generation === expectedSrcDocTransportGenerationRef.current
+      && verified?.frame === target
+      && verified.generation === expectedSrcDocTransportGenerationRef.current
     ) {
       postAndConsumePreviewRuntimeState(target);
     }
@@ -10338,9 +10339,23 @@ function HtmlViewer({
     }
     const frame = srcDocPreviewIframeRef.current;
     if (!frame) return;
+    const pending = pendingSrcDocTransportProbeRef.current;
+    const pendingRecoveryProbeMatches = (
+      pending?.frame === frame
+      && pending.generation === generation
+      && pending.recoverOnFailure
+    );
+    // Recovery probes can be shared by the timer and onLoad paths. A passive
+    // prewarm probe may target the lazy shell, so the real srcDoc must replace it.
+    if (pendingRecoveryProbeMatches) return;
     srcDocTransportProbeSequenceRef.current += 1;
     const probeId = `${generation}:probe-${srcDocTransportProbeSequenceRef.current}`;
-    pendingSrcDocTransportProbeRef.current = { frame, generation, probeId };
+    pendingSrcDocTransportProbeRef.current = {
+      frame,
+      generation,
+      probeId,
+      recoverOnFailure,
+    };
     // An eager acknowledgement from the injected head bridge is provisional:
     // Chromium can still abort the about:srcdoc navigation after it was sent.
     // Only this exact challenge response proves the current browsing context is
@@ -10362,7 +10377,7 @@ function HtmlViewer({
         return;
       }
       pendingSrcDocTransportProbeRef.current = null;
-      if (recoverOnFailure) recoverUnacknowledgedSrcDocTransport(generation);
+      if (pending.recoverOnFailure) recoverUnacknowledgedSrcDocTransport(generation);
     }, SRC_DOC_READY_PROBE_TIMEOUT_MS);
   }, [recoverUnacknowledgedSrcDocTransport]);
   // Sticky once the srcDoc iframe has materialized the real artifact for the
@@ -10936,11 +10951,11 @@ function HtmlViewer({
     const target = iframeRef.current;
     const win = target?.contentWindow;
     if (!win) return;
-    const ready = readySrcDocTransportRef.current;
+    const verified = verifiedSrcDocTransportRef.current;
     if (
       target === srcDocPreviewIframeRef.current
-      && ready?.frame === target
-      && ready.generation === expectedSrcDocTransportGenerationRef.current
+      && verified?.frame === target
+      && verified.generation === expectedSrcDocTransportGenerationRef.current
     ) {
       postAndConsumePreviewRuntimeState(target);
     }

@@ -147,6 +147,52 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
     expect(screen.getByTestId('artifact-preview-frame')).toBe(refreshedFrame);
   });
 
+  it('reuses an in-flight recovery probe when iframe load overlaps the recovery timer', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlFile()}
+        filesRefreshKey={0}
+        liveHtml={srcDocHtml('overlapping-probes')}
+      />,
+    );
+
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    act(() => {
+      vi.advanceTimersByTime(1_500);
+    });
+
+    const firstProbe = postMessage.mock.calls.find(
+      ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+    )?.[0] as { generation?: string; probeId?: string } | undefined;
+    expect(firstProbe?.probeId).toBeTruthy();
+
+    fireEvent.load(frame);
+    const probes = postMessage.mock.calls.filter(
+      ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+    );
+    expect(probes).toHaveLength(1);
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: firstProbe!.generation,
+          probeId: firstProbe!.probeId,
+        },
+      }));
+      vi.runAllTimers();
+    });
+
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+  });
+
   it('recovers when an eager activation acknowledgement is followed by an aborted navigation with no load', () => {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
