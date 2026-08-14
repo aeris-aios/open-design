@@ -2401,6 +2401,39 @@ function inspectPictureGeometry(entries, mediaName) {
   return null;
 }
 
+function capturedMediaNames(entries, capture) {
+  const slideNumber = capture.slideIndex + 1;
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide' + slideNumber + '.xml')
+    ?.data.toString('utf8') || '';
+  const relationships = entries
+    .find(({ name }) => name === 'ppt/slides/_rels/slide' + slideNumber + '.xml.rels')
+    ?.data.toString('utf8') || '';
+  const emuPerPixel = (10 * 914400) / 320;
+  const expected = {
+    height: Math.round(capture.height * emuPerPixel),
+    width: Math.round(capture.width * emuPerPixel),
+    x: Math.round(capture.left * emuPerPixel),
+    y: Math.round(capture.top * emuPerPixel),
+  };
+  return (slideXml.match(/<p:pic>[\\s\\S]*?<\\/p:pic>/g) || []).flatMap((picture) => {
+    const offset = picture.match(/<a:off x="(\\d+)" y="(\\d+)"\\/>/);
+    const extent = picture.match(/<a:ext cx="(\\d+)" cy="(\\d+)"\\/>/);
+    if (!offset || !extent) return [];
+    const actual = {
+      height: Number(extent[2]),
+      width: Number(extent[1]),
+      x: Number(offset[1]),
+      y: Number(offset[2]),
+    };
+    if (Object.keys(expected).some((key) => Math.abs(actual[key] - expected[key]) > 1)) return [];
+    const relationshipId = picture.match(/r:embed="([^"]+)"/)?.[1] || '';
+    const relationship = (relationships.match(/<Relationship\\b[^>]*>/g) || [])
+      .find((entry) => entry.includes('Id="' + relationshipId + '"')) || '';
+    const target = relationship.match(/Target="[^"]*\\/([^/"]+)"/)?.[1] || '';
+    return target ? ['ppt/media/' + target] : [];
+  });
+}
+
 let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
@@ -2624,14 +2657,25 @@ app.whenReady().then(async () => {
     const usedMedia = new Set();
     const result = {};
     for (const [targetId, capture] of Object.entries(captures)) {
-      const exportedImage = media.find(({ name, png }) =>
-        !usedMedia.has(name)
-        && Math.abs((png?.width ?? 0) - capture.width * 2) <= 1
-        && Math.abs((png?.height ?? 0) - capture.height * 2) <= 1);
+      const candidates = capturedMediaNames(entries, capture).filter((name) => !usedMedia.has(name));
+      const capturedPng = Buffer.from(capture.dataUrl.slice(capture.dataUrl.indexOf(',') + 1), 'base64');
+      const rankedCandidates = candidates.flatMap((name) => {
+        const image = media.find(({ name: mediaName, png }) => mediaName === name && png);
+        if (!image?.png) return [];
+        const reference = nativeImage.createFromBuffer(capturedPng).resize({
+          height: image.png.height,
+          quality: 'best',
+          width: image.png.width,
+        }).toPNG();
+        return [{ image, score: comparePng(reference, image.data).meanChannelDelta }];
+      }).sort((left, right) => left.score - right.score);
+      const exportedImage = rankedCandidates[0]?.image;
       if (!exportedImage) {
-        throw new Error('PPTX did not contain capture-sized media for ' + targetId + ': ' + JSON.stringify({
+        throw new Error('PPTX did not contain geometry-matched capture media for ' + targetId + ': ' + JSON.stringify({
+          candidates,
           capture: { height: capture.height, width: capture.width },
           media: media.map(({ name, png }) => ({ name, height: png?.height, width: png?.width })),
+          probe: probeByTarget[targetId],
         }));
       }
       const name = probeByTarget[targetId];
