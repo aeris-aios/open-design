@@ -717,6 +717,9 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     for (let ancestor = element.parentElement; ancestor && ancestor !== slide; ancestor = ancestor.parentElement) {
       if (establishesCompositingContext(getComputedStyle(ancestor))) ancestors.push(ancestor);
     }
+    if (element !== slide && hasUnsupportedNativeAncestorEffect(getComputedStyle(slide))) {
+      ancestors.push(slide);
+    }
     return ancestors;
   }
 
@@ -921,12 +924,42 @@ export function isolateLayeredPptxBackground(
       [intersection.left + insetX, intersection.bottom - insetY],
       [intersection.right - insetX, intersection.bottom - insetY],
     ];
-    return points.some(([x, y]) => {
+    let sampledTogether = false;
+    const paintsBehindAt = (x: number, y: number): boolean => {
       const paintStack = document.elementsFromPoint(x, y);
       const targetIndex = paintStack.indexOf(target);
       const elementIndex = paintStack.indexOf(element);
+      if (targetIndex >= 0 && elementIndex >= 0) sampledTogether = true;
       return targetIndex >= 0 && elementIndex > targetIndex;
-    });
+    };
+    if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
+    if (sampledTogether) return false;
+
+    const hasPaintClip = (candidate: HTMLElement): boolean => {
+      const style = getComputedStyle(candidate);
+      const clipPath = (style.clipPath || style.getPropertyValue?.("clip-path") || "none")
+        .trim()
+        .toLowerCase();
+      const hasMask = [
+        style.maskImage || style.getPropertyValue?.("mask-image"),
+        style.webkitMaskImage || style.getPropertyValue?.("-webkit-mask-image"),
+      ].some((value) => Boolean(value && value.trim().toLowerCase() !== "none"));
+      return (clipPath !== "" && clipPath !== "none") || hasMask;
+    };
+    if (!hasPaintClip(element) && !hasPaintClip(target)) return false;
+
+    // A clip path or mask can confine real paint to a narrow stripe or ring
+    // that misses all representative points above. Walk the complete overlap
+    // at capture-pixel centers until Chromium reports both painted elements;
+    // this preserves sub-CSS-pixel regions on the supported 2x capture path.
+    const captureScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const step = 1 / captureScale;
+    for (let y = intersection.top + step / 2; y < intersection.bottom; y += step) {
+      for (let x = intersection.left + step / 2; x < intersection.right; x += step) {
+        if (paintsBehindAt(x, y)) return true;
+      }
+    }
+    return false;
   };
   if (flattenBackdrop) {
     // Hit testing is Chromium's public view of the effective paint stack. Make

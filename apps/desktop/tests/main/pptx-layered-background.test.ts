@@ -549,6 +549,24 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.centerRgb, JSON.stringify(image)).toEqual([64, 96, 64]);
   }, 30_000);
 
+  test('includes a narrow clipped stripe in a layered blend target backdrop', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.clippedStripeBackdrop, JSON.stringify(media.clippedStripeBackdrop)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    const comparisonContext = JSON.stringify({
+      chromium: media.clippedStripeBackdropChromium,
+      exported: media.clippedStripeBackdrop.pngs[0],
+      comparison: media.clippedStripeBackdropChromiumComparison,
+    });
+    expect(media.clippedStripeBackdropChromiumComparison.meanChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(1);
+    expect(media.clippedStripeBackdropChromiumComparison.maxChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(16);
+  }, 30_000);
+
   test('includes an explicit slide background behind a materialized layered pseudo', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.stackingSlide.pngs;
@@ -843,6 +861,25 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.ancestorFilterForegroundNativeContent).toBe(-1);
   }, 30_000);
 
+  test('captures slide-root filter effects with layered backgrounds and native foreground', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.slideFilterForeground, JSON.stringify(media.slideFilterForeground)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    const comparisonContext = JSON.stringify({
+      chromium: media.slideFilterForegroundChromium,
+      exported: media.slideFilterForeground.pngs[0],
+      comparison: media.slideFilterForegroundChromiumComparison,
+    });
+    expect(media.slideFilterForegroundChromiumComparison.meanChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(8);
+    expect(media.slideFilterForegroundChromiumComparison.maxChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(160);
+    expect(media.slideFilterForegroundNativeContent).toBe(-1);
+  }, 30_000);
+
   test('captures a real masked element complete instead of emitting unmasked native foreground', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.masked.pngs;
@@ -921,6 +958,9 @@ type LayeredBackgroundProbe = {
   compositedPseudoContentChromium: PngProbe;
   compositedPseudoContentChromiumComparison: PngComparison;
   compositedPseudoContentNativeContent: number;
+  clippedStripeBackdrop: LayeredBackgroundExport;
+  clippedStripeBackdropChromium: PngProbe;
+  clippedStripeBackdropChromiumComparison: PngComparison;
   groupedBackdrop: LayeredBackgroundExport;
   masked: LayeredBackgroundExport;
   maskedNativeContent: number;
@@ -957,6 +997,10 @@ type LayeredBackgroundProbe = {
   selfFilteredPseudoChromium: PngProbe;
   selfFilteredPseudoChromiumComparison: PngComparison;
   selfFilteredPseudoNativeContent: number;
+  slideFilterForeground: LayeredBackgroundExport;
+  slideFilterForegroundChromium: PngProbe;
+  slideFilterForegroundChromiumComparison: PngComparison;
+  slideFilterForegroundNativeContent: number;
   slideRootMask: LayeredBackgroundExport;
   slideRootMaskGeometry: PptxGeometry | null;
   slideRootMaskNativeContent: number;
@@ -1305,6 +1349,7 @@ const fixtures = {
   masked: '<div class="masked">Masked real content</div>',
   composited: '<div class="card"><div class="composited"></div><div class="label">Native label</div></div>',
   compositedPseudoContent: '<div class="composited-pseudo-content"></div>',
+  clippedStripeBackdrop: '<div class="clipped-stripe-backdrop"></div><div class="clipped-stripe-target"></div>',
   skipped: '<div class="display-none"><div class="hidden-layer"></div></div><div class="visibility-hidden"><div class="hidden-layer"></div></div><div class="zero-sized"></div><div class="off-slide"></div>',
   backdropFiltered: '<div class="filtered-backdrop"></div><div class="backdrop-filtered"></div>',
   backgroundBlendPseudo: '<div class="background-blend-pseudo"></div>',
@@ -1315,6 +1360,7 @@ const fixtures = {
   textClipStandard: '<div class="text-clip-standard">Standard gradient title</div>',
   textClipWebkit: '<div class="text-clip-webkit">WebKit gradient title</div>',
   selfFilteredPseudo: '<div class="self-filtered-pseudo"></div>',
+  slideFilterForeground: '<div class="slide-filter-layer"></div><div class="slide-filter-label">Slide filtered label</div><div class="slide-filter-shape"></div>',
 };
 const styles = \`
   html, body { margin: 0; }
@@ -1560,6 +1606,36 @@ const styles = \`
     height: 26px;
     background: rgb(255, 80, 40);
   }
+  .slide-filter-context {
+    filter: brightness(.45);
+    background: rgb(18, 42, 70);
+  }
+  .slide-filter-context::before {
+    content: none;
+    display: none;
+  }
+  .slide-filter-layer {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(40, 120, 220), rgb(40, 120, 220)), linear-gradient(transparent, transparent);
+  }
+  .slide-filter-label {
+    position: absolute;
+    left: 24px;
+    top: 48px;
+    z-index: 1;
+    color: white;
+    font: 700 22px/30px sans-serif;
+  }
+  .slide-filter-shape {
+    position: absolute;
+    right: 28px;
+    bottom: 24px;
+    z-index: 1;
+    width: 42px;
+    height: 42px;
+    background: rgb(255, 80, 40);
+  }
   .paint-above,
   .paint-target,
   .paint-below {
@@ -1731,6 +1807,22 @@ const styles = \`
     border: 4px solid white;
     color: white;
     font: 700 30px/1 sans-serif;
+    background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
+    mix-blend-mode: multiply;
+  }
+  .clipped-stripe-backdrop,
+  .clipped-stripe-target {
+    position: absolute;
+    left: 112px;
+    top: 66px;
+    width: 96px;
+    height: 48px;
+  }
+  .clipped-stripe-backdrop {
+    background: rgb(128, 192, 128);
+    clip-path: polygon(18% 0, 22% 0, 22% 100%, 18% 100%);
+  }
+  .clipped-stripe-target {
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
   }
@@ -2074,7 +2166,10 @@ let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
   const window = new BrowserWindow({
+    height: 900,
     show: false,
+    useContentSize: true,
+    width: 800,
     webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: true },
   });
   let probeResult;
@@ -2094,8 +2189,10 @@ app.whenReady().then(async () => {
     // made this probe hit its Linux workspace-test timeout under concurrent load.
     const isolatedFixtureNames = new Set([
       'ancestorFilterForeground',
+      'clippedStripeBackdrop',
       'nestedOpacity',
       'selfFilteredPseudo',
+      'slideFilterForeground',
       'textClipStandard',
       'textClipWebkit',
     ]);
@@ -2104,6 +2201,9 @@ app.whenReady().then(async () => {
       .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
       .join('');
     const slide = '<section class="slide">' + fixtureMarkup + '</section>'
+      + '<section class="slide isolated-probe-slide"><div data-od-probe="clippedStripeBackdrop">'
+      + fixtures.clippedStripeBackdrop
+      + '</div></section>'
       + '<section class="slide stacking-slide" data-od-probe="stackingSlide"></section>'
       + '<section class="slide grouped-backdrop-slide" data-od-probe="groupedBackdrop">'
       + '<div class="grouped-backdrop"></div><div class="grouped-context"><div class="grouped-blended-child"></div></div>'
@@ -2123,6 +2223,9 @@ app.whenReady().then(async () => {
       + '<section class="slide isolated-probe-slide"><div data-od-probe="selfFilteredPseudo">'
       + fixtures.selfFilteredPseudo
       + '</div></section>'
+      + '<section class="slide slide-filter-context" data-od-probe="slideFilterForeground">'
+      + fixtures.slideFilterForeground
+      + '</section>'
       + '<section class="slide slide-root-mask" data-od-probe="slideRootMask">'
       + '<div class="slide-root-mask-content">Slide root paint</div></section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
@@ -2206,10 +2309,18 @@ app.whenReady().then(async () => {
       'chromium-ancestor-filter-foreground.png',
       64,
     );
+    const clippedStripeBackdropChromium = await captureChromiumReference(
+      '.clipped-stripe-target',
+      'chromium-clipped-stripe-backdrop.png',
+    );
     const selfFilteredPseudoChromium = await captureChromiumReference(
       '.self-filtered-pseudo',
       'chromium-self-filtered-pseudo.png',
       64,
+    );
+    const slideFilterForegroundChromium = await captureChromiumReference(
+      '.slide-filter-context',
+      'chromium-slide-filter-foreground.png',
     );
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
@@ -2389,6 +2500,15 @@ app.whenReady().then(async () => {
       ancestorFilterForegroundMedia.data,
     );
     result.ancestorFilterForegroundNativeContent = inspectNativeContent(entries, 'Filtered ancestor label');
+    result.clippedStripeBackdropChromium = clippedStripeBackdropChromium.png;
+    const clippedStripeBackdropMedia = media.find(
+      ({ name }) => name === result.clippedStripeBackdrop?.media?.[0],
+    );
+    if (!clippedStripeBackdropMedia) throw new Error('Missing exported clipped-stripe media');
+    result.clippedStripeBackdropChromiumComparison = comparePng(
+      clippedStripeBackdropChromium.data,
+      clippedStripeBackdropMedia.data,
+    );
     result.selfFilteredPseudoChromium = selfFilteredPseudoChromium.png;
     const selfFilteredPseudoMedia = media.find(({ name }) => name === result.selfFilteredPseudo?.media?.[0]);
     if (!selfFilteredPseudoMedia) throw new Error('Missing exported self-filtered pseudo media');
@@ -2397,6 +2517,16 @@ app.whenReady().then(async () => {
       selfFilteredPseudoMedia.data,
     );
     result.selfFilteredPseudoNativeContent = inspectNativeContent(entries, 'Filtered pseudo label');
+    result.slideFilterForegroundChromium = slideFilterForegroundChromium.png;
+    const slideFilterForegroundMedia = media.find(
+      ({ name }) => name === result.slideFilterForeground?.media?.[0],
+    );
+    if (!slideFilterForegroundMedia) throw new Error('Missing exported slide-filter media');
+    result.slideFilterForegroundChromiumComparison = comparePng(
+      slideFilterForegroundChromium.data,
+      slideFilterForegroundMedia.data,
+    );
+    result.slideFilterForegroundNativeContent = inspectNativeContent(entries, 'Slide filtered label');
     result.materializedOpaquePseudoNativeFill = inspectNativeContent(entries, 'val="F232A0"');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
@@ -2548,6 +2678,13 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || value.compositedPseudoContentChromiumComparison === null
     || !('compositedPseudoContentNativeContent' in value)
     || typeof value.compositedPseudoContentNativeContent !== 'number'
+    || !('clippedStripeBackdrop' in value)
+    || !('clippedStripeBackdropChromium' in value)
+    || typeof value.clippedStripeBackdropChromium !== 'object'
+    || value.clippedStripeBackdropChromium === null
+    || !('clippedStripeBackdropChromiumComparison' in value)
+    || typeof value.clippedStripeBackdropChromiumComparison !== 'object'
+    || value.clippedStripeBackdropChromiumComparison === null
     || !('groupedBackdrop' in value)
     || !('pseudoLayerOrder' in value)
     || typeof value.pseudoLayerOrder !== 'object'
@@ -2602,6 +2739,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || value.selfFilteredPseudoChromiumComparison === null
     || !('selfFilteredPseudoNativeContent' in value)
     || typeof value.selfFilteredPseudoNativeContent !== 'number'
+    || !('slideFilterForeground' in value)
+    || !('slideFilterForegroundChromium' in value)
+    || typeof value.slideFilterForegroundChromium !== 'object'
+    || value.slideFilterForegroundChromium === null
+    || !('slideFilterForegroundChromiumComparison' in value)
+    || typeof value.slideFilterForegroundChromiumComparison !== 'object'
+    || value.slideFilterForegroundChromiumComparison === null
+    || !('slideFilterForegroundNativeContent' in value)
+    || typeof value.slideFilterForegroundNativeContent !== 'number'
     || !('solidCompositor' in value)
     || !('solidCompositorOrder' in value)
     || typeof value.solidCompositorOrder !== 'object'
@@ -2652,6 +2798,10 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     compositedPseudoContentChromiumComparison:
       value.compositedPseudoContentChromiumComparison as PngComparison,
     compositedPseudoContentNativeContent: value.compositedPseudoContentNativeContent,
+    clippedStripeBackdrop: parseLayeredBackgroundExport(value.clippedStripeBackdrop),
+    clippedStripeBackdropChromium: value.clippedStripeBackdropChromium as PngProbe,
+    clippedStripeBackdropChromiumComparison:
+      value.clippedStripeBackdropChromiumComparison as PngComparison,
     groupedBackdrop: parseLayeredBackgroundExport(value.groupedBackdrop),
     masked: parseLayeredBackgroundExport(value.masked),
     maskedNativeContent: value.maskedNativeContent,
@@ -2695,6 +2845,11 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     selfFilteredPseudoChromium: value.selfFilteredPseudoChromium as PngProbe,
     selfFilteredPseudoChromiumComparison: value.selfFilteredPseudoChromiumComparison as PngComparison,
     selfFilteredPseudoNativeContent: value.selfFilteredPseudoNativeContent,
+    slideFilterForeground: parseLayeredBackgroundExport(value.slideFilterForeground),
+    slideFilterForegroundChromium: value.slideFilterForegroundChromium as PngProbe,
+    slideFilterForegroundChromiumComparison:
+      value.slideFilterForegroundChromiumComparison as PngComparison,
+    slideFilterForegroundNativeContent: value.slideFilterForegroundNativeContent,
     slideRootMask: parseLayeredBackgroundExport(value.slideRootMask),
     slideRootMaskGeometry: value.slideRootMaskGeometry as PptxGeometry,
     slideRootMaskNativeContent: value.slideRootMaskNativeContent,
