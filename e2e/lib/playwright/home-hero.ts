@@ -2,19 +2,17 @@ import { expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 
 /**
- * Home's inline scenario rail — the "Start from a template… / …or create a
- * blank project" row, its `home-hero-type-tabs` container, the
- * `home-hero-rail-<chipId>` cards and the "More" shortcuts menu — was removed
- * in the #5517 alignment. Choosing a project-type template is now a
- * composer-footer control: `home-hero-template-trigger` opens a radial menu
- * (`home-hero-template-menu`) whose ring segments are the templates
- * (`home-hero-template-wedge-<chipId>`).
+ * The old illustrated "Start from a template… / …or create a blank project"
+ * rail was removed in #5517. Home now offers compact type pills above the
+ * composer plus the footer picker; this helper drives the latter, whose
+ * `home-hero-template-trigger` opens a bounded list (`home-hero-template-menu`)
+ * with stable `home-hero-template-wedge-<chipId>` row ids.
  *
  * These helpers are the single place e2e encodes that entry point, so the next
  * time the picker's shape changes only this file moves.
  */
 
-/** Open the radial template menu (idempotent). Returns the menu locator. */
+/** Open the template list (idempotent). Returns the menu locator. */
 export async function openHomeTemplateMenu(page: Page): Promise<Locator> {
   const menu = page.getByTestId('home-hero-template-menu');
   if ((await menu.count()) > 0) return menu;

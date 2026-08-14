@@ -5151,6 +5151,8 @@ function AppInner() {
   } else {
     appMain = (
       <EntryView
+        projectCreateError={projectCreateError}
+        onProjectCreateErrorConsumed={() => setProjectCreateError(null)}
         skills={enabledSkills}
         designTemplates={enabledDesignTemplates}
         designSystems={enabledDS}
@@ -5363,7 +5365,7 @@ function AppInner() {
           onDismiss={() => setWorkingDirError(null)}
         />
       ) : null}
-      {projectCreateError ? (
+      {projectCreateError && !(route.kind === 'home' && route.view === 'home') ? (
         <Toast
           message={projectCreateError}
           role="alert"

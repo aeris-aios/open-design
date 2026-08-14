@@ -308,6 +308,34 @@ const HOME_PLUGINS = [
 ];
 
 const APPLY_RESPONSES: Record<string, unknown> = {
+  'od-media-generation': {
+    query: 'Create media.',
+    contextItems: [],
+    inputs: [],
+    assets: [],
+    mcpServers: [],
+    trust: 'bundled',
+    capabilitiesGranted: ['prompt:inject'],
+    capabilitiesRequired: ['prompt:inject'],
+    appliedPlugin: {
+      snapshotId: 'snap-media-generation',
+      pluginId: 'od-media-generation',
+      pluginVersion: '0.1.0',
+      manifestSourceDigest: 'c'.repeat(64),
+      inputs: {},
+      resolvedContext: { items: [] },
+      capabilitiesGranted: ['prompt:inject'],
+      capabilitiesRequired: ['prompt:inject'],
+      assetsStaged: [],
+      taskKind: 'new-generation',
+      appliedAt: 0,
+      connectorsRequired: [],
+      connectorsResolved: [],
+      mcpServers: [],
+      status: 'fresh',
+    },
+    projectMetadata: {},
+  },
   'example-live-dashboard': {
     query: 'Build a Notion-style team dashboard with live KPIs.',
     contextItems: [],
@@ -570,14 +598,14 @@ test('[P1] home left rail expands and collapses from the shell controls', async 
   await expect(shell).toHaveClass(/entry--rail-open/);
   await expect(rail).not.toHaveAttribute('aria-hidden', 'true');
   await expect(page.getByTestId('entry-nav-home')).toBeVisible();
-  // #5517's rail dropped the single "Projects" destination; Design systems is
-  // the stable second destination in both the signed-out and team rails.
+  // Design systems is the stable second destination in both the signed-out
+  // and team rails.
   await expect(page.getByTestId('entry-nav-design-systems')).toBeVisible();
 
-  // The rail has no in-rail collapse control (the header is chrome-free);
-  // the pinned Home tab's toggle folds it back.
+  // The refreshed rail folds from the control beside Search. The pinned Home
+  // tab remains the collapsed-state opener, but is not the close affordance.
   await expect(expand).toHaveAttribute('aria-expanded', 'true');
-  await expand.click();
+  await page.getByTestId('entry-rail-collapse').click();
   await expect(shell).not.toHaveClass(/entry--rail-open/);
   await expect(rail).toHaveAttribute('aria-hidden', 'true');
   await expect(expand).toHaveAttribute('aria-expanded', 'false');
@@ -945,7 +973,7 @@ test('[P1] home composer sends referenced workspace context into project creatio
 
 test('[P1] home staged workspace context auto-sends into the first project run', async ({ page }) => {
   const prompt = 'Create a project and immediately use the Home-staged context.';
-  const projectId = 'home-autosend-context-project';
+  let projectId = '';
   const conversationId = 'conv-home-autosend-context';
   const runBodies: Array<Record<string, unknown>> = [];
   let createdProjectMetadata: Record<string, unknown> = {};
@@ -969,7 +997,9 @@ test('[P1] home staged workspace context auto-sends into the first project run',
       return;
     }
     if (request.method() === 'POST') {
-      const body = request.postDataJSON() as { metadata?: Record<string, unknown>; name?: string; pendingPrompt?: string };
+      const body = request.postDataJSON() as { id?: string; metadata?: Record<string, unknown>; name?: string; pendingPrompt?: string };
+      projectId = body.id ?? '';
+      expect(projectId).toBeTruthy();
       createdProjectMetadata = body.metadata ?? {};
       await route.fulfill({
         json: {
@@ -998,8 +1028,13 @@ test('[P1] home staged workspace context auto-sends into the first project run',
       },
     });
   });
-  await page.route(`**/api/projects/${projectId}`, async (route) => {
+  await page.route('**/api/projects/*', async (route) => {
     const request = route.request();
+    const requestedId = decodeURIComponent(new URL(request.url()).pathname.split('/').at(-1) ?? '');
+    if (!projectId || requestedId !== projectId) {
+      await route.fallback();
+      return;
+    }
     if (request.method() === 'GET') {
       await route.fulfill({
         json: {
@@ -1036,7 +1071,12 @@ test('[P1] home staged workspace context auto-sends into the first project run',
     }
     await route.fallback();
   });
-  await page.route(`**/api/projects/${projectId}/conversations`, async (route) => {
+  await page.route('**/api/projects/*/conversations', async (route) => {
+    const requestedId = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) ?? '');
+    if (!projectId || requestedId !== projectId) {
+      await route.fallback();
+      return;
+    }
     if (route.request().method() !== 'GET') {
       await route.fallback();
       return;
@@ -1057,24 +1097,24 @@ test('[P1] home staged workspace context auto-sends into the first project run',
       },
     });
   });
-  await page.route(`**/api/projects/${projectId}/conversations/${conversationId}/messages`, async (route) => {
+  await page.route(`**/api/projects/*/conversations/${conversationId}/messages`, async (route) => {
     if (route.request().method() !== 'GET') {
       await route.fallback();
       return;
     }
     await route.fulfill({ json: { messages: [] } });
   });
-  await page.route(`**/api/projects/${projectId}/conversations/${conversationId}/messages/*`, async (route) => {
+  await page.route(`**/api/projects/*/conversations/${conversationId}/messages/*`, async (route) => {
     if (route.request().method() !== 'PUT') {
       await route.fallback();
       return;
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route(`**/api/projects/${projectId}/conversations/${conversationId}/comments`, async (route) => {
+  await page.route(`**/api/projects/*/conversations/${conversationId}/comments`, async (route) => {
     await route.fulfill({ json: { comments: [] } });
   });
-  await page.route(`**/api/projects/${projectId}/files`, async (route) => {
+  await page.route('**/api/projects/*/files', async (route) => {
     await route.fulfill({ json: { files: [] } });
   });
   await page.route('**/api/live-artifacts**', async (route) => {
@@ -1139,14 +1179,14 @@ test('[P1] home staged workspace context auto-sends into the first project run',
 test('[P2] home hero exposes the composer footer pickers and the full template set', async ({ page }) => {
   await gotoEntryHome(page);
 
+  await expect(page.getByTestId('home-hero-type-pills')).toBeVisible();
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
   await expect(page.getByTestId('home-hero-design-system-picker')).toBeVisible();
   await expect(page.getByTestId('working-dir-picker')).toBeVisible();
 
-  // #5517 removed Home's inline scenario rail ("Start from a template… / …or
-  // create a blank project") together with its More-shortcuts menu. Every
-  // project-type template now lives on the composer footer picker's radial
-  // menu, so that ring is the entry point this smoke has to see.
+  // The old illustrated scenario rail and shortcut row stay removed. The new
+  // compact type pills cover quick switching, while the footer list remains
+  // the complete catalog this smoke enumerates.
   await expect(page.getByTestId('home-hero-type-tabs')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-shortcuts-trigger')).toHaveCount(0);
 
@@ -1154,6 +1194,42 @@ test('[P2] home hero exposes the composer footer pickers and the full template s
   for (const id of ['prototype', 'live-artifact', 'deck', 'image', 'video', 'hyperframes', 'audio']) {
     await expect(menu.getByTestId(`home-hero-template-wedge-${id}`)).toBeVisible();
   }
+});
+
+test('[P0] home type pills switch direct and overflow creation routes', async ({ page }) => {
+  await routeProjectCreates(page);
+  await routeRunsAccepted(page);
+  await gotoEntryHome(page);
+
+  const deckPill = page.getByTestId('home-hero-type-pill-deck');
+  await expect(deckPill).toHaveAttribute('aria-selected', 'true');
+
+  const prototypePill = page.getByTestId('home-hero-type-pill-prototype');
+  await expect(prototypePill).toBeVisible();
+  await prototypePill.click();
+  await expect(prototypePill).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('home-hero-template-trigger')).toContainText('UI Mockup');
+
+  // At a compact desktop width the trailing media types move under All.
+  await page.setViewportSize({ width: 820, height: 900 });
+  await page.getByTestId('home-hero-type-pills-more').click();
+  const audioPill = page.getByTestId('home-hero-type-pill-audio-more');
+  await expect(audioPill).toBeVisible();
+  await audioPill.click();
+  await expect(page.getByTestId('home-hero-template-trigger')).toContainText('Audio');
+
+  await page.getByTestId('home-hero-input').fill('Create a concise launch sound identity.');
+  const createRequestPromise = page.waitForRequest((request) =>
+    request.method() === 'POST' && new URL(request.url()).pathname === '/api/projects',
+  );
+  await page.getByTestId('home-hero-submit').click();
+  const body = await createRequestPromise.then((request) => request.postDataJSON() as {
+    pluginId?: string | null;
+    metadata?: { kind?: string };
+  });
+
+  expect(body.pluginId).toBe('od-media-generation');
+  expect(body.metadata?.kind).toBe('audio');
 });
 
 test('[P0] empty home composer submits the active placeholder suggestion with template routing', async ({ page }) => {
@@ -1262,10 +1338,9 @@ test('[P1] home design-system picker Create opens design-system creation and sta
   await routeBrandExtraction(page, brandRequests);
 
   await gotoEntryHome(page);
-  // The Brand Kit rail chip went away with the scenario rail (#5517) and it is
-  // not one of the template picker's wedges — those are `apply-scenario` chips
-  // only. Brand extraction is now reached through the composer design-system
-  // picker's Create action, which is the surviving entry to /design-systems/create.
+  // Brand Kit is intentionally absent from both creation-type selectors: it
+  // opens a design-system flow rather than applying a generation scenario.
+  // Reach extraction through the design-system picker's Create action.
   await page.getByTestId('home-hero-design-system-trigger').click();
   await page.getByTestId('project-ds-picker-create').click();
 
@@ -1306,7 +1381,11 @@ test('[P1] brand-backed design system previews as a Brand Kit and carries into p
   await expect(brandPreview).toContainText('Acme is a bold engineering brand for fast-moving teams.');
   await expect(brandPreview).toContainText('Space Grotesk');
 
-  await popover.getByTestId(`project-ds-picker-option-${BRAND_DESIGN_SYSTEM.id}`).click();
+  // The hover preview can resize while fonts settle. Commit the already
+  // focused option through its keyboard contract instead of chasing a moving
+  // pointer target.
+  await popover.getByTestId(`project-ds-picker-option-${BRAND_DESIGN_SYSTEM.id}`).focus();
+  await page.keyboard.press('Enter');
   await expect(popover).toHaveCount(0);
 
   await page.getByTestId('home-hero-input').fill('Create a landing page with the Acme brand kit.');
@@ -1318,10 +1397,10 @@ test('[P1] brand-backed design system previews as a Brand Kit and carries into p
   expect(body.designSystemId).toBe(BRAND_DESIGN_SYSTEM.id);
 });
 
-// The horizontally-scrolling scenario-card rail this used to drive
-// (`.home-hero__scenario-cards` + `.home-hero__rail-edge`) was deleted with the
-// rest of the inline template rail in #5517; the radial picker is a fixed-size
-// ring with no scroll axis, so there is no overflow behaviour left to pin.
+// The horizontally-scrolling illustrated scenario-card rail this used to
+// drive (`.home-hero__scenario-cards` + `.home-hero__rail-edge`) was deleted.
+// Compact type-pill overflow is covered above; the footer picker is a bounded
+// list with no scrolling-edge affordance to pin.
 //
 // The first-run "scroll up to reveal community templates" affordance
 // (`home-templates-hint` / `.home-templates-reveal__body` / the Home
@@ -1377,7 +1456,7 @@ test('[P2] zh-CN home smoke exposes the localized creation type, design system, 
     'title',
     '上传文件、关联设计系统，或描述你想创作的内容',
   );
-  await expect(page.getByTestId('home-hero-template-trigger')).toContainText('创作类型');
+  await expect(page.getByTestId('home-hero-template-trigger')).toContainText('幻灯片');
   await expect(page.getByTestId('home-hero-design-system-trigger')).toContainText('设计体系');
   await expect(page.getByTestId('working-dir-picker')).toContainText('工作目录');
   await expect(page.getByTestId('home-hero-submit')).toHaveAccessibleName('运行');

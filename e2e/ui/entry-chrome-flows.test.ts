@@ -95,9 +95,9 @@ test('[P0] @critical entry chrome exposes the primary home creation surface and 
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
   await expect(page.getByTestId('home-hero-design-system-picker')).toBeVisible();
   await expect(page.getByTestId('working-dir-picker')).toBeVisible();
-  // #5517 deleted the inline scenario rail (the "Start from a template… / …or
-  // create a blank project" row and its cards); the composer footer's Template
-  // picker owns every project type now.
+  // The illustrated scenario-card rail is gone. The compact type pills and
+  // footer picker now expose the same creation catalog without duplicating the
+  // old "Start from a template…" section.
   const templateMenu = await openHomeTemplateMenu(page);
   for (const id of ['prototype', 'live-artifact', 'deck', 'image', 'video', 'hyperframes', 'audio']) {
     await expect(templateMenu.getByTestId(`home-hero-template-wedge-${id}`)).toBeVisible();
@@ -393,11 +393,13 @@ test('[P1] entry top navigation matches the current home tab structure', async (
   await expect(page.locator('.entry-nav-rail__footer').getByTestId('entry-nav-plugins')).toHaveCount(0);
 
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
-  // Nothing is applied on a fresh Home: no plugin chip, no template-driven
-  // footer options or presets.
+  // Fresh Home now waits for and binds the default Slide deck route. The
+  // binding is intentionally silent (no active-plugin context chip), while
+  // its deck inputs and examples are ready before Send becomes actionable.
+  await expect(page.getByTestId('home-hero-template-trigger')).toContainText(/Slide deck/i);
   await expect(page.getByTestId('home-hero-active-plugin')).toHaveCount(0);
-  await expect(page.getByTestId('home-hero-footer-options')).toHaveCount(0);
-  await expect(page.getByTestId('home-hero-plugin-presets')).toHaveCount(0);
+  await expect(page.getByTestId('home-hero-type-pills')).toBeVisible();
+  await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
 });
 
 test('[P1] home view exposes the redesigned hero, recent projects, and starters', async ({ page }) => {
@@ -429,6 +431,38 @@ test('[P0] @critical recent projects strip opens a project card from Home', asyn
   await expect(recentStrip).toBeVisible();
   await recentStrip.locator(`[data-project-id="${created.project.id}"]`).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${created.project.id}`));
+});
+
+test('[P1] recent projects supports type filtering, name sorting, and list view', async ({ page }) => {
+  const prototype = await createProject(page, 'Zulu Prototype');
+  const deck = await createProject(page, 'Alpha Deck', { kind: 'deck' });
+  await gotoEntryHome(page);
+
+  const recentStrip = page.getByTestId('recent-projects-strip');
+  const prototypeCard = recentStrip.locator(`[data-project-id="${prototype.project.id}"]`);
+  const deckCard = recentStrip.locator(`[data-project-id="${deck.project.id}"]`);
+  await expect(prototypeCard).toBeVisible();
+  await expect(deckCard).toBeVisible();
+
+  await recentStrip.getByRole('button', { name: 'Any type' }).click();
+  await recentStrip.getByRole('menu').getByRole('button', { name: 'Slide', exact: true }).click();
+  await expect(deckCard).toBeVisible();
+  await expect(prototypeCard).toHaveCount(0);
+
+  await recentStrip.getByTestId('recent-projects-clear-filters').click();
+  await expect(prototypeCard).toBeVisible();
+  await expect(deckCard).toBeVisible();
+
+  await recentStrip.getByRole('button', { name: 'Sort projects' }).click();
+  await recentStrip.getByRole('menu').getByRole('button', { name: 'Name', exact: true }).click();
+  const projectIds = await recentStrip.locator('[data-project-id]').evaluateAll((cards) =>
+    cards.map((card) => card.getAttribute('data-project-id')),
+  );
+  expect(projectIds.indexOf(deck.project.id)).toBeLessThan(projectIds.indexOf(prototype.project.id));
+
+  await recentStrip.getByRole('button', { name: 'List view' }).click();
+  await expect(recentStrip.getByRole('button', { name: 'List view' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(recentStrip.locator('.recent-projects__row')).toHaveClass(/recent-projects__row--list/);
 });
 
 test('[P1] design systems page is reachable from entry nav and supports search, preview, and default selection', async ({ page }) => {
@@ -730,6 +764,7 @@ test('[P1] Settings About reads desktop updater status and runs a manual update 
           (window as unknown as { __odUpdaterCalls: string[] }).__odUpdaterCalls.push('check');
           return checkedStatus;
         },
+        'clear-cache': async () => ({ ok: true }),
         download: async () => checkedStatus,
         install: async () => checkedStatus,
         quit: async () => ({ ok: true }),
@@ -754,9 +789,9 @@ test('[P1] Settings About reads desktop updater status and runs a manual update 
   });
 
   await gotoEntryHome(page);
-  await page.getByTestId('entry-settings-menu-trigger').click();
-  await page.getByTestId('entry-settings-open-details').click();
-  const dialog = page.getByRole('dialog');
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-settings-button').click();
+  const dialog = settingsSurface(page);
   await expect(dialog).toBeVisible();
 
   await dialog.getByRole('button', { name: /^About\b/i }).click();
@@ -824,6 +859,7 @@ test('[P1] Settings About surfaces prerelease updater check failures with retry 
           (window as unknown as { __odUpdaterCalls: string[] }).__odUpdaterCalls.push('check');
           return failedStatus;
         },
+        'clear-cache': async () => ({ ok: true }),
         download: async () => failedStatus,
         install: async () => failedStatus,
         quit: async () => ({ ok: true }),
@@ -848,9 +884,9 @@ test('[P1] Settings About surfaces prerelease updater check failures with retry 
   });
 
   await gotoEntryHome(page);
-  await page.getByTestId('entry-settings-menu-trigger').click();
-  await page.getByTestId('entry-settings-open-details').click();
-  const dialog = page.getByRole('dialog');
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-settings-button').click();
+  const dialog = settingsSurface(page);
   await expect(dialog).toBeVisible();
 
   await dialog.getByRole('button', { name: /^About\b/i }).click();
@@ -940,9 +976,9 @@ test('[P1] Settings BYOK connection failures emit a classified analytics error c
   });
 
   await gotoEntryHome(page);
-  await page.getByTestId('entry-settings-menu-trigger').click();
-  await page.getByTestId('entry-settings-open-details').click();
-  const dialog = page.getByRole('dialog');
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-settings-button').click();
+  const dialog = settingsSurface(page);
   await expect(dialog).toBeVisible();
 
   const connectionTest = dialog.locator('.settings-byok-connection-test');
@@ -1408,9 +1444,9 @@ test('[P1] rail can be collapsed again on coarse-pointer / non-hover devices', a
   await gotoEntryHome(page);
   await ensureRailOpen(page);
 
-  const toggle = page.getByTestId('workspace-home-rail-toggle');
-  await expect(toggle).toBeVisible();
-  await toggle.click();
+  const collapse = page.getByTestId('entry-rail-collapse');
+  await expect(collapse).toBeVisible();
+  await collapse.click();
   await expect(page.locator('.entry')).not.toHaveClass(/entry--rail-open/);
 });
 
@@ -1612,7 +1648,11 @@ async function gotoEntryHome(page: Page) {
   await expect(page.getByTestId('home-hero-input')).toBeVisible();
 }
 
-async function createProject(page: Page, name: string) {
+async function createProject(
+  page: Page,
+  name: string,
+  metadata: Record<string, unknown> = { kind: 'prototype' },
+) {
   const id = `entry-home-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const response = await page.request.post('/api/projects', {
     data: {
@@ -1620,7 +1660,7 @@ async function createProject(page: Page, name: string) {
       name,
       skillId: null,
       designSystemId: null,
-      metadata: { kind: 'prototype' },
+      metadata,
     },
   });
   expect(response.ok(), await response.text()).toBeTruthy();
