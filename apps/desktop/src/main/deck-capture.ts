@@ -948,7 +948,6 @@ export function isolateLayeredPptxBackground(
       return targetIndex >= 0 && elementIndex > targetIndex;
     };
     if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
-    if (sampledTogether) return false;
 
     const hasPaintClip = (candidate: HTMLElement): boolean => {
       const style = getComputedStyle(candidate);
@@ -986,6 +985,7 @@ export function isolateLayeredPptxBackground(
       for (const { candidate, property } of paintClipStyles) {
         candidate.style.setProperty(property, "none", "important");
       }
+      sampledTogether = false;
       if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
       if (sampledTogether) return false;
       // Nested clipping can still keep the two boxes out of Chromium's sampled
