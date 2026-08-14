@@ -430,6 +430,12 @@ describe('editable PPTX layered backgrounds', () => {
     expect(capture.largeAreaHitTests).toBeLessThanOrEqual(4_101);
   }, 20_000);
 
+  test('includes a 1px clipped stripe across a large layered blend backdrop', async () => {
+    const capture = await probeDpr2LayeredBackgroundCapture();
+
+    expect(capture.largeStripeExportedRgb).toEqual(capture.largeStripeChromiumRgb);
+  }, 30_000);
+
   test('captures standard and WebKit text-clipped layered gradients as Chromium-painted text', async () => {
     const media = await probeLayeredBackgroundMedia();
     const cases = [
@@ -1086,6 +1092,8 @@ async function runDpr2LayeredBackgroundCapture(): Promise<{
   devicePixelRatio: number;
   height: number;
   largeAreaHitTests: number;
+  largeStripeChromiumRgb: [number, number, number];
+  largeStripeExportedRgb: [number, number, number];
   width: number;
 }> {
   const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-dpr2-'));
@@ -1117,6 +1125,15 @@ async function queryDevicePixelRatio(window) {
   }
 }
 
+function rgbAt(image, logicalX, logicalY, logicalWidth, logicalHeight) {
+  const size = image.getSize();
+  const x = Math.min(size.width - 1, Math.max(0, Math.floor(logicalX * size.width / logicalWidth)));
+  const y = Math.min(size.height - 1, Math.max(0, Math.floor(logicalY * size.height / logicalHeight)));
+  const bitmap = image.toBitmap();
+  const offset = (y * size.width + x) * 4;
+  return [bitmap[offset + 2], bitmap[offset + 1], bitmap[offset]];
+}
+
 app.whenReady().then(async () => {
   const window = new BrowserWindow({
     height: 180,
@@ -1136,13 +1153,48 @@ app.whenReady().then(async () => {
     if (!capture) throw new Error('No layered background capture was produced');
     const image = nativeImage.createFromBuffer(Buffer.from(capture.dataUrl.split(',')[1], 'base64'));
     const size = image.getSize();
-    const largeHtml = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:1920px;height:1080px}.backdrop,.large-target{position:absolute;inset:0}.backdrop{background:green;clip-path:polygon(0 0,1px 0,1px 100%,0 100%)}.large-target{background-image:linear-gradient(red,blue),linear-gradient(white,black);mix-blend-mode:multiply}</style><section class="slide"><div class="backdrop"></div><div class="large-target"></div></section>';
+    const largeHtml = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:1920px;height:1080px}.backdrop,.large-target{position:absolute;inset:0}.backdrop{background:rgb(128,192,128);clip-path:polygon(7px 0,8px 0,8px 100%,7px 100%)}.large-target{background-image:linear-gradient(rgb(128,128,128),rgb(128,128,128)),linear-gradient(transparent,transparent);mix-blend-mode:multiply}</style><section class="slide"><div class="backdrop"></div><div class="large-target"></div></section>';
     await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(largeHtml));
+    await nextFrames(window);
+    const dbg = window.webContents.debugger;
+    dbg.attach('1.3');
+    await dbg.sendCommand('Page.enable');
+    const stripeClip = { height: 1, scale: 1, width: 1, x: 7, y: 540 };
+    const largeReferenceShot = await dbg.sendCommand('Page.captureScreenshot', {
+      captureBeyondViewport: true,
+      clip: stripeClip,
+      format: 'png',
+      fromSurface: true,
+    });
     const [largeTarget] = await window.webContents.executeJavaScript(
       '(' + collectLayeredPptxBackgroundTargets.toString() + ')(".slide")',
       true,
     );
     if (!largeTarget) throw new Error('No large layered background target was produced');
+    const largeGeometry = await window.webContents.executeJavaScript(
+      '(() => {'
+        + 'const restoreLayeredPptxBackgroundIsolation=' + restoreLayeredPptxBackgroundIsolation.toString() + ';'
+        + 'return (' + isolateLayeredPptxBackground.toString() + ')(".slide",' + JSON.stringify(largeTarget.id) + ');'
+      + '})()',
+      true,
+    );
+    if (!largeGeometry) throw new Error('Could not isolate the large layered background target');
+    await nextFrames(window);
+    const largeExportedShot = await dbg.sendCommand('Page.captureScreenshot', {
+      captureBeyondViewport: true,
+      clip: stripeClip,
+      format: 'png',
+      fromSurface: true,
+    });
+    await window.webContents.executeJavaScript(
+      '(' + restoreLayeredPptxBackgroundIsolation.toString() + ')()',
+      true,
+    );
+    dbg.detach();
+    const largeReferenceImage = nativeImage.createFromBuffer(Buffer.from(largeReferenceShot.data, 'base64'));
+    const largeExportedImage = nativeImage.createFromBuffer(Buffer.from(largeExportedShot.data, 'base64'));
+    const largeStripeChromiumRgb = rgbAt(largeReferenceImage, 0.5, 0.5, 1, 1);
+    const largeStripeExportedRgb = rgbAt(largeExportedImage, 0.5, 0.5, 1, 1);
     const largeAreaProbe = await window.webContents.executeJavaScript(
       '(() => {'
         + 'let calls=0;try{'
@@ -1159,6 +1211,8 @@ app.whenReady().then(async () => {
     const result = {
       devicePixelRatio: await queryDevicePixelRatio(window),
       largeAreaHitTests,
+      largeStripeChromiumRgb,
+      largeStripeExportedRgb,
       ...size,
     };
     await new Promise((resolve, reject) => {
@@ -1214,6 +1268,8 @@ app.whenReady().then(async () => {
       devicePixelRatio: number;
       height: number;
       largeAreaHitTests: number;
+      largeStripeChromiumRgb: [number, number, number];
+      largeStripeExportedRgb: [number, number, number];
       width: number;
     };
   } finally {

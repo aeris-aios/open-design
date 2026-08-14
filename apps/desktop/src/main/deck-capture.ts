@@ -958,33 +958,40 @@ export function isolateLayeredPptxBackground(
     if (!hasPaintClip(element) && !hasPaintClip(target)) return false;
 
     // A clip path or mask can confine real paint to a narrow stripe or ring
-    // that misses all representative points above. Preserve capture-pixel
-    // centers for small overlaps, then switch to a bounded stratified grid so
-    // a full-slide candidate cannot turn one export into millions of hit tests.
-    const captureScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const pixelColumns = Math.max(1, Math.ceil((intersection.right - intersection.left) * captureScale));
-    const pixelRows = Math.max(1, Math.ceil((intersection.bottom - intersection.top) * captureScale));
-    const maxFallbackSamples = 4_096;
-    let columns = pixelColumns;
-    let rows = pixelRows;
-    if (pixelColumns * pixelRows > maxFallbackSamples) {
-      const aspectRatio = pixelColumns / pixelRows;
-      columns = Math.max(
-        1,
-        Math.min(pixelColumns, maxFallbackSamples, Math.floor(Math.sqrt(maxFallbackSamples * aspectRatio))),
-      );
-      rows = Math.max(1, Math.min(pixelRows, Math.floor(maxFallbackSamples / columns)));
-    }
-    const stepX = (intersection.right - intersection.left) / columns;
-    const stepY = (intersection.bottom - intersection.top) / rows;
-    for (let row = 0; row < rows; row += 1) {
-      const y = intersection.top + (row + 0.5) * stepY;
-      for (let column = 0; column < columns; column += 1) {
-        const x = intersection.left + (column + 0.5) * stepX;
-        if (paintsBehindAt(x, y)) return true;
+    // that misses every fixed sample. Temporarily remove only those paint clips
+    // to ask Chromium for the boxes' relative paint order, then restore the
+    // authored styles before capture. The real clip/mask still shapes the PNG;
+    // this probe only decides whether its paint belongs to the target backdrop.
+    const paintClipProperties = [
+      "clip-path",
+      "-webkit-clip-path",
+      "mask-image",
+      "-webkit-mask-image",
+    ];
+    const paintClipStyles = [element, target]
+      .filter((candidate, index, candidates) => hasPaintClip(candidate) && candidates.indexOf(candidate) === index)
+      .flatMap((candidate) => paintClipProperties.map((property) => ({
+        candidate,
+        priority: candidate.style.getPropertyPriority(property),
+        property,
+        value: candidate.style.getPropertyValue(property),
+      })));
+    try {
+      for (const { candidate, property } of paintClipStyles) {
+        candidate.style.setProperty(property, "none", "important");
+      }
+      if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
+      if (sampledTogether) return false;
+      // Nested clipping can still keep the two boxes out of Chromium's sampled
+      // stack. Preserve the possible backdrop rather than dropping authored
+      // paint when coverage remains uncertain.
+      return true;
+    } finally {
+      for (const { candidate, priority, property, value } of paintClipStyles) {
+        if (value) candidate.style.setProperty(property, value, priority);
+        else candidate.style.removeProperty(property);
       }
     }
-    return false;
   };
   if (flattenBackdrop) {
     // Hit testing is Chromium's public view of the effective paint stack. Make
