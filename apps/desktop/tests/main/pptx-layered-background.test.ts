@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import {
   cjkPromotedFontFamily,
+  captureEditablePptxLayeredBackgrounds,
   collectLayeredPptxBackgroundTargets,
   isolateLayeredPptxBackground,
   restoreLayeredPptxBackgroundIsolation,
@@ -417,6 +418,12 @@ describe('editable PPTX layered backgrounds', () => {
     });
   }, 30_000);
 
+  test('keeps layered-background captures at 2x CSS resolution on a dpr=2 renderer', async () => {
+    const capture = await probeDpr2LayeredBackgroundCapture();
+
+    expect(capture).toEqual({ devicePixelRatio: 2, height: 120, width: 240 });
+  }, 20_000);
+
   test('captures standard and WebKit text-clipped layered gradients as Chromium-painted text', async () => {
     const media = await probeLayeredBackgroundMedia();
     const cases = [
@@ -452,6 +459,35 @@ describe('editable PPTX layered backgrounds', () => {
     }
   }, 30_000);
 
+  test('captures standard and WebKit text-clipped layered pseudos as Chromium-painted text', async () => {
+    const captures = await probePseudoTextClipCaptures();
+    const cases = [
+      {
+        name: 'standard',
+        result: captures.standard,
+        suppressAfter: false,
+        suppressBefore: true,
+      },
+      {
+        name: 'WebKit',
+        result: captures.webkit,
+        suppressAfter: true,
+        suppressBefore: false,
+      },
+    ];
+
+    for (const fixture of cases) {
+      expect(fixture.result, `${fixture.name}: ${JSON.stringify(fixture.result)}`).toMatchObject({
+        captures: 1,
+        entirePseudo: true,
+        suppressAfter: fixture.suppressAfter,
+        suppressBefore: fixture.suppressBefore,
+      });
+      expect(fixture.result.paintedPixels, fixture.name).toBeGreaterThan(0);
+      expect(fixture.result.transparentPixels, fixture.name).toBeGreaterThan(0);
+    }
+  }, 20_000);
+
   test('keeps layered pseudo backgrounds behind native pseudo content', async () => {
     const media = await probeLayeredBackgroundMedia();
 
@@ -468,6 +504,18 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.pseudoNativeStyle.content).toBeGreaterThanOrEqual(0);
     expect(media.pseudoNativeStyle.border).toBeGreaterThanOrEqual(0);
     expect(media.pseudoNativeStyle.fallbackFill).toBe(-1);
+  }, 30_000);
+
+  test('preserves a layered pseudo box shadow in its exported raster media', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.pseudoShadow.pngs;
+
+    expect(media.pseudoShadow, JSON.stringify(media.pseudoShadow)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(image?.topLeftRgb, JSON.stringify(image)).toEqual([255, 0, 0]);
+    expect(image?.centerRgb, JSON.stringify(image)).toEqual([0, 0, 255]);
   }, 30_000);
 
   test('flattens a multiply-blended layered background against an authored pseudo backdrop', async () => {
@@ -895,6 +943,7 @@ type LayeredBackgroundProbe = {
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
   pseudoNativeStyle: { border: number; content: number; fallbackFill: number };
+  pseudoShadow: LayeredBackgroundExport;
   realBlend: LayeredBackgroundExport;
   realBlendChromium: PngProbe;
   realBlendChromiumComparison: PngComparison;
@@ -954,6 +1003,265 @@ function probeLayeredBackgroundMedia(): Promise<LayeredBackgroundProbe> {
   return layeredBackgroundProbePromise;
 }
 
+async function probeDpr2LayeredBackgroundCapture(): Promise<{
+  devicePixelRatio: number;
+  height: number;
+  width: number;
+}> {
+  const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-dpr2-'));
+  await writeFile(join(probeDir, 'package.json'), '{"main":"main.cjs"}\n');
+  await writeFile(
+    join(probeDir, 'main.cjs'),
+    `
+const { app, BrowserWindow, nativeImage } = require('electron');
+
+const SLIDE_SELECTOR = '.slide';
+const collectLayeredPptxBackgroundTargets = ${collectLayeredPptxBackgroundTargets.toString()};
+const isolateLayeredPptxBackground = ${isolateLayeredPptxBackground.toString()};
+const restoreLayeredPptxBackgroundIsolation = ${restoreLayeredPptxBackgroundIsolation.toString()};
+const captureEditablePptxLayeredBackgrounds = ${captureEditablePptxLayeredBackgrounds.toString()};
+
+async function nextFrames(window) {
+  await window.webContents.executeJavaScript(
+    'new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(function(){r(true)})})})',
+    true,
+  );
+}
+
+async function queryDevicePixelRatio(window) {
+  try {
+    const value = await window.webContents.executeJavaScript('window.devicePixelRatio || 1', true);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  } catch {
+    return 1;
+  }
+}
+
+app.whenReady().then(async () => {
+  const window = new BrowserWindow({
+    height: 180,
+    show: false,
+    useContentSize: true,
+    width: 320,
+    webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: true },
+  });
+  try {
+    const html = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:320px;height:180px}.target{position:absolute;left:12px;top:10px;width:120px;height:60px;background-image:linear-gradient(red,blue),linear-gradient(white,black)}</style><section class="slide"><div class="target"></div></section>';
+    await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    window.setOpacity(0);
+    window.showInactive();
+    await nextFrames(window);
+    const captures = await captureEditablePptxLayeredBackgrounds(window);
+    const capture = Object.values(captures)[0];
+    if (!capture) throw new Error('No layered background capture was produced');
+    const image = nativeImage.createFromBuffer(Buffer.from(capture.dataUrl.split(',')[1], 'base64'));
+    const size = image.getSize();
+    const result = { devicePixelRatio: await queryDevicePixelRatio(window), ...size };
+    await new Promise((resolve, reject) => {
+      process.stdout.write('OD_PPTX_DPR2_PROBE:' + JSON.stringify(result) + '\\n', (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  } finally {
+    window.destroy();
+  }
+  app.exit(0);
+}).catch((error) => {
+  process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
+  app.exit(1);
+});
+`,
+  );
+
+  try {
+    const electronRelativePath = (await readFile(
+      join(desktopRoot, 'node_modules', 'electron', 'path.txt'),
+      'utf8',
+    )).trim();
+    const electronPath = join(desktopRoot, 'node_modules', 'electron', 'dist', electronRelativePath);
+    const electronArgs = [
+      '--force-device-scale-factor=2',
+      '--no-sandbox',
+      '--disable-gpu',
+      probeDir,
+    ];
+    const command = process.platform === 'linux' ? 'xvfb-run' : electronPath;
+    const args = process.platform === 'linux' ? ['-a', electronPath, ...electronArgs] : electronArgs;
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    let stderr: string;
+    let stdout: string;
+    try {
+      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: 10_000 }));
+    } catch (error) {
+      const failure = error as Error & { stderr?: string; stdout?: string };
+      throw new Error(
+        [
+          failure.message,
+          failure.stdout ? `stdout:\n${failure.stdout}` : '',
+          failure.stderr ? `stderr:\n${failure.stderr}` : '',
+        ].filter(Boolean).join('\n'),
+      );
+    }
+    const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_PPTX_DPR2_PROBE:'));
+    if (!marker) throw new Error(`Electron DPR=2 probe returned no result: ${stdout || stderr}`);
+    return JSON.parse(marker.slice('OD_PPTX_DPR2_PROBE:'.length)) as {
+      devicePixelRatio: number;
+      height: number;
+      width: number;
+    };
+  } finally {
+    await rm(probeDir, { force: true, recursive: true });
+  }
+}
+
+type PseudoTextClipCaptureProbe = {
+  captures: number;
+  entirePseudo: boolean;
+  paintedPixels: number;
+  suppressAfter: boolean;
+  suppressBefore: boolean;
+  transparentPixels: number;
+};
+
+async function probePseudoTextClipCaptures(): Promise<{
+  standard: PseudoTextClipCaptureProbe;
+  webkit: PseudoTextClipCaptureProbe;
+}> {
+  const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-pseudo-text-clip-'));
+  const collectSource = `(${collectLayeredPptxBackgroundTargets.toString()})(".slide")`;
+  const isolateSource = `(id => {
+    const restoreLayeredPptxBackgroundIsolation = ${restoreLayeredPptxBackgroundIsolation.toString()};
+    return (${isolateLayeredPptxBackground.toString()})(".slide", id);
+  })`;
+  const restoreSource = `(${restoreLayeredPptxBackgroundIsolation.toString()})()`;
+  await writeFile(join(probeDir, 'package.json'), '{"main":"main.cjs"}\n');
+  await writeFile(
+    join(probeDir, 'main.cjs'),
+    `
+const { app, BrowserWindow, nativeImage } = require('electron');
+
+app.whenReady().then(async () => {
+  const window = new BrowserWindow({
+    height: 180,
+    show: false,
+    useContentSize: true,
+    width: 320,
+    webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: true },
+  });
+  try {
+    const html = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:320px;height:180px}.standard,.webkit{position:absolute;top:58px;width:140px;height:64px}.standard{left:6px}.webkit{right:6px}.standard::before,.webkit::after{position:absolute;inset:0;color:transparent;font:700 18px/64px sans-serif;text-align:center;background-image:linear-gradient(90deg,rgb(255,48,96),rgb(32,160,255)),linear-gradient(white,white)}.standard::before{content:"Standard pseudo";background-clip:text}.webkit::after{content:"WebKit pseudo";-webkit-background-clip:text}</style><section class="slide"><div class="standard" data-probe="standard"></div><div class="webkit" data-probe="webkit"></div></section>';
+    await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    window.setOpacity(0);
+    window.showInactive();
+    await window.webContents.executeJavaScript(
+      'new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(function(){r(true)})})})',
+      true,
+    );
+    const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
+    const details = await window.webContents.executeJavaScript(
+      'Object.fromEntries(Array.from(document.querySelectorAll("[data-probe]"), (host) => { const helper = host.querySelector("[data-od-pptx-materialized-pseudo]"); return [host.getAttribute("data-probe"), { captures: host.querySelectorAll("[data-od-pptx-layer-capture-id]").length, entirePseudo: helper?.getAttribute("data-od-pptx-materialized-entire-pseudo") === "true", paintedPixels: 0, suppressAfter: host.getAttribute("data-od-pptx-suppress-after") === "true", suppressBefore: host.getAttribute("data-od-pptx-suppress-before") === "true", transparentPixels: 0 }]; }))',
+      true,
+    );
+    const probeByTarget = await window.webContents.executeJavaScript(
+      'Object.fromEntries(Array.from(document.querySelectorAll("[data-od-pptx-layer-capture-id]"), (target) => [target.getAttribute("data-od-pptx-layer-capture-id"), target.closest("[data-probe]").getAttribute("data-probe")]))',
+      true,
+    );
+    const devicePixelRatio = await window.webContents.executeJavaScript('window.devicePixelRatio || 1', true);
+    const dbg = window.webContents.debugger;
+    dbg.attach('1.3');
+    await dbg.sendCommand('Page.enable');
+    await dbg.sendCommand('Emulation.setDefaultBackgroundColorOverride', {
+      color: { a: 0, b: 0, g: 0, r: 0 },
+    });
+    for (const target of targets) {
+      const geometry = await window.webContents.executeJavaScript(
+        ${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')',
+        true,
+      );
+      await window.webContents.executeJavaScript(
+        'new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(function(){r(true)})})})',
+        true,
+      );
+      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+        captureBeyondViewport: true,
+        clip: {
+          height: geometry.height,
+          scale: 1 / devicePixelRatio,
+          width: geometry.width,
+          x: geometry.pageX,
+          y: geometry.pageY,
+        },
+        format: 'png',
+        fromSurface: true,
+      });
+      const bitmap = nativeImage.createFromBuffer(Buffer.from(screenshot.data, 'base64')).toBitmap();
+      let paintedPixels = 0;
+      let transparentPixels = 0;
+      for (let offset = 3; offset < bitmap.length; offset += 4) {
+        if (bitmap[offset] < 16) transparentPixels += 1;
+        else paintedPixels += 1;
+      }
+      const probe = details[probeByTarget[target.id]];
+      probe.paintedPixels = paintedPixels;
+      probe.transparentPixels = transparentPixels;
+      await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
+    }
+    await new Promise((resolve, reject) => {
+      process.stdout.write('OD_PPTX_PSEUDO_TEXT_CLIP:' + JSON.stringify(details) + '\\n', (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  } finally {
+    if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+    window.destroy();
+  }
+  app.exit(0);
+}).catch((error) => {
+  process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
+  app.exit(1);
+});
+`,
+  );
+
+  try {
+    const electronRelativePath = (await readFile(
+      join(desktopRoot, 'node_modules', 'electron', 'path.txt'),
+      'utf8',
+    )).trim();
+    const electronPath = join(desktopRoot, 'node_modules', 'electron', 'dist', electronRelativePath);
+    const electronArgs = [probeDir, '--no-sandbox', '--disable-gpu'];
+    const command = process.platform === 'linux' ? 'xvfb-run' : electronPath;
+    const args = process.platform === 'linux' ? ['-a', electronPath, ...electronArgs] : electronArgs;
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    let stderr: string;
+    let stdout: string;
+    try {
+      ({ stderr, stdout } = await execFileP(command, args, { env, timeout: 10_000 }));
+    } catch (error) {
+      const failure = error as Error & { stderr?: string; stdout?: string };
+      throw new Error(
+        [
+          failure.message,
+          failure.stdout ? `stdout:\n${failure.stdout}` : '',
+          failure.stderr ? `stderr:\n${failure.stderr}` : '',
+        ].filter(Boolean).join('\n'),
+      );
+    }
+    const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_PPTX_PSEUDO_TEXT_CLIP:'));
+    if (!marker) throw new Error(`Electron pseudo text-clip probe returned no result: ${stdout || stderr}`);
+    return JSON.parse(marker.slice('OD_PPTX_PSEUDO_TEXT_CLIP:'.length)) as {
+      standard: PseudoTextClipCaptureProbe;
+      webkit: PseudoTextClipCaptureProbe;
+    };
+  } finally {
+    await rm(probeDir, { force: true, recursive: true });
+  }
+}
+
 async function runLayeredBackgroundMediaProbe(): Promise<LayeredBackgroundProbe> {
   const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-probe-'));
   const invocationSource = `(captures => {
@@ -981,6 +1289,7 @@ const { gunzipSync, inflateRawSync } = require('node:zlib');
 const fixtures = {
   supported: '<div class="supported"></div>',
   pseudo: '<div class="pseudo"></div>',
+  pseudoShadow: '<div class="pseudo-shadow"></div>',
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
   nestedCompositor: '<div class="nested-compositor"><div class="nested-compositor-intermediate"><div class="nested-compositor-child"></div></div></div>',
@@ -1057,6 +1366,20 @@ const styles = \`
     background-color: rgb(250, 0, 200);
     background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
     background-size: 24px 24px;
+  }
+  .pseudo-shadow {
+    position: absolute;
+    left: 206px;
+    top: 112px;
+    width: 96px;
+    height: 44px;
+  }
+  .pseudo-shadow::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(0, 0, 255), rgb(0, 0, 255)), linear-gradient(transparent, transparent);
+    box-shadow: inset 0 0 0 12px rgb(255, 0, 0);
   }
   .blended-backdrop {
     position: absolute;
@@ -1992,6 +2315,16 @@ app.whenReady().then(async () => {
         pngs: backgroundBlendPseudoMedia?.png ? [backgroundBlendPseudoMedia.png] : [],
       };
     }
+    const pseudoShadowMedia = media.find(({ name, png }) =>
+      !usedMedia.has(name)
+      && png?.topLeftRgb?.every((channel, index) => channel === [255, 0, 0][index])
+      && png?.centerRgb?.every((channel, index) => channel === [0, 0, 255][index]));
+    if (pseudoShadowMedia) usedMedia.add(pseudoShadowMedia.name);
+    result.pseudoShadow = {
+      captures: captureCounts.pseudoShadow,
+      media: pseudoShadowMedia ? [pseudoShadowMedia.name] : [],
+      pngs: pseudoShadowMedia?.png ? [pseudoShadowMedia.png] : [],
+    };
     const pseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) > 100 && (png?.height ?? 0) > 40
         && (png?.width ?? 0) < 300 && (png?.height ?? 0) < 170,
@@ -2232,6 +2565,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.pseudoNativeStyle.content !== 'number'
     || !('fallbackFill' in value.pseudoNativeStyle)
     || typeof value.pseudoNativeStyle.fallbackFill !== 'number'
+    || !('pseudoShadow' in value)
     || !('realBlend' in value)
     || !('realBlendChromium' in value)
     || typeof value.realBlendChromium !== 'object'
@@ -2343,6 +2677,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       content: value.pseudoLayerOrder.content,
     },
     pseudoNativeStyle: value.pseudoNativeStyle as LayeredBackgroundProbe['pseudoNativeStyle'],
+    pseudoShadow: parseLayeredBackgroundExport(value.pseudoShadow),
     realBlend: parseLayeredBackgroundExport(value.realBlend),
     realBlendChromium: value.realBlendChromium as PngProbe,
     realBlendChromiumComparison: value.realBlendChromiumComparison as PngComparison,

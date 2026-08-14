@@ -571,13 +571,13 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const rawContent = (style.content || "").trim();
     const content = rawContent.toLowerCase();
     const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
-    const materializeEntirePseudo = hasCssMask(style) || hasUnsupportedPseudoSelfEffect(style);
+    const materializeEntirePseudo =
+      hasTextClip(style) || hasCssMask(style) || hasUnsupportedPseudoSelfEffect(style);
     if (
       !isGenerated ||
       (style.position !== "absolute" && style.position !== "fixed") ||
       !isSupportedLayeredGradient(style.backgroundImage || "") ||
-      (!materializeEntirePseudo && !hasNonNormalBackgroundBlendMode(style)) ||
-      hasTextClip(style)
+      (!materializeEntirePseudo && !hasNonNormalBackgroundBlendMode(style))
     ) {
       return null;
     }
@@ -620,6 +620,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("border-style", "solid", "important");
     background.style.setProperty("border-color", "transparent", "important");
     background.style.setProperty("border-radius", style.borderRadius || "0px", "important");
+    background.style.setProperty("box-shadow", style.boxShadow || "none", "important");
     background.style.setProperty("background-color", style.backgroundColor, "important");
     background.style.setProperty("background-image", style.backgroundImage, "important");
     background.style.setProperty("background-position", style.backgroundPosition, "important");
@@ -648,9 +649,9 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("scale", style.scale || "none", "important");
     background.style.setProperty("z-index", style.zIndex || "auto", "important");
     if (materializeEntirePseudo) {
-      // Masks and non-serializable self effects apply to the pseudo's complete
-      // painted output, including generated text and borders. Copy the computed
-      // pseudo style so Chromium rasterizes that output as one layer.
+      // Text clipping, masks, and non-serializable self effects apply to the
+      // pseudo's complete painted output, including generated text and borders.
+      // Copy the computed pseudo style so Chromium rasterizes it as one layer.
       for (let index = 0; index < style.length; index += 1) {
         const property = style.item(index);
         if (property === "content") continue;
@@ -1091,7 +1092,9 @@ export function isolateLayeredPptxBackground(
   };
 }
 
-async function captureEditablePptxLayeredBackgrounds(
+// Exported so the focused Electron fixture can exercise the real debugger,
+// isolation, and screenshot orchestration under explicit device scale factors.
+export async function captureEditablePptxLayeredBackgrounds(
   window: BrowserWindow,
 ): Promise<Record<string, LayeredPptxBackgroundCapture>> {
   const targets = (await window.webContents.executeJavaScript(
@@ -1099,6 +1102,11 @@ async function captureEditablePptxLayeredBackgrounds(
     true,
   )) as LayeredPptxBackgroundTarget[];
   if (targets.length === 0) return {};
+
+  // CDP multiplies clip.scale by the renderer's device scale factor. Keep the
+  // exported layer at a stable 2 physical pixels per CSS pixel instead of
+  // double-scaling Retina windows to 4x.
+  const captureScale = Math.min(2, 2 / (await queryDevicePixelRatio(window)));
 
   const dbg = window.webContents.debugger;
   let attachedHere = false;
@@ -1123,7 +1131,7 @@ async function captureEditablePptxLayeredBackgrounds(
         captureBeyondViewport: true,
         clip: {
           height: geometry.height,
-          scale: 2,
+          scale: captureScale,
           width: geometry.width,
           x: geometry.pageX,
           y: geometry.pageY,
@@ -1950,6 +1958,7 @@ export async function runDomToPptx(
     background.style.setProperty("border-style", "solid", "important");
     background.style.setProperty("border-color", "transparent", "important");
     background.style.setProperty("border-radius", style.borderRadius || "0px", "important");
+    background.style.setProperty("box-shadow", style.boxShadow || "none", "important");
     background.style.setProperty("background-color", style.backgroundColor, "important");
     background.style.setProperty("background-image", style.backgroundImage, "important");
     background.style.setProperty("background-position", style.backgroundPosition, "important");
