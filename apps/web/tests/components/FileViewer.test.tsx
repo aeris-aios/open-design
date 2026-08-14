@@ -7314,6 +7314,91 @@ describe('FileViewer tweaks toolbar', () => {
     ))).toHaveLength(1);
   });
 
+  it('recovers when an asynchronously scoped base replaces an already verified srcDoc navigation', async () => {
+    vi.useFakeTimers();
+    const context = teamWorkspaceContext();
+    const previewBaseResponse = deferredResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/projects/project-1/preview-url')) {
+        return previewBaseResponse.promise;
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      renderWithProjectWorkspace(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'brand.html', path: 'brand.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+        />,
+        context,
+      );
+
+      const initialFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const initialGeneration = initialFrame.srcdoc.match(
+        /data-od-srcdoc-transport-activation>[\s\S]*?var generation = "([^"]+)";/,
+      )?.[1];
+      expect(initialGeneration).toBeTruthy();
+
+      const postMessage = vi.spyOn(initialFrame.contentWindow!, 'postMessage');
+      fireEvent.load(initialFrame);
+      const initialProbe = postMessage.mock.calls.find(
+        ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+      )?.[0] as { probeId?: string } | undefined;
+      expect(initialProbe?.probeId).toBeTruthy();
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: initialFrame.contentWindow,
+          data: {
+            type: 'od:srcdoc-transport-activated',
+            generation: initialGeneration,
+            probeId: initialProbe!.probeId,
+          },
+        }));
+      });
+
+      await act(async () => {
+        previewBaseResponse.resolve(new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/scope-1/brand.html',
+          file: 'brand.html',
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        }), { status: 200 }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const scopedFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(scopedFrame).toBe(initialFrame);
+      expect(scopedFrame.srcdoc).toContain(
+        '<base href="/api/projects/project-1/preview/scope-1/">',
+      );
+      const scopedGeneration = scopedFrame.srcdoc.match(
+        /data-od-srcdoc-transport-activation>[\s\S]*?var generation = "([^"]+)";/,
+      )?.[1];
+      expect(scopedGeneration).toBeTruthy();
+      expect(scopedGeneration).not.toBe(initialGeneration);
+
+      act(() => {
+        // Model Electron's aborted second about:srcdoc navigation: the new
+        // document sends neither load nor activation, so recovery must not
+        // trust the verified witness from the pre-base document.
+        vi.runAllTimers();
+      });
+
+      const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(recoveredFrame).not.toBe(scopedFrame);
+      expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
+    } finally {
+      previewBaseResponse.resolve(new Response('', { status: 404 }));
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves an authored base without minting a project-scoped preview capability', async () => {
     const context = teamWorkspaceContext();
     const authoredBase = '<base href="https://cdn.example/assets/">';

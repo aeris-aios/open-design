@@ -10135,6 +10135,8 @@ function HtmlViewer({
     workspaceContext,
   ]);
 
+  const srcDocBaseHref = effectiveScopedSrcDocPreviewBase
+    ?? projectRawUrl(projectId, baseDirFor(file.name), workspaceContext);
   const srcDocTransportGeneration = useMemo(
     () => nextPreviewTransportGeneration(),
     [
@@ -10145,10 +10147,9 @@ function HtmlViewer({
       reloadKey,
       transportPreviewMeasurementDocumentEpoch,
       workspaceContext,
+      srcDocBaseHref,
     ],
   );
-  const srcDocBaseHref = effectiveScopedSrcDocPreviewBase
-    ?? projectRawUrl(projectId, baseDirFor(file.name), workspaceContext);
   const srcDoc = useMemo(
     () => (previewSource ? buildSrcdoc(previewSource, {
       deck: effectiveDeck,
