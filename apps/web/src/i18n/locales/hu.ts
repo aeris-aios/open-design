@@ -3468,6 +3468,7 @@ export const hu: Dict = {
   'assistant.role': 'Asszisztens',
   'assistant.workingLabel': 'Dolgozik',
   'assistant.doneLabel': 'Kész',
+  'assistant.canceledLabel': 'Megszakítva',
   'assistant.copyMarkdown': 'Válasz Markdown másolása',
   'assistant.forkConversation': 'Fork innen',
   'assistant.forkingConversation': 'Fork létrehozása…',

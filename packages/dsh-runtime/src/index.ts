@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/cordis-plugin-loader';
 import {
@@ -38,18 +39,32 @@ export const inject = [
 const PLUGIN_VERSION = '0.1.0';
 
 type Output = { write(chunk: string): unknown };
+type ExitFallbackTimer = { unref(): unknown };
+type ExitFallbackScheduler = (callback: () => void, delayMs: number) => ExitFallbackTimer;
+type CancellationLatch = {
+  activate(requestId: string, controller: AbortController): void;
+  cancel(requestId: string): void;
+};
+
+const PROCESS_EXIT_FALLBACK_MS = 1_000;
 
 function writeFrame(output: Output, frame: unknown): void {
   output.write(`${JSON.stringify(frame)}\n`);
 }
 
-function errorFacts(error: unknown, fallbackCode: string) {
-  return {
-    code: typeof (error as { code?: unknown } | null)?.code === 'string'
-      ? (error as { code: string }).code
-      : fallbackCode,
-    message: error instanceof Error ? error.message : String(error),
-  };
+function errorFacts(error: unknown, fallbackCode: string): { code: string; message: string } {
+  const candidate = typeof error === 'object' && error !== null
+    ? error as { code?: unknown; message?: unknown }
+    : undefined;
+  const code = typeof candidate?.code === 'string' && candidate.code !== ''
+    ? candidate.code
+    : fallbackCode;
+  if (error instanceof Error && error.message !== '') return { code, message: error.message };
+  if (typeof candidate?.message === 'string' && candidate.message !== '') {
+    return { code, message: candidate.message };
+  }
+  if (typeof error === 'string' && error !== '') return { code, message: error };
+  return { code, message: 'DeepSeek Harness reported an execution error.' };
 }
 
 function contentText(content: readonly ContentBlock[]): string {
@@ -104,6 +119,47 @@ function writeCancelledResult(output: Output, requestId: string, sessionId: stri
     session_id: sessionId,
     resume_rejected: false,
   });
+}
+
+function requestProfileExit(
+  exit: (code: number) => void,
+  forceExit: () => void = () => process.exit(0),
+  schedule: ExitFallbackScheduler = (callback, delayMs) => setTimeout(callback, delayMs),
+): void {
+  exit(0);
+  // rc.6 can finish root disposal before its launcher-owned file watchers are
+  // attached, leaving a one-shot profile alive when the host keeps stdin open.
+  // The agent handle and session flush have already settled here, so retain a
+  // bounded process fallback below OD's three-second cancellation grace.
+  schedule(forceExit, PROCESS_EXIT_FALLBACK_MS).unref();
+}
+
+function createCancellationLatch(cancelActiveAgent: () => void): CancellationLatch {
+  const pendingRequestIds = new Set<string>();
+  let activeRequest: { requestId: string; controller: AbortController } | undefined;
+
+  const cancelActive = () => {
+    if (!activeRequest || activeRequest.controller.signal.aborted) return;
+    activeRequest.controller.abort();
+    cancelActiveAgent();
+  };
+
+  return {
+    activate(requestId, controller) {
+      activeRequest = { requestId, controller };
+      if (pendingRequestIds.delete(requestId)) cancelActive();
+    },
+    cancel(requestId) {
+      if (activeRequest?.requestId === requestId) {
+        cancelActive();
+        return;
+      }
+      // The host can cancel during the child-spawn/profile-handshake window,
+      // before the execute line has created its AbortController. Retain that
+      // request-scoped intent and replay it as soon as execute becomes active.
+      pendingRequestIds.add(requestId);
+    },
+  };
 }
 
 function usageFrame(requestId: string, provider: string, model: string, usage: TokenUsage) {
@@ -280,6 +336,10 @@ async function execute(
     }));
     await handle.agent.whenIdle();
     await ctx.sessions.flush(handle.agent.session);
+    if (signal.aborted) {
+      writeCancelledResult(output, request.request_id, String(sessionId));
+      return;
+    }
 
     const reason = turnEnd?.data.reason;
     const status = resultStatus(reason);
@@ -316,19 +376,28 @@ async function execute(
   }
 }
 
-async function serve(ctx: Context, output: Output, exit: (code: number) => void): Promise<void> {
+async function serve(
+  ctx: Context,
+  output: Output,
+  exit: (code: number) => void,
+  input: Readable = process.stdin,
+  finishProfile: (exitCallback: (code: number) => void) => void = requestProfileExit,
+): Promise<void> {
   writeFrame(output, identityFrame('ready', PLUGIN_VERSION));
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const lines = createInterface({ input, crlfDelay: Infinity });
   let requestId: string | null = null;
   let handle: AgentHandle | undefined;
   let task: Promise<void> | undefined;
-  let taskAbort: AbortController | undefined;
+  const cancellation = createCancellationLatch(() => {
+    handle?.agent.cancel({ kind: 'user' });
+  });
   await new Promise<void>((resolve) => {
     let settled = false;
     const settle = () => {
       if (settled) return;
       settled = true;
       lines.close();
+      input.destroy();
       resolve();
     };
     lines.on('line', (line) => {
@@ -347,10 +416,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
         return;
       }
       if (command.type === 'cancel') {
-        if (command.request_id === requestId) {
-          taskAbort?.abort();
-          handle?.agent.cancel({ kind: 'user' });
-        }
+        cancellation.cancel(command.request_id);
         return;
       }
       if (task) {
@@ -364,7 +430,8 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
         return;
       }
       requestId = command.request_id;
-      taskAbort = new AbortController();
+      const taskAbort = new AbortController();
+      cancellation.activate(requestId, taskAbort);
       task = execute(
         ctx,
         command,
@@ -378,7 +445,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
       if (!task) settle();
     });
   });
-  exit(0);
+  finishProfile(exit);
 }
 
 export function apply(ctx: Context): void {
@@ -405,10 +472,14 @@ export function apply(ctx: Context): void {
 
 export const internals = {
   contentText,
+  createCancellationLatch,
+  errorFacts,
   emitSessionEvent,
   execute,
   listModelCatalog,
+  requestProfileExit,
   resultStatus,
   resultError,
+  serve,
   terminalOutput,
 };

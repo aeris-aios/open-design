@@ -389,6 +389,18 @@ describe('DeepSeek Harness profile session controller', () => {
       'usage',
       'thinking_end',
     ]);
+    assert.deepEqual(events.find(({ payload }) => payload.type === 'usage')?.payload, {
+      type: 'usage',
+      provider: 'deepseek-official',
+      model: 'model-1',
+      usage: {
+        input_tokens: 10,
+        output_tokens: 2,
+        cached_read_tokens: 0,
+        cached_write_tokens: 0,
+        total_tokens: 12,
+      },
+    });
   });
 
   test('ignores other requests and rejects a changed resumed session id', () => {

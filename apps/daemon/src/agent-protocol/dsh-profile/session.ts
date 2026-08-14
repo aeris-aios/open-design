@@ -185,6 +185,8 @@ export function attachDshProfileSession({
         if (!requireSession()) return;
         send('agent', {
           type: 'usage',
+          provider: frame.provider,
+          model: frame.model,
           usage: {
             input_tokens: frame.input_tokens,
             output_tokens: frame.output_tokens,

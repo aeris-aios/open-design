@@ -3468,6 +3468,7 @@ export const esES: Dict = {
   'assistant.role': 'Asistente',
   'assistant.workingLabel': 'Trabajando',
   'assistant.doneLabel': 'Listo',
+  'assistant.canceledLabel': 'Cancelado',
   'assistant.copyMarkdown': 'Copiar Markdown de la respuesta',
   'assistant.forkConversation': 'Bifurcar desde aquí',
   'assistant.forkingConversation': 'Bifurcando…',

@@ -845,6 +845,7 @@ const HIDDEN_BRAND_ASSISTANT_STATUS_LABELS = new Set([
   'streaming',
   'starting',
   'running',
+  'working',
   'requesting',
   'thinking',
   'empty_response',
@@ -4521,12 +4522,12 @@ export function isAssistantMessageStreaming(
   forceStreamingMessageIds?: Set<string>,
 ): boolean {
   if (message.role !== 'assistant') return false;
+  if (isTerminalRunStatus(message.runStatus)) return false;
   if (forceStreamingMessageIds?.has(message.id)) return true;
   if (isActiveRunStatus(message.runStatus)) return true;
   if (message.id !== lastAssistantId) return false;
   if (!paneStreaming) return false;
   if (message.endedAt !== undefined) return false;
-  if (isTerminalRunStatus(message.runStatus)) return false;
   return true;
 }
 
