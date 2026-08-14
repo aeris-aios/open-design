@@ -1,9 +1,9 @@
 ---
-title: Open Design 0.19.1 — DeepSeek Harness, Connected
+title: Open Design 0.19.1 — Design with DeepSeek Harness
 description: Connect your official DeepSeek Harness installation to Open Design for model discovery, structured runs, and session resume. Paid plans also get DeepSeek V4 Pro and Flash unlimited for two weeks.
 ---
 
-### 🌟 Codename: *DeepSeek Harness, Connected*
+### 🌟 Codename: *Design with DeepSeek Harness*
 
 🧰 **59 PRs · 24 contributors · 4 days** — **DeepSeek Harness now runs as an
 agent inside Open Design.** Open Design finds your official `dsh`, guides setup
