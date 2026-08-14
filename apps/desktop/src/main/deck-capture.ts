@@ -714,13 +714,22 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
 
   function compositingAncestors(element: HTMLElement, slide: HTMLElement): HTMLElement[] {
     const ancestors: HTMLElement[] = [];
+    let compositingBoundary = 0;
     for (let ancestor = element.parentElement; ancestor && ancestor !== slide; ancestor = ancestor.parentElement) {
-      if (establishesCompositingContext(getComputedStyle(ancestor))) ancestors.push(ancestor);
+      ancestors.push(ancestor);
+      if (establishesCompositingContext(getComputedStyle(ancestor))) {
+        compositingBoundary = ancestors.length;
+      }
     }
     if (element !== slide && hasUnsupportedNativeAncestorEffect(getComputedStyle(slide))) {
       ancestors.push(slide);
+      compositingBoundary = ancestors.length;
     }
-    return ancestors;
+    // A painted wrapper between the layered target and the outer compositor
+    // participates in the same group even when it establishes no compositor
+    // of its own. Keep the complete chain through the outermost boundary so
+    // its fill is captured and cannot be re-emitted above the replacement PNG.
+    return ancestors.slice(0, compositingBoundary);
   }
 
   const slides = Array.prototype.slice
@@ -949,13 +958,29 @@ export function isolateLayeredPptxBackground(
     if (!hasPaintClip(element) && !hasPaintClip(target)) return false;
 
     // A clip path or mask can confine real paint to a narrow stripe or ring
-    // that misses all representative points above. Walk the complete overlap
-    // at capture-pixel centers until Chromium reports both painted elements;
-    // this preserves sub-CSS-pixel regions on the supported 2x capture path.
+    // that misses all representative points above. Preserve capture-pixel
+    // centers for small overlaps, then switch to a bounded stratified grid so
+    // a full-slide candidate cannot turn one export into millions of hit tests.
     const captureScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const step = 1 / captureScale;
-    for (let y = intersection.top + step / 2; y < intersection.bottom; y += step) {
-      for (let x = intersection.left + step / 2; x < intersection.right; x += step) {
+    const pixelColumns = Math.max(1, Math.ceil((intersection.right - intersection.left) * captureScale));
+    const pixelRows = Math.max(1, Math.ceil((intersection.bottom - intersection.top) * captureScale));
+    const maxFallbackSamples = 4_096;
+    let columns = pixelColumns;
+    let rows = pixelRows;
+    if (pixelColumns * pixelRows > maxFallbackSamples) {
+      const aspectRatio = pixelColumns / pixelRows;
+      columns = Math.max(
+        1,
+        Math.min(pixelColumns, maxFallbackSamples, Math.floor(Math.sqrt(maxFallbackSamples * aspectRatio))),
+      );
+      rows = Math.max(1, Math.min(pixelRows, Math.floor(maxFallbackSamples / columns)));
+    }
+    const stepX = (intersection.right - intersection.left) / columns;
+    const stepY = (intersection.bottom - intersection.top) / rows;
+    for (let row = 0; row < rows; row += 1) {
+      const y = intersection.top + (row + 0.5) * stepY;
+      for (let column = 0; column < columns; column += 1) {
+        const x = intersection.left + (column + 0.5) * stepX;
         if (paintsBehindAt(x, y)) return true;
       }
     }

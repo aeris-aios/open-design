@@ -421,7 +421,13 @@ describe('editable PPTX layered backgrounds', () => {
   test('keeps layered-background captures at 2x CSS resolution on a dpr=2 renderer', async () => {
     const capture = await probeDpr2LayeredBackgroundCapture();
 
-    expect(capture).toEqual({ devicePixelRatio: 2, height: 120, width: 240 });
+    expect(capture).toMatchObject({ devicePixelRatio: 2, height: 120, width: 240 });
+  }, 20_000);
+
+  test('bounds clipped-backdrop hit testing independently of overlap area', async () => {
+    const capture = await probeDpr2LayeredBackgroundCapture();
+
+    expect(capture.largeAreaHitTests).toBeLessThanOrEqual(4_101);
   }, 20_000);
 
   test('captures standard and WebKit text-clipped layered gradients as Chromium-painted text', async () => {
@@ -792,6 +798,27 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.nestedCompositorNativeFill).toBe(-1);
   }, 30_000);
 
+  test('captures a painted static wrapper inside an opacity group without re-emitting its fill', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const [image] = media.paintedWrapper.pngs;
+
+    expect(media.paintedWrapper, JSON.stringify(media.paintedWrapper)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    // Chromium paints the half-transparent red child over the static green
+    // wrapper, then applies the outer half opacity to that complete group.
+    expect(
+      image?.centerRgb.every((channel, index) => Math.abs(channel - [50, 50, 0][index]!) <= 1),
+      JSON.stringify(image),
+    ).toBe(true);
+    expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
+    expect(image?.maxAlpha).toBeLessThanOrEqual(136);
+    expect(media.paintedWrapperOrder.image).toBeGreaterThanOrEqual(0);
+    expect(media.paintedWrapperOrder.nativeFill).toBe(-1);
+    expect(media.paintedWrapperOrder.image).toBeLessThan(media.paintedWrapperOrder.nativeContent);
+  }, 30_000);
+
   test('captures a compositor root solid background below its native foreground', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.solidCompositor.pngs;
@@ -980,6 +1007,8 @@ type LayeredBackgroundProbe = {
   nestedOpacityNativeShape: number;
   normalMaskedPseudo: LayeredBackgroundExport;
   paintOrderedBackdrop: LayeredBackgroundExport;
+  paintedWrapper: LayeredBackgroundExport;
+  paintedWrapperOrder: { image: number; nativeContent: number; nativeFill: number };
   pseudo: LayeredBackgroundExport;
   pseudoLayerOrder: { background: number; content: number };
   pseudoNativeStyle: { border: number; content: number; fallbackFill: number };
@@ -1041,15 +1070,22 @@ type PngProbe = {
 };
 
 let layeredBackgroundProbePromise: Promise<LayeredBackgroundProbe> | undefined;
+let dpr2LayeredBackgroundProbePromise: ReturnType<typeof runDpr2LayeredBackgroundCapture> | undefined;
 
 function probeLayeredBackgroundMedia(): Promise<LayeredBackgroundProbe> {
   layeredBackgroundProbePromise ??= runLayeredBackgroundMediaProbe();
   return layeredBackgroundProbePromise;
 }
 
-async function probeDpr2LayeredBackgroundCapture(): Promise<{
+function probeDpr2LayeredBackgroundCapture(): ReturnType<typeof runDpr2LayeredBackgroundCapture> {
+  dpr2LayeredBackgroundProbePromise ??= runDpr2LayeredBackgroundCapture();
+  return dpr2LayeredBackgroundProbePromise;
+}
+
+async function runDpr2LayeredBackgroundCapture(): Promise<{
   devicePixelRatio: number;
   height: number;
+  largeAreaHitTests: number;
   width: number;
 }> {
   const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-layered-dpr2-'));
@@ -1100,7 +1136,31 @@ app.whenReady().then(async () => {
     if (!capture) throw new Error('No layered background capture was produced');
     const image = nativeImage.createFromBuffer(Buffer.from(capture.dataUrl.split(',')[1], 'base64'));
     const size = image.getSize();
-    const result = { devicePixelRatio: await queryDevicePixelRatio(window), ...size };
+    const largeHtml = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:1920px;height:1080px}.backdrop,.large-target{position:absolute;inset:0}.backdrop{background:green;clip-path:polygon(0 0,1px 0,1px 100%,0 100%)}.large-target{background-image:linear-gradient(red,blue),linear-gradient(white,black);mix-blend-mode:multiply}</style><section class="slide"><div class="backdrop"></div><div class="large-target"></div></section>';
+    await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(largeHtml));
+    const [largeTarget] = await window.webContents.executeJavaScript(
+      '(' + collectLayeredPptxBackgroundTargets.toString() + ')(".slide")',
+      true,
+    );
+    if (!largeTarget) throw new Error('No large layered background target was produced');
+    const largeAreaProbe = await window.webContents.executeJavaScript(
+      '(() => {'
+        + 'let calls=0;try{'
+          + 'const restoreLayeredPptxBackgroundIsolation=' + restoreLayeredPptxBackgroundIsolation.toString() + ';'
+          + 'Object.defineProperty(document,"elementsFromPoint",{configurable:true,value:()=>{calls+=1;return[];}});'
+          + '(' + isolateLayeredPptxBackground.toString() + ')(".slide",' + JSON.stringify(largeTarget.id) + ');'
+          + 'return{calls};'
+        + '}catch(error){return{calls,error:String(error&&error.stack?error.stack:error)}}'
+      + '})()',
+      true,
+    );
+    if (largeAreaProbe.error) throw new Error(largeAreaProbe.error);
+    const largeAreaHitTests = largeAreaProbe.calls;
+    const result = {
+      devicePixelRatio: await queryDevicePixelRatio(window),
+      largeAreaHitTests,
+      ...size,
+    };
     await new Promise((resolve, reject) => {
       process.stdout.write('OD_PPTX_DPR2_PROBE:' + JSON.stringify(result) + '\\n', (error) => {
         if (error) reject(error);
@@ -1153,6 +1213,7 @@ app.whenReady().then(async () => {
     return JSON.parse(marker.slice('OD_PPTX_DPR2_PROBE:'.length)) as {
       devicePixelRatio: number;
       height: number;
+      largeAreaHitTests: number;
       width: number;
     };
   } finally {
@@ -1337,6 +1398,7 @@ const fixtures = {
   blended: '<div class="blended-backdrop"></div><div class="blended"></div>',
   nestedBlended: '<div class="nested-blended-backdrop"><div class="nested-blended-texture"></div></div><div class="nested-blended"></div>',
   nestedCompositor: '<div class="nested-compositor"><div class="nested-compositor-intermediate"><div class="nested-compositor-child"></div></div></div>',
+  paintedWrapper: '<div class="painted-wrapper-root"><div class="painted-wrapper-panel"><div class="painted-wrapper-child"></div><div class="painted-wrapper-label">Painted wrapper label</div></div></div>',
   nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div><div class="nested-opacity-label">Native nested opacity label</div><div class="nested-opacity-shape"></div></div>',
   solidCompositor: '<div class="solid-compositor"><div class="solid-compositor-child"></div><div class="solid-compositor-label">Solid compositor label</div></div>',
   ancestorBlend: '<div class="ancestor-blend-backdrop"></div><div class="ancestor-blend-context"><div class="ancestor-blend-child"></div></div>',
@@ -1540,6 +1602,30 @@ const styles = \`
     position: absolute;
     inset: 0;
     background-image: linear-gradient(rgba(200, 0, 0, .5), rgba(200, 0, 0, .5)), linear-gradient(transparent, transparent);
+  }
+  .painted-wrapper-root {
+    position: absolute;
+    left: 112px;
+    top: 118px;
+    width: 92px;
+    height: 44px;
+    opacity: .5;
+  }
+  .painted-wrapper-panel {
+    width: 100%;
+    height: 100%;
+    background: rgb(0, 200, 0);
+  }
+  .painted-wrapper-child {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(200, 0, 0, .5), rgba(200, 0, 0, .5)), linear-gradient(transparent, transparent);
+  }
+  .painted-wrapper-label {
+    position: absolute;
+    inset: 0;
+    color: white;
+    font: 1px/1px sans-serif;
   }
   .solid-compositor {
     position: absolute;
@@ -2112,6 +2198,23 @@ function inspectSolidCompositorOrder(entries, mediaName) {
   };
 }
 
+function inspectPaintedWrapperOrder(entries, mediaName) {
+  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
+  const relationships = entries
+    .find(({ name }) => name === 'ppt/slides/_rels/slide1.xml.rels')
+    ?.data.toString('utf8') || '';
+  const targetName = mediaName.split('/').pop() || '';
+  const relationship = relationships
+    .match(/<Relationship\\b[^>]*>/g)
+    ?.find((entry) => entry.includes(targetName)) || '';
+  const relationshipId = relationship.match(/\\bId="([^"]+)"/)?.[1] || '';
+  return {
+    image: relationshipId ? slideXml.indexOf('r:embed="' + relationshipId + '"') : -1,
+    nativeContent: slideXml.indexOf('Painted wrapper label'),
+    nativeFill: slideXml.indexOf('val="00C800"'),
+  };
+}
+
 function inspectAlignmentGeometry(entries, mediaName) {
   const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
   const relationships = entries
@@ -2458,6 +2561,10 @@ app.whenReady().then(async () => {
     result.nestedOpacityNativeContent = inspectNativeContent(entries, 'Native nested opacity label');
     result.nestedOpacityNativeShape = inspectNativeContent(entries, 'val="00FF00"');
     result.nestedCompositorNativeFill = inspectNativeContent(entries, 'val="00C800"');
+    result.paintedWrapperOrder = inspectPaintedWrapperOrder(
+      entries,
+      result.paintedWrapper?.media?.[0] || '',
+    );
     result.maskedNativeContent = inspectNativeContent(entries, 'Masked real content');
     result.compositedPseudoContentChromium = compositedPseudoContentChromium;
     const compositedPseudoContentMedia = media.find(
@@ -2643,6 +2750,16 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.nestedOpacityNativeShape !== 'number'
     || !('normalMaskedPseudo' in value)
     || !('paintOrderedBackdrop' in value)
+    || !('paintedWrapper' in value)
+    || !('paintedWrapperOrder' in value)
+    || typeof value.paintedWrapperOrder !== 'object'
+    || value.paintedWrapperOrder === null
+    || !('image' in value.paintedWrapperOrder)
+    || typeof value.paintedWrapperOrder.image !== 'number'
+    || !('nativeContent' in value.paintedWrapperOrder)
+    || typeof value.paintedWrapperOrder.nativeContent !== 'number'
+    || !('nativeFill' in value.paintedWrapperOrder)
+    || typeof value.paintedWrapperOrder.nativeFill !== 'number'
     || !('alignmentGeometry' in value)
     || typeof value.alignmentGeometry !== 'object'
     || value.alignmentGeometry === null
@@ -2821,6 +2938,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     nestedOpacityNativeShape: value.nestedOpacityNativeShape,
     normalMaskedPseudo: parseLayeredBackgroundExport(value.normalMaskedPseudo),
     paintOrderedBackdrop: parseLayeredBackgroundExport(value.paintOrderedBackdrop),
+    paintedWrapper: parseLayeredBackgroundExport(value.paintedWrapper),
+    paintedWrapperOrder: value.paintedWrapperOrder as LayeredBackgroundProbe['paintedWrapperOrder'],
     pseudo: parseLayeredBackgroundExport(value.pseudo),
     pseudoLayerOrder: {
       background: value.pseudoLayerOrder.background,
