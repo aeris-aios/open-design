@@ -3166,24 +3166,6 @@ export async function startServer({
   const fetchFreshBackgroundWorkspaceDirectory =
     workspaceDirectoryAuthority.backgroundFresh;
   let workspaceHubSubscriptions: WorkspaceHubSubscriptionManager | null = null;
-  let workspaceHubAccountIdentity = velaWorkspaceDirectoryIdentity(
-    readVelaControlApiContext,
-    configuredAmrEnv(),
-  );
-  const refreshWorkspaceHubAccountIdentity = (): void => {
-    const currentIdentity = velaWorkspaceDirectoryIdentity(
-      readVelaControlApiContext,
-      configuredAmrEnv(),
-    );
-    if (currentIdentity === workspaceHubAccountIdentity) return;
-    workspaceHubAccountIdentity = currentIdentity;
-    workspaceDirectoryAuthority.setRealtimeHealthy(false);
-    workspaceHubSubscriptions?.refreshEndpoints();
-  };
-  const fetchWorkspaceDirectoryForAccountSurface = () => {
-    refreshWorkspaceHubAccountIdentity();
-    return fetchWorkspaceDirectory();
-  };
   const verifyExplicitWorkspaceRequestContext = async (input: {
     req: any;
     requireTeam?: boolean;
@@ -3449,6 +3431,29 @@ export async function startServer({
       ...input,
     }),
   });
+  let workspaceHubAccountIdentity = velaWorkspaceDirectoryIdentity(
+    readVelaControlApiContext,
+    configuredAmrEnv(),
+  );
+  const resetWorkspaceExactIdentityCaches = (): void => {
+    workspaceExactAuthorityCache.resetIdentity();
+    workspaceExactContextCache.resetIdentity();
+  };
+  const refreshWorkspaceHubAccountIdentity = (): void => {
+    const currentIdentity = velaWorkspaceDirectoryIdentity(
+      readVelaControlApiContext,
+      configuredAmrEnv(),
+    );
+    if (currentIdentity === workspaceHubAccountIdentity) return;
+    workspaceHubAccountIdentity = currentIdentity;
+    resetWorkspaceExactIdentityCaches();
+    workspaceDirectoryAuthority.setRealtimeHealthy(false);
+    workspaceHubSubscriptions?.refreshEndpoints();
+  };
+  const fetchWorkspaceDirectoryForAccountSurface = () => {
+    refreshWorkspaceHubAccountIdentity();
+    return fetchWorkspaceDirectory();
+  };
   const workspaceContextProvider = workspaceExactContextCache.provider;
   const cachedWorkspaceContextForRequest = (
     req: unknown,

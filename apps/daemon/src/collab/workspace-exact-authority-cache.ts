@@ -18,6 +18,8 @@ export interface WorkspaceExactAuthorityCache {
     workspaceMemberId: string,
   ): WorkspaceDirectoryItem | null;
   setRealtimeHealthy(workspaceId: string, healthy: boolean): void;
+  /** Retire every row and health grant across a credential transition. */
+  resetIdentity(): void;
   invalidate(workspaceId?: string): void;
 }
 
@@ -47,6 +49,10 @@ export function createWorkspaceExactAuthorityCache(
 
   const key = (identity: string, workspaceId: string) =>
     `${identity}\0${workspaceId}`;
+  const resetIdentity = (): void => {
+    entries.clear();
+    healthyIdentities.clear();
+  };
 
   return {
     observe(identity, items): void {
@@ -109,11 +115,12 @@ export function createWorkspaceExactAuthorityCache(
       }
     },
 
+    resetIdentity,
+
     invalidate(workspaceIdInput): void {
       const workspaceId = workspaceIdInput?.trim() ?? '';
       if (!workspaceId) {
-        entries.clear();
-        healthyIdentities.clear();
+        resetIdentity();
         return;
       }
       const suffix = `\0${workspaceId}`;

@@ -69,4 +69,22 @@ describe('workspace exact authority cache', () => {
 
     expect(cache.cached('w1', 'member-w1')).toBeNull();
   });
+
+  it('does not revive account A after an A to B to A identity reset with no intervening read', () => {
+    let identity = 'account-a';
+    const cache = createWorkspaceExactAuthorityCache({
+      identity: () => identity,
+    });
+    cache.observe(identity, [item('w1')]);
+    cache.setRealtimeHealthy('w1', true);
+    expect(cache.cached('w1', 'member-w1')).not.toBeNull();
+
+    identity = 'account-b';
+    cache.resetIdentity();
+    identity = 'account-a';
+    cache.resetIdentity();
+
+    cache.setRealtimeHealthy('w1', true);
+    expect(cache.cached('w1', 'member-w1')).toBeNull();
+  });
 });

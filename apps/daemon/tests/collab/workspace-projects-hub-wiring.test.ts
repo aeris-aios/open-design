@@ -198,6 +198,25 @@ describe('server.ts wiring (source boundary)', () => {
     return source.slice(switchStart, i + 1);
   }
 
+  it('resets exact authority across credential changes before refreshing hub endpoints', () => {
+    const start = source.indexOf(
+      'const refreshWorkspaceHubAccountIdentity = (): void => {',
+    );
+    const end = source.indexOf(
+      'const fetchWorkspaceDirectoryForAccountSurface = () => {',
+      start,
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    const resetStart = body.indexOf('resetWorkspaceExactIdentityCaches();');
+    const endpointRefreshStart = body.indexOf(
+      'workspaceHubSubscriptions?.refreshEndpoints();',
+    );
+    expect(resetStart).toBeGreaterThan(-1);
+    expect(endpointRefreshStart).toBeGreaterThan(resetStart);
+  });
+
   it('routes both project catalog event families through project reconciliation', () => {
     const switchBody = extractOnEventSwitchBody();
     const cases = switchBody.split(/(?=case '[a-z-]+':)/g).filter((chunk) => chunk.startsWith("case '"));
