@@ -727,13 +727,15 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       );
       if (
         capturesLayer &&
-        (hasCssMask(style) || hasNonNormalBlendMode(style)) &&
+        (hasCssMask(style) || establishesCompositingContext(style)) &&
         !element.hasAttribute("data-od-pptx-materialized-pseudo")
       ) {
-        // The native converter serializes neither CSS masks nor mix-blend-mode.
-        // Both affect the complete painted element, so keep real foregrounds
-        // and borders in the same Chromium capture as the layered background.
+        // The native converter cannot reapply masks or compositor effects to a
+        // background raster and editable foreground as one CSS paint group.
+        // Keep the complete element paint in one Chromium capture instead.
         element.setAttribute("data-od-pptx-capture-entire-element", "true");
+        element.setAttribute("data-od-pptx-suppress-before", "true");
+        element.setAttribute("data-od-pptx-suppress-after", "true");
       }
       return capturesLayer;
     });
@@ -2041,6 +2043,36 @@ export async function runDomToPptx(
     }
   }
 
+  function suppressCapturedSlidePaint(slide: HTMLElement, capture: HTMLElement): void {
+    // dom-to-pptx needs the slide itself to remain measurable as the export
+    // root. Keep only the replacement image visible inside it and neutralize
+    // effects that Chromium already baked into that whole-paint capture.
+    slide.querySelectorAll<HTMLElement>("*").forEach((descendant) => {
+      if (descendant !== capture && !capture.contains(descendant)) {
+        descendant.style.setProperty("display", "none", "important");
+      }
+    });
+    slide.style.setProperty("background", "transparent", "important");
+    slide.style.setProperty("border", "0", "important");
+    slide.style.setProperty("box-shadow", "none", "important");
+    slide.style.setProperty("clip-path", "none", "important");
+    slide.style.setProperty("color", "transparent", "important");
+    slide.style.setProperty("filter", "none", "important");
+    slide.style.setProperty("backdrop-filter", "none", "important");
+    slide.style.setProperty("-webkit-backdrop-filter", "none", "important");
+    slide.style.setProperty("mask-image", "none", "important");
+    slide.style.setProperty("-webkit-mask-image", "none", "important");
+    slide.style.setProperty("mix-blend-mode", "normal", "important");
+    slide.style.setProperty("opacity", "1", "important");
+    slide.style.setProperty("outline", "none", "important");
+    slide.style.setProperty("text-shadow", "none", "important");
+    slide.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+    slide.style.setProperty("transform", "none", "important");
+    slide.style.setProperty("translate", "none", "important");
+    slide.style.setProperty("rotate", "none", "important");
+    slide.style.setProperty("scale", "none", "important");
+  }
+
   function preserveLayeredGradientBackgrounds(slides: HTMLElement[]): void {
     if (document.querySelectorAll("[data-od-pptx-suppress-before], [data-od-pptx-suppress-after]").length > 0) {
       const suppressedPseudoStyle = document.createElement("style");
@@ -2073,9 +2105,9 @@ export async function runDomToPptx(
       if (!slide) continue;
 
       const style = getComputedStyle(element);
-      // The PNG contains only the context's layered CSS backgrounds with its
-      // opacity/filter/transform applied. Export it beside the context, then
-      // remove those backgrounds while retaining authored foreground objects.
+      // Export the flattened context beside its source. Ordinary members lose
+      // only the backgrounds already present in the PNG; members whose own
+      // compositor effect required whole-paint capture are suppressed entirely.
       const image = document.createElement("img");
       image.setAttribute("data-od-pptx-layered-bg", "true");
       image.setAttribute("aria-hidden", "true");
@@ -2105,7 +2137,8 @@ export async function runDomToPptx(
           toJSON: () => ({}),
         } as DOMRect;
       };
-      element.parentElement?.insertBefore(image, element);
+      if (element === slide) slide.prepend(image);
+      else element.parentElement?.insertBefore(image, element);
       document
         .querySelectorAll<HTMLElement>(`[data-od-pptx-compositing-member="${captureId}"]`)
         .forEach((member) => {
@@ -2113,7 +2146,8 @@ export async function runDomToPptx(
             member.hasAttribute("data-od-pptx-materialized-pseudo") ||
             member.hasAttribute("data-od-pptx-capture-entire-element")
           ) {
-            member.style.setProperty("display", "none", "important");
+            if (member === slide) suppressCapturedSlidePaint(member, image);
+            else member.style.setProperty("display", "none", "important");
             capturedEntirePaintRoots.add(member);
           } else {
             member.style.setProperty("background-image", "none", "important");
@@ -2194,7 +2228,8 @@ export async function runDomToPptx(
           // The helper exists only to give Chromium a real capture target. Its
           // raster image now owns that paint; leaving the custom element in the
           // converter walk would emit the same pseudo as a second media layer.
-          element.style.setProperty("display", "none", "important");
+          if (element === slide) suppressCapturedSlidePaint(element, background);
+          else element.style.setProperty("display", "none", "important");
           capturedEntirePaintRoots.add(element);
         }
         continue;

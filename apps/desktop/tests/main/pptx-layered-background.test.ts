@@ -609,7 +609,7 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.maxAlpha).toBeLessThanOrEqual(136);
   }, 30_000);
 
-  test('flattens nested layered backgrounds through ancestor opacity once', async () => {
+  test('captures a layered target foreground with its own opacity applied once', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.nestedOpacity.pngs;
 
@@ -617,6 +617,13 @@ describe('editable PPTX layered backgrounds', () => {
       captures: 1,
       media: [expect.stringMatching(/\.png$/)],
     });
+    const comparisonContext = JSON.stringify({
+      chromium: media.nestedOpacityChromium,
+      exported: image,
+      comparison: media.nestedOpacityChromiumComparison,
+    });
+    expect(media.nestedOpacityChromiumComparison.meanChannelDelta, comparisonContext).toBeLessThanOrEqual(8);
+    expect(media.nestedOpacityChromiumComparison.maxChannelDelta, comparisonContext).toBeLessThanOrEqual(96);
     // Electron's bitmap is premultiplied: the authored [50, 0, 100] group
     // color appears at half intensity alongside the ancestor's 0.5 alpha.
     expect(
@@ -625,9 +632,25 @@ describe('editable PPTX layered backgrounds', () => {
     ).toBe(true);
     expect(image?.maxAlpha).toBeGreaterThanOrEqual(120);
     expect(image?.maxAlpha).toBeLessThanOrEqual(136);
-    expect(media.nestedOpacityNativeContent).toBeGreaterThanOrEqual(0);
-    expect(media.nestedOpacityNativeShape).toBeGreaterThanOrEqual(0);
+    expect(media.nestedOpacityNativeContent).toBe(-1);
+    expect(media.nestedOpacityNativeShape).toBe(-1);
     expect(image?.topLeftRgb[0], JSON.stringify(image)).toBeGreaterThan(image?.topLeftRgb[1] ?? 0);
+  }, 30_000);
+
+  test('keeps a whole-paint slide capture as the export root with full-slide geometry', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.slideRootMask, JSON.stringify(media.slideRootMask)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    expect(media.slideRootMaskGeometry).toEqual({
+      height: 5_143_500,
+      width: 9_144_000,
+      x: 0,
+      y: 0,
+    });
+    expect(media.slideRootMaskNativeContent).toBe(-1);
   }, 30_000);
 
   test('captures intermediate compositor paint with a partially transparent layered child', async () => {
@@ -786,6 +809,8 @@ type LayeredBackgroundProbe = {
   nestedCompositor: LayeredBackgroundExport;
   nestedCompositorNativeFill: number;
   nestedOpacity: LayeredBackgroundExport;
+  nestedOpacityChromium: PngProbe;
+  nestedOpacityChromiumComparison: PngComparison;
   nestedOpacityNativeContent: number;
   nestedOpacityNativeShape: number;
   normalMaskedPseudo: LayeredBackgroundExport;
@@ -802,6 +827,9 @@ type LayeredBackgroundProbe = {
   rootPseudo: LayeredBackgroundExport;
   rootPseudoLayerOrder: { background: number; content: number; slideBackground: number };
   skippedTargets: number;
+  slideRootMask: LayeredBackgroundExport;
+  slideRootMaskGeometry: PptxGeometry | null;
+  slideRootMaskNativeContent: number;
   solidCompositor: LayeredBackgroundExport;
   solidCompositorOrder: { image: number; nativeContent: number; nativeFill: number };
   stackingSlide: LayeredBackgroundExport;
@@ -979,8 +1007,8 @@ const styles = \`
   }
   .nested-opacity {
     position: absolute;
-    left: 146px;
-    top: 106px;
+    left: 126px;
+    top: 70px;
     width: 68px;
     height: 38px;
     opacity: .5;
@@ -1000,11 +1028,37 @@ const styles = \`
   }
   .nested-opacity-shape {
     position: absolute;
-    left: 0;
-    top: 0;
-    width: 10px;
-    height: 10px;
+    right: 6px;
+    bottom: 6px;
+    width: 20px;
+    height: 20px;
     background: rgb(0, 255, 0);
+  }
+  .nested-opacity-slide,
+  .slide-root-mask {
+    background: transparent;
+  }
+  .nested-opacity-slide::before,
+  .slide-root-mask::before {
+    content: none;
+    display: none;
+  }
+  .slide-root-mask {
+    background-image: linear-gradient(rgb(42, 84, 126), rgb(42, 84, 126)), linear-gradient(transparent, transparent);
+    -webkit-mask-image: linear-gradient(to right, black 60%, transparent 100%);
+    mask-image: linear-gradient(to right, black 60%, transparent 100%);
+  }
+  .slide-root-mask-content {
+    position: absolute;
+    left: 96px;
+    top: 60px;
+    width: 128px;
+    height: 60px;
+    box-sizing: border-box;
+    border: 4px solid white;
+    color: white;
+    font: 700 18px/52px sans-serif;
+    text-align: center;
   }
   .nested-compositor {
     position: absolute;
@@ -1426,8 +1480,11 @@ function inspectMaskedPseudoContentOrder(entries, mediaName) {
 }
 
 function inspectNativeContent(entries, content) {
-  const slideXml = entries.find(({ name }) => name === 'ppt/slides/slide1.xml')?.data.toString('utf8') || '';
-  return slideXml.indexOf(content);
+  return entries
+    .filter(({ name }) => /^ppt\\/slides\\/slide\\d+\\.xml$/.test(name))
+    .map(({ data }) => data.toString('utf8'))
+    .join('')
+    .indexOf(content);
 }
 
 function inspectPseudoNativeStyle(entries) {
@@ -1495,6 +1552,32 @@ function inspectAlignmentGeometry(entries, mediaName) {
   return { background: geometry(picture), content: geometry(content) };
 }
 
+function inspectPictureGeometry(entries, mediaName) {
+  const targetName = mediaName.split('/').pop() || '';
+  if (!targetName) return null;
+  for (const relationshipEntry of entries.filter(({ name }) => /^ppt\\/slides\\/_rels\\/slide\\d+\\.xml\\.rels$/.test(name))) {
+    const relationships = relationshipEntry.data.toString('utf8');
+    const relationship = relationships
+      .match(/<Relationship\\b[^>]*>/g)
+      ?.find((entry) => entry.includes(targetName)) || '';
+    const relationshipId = relationship.match(/\\bId="([^"]+)"/)?.[1] || '';
+    if (!relationshipId) continue;
+    const slideName = relationshipEntry.name
+      .replace('ppt/slides/_rels/', 'ppt/slides/')
+      .replace('.xml.rels', '.xml');
+    const slideXml = entries.find(({ name }) => name === slideName)?.data.toString('utf8') || '';
+    const picture = slideXml
+      .match(/<p:pic>[\\s\\S]*?<\\/p:pic>/g)
+      ?.find((entry) => entry.includes('r:embed="' + relationshipId + '"')) || '';
+    const offset = picture.match(/<a:off x="(\\d+)" y="(\\d+)"\\/>/);
+    const extent = picture.match(/<a:ext cx="(\\d+)" cy="(\\d+)"\\/>/);
+    if (offset && extent) {
+      return { height: Number(extent[2]), width: Number(extent[1]), x: Number(offset[1]), y: Number(offset[2]) };
+    }
+  }
+  return null;
+}
+
 let probeStage = 'startup';
 app.whenReady().then(async () => {
   const bundle = gunzipSync(await readFile(process.env.OD_PPTX_LAYER_BUNDLE)).toString('utf8');
@@ -1517,7 +1600,7 @@ app.whenReady().then(async () => {
     await dbg.sendCommand('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     // Keep one slide and one real exporter invocation: serial slide conversion
     // made this probe hit its Linux workspace-test timeout under concurrent load.
-    const fixtureEntries = Object.entries(fixtures);
+    const fixtureEntries = Object.entries(fixtures).filter(([name]) => name !== 'nestedOpacity');
     const fixtureMarkup = fixtureEntries
       .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
       .join('');
@@ -1525,7 +1608,12 @@ app.whenReady().then(async () => {
       + '<section class="slide stacking-slide" data-od-probe="stackingSlide"></section>'
       + '<section class="slide grouped-backdrop-slide" data-od-probe="groupedBackdrop">'
       + '<div class="grouped-backdrop"></div><div class="grouped-context"><div class="grouped-blended-child"></div></div>'
-      + '</section>';
+      + '</section>'
+      + '<section class="slide nested-opacity-slide"><div data-od-probe="nestedOpacity">'
+      + fixtures.nestedOpacity
+      + '</div></section>'
+      + '<section class="slide slide-root-mask" data-od-probe="slideRootMask">'
+      + '<div class="slide-root-mask-content">Slide root paint</div></section>';
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     probeStage = 'normalize export DOM';
@@ -1565,6 +1653,21 @@ app.whenReady().then(async () => {
     });
     const realBlendChromiumData = Buffer.from(realBlendScreenshot.data, 'base64');
     const realBlendChromium = inspectPng(realBlendChromiumData, 'chromium-real-blend.png');
+    const nestedOpacityCapture = await window.webContents.executeJavaScript(
+      '(() => { const rect = document.querySelector(".nested-opacity").getBoundingClientRect(); return { geometry: { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
+      true,
+    );
+    const nestedOpacityScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
+      captureBeyondViewport: true,
+      clip: {
+        ...nestedOpacityCapture.geometry,
+        scale: 2 / nestedOpacityCapture.pixelRatio,
+      },
+      format: 'png',
+      fromSurface: true,
+    });
+    const nestedOpacityChromiumData = Buffer.from(nestedOpacityScreenshot.data, 'base64');
+    const nestedOpacityChromium = inspectPng(nestedOpacityChromiumData, 'chromium-nested-opacity.png');
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
     const targetCounts = await window.webContents.executeJavaScript(
@@ -1684,6 +1787,10 @@ app.whenReady().then(async () => {
       entries,
       result.maskedPseudoContent?.media?.[0] || '',
     );
+    result.nestedOpacityChromium = nestedOpacityChromium;
+    const nestedOpacityMedia = media.find(({ name }) => name === result.nestedOpacity?.media?.[0]);
+    if (!nestedOpacityMedia) throw new Error('Missing exported nested opacity media');
+    result.nestedOpacityChromiumComparison = comparePng(nestedOpacityChromiumData, nestedOpacityMedia.data);
     result.nestedOpacityNativeContent = inspectNativeContent(entries, 'Native nested opacity label');
     result.nestedOpacityNativeShape = inspectNativeContent(entries, 'val="00FF00"');
     result.nestedCompositorNativeFill = inspectNativeContent(entries, 'val="00C800"');
@@ -1720,6 +1827,8 @@ app.whenReady().then(async () => {
       result.solidCompositor?.media?.[0] || '',
     );
     result.alignmentGeometry = inspectAlignmentGeometry(entries, result.alignment?.media?.[0] || '');
+    result.slideRootMaskGeometry = inspectPictureGeometry(entries, result.slideRootMask?.media?.[0] || '');
+    result.slideRootMaskNativeContent = inspectNativeContent(entries, 'Slide root paint');
     result.skippedTargets = targetCounts.skipped;
     probeResult = result;
   } finally {
@@ -1796,6 +1905,12 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('nestedCompositorNativeFill' in value)
     || typeof value.nestedCompositorNativeFill !== 'number'
     || !('nestedOpacity' in value)
+    || !('nestedOpacityChromium' in value)
+    || typeof value.nestedOpacityChromium !== 'object'
+    || value.nestedOpacityChromium === null
+    || !('nestedOpacityChromiumComparison' in value)
+    || typeof value.nestedOpacityChromiumComparison !== 'object'
+    || value.nestedOpacityChromiumComparison === null
     || !('nestedOpacityNativeContent' in value)
     || typeof value.nestedOpacityNativeContent !== 'number'
     || !('nestedOpacityNativeShape' in value)
@@ -1875,6 +1990,12 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || typeof value.rootPseudoLayerOrder.slideBackground !== 'number'
     || !('skippedTargets' in value)
     || typeof value.skippedTargets !== 'number'
+    || !('slideRootMask' in value)
+    || !('slideRootMaskGeometry' in value)
+    || typeof value.slideRootMaskGeometry !== 'object'
+    || value.slideRootMaskGeometry === null
+    || !('slideRootMaskNativeContent' in value)
+    || typeof value.slideRootMaskNativeContent !== 'number'
     || !('solidCompositor' in value)
     || !('solidCompositorOrder' in value)
     || typeof value.solidCompositorOrder !== 'object'
@@ -1915,6 +2036,8 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     nestedCompositor: parseLayeredBackgroundExport(value.nestedCompositor),
     nestedCompositorNativeFill: value.nestedCompositorNativeFill,
     nestedOpacity: parseLayeredBackgroundExport(value.nestedOpacity),
+    nestedOpacityChromium: value.nestedOpacityChromium as PngProbe,
+    nestedOpacityChromiumComparison: value.nestedOpacityChromiumComparison as PngComparison,
     nestedOpacityNativeContent: value.nestedOpacityNativeContent,
     nestedOpacityNativeShape: value.nestedOpacityNativeShape,
     normalMaskedPseudo: parseLayeredBackgroundExport(value.normalMaskedPseudo),
@@ -1938,6 +2061,9 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       slideBackground: value.rootPseudoLayerOrder.slideBackground,
     },
     skippedTargets: value.skippedTargets,
+    slideRootMask: parseLayeredBackgroundExport(value.slideRootMask),
+    slideRootMaskGeometry: value.slideRootMaskGeometry as PptxGeometry,
+    slideRootMaskNativeContent: value.slideRootMaskNativeContent,
     solidCompositor: parseLayeredBackgroundExport(value.solidCompositor),
     solidCompositorOrder: value.solidCompositorOrder as LayeredBackgroundProbe['solidCompositorOrder'],
     stackingSlide: parseLayeredBackgroundExport(value.stackingSlide),
