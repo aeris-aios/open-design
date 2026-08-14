@@ -555,6 +555,56 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test('[P1] recent project overflow menu flips upward near the viewport bottom', async ({ page }) => {
+  const recentProject = {
+    id: 'recent-menu-bottom',
+    name: 'Bottom Edge Project',
+    skillId: null,
+    designSystemId: null,
+    createdAt: Date.now() - 10_000,
+    updatedAt: Date.now() - 5_000,
+    metadata: { kind: 'prototype', nameSource: 'user' },
+  };
+
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.route('**/api/projects', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: { projects: [recentProject] } });
+      return;
+    }
+    await route.continue();
+  });
+  await gotoEntryHome(page);
+
+  const card = page.locator(`[data-project-id="${recentProject.id}"]`);
+  await expect(card).toBeVisible();
+  await page.evaluate((projectId) => {
+    const scroller = document.querySelector<HTMLElement>('.entry-main--scroll');
+    const card = document.querySelector<HTMLElement>(`[data-project-id="${projectId}"]`);
+    const trigger = card?.querySelector<HTMLElement>('.recent-projects__card-more');
+    if (!scroller || !card || !trigger) {
+      throw new Error('Recent project menu fixture is missing');
+    }
+
+    const desiredTop = scroller.getBoundingClientRect().bottom - 60;
+    scroller.scrollTop += trigger.getBoundingClientRect().top - desiredTop;
+  }, recentProject.id);
+
+  await card.hover();
+  const trigger = card.getByRole('button', { name: /more actions/i });
+  await trigger.click();
+
+  const menu = card.getByRole('menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeInViewport();
+
+  const triggerBox = await trigger.boundingBox();
+  const menuBox = await menu.boundingBox();
+  expect(triggerBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThan(triggerBox?.y ?? 0);
+});
+
 test('[P1] home left rail expands and collapses from the shell controls', async ({ page }) => {
   await gotoEntryHome(page);
 
