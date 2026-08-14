@@ -20,6 +20,11 @@
  */
 
 import { createRoleMarkerGuard, type RoleMarkerGuard } from '../role-marker-guard.js';
+import {
+  createClaudeChildEvidenceCollector,
+  type ClaudeChildRuntimeFact,
+  type ClaudeOpenChildTerminationReason,
+} from './claude-child-evidence.js';
 
 type StreamEvent = Record<string, unknown>;
 type EventSink = (event: StreamEvent) => void;
@@ -41,8 +46,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-interface ClaudeStreamHandlerOptions {
+export interface ClaudeStreamHandlerOptions {
   suppressHtmlArtifactsAfterFileWrite?: boolean;
+  onChildRuntimeFact?: (fact: ClaudeChildRuntimeFact) => void;
+  childEvidenceNow?: () => number;
 }
 
 export function createClaudeStreamHandler(
@@ -50,6 +57,12 @@ export function createClaudeStreamHandler(
   options: ClaudeStreamHandlerOptions = {},
 ) {
   let buffer = '';
+  const childEvidence = options.onChildRuntimeFact
+    ? createClaudeChildEvidenceCollector({
+        onFact: options.onChildRuntimeFact,
+        ...(options.childEvidenceNow ? { now: options.childEvidenceNow } : {}),
+      })
+    : null;
 
   // Per-content-block scratch, keyed by `${messageId}:${blockIndex}`.
   const blocks = new Map<string, BlockState>();
@@ -377,6 +390,8 @@ export function createClaudeStreamHandler(
   function handleObject(obj: unknown) {
     if (!isRecord(obj)) return;
 
+    childEvidence?.observe(obj);
+
     if (obj.type === 'system' && obj.subtype === 'init') {
       onEvent({
         type: 'status',
@@ -656,7 +671,11 @@ export function createClaudeStreamHandler(
     emitSafeText(currentMessageId, text);
   }
 
-  return { feed, flush };
+  function finishOpenChildEvidence(reason: ClaudeOpenChildTerminationReason): void {
+    childEvidence?.finishOpenChildren(reason);
+  }
+
+  return { feed, flush, finishOpenChildEvidence };
 }
 
 function stringifyToolResult(content: unknown): string {
