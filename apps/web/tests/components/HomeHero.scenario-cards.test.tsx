@@ -82,13 +82,13 @@ describe('HomeHero scenario cards', () => {
     openTemplatePicker();
     expect(
       screen.getByTestId('home-hero-template-wedge-prototype').getAttribute('aria-label'),
-    ).toContain('UI Mockup');
+    ).toContain('Prototype');
     expect(
       screen.getByTestId('home-hero-template-wedge-deck').getAttribute('aria-label'),
     ).toContain('Slide deck');
   });
 
-  it('leads the create rail with UI Mockup, then Slide deck, and trails Website clone', () => {
+  it('leads the create rail with Prototype, then Slide deck, and trails Website clone', () => {
     const ordered = orderedCreateChips();
     const ids = ordered.map((chip) => chip.id);
     expect(ids.slice(0, 2)).toEqual(['prototype', 'deck']);

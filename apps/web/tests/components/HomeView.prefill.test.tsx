@@ -997,7 +997,7 @@ describe('HomeView prompt handoff', () => {
     }));
   });
 
-  it('binds the Home rail UI Mockup chip locally and applies it on submit', async () => {
+  it('binds the Home rail Prototype chip locally and applies it on submit', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -1032,7 +1032,7 @@ describe('HomeView prompt handoff', () => {
     await pickHomeTemplate('prototype');
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
@@ -1198,7 +1198,7 @@ describe('HomeView prompt handoff', () => {
     await pickHomeTemplate('prototype');
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
     // Round-4 skin: the unset trigger reads "Design system" (the field name)
     // instead of the "No design system" placeholder.
@@ -1340,7 +1340,7 @@ describe('HomeView prompt handoff', () => {
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
     ))).toBe(false);
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     // The design-system picker is now the persistent control below the composer.
     expect(
       screen.getByTestId('home-hero-design-system-trigger').textContent,
@@ -1631,7 +1631,7 @@ describe('HomeView prompt handoff', () => {
     await pickHomeTemplate('prototype');
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
