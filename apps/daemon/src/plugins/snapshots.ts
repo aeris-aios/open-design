@@ -17,7 +17,9 @@ import type Database from 'better-sqlite3';
 import { readPluginEnvKnobs } from '../app-config.js';
 import {
   OPEN_DESIGN_PLUGIN_SPEC_VERSION,
+  AppliedStrategyBindingV2Schema,
   type AppliedPluginSnapshot,
+  type AppliedStrategyBindingV2,
   type GenUISurfaceSpec,
   type McpServerSpec,
   type PluginAssetRef,
@@ -26,6 +28,7 @@ import {
   type PluginPipeline,
   type ResolvedContext,
 } from '@open-design/contracts';
+import { strategyPackageHashFromDigests } from '@open-design/plugin-runtime';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;
@@ -40,6 +43,7 @@ export interface CreateSnapshotInput {
   pluginTitle?: string | undefined;
   pluginDescription?: string | undefined;
   manifestSourceDigest: string;
+  strategy?: AppliedStrategyBindingV2 | null | undefined;
   sourceMarketplaceId?: string | null | undefined;
   sourceMarketplaceEntryName?: string | null | undefined;
   sourceMarketplaceEntryVersion?: string | null | undefined;
@@ -64,6 +68,11 @@ export interface CreateSnapshotInput {
 }
 
 export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): AppliedPluginSnapshot {
+  // Validate before issuing INSERT so a malformed internal caller can never
+  // persist a row that only fails later at read time.
+  const strategy = input.strategy == null
+    ? undefined
+    : validateStrategyBinding(input.strategy, input.pluginId, input.pluginVersion);
   const id = randomUUID();
   const now = Date.now();
   const knobs = readPluginEnvKnobs();
@@ -79,7 +88,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
   db.prepare(`
     INSERT INTO applied_plugin_snapshots (
       id, project_id, conversation_id, run_id, plugin_id, plugin_spec_version, plugin_version,
-      manifest_source_digest, source_marketplace_id, source_marketplace_entry_name,
+      manifest_source_digest, strategy_json, source_marketplace_id, source_marketplace_entry_name,
       source_marketplace_entry_version, marketplace_trust, resolved_source,
       resolved_ref, archive_integrity, pinned_ref, task_kind,
       inputs_json, resolved_context_json, craft_requires_json, pipeline_json, genui_surfaces_json,
@@ -88,7 +97,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
       plugin_title, plugin_description, query_text,
       status, applied_at, expires_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fresh', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fresh', ?, ?)
   `).run(
     id,
     input.projectId,
@@ -98,6 +107,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
     input.pluginSpecVersion ?? OPEN_DESIGN_PLUGIN_SPEC_VERSION,
     input.pluginVersion,
     input.manifestSourceDigest,
+    strategy ? JSON.stringify(strategy) : null,
     input.sourceMarketplaceId ?? null,
     input.sourceMarketplaceEntryName ?? null,
     input.sourceMarketplaceEntryVersion ?? null,
@@ -128,7 +138,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
   const snapshot: AppliedPluginSnapshot = buildSnapshot({
     id,
     appliedAt: now,
-    input,
+    input: { ...input, strategy },
     status: 'fresh',
   });
   return snapshot;
@@ -344,6 +354,7 @@ function buildSnapshot(args: {
     pluginSpecVersion:    input.pluginSpecVersion ?? OPEN_DESIGN_PLUGIN_SPEC_VERSION,
     pluginVersion:        input.pluginVersion,
     manifestSourceDigest: input.manifestSourceDigest,
+    ...(input.strategy ? { strategy: input.strategy } : {}),
     sourceMarketplaceId:  input.sourceMarketplaceId ?? undefined,
     sourceMarketplaceEntryName: input.sourceMarketplaceEntryName ?? undefined,
     sourceMarketplaceEntryVersion: input.sourceMarketplaceEntryVersion ?? undefined,
@@ -375,12 +386,16 @@ function buildSnapshot(args: {
 
 export function rowToSnapshot(row: DbRow): AppliedPluginSnapshot {
   const pipeline = parseJsonOrUndefined<PluginPipeline>(row['pipeline_json']);
+  const pluginId = String(row['plugin_id']);
+  const pluginVersion = String(row['plugin_version']);
+  const strategy = parseStrategyBinding(row['strategy_json'], pluginId, pluginVersion);
   const snapshot: AppliedPluginSnapshot = {
     snapshotId:           String(row['id']),
-    pluginId:             String(row['plugin_id']),
+    pluginId,
     pluginSpecVersion:    row['plugin_spec_version'] != null ? String(row['plugin_spec_version']) : undefined,
-    pluginVersion:        String(row['plugin_version']),
+    pluginVersion,
     manifestSourceDigest: String(row['manifest_source_digest']),
+    ...(strategy ? { strategy } : {}),
     sourceMarketplaceId:  row['source_marketplace_id'] != null ? String(row['source_marketplace_id']) : undefined,
     sourceMarketplaceEntryName: row['source_marketplace_entry_name'] != null ? String(row['source_marketplace_entry_name']) : undefined,
     sourceMarketplaceEntryVersion: row['source_marketplace_entry_version'] != null ? String(row['source_marketplace_entry_version']) : undefined,
@@ -408,6 +423,59 @@ export function rowToSnapshot(row: DbRow): AppliedPluginSnapshot {
     status:               row['status'] === 'stale' ? 'stale' : 'fresh',
   };
   return snapshot;
+}
+
+export class InvalidAppliedStrategySnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidAppliedStrategySnapshotError';
+  }
+}
+
+function parseStrategyBinding(
+  value: unknown,
+  pluginId: string,
+  pluginVersion: string,
+): AppliedStrategyBindingV2 | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new InvalidAppliedStrategySnapshotError('Applied strategy binding must be JSON text.');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidAppliedStrategySnapshotError('Applied strategy binding contains invalid JSON.');
+  }
+  return validateStrategyBinding(parsed, pluginId, pluginVersion);
+}
+
+function validateStrategyBinding(
+  value: unknown,
+  pluginId: string,
+  pluginVersion: string,
+): AppliedStrategyBindingV2 {
+  const binding = AppliedStrategyBindingV2Schema.safeParse(value);
+  if (!binding.success) {
+    throw new InvalidAppliedStrategySnapshotError('Applied strategy binding failed schema validation.');
+  }
+  let recomputed: string;
+  try {
+    recomputed = strategyPackageHashFromDigests(binding.data.assetDigests);
+  } catch {
+    throw new InvalidAppliedStrategySnapshotError('Applied strategy digest roster is invalid.');
+  }
+  if (recomputed !== binding.data.packageHash) {
+    throw new InvalidAppliedStrategySnapshotError(
+      'Applied strategy package hash does not match its asset digests.',
+    );
+  }
+  if (binding.data.id !== pluginId || binding.data.version !== pluginVersion) {
+    throw new InvalidAppliedStrategySnapshotError(
+      'Applied strategy binding does not match the snapshot plugin identity.',
+    );
+  }
+  return binding.data;
 }
 
 function parseJsonOr<T>(value: unknown, fallback: T): T {

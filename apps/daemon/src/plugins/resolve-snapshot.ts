@@ -23,6 +23,7 @@
 import type Database from 'better-sqlite3';
 import type {
   AppliedPluginSnapshot,
+  AppliedStrategyBindingV2,
   ApplyResult,
   InstalledPluginRecord,
   PluginConnectorBinding,
@@ -48,6 +49,12 @@ import {
   type ConnectorProbe,
 } from './connector-gate.js';
 import type { RegistryView } from '@open-design/plugin-runtime';
+import {
+  createBundledStrategyBindingV2,
+  StrategyPackageIdentityError,
+  type SelectableStrategyTaskTypeV2,
+} from './strategy-package.js';
+import { InvalidBundledStrategyActivationV2Error } from './strategy-provenance.js';
 
 type SqliteDb = Database.Database;
 
@@ -77,6 +84,15 @@ export interface ResolveSnapshotInput {
    * has been established.
    */
   requireSnapshotProjectMatch?: boolean | undefined;
+  /**
+   * Internal Coordinator-only activation. This is not parsed from an HTTP or
+   * CLI request body, so ordinary catalog/apply paths stay fail closed.
+   */
+  internalStrategyActivation?: {
+    taskType: SelectableStrategyTaskTypeV2;
+    /** Trusted record resolved directly from the hidden bundled resource. */
+    plugin: InstalledPluginRecord;
+  } | undefined;
 }
 
 export interface ResolveSnapshotOk {
@@ -223,9 +239,12 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
   }
 
   // Path 2: pluginId — run apply, persist a new snapshot.
-  const plugin = input.plugin?.id === fields.pluginId
-    ? input.plugin
-    : getInstalledPlugin(input.db, fields.pluginId!);
+  const internalPlugin = input.internalStrategyActivation?.plugin;
+  const plugin = internalPlugin?.id === fields.pluginId
+    ? internalPlugin
+    : input.plugin?.id === fields.pluginId
+      ? input.plugin
+      : getInstalledPlugin(input.db, fields.pluginId!);
   if (!plugin) {
     return {
       ok: false,
@@ -243,6 +262,13 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
 
   let applyComputed;
   try {
+    const internalStrategyBinding: AppliedStrategyBindingV2 | undefined =
+      input.internalStrategyActivation
+        ? createBundledStrategyBindingV2({
+            plugin,
+            taskType: input.internalStrategyActivation.taskType,
+          })
+        : undefined;
     applyComputed = applyPlugin({
       plugin,
       inputs: fields.pluginInputs ?? {},
@@ -250,6 +276,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
       activeProjectDesignSystem: input.activeProjectDesignSystem,
       connectorProbe: input.connectorProbe,
       locale: fields.locale,
+      internalStrategyBinding,
     });
   } catch (err) {
     if (err instanceof InternalBundledStrategyApplyError) {
@@ -261,6 +288,23 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
           error: {
             code: 'strategy-inactive',
             message: `Bundled strategy "${fields.pluginId}" is not active.`,
+            data: { pluginId: fields.pluginId },
+          },
+        },
+      };
+    }
+    if (
+      err instanceof StrategyPackageIdentityError
+      || err instanceof InvalidBundledStrategyActivationV2Error
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        exitCode: 72,
+        body: {
+          error: {
+            code: 'strategy-content-invalid',
+            message: `Bundled strategy "${fields.pluginId}" failed content identity validation.`,
             data: { pluginId: fields.pluginId },
           },
         },
@@ -330,6 +374,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     connectorsResolved: result.appliedPlugin.connectorsResolved,
     mcpServers: result.appliedPlugin.mcpServers,
     query: result.query,
+    strategy: result.appliedPlugin.strategy,
   });
 
   return finalizeOk({

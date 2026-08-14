@@ -23,6 +23,7 @@ import {
   renderPluginBlock,
   resolveLocalizedText,
   type AppliedPluginSnapshot,
+  type AppliedStrategyBindingV2,
   type ApplyResult,
   type InstalledPluginRecord,
   type McpServerSpec,
@@ -43,7 +44,10 @@ import {
 import { deriveAutoAtomSurfaces } from './atoms/auto-surfaces.js';
 import { ensureCoreQualityStages } from './ensure-core-stages.js';
 import { getManifestContextCraft } from './context-craft.js';
-import { isInternalBundledStrategyV2 } from './strategy-provenance.js';
+import {
+  isInternalBundledStrategyV2,
+  validateBundledStrategyActivationV2,
+} from './strategy-provenance.js';
 
 export class MissingInputError extends Error {
   readonly fields: string[];
@@ -87,6 +91,8 @@ export interface ApplyInput {
   // tests), the connector bindings stay in `pending` status and no
   // auto-prompt is derived.
   connectorProbe?: ConnectorProbe | undefined;
+  /** Daemon-internal, controlled-I/O proof for OD Next activation. */
+  internalStrategyBinding?: AppliedStrategyBindingV2 | undefined;
 }
 
 export interface ApplyComputed {
@@ -99,9 +105,16 @@ export interface ApplyComputed {
 }
 
 export function applyPlugin(input: ApplyInput): ApplyComputed {
-  if (isInternalBundledStrategyV2(input.plugin)) {
+  const isInternalStrategy = isInternalBundledStrategyV2(input.plugin);
+  if (isInternalStrategy && !input.internalStrategyBinding) {
     throw new InternalBundledStrategyApplyError(input.plugin.id);
   }
+  if (!isInternalStrategy && input.internalStrategyBinding) {
+    throw new InternalBundledStrategyApplyError(input.plugin.id);
+  }
+  const strategy = input.internalStrategyBinding
+    ? validateBundledStrategyActivationV2(input.plugin, input.internalStrategyBinding)
+    : undefined;
   const manifest = input.plugin.manifest;
   const rawTrust: TrustTier = input.trust ?? input.plugin.trust;
   const trust: ApplyTrust = rawTrust === 'restricted' ? 'restricted' : 'trusted';
@@ -220,6 +233,7 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
     pluginTitle,
     pluginDescription,
     query:                queryText || undefined,
+    ...(strategy ? { strategy } : {}),
     status:               'fresh',
   };
 

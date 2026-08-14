@@ -177,7 +177,7 @@ describe('OD Next V2 bundled declaration and applied identity', () => {
     expect(declaration.promptRecipe).toBe('od-next-plan-build-v2');
   });
 
-  it('accepts a complete applied content binding and rejects duplicate assets', () => {
+  it('accepts a complete applied content binding and rejects ambiguous profile identity', () => {
     const binding = {
       schema: OD_NEXT_APPLIED_STRATEGY_SCHEMA,
       id: 'od-next-strategy',
@@ -186,8 +186,15 @@ describe('OD Next V2 bundled declaration and applied identity', () => {
       assetDigests: [
         { path: './assets/core.md', sha256: hash },
         { path: './assets/orchestration.md', sha256: 'b'.repeat(64) },
+        { path: './assets/prototype.md', sha256: 'c'.repeat(64) },
       ],
-      taskProfileVersions: ['prototype@2.0.0', 'hyperframes@2.0.0'],
+      selectedTaskProfile: {
+        taskType: 'prototype',
+        version: 'prototype@2.0.0',
+        path: './assets/prototype.md',
+        sha256: 'c'.repeat(64),
+      },
+      taskProfileVersions: ['prototype@2.0.0'],
       promptRecipe: 'od-next-plan-build-v2',
     };
     expect(AppliedStrategyBindingV2Schema.parse(binding)).toEqual(binding);
@@ -195,6 +202,17 @@ describe('OD Next V2 bundled declaration and applied identity', () => {
       ...binding,
       assetDigests: [binding.assetDigests[0], binding.assetDigests[0]],
     })).toThrow(/unique/);
+    expect(() => AppliedStrategyBindingV2Schema.parse({
+      ...binding,
+      assetDigests: [...binding.assetDigests].reverse(),
+    })).toThrow(/stable path order/);
+    expect(() => AppliedStrategyBindingV2Schema.parse({
+      ...binding,
+      selectedTaskProfile: {
+        ...binding.selectedTaskProfile,
+        sha256: 'd'.repeat(64),
+      },
+    })).toThrow(/digest must match/);
   });
 });
 

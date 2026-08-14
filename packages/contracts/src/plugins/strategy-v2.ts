@@ -134,15 +134,25 @@ export const BundledStrategyDeclarationV2Schema = z.object({
 });
 export type BundledStrategyDeclarationV2 = z.infer<typeof BundledStrategyDeclarationV2Schema>;
 
+const StrategyAssetDigestV2Schema = z.object({
+  path: relativeAssetPathSchema,
+  sha256: sha256Schema,
+}).strict();
+
+const SelectedStrategyTaskProfileV2Schema = z.object({
+  taskType: StrategyTaskTypeV2Schema.exclude(['generic']),
+  version: z.string().min(1),
+  path: relativeAssetPathSchema,
+  sha256: sha256Schema,
+}).strict();
+
 export const AppliedStrategyBindingV2Schema = z.object({
   schema: z.literal(OD_NEXT_APPLIED_STRATEGY_SCHEMA),
   id: z.literal(OD_NEXT_STRATEGY_ID),
   version: z.string().min(1),
   packageHash: sha256Schema,
-  assetDigests: z.array(z.object({
-    path: relativeAssetPathSchema,
-    sha256: sha256Schema,
-  }).strict()).min(1),
+  assetDigests: z.array(StrategyAssetDigestV2Schema).min(1),
+  selectedTaskProfile: SelectedStrategyTaskProfileV2Schema,
   taskProfileVersions: z.array(z.string().min(1)).min(1),
   promptRecipe: z.literal(OD_NEXT_PROMPT_RECIPE_ID),
 }).strict().superRefine((value, context) => {
@@ -152,6 +162,31 @@ export const AppliedStrategyBindingV2Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['assetDigests'],
       message: 'Applied strategy asset paths must be unique.',
+    });
+  }
+  const sortedPaths = [...paths].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  if (paths.some((path, index) => path !== sortedPaths[index])) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['assetDigests'],
+      message: 'Applied strategy asset digests must use stable path order.',
+    });
+  }
+  const selectedDigest = value.assetDigests.find(
+    (asset) => asset.path === value.selectedTaskProfile.path,
+  );
+  if (selectedDigest?.sha256 !== value.selectedTaskProfile.sha256) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['selectedTaskProfile'],
+      message: 'Selected task profile digest must match the package asset roster.',
+    });
+  }
+  if (!value.taskProfileVersions.includes(value.selectedTaskProfile.version)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['taskProfileVersions'],
+      message: 'Selected task profile version must be recorded in taskProfileVersions.',
     });
   }
 });
