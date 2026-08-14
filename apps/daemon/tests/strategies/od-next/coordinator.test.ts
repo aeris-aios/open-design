@@ -1,0 +1,687 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { strategyPackageHashFromDigests } from '@open-design/plugin-runtime';
+import type { AppliedPluginSnapshot, OpenDesignPlanContractV2 } from '@open-design/contracts';
+import type Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { closeDatabase, openDatabase } from '../../../src/db.js';
+import { createSnapshot } from '../../../src/plugins/snapshots.js';
+import {
+  beginStrategyClarification,
+  finalizeStrategyPlanningTurn,
+  prepareStrategyRequest,
+} from '../../../src/strategies/od-next/coordinator.js';
+import { OdNextMachineProtocolStream } from '../../../src/strategies/od-next/protocol.js';
+import { createStrategyTaskExecution } from '../../../src/strategies/task-store.js';
+
+const AGENT_ID = 'codex';
+
+function strategyBinding() {
+  const assetDigests = [
+    { path: './SKILL.md', sha256: 'a'.repeat(64) },
+    { path: './assets/task-profiles/prototype.md', sha256: 'b'.repeat(64) },
+  ];
+  return {
+    schema: 'open-design.applied-strategy/v2' as const,
+    id: 'od-next-strategy' as const,
+    version: '2.0.0',
+    packageHash: strategyPackageHashFromDigests(assetDigests),
+    assetDigests,
+    selectedTaskProfile: {
+      taskType: 'prototype' as const,
+      version: '2.0.0',
+      path: './assets/task-profiles/prototype.md',
+      sha256: 'b'.repeat(64),
+    },
+    taskProfileVersions: ['2.0.0'],
+    promptRecipe: 'od-next-plan-build-v2' as const,
+  };
+}
+
+function createStrategySnapshot(db: Database.Database): AppliedPluginSnapshot {
+  return createSnapshot(db, {
+    projectId: 'project-1',
+    conversationId: 'conversation-1',
+    runId: null,
+    pluginId: 'od-next-strategy',
+    pluginVersion: '2.0.0',
+    manifestSourceDigest: 'manifest-digest',
+    strategy: strategyBinding(),
+    taskKind: 'new-generation',
+    inputs: {},
+    resolvedContext: { items: [] },
+    capabilitiesGranted: ['prompt:inject'],
+    capabilitiesRequired: ['prompt:inject'],
+    assetsStaged: [],
+    connectorsRequired: [],
+    connectorsResolved: [],
+    mcpServers: [],
+  });
+}
+
+function planContract(snapshot: AppliedPluginSnapshot): OpenDesignPlanContractV2 {
+  const strategy = snapshot.strategy!;
+  return {
+    schema: 'open-design.plan-contract/v2',
+    strategy: {
+      id: 'od-next-strategy',
+      version: strategy.version,
+      packageHash: strategy.packageHash,
+      snapshotId: snapshot.snapshotId,
+    },
+    taskProfile: {
+      schemaVersion: '2',
+      taskType: 'prototype',
+      taskProfileVersion: strategy.selectedTaskProfile.version,
+      goal: 'Build a prototype',
+      contextAndAudience: 'Product operators',
+      inputsAndReferences: ['request'],
+      constraints: [],
+      canonicalDeliverable: { id: 'prototype', kind: 'prototype', format: 'html' },
+      requiredDeliverables: [{ id: 'prototype', kind: 'prototype' }],
+      designSpec: {
+        source: 'resolved-baseline',
+        version: '1',
+        decisions: { palette: 'neutral' },
+      },
+      buildRequirements: [{ id: 'build', text: 'Build the prototype.' }],
+      assumptions: [],
+      risks: [],
+      taskSpecific: {},
+    },
+    fullPlan: {
+      executionMode: 'simple',
+      steps: [{ id: 'build', objective: 'Build', outputs: ['prototype'] }],
+      readinessArtifacts: [],
+      buildPackages: [],
+    },
+    runManifest: {
+      selectedAgentId: AGENT_ID,
+      capabilitySnapshotHash: 'c'.repeat(64),
+      inputRefs: ['request'],
+      productionRoutes: ['html'],
+      preflight: { intake: 'passed', execution: 'passed' },
+    },
+    decisionSummary: {
+      goal: 'Build a prototype',
+      deliverables: ['prototype'],
+      keyConstraints: [],
+      assumptions: [],
+      risks: [],
+      openDecisions: [],
+    },
+  };
+}
+
+function block(tag: string, value: unknown, fenced = false): string {
+  const json = JSON.stringify(value);
+  return `<${tag}>\n${fenced ? `\`\`\`json\n${json}\n\`\`\`` : json}\n</${tag}>`;
+}
+
+function protocol(text: string): OdNextMachineProtocolStream {
+  const stream = new OdNextMachineProtocolStream();
+  for (let index = 0; index < text.length; index += 7) {
+    stream.push(text.slice(index, index + 7));
+  }
+  return stream;
+}
+
+function runtimeState(input: {
+  route?: 'direct_edit' | 'full_plan';
+  inputStage?: 'request' | 'clarification' | 'contract_repair';
+  outcome: 'clarification_required' | 'plan_ready' | 'completed' | 'blocked';
+  executionMode?: 'simple' | null;
+}) {
+  return {
+    schema: 'open-design.strategy-state/v2' as const,
+    route: input.route ?? 'full_plan',
+    inputStage: input.inputStage ?? 'request',
+    outcome: input.outcome,
+    executionMode: input.executionMode === undefined ? null : input.executionMode,
+    reasonCodes: [],
+  };
+}
+
+const intakePassed = {
+  inputRefs: [{ id: 'request', accessible: true }],
+  selectedAgentAvailable: true,
+  nativeContinuation: 'verified' as const,
+  taskProfileAvailable: true,
+  dependencies: [],
+};
+
+const executionPassed = {
+  productionRoutes: [{ id: 'html', available: true }],
+  dependencies: [],
+  inputs: [{ id: 'request', available: true }],
+  renderers: [],
+  exporters: [],
+  templates: [],
+  outputKinds: [{ id: 'prototype', supported: true }],
+};
+
+const directEligible = {
+  editableBaselineExists: true,
+  localAndUnambiguous: true,
+  canonicalDeliverableStable: true,
+  deliverableSetStable: true,
+  dependenciesBounded: true,
+};
+
+describe('OD Next planning coordinator', () => {
+  let tempDir: string;
+  let db: Database.Database;
+  let snapshot: AppliedPluginSnapshot;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-next-coordinator-'));
+    db = openDatabase(tempDir, { dataDir: tempDir });
+    db.prepare(
+      `INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+    ).run('project-1', 'Project 1', 1, 1);
+    db.prepare(
+      `INSERT INTO conversations (id, project_id, title, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run('conversation-1', 'project-1', 'Conversation 1', 1, 1);
+    snapshot = createStrategySnapshot(db);
+    createStrategyTaskExecution(db, {
+      taskExecutionId: 'task-1',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      snapshotId: snapshot.snapshotId,
+      selectedAgentId: AGENT_ID,
+      initialRunId: 'run-request',
+      createdAt: 100,
+    });
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('routes a new request once and completes an eligible Direct Edit in its request Run', () => {
+    const prepared = prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'auto',
+      directEdit: directEligible,
+      intake: intakePassed,
+      execution: executionPassed,
+      updatedAt: 110,
+    });
+    expect(prepared.task).toMatchObject({
+      route: 'direct_edit',
+      executionMode: 'simple',
+      inputStage: 'request',
+      outcome: 'running',
+    });
+    expect(() => prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+    })).toThrowError(expect.objectContaining({
+      reasonCodes: ['od_next_route_already_locked'],
+    }));
+
+    const final = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        'Updated the existing header.',
+        block('open-design-runtime-state', runtimeState({
+          route: 'direct_edit',
+          outcome: 'completed',
+          executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(final).toMatchObject({
+      action: 'completed',
+      visibleText: 'Updated the existing header.\n',
+      reasonCodes: [],
+      task: { outcome: 'completed' },
+    });
+  });
+
+  it('persists the one clarification round and refuses a second question after restart', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const question = '<question-form id="scope">{"questions":[{"id":"surface","label":"Surface?"}]}</question-form>';
+    const awaiting = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol(`${question}\n${block('open-design-runtime-state', runtimeState({
+        outcome: 'clarification_required',
+      }))}`),
+      updatedAt: 120,
+    });
+    expect(awaiting).toMatchObject({
+      action: 'awaiting_clarification',
+      task: { outcome: 'clarification_required', clarificationCount: 0 },
+    });
+
+    const continued = beginStrategyClarification(db, {
+      taskExecutionId: 'task-1',
+      sourceRunId: 'run-request',
+      nextRunId: 'run-clarification',
+      answer: 'Use the operator console.',
+      updatedAt: 130,
+    });
+    expect(continued).toMatchObject({
+      instruction: {
+        stage: 'clarification',
+        nativeSessionResume: true,
+        answer: 'Use the operator console.',
+      },
+      task: { inputStage: 'clarification', clarificationCount: 1 },
+    });
+
+    closeDatabase();
+    db = openDatabase(tempDir, { dataDir: tempDir });
+    const repeated = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-clarification',
+      protocol: protocol(`${question}\n${block('open-design-runtime-state', runtimeState({
+        inputStage: 'clarification',
+        outcome: 'blocked',
+      }))}`),
+      updatedAt: 140,
+    });
+    expect(repeated).toMatchObject({
+      action: 'blocked',
+      reasonCodes: ['od_next_clarification_repeated'],
+      task: { outcome: 'blocked', clarificationCount: 1 },
+    });
+  });
+
+  it('persists a valid Full Plan and returns only its decision summary as structured output', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const plan = planContract(snapshot);
+    const final = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        'Planning complete.',
+        block('open-design-plan-contract', plan),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(final).toMatchObject({
+      action: 'plan_ready',
+      visibleText: 'Planning complete.\n\n',
+      decisionSummary: plan.decisionSummary,
+      task: {
+        outcome: 'plan_ready',
+        executionMode: 'simple',
+        planContract: plan,
+      },
+    });
+  });
+
+  it('allows one serialization-only repair only with a durable semantic hash anchor', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const plan = planContract(snapshot);
+    const repair = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', plan, true),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      repairRun: { runId: 'run-repair', sourceRunId: 'run-request' },
+      toolUseCount: 2,
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(repair).toMatchObject({
+      action: 'contract_repair',
+      instruction: {
+        stage: 'contract_repair',
+        nativeSessionResume: true,
+      },
+      task: {
+        inputStage: 'contract_repair',
+        outcome: 'running',
+        executionMode: 'simple',
+        planContractRepairAttempts: 1,
+        planContract: plan,
+      },
+    });
+
+    closeDatabase();
+    db = openDatabase(tempDir, { dataDir: tempDir });
+    const repaired = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-repair',
+      protocol: protocol([
+        block('open-design-plan-contract', plan),
+        block('open-design-runtime-state', runtimeState({
+          inputStage: 'contract_repair',
+          outcome: 'plan_ready',
+          executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 130,
+    });
+    expect(repaired).toMatchObject({
+      action: 'plan_ready',
+      task: { outcome: 'plan_ready', planContractRepairAttempts: 1 },
+    });
+  });
+
+  it('blocks duplicate blocks, semantic drift, tools in repair, and unanchored malformed plans', () => {
+    const cases = [
+      {
+        name: 'duplicate',
+        text: (plan: OpenDesignPlanContractV2) => [
+          block('open-design-plan-contract', plan),
+          block('open-design-plan-contract', plan),
+          block('open-design-runtime-state', runtimeState({ outcome: 'plan_ready', executionMode: 'simple' })),
+        ].join('\n'),
+        reason: 'od_next_protocol_plan_contract_duplicate',
+      },
+      {
+        name: 'unanchored',
+        text: () => [
+          '<open-design-plan-contract>\n{not-json}\n</open-design-plan-contract>',
+          block('open-design-runtime-state', runtimeState({ outcome: 'plan_ready', executionMode: 'simple' })),
+        ].join('\n'),
+        reason: 'od_next_protocol_plan_contract_invalid_json',
+      },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const taskId = `task-${index + 2}`;
+      const runId = `run-${index + 2}`;
+      createStrategyTaskExecution(db, {
+        taskExecutionId: taskId,
+        projectId: 'project-1',
+        conversationId: 'conversation-1',
+        snapshotId: snapshot.snapshotId,
+        selectedAgentId: AGENT_ID,
+        initialRunId: runId,
+        createdAt: 200 + index * 20,
+      });
+      prepareStrategyRequest(db, {
+        taskExecutionId: taskId,
+        preference: 'full_plan',
+        directEdit: directEligible,
+        intake: intakePassed,
+        updatedAt: 201 + index * 20,
+      });
+      const result = finalizeStrategyPlanningTurn(db, {
+        taskExecutionId: taskId,
+        runId,
+        protocol: protocol(testCase.text(planContract(snapshot))),
+        repairRun: { runId: `${runId}-repair`, sourceRunId: runId },
+        updatedAt: 202 + index * 20,
+      });
+      expect(result.action, testCase.name).toBe('blocked');
+      expect(result.reasonCodes, testCase.name).toContain(testCase.reason);
+    }
+
+    const original = planContract(snapshot);
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 300,
+    });
+    finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', original, true),
+        block('open-design-runtime-state', runtimeState({ outcome: 'plan_ready', executionMode: 'simple' })),
+      ].join('\n')),
+      repairRun: { runId: 'run-repair', sourceRunId: 'run-request' },
+      executionPreflight: executionPassed,
+      updatedAt: 301,
+    });
+    const changed = structuredClone(original);
+    changed.taskProfile.goal = 'Changed semantic goal';
+    changed.decisionSummary.goal = 'Changed semantic goal';
+    const drift = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-repair',
+      protocol: protocol([
+        block('open-design-plan-contract', changed),
+        block('open-design-runtime-state', runtimeState({
+          inputStage: 'contract_repair', outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 302,
+    });
+    expect(drift).toMatchObject({
+      action: 'blocked',
+      reasonCodes: ['od_next_contract_repair_semantic_drift'],
+    });
+  });
+
+  it('blocks locked route drift and any tool use during contract repair', () => {
+    createStrategyTaskExecution(db, {
+      taskExecutionId: 'task-route-drift',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      snapshotId: snapshot.snapshotId,
+      selectedAgentId: AGENT_ID,
+      initialRunId: 'run-route-drift',
+      createdAt: 400,
+    });
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-route-drift',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 401,
+    });
+    const drift = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-route-drift',
+      runId: 'run-route-drift',
+      protocol: protocol(block('open-design-runtime-state', runtimeState({
+        route: 'direct_edit', outcome: 'completed', executionMode: 'simple',
+      }))),
+      updatedAt: 402,
+    });
+    expect(drift).toMatchObject({
+      action: 'blocked',
+      reasonCodes: ['od_next_protocol_route_mismatch'],
+    });
+
+    createStrategyTaskExecution(db, {
+      taskExecutionId: 'task-profile-drift',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      snapshotId: snapshot.snapshotId,
+      selectedAgentId: AGENT_ID,
+      initialRunId: 'run-profile-drift',
+      createdAt: 405,
+    });
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-profile-drift',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 406,
+    });
+    const mismatchedProfile = planContract(snapshot);
+    mismatchedProfile.taskProfile.taskType = 'ppt';
+    const profileDrift = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-profile-drift',
+      runId: 'run-profile-drift',
+      protocol: protocol([
+        block('open-design-plan-contract', mismatchedProfile),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 407,
+    });
+    expect(profileDrift).toMatchObject({
+      action: 'blocked',
+      reasonCodes: ['od_next_plan_task_profile_mismatch'],
+    });
+
+    createStrategyTaskExecution(db, {
+      taskExecutionId: 'task-repair-tools',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      snapshotId: snapshot.snapshotId,
+      selectedAgentId: AGENT_ID,
+      initialRunId: 'run-repair-tools-request',
+      createdAt: 410,
+    });
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-repair-tools',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 411,
+    });
+    const plan = planContract(snapshot);
+    finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-repair-tools',
+      runId: 'run-repair-tools-request',
+      protocol: protocol([
+        block('open-design-plan-contract', plan, true),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      repairRun: {
+        runId: 'run-repair-tools',
+        sourceRunId: 'run-repair-tools-request',
+      },
+      executionPreflight: executionPassed,
+      updatedAt: 412,
+    });
+    const toolUse = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-repair-tools',
+      runId: 'run-repair-tools',
+      protocol: protocol([
+        block('open-design-plan-contract', plan),
+        block('open-design-runtime-state', runtimeState({
+          inputStage: 'contract_repair', outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      toolUseCount: 1,
+      executionPreflight: executionPassed,
+      updatedAt: 413,
+    });
+    expect(toolUse).toMatchObject({
+      action: 'blocked',
+      reasonCodes: ['od_next_contract_repair_tool_use_forbidden'],
+    });
+  });
+
+  it('maps strict and repair-anchor Plan identity drift to stable blocked reasons', () => {
+    const cases: Array<{
+      name: string;
+      reason: string;
+      mutate: (plan: OpenDesignPlanContractV2) => void;
+    }> = [
+      {
+        name: 'snapshot',
+        reason: 'od_next_plan_snapshot_mismatch',
+        mutate: (plan) => { plan.strategy.snapshotId = 'snapshot-drift'; },
+      },
+      {
+        name: 'version',
+        reason: 'od_next_plan_strategy_version_mismatch',
+        mutate: (plan) => { plan.strategy.version = '2.0.1'; },
+      },
+      {
+        name: 'package-hash',
+        reason: 'od_next_plan_strategy_package_hash_mismatch',
+        mutate: (plan) => { plan.strategy.packageHash = 'd'.repeat(64); },
+      },
+      {
+        name: 'selected-agent',
+        reason: 'od_next_plan_selected_agent_mismatch',
+        mutate: (plan) => { plan.runManifest.selectedAgentId = 'claude'; },
+      },
+    ];
+
+    let sequence = 0;
+    for (const testCase of cases) {
+      for (const repairAnchor of [false, true]) {
+        sequence += 1;
+        const taskId = `task-identity-${sequence}`;
+        const runId = `run-identity-${sequence}`;
+        createStrategyTaskExecution(db, {
+          taskExecutionId: taskId,
+          projectId: 'project-1',
+          conversationId: 'conversation-1',
+          snapshotId: snapshot.snapshotId,
+          selectedAgentId: AGENT_ID,
+          initialRunId: runId,
+          createdAt: 500 + sequence * 10,
+        });
+        prepareStrategyRequest(db, {
+          taskExecutionId: taskId,
+          preference: 'full_plan',
+          directEdit: directEligible,
+          intake: intakePassed,
+          updatedAt: 501 + sequence * 10,
+        });
+        const drifted = planContract(snapshot);
+        testCase.mutate(drifted);
+        const result = finalizeStrategyPlanningTurn(db, {
+          taskExecutionId: taskId,
+          runId,
+          protocol: protocol([
+            block('open-design-plan-contract', drifted, repairAnchor),
+            block('open-design-runtime-state', runtimeState({
+              outcome: 'plan_ready', executionMode: 'simple',
+            })),
+          ].join('\n')),
+          ...(repairAnchor
+            ? { repairRun: { runId: `${runId}-repair`, sourceRunId: runId } }
+            : {}),
+          executionPreflight: executionPassed,
+          updatedAt: 502 + sequence * 10,
+        });
+        expect(result.action, `${testCase.name}/${repairAnchor ? 'repair' : 'strict'}`).toBe(
+          'blocked',
+        );
+        expect(
+          result.reasonCodes,
+          `${testCase.name}/${repairAnchor ? 'repair' : 'strict'}`,
+        ).toContain(testCase.reason);
+        expect(result.task.outcome).toBe('blocked');
+      }
+    }
+  });
+});

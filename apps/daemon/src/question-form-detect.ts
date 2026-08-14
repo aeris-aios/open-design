@@ -59,18 +59,24 @@ export function findQuestionFormCloseTag(text: string, from: number, closeTag: s
 // doc) count as a clarification turn, so artifact-generating runs that merely
 // mention the markup are not misclassified.
 export function emittedRenderableQuestionForm(text: unknown): boolean {
-  if (typeof text !== 'string' || !text) return false;
+  return countRenderableQuestionForms(text) > 0;
+}
+
+/** Count complete renderable forms so one-round protocols can reject ambiguity. */
+export function countRenderableQuestionForms(text: unknown): number {
+  if (typeof text !== 'string' || !text) return 0;
   let cursor = 0;
+  let count = 0;
   while (cursor < text.length) {
     const m = QUESTION_FORM_OPEN_RE.exec(text.slice(cursor));
-    if (!m) return false;
+    if (!m) return count;
     const tagName = (m[1] ?? 'question-form').toLowerCase();
     const closeTag = `</${tagName}>`;
     const openEnd = cursor + m.index + m[0].length;
     const closeIdx = findQuestionFormCloseTag(text, openEnd, closeTag);
-    if (closeIdx === -1) return false;
-    if (questionFormBodyIsRenderable(text.slice(openEnd, closeIdx))) return true;
+    if (closeIdx === -1) return count;
+    if (questionFormBodyIsRenderable(text.slice(openEnd, closeIdx))) count += 1;
     cursor = closeIdx + closeTag.length;
   }
-  return false;
+  return count;
 }

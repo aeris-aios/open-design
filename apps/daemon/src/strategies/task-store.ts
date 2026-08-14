@@ -855,7 +855,7 @@ function resolvePlanContract(
       );
     }
     validatePlanIdentity(parsed.data, current, next.executionMode);
-    const candidateHash = planContractHash(parsed.data);
+    const candidateHash = strategyPlanContractHash(parsed.data);
     if (hash && hash !== candidateHash) {
       throw new InvalidStrategyTaskTransitionError(
         'The locked Plan Contract hash cannot change.',
@@ -928,7 +928,7 @@ function parseStoredPlanContract(
     throw new InvalidStrategyTaskRecordError('Stored Plan Contract contains invalid JSON.');
   }
   const parsed = OpenDesignPlanContractV2Schema.safeParse(value);
-  if (!parsed.success || planContractHash(parsed.data) !== hash) {
+  if (!parsed.success || strategyPlanContractHash(parsed.data) !== hash) {
     throw new InvalidStrategyTaskRecordError(
       'Stored Plan Contract failed schema or hash validation.',
     );
@@ -936,7 +936,7 @@ function parseStoredPlanContract(
   return { contract: parsed.data, hash };
 }
 
-function planContractHash(plan: OpenDesignPlanContractV2): string {
+export function strategyPlanContractHash(plan: OpenDesignPlanContractV2): string {
   return createHash('sha256')
     .update(JSON.stringify(canonicalJsonValue(plan)), 'utf8')
     .digest('hex');
