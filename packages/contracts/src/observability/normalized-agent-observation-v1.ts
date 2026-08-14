@@ -469,6 +469,24 @@ export const NormalizedTimingEvidenceV1Schema = z.object({
 });
 export type NormalizedTimingEvidenceV1 = z.infer<typeof NormalizedTimingEvidenceV1Schema>;
 
+/**
+ * Identifies one provider/runtime turn for usage aggregation.
+ *
+ * Some runtimes repeat a child turn in a parent or sibling stream. Keeping the
+ * owner/excluded decision beside the normalized fact lets downstream readers
+ * avoid counting the inherited copy without guessing from provider event
+ * names. The field is optional for V1 producers that cannot observe this
+ * boundary; absence must remain partial/unavailable rather than being inferred.
+ */
+export const ObservationTurnAccountingV1Schema = z.object({
+  turnId: nonEmptyStringSchema,
+  disposition: z.enum(['owner', 'exclude_inherited']),
+  ownerObservationId: nonEmptyStringSchema,
+}).passthrough();
+export type ObservationTurnAccountingV1 = z.infer<
+  typeof ObservationTurnAccountingV1Schema
+>;
+
 export const NormalizedAgentObservationV1Schema = z.object({
   schema: z.literal(NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA),
   identity: ObservationIdentityV1Schema,
@@ -478,6 +496,7 @@ export const NormalizedAgentObservationV1Schema = z.object({
   prompt: NormalizedPromptEvidenceV1Schema,
   usage: NormalizedUsageEvidenceV1Schema,
   timing: NormalizedTimingEvidenceV1Schema,
+  turnAccounting: ObservationTurnAccountingV1Schema.optional(),
   limitations: limitationListSchema,
   attributes: z.record(z.unknown()).optional(),
 }).passthrough().superRefine((observation, context) => {
@@ -489,6 +508,26 @@ export const NormalizedAgentObservationV1Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['identity', 'parentObservationId'],
       message: `${observation.kind} observations require a parentObservationId.`,
+    });
+  }
+  if (
+    observation.turnAccounting?.disposition === 'owner' &&
+    observation.turnAccounting.ownerObservationId !== observation.identity.observationId
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['turnAccounting', 'ownerObservationId'],
+      message: 'A Turn accounting owner must bind its own observationId.',
+    });
+  }
+  if (
+    observation.turnAccounting?.disposition === 'exclude_inherited' &&
+    observation.turnAccounting.ownerObservationId === observation.identity.observationId
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['turnAccounting', 'ownerObservationId'],
+      message: 'An excluded inherited Turn copy must bind a distinct owner observation.',
     });
   }
 });
