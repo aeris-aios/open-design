@@ -551,14 +551,80 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 }
 .att-ov .act svg { width: 10px; height: 10px; }
 
-/* 缩略图占位:实心拼版,不画线框 */
-.mini { height: 100%; display: flex; flex-direction: column; gap: 3px; padding: 5px; }
-.mini i { display: block; border-radius: 2px; background: var(--border); }
-.mini .bar { height: 6px; background: var(--text-strong); opacity: 0.7; }
-.mini .hero { flex: 1; background: var(--text-soft); opacity: 0.45; }
-.mini .row { display: flex; gap: 3px; }
-.mini .row i { flex: 1; height: 11px; }
-.mini .dot { height: 4px; width: 42%; background: var(--brand); }
+/* ---------- 缩略图 ----------
+   缩略图画的是【版式骨架】,不是三条灰杠。理由:74px 见方的缩略图上,
+   人眼本来就读不到内容,读到的是"两列网格 / 大图带按钮 / 一列开关",
+   靠这个认出是哪一页。所以按页面类型分六种骨架,而不是一种通用灰块。
+
+   商品图的底色用 color-mix 从既有语义色调出低饱和的中性偏色,
+   模拟真实商品照片在缩略图里的色块感 —— 不新造 hex,也不让它读成语义色。 */
+.mini {
+  --sh-a: color-mix(in srgb, var(--amber) 14%, var(--bg-muted));
+  --sh-b: color-mix(in srgb, var(--blue) 12%, var(--bg-muted));
+  --sh-c: color-mix(in srgb, var(--text-soft) 34%, var(--bg-subtle));
+  height: 100%; display: flex; flex-direction: column; gap: 2px; padding: 4px;
+  background: var(--bg);
+}
+.mini i { display: block; border-radius: 1px; background: var(--border); flex: none; }
+
+/* 顶栏与搜索条:每一页都有,是"这是个 App 界面"的第一眼线索 */
+.mini .nav { height: 5px; background: var(--text-strong); opacity: 0.72; border-radius: 1px; }
+.mini .pill { height: 4px; background: var(--bg-subtle); border-radius: 999px; }
+
+/* 商品网格:两列,每格 = 商品图 + 一条标题 + 一条价格(价格更短) */
+.mini .cards { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.mini .cards > span { display: flex; flex-direction: column; gap: 1px; }
+.mini .cards > span > .img { flex: 1; min-height: 0; border-radius: 1px; }
+.mini .cards > span > .t1 { height: 2px; background: var(--border); }
+.mini .cards > span > .t2 { height: 2px; width: 55%; background: var(--bg-muted); }
+.mini .cards > span:nth-child(1) > .img { background: var(--sh-a); }
+.mini .cards > span:nth-child(2) > .img { background: var(--sh-c); }
+.mini .cards > span:nth-child(3) > .img { background: var(--sh-b); }
+.mini .cards > span:nth-child(4) > .img { background: var(--sh-a); }
+
+/* 详情页:一张大图压住上半屏 + 标题 + 价格 + 一条通栏按钮 */
+.mini .hero { flex: 1; min-height: 0; background: var(--sh-a); border-radius: 1px; }
+.mini .ln { height: 3px; background: var(--border); }
+.mini .ln.mod-short { width: 44%; background: var(--bg-muted); }
+.mini .cta { height: 6px; background: var(--text-strong); opacity: 0.62; border-radius: 999px; }
+
+/* 设置页 / 结算页:一列行,右端带开关或数值 */
+.mini .rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+.mini .rows > span { flex: 1; display: flex; align-items: center; gap: 3px; }
+.mini .rows > span > .lb { flex: 1; height: 2px; background: var(--border); border-radius: 1px; }
+.mini .rows > span > .sw { flex: none; width: 8px; height: 4px; background: var(--bg-muted); border-radius: 999px; }
+/* 开关"打开"用语义色 --green,不用 --brand。缩略图画的是用户自己那个 App
+   的界面,里面不该出现 OpenDesign 的品牌色;而绿色开关是现实里的通用约定,
+   用语义色既保留"这是设置页"的识别线索,又不借品牌色。 */
+.mini .rows > span:nth-child(2) > .sw { background: color-mix(in srgb, var(--green) 62%, var(--bg-muted)); }
+.mini .rows > span > .vl { flex: none; width: 6px; height: 2px; background: var(--bg-muted); border-radius: 1px; }
+
+/* 搜索页:筛选 chip 一行 + 结果列表(左小图右两行) */
+.mini .chips { display: flex; gap: 2px; }
+.mini .chips > i { height: 4px; width: 10px; border-radius: 999px; background: var(--bg-subtle); }
+.mini .chips > i:first-child { background: var(--text-strong); opacity: 0.55; }
+.mini .list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+.mini .list > span { flex: 1; display: flex; align-items: center; gap: 2px; }
+.mini .list > span > .th2 { flex: none; width: 10px; align-self: stretch; border-radius: 1px; background: var(--sh-c); }
+.mini .list > span:nth-child(2) > .th2 { background: var(--sh-b); }
+.mini .list > span > .tx { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.mini .list > span > .tx > i { height: 2px; }
+.mini .list > span > .tx > i:last-child { width: 50%; background: var(--bg-muted); }
+
+/* 文档(.md 之类):没有顶栏、没有商品图 —— 只有标题和段落。
+   产物不一定是界面,规格文档的缩略图不能长得像 App 截图。 */
+.mini .doc { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+.mini .doc > i { height: 2px; background: var(--border); }
+.mini .doc > i.h { height: 3px; width: 50%; background: var(--text-strong); opacity: 0.5; }
+.mini .doc > i.s { width: 68%; }
+.mini .doc > i.sp { background: none; }
+
+/* 个人页:头像 + 两行信息 + 一列菜单 */
+.mini .head2 { display: flex; align-items: center; gap: 3px; }
+.mini .head2 > .av { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--sh-b); }
+.mini .head2 > .tx { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.mini .head2 > .tx > i { height: 2px; }
+.mini .head2 > .tx > i:last-child { width: 60%; background: var(--bg-muted); }
 
 /* ---- Thinking / 折叠类通用 ---- */
 .fold { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); }
@@ -878,8 +944,8 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-l mod-def"><span>成功 · 显示缩略图</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i><i></i></span></span></span><span class="nm">首页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><span class="row"><i></i><i></i><i></i></span><i class="hero"></i></span></span><span class="nm">设置页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><i class="pill"></i><span class="cards"><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span></span></span></span><span class="nm">首页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><span class="rows"><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span></span></span></span><span class="nm">设置页.png</span></span>
               </div>
             </div>
           </div>
@@ -903,7 +969,7 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-b">
               <div class="att">
                 <span class="att-i att-ov">
-                  <span class="ph"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i><i></i></span></span></span>
+                  <span class="ph"><span class="mini"><i class="nav"></i><i class="pill"></i><span class="cards"><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span></span></span></span>
                   <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>预览</span>
                   <span class="nm">首页.png</span>
                 </span>
@@ -914,13 +980,13 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-l"><span>多附件 · 一行 4 个,满两行后收进「+N」</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i><i></i></span></span></span><span class="nm">首页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><span class="row"><i></i><i></i><i></i></span><i class="hero"></i></span></span><span class="nm">设置页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i><i></i><i></i></span></span></span><span class="nm">列表页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><span class="row"><i></i><i></i></span><i class="hero"></i></span></span><span class="nm">详情页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i></span></span></span><span class="nm">结算页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><span class="row"><i></i><i></i><i></i></span><span class="row"><i></i><i></i></span></span></span><span class="nm">搜索页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i><i></i></span></span></span><span class="nm">我的.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><i class="pill"></i><span class="cards"><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span></span></span></span><span class="nm">首页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><span class="rows"><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span></span></span></span><span class="nm">设置页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><i class="pill"></i><span class="cards"><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span></span></span></span><span class="nm">列表页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><i class="hero"></i><i class="ln"></i><i class="ln mod-short"></i><i class="cta"></i></span></span><span class="nm">详情页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="nav"></i><span class="rows"><span><i class="lb"></i><i class="vl"></i></span><span><i class="lb"></i><i class="vl"></i></span><span><i class="lb"></i><i class="vl"></i></span></span><i class="cta"></i></span></span><span class="nm">结算页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><i class="pill"></i><span class="chips"><i></i><i></i><i></i></span><span class="list"><span><i class="th2"></i><span class="tx"><i></i><i></i></span></span><span><i class="th2"></i><span class="tx"><i></i><i></i></span></span></span></span></span><span class="nm">搜索页.png</span></span>
+                <span class="att-i"><span class="ph"><span class="mini"><span class="head2"><i class="av"></i><span class="tx"><i></i><i></i></span></span><span class="rows"><span><i class="lb"></i><i class="vl"></i></span><span><i class="lb"></i><i class="vl"></i></span><span><i class="lb"></i><i class="vl"></i></span></span></span></span><span class="nm">我的.png</span></span>
                 <button class="att-more" type="button" aria-label="还有 5 个附件,点开查看全部">+5</button>
               </div>
             </div>
@@ -1374,7 +1440,7 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-b">
               <div class="arts">
                 <div class="art">
-                  <span class="thumb"><span class="mini"><i class="bar"></i><i class="hero"></i><span class="row"><i></i><i></i><i></i></span><i class="dot"></i></span></span>
+                  <span class="thumb"><span class="mini"><i class="nav"></i><i class="pill"></i><span class="cards"><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span><span><i class="img"></i><i class="t1"></i><i class="t2"></i></span></span></span></span>
                   <div class="b"><div class="nm">商品列表页</div><div class="kd">product-list.html</div></div>
                   <div class="ops">
                     <button class="btn mod-primary mod-sm" type="button">预览</button>
@@ -1383,7 +1449,7 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
                   </div>
                 </div>
                 <div class="art">
-                  <span class="thumb"><span class="mini"><i class="bar"></i><span class="row"><i></i><i></i></span><span class="row"><i></i><i></i></span><i class="hero"></i></span></span>
+                  <span class="thumb"><span class="mini"><i class="nav"></i><span class="rows"><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span><span><i class="lb"></i><i class="sw"></i></span></span></span></span>
                   <div class="b"><div class="nm">设置页</div><div class="kd">settings.html</div></div>
                   <div class="ops">
                     <button class="btn mod-primary mod-sm" type="button">预览</button>
@@ -1397,9 +1463,11 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
           <div class="st">
             <div class="st-l"><span>非 HTML 产物 · 无「发布」</span><i></i></div>
             <div class="st-b">
-              <div class="arts" style="grid-template-columns:1fr">
+              <!-- 不改列宽:两态之间唯一该变的是按钮组(有没有「发布」),
+                   卡片尺寸跟着变会让人以为尺寸也是状态的一部分。 -->
+              <div class="arts">
                 <div class="art">
-                  <span class="thumb" style="height:56px"><span class="mini"><i class="bar"></i><span class="row"><i></i><i></i><i></i><i></i></span></span></span>
+                  <span class="thumb"><span class="mini"><span class="doc"><i class="h"></i><i></i><i></i><i class="s"></i><i class="sp"></i><i class="h"></i><i></i><i class="s"></i></span></span></span>
                   <div class="b"><div class="nm">商品卡组件规格</div><div class="kd">product-card.md</div></div>
                   <div class="ops">
                     <button class="btn mod-primary mod-sm" type="button">预览</button>
