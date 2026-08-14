@@ -264,6 +264,19 @@ class StandaloneBundler {
         );
         const inlineStyle = attrs.get('style');
         if (inlineStyle) attrs.set('style', await this.rewriteCssUrls(inlineStyle, documentOwnerPath, chain));
+        if (attrs.has('disabled') || /\balternate\b/u.test(rel)) {
+          attrs.set('href', this.checkedDataUrl('text/css;charset=utf-8', Buffer.from(css), [
+            ...chain,
+            local.projectPath,
+          ]));
+          replacements.push({
+            start: location.startOffset,
+            end: location.endOffset,
+            value: `<link${renderAttributes(attrs, ['integrity', 'crossorigin', 'referrerpolicy'])}>`,
+          });
+          wholeNodeReplacements.add(node);
+          continue;
+        }
         const kept = renderAttributes(attrs, ['rel', 'href', 'type', 'integrity', 'crossorigin', 'referrerpolicy']);
         replacements.push({
           start: location.startOffset,

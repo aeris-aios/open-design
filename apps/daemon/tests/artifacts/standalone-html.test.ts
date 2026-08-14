@@ -237,6 +237,24 @@ describe('bundleStandaloneHtml', () => {
     expect(result.html).toContain('@media screen and (min-width: 1px)');
   });
 
+  it('preserves disabled and alternate stylesheet state on embedded links', async () => {
+    const result = await bundleStandaloneHtml({
+      entryPath: 'index.html',
+      html: `<link rel="stylesheet" disabled href="styles/disabled.css">
+        <link rel="alternate stylesheet" title="Dark" href="styles/dark.css">`,
+      readAsset: assetReader({
+        'styles/disabled.css': { body: 'body{color:red}', mime: 'text/css' },
+        'styles/dark.css': { body: 'body{color:white}', mime: 'text/css' },
+      }),
+    });
+
+    expect(result.html).toMatch(/<link rel="stylesheet" disabled href="data:text\/css;base64,/u);
+    expect(result.html).toMatch(/<link rel="alternate stylesheet" title="Dark" href="data:text\/css;base64,/u);
+    expect(result.html).not.toContain('<style data-od-inline-asset');
+    expect(result.html).not.toContain('styles/disabled.css');
+    expect(result.html).not.toContain('styles/dark.css');
+  });
+
   it('rejects recursive iframe documents with a dependency chain', async () => {
     await expect(bundleStandaloneHtml({
       entryPath: 'index.html',
