@@ -7660,6 +7660,27 @@ describe('FileViewer tweaks toolbar', () => {
       expect(f.srcdoc).toContain('data-od-edit-bridge');
       return f.srcdoc;
     });
+    const materializedFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(materializedFrame.contentWindow!, 'postMessage');
+    fireEvent.load(materializedFrame);
+    const probe = await waitFor(() => {
+      const value = postMessage.mock.calls.find(
+        ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+      )?.[0] as { generation?: string; probeId?: string } | undefined;
+      expect(value?.generation).toBeTruthy();
+      expect(value?.probeId).toBeTruthy();
+      return value!;
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: materializedFrame.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: probe.generation,
+          probeId: probe.probeId,
+        },
+      }));
+    });
 
     // Leave Draw and enter Edit. Because the edit bridge was already in the
     // materialized srcDoc, entering Edit must NOT change the document string —
