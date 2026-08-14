@@ -198,7 +198,10 @@ describe('server.ts wiring (source boundary)', () => {
     return source.slice(switchStart, i + 1);
   }
 
-  it('resets exact authority across credential changes before refreshing hub endpoints', () => {
+  it('resets directory and exact authority across credential changes before refreshing hub endpoints', () => {
+    const resetHelperStart = source.indexOf(
+      'const resetWorkspaceIdentityCaches = (): void => {',
+    );
     const start = source.indexOf(
       'const refreshWorkspaceHubAccountIdentity = (): void => {',
     );
@@ -206,10 +209,21 @@ describe('server.ts wiring (source boundary)', () => {
       'const fetchWorkspaceDirectoryForAccountSurface = () => {',
       start,
     );
-    expect(start).toBeGreaterThan(-1);
+    expect(resetHelperStart).toBeGreaterThan(-1);
+    expect(start).toBeGreaterThan(resetHelperStart);
     expect(end).toBeGreaterThan(start);
+    const resetHelperBody = source.slice(resetHelperStart, start);
+    expect(resetHelperBody).toContain(
+      'workspaceDirectoryAuthority.resetIdentity();',
+    );
+    expect(resetHelperBody).toContain(
+      'workspaceExactAuthorityCache.resetIdentity();',
+    );
+    expect(resetHelperBody).toContain(
+      'workspaceExactContextCache.resetIdentity();',
+    );
     const body = source.slice(start, end);
-    const resetStart = body.indexOf('resetWorkspaceExactIdentityCaches();');
+    const resetStart = body.indexOf('resetWorkspaceIdentityCaches();');
     const endpointRefreshStart = body.indexOf(
       'workspaceHubSubscriptions?.refreshEndpoints();',
     );
