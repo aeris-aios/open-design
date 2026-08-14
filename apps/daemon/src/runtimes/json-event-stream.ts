@@ -1,3 +1,8 @@
+import {
+  createOpenCodeRootTaskEvidenceCollector,
+  type OpenCodeTaskTerminalCandidate,
+} from './opencode-child-evidence.js';
+
 type JsonObject = Record<string, unknown>;
 type StreamEvent = Record<string, unknown>;
 type StreamEventHandler = (event: StreamEvent) => void;
@@ -870,7 +875,20 @@ function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: Pars
   return false;
 }
 
-export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEventHandler) {
+export interface JsonEventStreamHandlerOptions {
+  openCodeChildEvidence?: {
+    rootSessionId?: string;
+    cliVersion: string;
+    onCandidate: (candidate: OpenCodeTaskTerminalCandidate) => void;
+    now?: () => number;
+  };
+}
+
+export function createJsonEventStreamHandler(
+  kind: ParserKind,
+  onEvent: StreamEventHandler,
+  options: JsonEventStreamHandlerOptions = {},
+) {
   let buffer = '';
   const state: ParserState = {
     cursorTextSoFar: '',
@@ -887,6 +905,9 @@ export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEv
     artifactOpenCandidate: '',
     pendingArtifactText: '',
   };
+  const openCodeChildEvidence = kind === 'opencode' && options.openCodeChildEvidence
+    ? createOpenCodeRootTaskEvidenceCollector(options.openCodeChildEvidence)
+    : null;
 
   function handleLine(line: string): void {
     let obj: unknown;
@@ -896,6 +917,8 @@ export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEv
       onEvent({ type: 'raw', line });
       return;
     }
+
+    openCodeChildEvidence?.observe(obj);
 
     if (kind === 'opencode' && handleOpenCodeEvent(obj, onEvent, state)) return;
     if (kind === 'gemini' && handleGeminiEvent(obj, onEvent, state)) return;

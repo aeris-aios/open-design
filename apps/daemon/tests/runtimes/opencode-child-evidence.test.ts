@@ -1,0 +1,366 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import {
+  evaluateRuntimeEvidenceGraphV1,
+  normalizeAgentObservationV1,
+} from '@open-design/contracts';
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  adaptOpenCodeChildRuntimeFactV1,
+  collectOpenCodeChildRuntimeFacts,
+  createOpenCodeRootTaskEvidenceCollector,
+  OPENCODE_CHILD_EVIDENCE_CLI_VERSION,
+  verifyOpenCodeChildExport,
+  type OpenCodeTaskTerminalCandidate,
+} from '../../src/runtimes/opencode-child-evidence.js';
+import { createJsonEventStreamHandler } from '../../src/runtimes/json-event-stream.js';
+
+const fixturePath = fileURLToPath(new URL(
+  '../fixtures/od-next-runtime-capabilities/opencode-1.18.4.synthetic.json',
+  import.meta.url,
+));
+
+function fixture(): {
+  fixtureKind: string;
+  rootSessionId: string;
+  frames: unknown[];
+  sanitizedChildExport: unknown;
+} {
+  return JSON.parse(readFileSync(fixturePath, 'utf8'));
+}
+
+function collectCandidate(overrides: Record<string, unknown> = {}): OpenCodeTaskTerminalCandidate[] {
+  const data = fixture();
+  const candidates: OpenCodeTaskTerminalCandidate[] = [];
+  const collector = createOpenCodeRootTaskEvidenceCollector({
+    rootSessionId: data.rootSessionId,
+    cliVersion: OPENCODE_CHILD_EVIDENCE_CLI_VERSION,
+    now: () => 1786723202000,
+    onCandidate: (candidate) => candidates.push(candidate),
+  });
+  for (const frame of data.frames) {
+    collector.observe({ ...(frame as Record<string, unknown>), ...overrides });
+  }
+  return candidates;
+}
+
+describe('native OpenCode child evidence', () => {
+  it('captures a terminal native Task candidate without retaining Prompt text', () => {
+    const [candidate] = collectCandidate();
+    expect(candidate).toMatchObject({
+      cliVersion: '1.18.4',
+      rootSessionId: 'ses_root_synthetic',
+      childSessionId: 'ses_child_synthetic',
+      toolCallId: 'call_task_synthetic',
+      state: 'completed',
+      startedAtMs: 1786723200000,
+      endedAtMs: 1786723201250,
+      promptBytes: 35,
+    });
+    expect(candidate?.promptHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(candidate)).not.toContain('Inspect the synthetic fixture');
+  });
+
+  it('requires the root stream id and Task parent metadata to agree', () => {
+    const data = fixture();
+    const frame = structuredClone(data.frames[1]) as Record<string, unknown>;
+    const part = frame.part as Record<string, unknown>;
+    const state = part.state as Record<string, unknown>;
+    state.metadata = {
+      ...(state.metadata as Record<string, unknown>),
+      parentSessionId: 'ses_unrelated',
+    };
+    const candidates: OpenCodeTaskTerminalCandidate[] = [];
+    createOpenCodeRootTaskEvidenceCollector({
+      rootSessionId: data.rootSessionId,
+      cliVersion: '1.18.4',
+      onCandidate: (candidate) => candidates.push(candidate),
+    }).observe(frame);
+    expect(candidates).toEqual([]);
+  });
+
+  it('learns a create-turn root id from step_start and rejects version drift', () => {
+    const data = fixture();
+    const candidates: OpenCodeTaskTerminalCandidate[] = [];
+    const collector = createOpenCodeRootTaskEvidenceCollector({
+      cliVersion: '1.18.4',
+      onCandidate: (candidate) => candidates.push(candidate),
+    });
+    for (const frame of data.frames) collector.observe(frame);
+    expect(candidates).toHaveLength(1);
+
+    const drifted: OpenCodeTaskTerminalCandidate[] = [];
+    const driftedCollector = createOpenCodeRootTaskEvidenceCollector({
+      cliVersion: '1.18.5',
+      onCandidate: (candidate) => drifted.push(candidate),
+    });
+    for (const frame of data.frames) driftedCollector.observe(frame);
+    expect(drifted).toEqual([]);
+    const [candidate] = collectCandidate();
+    expect(verifyOpenCodeChildExport({
+      candidate: { ...candidate!, cliVersion: '1.18.5' },
+      sanitizedExport: data.sanitizedChildExport,
+    })).toEqual([]);
+  });
+
+  it.each([
+    ['explicit background', '[background task started]'],
+    ['foreground promoted to background', '[foreground task promoted]'],
+  ])('does not promote %s root tool completion to a Child terminal', (_label, output) => {
+    const data = fixture();
+    const frame = structuredClone(data.frames[1]) as Record<string, unknown>;
+    const part = frame.part as Record<string, unknown>;
+    const state = part.state as Record<string, unknown>;
+    state.output = output;
+    state.metadata = {
+      ...(state.metadata as Record<string, unknown>),
+      background: true,
+    };
+    const candidates: OpenCodeTaskTerminalCandidate[] = [];
+    createOpenCodeRootTaskEvidenceCollector({
+      rootSessionId: data.rootSessionId,
+      cliVersion: '1.18.4',
+      onCandidate: (candidate) => candidates.push(candidate),
+    }).observe(frame);
+    expect(candidates).toEqual([]);
+  });
+
+  it.each([
+    ['Cancelled', 'canceled'],
+    ['Task cancelled', 'canceled'],
+    ['Child provider failed', 'failed'],
+  ] as const)('maps an explicit native Task error %s to %s', (error, expected) => {
+    const data = fixture();
+    const frame = structuredClone(data.frames[1]) as Record<string, unknown>;
+    const part = frame.part as Record<string, unknown>;
+    const state = part.state as Record<string, unknown>;
+    state.status = 'error';
+    state.error = error;
+    const candidates: OpenCodeTaskTerminalCandidate[] = [];
+    createOpenCodeRootTaskEvidenceCollector({
+      rootSessionId: data.rootSessionId,
+      cliVersion: '1.18.4',
+      onCandidate: (candidate) => candidates.push(candidate),
+    }).observe(frame);
+    expect(candidates[0]?.state).toBe(expected);
+  });
+
+  it('keeps timeout-looking and unclassified empty Task errors unknown', () => {
+    const data = fixture();
+    for (const error of ['Task timed out', '']) {
+      const frame = structuredClone(data.frames[1]) as Record<string, unknown>;
+      const part = frame.part as Record<string, unknown>;
+      const state = part.state as Record<string, unknown>;
+      state.status = 'error';
+      state.error = error;
+      const candidates: OpenCodeTaskTerminalCandidate[] = [];
+      createOpenCodeRootTaskEvidenceCollector({
+        rootSessionId: data.rootSessionId,
+        cliVersion: '1.18.4',
+        onCandidate: (candidate) => candidates.push(candidate),
+      }).observe(frame);
+      expect(candidates).toEqual([]);
+    }
+  });
+
+  it('rejects unrelated and single-evidence sanitized exports', () => {
+    const [candidate] = collectCandidate();
+    expect(candidate).toBeDefined();
+    expect(verifyOpenCodeChildExport({
+      candidate: candidate!,
+      sanitizedExport: {
+        info: { id: candidate!.childSessionId, parentID: 'ses_other_root' },
+        messages: [],
+      },
+    })).toEqual([]);
+    expect(verifyOpenCodeChildExport({
+      candidate: candidate!,
+      sanitizedExport: {
+        info: { id: 'ses_other_child', parentID: candidate!.rootSessionId },
+        messages: [],
+      },
+    })).toEqual([]);
+  });
+
+  it('emits one started and one terminal fact with independent child usage', () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const facts = verifyOpenCodeChildExport({
+      candidate: candidate!,
+      sanitizedExport: data.sanitizedChildExport,
+    });
+    expect(facts.map((fact) => fact.state)).toEqual(['started', 'completed']);
+    expect(facts[1]?.usage).toEqual({
+      inputTokens: 11,
+      outputTokens: 7,
+      thoughtTokens: 3,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 2,
+    });
+  });
+
+  it('attributes usage only to child messages inside the native Task time window', () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const exported = structuredClone(data.sanitizedChildExport) as Record<string, unknown>;
+    exported.messages = [
+      {
+        info: {
+          role: 'assistant',
+          sessionID: candidate!.childSessionId,
+          time: { created: candidate!.startedAtMs! - 1 },
+          tokens: { input: 100, output: 100 },
+        },
+      },
+      ...(exported.messages as unknown[]),
+      {
+        info: {
+          role: 'assistant',
+          sessionID: 'ses_unrelated_child',
+          time: { created: candidate!.startedAtMs! + 1 },
+          tokens: { input: 200, output: 200 },
+        },
+      },
+    ];
+    const facts = verifyOpenCodeChildExport({
+      candidate: candidate!,
+      sanitizedExport: exported,
+    });
+    expect(facts[1]?.usage).toEqual({
+      inputTokens: 11,
+      outputTokens: 7,
+      thoughtTokens: 3,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 2,
+    });
+  });
+
+  it('post-run collection requests only the declared child and absorbs lookup failure', async () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const loader = vi.fn(async () => data.sanitizedChildExport);
+    await expect(collectOpenCodeChildRuntimeFacts({
+      candidate: candidate!,
+      loadSanitizedExport: loader,
+    })).resolves.toHaveLength(2);
+    expect(loader).toHaveBeenCalledWith('ses_child_synthetic');
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await expect(collectOpenCodeChildRuntimeFacts({
+      candidate: candidate!,
+      loadSanitizedExport: async () => { throw new Error('export unavailable'); },
+    })).resolves.toEqual([]);
+  });
+
+  it('does not invent started or usage facts when the native fields are absent', () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const {
+      startedAtMs: _startedAtMs,
+      endedAtMs: _endedAtMs,
+      ...candidateWithoutTiming
+    } = candidate!;
+    const facts = verifyOpenCodeChildExport({
+      candidate: candidateWithoutTiming,
+      sanitizedExport: {
+        ...(data.sanitizedChildExport as Record<string, unknown>),
+        messages: [],
+      },
+    });
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toMatchObject({ state: 'completed' });
+    expect(facts[0]?.usage).toBeUndefined();
+  });
+
+  it('keeps running Task parts and host cancellation unclaimed without a child id', () => {
+    const data = fixture();
+    const frame = structuredClone(data.frames[1]) as Record<string, unknown>;
+    const part = frame.part as Record<string, unknown>;
+    const state = part.state as Record<string, unknown>;
+    state.status = 'running';
+    const candidates: OpenCodeTaskTerminalCandidate[] = [];
+    const collector = createOpenCodeRootTaskEvidenceCollector({
+      rootSessionId: data.rootSessionId,
+      cliVersion: '1.18.4',
+      onCandidate: (candidate) => candidates.push(candidate),
+    });
+    collector.observe(frame);
+    expect(candidates).toEqual([]);
+  });
+
+  it('keeps parser output stable when the side-channel callback throws', () => {
+    const data = fixture();
+    const events: Array<Record<string, unknown>> = [];
+    const handler = createJsonEventStreamHandler('opencode', (event) => events.push(event), {
+      openCodeChildEvidence: {
+        rootSessionId: data.rootSessionId,
+        cliVersion: '1.18.4',
+        onCandidate: () => { throw new Error('observer failed'); },
+      },
+    });
+    handler.feed(`${data.frames.map((frame) => JSON.stringify(frame)).join('\n')}\n`);
+    handler.flush();
+    expect(events).toEqual([
+      { type: 'status', label: 'running', sessionId: 'ses_root_synthetic' },
+      {
+        type: 'tool_use',
+        id: 'call_task_synthetic',
+        name: 'task',
+        input: {
+          description: 'Synthetic child',
+          prompt: 'Inspect the synthetic fixture only.',
+          subagent_type: 'explore',
+        },
+      },
+      {
+        type: 'tool_result',
+        toolUseId: 'call_task_synthetic',
+        content: '[redacted:tool-output:task]',
+        isError: false,
+      },
+    ]);
+  });
+
+  it('normalizes verified facts as L2 child lifecycle without claiming L3 turns', () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const observations = verifyOpenCodeChildExport({
+      candidate: candidate!,
+      sanitizedExport: data.sanitizedChildExport,
+    }).map((fact) => adaptOpenCodeChildRuntimeFactV1({
+      fact,
+      taskExecutionId: 'task-1',
+      runId: 'run-1',
+      taskRunIndex: 0,
+      taskRunObservationId: 'task-run:task-1:run-1',
+      stage: 'production',
+    }));
+    expect(observations[1]).toMatchObject({
+      kind: 'child_agent',
+      status: 'completed',
+      usage: { accountingMode: 'additive', availability: 'complete' },
+      prompt: { childInjected: { availability: 'partial' } },
+    });
+    expect(observations[1]?.turnAccounting).toBeUndefined();
+    const parent = normalizeAgentObservationV1({
+      identity: {
+        observationId: 'task-run:task-1:run-1',
+        taskExecutionId: 'task-1',
+        runId: 'run-1',
+        taskRunIndex: 0,
+      },
+      kind: 'task_run',
+      stage: 'production',
+      status: 'running',
+      limitations: ['synthetic_contract_parent'],
+    });
+    const graph = evaluateRuntimeEvidenceGraphV1([parent, ...observations]);
+    expect(graph).toMatchObject({ valid: true, evidenceLevel: 'L2', countedTurnIds: [] });
+  });
+
+  it('labels the fixture contract-only so it cannot become production evidence', () => {
+    expect(fixture().fixtureKind).toBe('contract_only');
+  });
+});
