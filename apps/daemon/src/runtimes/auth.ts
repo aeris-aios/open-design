@@ -24,7 +24,7 @@ const DEEPSEEK_AUTH_GUIDANCE =
   'DeepSeek TUI is installed but is not authenticated. Add or verify your API key in `~/.deepseek/config.toml` as `api_key = "..."`, or expose DEEPSEEK_API_KEY to the Open Design daemon process, then retry. If Open Design is launched outside an interactive shell, shell rc files such as ~/.zshrc may not be loaded.';
 
 const DEEPSEEK_HARNESS_AUTH_GUIDANCE =
-  'DeepSeek Harness is installed and compatible, but its provider credential is missing. Add your DeepSeek API key on the Models page, or expose DEEPSEEK_API_KEY to the Open Design daemon process, then retry.';
+  'DeepSeek Harness has no model API key configured. Open a terminal and run `dsh web`, then open Settings → Models and add your DeepSeek API key. Return to Open Design and retry. For automation, expose DEEPSEEK_API_KEY to the Open Design process.';
 
 // agy's print mode (`-p`) detects a missing OAuth token, prints the
 // Google sign-in URL to stdout, waits 30s for completion, then exits
@@ -125,12 +125,63 @@ export function isDeepSeekAuthFailureText(text: string): boolean {
   const value = String(text || '');
   if (!value.trim()) return false;
   return (
+    /\b(?:MISSING_CREDENTIAL|DSH_PROVIDER_AUTH_FAILED)\b/i.test(value) ||
     /KEY=<your-key>/i.test(value) ||
     /api_key\s*=\s*["']<your-key>["']/i.test(value) ||
     (/~\/\.deepseek\/config\.toml/i.test(value) && /api[_ -]?key|KEY=/i.test(value)) ||
     (/DEEPSEEK_API_KEY/i.test(value) &&
       /auth|api[_ -]?key|missing|not set|required|unauthorized/i.test(value))
   );
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function unknownRecord(value: unknown): UnknownRecord | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as UnknownRecord;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+export type DeepSeekHarnessFailure = {
+  code: string;
+  message: string;
+  authRequired: boolean;
+};
+
+/**
+ * Turns the profile's structured error payload into a safe user-facing error.
+ * Harness SDK errors can place an object in `message`; never coerce that object
+ * to text because it produces `[object Object]` and can expose provider data.
+ */
+export function normalizeDeepSeekHarnessFailure(payload: unknown): DeepSeekHarnessFailure {
+  const root = unknownRecord(payload);
+  const nestedError = unknownRecord(root?.error);
+  const embeddedMessage = unknownRecord(root?.message);
+  const code = firstNonEmptyString(
+    nestedError?.code,
+    root?.code,
+    embeddedMessage?.code,
+  ) ?? 'AGENT_EXECUTION_FAILED';
+  const rawMessage = firstNonEmptyString(
+    typeof payload === 'string' ? payload : undefined,
+    root?.message,
+    nestedError?.message,
+    embeddedMessage?.message,
+  );
+  const authRequired = isDeepSeekAuthFailureText(`${code}\n${rawMessage ?? ''}`);
+  return {
+    code,
+    message: authRequired
+      ? deepseekHarnessAuthGuidance()
+      : rawMessage ?? 'DeepSeek Harness profile error.',
+    authRequired,
+  };
 }
 
 export function isReasonixAuthFailureText(text: string): boolean {
