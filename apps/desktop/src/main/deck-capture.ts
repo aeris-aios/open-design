@@ -544,6 +544,16 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     return images.some((image) => image && image.trim().toLowerCase() !== "none");
   }
 
+  function hasCssClipPath(style: CSSStyleDeclaration): boolean {
+    const value = (
+      style.clipPath ||
+      style.getPropertyValue?.("clip-path") ||
+      style.getPropertyValue?.("-webkit-clip-path") ||
+      "none"
+    ).trim().toLowerCase();
+    return value !== "" && value !== "none";
+  }
+
   function copyComputedMaskStyles(background: HTMLElement, style: CSSStyleDeclaration): void {
     for (let index = 0; index < style.length; index += 1) {
       const property = style.item(index);
@@ -556,11 +566,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
   function hasUnsupportedPseudoSelfEffect(style: CSSStyleDeclaration): boolean {
     const opacity = Number.parseFloat(style.opacity || "1");
     const hasOpacity = Number.isFinite(opacity) && opacity > 0 && opacity < 1;
-    const clipPath = (style.clipPath || style.getPropertyValue?.("clip-path") || "none")
-      .trim()
-      .toLowerCase();
-    const hasClipPath = clipPath !== "" && clipPath !== "none";
-    return hasOpacity || hasClipPath || hasUnsupportedNativeAncestorEffect(style);
+    return hasOpacity || hasCssClipPath(style) || hasUnsupportedNativeAncestorEffect(style);
   }
 
   function materializeLayeredPseudoBackground(
@@ -709,7 +715,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const hasFilter = Boolean(style.filter && style.filter !== "none");
     const hasTransform = [style.transform, style.translate, style.rotate, style.scale]
       .some((value) => Boolean(value && value !== "none"));
-    return hasFilter || hasTransform || dependsOnBackdrop(style);
+    return hasFilter || hasTransform || hasCssClipPath(style) || hasCssMask(style) || dependsOnBackdrop(style);
   }
 
   function compositingAncestors(element: HTMLElement, slide: HTMLElement): HTMLElement[] {

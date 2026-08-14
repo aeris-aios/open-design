@@ -913,6 +913,29 @@ describe('editable PPTX layered backgrounds', () => {
     expect(media.slideFilterForegroundNativeContent).toBe(-1);
   }, 30_000);
 
+  test.each([
+    ['a layered element clip path', 'selfClipForeground'],
+    ['an ancestor clip path', 'ancestorClipForeground'],
+    ['an ancestor prefixed mask', 'ancestorMaskForeground'],
+  ] as const)('captures native foreground inside %s', async (_label, key) => {
+    const media = await probeLayeredBackgroundMedia();
+    const probe = media[key];
+
+    expect(probe.exported, JSON.stringify(probe.exported)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    const comparisonContext = JSON.stringify({
+      chromium: probe.chromium,
+      exported: probe.exported.pngs[0],
+      comparison: probe.comparison,
+    });
+    expect(probe.comparison.meanChannelDelta, comparisonContext).toBeLessThanOrEqual(8);
+    expect(probe.comparison.maxChannelDelta, comparisonContext).toBeLessThanOrEqual(160);
+    expect(probe.nativeContent).toBe(-1);
+    expect(probe.nativeBorder).toBe(-1);
+  }, 30_000);
+
   test('captures a real masked element complete instead of emitting unmasked native foreground', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.masked.pngs;
@@ -978,10 +1001,12 @@ type LayeredBackgroundProbe = {
     content: PptxGeometry | null;
   };
   ancestorBlend: LayeredBackgroundExport;
+  ancestorClipForeground: PaintClipForegroundProbe;
   ancestorFilterForeground: LayeredBackgroundExport;
   ancestorFilterForegroundChromium: PngProbe;
   ancestorFilterForegroundChromiumComparison: PngComparison;
   ancestorFilterForegroundNativeContent: number;
+  ancestorMaskForeground: PaintClipForegroundProbe;
   backdropFiltered: LayeredBackgroundExport;
   backgroundBlendPseudo: LayeredBackgroundExport;
   blended: LayeredBackgroundExport;
@@ -1032,6 +1057,7 @@ type LayeredBackgroundProbe = {
   selfFilteredPseudoChromium: PngProbe;
   selfFilteredPseudoChromiumComparison: PngComparison;
   selfFilteredPseudoNativeContent: number;
+  selfClipForeground: PaintClipForegroundProbe;
   slideFilterForeground: LayeredBackgroundExport;
   slideFilterForegroundChromium: PngProbe;
   slideFilterForegroundChromiumComparison: PngComparison;
@@ -1061,6 +1087,14 @@ type PngComparison = {
 };
 
 type LayeredBackgroundExport = { captures: number; media: string[]; pngs: PngProbe[] };
+
+type PaintClipForegroundProbe = {
+  chromium: PngProbe;
+  comparison: PngComparison;
+  exported: LayeredBackgroundExport;
+  nativeBorder: number;
+  nativeContent: number;
+};
 
 type PngProbe = {
   centerRgb: [number, number, number];
@@ -1458,7 +1492,9 @@ const fixtures = {
   nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div><div class="nested-opacity-label">Native nested opacity label</div><div class="nested-opacity-shape"></div></div>',
   solidCompositor: '<div class="solid-compositor"><div class="solid-compositor-child"></div><div class="solid-compositor-label">Solid compositor label</div></div>',
   ancestorBlend: '<div class="ancestor-blend-backdrop"></div><div class="ancestor-blend-context"><div class="ancestor-blend-child"></div></div>',
+  ancestorClipForeground: '<div class="ancestor-clip-foreground"><div class="ancestor-clip-layer"></div><div class="ancestor-clip-label">Ancestor clipped foreground</div></div>',
   ancestorFilterForeground: '<div class="ancestor-filter-context"><div class="ancestor-filter-layer"></div><div class="ancestor-filter-label">Filtered ancestor label</div><div class="ancestor-filter-shape"></div></div>',
+  ancestorMaskForeground: '<div class="ancestor-mask-foreground"><div class="ancestor-mask-layer"></div><div class="ancestor-mask-label">Ancestor masked foreground</div></div>',
   normalMaskedPseudo: '<div class="normal-masked-pseudo"></div>',
   compositedMaskedPseudo: '<div class="composited-masked-pseudo"></div>',
   maskedPseudoContent: '<div class="masked-pseudo-content"></div><div class="masked-pseudo-sibling">Native after mask</div>',
@@ -1478,6 +1514,7 @@ const fixtures = {
   textClipStandard: '<div class="text-clip-standard">Standard gradient title</div>',
   textClipWebkit: '<div class="text-clip-webkit">WebKit gradient title</div>',
   selfFilteredPseudo: '<div class="self-filtered-pseudo"></div>',
+  selfClipForeground: '<div class="self-clip-foreground">Self clipped foreground</div>',
   slideFilterForeground: '<div class="slide-filter-layer"></div><div class="slide-filter-label">Slide filtered label</div><div class="slide-filter-shape"></div>',
 };
 const styles = \`
@@ -1747,6 +1784,49 @@ const styles = \`
     width: 26px;
     height: 26px;
     background: rgb(255, 80, 40);
+  }
+  .self-clip-foreground,
+  .ancestor-clip-foreground,
+  .ancestor-mask-foreground {
+    position: absolute;
+    left: 66px;
+    top: 52px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font: 700 14px/20px sans-serif;
+  }
+  .self-clip-foreground {
+    width: 178px;
+    height: 72px;
+    border: 5px solid rgb(10, 220, 240);
+    background-image: linear-gradient(rgb(44, 92, 188), rgb(44, 92, 188)), linear-gradient(transparent, transparent);
+    clip-path: polygon(0 0, 100% 0, 62% 100%, 0 100%);
+  }
+  .ancestor-clip-foreground {
+    width: 184px;
+    height: 78px;
+    border: 5px solid rgb(255, 123, 45);
+    clip-path: polygon(0 0, 100% 0, 68% 100%, 0 100%);
+  }
+  .ancestor-mask-foreground {
+    width: 190px;
+    height: 84px;
+    border: 5px solid rgb(111, 240, 79);
+    -webkit-mask-image: linear-gradient(to right, black 58%, transparent 58%);
+  }
+  .ancestor-clip-layer,
+  .ancestor-mask-layer {
+    position: absolute;
+    inset: -5px;
+    background-image: linear-gradient(rgb(154, 54, 188), rgb(154, 54, 188)), linear-gradient(transparent, transparent);
+  }
+  .ancestor-clip-label,
+  .ancestor-mask-label {
+    position: relative;
+    z-index: 1;
   }
   .slide-filter-context {
     filter: brightness(.45);
@@ -2347,10 +2427,13 @@ app.whenReady().then(async () => {
     // Keep one slide and one real exporter invocation: serial slide conversion
     // made this probe hit its Linux workspace-test timeout under concurrent load.
     const isolatedFixtureNames = new Set([
+      'ancestorClipForeground',
       'ancestorFilterForeground',
+      'ancestorMaskForeground',
       'clippedStripeBackdrop',
       'nestedOpacity',
       'selfFilteredPseudo',
+      'selfClipForeground',
       'slideFilterForeground',
       'textClipStandard',
       'textClipWebkit',
@@ -2358,6 +2441,14 @@ app.whenReady().then(async () => {
     const fixtureEntries = Object.entries(fixtures).filter(([name]) => !isolatedFixtureNames.has(name));
     const fixtureMarkup = fixtureEntries
       .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
+      .join('');
+    const paintClipForegroundSlides = [
+      'selfClipForeground',
+      'ancestorClipForeground',
+      'ancestorMaskForeground',
+    ].map((name) => '<section class="slide isolated-probe-slide"><div data-od-probe="' + name + '">'
+      + fixtures[name]
+      + '</div></section>')
       .join('');
     const slide = '<section class="slide">' + fixtureMarkup + '</section>'
       + '<section class="slide isolated-probe-slide"><div data-od-probe="clippedStripeBackdrop">'
@@ -2386,7 +2477,8 @@ app.whenReady().then(async () => {
       + fixtures.slideFilterForeground
       + '</section>'
       + '<section class="slide slide-root-mask" data-od-probe="slideRootMask">'
-      + '<div class="slide-root-mask-content">Slide root paint</div></section>';
+      + '<div class="slide-root-mask-content">Slide root paint</div></section>'
+      + paintClipForegroundSlides;
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(slide), true);
     await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
     probeStage = 'normalize export DOM';
@@ -2467,6 +2559,18 @@ app.whenReady().then(async () => {
       '.ancestor-filter-context',
       'chromium-ancestor-filter-foreground.png',
       64,
+    );
+    const selfClipForegroundChromium = await captureChromiumReference(
+      '.self-clip-foreground',
+      'chromium-self-clip-foreground.png',
+    );
+    const ancestorClipForegroundChromium = await captureChromiumReference(
+      '.ancestor-clip-foreground',
+      'chromium-ancestor-clip-foreground.png',
+    );
+    const ancestorMaskForegroundChromium = await captureChromiumReference(
+      '.ancestor-mask-foreground',
+      'chromium-ancestor-mask-foreground.png',
     );
     const clippedStripeBackdropChromium = await captureChromiumReference(
       '.clipped-stripe-target',
@@ -2663,6 +2767,36 @@ app.whenReady().then(async () => {
       ancestorFilterForegroundMedia.data,
     );
     result.ancestorFilterForegroundNativeContent = inspectNativeContent(entries, 'Filtered ancestor label');
+    function paintClipForegroundResult(name, chromium, content, borderColor) {
+      const exported = result[name];
+      const exportedMedia = media.find(({ name: mediaName }) => mediaName === exported?.media?.[0]);
+      if (!exportedMedia) throw new Error('Missing exported ' + name + ' media');
+      return {
+        chromium: chromium.png,
+        comparison: comparePng(chromium.data, exportedMedia.data),
+        exported,
+        nativeBorder: inspectNativeContent(entries, 'val="' + borderColor + '"'),
+        nativeContent: inspectNativeContent(entries, content),
+      };
+    }
+    result.selfClipForeground = paintClipForegroundResult(
+      'selfClipForeground',
+      selfClipForegroundChromium,
+      'Self clipped foreground',
+      '0ADCF0',
+    );
+    result.ancestorClipForeground = paintClipForegroundResult(
+      'ancestorClipForeground',
+      ancestorClipForegroundChromium,
+      'Ancestor clipped foreground',
+      'FF7B2D',
+    );
+    result.ancestorMaskForeground = paintClipForegroundResult(
+      'ancestorMaskForeground',
+      ancestorMaskForegroundChromium,
+      'Ancestor masked foreground',
+      '6FF04F',
+    );
     result.clippedStripeBackdropChromium = clippedStripeBackdropChromium.png;
     const clippedStripeBackdropMedia = media.find(
       ({ name }) => name === result.clippedStripeBackdrop?.media?.[0],
@@ -2773,6 +2907,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     typeof value !== 'object'
     || value === null
     || !('ancestorBlend' in value)
+    || !('ancestorClipForeground' in value)
     || !('ancestorFilterForeground' in value)
     || !('ancestorFilterForegroundChromium' in value)
     || typeof value.ancestorFilterForegroundChromium !== 'object'
@@ -2782,6 +2917,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || value.ancestorFilterForegroundChromiumComparison === null
     || !('ancestorFilterForegroundNativeContent' in value)
     || typeof value.ancestorFilterForegroundNativeContent !== 'number'
+    || !('ancestorMaskForeground' in value)
     || !('blended' in value)
     || !('backdropFiltered' in value)
     || !('backgroundBlendPseudo' in value)
@@ -2912,6 +3048,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || value.selfFilteredPseudoChromiumComparison === null
     || !('selfFilteredPseudoNativeContent' in value)
     || typeof value.selfFilteredPseudoNativeContent !== 'number'
+    || !('selfClipForeground' in value)
     || !('slideFilterForeground' in value)
     || !('slideFilterForegroundChromium' in value)
     || typeof value.slideFilterForegroundChromium !== 'object'
@@ -2956,11 +3093,13 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
   return {
     alignmentGeometry: value.alignmentGeometry as LayeredBackgroundProbe['alignmentGeometry'],
     ancestorBlend: parseLayeredBackgroundExport(value.ancestorBlend),
+    ancestorClipForeground: parsePaintClipForegroundProbe(value.ancestorClipForeground),
     ancestorFilterForeground: parseLayeredBackgroundExport(value.ancestorFilterForeground),
     ancestorFilterForegroundChromium: value.ancestorFilterForegroundChromium as PngProbe,
     ancestorFilterForegroundChromiumComparison:
       value.ancestorFilterForegroundChromiumComparison as PngComparison,
     ancestorFilterForegroundNativeContent: value.ancestorFilterForegroundNativeContent,
+    ancestorMaskForeground: parsePaintClipForegroundProbe(value.ancestorMaskForeground),
     backdropFiltered: parseLayeredBackgroundExport(value.backdropFiltered),
     backgroundBlendPseudo: parseLayeredBackgroundExport(value.backgroundBlendPseudo),
     blended: parseLayeredBackgroundExport(value.blended),
@@ -3020,6 +3159,7 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     selfFilteredPseudoChromium: value.selfFilteredPseudoChromium as PngProbe,
     selfFilteredPseudoChromiumComparison: value.selfFilteredPseudoChromiumComparison as PngComparison,
     selfFilteredPseudoNativeContent: value.selfFilteredPseudoNativeContent,
+    selfClipForeground: parsePaintClipForegroundProbe(value.selfClipForeground),
     slideFilterForeground: parseLayeredBackgroundExport(value.slideFilterForeground),
     slideFilterForegroundChromium: value.slideFilterForegroundChromium as PngProbe,
     slideFilterForegroundChromiumComparison:
@@ -3040,6 +3180,33 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     textClipWebkitChromium: value.textClipWebkitChromium as PngProbe,
     textClipWebkitChromiumComparison: value.textClipWebkitChromiumComparison as PngComparison,
     textClipWebkitNativeContent: value.textClipWebkitNativeContent,
+  };
+}
+
+function parsePaintClipForegroundProbe(value: unknown): PaintClipForegroundProbe {
+  if (
+    typeof value !== 'object'
+    || value === null
+    || !('chromium' in value)
+    || typeof value.chromium !== 'object'
+    || value.chromium === null
+    || !('comparison' in value)
+    || typeof value.comparison !== 'object'
+    || value.comparison === null
+    || !('exported' in value)
+    || !('nativeBorder' in value)
+    || typeof value.nativeBorder !== 'number'
+    || !('nativeContent' in value)
+    || typeof value.nativeContent !== 'number'
+  ) {
+    throw new Error('Electron renderer probe returned an invalid paint-clip foreground result');
+  }
+  return {
+    chromium: value.chromium as PngProbe,
+    comparison: value.comparison as PngComparison,
+    exported: parseLayeredBackgroundExport(value.exported),
+    nativeBorder: value.nativeBorder,
+    nativeContent: value.nativeContent,
   };
 }
 
