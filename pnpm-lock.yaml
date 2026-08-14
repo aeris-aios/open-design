@@ -743,6 +743,9 @@ importers:
       '@open-design/standalone':
         specifier: workspace:*
         version: link:../../apps/standalone
+      undici:
+        specifier: 7.29.0
+        version: 7.29.0
     devDependencies:
       '@types/node':
         specifier: 24.12.2
