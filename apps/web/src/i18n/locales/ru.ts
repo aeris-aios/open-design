@@ -3468,6 +3468,7 @@ export const ru: Dict = {
   'assistant.role': 'Ассистент',
   'assistant.workingLabel': 'Работает',
   'assistant.doneLabel': 'Готово',
+  'assistant.canceledLabel': 'Отменено',
   'assistant.copyMarkdown': 'Скопировать Markdown ответа',
   'assistant.forkConversation': 'Создать форк отсюда',
   'assistant.forkingConversation': 'Создание форка…',

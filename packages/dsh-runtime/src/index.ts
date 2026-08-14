@@ -38,18 +38,28 @@ export const inject = [
 const PLUGIN_VERSION = '0.1.0';
 
 type Output = { write(chunk: string): unknown };
+type ExitFallbackTimer = { unref(): unknown };
+type ExitFallbackScheduler = (callback: () => void, delayMs: number) => ExitFallbackTimer;
+
+const PROCESS_EXIT_FALLBACK_MS = 1_000;
 
 function writeFrame(output: Output, frame: unknown): void {
   output.write(`${JSON.stringify(frame)}\n`);
 }
 
-function errorFacts(error: unknown, fallbackCode: string) {
-  return {
-    code: typeof (error as { code?: unknown } | null)?.code === 'string'
-      ? (error as { code: string }).code
-      : fallbackCode,
-    message: error instanceof Error ? error.message : String(error),
-  };
+function errorFacts(error: unknown, fallbackCode: string): { code: string; message: string } {
+  const candidate = typeof error === 'object' && error !== null
+    ? error as { code?: unknown; message?: unknown }
+    : undefined;
+  const code = typeof candidate?.code === 'string' && candidate.code !== ''
+    ? candidate.code
+    : fallbackCode;
+  if (error instanceof Error && error.message !== '') return { code, message: error.message };
+  if (typeof candidate?.message === 'string' && candidate.message !== '') {
+    return { code, message: candidate.message };
+  }
+  if (typeof error === 'string' && error !== '') return { code, message: error };
+  return { code, message: 'DeepSeek Harness reported an execution error.' };
 }
 
 function contentText(content: readonly ContentBlock[]): string {
@@ -104,6 +114,19 @@ function writeCancelledResult(output: Output, requestId: string, sessionId: stri
     session_id: sessionId,
     resume_rejected: false,
   });
+}
+
+function requestProfileExit(
+  exit: (code: number) => void,
+  forceExit: () => void = () => process.exit(0),
+  schedule: ExitFallbackScheduler = (callback, delayMs) => setTimeout(callback, delayMs),
+): void {
+  exit(0);
+  // rc.6 can finish root disposal before its launcher-owned file watchers are
+  // attached, leaving a one-shot profile alive when the host keeps stdin open.
+  // The agent handle and session flush have already settled here, so retain a
+  // bounded process fallback below OD's three-second cancellation grace.
+  schedule(forceExit, PROCESS_EXIT_FALLBACK_MS).unref();
 }
 
 function usageFrame(requestId: string, provider: string, model: string, usage: TokenUsage) {
@@ -280,6 +303,10 @@ async function execute(
     }));
     await handle.agent.whenIdle();
     await ctx.sessions.flush(handle.agent.session);
+    if (signal.aborted) {
+      writeCancelledResult(output, request.request_id, String(sessionId));
+      return;
+    }
 
     const reason = turnEnd?.data.reason;
     const status = resultStatus(reason);
@@ -329,6 +356,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
       if (settled) return;
       settled = true;
       lines.close();
+      process.stdin.destroy();
       resolve();
     };
     lines.on('line', (line) => {
@@ -347,8 +375,8 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
         return;
       }
       if (command.type === 'cancel') {
-        if (command.request_id === requestId) {
-          taskAbort?.abort();
+        if (command.request_id === requestId && taskAbort && !taskAbort.signal.aborted) {
+          taskAbort.abort();
           handle?.agent.cancel({ kind: 'user' });
         }
         return;
@@ -378,7 +406,7 @@ async function serve(ctx: Context, output: Output, exit: (code: number) => void)
       if (!task) settle();
     });
   });
-  exit(0);
+  requestProfileExit(exit);
 }
 
 export function apply(ctx: Context): void {
@@ -405,9 +433,11 @@ export function apply(ctx: Context): void {
 
 export const internals = {
   contentText,
+  errorFacts,
   emitSessionEvent,
   execute,
   listModelCatalog,
+  requestProfileExit,
   resultStatus,
   resultError,
   terminalOutput,

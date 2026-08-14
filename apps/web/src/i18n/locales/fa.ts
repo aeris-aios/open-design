@@ -3468,6 +3468,7 @@ export const fa: Dict = {
   'assistant.role': 'دستیار',
   'assistant.workingLabel': 'در حال کار',
   'assistant.doneLabel': 'انجام شد',
+  'assistant.canceledLabel': 'لغو شد',
   'assistant.copyMarkdown': 'کپی Markdown پاسخ',
   'assistant.forkConversation': 'فورک از اینجا',
   'assistant.forkingConversation': 'در حال فورک…',

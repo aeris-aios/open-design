@@ -3468,6 +3468,7 @@ export const uk: Dict = {
   'assistant.role': 'Асистент',
   'assistant.workingLabel': 'Роботи',
   'assistant.doneLabel': 'Готово',
+  'assistant.canceledLabel': 'Скасовано',
   'assistant.copyMarkdown': 'Скопіювати Markdown відповіді',
   'assistant.forkConversation': 'Створити форк звідси',
   'assistant.forkingConversation': 'Створення форка…',

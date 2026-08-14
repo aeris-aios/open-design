@@ -124,6 +124,42 @@ describe('@open-design/dsh-runtime protocol', () => {
     assert.equal(internals.resultError({ kind: 'aborted', reason: { kind: 'user' } }), undefined);
   });
 
+  test('preserves structured Harness error facts without object coercion', () => {
+    assert.deepEqual(internals.errorFacts({
+      code: 'MISSING_CREDENTIAL',
+      message: 'Configure a DeepSeek API key in Harness.',
+    }, 'DSH_PROFILE_TURN_FAILED'), {
+      code: 'MISSING_CREDENTIAL',
+      message: 'Configure a DeepSeek API key in Harness.',
+    });
+    assert.deepEqual(internals.errorFacts({ code: 'UNKNOWN', detail: 'private provider data' }, 'fallback'), {
+      code: 'UNKNOWN',
+      message: 'DeepSeek Harness reported an execution error.',
+    });
+    assert.doesNotMatch(
+      internals.errorFacts({ code: 'UNKNOWN' }, 'fallback').message,
+      /\[object Object\]/,
+    );
+  });
+
+  test('keeps a bounded process-exit fallback after managed profile shutdown', () => {
+    const calls: string[] = [];
+    let scheduled: (() => void) | undefined;
+    internals.requestProfileExit(
+      (code) => calls.push(`managed:${code}`),
+      () => calls.push('forced'),
+      (callback, delayMs) => {
+        calls.push(`scheduled:${delayMs}`);
+        scheduled = callback;
+        return { unref: () => calls.push('unref') };
+      },
+    );
+
+    assert.deepEqual(calls, ['managed:0', 'scheduled:1000', 'unref']);
+    scheduled?.();
+    assert.deepEqual(calls, ['managed:0', 'scheduled:1000', 'unref', 'forced']);
+  });
+
   test('cancels a resumed request during restore without starting its follow-up turn', async () => {
     let finishRestore!: () => void;
     const restoring = new Promise<void>((resolveRestore) => { finishRestore = resolveRestore; });
@@ -183,5 +219,59 @@ describe('@open-design/dsh-runtime protocol', () => {
         resume_rejected: false,
       },
     ]);
+  });
+
+  test('cancellation remains authoritative while the active turn is being flushed', async () => {
+    let idleCalls = 0;
+    let notifyFlushStarted!: () => void;
+    const flushStarted = new Promise<void>((resolveFlush) => { notifyFlushStarted = resolveFlush; });
+    let finishFlush!: () => void;
+    const flushFinished = new Promise<void>((resolveFlush) => { finishFlush = resolveFlush; });
+    let disposeCalls = 0;
+    const handle = {
+      agent: {
+        session: { seq: 0 },
+        whenIdle: async () => { idleCalls += 1; },
+        followup: async () => {},
+      },
+      dispose: async () => { disposeCalls += 1; },
+    };
+    const ctx = {
+      agentDefaultModel: {
+        currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      },
+      agents: {
+        create: async () => handle,
+      },
+      on: () => () => {},
+      sessions: {
+        flush: async () => {
+          notifyFlushStarted();
+          await flushFinished;
+        },
+      },
+    };
+    const chunks: string[] = [];
+    const abort = new AbortController();
+    const execution = internals.execute(ctx as never, {
+      v: 1,
+      type: 'execute',
+      request_id: 'run-active-cancel',
+      cwd: '/project',
+      prompt: 'keep working',
+      mcp_servers: [],
+    }, { write: (chunk: string) => chunks.push(chunk) }, () => {}, abort.signal);
+
+    await flushStarted;
+    abort.abort();
+    finishFlush();
+    await execution;
+
+    assert.equal(idleCalls, 2);
+    assert.equal(disposeCalls, 1);
+    const frames = chunks.map((chunk) => JSON.parse(chunk) as { type: string; status?: string; error?: unknown });
+    assert.equal(frames.filter((frame) => frame.type === 'result').length, 1);
+    assert.equal(frames.at(-1)?.status, 'cancelled');
+    assert.equal(frames.at(-1)?.error, undefined);
   });
 });

@@ -301,7 +301,7 @@ describe('AssistantMessage tool status', () => {
     expect(container.querySelector('.op-status-done')).toBeNull();
   });
 
-  it('does not show Done when a canceled run is missing a tool result', () => {
+  it('shows Canceled when a canceled run is missing a tool result', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -322,9 +322,29 @@ describe('AssistantMessage tool status', () => {
       />,
     );
 
-    expect(screen.getByTestId('task-activity-toggle').textContent).toContain('Run failed');
+    const activity = screen.getByTestId('task-activity-toggle');
+    expect(activity.textContent).toContain('Canceled');
+    expect(activity.getAttribute('data-run-state')).toBe('canceled');
     expect(container.querySelector('[data-tool-category="run"][data-tool-state="error"]')).not.toBeNull();
     expect(container.querySelector('.op-status-done')).toBeNull();
+  });
+
+  it('shows Canceled instead of Done when a canceled run has no activity card', () => {
+    const { container } = render(
+      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
+        message={{
+          ...messageWithEvents([{ kind: 'text', text: 'Partial response.' }]),
+          content: 'Partial response.',
+          runStatus: 'canceled',
+        }}
+        streaming={false}
+        projectId="project-1"
+      />,
+    );
+
+    expect(container.querySelector('.assistant-label')?.textContent).toBe('Canceled');
   });
 
   it.each(['no_result', 'delivery_failed'] as const)(
