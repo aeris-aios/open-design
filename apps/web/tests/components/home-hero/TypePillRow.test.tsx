@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TypePillRow } from '../../../src/components/home-hero/TypePillRow';
@@ -9,7 +9,7 @@ import {
   type HomeHeroChip,
 } from '../../../src/components/home-hero/chips';
 
-const chips = ['deck', 'prototype', 'wireframe', 'video'].map((chipId) => {
+const chips = ['deck', 'prototype', 'wireframe', 'image', 'video'].map((chipId) => {
   const chip = HOME_HERO_CHIPS.find((candidate) => candidate.id === chipId);
   if (!chip) throw new Error(`Missing chip fixture: ${chipId}`);
   return chip;
@@ -62,6 +62,17 @@ function renderPillRow(labelFor: (chipId: string) => string) {
 }
 
 describe('TypePillRow', () => {
+  it('keeps Image inline and moves Video into All when the row overflows', () => {
+    renderPillRow((chipId) => chipId);
+
+    expect(screen.queryByTestId('home-hero-type-pill-image')).not.toBeNull();
+    expect(screen.queryByTestId('home-hero-type-pill-video')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('home-hero-type-pills-more'));
+    expect(screen.queryByTestId('home-hero-type-pill-video-more')).not.toBeNull();
+    expect(screen.queryByTestId('home-hero-type-pill-image-more')).toBeNull();
+  });
+
   it('recomputes the inline split when rendered labels change without resizing the container', () => {
     const labels = new Map(chips.map((chip) => [chip.id, chip.label]));
     const view = renderPillRow((chipId) => labels.get(chipId) ?? chipId);

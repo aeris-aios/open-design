@@ -1,7 +1,7 @@
 // Capsule type row — the pill replacement for the fanned type carousel
-// (per product: 12 个创作类型全部换成胶囊形). ONE line exactly as wide as the
+// (per product: all 12 creation types use capsules). ONE line exactly as wide as the
 // composer card below it, EVERY gap identical (8px): the pills that fit
-// render inline, then the pinned 视频 pill, then the 全部 button, and the
+// render inline, then the pinned Image pill, then the All button, and the
 // rest fold into the 全部 popover. Fit is computed against an invisible
 // probe row that always lays out the full set at natural size, so showing /
 // hiding pills can never feed back into its own measurement. Selection
@@ -15,10 +15,10 @@ import { useT } from '../../i18n';
 // today, so this only guards against future catalog growth widening the row.
 const MAX_PILLS = 12;
 
-// Pills pinned just BEFORE the 全部 trigger (per product: 视频 stays visible
+// Pills pinned just BEFORE the All trigger (per product: Image stays visible
 // in the row, never folded into the popover). Pinned pills sit outside the
 // fit computation's flowing run, so they survive any window width.
-const PINNED_PILL_IDS: readonly string[] = ['video'];
+const PINNED_PILL_IDS: readonly string[] = ['image'];
 
 // Must match .home-hero__type-pills-wrap's CSS gap.
 const PILL_GAP = 8;
