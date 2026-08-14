@@ -6076,7 +6076,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  it('exposes selected-version download actions and exports that version content', async () => {
+  it('hides standalone HTML for historical versions without a dependency snapshot', async () => {
     const originalCreateObjectUrl = URL.createObjectURL;
     const originalRevokeObjectUrl = URL.revokeObjectURL;
     let capturedBlob: Blob | null = null;
@@ -6140,6 +6140,14 @@ describe('FileViewer SVG artifacts', () => {
           content: '<html><body><h1>Prior version export</h1></body></html>',
         }), { status: 200 });
       }
+      if (url === '/api/projects/project-1/export/html' && method === 'POST') {
+        return Response.json({
+          error: {
+            code: 'CONFLICT',
+            message: 'standalone HTML cannot export a historical entry with current project dependencies',
+          },
+        }, { status: 409 });
+      }
       return new Response(JSON.stringify({}), { status: 404 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -6169,15 +6177,10 @@ describe('FileViewer SVG artifacts', () => {
         'Export as PDF',
         'Export as image',
         'Download as .zip',
-        'Export as standalone HTML',
       ]);
       expect(menuItems).not.toContain('Save as template…');
-
-      fireEvent.click(within(versionDialog).getByRole('menuitem', { name: 'Export as standalone HTML' }));
-
-      await waitFor(() => {
-        expect(capturedBlob).toBeTruthy();
-      });
+      expect(within(versionDialog).queryByRole('menuitem', { name: 'Export as standalone HTML' })).toBeNull();
+      expect(capturedBlob).toBeNull();
       expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/projects/project-1/files/index.html/versions/v1')).toBe(true);
       const versionRead = fetchMock.mock.calls.find(
         ([input]) => String(input) === '/api/projects/project-1/files/index.html/versions/v1',
@@ -6186,8 +6189,10 @@ describe('FileViewer SVG artifacts', () => {
         .toBe(workspaceContext.workspaceId);
       expect(new Headers(versionRead?.[1]?.headers).get('x-od-workspace-member-id'))
         .toBe(workspaceContext.workspaceMemberId);
-      expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/projects/project-1/export/index.html?inline=1')).toBe(false);
-      expect(await capturedBlob!.text()).toContain('Prior version export');
+      const exportCall = fetchMock.mock.calls.find(
+        ([input]) => String(input) === '/api/projects/project-1/export/html',
+      );
+      expect(exportCall).toBeUndefined();
     } finally {
       if (originalCreateObjectUrl) {
         Object.defineProperty(URL, 'createObjectURL', {

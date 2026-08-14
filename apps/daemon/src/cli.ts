@@ -479,10 +479,9 @@ function printExportHelp() {
   console.log(`Usage:
   od export <file> --project <id> --format <fmt> [options]
 
-Programmatic export of an HTML/deck artifact to PDF, image, or PPTX. Runs
-entirely from the rendered design (no model/agent calls). Rasterization uses
-the desktop runtime's bundled Chromium, so a desktop/packaged runtime must be
-reachable; otherwise the command reports that the renderer is unavailable.
+Programmatic export of an HTML/deck artifact to standalone HTML, PDF, image,
+or PPTX. Runs without model/agent calls. Standalone HTML works in a headless
+daemon; visual formats require the desktop runtime's bundled Chromium.
 
 Formats:  ${EXPORT_FORMATS.join(', ')}
 
@@ -501,6 +500,7 @@ Options:
 
 Examples:
   od export index.html --project p1 --format pdf --out page.pdf
+  od export index.html --project p1 --format html --out standalone.html
   od export slide.html --project p1 --format image --image-format png --out slide.png
   od export deck.html --project p1 --format pptx --out deck.pptx`);
 }
@@ -542,7 +542,7 @@ async function runExport(args) {
   const requestHeaders = token
     ? { authorization: `Bearer ${token}` }
     : workspaceHeadersFromExplicitFlags(flags) ?? {};
-  // All three formats rasterize through the desktop screenshot renderer so the
+  // Visual formats rasterize through the desktop screenshot renderer so the
   // CLI matches the UI exactly. In particular `pdf` uses `/export/pdf-image`
   // (one raster page per deck slide / per viewport for a page) — NOT the generic
   // `/export` vector `printToPDF` path, which drops CJK glyphs in the packaged
@@ -593,7 +593,7 @@ async function runExport(args) {
     if (!out) {
       const ext = format === 'image'
         ? (flags['image-format'] === 'jpeg' ? 'jpg' : 'png')
-        : format === 'pptx' ? 'pptx' : 'pdf';
+        : format === 'pptx' ? 'pptx' : format === 'html' ? 'html' : 'pdf';
       out = `artifact.${ext}`;
     }
   }
@@ -799,8 +799,8 @@ function printRootHelp() {
       into a zip for support tickets. Same output as Settings → About →
       Export diagnostics.
 
-  od export <file> --project <id> --format <pdf|image|pptx> [--out <path>]
-      Programmatically export an HTML/deck artifact to PDF, image, or PPTX
+  od export <file> --project <id> --format <html|pdf|image|pptx> [--out <path>]
+      Programmatically export an HTML/deck artifact to HTML, PDF, image, or PPTX
       (no model/agent calls). Mirrors the web Download menu; rasterization uses
       the desktop runtime's bundled Chromium.
 
