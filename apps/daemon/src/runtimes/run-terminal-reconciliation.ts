@@ -11,6 +11,7 @@ import {
 } from '@open-design/contracts/analytics';
 
 import { appendMessageStatusEvent } from '../db.js';
+import { reconcileStrategyTaskRunTerminal } from '../strategies/task-store.js';
 import { classifyRunFailure } from '../run-failure-classification.js';
 import { deriveRunErrorCode, runResultFromStatus } from '../run-result.js';
 import { runAskedUserQuestion } from './run-artifacts.js';
@@ -92,6 +93,7 @@ export interface RunTerminalReconciliationResult {
   scanned: number;
   interrupted: number;
   messagesReconciled: number;
+  strategyTasksReconciled: number;
   analyticsReplayed: number;
   langfuseReplayed: number;
 }
@@ -221,6 +223,7 @@ export async function reconcileDurableRunTerminals(
     scanned: 0,
     interrupted: 0,
     messagesReconciled: 0,
+    strategyTasksReconciled: 0,
     analyticsReplayed: 0,
     langfuseReplayed: 0,
   };
@@ -261,6 +264,16 @@ export async function reconcileDurableRunTerminals(
 
   const statesByRunId = new Map(states.map((entry) => [entry.state.id, entry.state]));
   result.messagesReconciled = reconcileMessages(options.db, statesByRunId, now);
+  for (const { state } of states) {
+    if (state.status !== 'failed' && state.status !== 'canceled') continue;
+    if (reconcileStrategyTaskRunTerminal(options.db, {
+      runId: state.id,
+      status: state.status,
+      updatedAt: state.updatedAt,
+    })) {
+      result.strategyTasksReconciled += 1;
+    }
+  }
 
   for (const entry of states) {
     const { state } = entry;

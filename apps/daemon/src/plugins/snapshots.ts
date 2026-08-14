@@ -264,8 +264,8 @@ export interface PruneExpiredOptions {
   now?: number;
   // Operator escape hatch: force-delete unreferenced rows older than
   // this unix-ms timestamp even when their TTL has not yet expired.
-  // Does NOT touch referenced rows (run_id IS NOT NULL); the
-  // `retentionDays` knob below is the only way to reach those.
+  // Does NOT touch rows referenced by a Run or StrategyTaskExecution;
+  // the `retentionDays` knob below is the only way to reach Run rows.
   before?: number;
   // Plan §3.M1 / spec PB2 / §16 Phase 5 — operator-opt-in
   // referenced-row TTL. When set, snapshots are eligible for deletion
@@ -291,17 +291,36 @@ export function pruneExpiredSnapshots(
 ): PruneExpiredResult {
   const now = options.now ?? Date.now();
   const cutoff = typeof options.before === 'number' ? options.before : now;
+  // Older databases can contain a durable StrategyTaskExecution created
+  // before task-owned snapshots were pinned. The explicit `before` escape
+  // hatch also treats expires_at=NULL/run_id=NULL rows as candidates. Exclude
+  // durable task references when the additive task table is present so one
+  // protected row cannot make a mixed GC batch fail its foreign-key delete.
+  const hasStrategyTaskStore = Boolean(db.prepare(`
+    SELECT 1 FROM sqlite_master
+     WHERE type = 'table' AND name = 'strategy_task_executions'
+  `).get());
+  const excludeStrategyTaskSnapshot = hasStrategyTaskStore
+    ? `AND NOT EXISTS (
+         SELECT 1 FROM strategy_task_executions AS task
+          WHERE task.snapshot_id = snapshot.id
+       )`
+    : '';
   const expiredIds = db
     .prepare(
-      `SELECT id FROM applied_plugin_snapshots
-        WHERE expires_at IS NOT NULL AND expires_at <= ?`,
+      `SELECT snapshot.id FROM applied_plugin_snapshots AS snapshot
+        WHERE snapshot.expires_at IS NOT NULL AND snapshot.expires_at <= ?
+          ${excludeStrategyTaskSnapshot}`,
     )
     .all(cutoff) as Array<{ id: string }>;
   const beforeIds = typeof options.before === 'number'
     ? (db
         .prepare(
-          `SELECT id FROM applied_plugin_snapshots
-            WHERE expires_at IS NULL AND run_id IS NULL AND applied_at <= ?`,
+          `SELECT snapshot.id FROM applied_plugin_snapshots AS snapshot
+            WHERE snapshot.expires_at IS NULL
+              AND snapshot.run_id IS NULL
+              AND snapshot.applied_at <= ?
+              ${excludeStrategyTaskSnapshot}`,
         )
         .all(options.before) as Array<{ id: string }>)
     : [];
@@ -317,11 +336,12 @@ export function pruneExpiredSnapshots(
     const retentionCutoff = now - options.retentionDays * 24 * 60 * 60 * 1000;
     const rows = db
       .prepare(
-        `SELECT s.id AS id
-           FROM applied_plugin_snapshots s
-           LEFT JOIN projects p ON p.id = s.project_id
-          WHERE s.applied_at <= ?
-            AND p.id IS NULL`,
+        `SELECT snapshot.id AS id
+           FROM applied_plugin_snapshots AS snapshot
+           LEFT JOIN projects p ON p.id = snapshot.project_id
+          WHERE snapshot.applied_at <= ?
+            AND p.id IS NULL
+            ${excludeStrategyTaskSnapshot}`,
       )
       .all(retentionCutoff) as Array<{ id: string }>;
     retentionIds.push(...rows);
