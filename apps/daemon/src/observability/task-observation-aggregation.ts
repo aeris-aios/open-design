@@ -596,7 +596,7 @@ function legacyAbsoluteTiming(
 }
 
 function legacyUsage(observation: NormalizedAgentObservationV1): Record<string, unknown> | undefined {
-  const values = observation.usage.values;
+  const values = safeTaskObservationUsageValues(observation);
   if (!values) return undefined;
   return {
     input: values.effectiveInputTokens ?? values.inputTokens,
@@ -604,6 +604,52 @@ function legacyUsage(observation: NormalizedAgentObservationV1): Record<string, 
     total: values.totalTokens,
     unit: 'TOKENS',
   };
+}
+
+const SAFE_USAGE_VALUE_KEYS = [
+  'inputTokens',
+  'effectiveInputTokens',
+  'outputTokens',
+  'totalTokens',
+  'thoughtTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'uncachedInputTokens',
+  'estimatedContextTokens',
+] as const;
+
+export function safeTaskObservationUsageValues(
+  observation: NormalizedAgentObservationV1,
+): Record<string, number> | undefined {
+  if (observation.turnAccounting?.disposition === 'exclude_inherited') {
+    return undefined;
+  }
+  const source = observation.usage.values;
+  if (!source) return undefined;
+  const values: Record<string, number> = {};
+  for (const key of SAFE_USAGE_VALUE_KEYS) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      values[key] = value;
+    }
+  }
+  return Object.keys(values).length > 0 ? values : undefined;
+}
+
+export function safeTaskObservationUsageValueSources(
+  observation: NormalizedAgentObservationV1,
+): Record<string, string> | undefined {
+  if (observation.turnAccounting?.disposition === 'exclude_inherited') {
+    return undefined;
+  }
+  const source = observation.usage.valueSources;
+  if (!source) return undefined;
+  const valueSources: Record<string, string> = {};
+  for (const key of SAFE_USAGE_VALUE_KEYS) {
+    const value = source[key];
+    if (typeof value === 'string') valueSources[key] = value;
+  }
+  return Object.keys(valueSources).length > 0 ? valueSources : undefined;
 }
 
 function safePromptInput(observation: NormalizedAgentObservationV1): unknown {
@@ -614,7 +660,9 @@ function safePromptInput(observation: NormalizedAgentObservationV1): unknown {
     : undefined;
 }
 
-function safeLimitationCodes(limitations: readonly string[]): string[] {
+export function safeTaskObservationLimitationCodes(
+  limitations: readonly string[],
+): string[] {
   return limitations.filter((limitation) => (
     /^[a-z0-9][a-z0-9_:.-]{0,127}$/.test(limitation)
   ));
@@ -669,7 +717,7 @@ export function buildLegacyTaskObservationPayload(
       selectedAgentId: aggregate.root.selectedAgentId,
       coverage: aggregate.coverage,
       stageTotals: aggregate.stageTotals,
-      limitations: safeLimitationCodes(aggregate.limitations),
+      limitations: safeTaskObservationLimitationCodes(aggregate.limitations),
     },
   });
 
@@ -699,14 +747,20 @@ export function buildLegacyTaskObservationPayload(
           ? { promptAvailability: promptBoundary.availability }
           : {}),
         usageAvailability: observation.usage.availability,
+        usageSource: observation.usage.source,
         usageAccountingMode: observation.usage.accountingMode,
+        usageValues: safeTaskObservationUsageValues(observation),
+        usageValueSources: safeTaskObservationUsageValueSources(observation),
+        usageLimitations: safeTaskObservationLimitationCodes(
+          observation.usage.limitations,
+        ),
         usageAccounted:
           observation.turnAccounting?.disposition !== 'exclude_inherited',
         turnAccountingDisposition: observation.turnAccounting?.disposition,
         turnAccountingOwnerObservationId:
           observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
-        limitations: safeLimitationCodes(observation.limitations),
+        limitations: safeTaskObservationLimitationCodes(observation.limitations),
       },
     };
     if (observation.kind === 'model_call') {

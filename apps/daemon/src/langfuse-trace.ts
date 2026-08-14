@@ -54,7 +54,7 @@ const TOOL_INPUT_MAX_BYTES = 8 * 1024;
 const TOOL_OUTPUT_MAX_BYTES = 8 * 1024;
 const ARTIFACTS_MAX_ITEMS = 50;
 const SESSION_ID_MAX = 200; // Langfuse drops sessionIds longer than this.
-const HARD_BATCH_MAX_BYTES = 1024 * 1024;
+export const HARD_BATCH_MAX_BYTES = 1024 * 1024;
 const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_FETCH_RETRIES = 1;
 const PROMPT_STACK_BLAME_MAX_SECTIONS = 8;
@@ -78,6 +78,8 @@ export type LangfuseDropReason =
   | 'content_consent_off'
   | 'missing_sink_config'
   | 'payload_too_large'
+  | 'payload_build_error'
+  | 'export_mapping_mismatch'
   | 'relay_429'
   | 'relay_413'
   | 'relay_5xx'
@@ -2001,7 +2003,7 @@ function withDeliveryDiagnostics(
     : state;
 }
 
-async function postLangfuseBatch(
+export async function postLangfuseBatch(
   config: LangfuseConfig,
   batch: unknown[],
   fetchImpl: typeof fetch,
