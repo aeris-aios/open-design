@@ -417,6 +417,41 @@ describe('editable PPTX layered backgrounds', () => {
     });
   }, 30_000);
 
+  test('captures standard and WebKit text-clipped layered gradients as Chromium-painted text', async () => {
+    const media = await probeLayeredBackgroundMedia();
+    const cases = [
+      {
+        chromium: media.textClipStandardChromium,
+        comparison: media.textClipStandardChromiumComparison,
+        exported: media.textClipStandard,
+        name: 'standard',
+        nativeContent: media.textClipStandardNativeContent,
+      },
+      {
+        chromium: media.textClipWebkitChromium,
+        comparison: media.textClipWebkitChromiumComparison,
+        exported: media.textClipWebkit,
+        name: 'WebKit',
+        nativeContent: media.textClipWebkitNativeContent,
+      },
+    ];
+
+    for (const fixture of cases) {
+      expect(fixture.exported, `${fixture.name}: ${JSON.stringify(fixture.exported)}`).toMatchObject({
+        captures: 1,
+        media: [expect.stringMatching(/\.png$/)],
+      });
+      const comparisonContext = JSON.stringify({
+        chromium: fixture.chromium,
+        exported: fixture.exported.pngs[0],
+        comparison: fixture.comparison,
+      });
+      expect(fixture.comparison.meanChannelDelta, comparisonContext).toBeLessThanOrEqual(8);
+      expect(fixture.comparison.maxChannelDelta, comparisonContext).toBeLessThanOrEqual(224);
+      expect(fixture.nativeContent).toBe(-1);
+    }
+  }, 30_000);
+
   test('keeps layered pseudo backgrounds behind native pseudo content', async () => {
     const media = await probeLayeredBackgroundMedia();
 
@@ -526,6 +561,25 @@ describe('editable PPTX layered backgrounds', () => {
     expect(comparison.meanChannelDelta, comparisonContext).toBeLessThanOrEqual(8);
     expect(comparison.maxChannelDelta, comparisonContext).toBeLessThanOrEqual(160);
     expect(media.compositedPseudoContentNativeContent).toBe(-1);
+  }, 30_000);
+
+  test('captures a filtered layered pseudo with its generated content and border', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.selfFilteredPseudo, JSON.stringify(media.selfFilteredPseudo)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    const comparisonContext = JSON.stringify({
+      chromium: media.selfFilteredPseudoChromium,
+      exported: media.selfFilteredPseudo.pngs[0],
+      comparison: media.selfFilteredPseudoChromiumComparison,
+    });
+    expect(media.selfFilteredPseudoChromiumComparison.meanChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(8);
+    expect(media.selfFilteredPseudoChromiumComparison.maxChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(160);
+    expect(media.selfFilteredPseudoNativeContent).toBe(-1);
   }, 30_000);
 
   test('captures a real blended target with its Chromium-painted foreground', async () => {
@@ -722,6 +776,25 @@ describe('editable PPTX layered backgrounds', () => {
     expect(image?.minAlpha).toBe(255);
   }, 30_000);
 
+  test('captures native foreground inside an unsupported ancestor filter context', async () => {
+    const media = await probeLayeredBackgroundMedia();
+
+    expect(media.ancestorFilterForeground, JSON.stringify(media.ancestorFilterForeground)).toMatchObject({
+      captures: 1,
+      media: [expect.stringMatching(/\.png$/)],
+    });
+    const comparisonContext = JSON.stringify({
+      chromium: media.ancestorFilterForegroundChromium,
+      exported: media.ancestorFilterForeground.pngs[0],
+      comparison: media.ancestorFilterForegroundChromiumComparison,
+    });
+    expect(media.ancestorFilterForegroundChromiumComparison.meanChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(8);
+    expect(media.ancestorFilterForegroundChromiumComparison.maxChannelDelta, comparisonContext)
+      .toBeLessThanOrEqual(160);
+    expect(media.ancestorFilterForegroundNativeContent).toBe(-1);
+  }, 30_000);
+
   test('captures a real masked element complete instead of emitting unmasked native foreground', async () => {
     const media = await probeLayeredBackgroundMedia();
     const [image] = media.masked.pngs;
@@ -787,6 +860,10 @@ type LayeredBackgroundProbe = {
     content: PptxGeometry | null;
   };
   ancestorBlend: LayeredBackgroundExport;
+  ancestorFilterForeground: LayeredBackgroundExport;
+  ancestorFilterForegroundChromium: PngProbe;
+  ancestorFilterForegroundChromiumComparison: PngComparison;
+  ancestorFilterForegroundNativeContent: number;
   backdropFiltered: LayeredBackgroundExport;
   backgroundBlendPseudo: LayeredBackgroundExport;
   blended: LayeredBackgroundExport;
@@ -827,6 +904,10 @@ type LayeredBackgroundProbe = {
   rootPseudo: LayeredBackgroundExport;
   rootPseudoLayerOrder: { background: number; content: number; slideBackground: number };
   skippedTargets: number;
+  selfFilteredPseudo: LayeredBackgroundExport;
+  selfFilteredPseudoChromium: PngProbe;
+  selfFilteredPseudoChromiumComparison: PngComparison;
+  selfFilteredPseudoNativeContent: number;
   slideRootMask: LayeredBackgroundExport;
   slideRootMaskGeometry: PptxGeometry | null;
   slideRootMaskNativeContent: number;
@@ -834,6 +915,14 @@ type LayeredBackgroundProbe = {
   solidCompositorOrder: { image: number; nativeContent: number; nativeFill: number };
   stackingSlide: LayeredBackgroundExport;
   supported: LayeredBackgroundExport;
+  textClipStandard: LayeredBackgroundExport;
+  textClipStandardChromium: PngProbe;
+  textClipStandardChromiumComparison: PngComparison;
+  textClipStandardNativeContent: number;
+  textClipWebkit: LayeredBackgroundExport;
+  textClipWebkitChromium: PngProbe;
+  textClipWebkitChromiumComparison: PngComparison;
+  textClipWebkitNativeContent: number;
 };
 
 type PptxGeometry = { height: number; width: number; x: number; y: number };
@@ -898,6 +987,7 @@ const fixtures = {
   nestedOpacity: '<div class="nested-opacity"><div class="nested-opacity-child"></div><div class="nested-opacity-label">Native nested opacity label</div><div class="nested-opacity-shape"></div></div>',
   solidCompositor: '<div class="solid-compositor"><div class="solid-compositor-child"></div><div class="solid-compositor-label">Solid compositor label</div></div>',
   ancestorBlend: '<div class="ancestor-blend-backdrop"></div><div class="ancestor-blend-context"><div class="ancestor-blend-child"></div></div>',
+  ancestorFilterForeground: '<div class="ancestor-filter-context"><div class="ancestor-filter-layer"></div><div class="ancestor-filter-label">Filtered ancestor label</div><div class="ancestor-filter-shape"></div></div>',
   normalMaskedPseudo: '<div class="normal-masked-pseudo"></div>',
   compositedMaskedPseudo: '<div class="composited-masked-pseudo"></div>',
   maskedPseudoContent: '<div class="masked-pseudo-content"></div><div class="masked-pseudo-sibling">Native after mask</div>',
@@ -913,6 +1003,9 @@ const fixtures = {
   materializedOpaquePseudo: '<div class="materialized-opaque-pseudo"></div>',
   alignment: '<div class="alignment-layer"><div class="alignment-native">Alignment native</div></div>',
   realBlend: '<div class="real-blend-backdrop"></div><div class="real-blend-target">MM</div>',
+  textClipStandard: '<div class="text-clip-standard">Standard gradient title</div>',
+  textClipWebkit: '<div class="text-clip-webkit">WebKit gradient title</div>',
+  selfFilteredPseudo: '<div class="self-filtered-pseudo"></div>',
 };
 const styles = \`
   html, body { margin: 0; }
@@ -1114,6 +1207,36 @@ const styles = \`
     inset: 0;
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
   }
+  .ancestor-filter-context {
+    position: absolute;
+    left: 72px;
+    top: 54px;
+    width: 176px;
+    height: 72px;
+    filter: brightness(.45);
+  }
+  .ancestor-filter-layer {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgb(40, 120, 220), rgb(40, 120, 220)), linear-gradient(transparent, transparent);
+  }
+  .ancestor-filter-label {
+    position: absolute;
+    left: 14px;
+    top: 18px;
+    z-index: 1;
+    color: white;
+    font: 700 16px/24px sans-serif;
+  }
+  .ancestor-filter-shape {
+    position: absolute;
+    right: 12px;
+    bottom: 10px;
+    z-index: 1;
+    width: 26px;
+    height: 26px;
+    background: rgb(255, 80, 40);
+  }
   .paint-above,
   .paint-target,
   .paint-below {
@@ -1287,6 +1410,52 @@ const styles = \`
     font: 700 30px/1 sans-serif;
     background-image: linear-gradient(rgb(128, 128, 128), rgb(128, 128, 128)), linear-gradient(transparent, transparent);
     mix-blend-mode: multiply;
+  }
+  .isolated-probe-slide {
+    background: transparent;
+  }
+  .isolated-probe-slide::before {
+    content: none;
+    display: none;
+  }
+  .text-clip-standard,
+  .text-clip-webkit {
+    position: absolute;
+    left: 40px;
+    top: 58px;
+    width: 240px;
+    height: 64px;
+    color: transparent;
+    font: 700 28px/64px sans-serif;
+    text-align: center;
+    background-image: linear-gradient(90deg, rgb(255, 48, 96), rgb(32, 160, 255)), linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255));
+  }
+  .text-clip-standard {
+    background-clip: text;
+  }
+  .text-clip-webkit {
+    -webkit-background-clip: text;
+  }
+  .self-filtered-pseudo {
+    position: absolute;
+    left: 72px;
+    top: 56px;
+    width: 176px;
+    height: 68px;
+  }
+  .self-filtered-pseudo::after {
+    content: 'Filtered pseudo label';
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 5px solid rgb(255, 220, 80);
+    color: white;
+    font: 700 15px/20px sans-serif;
+    background-image: linear-gradient(rgb(160, 48, 200), rgb(160, 48, 200)), linear-gradient(transparent, transparent);
+    filter: brightness(.45);
   }
   .replaced {
     position: absolute;
@@ -1600,7 +1769,14 @@ app.whenReady().then(async () => {
     await dbg.sendCommand('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     // Keep one slide and one real exporter invocation: serial slide conversion
     // made this probe hit its Linux workspace-test timeout under concurrent load.
-    const fixtureEntries = Object.entries(fixtures).filter(([name]) => name !== 'nestedOpacity');
+    const isolatedFixtureNames = new Set([
+      'ancestorFilterForeground',
+      'nestedOpacity',
+      'selfFilteredPseudo',
+      'textClipStandard',
+      'textClipWebkit',
+    ]);
+    const fixtureEntries = Object.entries(fixtures).filter(([name]) => !isolatedFixtureNames.has(name));
     const fixtureMarkup = fixtureEntries
       .map(([name, markup]) => '<div data-od-probe="' + name + '">' + markup + '</div>')
       .join('');
@@ -1611,6 +1787,18 @@ app.whenReady().then(async () => {
       + '</section>'
       + '<section class="slide nested-opacity-slide"><div data-od-probe="nestedOpacity">'
       + fixtures.nestedOpacity
+      + '</div></section>'
+      + '<section class="slide isolated-probe-slide"><div data-od-probe="textClipStandard">'
+      + fixtures.textClipStandard
+      + '</div></section>'
+      + '<section class="slide isolated-probe-slide"><div data-od-probe="textClipWebkit">'
+      + fixtures.textClipWebkit
+      + '</div></section>'
+      + '<section class="slide isolated-probe-slide"><div data-od-probe="ancestorFilterForeground">'
+      + fixtures.ancestorFilterForeground
+      + '</div></section>'
+      + '<section class="slide isolated-probe-slide"><div data-od-probe="selfFilteredPseudo">'
+      + fixtures.selfFilteredPseudo
       + '</div></section>'
       + '<section class="slide slide-root-mask" data-od-probe="slideRootMask">'
       + '<div class="slide-root-mask-content">Slide root paint</div></section>';
@@ -1668,6 +1856,38 @@ app.whenReady().then(async () => {
     });
     const nestedOpacityChromiumData = Buffer.from(nestedOpacityScreenshot.data, 'base64');
     const nestedOpacityChromium = inspectPng(nestedOpacityChromiumData, 'chromium-nested-opacity.png');
+    async function captureChromiumReference(selector, name, padding = 0) {
+      const capture = await window.webContents.executeJavaScript(
+        '(() => { const element = document.querySelector(' + JSON.stringify(selector) + '); const rect = element.getBoundingClientRect(); const slideRect = element.closest(".slide").getBoundingClientRect(); const left = Math.max(slideRect.left, rect.left - ' + padding + '); const top = Math.max(slideRect.top, rect.top - ' + padding + '); const right = Math.min(slideRect.right, rect.right + ' + padding + '); const bottom = Math.min(slideRect.bottom, rect.bottom + ' + padding + '); return { geometry: { height: bottom - top, width: right - left, x: left + window.scrollX, y: top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
+        true,
+      );
+      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+        captureBeyondViewport: true,
+        clip: { ...capture.geometry, scale: 2 / capture.pixelRatio },
+        format: 'png',
+        fromSurface: true,
+      });
+      const data = Buffer.from(screenshot.data, 'base64');
+      return { data, png: inspectPng(data, name) };
+    }
+    const textClipStandardChromium = await captureChromiumReference(
+      '.text-clip-standard',
+      'chromium-text-clip-standard.png',
+    );
+    const textClipWebkitChromium = await captureChromiumReference(
+      '.text-clip-webkit',
+      'chromium-text-clip-webkit.png',
+    );
+    const ancestorFilterForegroundChromium = await captureChromiumReference(
+      '.ancestor-filter-context',
+      'chromium-ancestor-filter-foreground.png',
+      64,
+    );
+    const selfFilteredPseudoChromium = await captureChromiumReference(
+      '.self-filtered-pseudo',
+      'chromium-self-filtered-pseudo.png',
+      64,
+    );
     const targets = await window.webContents.executeJavaScript(${JSON.stringify(collectSource)}, true);
     const captures = {};
     const targetCounts = await window.webContents.executeJavaScript(
@@ -1810,6 +2030,40 @@ app.whenReady().then(async () => {
     if (!realBlendMedia) throw new Error('Missing exported real blend media');
     result.realBlendChromiumComparison = comparePng(realBlendChromiumData, realBlendMedia.data);
     result.realBlendNativeContent = inspectNativeContent(entries, 'MM');
+    result.textClipStandardChromium = textClipStandardChromium.png;
+    const textClipStandardMedia = media.find(({ name }) => name === result.textClipStandard?.media?.[0]);
+    if (!textClipStandardMedia) throw new Error('Missing exported standard text-clip media');
+    result.textClipStandardChromiumComparison = comparePng(
+      textClipStandardChromium.data,
+      textClipStandardMedia.data,
+    );
+    result.textClipStandardNativeContent = inspectNativeContent(entries, 'Standard gradient title');
+    result.textClipWebkitChromium = textClipWebkitChromium.png;
+    const textClipWebkitMedia = media.find(({ name }) => name === result.textClipWebkit?.media?.[0]);
+    if (!textClipWebkitMedia) throw new Error('Missing exported WebKit text-clip media');
+    result.textClipWebkitChromiumComparison = comparePng(
+      textClipWebkitChromium.data,
+      textClipWebkitMedia.data,
+    );
+    result.textClipWebkitNativeContent = inspectNativeContent(entries, 'WebKit gradient title');
+    result.ancestorFilterForegroundChromium = ancestorFilterForegroundChromium.png;
+    const ancestorFilterForegroundMedia = media.find(
+      ({ name }) => name === result.ancestorFilterForeground?.media?.[0],
+    );
+    if (!ancestorFilterForegroundMedia) throw new Error('Missing exported ancestor-filter media');
+    result.ancestorFilterForegroundChromiumComparison = comparePng(
+      ancestorFilterForegroundChromium.data,
+      ancestorFilterForegroundMedia.data,
+    );
+    result.ancestorFilterForegroundNativeContent = inspectNativeContent(entries, 'Filtered ancestor label');
+    result.selfFilteredPseudoChromium = selfFilteredPseudoChromium.png;
+    const selfFilteredPseudoMedia = media.find(({ name }) => name === result.selfFilteredPseudo?.media?.[0]);
+    if (!selfFilteredPseudoMedia) throw new Error('Missing exported self-filtered pseudo media');
+    result.selfFilteredPseudoChromiumComparison = comparePng(
+      selfFilteredPseudoChromium.data,
+      selfFilteredPseudoMedia.data,
+    );
+    result.selfFilteredPseudoNativeContent = inspectNativeContent(entries, 'Filtered pseudo label');
     result.materializedOpaquePseudoNativeFill = inspectNativeContent(entries, 'val="F232A0"');
     const rootPseudoMedia = media.filter(
       ({ name, png }) => !usedMedia.has(name) && (png?.width ?? 0) >= 300 && (png?.height ?? 0) >= 170,
@@ -1893,6 +2147,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     typeof value !== 'object'
     || value === null
     || !('ancestorBlend' in value)
+    || !('ancestorFilterForeground' in value)
+    || !('ancestorFilterForegroundChromium' in value)
+    || typeof value.ancestorFilterForegroundChromium !== 'object'
+    || value.ancestorFilterForegroundChromium === null
+    || !('ancestorFilterForegroundChromiumComparison' in value)
+    || typeof value.ancestorFilterForegroundChromiumComparison !== 'object'
+    || value.ancestorFilterForegroundChromiumComparison === null
+    || !('ancestorFilterForegroundNativeContent' in value)
+    || typeof value.ancestorFilterForegroundNativeContent !== 'number'
     || !('blended' in value)
     || !('backdropFiltered' in value)
     || !('backgroundBlendPseudo' in value)
@@ -1996,6 +2259,15 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || value.slideRootMaskGeometry === null
     || !('slideRootMaskNativeContent' in value)
     || typeof value.slideRootMaskNativeContent !== 'number'
+    || !('selfFilteredPseudo' in value)
+    || !('selfFilteredPseudoChromium' in value)
+    || typeof value.selfFilteredPseudoChromium !== 'object'
+    || value.selfFilteredPseudoChromium === null
+    || !('selfFilteredPseudoChromiumComparison' in value)
+    || typeof value.selfFilteredPseudoChromiumComparison !== 'object'
+    || value.selfFilteredPseudoChromiumComparison === null
+    || !('selfFilteredPseudoNativeContent' in value)
+    || typeof value.selfFilteredPseudoNativeContent !== 'number'
     || !('solidCompositor' in value)
     || !('solidCompositorOrder' in value)
     || typeof value.solidCompositorOrder !== 'object'
@@ -2007,12 +2279,35 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     || !('nativeFill' in value.solidCompositorOrder)
     || typeof value.solidCompositorOrder.nativeFill !== 'number'
     || !('stackingSlide' in value)
+    || !('textClipStandard' in value)
+    || !('textClipStandardChromium' in value)
+    || typeof value.textClipStandardChromium !== 'object'
+    || value.textClipStandardChromium === null
+    || !('textClipStandardChromiumComparison' in value)
+    || typeof value.textClipStandardChromiumComparison !== 'object'
+    || value.textClipStandardChromiumComparison === null
+    || !('textClipStandardNativeContent' in value)
+    || typeof value.textClipStandardNativeContent !== 'number'
+    || !('textClipWebkit' in value)
+    || !('textClipWebkitChromium' in value)
+    || typeof value.textClipWebkitChromium !== 'object'
+    || value.textClipWebkitChromium === null
+    || !('textClipWebkitChromiumComparison' in value)
+    || typeof value.textClipWebkitChromiumComparison !== 'object'
+    || value.textClipWebkitChromiumComparison === null
+    || !('textClipWebkitNativeContent' in value)
+    || typeof value.textClipWebkitNativeContent !== 'number'
   ) {
     throw new Error(`Electron renderer probe returned an invalid result: ${JSON.stringify(value)}`);
   }
   return {
     alignmentGeometry: value.alignmentGeometry as LayeredBackgroundProbe['alignmentGeometry'],
     ancestorBlend: parseLayeredBackgroundExport(value.ancestorBlend),
+    ancestorFilterForeground: parseLayeredBackgroundExport(value.ancestorFilterForeground),
+    ancestorFilterForegroundChromium: value.ancestorFilterForegroundChromium as PngProbe,
+    ancestorFilterForegroundChromiumComparison:
+      value.ancestorFilterForegroundChromiumComparison as PngComparison,
+    ancestorFilterForegroundNativeContent: value.ancestorFilterForegroundNativeContent,
     backdropFiltered: parseLayeredBackgroundExport(value.backdropFiltered),
     backgroundBlendPseudo: parseLayeredBackgroundExport(value.backgroundBlendPseudo),
     blended: parseLayeredBackgroundExport(value.blended),
@@ -2061,6 +2356,10 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
       slideBackground: value.rootPseudoLayerOrder.slideBackground,
     },
     skippedTargets: value.skippedTargets,
+    selfFilteredPseudo: parseLayeredBackgroundExport(value.selfFilteredPseudo),
+    selfFilteredPseudoChromium: value.selfFilteredPseudoChromium as PngProbe,
+    selfFilteredPseudoChromiumComparison: value.selfFilteredPseudoChromiumComparison as PngComparison,
+    selfFilteredPseudoNativeContent: value.selfFilteredPseudoNativeContent,
     slideRootMask: parseLayeredBackgroundExport(value.slideRootMask),
     slideRootMaskGeometry: value.slideRootMaskGeometry as PptxGeometry,
     slideRootMaskNativeContent: value.slideRootMaskNativeContent,
@@ -2068,6 +2367,14 @@ function parseLayeredBackgroundProbe(value: unknown): LayeredBackgroundProbe {
     solidCompositorOrder: value.solidCompositorOrder as LayeredBackgroundProbe['solidCompositorOrder'],
     stackingSlide: parseLayeredBackgroundExport(value.stackingSlide),
     supported: parseLayeredBackgroundExport(value.supported),
+    textClipStandard: parseLayeredBackgroundExport(value.textClipStandard),
+    textClipStandardChromium: value.textClipStandardChromium as PngProbe,
+    textClipStandardChromiumComparison: value.textClipStandardChromiumComparison as PngComparison,
+    textClipStandardNativeContent: value.textClipStandardNativeContent,
+    textClipWebkit: parseLayeredBackgroundExport(value.textClipWebkit),
+    textClipWebkitChromium: value.textClipWebkitChromium as PngProbe,
+    textClipWebkitChromiumComparison: value.textClipWebkitChromiumComparison as PngComparison,
+    textClipWebkitNativeContent: value.textClipWebkitNativeContent,
   };
 }
 

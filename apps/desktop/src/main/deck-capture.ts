@@ -553,6 +553,16 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     }
   }
 
+  function hasUnsupportedPseudoSelfEffect(style: CSSStyleDeclaration): boolean {
+    const opacity = Number.parseFloat(style.opacity || "1");
+    const hasOpacity = Number.isFinite(opacity) && opacity > 0 && opacity < 1;
+    const clipPath = (style.clipPath || style.getPropertyValue?.("clip-path") || "none")
+      .trim()
+      .toLowerCase();
+    const hasClipPath = clipPath !== "" && clipPath !== "none";
+    return hasOpacity || hasClipPath || hasUnsupportedNativeAncestorEffect(style);
+  }
+
   function materializeLayeredPseudoBackground(
     element: HTMLElement,
     pseudo: "::before" | "::after",
@@ -561,12 +571,12 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     const rawContent = (style.content || "").trim();
     const content = rawContent.toLowerCase();
     const isGenerated = content !== "" && content !== "none" && content !== "normal" && style.display !== "none";
-    const materializeEntirePseudo = hasCssMask(style) || dependsOnBackdrop(style);
+    const materializeEntirePseudo = hasCssMask(style) || hasUnsupportedPseudoSelfEffect(style);
     if (
       !isGenerated ||
       (style.position !== "absolute" && style.position !== "fixed") ||
       !isSupportedLayeredGradient(style.backgroundImage || "") ||
-      (!dependsOnBackdrop(style) && !hasNonNormalBackgroundBlendMode(style) && !hasCssMask(style)) ||
+      (!materializeEntirePseudo && !hasNonNormalBackgroundBlendMode(style)) ||
       hasTextClip(style)
     ) {
       return null;
@@ -638,7 +648,7 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
     background.style.setProperty("scale", style.scale || "none", "important");
     background.style.setProperty("z-index", style.zIndex || "auto", "important");
     if (materializeEntirePseudo) {
-      // Masks, blend modes, and backdrop filters apply to the pseudo's complete
+      // Masks and non-serializable self effects apply to the pseudo's complete
       // painted output, including generated text and borders. Copy the computed
       // pseudo style so Chromium rasterizes that output as one layer.
       for (let index = 0; index < style.length; index += 1) {
@@ -691,10 +701,14 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
   function establishesCompositingContext(style: CSSStyleDeclaration): boolean {
     const opacity = Number.parseFloat(style.opacity || "1");
     const hasOpacity = Number.isFinite(opacity) && opacity > 0 && opacity < 1;
+    return hasOpacity || hasUnsupportedNativeAncestorEffect(style);
+  }
+
+  function hasUnsupportedNativeAncestorEffect(style: CSSStyleDeclaration): boolean {
     const hasFilter = Boolean(style.filter && style.filter !== "none");
     const hasTransform = [style.transform, style.translate, style.rotate, style.scale]
       .some((value) => Boolean(value && value !== "none"));
-    return hasOpacity || hasFilter || hasTransform || dependsOnBackdrop(style);
+    return hasFilter || hasTransform || dependsOnBackdrop(style);
   }
 
   function compositingAncestors(element: HTMLElement, slide: HTMLElement): HTMLElement[] {
@@ -722,17 +736,17 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       const style = getComputedStyle(element);
       const capturesLayer = (
         isSupportedLayeredGradient(style.backgroundImage || "") &&
-        !hasTextClip(style) &&
         isRenderedInsideSlide(element, slide, style)
       );
       if (
         capturesLayer &&
-        (hasCssMask(style) || establishesCompositingContext(style)) &&
+        (hasTextClip(style) || hasCssMask(style) || establishesCompositingContext(style)) &&
         !element.hasAttribute("data-od-pptx-materialized-pseudo")
       ) {
-        // The native converter cannot reapply masks or compositor effects to a
-        // background raster and editable foreground as one CSS paint group.
-        // Keep the complete element paint in one Chromium capture instead.
+        // The native converter cannot reapply text clipping, masks, or
+        // compositor effects to a background raster and editable foreground as
+        // one CSS paint group. Keep the complete element paint in one Chromium
+        // capture instead.
         element.setAttribute("data-od-pptx-capture-entire-element", "true");
         element.setAttribute("data-od-pptx-suppress-before", "true");
         element.setAttribute("data-od-pptx-suppress-after", "true");
@@ -747,6 +761,16 @@ export function collectLayeredPptxBackgroundTargets(slideSelector: string): Laye
       // Every intermediate compositor participates in that same flattened paint
       // and must have its native background cleared after capture as well.
       const ancestors = compositingAncestors(element, slide);
+      for (const ancestor of ancestors) {
+        if (!hasUnsupportedNativeAncestorEffect(getComputedStyle(ancestor))) continue;
+        // dom-to-pptx can inherit ancestor opacity, but it cannot serialize an
+        // ancestor filter, transform, blend mode, or backdrop filter onto the
+        // editable foreground. Capture and suppress that affected subtree so
+        // Chromium applies the unsupported effect exactly once.
+        ancestor.setAttribute("data-od-pptx-capture-entire-element", "true");
+        ancestor.setAttribute("data-od-pptx-suppress-before", "true");
+        ancestor.setAttribute("data-od-pptx-suppress-after", "true");
+      }
       const root = ancestors.at(-1) ?? element;
       const members = captureGroups.get(root) ?? [];
       for (const member of [element, ...ancestors]) {
@@ -2165,8 +2189,10 @@ export async function runDomToPptx(
       const captured = layeredBackgrounds[captureId];
       if (
         !hasRasterizableLayeredGradientBackground(style.backgroundImage || "") ||
-        hasTextBackgroundClip(style.backgroundClip || "") ||
-        hasTextBackgroundClip(style.webkitBackgroundClip || "") ||
+        (!captured && (
+          hasTextBackgroundClip(style.backgroundClip || "") ||
+          hasTextBackgroundClip(style.webkitBackgroundClip || "")
+        )) ||
         // The custom-element fallback uses html2canvas, which cannot preserve
         // masks. Production exports provide a Chromium capture for these.
         (hasCssMask(style) && !captured)
