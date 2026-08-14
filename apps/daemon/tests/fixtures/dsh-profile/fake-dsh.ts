@@ -84,6 +84,21 @@ function sessionState(): { sessionId: string; firstPrompt: string } | null {
 }
 
 function handleExecute(command: Extract<DshProfileHostCommand, { type: 'execute' }>): void {
+  if (mode === 'missing-credential') {
+    emit({
+      type: 'result',
+      request_id: command.request_id,
+      status: 'failed',
+      session_id: 'fixture-missing-credential',
+      resume_rejected: false,
+      error: {
+        code: 'MISSING_CREDENTIAL',
+        message: 'No API key for provider route "deepseek-official".',
+      },
+    });
+    finish();
+    return;
+  }
   const stored = sessionState();
   const requested = command.resume_session_id;
   if (requested) {

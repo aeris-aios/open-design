@@ -441,6 +441,7 @@ import {
   classifyAgentAuthFailure,
   classifyAgentServiceFailure,
   cursorAuthGuidance,
+  normalizeDeepSeekHarnessFailure,
 } from './runtimes/auth.js';
 import { readOpenCodeServiceFailure } from './runtimes/opencode-log.js';
 import { createAgentStderrVisibilityFilter } from './amr-stderr-filter.js';
@@ -13385,16 +13386,8 @@ export async function startServer({
             return;
           }
           if (event === 'error') {
-            const payload = data as {
-              message?: unknown;
-              error?: { code?: unknown };
-            } | null;
-            const message = String(
-              payload?.message ?? 'DeepSeek Harness profile error',
-            );
-            const code = String(
-              payload?.error?.code ?? 'AGENT_EXECUTION_FAILED',
-            );
+            const failure = normalizeDeepSeekHarnessFailure(data);
+            const { code, message } = failure;
             agentStreamError = message;
             agentStreamErrorObservedBeforeCancellation = !run.cancelRequested;
             acpFatalErrorObservedBeforeCancellation = !run.cancelRequested;
@@ -13415,7 +13408,8 @@ export async function startServer({
             }
             if (!run.cancelRequested) {
               send('error', createSseErrorPayload(code, message, {
-                retryable: code === 'DSH_PROFILE_RESUME_REJECTED',
+                retryable:
+                  failure.authRequired || code === 'DSH_PROFILE_RESUME_REJECTED',
               }));
             }
             return;

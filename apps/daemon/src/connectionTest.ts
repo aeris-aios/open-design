@@ -48,6 +48,7 @@ import {
   classifyAgentAuthFailure,
   classifyAgentServiceFailure,
   cursorAuthGuidance,
+  normalizeDeepSeekHarnessFailure,
   probeAgentAuthStatus,
 } from './runtimes/auth.js';
 import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
@@ -2042,7 +2043,21 @@ function attachAgentStreamHandlers(
       prompt,
       cwd,
       model: model ?? null,
-      send,
+      send: (event, payload) => {
+        if (event !== 'error') {
+          send(event, payload);
+          return;
+        }
+        const failure = normalizeDeepSeekHarnessFailure(payload);
+        send('error', {
+          message: failure.message,
+          error: {
+            code: failure.code,
+            message: failure.message,
+            retryable: failure.authRequired,
+          },
+        });
+      },
     });
   } else if (def.streamFormat === 'json-event-stream') {
     const handler = createJsonEventStreamHandler(
