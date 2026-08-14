@@ -244,6 +244,11 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+.itemExpanded {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
 .itemSummary {
   box-sizing: border-box;
   width: 100%;
@@ -265,6 +270,10 @@
 
 .itemSummary:hover {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.itemExpanded .itemSummary:hover {
+  background: transparent;
 }
 
 .itemMeta {
