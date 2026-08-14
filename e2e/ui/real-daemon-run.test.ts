@@ -740,6 +740,37 @@ test('[P0] real daemon run supports fake non-Codex runtime protocols', async ({ 
   }
 });
 
+test('[P0] DeepSeek Harness cancellation reaches the profile and settles the run', async ({ page }) => {
+  await createProject(page, 'DeepSeek Harness cancellation smoke', 'deepseek-harness');
+  await expectWorkspaceReady(page);
+
+  const runResponse = await sendPrompt(page, 'Hold the DeepSeek Harness run open until canceled');
+  const { runId } = (await runResponse.json()) as { runId: string };
+  expect(runId).toBeTruthy();
+
+  const stopButton = page.getByTestId('chat-composer').getByRole('button', { name: 'Stop' });
+  await expect(stopButton).toBeVisible({ timeout: T.medium });
+  const cancelResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === 'POST'
+      && url.pathname === `/api/runs/${runId}/cancel`;
+  });
+  await stopButton.click();
+  expect((await cancelResponse).ok()).toBe(true);
+
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`/api/runs/${runId}`);
+      if (!response.ok()) return null;
+      return ((await response.json()) as { status?: string }).status ?? null;
+    }, { timeout: T.medium })
+    .toBe('canceled');
+
+  const { projectId } = currentProject(page);
+  expect(await listProjectFiles(page, projectId)).toEqual([]);
+  await expect(stopButton).toHaveCount(0);
+});
+
 async function createProject(page: Page, name: string, agentId: FakeAgentId = 'codex') {
   const projectId = `real-daemon-${name}-${Date.now()}`.replace(/[^A-Za-z0-9._-]/g, '-');
   await configureFakeAgent(page, agentId);

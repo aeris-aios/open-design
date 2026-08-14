@@ -446,6 +446,10 @@ describe('app-config', () => {
           opencode: {
             OPENCODE_BIN: '  ~/bin/opencode  ',
           },
+          'deepseek-harness': {
+            DSH_BIN: '  ~/bin/dsh  ',
+            DSH_HOME: '  ~/.dsh-e2e  ',
+          },
           'byok-opencode': {
             OPENCODE_BIN: '  ~/bin/byok-opencode  ',
           },
@@ -470,6 +474,7 @@ describe('app-config', () => {
           OPENCODE_TEST_HOME: '~/.open-design-amr-opencode',
         },
         opencode: { OPENCODE_BIN: '~/bin/opencode' },
+        'deepseek-harness': { DSH_BIN: '~/bin/dsh', DSH_HOME: '~/.dsh-e2e' },
         'trae-cli': { TRAE_CLI_BIN: '~/bin/traecli-public' },
       });
       expect(agentCliEnvForAgent(cfg.agentCliEnv, 'byok-opencode')).toEqual({
