@@ -40,14 +40,57 @@ curl -fsSL 'https://open-design.ai/install-dsh.sh?version=1' | sh
 curl -fsSL "https://open-design.ai/install-dsh.cmd?version=1" -o "%TEMP%\install-dsh.cmd" && call "%TEMP%\install-dsh.cmd"
 ```
 
-## 安装完成后
+## 配置 DeepSeek API Key
 
-1. 安装器会自动启动 `dsh web`。
-2. 在 DeepSeek Harness 的 Models 页面根据引导配置 DeepSeek API Key。
-3. 配置完成后，可以按 `Ctrl+C` 关闭 `dsh web`；日常使用 Open Design 时不需要让该页面常驻。
-4. 回到 Open Design 的“本地 Agent”页面，点击“重新扫描”。
-5. 选择“DeepSeek Harness”。如果出现“安装 Open Design 连接组件”的确认提示，确认安装即可。
-6. 点击“测试”；测试通过后即可选择模型并开始生成。
+是的，API Key 在 DeepSeek Harness 自己的 Web UI 中配置，不需要粘贴到 Open Design。
+
+### 1. 打开 DeepSeek Harness Web UI
+
+安装完成后，安装器会直接运行：
+
+```sh
+dsh web
+```
+
+终端会显示 Web UI 的访问地址，默认是：
+
+```text
+http://127.0.0.1:3080
+```
+
+如果浏览器没有自动打开，请复制终端显示的地址，在浏览器中手动访问；始终以终端实际打印的地址为准。
+
+以后需要重新配置时，也可以在终端再次运行 `dsh web`。
+
+### 2. 填写 API Key
+
+首次打开 DeepSeek Harness 时，可能会依次看到：
+
+1. “内测声明”：点击“继续”。
+2. DeepSeek API Key 配置：将 Key 粘贴到输入框，点击“保存”或“应用”。
+
+如果没有出现 API Key 弹窗，或者之前选择了稍后配置，请打开：
+
+**设置 → 模型 → DeepSeek → API 密钥**
+
+输入 API Key 后点击“保存”或“应用”。配置会立即生效，不需要重启 `dsh web`。
+
+> 只粘贴 API Key 本身。不要粘贴 `DEEPSEEK_API_KEY=...`，也不要在 Key 外面添加引号。
+
+如果还没有 API Key，请先前往 [DeepSeek 开放平台](https://platform.deepseek.com/api_keys) 创建。
+
+### 3. 确认配置成功
+
+保存后，DeepSeek 提供方会显示为已配置，对应模型会出现在模型选择器中。如果页面提示 `MISSING_CREDENTIAL`，请回到 DeepSeek 卡片重新保存 API Key。
+
+DeepSeek Harness 会以只写方式保存凭据：页面只能知道 Key 是否已经配置，无法重新读取或显示 Key 明文。官方说明见 [DeepSeek Harness 模型配置指南](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md)。
+
+### 4. 回到 Open Design
+
+1. API Key 配置完成后，可以在运行 `dsh web` 的终端按 `Ctrl+C`；日常使用 Open Design 时不需要让该页面常驻。
+2. 回到 Open Design 的“本地 Agent”页面，点击“重新扫描”。
+3. 选择“DeepSeek Harness”。如果出现“安装 Open Design 连接组件”的确认提示，确认安装即可。
+4. 点击“测试”；测试通过后即可选择模型并开始生成。
 
 ## 安装器会做什么
 
@@ -93,7 +136,7 @@ DeepSeek API Key 在 DeepSeek Harness 自己的页面中配置和保存。Open D
 
 ## 适合社群直接转发的短版
 
-DeepSeek Harness 已接入 Open Design。没有 Node.js、pnpm 或 dsh 也没关系：复制一行命令即可自动补齐兼容环境，安装完成后会打开 Harness 的 API Key 配置页面。配置完成，回到 Open Design 重新扫描并选择 DeepSeek Harness，就可以开始生成设计。
+DeepSeek Harness 已接入 Open Design。没有 Node.js、pnpm 或 dsh 也没关系：复制一行命令即可自动补齐兼容环境。安装完成后，在 Harness Web UI 的“设置 → 模型 → DeepSeek”中保存 API Key，再回到 Open Design 重新扫描并选择 DeepSeek Harness，就可以开始生成设计。
 
 - macOS / Linux：`curl -fsSL 'https://open-design.ai/install-dsh.sh?version=1' | sh`
 - Windows PowerShell：`& ([scriptblock]::Create((irm 'https://open-design.ai/install-dsh.ps1?version=1')))`
