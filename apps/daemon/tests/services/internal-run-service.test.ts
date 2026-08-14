@@ -112,6 +112,7 @@ describe('internal run creation service', () => {
 
     expect(harness.service.prepare({ meta: {}, beforeClaimCommit }).kind).toBe('ready');
     expect(beforeClaimCommit).toHaveBeenCalledOnce();
+    expect(beforeClaimCommit).toHaveBeenCalledWith(harness.run);
   });
 
   it('drops an optimistic run when the claim transaction throws', () => {

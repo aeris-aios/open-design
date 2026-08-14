@@ -28,6 +28,7 @@ import type {
   TrackingRunRecoveryActionType,
   TrackingRunTerminalTrigger,
 } from '../analytics/events.js';
+import type { StrategyTaskProjectionV2 } from '../plugins/strategy-v2.js';
 
 // The daemon's run-failure taxonomy, re-exported under product-facing names so
 // the run-status/error surface can carry the specific cause the daemon already
@@ -78,6 +79,11 @@ export interface ByokMediaDefaults {
 export interface ChatRequest {
   agentId: string;
   message: string;
+  /**
+   * Explicit daemon-issued OD Next continuation handle. Omit for an ordinary
+   * chat turn; callers must never infer this value from conversation order.
+   */
+  taskExecutionId?: string;
   /** The latest user turn only, used for per-turn telemetry content. */
   currentPrompt?: string;
   systemPrompt?: string;
@@ -430,6 +436,8 @@ export interface ChatRunFeedbackResponse {
 
 export interface ChatRunCreateResponse {
   runId: string;
+  /** Present only when this physical Run belongs to a strategy task chain. */
+  taskExecutionId?: string;
   // Daemon-resolved conversation/message ids — populated for MCP /
   // SDK callers that POST /api/runs with only projectId. The web flow
   // normally sends these in already; daemon falls back to the
@@ -440,6 +448,7 @@ export interface ChatRunCreateResponse {
   pluginId?: string | null;
   /** Analytics-only data-quality signal; it never changes run reuse semantics. */
   analyticsAttributionMismatch?: boolean;
+  strategyTask?: StrategyTaskProjectionV2;
 }
 
 export type NativeSessionRecoveryState =
@@ -725,6 +734,7 @@ export interface ChatRunStatusResponse {
   workspace?: RunWorkspace;
   /** Available only after terminal completion; safe for eval/observability clients. */
   executionDiagnostics?: ChatRunExecutionDiagnostics;
+  strategyTask?: StrategyTaskProjectionV2;
 }
 
 export type ChatRunResultPackageResponse = RunResultPackageResponse;

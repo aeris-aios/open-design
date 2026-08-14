@@ -282,6 +282,34 @@ export function getStrategyTaskExecutionByRunId(
   return row ? rowToTask(db, row) : null;
 }
 
+export function getAwaitingClarificationStrategyTaskExecution(
+  db: SqliteDb,
+  input: { projectId: string; conversationId: string },
+): StrategyTaskExecutionRecord | null {
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM strategy_task_executions
+       WHERE project_id = ? AND conversation_id = ?
+         AND route = 'full_plan'
+         AND input_stage = 'request'
+         AND outcome = 'clarification_required'
+       ORDER BY updated_at DESC, task_execution_id ASC
+       LIMIT 2
+    `).all(input.projectId, input.conversationId) as DbRow[];
+    // Ambiguous active ownership is fail-closed. A continuation must never be
+    // guessed onto one of two logical tasks sharing a conversation.
+    if (rows.length > 1) {
+      throw new InvalidStrategyTaskRecordError(
+        'Conversation has multiple strategy tasks awaiting clarification.',
+      );
+    }
+    return rows.length === 1 ? rowToTask(db, rows[0]!) : null;
+  } catch (error) {
+    if (isMissingTaskStoreError(error)) return null;
+    throw error;
+  }
+}
+
 export function compareAndTransitionStrategyTaskExecution(
   db: SqliteDb,
   input: CompareAndTransitionStrategyTaskInput,

@@ -56,7 +56,12 @@ export type AssistantRunClaimResult = {
 
 export interface PrepareInternalRunInput<TMeta extends InternalRunCreateInput, TRun> {
   meta: TMeta;
-  beforeClaimCommit?: () => void;
+  /**
+   * Runs inside the assistant-message claim transaction. The newly allocated
+   * physical Run is supplied so a logical coordinator can CAS-claim that exact
+   * id before either record becomes visible.
+   */
+  beforeClaimCommit?: (run: TRun) => void;
   resume?: {
     requested: boolean;
     canResume: (run: TRun) => boolean;
@@ -127,7 +132,7 @@ export function createInternalRunCreationService<
     try {
       claim = deps.claimAssistantMessage(run, {
         ...(input.beforeClaimCommit
-          ? { beforeClaimCommit: input.beforeClaimCommit }
+          ? { beforeClaimCommit: () => input.beforeClaimCommit?.(run) }
           : {}),
         isRunActive,
       });

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  composeOdNextStrategyContinuationV2,
   defaultScenarioPluginIdForProjectMetadata,
   RUN_RESULT_PACKAGE_SCHEMA,
   type AppliedPluginSnapshot,
@@ -11,6 +12,7 @@ import {
   type ByokChatProviderConfig,
   type ChatRunStatus,
   type ChatRunStatusResponse,
+  type StrategyTaskProjectionV2,
   type ProjectMetadata as ContractProjectMetadata,
   type RunResultPackageResponse,
 } from '@open-design/contracts';
@@ -72,10 +74,23 @@ import {
   type InternalRunCreationService,
 } from '../services/internal-run-service.js';
 import {
+  projectStrategyTask,
+  projectStrategyTaskByRunId,
+} from '../strategies/od-next/automatic-simple-production.js';
+import {
+  cancelStrategyTaskExecution,
+  getStrategyTaskExecution,
+  getStrategyTaskExecutionByRunId,
+  type StrategyTaskExecutionRecord,
+  StrategyTaskTransitionConflictError,
+} from '../strategies/task-store.js';
+import { beginStrategyClarification } from '../strategies/od-next/coordinator.js';
+import {
   buildConnectorProbe,
   getInstalledPlugin,
   resolvePluginSnapshot,
 } from '../plugins/index.js';
+import { getSnapshot, linkSnapshotToRun } from '../plugins/snapshots.js';
 import {
   assertSandboxProjectRootAvailable,
   isSafeId,
@@ -372,6 +387,7 @@ interface ChatRun {
     missReason?: string | null;
     changedSections?: string[] | null;
   };
+  strategyTask?: StrategyTaskProjectionV2;
 }
 
 interface RunCreateMeta extends InternalRunCreateInput, JsonRecord {
@@ -939,6 +955,244 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     claimAssistantMessage: (run, options) =>
       pinAssistantMessageOnRunCreate(db, run, options),
   });
+  const statusWithStrategyTask = (run: ChatRun): ChatRunStatusResponse => {
+    const strategyTask = projectStrategyTaskByRunId(db, run.id);
+    if (strategyTask) run.strategyTask = strategyTask;
+    return design.runs.statusBody(run);
+  };
+
+  type ClarificationContinuation = {
+    task: StrategyTaskExecutionRecord;
+    sourceRunId: string;
+    taskRunIndex: number;
+    answer: string;
+    retry: boolean;
+    snapshot: AppliedPluginSnapshot;
+  };
+
+  type ClarificationResolution =
+    | { kind: 'ordinary' }
+    | { kind: 'error'; status: number; code: string; message: string }
+    | { kind: 'continuation'; value: ClarificationContinuation };
+
+  /**
+   * Resolve only an explicit daemon-issued task handle. Conversation order is
+   * never an ownership signal: an ordinary follow-up in a conversation that
+   * happens to contain an awaiting strategy task must stay an ordinary Run.
+   */
+  function resolveClarificationContinuation(
+    requestBody: JsonRecord,
+  ): ClarificationResolution {
+    if (requestBody.taskExecutionId === undefined) return { kind: 'ordinary' };
+    if (
+      typeof requestBody.taskExecutionId !== 'string'
+      || !requestBody.taskExecutionId.trim()
+      || !isSafeId(requestBody.taskExecutionId)
+    ) {
+      return {
+        kind: 'error',
+        status: 400,
+        code: 'BAD_REQUEST',
+        message: 'taskExecutionId must be a non-empty safe id',
+      };
+    }
+    const task = getStrategyTaskExecution(db, requestBody.taskExecutionId);
+    if (!task) {
+      return {
+        kind: 'error',
+        status: 404,
+        code: 'STRATEGY_TASK_NOT_FOUND',
+        message: 'strategy task execution not found',
+      };
+    }
+    if (
+      requestBody.projectId !== task.projectId
+      || requestBody.conversationId !== task.conversationId
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_SCOPE_MISMATCH',
+        message: 'strategy continuation must use the task\'s locked project and conversation',
+      };
+    }
+    if (
+      typeof requestBody.agentId === 'string'
+      && requestBody.agentId
+      && requestBody.agentId !== task.selectedAgentId
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_AGENT_MISMATCH',
+        message: 'strategy continuation must use the task\'s locked agent',
+      };
+    }
+    if (
+      typeof requestBody.appliedPluginSnapshotId === 'string'
+      && requestBody.appliedPluginSnapshotId
+      && requestBody.appliedPluginSnapshotId !== task.snapshotId
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_SNAPSHOT_MISMATCH',
+        message: 'strategy continuation must use the task\'s locked snapshot',
+      };
+    }
+    if (
+      typeof requestBody.pluginId === 'string'
+      && requestBody.pluginId
+      && requestBody.pluginId !== task.strategyId
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_PLUGIN_MISMATCH',
+        message: 'strategy continuation must use the task\'s locked strategy',
+      };
+    }
+    const snapshot = getSnapshot(db, task.snapshotId);
+    if (
+      !snapshot
+      || snapshot.pluginId !== task.strategyId
+      || snapshot.strategy?.id !== task.strategyId
+      || snapshot.strategy.version !== task.strategyVersion
+      || snapshot.strategy.packageHash !== task.strategyPackageHash
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_SNAPSHOT_INVALID',
+        message: 'strategy task snapshot identity is unavailable or has drifted',
+      };
+    }
+    const answer = typeof requestBody.currentPrompt === 'string'
+      ? requestBody.currentPrompt
+      : typeof requestBody.message === 'string'
+        ? requestBody.message
+        : '';
+    if (!answer.trim()) {
+      return {
+        kind: 'error',
+        status: 400,
+        code: 'STRATEGY_CLARIFICATION_ANSWER_MISSING',
+        message: 'clarification continuation requires a non-empty answer',
+      };
+    }
+    const existingClientRun =
+      typeof requestBody.clientRequestId === 'string' && requestBody.clientRequestId
+        ? design.runs.list({
+            projectId: task.projectId,
+            conversationId: task.conversationId,
+          }).find((candidate) => candidate.clientRequestId === requestBody.clientRequestId) ?? null
+        : null;
+    const existingMapping = existingClientRun
+      ? task.runs.find((mapping) => mapping.runId === existingClientRun.id)
+      : undefined;
+    const exactRetry = Boolean(
+      existingClientRun
+      && existingMapping?.inputStage === 'clarification'
+      && task.latestRunId === existingClientRun.id
+      && task.activeRunId === existingClientRun.id
+      && task.outcome === 'running',
+    );
+    if (existingClientRun && !exactRetry) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_RETRY_MISMATCH',
+        message: 'clientRequestId is not bound to this task clarification',
+      };
+    }
+    if (exactRetry && existingMapping) {
+      return {
+        kind: 'continuation',
+        value: {
+          task,
+          sourceRunId: existingMapping.sourceRunId!,
+          taskRunIndex: existingMapping.taskRunIndex,
+          answer,
+          retry: true,
+          snapshot,
+        },
+      };
+    }
+    const latestMapping = task.runs.at(-1);
+    if (
+      task.route !== 'full_plan'
+      || task.inputStage !== 'request'
+      || task.outcome !== 'clarification_required'
+      || task.activeRunId !== null
+      || task.terminalRunId !== null
+      || task.clarificationCount !== 0
+      || !latestMapping
+      || latestMapping.runId !== task.latestRunId
+      || latestMapping.inputStage !== 'request'
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_STATE_MISMATCH',
+        message: 'strategy task is not awaiting its first clarification answer',
+      };
+    }
+    const sourceRun = design.runs.get(task.latestRunId);
+    if (
+      !sourceRun
+      || sourceRun.status !== 'succeeded'
+      || sourceRun.projectId !== task.projectId
+      || sourceRun.conversationId !== task.conversationId
+      || sourceRun.agentId !== task.selectedAgentId
+      || sourceRun.appliedPluginSnapshotId !== task.snapshotId
+    ) {
+      return {
+        kind: 'error',
+        status: 409,
+        code: 'STRATEGY_TASK_SOURCE_RUN_INVALID',
+        message: 'strategy clarification source Run is unavailable or does not match the locked task',
+      };
+    }
+    return {
+      kind: 'continuation',
+      value: {
+        task,
+        sourceRunId: task.latestRunId,
+        taskRunIndex: latestMapping.taskRunIndex + 1,
+        answer,
+        retry: false,
+        snapshot,
+      },
+    };
+  }
+
+  function applyClarificationContinuationMeta(
+    meta: RunCreateMeta,
+    continuation: ClarificationContinuation,
+  ): void {
+    const { task, answer, sourceRunId, taskRunIndex } = continuation;
+    const instruction = composeOdNextStrategyContinuationV2({
+      stage: 'clarification',
+      nativeSessionResume: true,
+      answer,
+    });
+    meta.taskExecutionId = task.taskExecutionId;
+    meta.agentId = task.selectedAgentId;
+    meta.appliedPluginSnapshotId = task.snapshotId;
+    meta.pluginId = task.strategyId;
+    meta.message = instruction;
+    meta.currentPrompt = instruction;
+    meta.titleGeneration = undefined;
+    meta.analyticsHints = {
+      ...(meta.analyticsHints && typeof meta.analyticsHints === 'object'
+        ? meta.analyticsHints
+        : {}),
+      taskExecutionId: task.taskExecutionId,
+      initialRunId: task.initialRunId,
+      sourceRunId,
+      taskRunIndex,
+    };
+  }
 
   /** Authorize every bound run mutation before plugin or snapshot resolution. */
   async function authorizeRunProjectBeforePluginResolution(
@@ -1296,8 +1550,23 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (!authorization.ok) return;
       authorizedBoundMutation = authorization.authorizedBoundMutation;
     }
+    const clarificationResolution = resolveClarificationContinuation(requestBody);
+    if (clarificationResolution.kind === 'error') {
+      return sendApiError(
+        res,
+        clarificationResolution.status,
+        clarificationResolution.code,
+        clarificationResolution.message,
+      );
+    }
+    const clarificationContinuation = clarificationResolution.kind === 'continuation'
+      ? clarificationResolution.value
+      : null;
+    const clarificationTask = clarificationContinuation?.task ?? null;
     let effectiveAgentId =
-      typeof requestBody.agentId === 'string' && requestBody.agentId
+      clarificationTask
+        ? clarificationTask.selectedAgentId
+        : typeof requestBody.agentId === 'string' && requestBody.agentId
         ? requestBody.agentId
         : null;
     if (!effectiveAgentId) {
@@ -1332,7 +1601,22 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       preparedWorkspaceScope = prepared.workspaceScope;
     }
     let resolvedSnapshot = null;
-    if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
+    if (clarificationContinuation) {
+      if (
+        ctx.plugins.authorizePluginRequest
+        && !await ctx.plugins.authorizePluginRequest(
+          req,
+          res,
+          clarificationTask!.strategyId,
+        )
+      ) return;
+      resolvedSnapshot = {
+        ok: true,
+        status: 200,
+        snapshotId: clarificationTask!.snapshotId,
+        snapshot: clarificationContinuation.snapshot,
+      };
+    } else if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
       const explicitPlugin =
         requestBody.pluginId || requestBody.appliedPluginSnapshotId;
       let runResolveBody: JsonRecord = requestBody;
@@ -1425,6 +1709,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ).trim();
         if (renderedQuery.length > 0) meta.message = renderedQuery;
       }
+    }
+    if (clarificationContinuation) {
+      applyClarificationContinuationMeta(meta, clarificationContinuation);
     }
     let runProject: ProjectRecord | null = null;
     if (typeof meta.projectId === 'string' && meta.projectId) {
@@ -1786,24 +2073,53 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         updateProject(db, meta.projectId, {});
       }
     };
-    meta.requestFingerprint = runRequestFingerprint(
-      meta,
-      resolvedSnapshot?.ok ? resolvedSnapshot.snapshot : null,
-    );
-    const preparedRun = internalRuns.prepare({
-      meta,
-      ...(runUserSeed ? { beforeClaimCommit: seedRunUserMessage } : {}),
-      resume: {
-        requested: requestBody.resume === true,
-        canResume: (candidate) =>
-          candidate.status === 'failed'
-          && candidate.agentId === 'amr'
-          && (
-            candidate.failureAction === 'recharge'
-            || candidate.errorCode === 'AMR_INSUFFICIENT_BALANCE'
-          ),
-      },
-    });
+    const fingerprintSnapshot = clarificationTask
+      ? getSnapshot(db, clarificationTask.snapshotId)
+      : resolvedSnapshot?.ok
+        ? resolvedSnapshot.snapshot
+        : null;
+    meta.requestFingerprint = runRequestFingerprint(meta, fingerprintSnapshot);
+    let preparedRun;
+    try {
+      preparedRun = internalRuns.prepare({
+        meta,
+        ...((runUserSeed || clarificationTask)
+          ? {
+              beforeClaimCommit: (candidate) => {
+                seedRunUserMessage();
+                if (clarificationContinuation && !clarificationContinuation.retry) {
+                  beginStrategyClarification(db, {
+                    taskExecutionId: clarificationContinuation.task.taskExecutionId,
+                    sourceRunId: clarificationContinuation.sourceRunId,
+                    nextRunId: candidate.id,
+                    answer: clarificationContinuation.answer,
+                  });
+                }
+              },
+            }
+          : {}),
+        resume: {
+          requested: requestBody.resume === true,
+          canResume: (candidate) =>
+            candidate.status === 'failed'
+            && candidate.agentId === 'amr'
+            && (
+              candidate.failureAction === 'recharge'
+              || candidate.errorCode === 'AMR_INSUFFICIENT_BALANCE'
+            ),
+        },
+      });
+    } catch (error) {
+      if (clarificationTask) {
+        return sendApiError(
+          res,
+          409,
+          'STRATEGY_TASK_TRANSITION_CONFLICT',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
     if (preparedRun.kind === 'idempotency_conflict') {
       return sendApiError(
         res,
@@ -1820,6 +2136,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         meta.analyticsHints,
       );
     if (preparedRun.kind === 'reused') {
+      const strategyTask = projectStrategyTaskByRunId(db, run.id);
       return res.status(202).json({
         runId: run.id,
         conversationId: run.conversationId ?? null,
@@ -1834,6 +2151,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           ? { appliedPluginSnapshotId: run.appliedPluginSnapshotId }
           : {}),
         ...(run.pluginId ? { pluginId: run.pluginId } : {}),
+        ...(strategyTask ? { taskExecutionId: strategyTask.taskExecutionId } : {}),
+        ...(strategyTask ? { strategyTask } : {}),
       });
     }
     if (preparedRun.kind === 'resume_not_allowed') {
@@ -1862,14 +2181,19 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       const ua = String(req.get('user-agent') ?? '');
       run.clientType = ua.includes('Electron/') ? 'desktop' : 'web';
     }
-    if (resolvedSnapshot?.ok) {
+    if (resolvedSnapshot?.ok || clarificationTask) {
       try {
-        const { linkSnapshotToRun } = await import('../plugins/snapshots.js');
-        linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
+        linkSnapshotToRun(
+          db,
+          clarificationTask?.snapshotId ?? resolvedSnapshot!.snapshotId,
+          run.id,
+        );
       } catch {
         // Linking is best-effort here; in-memory run still carries the id.
       }
     }
+    const strategyTask = projectStrategyTaskByRunId(db, run.id);
+    if (strategyTask) run.strategyTask = strategyTask;
     const body = {
       runId: run.id,
       conversationId: run.conversationId ?? null,
@@ -1880,15 +2204,20 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       ...(analyticsAttributionMismatch
         ? { analyticsAttributionMismatch: true }
         : {}),
-      ...(resolvedSnapshot?.ok
-        ? {
-            appliedPluginSnapshotId: resolvedSnapshot.snapshotId,
-            pluginId: resolvedSnapshot.snapshot.pluginId,
-          }
+      ...(run.appliedPluginSnapshotId
+        ? { appliedPluginSnapshotId: run.appliedPluginSnapshotId }
         : {}),
+      ...(run.pluginId ? { pluginId: run.pluginId } : {}),
+      ...(strategyTask ? { taskExecutionId: strategyTask.taskExecutionId } : {}),
+      ...(strategyTask ? { strategyTask } : {}),
     };
     res.status(202).json(body);
-    if (!resumed && resolvedSnapshot?.ok && resolvedSnapshot.snapshot.pipeline) {
+    if (
+      !clarificationTask
+      && !resumed
+      && resolvedSnapshot?.ok
+      && resolvedSnapshot.snapshot.pipeline
+    ) {
       firePipelineForRun({
         run,
         snapshot: resolvedSnapshot.snapshot,
@@ -2791,7 +3120,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'projectId is required when listing Workspace-bound runs',
       );
     }
-    const body = { runs: visibleRuns.map(design.runs.statusBody) };
+    const body = { runs: visibleRuns.map(statusWithStrategyTask) };
     res.json(body);
   });
 
@@ -2840,10 +3169,13 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   app.get('/api/runs/:id/result-package', async (req: ApiRequest, res: ApiResponse) => {
     const runId = routeParamId(req);
     if (!runId) return sendApiError(res, 400, 'BAD_REQUEST', 'run id missing');
-    const run = design.runs.get(runId);
-    if (!run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
+    const requestedRun = design.runs.get(runId);
+    const task = getStrategyTaskExecutionByRunId(db, runId);
+    const resultRunId = task?.terminalRunId ?? task?.latestRunId ?? runId;
+    const run = design.runs.get(resultRunId);
+    if (!requestedRun || !run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
     if (!await authorizeRunProject(req, res, run, { mode: 'read' })) return;
-    const status = design.runs.statusBody(run);
+    const status = statusWithStrategyTask(run);
     const project = run.projectId ? toProjectRecord(getProject(db, run.projectId)) : null;
     let files: ProjectFileEntry[] = [];
     if (project) {
@@ -2930,7 +3262,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const run = design.runs.get(runId);
     if (!run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
     if (!await authorizeRunProject(req, res, run, { mode: 'read' })) return;
-    const status = design.runs.statusBody(run);
+    const status = statusWithStrategyTask(run);
     if (!design.runs.isTerminal(run.status)) {
       res.json(status);
       return;
@@ -3048,8 +3380,48 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       run,
       { mode: 'write', capability: 'writeFiles' },
     )) return;
-    const status = await design.runs.cancel(run, 'user_stop');
-    const body = { ok: true, run: status };
+    const task = getStrategyTaskExecutionByRunId(db, runId);
+    const activeRun = task?.activeRunId ? design.runs.get(task.activeRunId) : null;
+    let cancelRun = activeRun ?? run;
+    let taskForCancel = task;
+    if (taskForCancel && !['completed', 'blocked', 'canceled'].includes(taskForCancel.outcome)) {
+      let canceled = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const physicalRunId = taskForCancel.activeRunId ?? cancelRun.id;
+        try {
+          canceled = cancelStrategyTaskExecution(db, {
+            taskExecutionId: taskForCancel.taskExecutionId,
+            expectedRevision: taskForCancel.revision,
+          });
+          cancelRun = design.runs.get(physicalRunId) ?? cancelRun;
+          break;
+        } catch (error) {
+          if (!(error instanceof StrategyTaskTransitionConflictError)) throw error;
+          const latest = getStrategyTaskExecutionByRunId(db, cancelRun.id)
+            ?? getStrategyTaskExecutionByRunId(db, runId);
+          if (!latest) throw error;
+          taskForCancel = latest;
+          if (['completed', 'blocked', 'canceled'].includes(latest.outcome)) {
+            canceled = latest;
+            break;
+          }
+        }
+      }
+      if (!canceled || !['completed', 'blocked', 'canceled'].includes(canceled.outcome)) {
+        return sendApiError(
+          res,
+          409,
+          'STRATEGY_TASK_CANCEL_CONFLICT',
+          'strategy task changed while cancellation was being applied',
+        );
+      }
+      cancelRun.strategyTask = projectStrategyTask(canceled, cancelRun.id);
+    }
+    // Logical CAS wins before physical finish: the emitted end frame therefore
+    // carries the terminal task projection and can never advertise a running
+    // task after the cancel response already succeeded.
+    await design.runs.cancel(cancelRun, 'user_stop');
+    const body = { ok: true, run: statusWithStrategyTask(cancelRun) };
     res.json(body);
   });
 
@@ -3078,19 +3450,6 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         throw err;
       }
     }
-    const toolBundleSupport = validateRunToolBundleForAgent(
-      toolBundle.bundle,
-      typeof requestBody.agentId === 'string' ? getAgentDef(requestBody.agentId) : null,
-      {
-        deliveryTarget: runToolBundleDeliveryTargetForProject(
-          requestBody.projectId,
-          chatProject?.metadata,
-        ),
-      },
-    );
-    if (!toolBundleSupport.ok) {
-      return sendApiError(res, 400, 'BAD_REQUEST', toolBundleSupport.message);
-    }
     // A chat run may only attach to a conversation owned by its own project.
     // Without this guard, pairing projectId=A with a conversationId owned by
     // project B runs in A's cwd but pins messages and the native session under
@@ -3113,7 +3472,23 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (!authorization.ok) return;
       authorizedBoundMutation = authorization.authorizedBoundMutation;
     }
-    if (!hasCompleteByokOpenCodeConfig(requestBody)) {
+    const clarificationResolution = resolveClarificationContinuation(requestBody);
+    if (clarificationResolution.kind === 'error') {
+      return sendApiError(
+        res,
+        clarificationResolution.status,
+        clarificationResolution.code,
+        clarificationResolution.message,
+      );
+    }
+    const clarificationContinuation = clarificationResolution.kind === 'continuation'
+      ? clarificationResolution.value
+      : null;
+    const clarificationTask = clarificationContinuation?.task ?? null;
+    if (!hasCompleteByokOpenCodeConfig({
+      ...requestBody,
+      ...(clarificationTask ? { agentId: clarificationTask.selectedAgentId } : {}),
+    })) {
       return sendApiError(
         res,
         400,
@@ -3130,6 +3505,22 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       // server-owned value explicitly and replace it below for bound projects.
       workspaceScope: null,
     };
+    if (clarificationContinuation) {
+      applyClarificationContinuationMeta(meta, clarificationContinuation);
+    }
+    const toolBundleSupport = validateRunToolBundleForAgent(
+      toolBundle.bundle,
+      typeof meta.agentId === 'string' ? getAgentDef(meta.agentId) : null,
+      {
+        deliveryTarget: runToolBundleDeliveryTargetForProject(
+          meta.projectId,
+          chatProject?.metadata,
+        ),
+      },
+    );
+    if (!toolBundleSupport.ok) {
+      return sendApiError(res, 400, 'BAD_REQUEST', toolBundleSupport.message);
+    }
     // Mirror the POST /api/runs ownership check: the assistantMessageId must
     // reference an assistant message in THIS conversation, or the run mutates a
     // row it does not own via the id-only writers (#6418 review).
@@ -3194,15 +3585,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (!preparedWorkspaceScope.ok) return;
       meta.workspaceScope = preparedWorkspaceScope.workspaceScope;
     }
+    const chatPluginId = clarificationTask?.strategyId
+      ?? (typeof requestBody.pluginId === 'string' ? requestBody.pluginId : null);
     if (
-      typeof requestBody.pluginId === 'string'
-      && requestBody.pluginId.length > 0
+      chatPluginId
       && ctx.plugins.authorizePluginRequest
-      && !await ctx.plugins.authorizePluginRequest(
-        req,
-        res,
-        requestBody.pluginId,
-      )
+      && !await ctx.plugins.authorizePluginRequest(req, res, chatPluginId)
     ) return;
     if (
       typeof meta.projectId === 'string'
@@ -3213,8 +3601,38 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         meta.appliedPluginSnapshotId,
       )
     ) return;
-    meta.requestFingerprint = runRequestFingerprint(meta);
-    const preparedRun = internalRuns.prepare({ meta });
+    meta.requestFingerprint = runRequestFingerprint(
+      meta,
+      clarificationContinuation?.snapshot,
+    );
+    let preparedRun;
+    try {
+      preparedRun = internalRuns.prepare({
+        meta,
+        ...(clarificationContinuation && !clarificationContinuation.retry
+          ? {
+              beforeClaimCommit: (candidate) => {
+                beginStrategyClarification(db, {
+                  taskExecutionId: clarificationContinuation.task.taskExecutionId,
+                  sourceRunId: clarificationContinuation.sourceRunId,
+                  nextRunId: candidate.id,
+                  answer: clarificationContinuation.answer,
+                });
+              },
+            }
+          : {}),
+      });
+    } catch (error) {
+      if (clarificationContinuation) {
+        return sendApiError(
+          res,
+          409,
+          'STRATEGY_TASK_TRANSITION_CONFLICT',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
     if (preparedRun.kind === 'idempotency_conflict') {
       return sendApiError(
         res,
@@ -3225,6 +3643,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     const run = preparedRun.run;
     if (preparedRun.kind === 'reused') {
+      const strategyTask = projectStrategyTaskByRunId(db, run.id);
+      if (strategyTask) run.strategyTask = strategyTask;
       design.runs.stream(run, req, res);
       return;
     }
@@ -3244,6 +3664,15 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'Only a failed Open Design Cloud run waiting for recharge can be resumed with the same request',
       );
     }
+    if (clarificationContinuation) {
+      try {
+        linkSnapshotToRun(db, clarificationContinuation.task.snapshotId, run.id);
+      } catch {
+        // The locked snapshot remains on the in-memory Run; linking is best-effort.
+      }
+    }
+    const strategyTask = projectStrategyTaskByRunId(db, run.id);
+    if (strategyTask) run.strategyTask = strategyTask;
     design.runs.stream(run, req, res);
     reconcileAssistantMessageOnRunEnd(db, design.runs, run);
     const executionMeta: RunCreateMeta = {

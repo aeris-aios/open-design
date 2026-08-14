@@ -11,7 +11,7 @@ import express from 'express';
 import multer from 'multer';
 import JSZip from 'jszip';
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -453,6 +453,17 @@ import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
+import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
+import type { OdNextExecutionPreflightInput } from './strategies/od-next/resolver.js';
+import {
+  blockAutomaticContinuation,
+  prepareAutomaticStrategyContinuation,
+  projectStrategyTask,
+} from './strategies/od-next/automatic-simple-production.js';
+import {
+  getStrategyTaskExecutionByRunId,
+  reconcileStrategyTaskRunTerminal,
+} from './strategies/task-store.js';
 import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
@@ -460,6 +471,7 @@ import {
 } from './run-lifecycle-tracer.js';
 import { deriveRunErrorCode, runResultFromStatus } from './run-result.js';
 import { classifyRunFailure, isResumableFailure } from './run-failure-classification.js';
+import { validateRunDeliverable } from './run-deliverable-validation.js';
 import {
   POST_TOOL_RESUME_CONTINUATION_PROMPT,
   decidePostToolResumeRecovery,
@@ -2589,6 +2601,13 @@ export interface StartServerOptions {
   returnServer?: boolean;
   runtime?: DaemonRuntimeContext | null;
   staticDir?: string;
+  /** Daemon-owned host capability facts. HTTP/model output cannot populate it. */
+  odNextExecutionPreflightResolver?: ((input: {
+    taskExecutionId: string;
+    runId: string;
+    agentId: string;
+    productionRoutes: readonly string[];
+  }) => OdNextExecutionPreflightInput | undefined | Promise<OdNextExecutionPreflightInput | undefined>) | null;
 }
 
 export interface StartServerResult {
@@ -2607,6 +2626,7 @@ export async function startServer({
   desktopArtifactExporter = null,
   runtime = null,
   staticDir = STATIC_DIR,
+  odNextExecutionPreflightResolver = null,
 }: StartServerOptions = {}) {
   host = normalizeDaemonBindHost(host);
   let resolvedPort = port;
@@ -7120,6 +7140,12 @@ export async function startServer({
         if (!run.sideEffectLedger) run.sideEffectLedger = createRunSideEffectLedger();
         foldEventIntoRunSideEffectLedger(run.sideEffectLedger, record);
       },
+      beforeFinish: (run, status) => {
+        if (status !== 'failed' && status !== 'canceled') return;
+        reconcileStrategyTaskRunTerminal(db, { runId: run.id, status });
+        const latestTask = getStrategyTaskExecutionByRunId(db, run.id);
+        if (latestTask) run.strategyTask = projectStrategyTask(latestTask, run.id);
+      },
     }),
     analytics: analyticsService,
     getAppVersion: () => telemetry.getCachedAppVersion()?.version ?? '0.0.0',
@@ -9829,6 +9855,14 @@ export async function startServer({
     run.nativeSessionContinuePending = null;
     /** @type {Partial<ChatRequest> & { imagePaths?: string[] }} */
     chatBody = chatBody || {};
+    const strategyTaskAtStart = getStrategyTaskExecutionByRunId(db, run.id);
+    const strategyProtocol = strategyTaskAtStart
+      ? new OdNextMachineProtocolStream()
+      : null;
+    let strategyVisibleEmitted = '';
+    let strategyProtocolResult = null;
+    let strategyToolUseCount = 0;
+    let pendingStrategyContinuation = null;
     const {
       agentId,
       message,
@@ -10699,6 +10733,17 @@ export async function startServer({
           invalidationReason: null,
         }
       : resolvedAgentResumeCtx;
+    if (
+      strategyTaskAtStart
+      && strategyTaskAtStart.inputStage !== 'request'
+      && !agentResumeCtx.isResuming
+    ) {
+      const blocked = blockAutomaticContinuation(db, { runId: run.id });
+      if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
+      throw new Error(
+        'OD Next continuation requires the locked native session; cold re-seeding is forbidden.',
+      );
+    }
     const publishNativeSessionRecoveryMetadata = () => {
       if (!run.nativeSessionRecovery) return;
       design.runs.emit(run, 'diagnostic', {
@@ -10919,6 +10964,29 @@ export async function startServer({
     // covers realistic artifact-bearing runs while bounding per-run memory.
     const PLAIN_ARTIFACT_STDOUT_CAP = 8 * 1024 * 1024;
     const send = (event, data) => {
+      if (strategyProtocol && event === 'agent' && data?.type === 'tool_use') {
+        strategyToolUseCount += 1;
+      }
+      if (
+        strategyProtocol
+        && event === 'agent'
+        && data?.type === 'text_delta'
+        && typeof data.delta === 'string'
+      ) {
+        const delta = strategyProtocol.push(data.delta);
+        if (!delta) return;
+        strategyVisibleEmitted += delta;
+        data = { ...data, delta };
+      } else if (
+        strategyProtocol
+        && event === 'stdout'
+        && typeof data?.chunk === 'string'
+      ) {
+        const chunk = strategyProtocol.push(data.chunk);
+        if (!chunk) return;
+        strategyVisibleEmitted += chunk;
+        data = { ...data, chunk };
+      }
       const lifecycleMarkers = runLifecycleMarkersForStreamEvent(event, data);
       if (lifecycleMarkers.firstModelEventType) {
         lifecycle.markFirstModelEvent(lifecycleMarkers.firstModelEventType);
@@ -11189,6 +11257,9 @@ export async function startServer({
       if (typeof code === 'number') return code === 0 ? 'exit_0' : 'exit_nonzero';
       return 'unknown';
     };
+    const finishStrategyAwarePhysicalRun = (status, code = null, signal = null) => {
+      return design.runs.finish(run, status, code, signal);
+    };
     const finishWithRetryDecision = (status, code = null, signal = null) => {
       lifecycle.mark('finalize_start');
       // Persist the transport-level close mechanism before classifying this
@@ -11425,7 +11496,7 @@ export async function startServer({
           });
         }
       }
-      design.runs.finish(run, status, code, signal);
+      finishStrategyAwarePhysicalRun(status, code, signal);
       return false;
     };
     const mcpServers = buildLiveArtifactsMcpServersForAgent(def, {
@@ -11569,7 +11640,7 @@ export async function startServer({
           { retryable: false },
         ),
       );
-      return design.runs.finish(run, 'failed', 1, null);
+      return finishStrategyAwarePhysicalRun('failed', 1, null);
     }
 
     let mmdRouteLaunchEnv = null;
@@ -11697,7 +11768,7 @@ export async function startServer({
                 'AMR sign-in is required. Sign in to AMR Cloud again, then retry this run.',
               action: 'relogin',
             });
-            return design.runs.finish(run, 'failed', 1, null);
+            return finishStrategyAwarePhysicalRun('failed', 1, null);
           }
         }
         // Logged in but no catalog at all AND no resolvable model: only now is
@@ -11706,7 +11777,7 @@ export async function startServer({
           send('error', createAmrModelUnavailablePayload(safeModel, {
             reason: 'model_catalog_unavailable',
           }));
-          return design.runs.finish(run, 'failed', 1, null);
+          return finishStrategyAwarePhysicalRun('failed', 1, null);
         }
         // Otherwise fall through with the user's selected model and let vela's
         // `session/set_model` be the authoritative gate.
@@ -11716,7 +11787,7 @@ export async function startServer({
           typeof model === 'string' && model.trim() ? model : safeModel,
           { availableModels: [...liveModelIds] },
         ));
-        return design.runs.finish(run, 'failed', 1, null);
+        return finishStrategyAwarePhysicalRun('failed', 1, null);
       }
       // NOTE: when the selected model is absent from the (possibly preset-only
       // or stale) catalog we intentionally do NOT fail-close. The cached/preset
@@ -11928,7 +11999,7 @@ export async function startServer({
           { retryable: false },
         ),
       );
-      return design.runs.finish(run, 'failed', 1, null);
+      return finishStrategyAwarePhysicalRun('failed', 1, null);
     }
 
     // Companion guard for non-shim Windows installs (e.g. a cargo-built
@@ -11956,7 +12027,7 @@ export async function startServer({
           { retryable: false },
         ),
       );
-      return design.runs.finish(run, 'failed', 1, null);
+      return finishStrategyAwarePhysicalRun('failed', 1, null);
     }
 
     let persistDeliveredAgentSessionState = () => {};
@@ -12313,7 +12384,7 @@ export async function startServer({
           'Install it and refresh the agent list (GET /api/agents) before retrying.',
         { retryable: true },
       ));
-      return design.runs.finish(run, 'failed', 1, null);
+      return finishStrategyAwarePhysicalRun('failed', 1, null);
     }
     const browserUseRuntimeEnv = run.browserUse
       ? {
@@ -12346,7 +12417,7 @@ export async function startServer({
           message: 'AMR sign-in is required. Sign in to AMR Cloud again, then retry this run.',
           action: 'relogin',
         });
-        return design.runs.finish(run, 'failed', 1, null);
+        return finishStrategyAwarePhysicalRun('failed', 1, null);
       }
     }
     const odMediaEnv = createOpenDesignToolEnv({
@@ -12594,7 +12665,7 @@ export async function startServer({
           ? err.message
           : `spawn failed: ${err.message}`,
       ));
-      design.runs.finish(run, 'failed', 1, null);
+      finishStrategyAwarePhysicalRun('failed', 1, null);
       return;
     }
 
@@ -12842,16 +12913,16 @@ export async function startServer({
           const succeeded = orchestratorResult.status === 'shipped'
             || orchestratorResult.status === 'below_threshold';
           if (run.cancelRequested) {
-            design.runs.finish(run, 'canceled', 1, null);
+            finishStrategyAwarePhysicalRun('canceled', 1, null);
           } else if (succeeded) {
             design.runs.finish(run, 'succeeded', 0, null);
           } else {
-            design.runs.finish(run, 'failed', 1, null);
+            finishStrategyAwarePhysicalRun('failed', 1, null);
           }
         } catch (err) {
           flushVisibleAgentStderr();
           send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err instanceof Error ? err.message : String(err)));
-          design.runs.finish(run, 'failed', 1, null);
+          finishStrategyAwarePhysicalRun('failed', 1, null);
         } finally {
           critiqueRunRegistry.unregister(critiqueProjectKey, critiqueRunId);
         }
@@ -13702,6 +13773,16 @@ export async function startServer({
         run.conversationId &&
         isAgentResumeFailure(def.id, agentStderrTail, agentStdoutTail)
       ) {
+        if (strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request') {
+          const blocked = blockAutomaticContinuation(db, { runId: run.id });
+          if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
+          send('error', createSseErrorPayload(
+            'AGENT_SESSION_RESUME_FAILED',
+            'The locked OD Next native session is unavailable; the task was blocked without cold re-seeding.',
+            { retryable: false },
+          ));
+          return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
+        }
         // The resumed upstream session is gone (expired / pruned). Clear the dead
         // handle and TRANSPARENTLY re-run this same turn with a fresh session +
         // the full transcript rebuilt from the DB — exactly the pre-session-reuse
@@ -13741,7 +13822,7 @@ export async function startServer({
           'The previous session could not be resumed (it may have expired). Resend your message to continue with a fresh session.',
           { retryable: true },
         ));
-        return design.runs.finish(run, 'failed', code ?? 1, signal ?? null);
+        return finishStrategyAwarePhysicalRun('failed', code ?? 1, signal ?? null);
       }
       if (acpFatalErrorObservedBeforeCancellation && acpSession?.hasFatalError()) {
         markRpcCloseReason('fatal_rpc_error');
@@ -14224,6 +14305,19 @@ export async function startServer({
         publishNativeSessionRecoveryMetadata();
       }
       if (status === 'succeeded') {
+        if (strategyProtocol && !strategyProtocolResult) {
+          strategyProtocolResult = strategyProtocol.finish();
+          const tail = strategyProtocolResult.visibleText.slice(strategyVisibleEmitted.length);
+          if (tail) {
+            const tailEvent = def.streamFormat === 'plain' ? 'stdout' : 'agent';
+            const tailData = tailEvent === 'stdout'
+              ? { chunk: tail }
+              : { type: 'text_delta', delta: tail };
+            persistRunEventToAssistantMessage(db, run, tailEvent, tailData);
+            design.runs.emit(run, tailEvent, tailData);
+            strategyVisibleEmitted += tail;
+          }
+        }
         try {
           await snapshotAiHtmlVersionsBeforeSuccess();
         } catch (err) {
@@ -14239,7 +14333,7 @@ export async function startServer({
               ...(details ? { details } : {}),
             },
           ));
-          design.runs.finish(run, 'failed', 1, signal);
+          finishStrategyAwarePhysicalRun('failed', 1, signal);
           return;
         }
         try {
@@ -14247,8 +14341,148 @@ export async function startServer({
         } catch (err) {
           console.warn('[sessions] delivered session persistence failed', err);
         }
+        let deliverableValid = false;
+        if (
+          strategyTaskAtStart
+          && strategyProtocolResult?.runtimeState?.outcome === 'completed'
+        ) {
+          const deliverable = await validateRunDeliverable({
+            projectsRoot: PROJECTS_DIR,
+            projectId: run.projectId ?? null,
+            projectMetadata: projectRecord?.metadata,
+            runStatus: 'succeeded',
+            artifactCount: Number.isFinite(run.artifactCount) ? run.artifactCount : 0,
+            ...(Array.isArray(run.artifactPaths) ? { touchedPaths: run.artifactPaths } : {}),
+          });
+          design.runs.setDeliverableValidation?.(run, deliverable);
+          deliverableValid = deliverable.valid;
+        }
+        if (strategyTaskAtStart && strategyProtocolResult) {
+          let automaticContinuationChatBody = null;
+          const plan = strategyProtocolResult.planContract
+            ?? strategyProtocolResult.repairPlanContract;
+          let executionPreflight;
+          try {
+            executionPreflight = plan && odNextExecutionPreflightResolver
+              ? await odNextExecutionPreflightResolver({
+                  taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                  runId: run.id,
+                  agentId: strategyTaskAtStart.selectedAgentId,
+                  productionRoutes: plan.runManifest.productionRoutes,
+                })
+              : undefined;
+          } catch (error) {
+            if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+            send('error', createSseErrorPayload(
+              'OD_NEXT_EXECUTION_PREFLIGHT_FAILED',
+              error instanceof Error ? error.message : String(error),
+              { retryable: false },
+            ));
+            finishStrategyAwarePhysicalRun('failed', 1, signal);
+            return;
+          }
+          // Cancellation can win while the daemon-owned resolver is awaiting
+          // host facts. Never let the stale continuation allocate a new Run or
+          // mutate the already-terminal task after that boundary.
+          if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+          let transition;
+          try {
+            transition = prepareAutomaticStrategyContinuation({
+              db,
+              service: internalRunCreation,
+              task: strategyTaskAtStart,
+              parsed: strategyProtocolResult,
+              toolUseCount: strategyToolUseCount,
+              ...(executionPreflight ? { executionPreflight } : {}),
+              ...(strategyProtocolResult.runtimeState?.outcome === 'completed'
+                ? {
+                    completionEvidence: {
+                      physicalStatus: 'succeeded',
+                      deliverableValid,
+                    },
+                  }
+                : {}),
+              createMeta: (stage, instruction, taskRunIndex) => {
+                const identity = createHash('sha256')
+                  .update(`${strategyTaskAtStart.taskExecutionId}:${stage}:${taskRunIndex}`)
+                  .digest('hex');
+                const meta = {
+                  ...chatBody,
+                  projectId: strategyTaskAtStart.projectId,
+                  conversationId: strategyTaskAtStart.conversationId,
+                  agentId: strategyTaskAtStart.selectedAgentId,
+                  appliedPluginSnapshotId: strategyTaskAtStart.snapshotId,
+                  pluginId: strategyTaskAtStart.strategyId,
+                  assistantMessageId: `odnext_assistant_${identity.slice(0, 32)}`,
+                  clientRequestId: `odnext_run_${identity.slice(0, 40)}`,
+                  message: instruction,
+                  currentPrompt: instruction,
+                  titleGeneration: undefined,
+                  userMessageId: undefined,
+                };
+                automaticContinuationChatBody = {
+                  ...meta,
+                  requestFingerprint: createHash('sha256')
+                    .update(JSON.stringify({
+                      taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                      sourceRunId: run.id,
+                      stage,
+                      taskRunIndex,
+                      instruction,
+                      projectId: meta.projectId,
+                      conversationId: meta.conversationId,
+                      agentId: meta.agentId,
+                      snapshotId: meta.appliedPluginSnapshotId,
+                    }))
+                    .digest('hex'),
+                };
+                return automaticContinuationChatBody;
+              },
+            });
+          } catch (error) {
+            if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+            send('error', createSseErrorPayload(
+              'OD_NEXT_CONTINUATION_FAILED',
+              error instanceof Error ? error.message : String(error),
+              { retryable: false },
+            ));
+            finishStrategyAwarePhysicalRun('failed', 1, signal);
+            return;
+          }
+          run.strategyTask = projectStrategyTask(transition.result.task, run.id);
+          if (transition.start && transition.prepared?.kind === 'ready') {
+            const nextRun = transition.prepared.run;
+            nextRun.strategyTask = projectStrategyTask(transition.result.task, nextRun.id);
+            pendingStrategyContinuation = {
+              run: nextRun,
+              chatBody: automaticContinuationChatBody,
+            };
+          }
+        }
       }
-      finishWithRetryDecision(status, code, signal);
+      const retried = finishWithRetryDecision(status, code, signal);
+      if (!retried && pendingStrategyContinuation) {
+        const continuation = pendingStrategyContinuation;
+        reconcileAssistantMessageOnRunEnd(db, design.runs, continuation.run);
+        internalRunCreation.start(continuation.run, async () => {
+          try {
+            return await startChatRun(continuation.chatBody, continuation.run);
+          } catch (error) {
+            reconcileStrategyTaskRunTerminal(db, {
+              runId: continuation.run.id,
+              status: 'failed',
+            });
+            const latestTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
+            if (latestTask) {
+              continuation.run.strategyTask = projectStrategyTask(
+                latestTask,
+                continuation.run.id,
+              );
+            }
+            throw error;
+          }
+        });
+      }
       } finally {
         // Best-effort cleanup of the per-run agy log file on every close
         // path — successful, failed, cancelled, or non-zero exit — so

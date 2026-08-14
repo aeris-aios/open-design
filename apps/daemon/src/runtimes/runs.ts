@@ -575,6 +575,7 @@ function durableRunState(run) {
     ...(typeof run.deliverableArtifactKind === 'string'
       ? { deliverableArtifactKind: run.deliverableArtifactKind }
       : {}),
+    ...(run.strategyTask ? { strategyTask: run.strategyTask } : {}),
     ...(typeof run.langfuseCompletedAt === 'number'
       ? { langfuseCompletedAt: run.langfuseCompletedAt }
       : {}),
@@ -648,6 +649,12 @@ export function createChatRunService({
   // outlives buffer truncation. Kept generic here: this service does not
   // interpret event semantics, it just hands each record to the observer.
   onEventEmitted = null,
+  // Optional synchronous hook invoked immediately before the single physical
+  // terminal transition. The daemon uses this to converge durable logical
+  // task state before the `end` event is persisted or published. Keeping the
+  // hook here covers startup failures and daemon shutdown in addition to the
+  // normal child-close path.
+  beforeFinish = null,
 }) {
   const runs = new Map();
   const runIdsByClientRequestId = new Map();
@@ -1213,6 +1220,7 @@ export function createChatRunService({
     ...(typeof run.deliverableArtifactKind === 'string'
       ? { deliverableArtifactKind: run.deliverableArtifactKind }
       : {}),
+    ...(run.strategyTask ? { strategyTask: run.strategyTask } : {}),
     ...(TERMINAL_RUN_STATUSES.has(run.status)
       ? { executionDiagnostics: buildExecutionDiagnostics(run) }
       : {}),
@@ -1220,6 +1228,7 @@ export function createChatRunService({
 
   const finish = (run, status, code: number | null = null, signal: string | null = null) => {
     if (TERMINAL_RUN_STATUSES.has(run.status)) return;
+    if (beforeFinish) beforeFinish(run, status, code, signal);
     run.status = status;
     run.exitCode = code;
     run.signal = signal;
@@ -1252,6 +1261,7 @@ export function createChatRunService({
       ...(Array.isArray(run.artifactPaths) ? { artifactPaths: run.artifactPaths } : {}),
       failureCategory: run.failureCategory ?? null,
       failureDetail: run.failureDetail ?? null,
+      ...(run.strategyTask ? { strategyTask: run.strategyTask } : {}),
     });
     for (const sse of run.clients) sse.end();
     run.clients.clear();

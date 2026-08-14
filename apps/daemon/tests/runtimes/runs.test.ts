@@ -854,6 +854,33 @@ describe('chat run service shutdown', () => {
     });
   });
 
+  it('runs durable terminal convergence before shutdown publishes the physical end event', async () => {
+    const observed: string[] = [];
+    const runs = createChatRunService({
+      createSseResponse: () => ({ send: vi.fn(() => true), end: vi.fn(), cleanup: vi.fn() }),
+      createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
+      shutdownGraceMs: 10,
+      ttlMs: 60_000,
+      beforeFinish: ((run: any, status: string) => {
+        observed.push(`before:${status}:${run.status}`);
+        run.strategyTask = { outcome: 'canceled', terminal: true };
+      }) as unknown as null,
+    });
+    const run = runs.create() as any;
+    run.status = 'running';
+
+    await runs.shutdownActive({ graceMs: 10 });
+
+    expect(observed).toEqual(['before:canceled:running']);
+    expect(run.events.at(-1)).toMatchObject({
+      event: 'end',
+      data: {
+        status: 'canceled',
+        strategyTask: { outcome: 'canceled', terminal: true },
+      },
+    });
+  });
+
   it('escalates to SIGKILL when a child ignores the shutdown SIGTERM grace window', async () => {
     const runs = createRuns();
     const child = new FakeChildProcess({ closeOn: 'SIGKILL' });

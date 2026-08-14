@@ -15,7 +15,18 @@ import {
   prepareStrategyRequest,
 } from '../../../src/strategies/od-next/coordinator.js';
 import { OdNextMachineProtocolStream } from '../../../src/strategies/od-next/protocol.js';
-import { createStrategyTaskExecution } from '../../../src/strategies/task-store.js';
+import {
+  beginAutomaticSimpleProduction,
+  blockAutomaticContinuation,
+  completeAutomaticSimpleProduction,
+  projectStrategyTask,
+  prepareAutomaticStrategyContinuation,
+  prepareAutomaticSimpleProductionRun,
+} from '../../../src/strategies/od-next/automatic-simple-production.js';
+import {
+  createStrategyTaskExecution,
+  getStrategyTaskExecution,
+} from '../../../src/strategies/task-store.js';
 
 const AGENT_ID = 'codex';
 
@@ -131,7 +142,7 @@ function protocol(text: string): OdNextMachineProtocolStream {
 
 function runtimeState(input: {
   route?: 'direct_edit' | 'full_plan';
-  inputStage?: 'request' | 'clarification' | 'contract_repair';
+  inputStage?: 'request' | 'clarification' | 'contract_repair' | 'production';
   outcome: 'clarification_required' | 'plan_ready' | 'completed' | 'blocked';
   executionMode?: 'simple' | null;
 }) {
@@ -239,6 +250,7 @@ describe('OD Next planning coordinator', () => {
         })),
       ].join('\n')),
       executionPreflight: executionPassed,
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: true },
       updatedAt: 120,
     });
     expect(final).toMatchObject({
@@ -512,6 +524,7 @@ describe('OD Next planning coordinator', () => {
       protocol: protocol(block('open-design-runtime-state', runtimeState({
         route: 'direct_edit', outcome: 'completed', executionMode: 'simple',
       }))),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: true },
       updatedAt: 402,
     });
     expect(drift).toMatchObject({
@@ -683,5 +696,346 @@ describe('OD Next planning coordinator', () => {
         expect(result.task.outcome).toBe('blocked');
       }
     }
+  });
+
+  it('atomically advances a hash-bound plan into one simple production Run', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+
+    const production = beginAutomaticSimpleProduction(db, {
+      task: planned.task,
+      sourceRunId: 'run-request',
+      nextRunId: 'run-production',
+      updatedAt: 130,
+    });
+    expect(production).toMatchObject({
+      outcome: 'running',
+      inputStage: 'production',
+      executionMode: 'simple',
+      latestRunId: 'run-production',
+      activeRunId: 'run-production',
+    });
+    expect(production.runs).toEqual([
+      { runId: 'run-request', inputStage: 'request', taskRunIndex: 0 },
+      {
+        runId: 'run-production',
+        inputStage: 'production',
+        taskRunIndex: 1,
+        sourceRunId: 'run-request',
+      },
+    ]);
+    expect(projectStrategyTask(production, 'run-request')).toMatchObject({
+      taskExecutionId: 'task-1',
+      activeRunId: 'run-production',
+      nextRunId: 'run-production',
+      terminal: false,
+    });
+
+    expect(() => beginAutomaticSimpleProduction(db, {
+      task: planned.task,
+      sourceRunId: 'run-request',
+      nextRunId: 'run-production-duplicate',
+    })).toThrow();
+  });
+
+  it('prepares the production prompt and task CAS through the internal Run claim callback', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    let capturedMeta: Record<string, unknown> | null = null;
+    const result = prepareAutomaticSimpleProductionRun({
+      db,
+      task: planned.task,
+      service: {
+        prepare(input) {
+          capturedMeta = input.meta;
+          const run = { id: 'run-production', status: 'queued' };
+          input.beforeClaimCommit?.(run);
+          return { kind: 'ready', run, creationKind: 'created', resumed: false };
+        },
+        start(run) { return run; },
+      },
+      createMeta: (instruction, taskRunIndex) => ({ instruction, taskRunIndex }),
+      updatedAt: 130,
+    });
+    expect(capturedMeta).toMatchObject({
+      taskRunIndex: 1,
+      instruction: expect.stringContaining(`planContractHash=${planned.task.planContractHash}`),
+    });
+    expect(result.task.latestRunId).toBe('run-production');
+    expect(result.projection.nextRunId).toBe('run-production');
+  });
+
+  it('accepts the parsed server result and claims simple Production in one transaction', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const parsed = protocol([
+      block('open-design-plan-contract', planContract(snapshot)),
+      block('open-design-runtime-state', runtimeState({
+        outcome: 'plan_ready', executionMode: 'simple',
+      })),
+    ].join('\n')).finish();
+    let capturedMeta: Record<string, unknown> | null = null;
+    const transition = prepareAutomaticStrategyContinuation({
+      db,
+      task: getStrategyTaskExecution(db, 'task-1')!,
+      parsed,
+      executionPreflight: executionPassed,
+      service: {
+        prepare(input) {
+          capturedMeta = input.meta;
+          const run = { id: 'run-production-live', status: 'queued' };
+          db.transaction(() => input.beforeClaimCommit?.(run)).immediate();
+          return { kind: 'ready', run, creationKind: 'created', resumed: false };
+        },
+        start(run) { return run; },
+      },
+      createMeta: (stage, instruction, taskRunIndex) => ({
+        stage, instruction, taskRunIndex,
+      }),
+      updatedAt: 120,
+    });
+    expect(capturedMeta).toMatchObject({
+      stage: 'production',
+      taskRunIndex: 1,
+      instruction: expect.stringContaining('planContractHash='),
+    });
+    expect(transition).toMatchObject({
+      start: true,
+      stage: 'production',
+      result: {
+        action: 'plan_ready',
+        task: {
+          inputStage: 'production',
+          outcome: 'running',
+          latestRunId: 'run-production-live',
+        },
+      },
+    });
+  });
+
+  it('blocks an unknown production route instead of trusting the Plan string', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const plan = planContract(snapshot);
+    plan.runManifest.productionRoutes = ['unregistered-host-route'];
+    const parsed = protocol([
+      block('open-design-plan-contract', plan),
+      block('open-design-runtime-state', runtimeState({
+        outcome: 'plan_ready', executionMode: 'simple',
+      })),
+    ].join('\n')).finish();
+    const transition = prepareAutomaticStrategyContinuation({
+      db,
+      task: getStrategyTaskExecution(db, 'task-1')!,
+      parsed,
+      executionPreflight: {
+        ...executionPassed,
+        productionRoutes: [{ id: 'unregistered-host-route', available: false }],
+      },
+      service: {
+        prepare(input) {
+          const run = { id: 'must-rollback', status: 'queued' };
+          db.transaction(() => input.beforeClaimCommit?.(run)).immediate();
+          return { kind: 'ready', run, creationKind: 'created', resumed: false };
+        },
+        start(run) { return run; },
+      },
+      createMeta: () => ({}),
+      updatedAt: 120,
+    });
+    expect(transition).toMatchObject({
+      start: false,
+      result: {
+        action: 'blocked',
+        reasonCodes: ['od_next_preflight_route_unavailable:unregistered-host-route'],
+        task: { outcome: 'blocked', latestRunId: 'run-request' },
+      },
+    });
+  });
+
+  it('blocks plan continuation when daemon-owned execution facts are absent', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const parsed = protocol([
+      block('open-design-plan-contract', planContract(snapshot)),
+      block('open-design-runtime-state', runtimeState({
+        outcome: 'plan_ready', executionMode: 'simple',
+      })),
+    ].join('\n')).finish();
+    const transition = prepareAutomaticStrategyContinuation({
+      db,
+      task: getStrategyTaskExecution(db, 'task-1')!,
+      parsed,
+      service: {
+        prepare(input) {
+          const run = { id: 'must-not-start', status: 'queued' };
+          db.transaction(() => input.beforeClaimCommit?.(run)).immediate();
+          return { kind: 'ready', run, creationKind: 'created', resumed: false };
+        },
+        start(run) { return run; },
+      },
+      createMeta: () => ({}),
+      updatedAt: 120,
+    });
+    expect(transition).toMatchObject({
+      start: false,
+      result: {
+        action: 'blocked',
+        reasonCodes: ['od_next_preflight_execution_facts_missing'],
+        task: { outcome: 'blocked', latestRunId: 'run-request' },
+      },
+    });
+  });
+
+  it('claims a serialization-only repair Run before simple Production', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const plan = planContract(snapshot);
+    const parsed = protocol([
+      block('open-design-plan-contract', plan, true),
+      block('open-design-runtime-state', runtimeState({
+        outcome: 'plan_ready', executionMode: 'simple',
+      })),
+    ].join('\n')).finish();
+    const transition = prepareAutomaticStrategyContinuation({
+      db,
+      task: getStrategyTaskExecution(db, 'task-1')!,
+      parsed,
+      executionPreflight: executionPassed,
+      service: {
+        prepare(input) {
+          const run = { id: 'run-contract-repair-live', status: 'queued' };
+          db.transaction(() => input.beforeClaimCommit?.(run)).immediate();
+          return { kind: 'ready', run, creationKind: 'created', resumed: false };
+        },
+        start(run) { return run; },
+      },
+      createMeta: (stage, instruction) => ({ stage, instruction }),
+      updatedAt: 120,
+    });
+    expect(transition).toMatchObject({
+      start: true,
+      stage: 'contract_repair',
+      result: {
+        action: 'contract_repair',
+        task: {
+          inputStage: 'contract_repair',
+          outcome: 'running',
+          latestRunId: 'run-contract-repair-live',
+          planContractRepairAttempts: 1,
+        },
+      },
+    });
+  });
+
+  it('blocks Direct Edit completion without physical success and canonical delivery', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'auto', directEdit: directEligible,
+      intake: intakePassed, execution: executionPassed, updatedAt: 110,
+    });
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol(block('open-design-runtime-state', runtimeState({
+        route: 'direct_edit', outcome: 'completed', executionMode: 'simple',
+      }))),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: false },
+      updatedAt: 120,
+    });
+    expect(result).toMatchObject({
+      action: 'blocked',
+      reasonCodes: ['od_next_canonical_deliverable_invalid'],
+      task: { outcome: 'blocked', terminalRunId: 'run-request' },
+    });
+  });
+
+  it('requires both physical success and a canonical deliverable to complete production', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    beginAutomaticSimpleProduction(db, {
+      task: planned.task, sourceRunId: 'run-request', nextRunId: 'run-production',
+      updatedAt: 130,
+    });
+    const completed = completeAutomaticSimpleProduction(db, {
+      runId: 'run-production', physicalStatus: 'succeeded', deliverableValid: true,
+      updatedAt: 140,
+    });
+    expect(completed).toMatchObject({
+      outcome: 'completed', terminalRunId: 'run-production', activeRunId: null,
+    });
+  });
+
+  it('blocks a continuation when native-session continuity cannot be proved', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const question = '<question-form id="scope">{"questions":[{"id":"surface","label":"Surface?"}]}</question-form>';
+    const waiting = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol(`${question}\n${block('open-design-runtime-state', runtimeState({
+        outcome: 'clarification_required',
+      }))}`),
+      updatedAt: 120,
+    });
+    beginStrategyClarification(db, {
+      taskExecutionId: 'task-1', sourceRunId: waiting.task.latestRunId,
+      nextRunId: 'run-clarification', answer: 'Desktop', updatedAt: 130,
+    });
+    const blocked = blockAutomaticContinuation(db, {
+      runId: 'run-clarification', updatedAt: 140,
+    });
+    expect(blocked).toMatchObject({ outcome: 'blocked', terminalRunId: 'run-clarification' });
   });
 });

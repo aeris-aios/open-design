@@ -48,7 +48,9 @@ export type OdNextCoordinatorReasonCode =
   | 'od_next_plan_strategy_version_mismatch'
   | 'od_next_plan_strategy_package_hash_mismatch'
   | 'od_next_plan_selected_agent_mismatch'
-  | 'od_next_preflight_execution_facts_missing';
+  | 'od_next_preflight_execution_facts_missing'
+  | 'od_next_physical_run_not_succeeded'
+  | 'od_next_canonical_deliverable_invalid';
 
 export class OdNextCoordinatorError extends Error {
   constructor(
@@ -224,6 +226,29 @@ export function finalizeStrategyPlanningTurn(db: SqliteDb, input: {
   repairRun?: { runId: string; sourceRunId: string };
   toolUseCount?: number;
   executionPreflight?: OdNextExecutionPreflightInput;
+  completionEvidence?: {
+    physicalStatus: 'succeeded' | 'failed' | 'canceled';
+    deliverableValid: boolean;
+  };
+  updatedAt?: number;
+}): OdNextCoordinatorResult {
+  return finalizeStrategyPlanningResult(db, {
+    ...input,
+    parsed: input.protocol.finish(),
+  });
+}
+
+export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
+  taskExecutionId: string;
+  runId: string;
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']>;
+  repairRun?: { runId: string; sourceRunId: string };
+  toolUseCount?: number;
+  executionPreflight?: OdNextExecutionPreflightInput;
+  completionEvidence?: {
+    physicalStatus: 'succeeded' | 'failed' | 'canceled';
+    deliverableValid: boolean;
+  };
   updatedAt?: number;
 }): OdNextCoordinatorResult {
   const current = requireTask(db, input.taskExecutionId);
@@ -240,7 +265,7 @@ export function finalizeStrategyPlanningTurn(db: SqliteDb, input: {
     );
   }
 
-  const parsed = input.protocol.finish();
+  const parsed = input.parsed;
   const protocolCodes = uniqueReasonCodes(parsed.issues.map((issue) => issue.code));
   if (protocolCodes.length > 0) {
     const plan = parsed.planContract ?? parsed.repairPlanContract;
@@ -269,6 +294,7 @@ export function finalizeStrategyPlanningTurn(db: SqliteDb, input: {
   const reasonCodes = validateAcceptedTurn(db, current, state, parsed.planContract, parsed.visibleText, {
     toolUseCount: input.toolUseCount ?? 0,
     ...(input.executionPreflight ? { executionPreflight: input.executionPreflight } : {}),
+    ...(input.completionEvidence ? { completionEvidence: input.completionEvidence } : {}),
   });
   if (reasonCodes.length > 0) {
     return blockTask(db, current, parsed.visibleText, reasonCodes, input.updatedAt);
@@ -308,6 +334,10 @@ function validateAcceptedTurn(
   input: {
     toolUseCount: number;
     executionPreflight?: OdNextExecutionPreflightInput;
+    completionEvidence?: {
+      physicalStatus: 'succeeded' | 'failed' | 'canceled';
+      deliverableValid: boolean;
+    };
   },
 ): string[] {
   const reasonCodes: string[] = [];
@@ -362,6 +392,14 @@ function validateAcceptedTurn(
     && strategyPlanContractHash(plan) !== task.planContractHash
   ) {
     reasonCodes.push('od_next_contract_repair_semantic_drift');
+  }
+  if (state.outcome === 'completed') {
+    if (input.completionEvidence?.physicalStatus !== 'succeeded') {
+      reasonCodes.push('od_next_physical_run_not_succeeded');
+    }
+    if (input.completionEvidence?.deliverableValid !== true) {
+      reasonCodes.push('od_next_canonical_deliverable_invalid');
+    }
   }
   return uniqueReasonCodes(reasonCodes);
 }
