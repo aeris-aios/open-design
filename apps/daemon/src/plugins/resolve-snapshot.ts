@@ -29,6 +29,7 @@ import type {
 } from '@open-design/contracts';
 import {
   applyPlugin,
+  InternalBundledStrategyApplyError,
   MissingInputError,
   type ApplyTrust,
 } from './apply.js';
@@ -251,6 +252,20 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
       locale: fields.locale,
     });
   } catch (err) {
+    if (err instanceof InternalBundledStrategyApplyError) {
+      return {
+        ok: false,
+        status: 409,
+        exitCode: 72,
+        body: {
+          error: {
+            code: 'strategy-inactive',
+            message: `Bundled strategy "${fields.pluginId}" is not active.`,
+            data: { pluginId: fields.pluginId },
+          },
+        },
+      };
+    }
     if (err instanceof MissingInputError) {
       return {
         ok: false,

@@ -43,6 +43,7 @@ import {
 import { deriveAutoAtomSurfaces } from './atoms/auto-surfaces.js';
 import { ensureCoreQualityStages } from './ensure-core-stages.js';
 import { getManifestContextCraft } from './context-craft.js';
+import { isInternalBundledStrategyV2 } from './strategy-provenance.js';
 
 export class MissingInputError extends Error {
   readonly fields: string[];
@@ -50,6 +51,15 @@ export class MissingInputError extends Error {
     super(`Missing required plugin inputs: ${fields.join(', ')}`);
     this.fields = fields;
     this.name = 'MissingInputError';
+  }
+}
+
+export class InternalBundledStrategyApplyError extends Error {
+  readonly pluginId: string;
+  constructor(pluginId: string) {
+    super(`Bundled strategy ${pluginId} is internal until hash-gated activation.`);
+    this.pluginId = pluginId;
+    this.name = 'InternalBundledStrategyApplyError';
   }
 }
 
@@ -89,6 +99,9 @@ export interface ApplyComputed {
 }
 
 export function applyPlugin(input: ApplyInput): ApplyComputed {
+  if (isInternalBundledStrategyV2(input.plugin)) {
+    throw new InternalBundledStrategyApplyError(input.plugin.id);
+  }
   const manifest = input.plugin.manifest;
   const rawTrust: TrustTier = input.trust ?? input.plugin.trust;
   const trust: ApplyTrust = rawTrust === 'restricted' ? 'restricted' : 'trusted';
