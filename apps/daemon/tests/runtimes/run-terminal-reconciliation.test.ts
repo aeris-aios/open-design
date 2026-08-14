@@ -277,7 +277,7 @@ describe('durable run terminal reconciliation', () => {
     expect(reportLangfuse).not.toHaveBeenCalled();
   });
 
-  it('leaves failed Langfuse delivery uncheckpointed for the next boot', async () => {
+  it('finalizes failed Langfuse delivery and does not resend it on the next boot', async () => {
     const runId = 'run-langfuse-retry';
     const runDir = path.join(tmpDir, runId);
     fs.mkdirSync(runDir, { recursive: true });
@@ -292,12 +292,23 @@ describe('durable run terminal reconciliation', () => {
       createdAt: 1_000,
       updatedAt: 2_000,
       errorCode: 'AGENT_EXIT_1',
+      telemetryDelivery: {
+        version: 1,
+        idempotencyKey: 'od-run-telemetry-v1-fixture',
+        status: 'in_flight',
+        attemptCount: 1,
+        crashWindow: true,
+        startedAt: 1_900,
+      },
     }));
-    const reportLangfuse = vi.fn(async () => ({
-      langfuse_expected: true,
-      langfuse_delivery_status: 'failed' as const,
-      langfuse_drop_reason: 'network_error' as const,
-    }));
+    const reportLangfuse = vi.fn(async (args: Record<string, unknown>) => {
+      (args.onDeliveryAttempt as (() => void) | undefined)?.();
+      return {
+        langfuse_expected: true,
+        langfuse_delivery_status: 'failed' as const,
+        langfuse_drop_reason: 'network_error' as const,
+      };
+    });
     const options = {
       analytics: { capture: vi.fn() },
       appVersion: '0.15.1',
@@ -309,9 +320,20 @@ describe('durable run terminal reconciliation', () => {
     await reconcileDurableRunTerminals(options);
     await reconcileDurableRunTerminals(options);
 
-    expect(reportLangfuse).toHaveBeenCalledTimes(2);
+    expect(reportLangfuse).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fs.readFileSync(path.join(runDir, 'state.json'), 'utf8')))
-      .not.toHaveProperty('langfuseCompletedAt');
+      .toMatchObject({
+        langfuseCompletedAt: expect.any(Number),
+        telemetryDelivery: {
+          version: 1,
+          idempotencyKey: 'od-run-telemetry-v1-fixture',
+          status: 'failed',
+          attemptCount: 2,
+          crashWindow: false,
+          dropReason: 'network_error',
+          finalizedAt: expect.any(Number),
+        },
+      });
   });
 
   it('retries an accepted telemetry delivery after a crash before checkpoint', async () => {
@@ -329,11 +351,20 @@ describe('durable run terminal reconciliation', () => {
       createdAt: 1_000,
       updatedAt: 2_000,
       errorCode: 'AGENT_EXIT_1',
+      telemetryDelivery: {
+        version: 1,
+        idempotencyKey: 'od-run-telemetry-v1-crash-fixture',
+        status: 'in_flight',
+        attemptCount: 1,
+        crashWindow: true,
+        startedAt: 1_900,
+      },
     }));
     const calls: Array<Record<string, unknown>> = [];
     let firstAttempt = true;
     const reportLangfuse = vi.fn(async (args: Record<string, unknown>) => {
       calls.push(args);
+      (args.onDeliveryAttempt as (() => void) | undefined)?.();
       if (firstAttempt) {
         firstAttempt = false;
         // The upstream has accepted the request, but the daemon dies before
@@ -364,12 +395,51 @@ describe('durable run terminal reconciliation', () => {
     });
     expect(reportLangfuse).toHaveBeenCalledTimes(2);
     expect(calls[1]).toMatchObject({
+      deliveryIdempotencyKey: 'od-run-telemetry-v1-crash-fixture',
       run: expect.objectContaining({ id: runId, status: 'failed' }),
       persistedRunStatus: 'failed',
       persistedEndedAt: 2_000,
     });
     expect(calls[1]?.run).toEqual(calls[0]?.run);
     expect(JSON.parse(fs.readFileSync(path.join(runDir, 'state.json'), 'utf8')))
-      .toMatchObject({ langfuseCompletedAt: expect.any(Number) });
+      .toMatchObject({
+        langfuseCompletedAt: expect.any(Number),
+        telemetryDelivery: {
+          status: 'accepted',
+          attemptCount: 3,
+          crashWindow: false,
+          finalizedAt: expect.any(Number),
+        },
+      });
+  });
+
+  it('does not treat an unmarked legacy terminal record as an offline queue', async () => {
+    const runId = 'run-legacy-unmarked';
+    const runDir = path.join(tmpDir, runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: runId,
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: 'm1',
+      agentId: 'codex',
+      status: 'failed',
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      errorCode: 'AGENT_EXIT_1',
+    }));
+    const reportLangfuse = vi.fn();
+
+    const result = await reconcileDurableRunTerminals({
+      analytics: { capture: vi.fn() },
+      appVersion: '0.15.1',
+      db,
+      reportLangfuse,
+      runsLogDir: tmpDir,
+    });
+
+    expect(result.langfuseReplayed).toBe(0);
+    expect(reportLangfuse).not.toHaveBeenCalled();
   });
 });

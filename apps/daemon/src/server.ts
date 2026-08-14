@@ -480,6 +480,10 @@ import {
   snapshotAiHtmlVersionsForRun,
 } from './run-html-version-snapshots.js';
 import { reportRunCompletedFromDaemon } from './langfuse-bridge.js';
+import {
+  describeRunTelemetrySink,
+  readRunTelemetrySinkConfig,
+} from './langfuse-trace.js';
 import { reconcileDurableRunTerminals } from './runtimes/run-terminal-reconciliation.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { newInsertId, readAnalyticsContext, type AnalyticsService } from './analytics.js';
@@ -2061,19 +2065,78 @@ export function createFinalizedMessageTelemetryReporter({
       });
       return;
     }
-    if (reportTrigger !== 'terminal_fallback') {
+    const existingDelivery = run.telemetryDelivery;
+    if (
+      existingDelivery?.status === 'in_flight'
+      || typeof existingDelivery?.finalizedAt === 'number'
+    ) {
       reportedRuns.add(run.id);
+      const alreadyTerminal = typeof existingDelivery.finalizedAt === 'number';
+      captureResult({
+        analyticsContext: options.analyticsContext,
+        conversationId: options.conversationId ?? saved.conversationId,
+        delivery: {
+          langfuse_expected: alreadyTerminal
+            ? existingDelivery.status !== 'not_expected'
+            : true,
+          langfuse_delivery_status: alreadyTerminal
+            ? existingDelivery.status
+            : 'failed',
+          ...(alreadyTerminal && existingDelivery.dropReason
+            ? { langfuse_drop_reason: existingDelivery.dropReason }
+            : !alreadyTerminal
+              ? { langfuse_drop_reason: 'network_error' }
+              : {}),
+        },
+        projectId: options.projectId,
+        reportTrigger: options.reportTrigger,
+        reportResult: 'skipped',
+        run,
+        runId: run.id,
+        skipReason: 'duplicate_run',
+        status: saved.runStatus,
+      });
+      return;
     }
+    const deliveryAttempt = design.runs.beginTelemetryDelivery?.(run);
+    reportedRuns.add(run.id);
     void (async () => {
       const start = Date.now();
-      const delivery = await report({
-        db,
-        dataDir,
-        run,
-        persistedRunStatus: saved.runStatus,
-        persistedEndedAt: saved.endedAt,
-        appVersion: getAppVersion(),
-      });
+      let delivery;
+      try {
+        delivery = await report({
+          db,
+          dataDir,
+          run,
+          persistedRunStatus: saved.runStatus,
+          persistedEndedAt: saved.endedAt,
+          appVersion: getAppVersion(),
+          ...(deliveryAttempt?.idempotencyKey
+            ? { deliveryIdempotencyKey: deliveryAttempt.idempotencyKey }
+            : {}),
+          ...(design.runs.recordTelemetryDeliveryAttempt
+            ? {
+                onDeliveryAttempt: () => {
+                  design.runs.recordTelemetryDeliveryAttempt(run);
+                },
+              }
+            : {}),
+        });
+      } catch {
+        // The production bridge already converts provider and assembly errors
+        // into a failed result. Keep this final guard so an injected/custom
+        // reporter cannot reject out of the detached telemetry task or leave
+        // a normal failure looking like a daemon crash window.
+        delivery = {
+          langfuse_expected: true,
+          langfuse_delivery_status: 'failed',
+          langfuse_drop_reason: 'network_error',
+          langfuse_attempt_count: 0,
+          ...(deliveryAttempt?.idempotencyKey
+            ? { langfuse_idempotency_key: deliveryAttempt.idempotencyKey }
+            : {}),
+        };
+      }
       const state = delivery ?? {
         langfuse_expected: true,
         langfuse_delivery_status: 'accepted',
@@ -2097,12 +2160,7 @@ export function createFinalizedMessageTelemetryReporter({
         skipReason: state.langfuse_expected === false ? 'not_expected' : undefined,
         status: saved.runStatus,
       });
-      if (
-        state.langfuse_expected === false
-        || state.langfuse_delivery_status === 'accepted'
-      ) {
-        design.runs.markLangfuseCompleted?.(run);
-      }
+      design.runs.finalizeTelemetryDelivery?.(run, state);
     })();
   };
 }
@@ -7042,6 +7100,12 @@ export async function startServer({
   });
   const { analyticsService } = telemetry;
   workspaceAnalyticsService = analyticsService;
+  console.info(
+    '[telemetry] effective run sink',
+    describeRunTelemetrySink(
+      readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
+    ),
+  );
   const design = {
     runs: createChatRunService({
       createSseResponse,
@@ -7090,9 +7154,9 @@ export async function startServer({
   const terminalService = createTerminalService();
 
   // Tracks runs whose finalized assistant message has already been forwarded
-  // to Langfuse so repeated message updates only emit one final trace per run.
-  // Terminal fallback reports intentionally do not claim this set; a delayed
-  // telemetry-finalized message can still replace the synthetic fallback.
+  // so repeated message updates only enter the reporter once. Terminal
+  // fallback and delayed final-message writes share this process-local gate;
+  // the durable delivery terminal keeps the same guarantee across restarts.
   const reportedRuns = new Set();
 
   const reportFinalizedMessage = createFinalizedMessageTelemetryReporter({

@@ -20,6 +20,11 @@ import {
   RESTART_ERROR_CODE,
   RESTART_ERROR_MESSAGE,
 } from './run-restart-recovery.js';
+import {
+  beginRunTelemetryDelivery,
+  finalizeRunTelemetryDelivery,
+  recordRunTelemetryDeliveryAttempt,
+} from '../observability/delivery-state.js';
 
 export const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
@@ -573,6 +578,7 @@ function durableRunState(run) {
     ...(typeof run.langfuseCompletedAt === 'number'
       ? { langfuseCompletedAt: run.langfuseCompletedAt }
       : {}),
+    ...(run.telemetryDelivery ? { telemetryDelivery: run.telemetryDelivery } : {}),
   };
 }
 
@@ -942,10 +948,48 @@ export function createChatRunService({
     persistState(run);
   };
 
+  const beginTelemetryDelivery = (run) => {
+    if (!run) return null;
+    run.telemetryDelivery = beginRunTelemetryDelivery(
+      run.telemetryDelivery,
+      run.id,
+    );
+    persistState(run);
+    return run.telemetryDelivery;
+  };
+
+  const finalizeTelemetryDelivery = (run, delivery) => {
+    if (!run || !delivery) return null;
+    run.telemetryDelivery = finalizeRunTelemetryDelivery(
+      run.telemetryDelivery,
+      run.id,
+      delivery,
+    );
+    run.langfuseCompletedAt = run.telemetryDelivery.finalizedAt;
+    persistState(run);
+    return run.telemetryDelivery;
+  };
+
+  const recordTelemetryDeliveryAttempt = (run) => {
+    if (!run) return null;
+    run.telemetryDelivery = recordRunTelemetryDeliveryAttempt(
+      run.telemetryDelivery,
+      run.id,
+    );
+    persistState(run);
+    return run.telemetryDelivery;
+  };
+
+  // Compatibility alias for older in-process callers. New delivery paths use
+  // the explicit begin/finalize pair so a daemon crash cannot be confused
+  // with a terminal network failure.
   const markLangfuseCompleted = (run) => {
     if (!run) return;
-    run.langfuseCompletedAt = Date.now();
-    persistState(run);
+    finalizeTelemetryDelivery(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+      langfuse_attempt_count: 1,
+    });
   };
 
   const setDeliverableValidation = (run, result) => {
@@ -1567,6 +1611,9 @@ export function createChatRunService({
     persistState,
     setAnalyticsRecovery,
     markAnalyticsCompleted,
+    beginTelemetryDelivery,
+    recordTelemetryDeliveryAttempt,
+    finalizeTelemetryDelivery,
     markLangfuseCompleted,
     setDeliverableValidation,
     finish,

@@ -95,6 +95,10 @@ export interface LangfuseDeliveryState {
   langfuse_expected: boolean;
   langfuse_delivery_status: LangfuseDeliveryStatus;
   langfuse_drop_reason?: LangfuseDropReason;
+  /** Actual transport requests made by this exporter invocation. */
+  langfuse_attempt_count?: number;
+  /** Stable, non-secret identity supplied by the daemon delivery owner. */
+  langfuse_idempotency_key?: string;
 }
 
 export type TelemetrySinkConfig =
@@ -354,6 +358,10 @@ export interface ReportRunOpts {
   configuredEnv?: Record<string, string>;
   /** Keep object-authority registration anonymous and content-free. */
   deliveryPurpose?: 'final' | 'object-registration';
+  /** Stable identity persisted before crossing the final delivery boundary. */
+  deliveryIdempotencyKey?: string;
+  /** Persists each concrete transport request before fetch is invoked. */
+  onDeliveryAttempt?: () => void;
 }
 
 export interface ReportFeedbackOpts {
@@ -485,6 +493,43 @@ export function readFeedbackTelemetrySinkConfig(
   configuredEnv: Record<string, string> = {},
 ): RunTelemetrySinkConfig | null {
   return readRunTelemetrySinkConfig(env, configuredEnv);
+}
+
+export interface EffectiveRunTelemetrySinkDiagnostic {
+  kind: RunTelemetrySinkConfig['kind'] | 'none';
+  host: string | null;
+  protocol: 'http' | 'https' | null;
+}
+
+/**
+ * Allowlisted effective-sink identity for daemon logs and support bundles.
+ * URL credentials, ports, paths, queries, fragments, headers, and keys never
+ * enter the returned object.
+ */
+export function describeRunTelemetrySink(
+  sink: RunTelemetrySinkConfig | null,
+): EffectiveRunTelemetrySinkDiagnostic {
+  if (!sink) return { kind: 'none', host: null, protocol: null };
+  const rawUrl = sink.kind === 'vela'
+    ? sink.apiUrl
+    : sink.kind === 'relay'
+      ? sink.relayUrl
+      : sink.baseUrl;
+  try {
+    const url = new URL(rawUrl);
+    const protocol = url.protocol === 'https:'
+      ? 'https'
+      : url.protocol === 'http:'
+        ? 'http'
+        : null;
+    return {
+      kind: sink.kind,
+      host: url.hostname || null,
+      protocol,
+    };
+  } catch {
+    return { kind: sink.kind, host: null, protocol: null };
+  }
 }
 
 export function deriveLangfuseDeliveryState(
@@ -1457,7 +1502,41 @@ function shouldCreateGenerationObservation(ctx: ReportContext): boolean {
   return ctx.run.failure?.failure_stage !== 'session_init';
 }
 
-export function buildTracePayload(ctx: ReportContext): unknown[] {
+function stableRunIngestionEventId(
+  event: unknown,
+  deliveryPurpose: 'final' | 'object-registration',
+): string | null {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return null;
+  const item = event as { type?: unknown; body?: unknown };
+  if (typeof item.type !== 'string' || !item.body || typeof item.body !== 'object') {
+    return null;
+  }
+  const bodyId = (item.body as { id?: unknown }).id;
+  if (typeof bodyId !== 'string' || !bodyId) return null;
+  return `od-${createHash('sha256')
+    .update(
+      `open-design/langfuse-event/v1\n${deliveryPurpose}\n${item.type}\n${bodyId}`,
+      'utf8',
+    )
+    .digest('hex')}`;
+}
+
+function stabilizeRunIngestionBatch(
+  batch: unknown[],
+  deliveryPurpose: 'final' | 'object-registration',
+): unknown[] {
+  return batch.map((event) => {
+    const id = stableRunIngestionEventId(event, deliveryPurpose);
+    return id && event && typeof event === 'object' && !Array.isArray(event)
+      ? { ...event, id }
+      : event;
+  });
+}
+
+export function buildTracePayload(
+  ctx: ReportContext,
+  deliveryPurpose: 'final' | 'object-registration' = 'final',
+): unknown[] {
   const wantsContent = ctx.prefs.metrics === true && ctx.prefs.content === true;
   const wantsArtifacts = wantsContent;
   const safeRunError =
@@ -1903,17 +1982,35 @@ export function buildTracePayload(ctx: ReportContext): unknown[] {
     });
   }
 
-  return batch;
+  return stabilizeRunIngestionBatch(batch, deliveryPurpose);
+}
+
+type TransportAttemptObserver = () => void;
+
+function withDeliveryDiagnostics(
+  state: LangfuseDeliveryState,
+  attemptCount: number,
+  idempotencyKey: string | undefined,
+): LangfuseDeliveryState {
+  return idempotencyKey
+    ? {
+        ...state,
+        langfuse_attempt_count: attemptCount,
+        langfuse_idempotency_key: idempotencyKey,
+      }
+    : state;
 }
 
 async function postLangfuseBatch(
   config: LangfuseConfig,
   batch: unknown[],
   fetchImpl: typeof fetch,
+  onAttempt?: TransportAttemptObserver,
 ): Promise<LangfuseDeliveryState> {
   const attempts = config.retries + 1;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      onAttempt?.();
       const response = await fetchImpl(`${config.baseUrl}/api/public/ingestion`, {
         method: 'POST',
         headers: {
@@ -1985,15 +2082,19 @@ async function postRelayBatch(
   config: Extract<TelemetrySinkConfig, { kind: 'relay' }>,
   body: string,
   fetchImpl: typeof fetch,
+  onAttempt?: TransportAttemptObserver,
+  idempotencyKey?: string,
 ): Promise<LangfuseDeliveryState> {
   const attempts = config.retries + 1;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      onAttempt?.();
       const response = await fetchImpl(config.relayUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Open-Design-Telemetry': 'langfuse-ingestion-v1',
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
         },
         signal: AbortSignal.timeout(config.timeoutMs),
         body,
@@ -2143,7 +2244,11 @@ async function postVelaBatch(
   batch: unknown[],
   installationId: string,
   fetchImpl: typeof fetch,
-  opts: { allowAnonymousAuthFallback?: boolean } = {},
+  opts: {
+    allowAnonymousAuthFallback?: boolean;
+    deliveryIdempotencyKey?: string;
+    onAttempt?: TransportAttemptObserver;
+  } = {},
 ): Promise<LangfuseDeliveryState> {
   // Completed-run batches may fall back to the anonymous relay when Vela
   // rejects auth (expired Control Key, etc.). Score-only feedback must not:
@@ -2152,11 +2257,12 @@ async function postVelaBatch(
   const allowAnonymousAuthFallback = opts.allowAnonymousAuthFallback !== false;
   const envelope = buildVelaEnvelope(batch, installationId);
   const body = JSON.stringify(envelope);
-  const idempotencyKey = velaIdempotencyKey(envelope);
+  const idempotencyKey = opts.deliveryIdempotencyKey ?? velaIdempotencyKey(envelope);
   const attempts = config.retries + 1;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      opts.onAttempt?.();
       const response = await fetchImpl(
         `${config.apiUrl}/api/v1/open-design/telemetry`,
         {
@@ -2186,8 +2292,14 @@ async function postVelaBatch(
         if (fallback) {
           const serialized = JSON.stringify({ batch });
           return fallback.kind === 'relay'
-            ? postRelayBatch(fallback, serialized, fetchImpl)
-            : postLangfuseBatch(fallback, batch, fetchImpl);
+            ? postRelayBatch(
+                fallback,
+                serialized,
+                fetchImpl,
+                opts.onAttempt,
+                opts.deliveryIdempotencyKey,
+              )
+            : postLangfuseBatch(fallback, batch, fetchImpl, opts.onAttempt);
         }
       }
       if (
@@ -2382,9 +2494,14 @@ async function exportLegacyLangfuseRun(
   ctx: ReportContext,
   opts: ReportRunOpts = {},
 ): Promise<LangfuseDeliveryState> {
+  const deliveryIdempotencyKey = opts.deliveryIdempotencyKey;
   const notExpected = deriveLangfuseDeliveryState(ctx.prefs, null);
-  if (ctx.prefs.metrics !== true) return notExpected;
-  if (ctx.prefs.content !== true) return notExpected;
+  if (ctx.prefs.metrics !== true) {
+    return withDeliveryDiagnostics(notExpected, 0, deliveryIdempotencyKey);
+  }
+  if (ctx.prefs.content !== true) {
+    return withDeliveryDiagnostics(notExpected, 0, deliveryIdempotencyKey);
+  }
 
   const config = resolveRunReportConfig(opts);
   const langfuseDelivery = deriveLangfuseDeliveryState(ctx.prefs, config);
@@ -2397,22 +2514,29 @@ async function exportLegacyLangfuseRun(
         '[langfuse-trace] Telemetry metrics are enabled but no relay or Langfuse credentials are configured',
       );
     }
-    return langfuseDelivery;
+    return withDeliveryDiagnostics(
+      langfuseDelivery,
+      0,
+      deliveryIdempotencyKey,
+    );
   }
 
   let batch: unknown[];
   try {
-    batch = buildTracePayload({ ...ctx, langfuse: langfuseDelivery });
+    batch = buildTracePayload(
+      { ...ctx, langfuse: langfuseDelivery },
+      opts.deliveryPurpose ?? 'final',
+    );
     if (opts.deliveryPurpose === 'object-registration') {
       batch = objectRegistrationBatch(batch);
     }
   } catch (error) {
     console.warn(`[langfuse-trace] Payload build error: ${String(error)}`);
-    return {
+    return withDeliveryDiagnostics({
       langfuse_expected: true,
       langfuse_delivery_status: 'failed',
       langfuse_drop_reason: 'payload_too_large',
-    };
+    }, 0, deliveryIdempotencyKey);
   }
 
   const serialized = JSON.stringify({ batch });
@@ -2424,35 +2548,62 @@ async function exportLegacyLangfuseRun(
     console.warn(
       `[langfuse-trace] Batch too large (${serializedBytes}B > ${HARD_BATCH_MAX_BYTES}B), dropping trace ${ctx.run.runId}`,
     );
-    return {
+    return withDeliveryDiagnostics({
       langfuse_expected: true,
       langfuse_delivery_status: 'failed',
       langfuse_drop_reason: 'payload_too_large',
-    };
+    }, 0, deliveryIdempotencyKey);
   }
 
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  let attemptCount = 0;
+  const onAttempt = () => {
+    attemptCount += 1;
+    opts.onDeliveryAttempt?.();
+  };
+  let delivery: LangfuseDeliveryState;
   if (config.kind === 'vela') {
     const installationId = ctx.installationId?.trim() ?? '';
     if (!installationId) {
       const fallback = readTelemetrySinkConfig();
       if (!fallback) {
-        return {
+        return withDeliveryDiagnostics({
           langfuse_expected: false,
           langfuse_delivery_status: 'not_expected',
           langfuse_drop_reason: 'missing_sink_config',
-        };
+        }, 0, deliveryIdempotencyKey);
       }
-      return fallback.kind === 'relay'
-        ? postRelayBatch(fallback, serialized, fetchImpl)
-        : postLangfuseBatch(fallback, batch, fetchImpl);
+      delivery = fallback.kind === 'relay'
+        ? await postRelayBatch(
+            fallback,
+            serialized,
+            fetchImpl,
+            onAttempt,
+            deliveryIdempotencyKey,
+          )
+        : await postLangfuseBatch(fallback, batch, fetchImpl, onAttempt);
+    } else {
+      delivery = await postVelaBatch(config, batch, installationId, fetchImpl, {
+        ...(deliveryIdempotencyKey ? { deliveryIdempotencyKey } : {}),
+        onAttempt,
+      });
     }
-    return postVelaBatch(config, batch, installationId, fetchImpl);
+  } else if (config.kind === 'relay') {
+    delivery = await postRelayBatch(
+      config,
+      serialized,
+      fetchImpl,
+      onAttempt,
+      deliveryIdempotencyKey,
+    );
+  } else {
+    delivery = await postLangfuseBatch(config, batch, fetchImpl, onAttempt);
   }
-  if (config.kind === 'relay') {
-    return postRelayBatch(config, serialized, fetchImpl);
-  }
-  return postLangfuseBatch(config, batch, fetchImpl);
+  return withDeliveryDiagnostics(
+    delivery,
+    attemptCount,
+    deliveryIdempotencyKey,
+  );
 }
 
 /**

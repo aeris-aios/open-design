@@ -1185,7 +1185,15 @@ describe('run event log persistence', () => {
     runs.emit(run, 'start', { status: 'running' });
     runs.finish(run, 'failed', 1, null);
     runs.markAnalyticsCompleted(run);
-    runs.markLangfuseCompleted(run);
+    runs.beginTelemetryDelivery(run);
+    runs.recordTelemetryDeliveryAttempt(run);
+    runs.recordTelemetryDeliveryAttempt(run);
+    runs.finalizeTelemetryDelivery(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'failed',
+      langfuse_drop_reason: 'network_error',
+      langfuse_attempt_count: 2,
+    });
 
     expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toMatchObject({
       status: 'failed',
@@ -1195,6 +1203,15 @@ describe('run event log persistence', () => {
         completedAt: expect.any(Number),
       },
       langfuseCompletedAt: expect.any(Number),
+      telemetryDelivery: {
+        version: 1,
+        idempotencyKey: expect.stringMatching(/^od-run-telemetry-v1-[a-f0-9]{64}$/u),
+        status: 'failed',
+        attemptCount: 2,
+        crashWindow: false,
+        dropReason: 'network_error',
+        finalizedAt: expect.any(Number),
+      },
     });
   });
 

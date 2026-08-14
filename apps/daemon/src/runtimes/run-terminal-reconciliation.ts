@@ -20,6 +20,14 @@ import {
   RESTART_ERROR_MESSAGE,
   type RestartRecoverableDurableRunState,
 } from './run-restart-recovery.js';
+import {
+  beginRunTelemetryDelivery,
+  finalizeRunTelemetryDelivery,
+  isRunTelemetryDeliveryCrashWindow,
+  recordRunTelemetryDeliveryAttempt,
+  type RunTelemetryDeliveryResult,
+  type RunTelemetryDeliveryStateV1,
+} from '../observability/delivery-state.js';
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 const RECONCILED_STATUS_MESSAGE = 'Run terminal state reconciled after daemon restart.';
@@ -58,6 +66,7 @@ interface DurableRunState extends RestartRecoverableDurableRunState {
   promptCache?: Record<string, unknown>;
   analyticsRecovery?: AnalyticsRecovery;
   langfuseCompletedAt?: number;
+  telemetryDelivery?: RunTelemetryDeliveryStateV1;
 }
 
 interface AnalyticsLike {
@@ -231,10 +240,22 @@ export async function reconcileDurableRunTerminals(
     .filter((entry): entry is { filePath: string; state: DurableRunState } => entry.state !== null);
   result.scanned = states.length;
   const now = Date.now();
+  const interruptedRunIds = new Set<string>();
 
   for (const entry of states) {
     if (!interruptDurableRunAfterDaemonRestart(entry.state, now)) continue;
+    if (
+      !entry.state.langfuseCompletedAt
+      && typeof entry.state.telemetryDelivery?.finalizedAt !== 'number'
+    ) {
+      entry.state.telemetryDelivery = beginRunTelemetryDelivery(
+        entry.state.telemetryDelivery,
+        entry.state.id,
+        now,
+      );
+    }
     writeState(entry.filePath, entry.state);
+    interruptedRunIds.add(entry.state.id);
     result.interrupted += 1;
   }
 
@@ -246,7 +267,13 @@ export async function reconcileDurableRunTerminals(
     const needsAnalytics = Boolean(
       state.analyticsRecovery && !state.analyticsRecovery.completedAt,
     );
-    const needsLangfuse = !state.langfuseCompletedAt;
+    const needsLangfuse =
+      isRunTelemetryDeliveryCrashWindow(state.telemetryDelivery)
+      || (
+        interruptedRunIds.has(state.id)
+        && !state.langfuseCompletedAt
+        && typeof state.telemetryDelivery?.finalizedAt !== 'number'
+      );
     if (!needsAnalytics && !needsLangfuse) continue;
 
     const recoveryReason = state.terminalRecoveryReason ?? 'analytics_incomplete';
@@ -335,22 +362,48 @@ export async function reconcileDurableRunTerminals(
     }
 
     if (needsLangfuse) {
-      const delivery = await Promise.resolve(options.reportLangfuse({
+      state.telemetryDelivery = beginRunTelemetryDelivery(
+        state.telemetryDelivery,
+        state.id,
+      );
+      // Persist before crossing the network boundary. If the daemon dies from
+      // here until the terminal result write, this exact in-flight marker is
+      // the only startup-replay eligibility signal.
+      writeState(entry.filePath, state);
+      const rawDelivery = await Promise.resolve(options.reportLangfuse({
         db: options.db,
         dataDir: path.dirname(options.runsLogDir),
         run: hydrateRun(state, events),
         persistedRunStatus: state.status,
         persistedEndedAt: state.updatedAt,
         appVersion: options.appVersionInfo ?? null,
+        deliveryIdempotencyKey: state.telemetryDelivery.idempotencyKey,
+        onDeliveryAttempt: () => {
+          state.telemetryDelivery = recordRunTelemetryDeliveryAttempt(
+            state.telemetryDelivery,
+            state.id,
+          );
+          writeState(entry.filePath, state);
+        },
       }));
-      if (
-        isObject(delivery)
-        && (delivery.langfuse_expected === false
-          || delivery.langfuse_delivery_status === 'accepted')
-      ) {
-        state.langfuseCompletedAt = Date.now();
-        writeState(entry.filePath, state);
+      const delivery: RunTelemetryDeliveryResult = isObject(rawDelivery)
+        && typeof rawDelivery.langfuse_expected === 'boolean'
+        && typeof rawDelivery.langfuse_delivery_status === 'string'
+        ? rawDelivery as unknown as RunTelemetryDeliveryResult
+        : {
+            langfuse_expected: true,
+            langfuse_delivery_status: 'failed',
+            langfuse_drop_reason: 'network_error',
+          };
+      state.telemetryDelivery = finalizeRunTelemetryDelivery(
+        state.telemetryDelivery,
+        state.id,
+        delivery,
+      );
+      if (typeof state.telemetryDelivery.finalizedAt === 'number') {
+        state.langfuseCompletedAt = state.telemetryDelivery.finalizedAt;
       }
+      writeState(entry.filePath, state);
       result.langfuseReplayed += 1;
     }
   }

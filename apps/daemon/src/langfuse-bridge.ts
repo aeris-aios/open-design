@@ -68,6 +68,7 @@ import { deriveRunErrorCode, runResultFromStatus } from './run-result.js';
 import { buildTraceObjectManifests } from './trace-object-manifest.js';
 import type { TraceArtifactObjectSource, TraceObjectUploadManifests } from './trace-object-manifest.js';
 import { getDetectedRuntimeVersions } from './runtimes/detection.js';
+import { runTelemetryDeliveryIdempotencyKey } from './observability/delivery-state.js';
 
 interface DaemonRunRecord {
   id: string;
@@ -140,6 +141,10 @@ export interface ReportRunCompletedFromDaemonOpts {
   persistedEndedAt?: number;
   /** App version info — collected once at daemon startup and reused. */
   appVersion?: AppVersionInfo | null;
+  /** Exact identity persisted by the caller before crossing the network. */
+  deliveryIdempotencyKey?: string;
+  /** Persists each concrete transport attempt before fetch. */
+  onDeliveryAttempt?: () => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -1206,6 +1211,12 @@ export async function reportRunCompletedFromDaemon(
       })),
       {
         configuredEnv: configuredAmrEnv,
+        deliveryIdempotencyKey:
+          opts.deliveryIdempotencyKey
+          ?? runTelemetryDeliveryIdempotencyKey(run.id),
+        ...(opts.onDeliveryAttempt
+          ? { onDeliveryAttempt: opts.onDeliveryAttempt }
+          : {}),
         ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       },
     );

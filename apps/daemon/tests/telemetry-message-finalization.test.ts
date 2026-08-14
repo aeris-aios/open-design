@@ -354,7 +354,7 @@ describe('Langfuse message finalization gate', () => {
     });
   });
 
-  it('allows a real final message report after a terminal fallback report', async () => {
+  it('does not send again when a final message arrives after terminal fallback reporting', async () => {
     const run = {
       id: 'run-failed-late-final',
       projectId: 'project-1',
@@ -426,15 +426,14 @@ describe('Langfuse message finalization gate', () => {
     );
     await Promise.resolve();
 
-    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenCalledTimes(1);
     expect(report.mock.calls.map(([call]) => call.persistedEndedAt)).toEqual([
       1234,
-      1235,
     ]);
     expect(capture).toHaveBeenCalledTimes(3);
     expect(capture.mock.calls.map(([call]) => call.insertId)).toEqual(expect.arrayContaining([
       'run-failed-late-final-langfuse-report-terminal_fallback-accepted',
-      'run-failed-late-final-langfuse-report-final_message-accepted',
+      'run-failed-late-final-langfuse-report-final_message-skipped-duplicate_run',
       'run-failed-late-final-langfuse-report-final_message-skipped-duplicate_run',
     ]));
   });
@@ -453,7 +452,15 @@ describe('Langfuse message finalization gate', () => {
       events: [],
     };
     const capture = vi.fn();
-    const markLangfuseCompleted = vi.fn();
+    const beginTelemetryDelivery = vi.fn(() => ({
+      version: 1,
+      idempotencyKey: 'od-run-telemetry-v1-fixture',
+      status: 'in_flight',
+      attemptCount: 1,
+      crashWindow: true,
+      startedAt: 1,
+    }));
+    const finalizeTelemetryDelivery = vi.fn();
     const report = vi.fn(async () => ({
       langfuse_expected: true,
       langfuse_delivery_status: 'accepted' as const,
@@ -462,7 +469,11 @@ describe('Langfuse message finalization gate', () => {
       design: {
         analytics: { capture },
         getAppVersion: () => '0.7.0',
-        runs: { get: vi.fn(() => run), markLangfuseCompleted },
+        runs: {
+          get: vi.fn(() => run),
+          beginTelemetryDelivery,
+          finalizeTelemetryDelivery,
+        },
       },
       db: 'db',
       dataDir: '/tmp/od-data',
@@ -503,7 +514,127 @@ describe('Langfuse message finalization gate', () => {
         }),
       }),
     );
-    expect(markLangfuseCompleted).toHaveBeenCalledWith(run);
+    expect(beginTelemetryDelivery).toHaveBeenCalledWith(run);
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+    });
+    expect(beginTelemetryDelivery.mock.invocationCallOrder[0]).toBeLessThan(
+      report.mock.invocationCallOrder[0]!,
+    );
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryIdempotencyKey: 'od-run-telemetry-v1-fixture',
+    }));
+  });
+
+  it.each([
+    {
+      label: 'not_expected',
+      delivery: {
+        langfuse_expected: false,
+        langfuse_delivery_status: 'not_expected' as const,
+        langfuse_drop_reason: 'content_consent_off' as const,
+      },
+    },
+    {
+      label: 'failed',
+      delivery: {
+        langfuse_expected: true,
+        langfuse_delivery_status: 'failed' as const,
+        langfuse_drop_reason: 'network_error' as const,
+      },
+    },
+  ])('finalizes a terminal $label delivery without changing the run outcome', async ({ delivery }) => {
+    const run = {
+      id: `run-${delivery.langfuse_delivery_status}`,
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const beginTelemetryDelivery = vi.fn();
+    const finalizeTelemetryDelivery = vi.fn();
+    const report = vi.fn(async () => delivery);
+    const reporter = createFinalizedMessageTelemetryReporter({
+      design: {
+        runs: {
+          get: vi.fn(() => run),
+          beginTelemetryDelivery,
+          finalizeTelemetryDelivery,
+        },
+      },
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      getAppVersion: () => ({ version: '0.7.0', channel: 'beta', packaged: true }),
+      report,
+    });
+
+    reporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+
+    expect(beginTelemetryDelivery).toHaveBeenCalledWith(run);
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, delivery);
+    expect(run.status).toBe('succeeded');
+  });
+
+  it('turns an unexpected reporter rejection into a terminal non-blocking failure', async () => {
+    const run = {
+      id: 'run-unexpected-rejection',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const finalizeTelemetryDelivery = vi.fn();
+    const reporter = createFinalizedMessageTelemetryReporter({
+      design: {
+        runs: {
+          get: vi.fn(() => run),
+          beginTelemetryDelivery: vi.fn(() => ({
+            version: 1,
+            idempotencyKey: 'od-run-telemetry-v1-rejection',
+            status: 'in_flight',
+            attemptCount: 1,
+            crashWindow: true,
+            startedAt: 1,
+          })),
+          finalizeTelemetryDelivery,
+        },
+      },
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      getAppVersion: () => ({ version: '0.7.0', channel: 'beta', packaged: true }),
+      report: vi.fn(async () => {
+        throw new Error('injected reporter rejection');
+      }),
+    });
+
+    reporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'failed',
+      langfuse_drop_reason: 'network_error',
+      langfuse_attempt_count: 0,
+      langfuse_idempotency_key: 'od-run-telemetry-v1-rejection',
+    });
+    expect(run.status).toBe('succeeded');
   });
 
   it('falls back to the run analytics context when final message headers are missing', async () => {

@@ -936,6 +936,7 @@ describe('langfuse-bridge.reportRunCompletedFromDaemon', () => {
     expect(fetchSpy.mock.calls[3]![0]).toBe('https://us.cloud.langfuse.com/api/public/ingestion');
     const registrationBatch = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string).batch as any[];
     const finalBatch = JSON.parse(fetchSpy.mock.calls[3]![1]!.body as string).batch as any[];
+    expect(registrationBatch[0].id).not.toBe(finalBatch[0].id);
     expect(registrationBatch[0].body.metadata.artifact_manifest[0]).toMatchObject({
       object_class: 'artifact',
       storage_ref: expect.stringContaining(
