@@ -430,7 +430,7 @@ describe('editable PPTX layered backgrounds', () => {
     expect(capture.largeAreaHitTests).toBeLessThanOrEqual(4_101);
   }, 20_000);
 
-  test('includes a 1px clipped stripe across a large layered blend backdrop', async () => {
+  test('includes a 1px clipped backdrop nested in a layered blend compositor root', async () => {
     const capture = await probeDpr2LayeredBackgroundCapture();
 
     expect(capture.largeStripeExportedRgb).toEqual(capture.largeStripeChromiumRgb);
@@ -1187,7 +1187,7 @@ app.whenReady().then(async () => {
     if (!capture) throw new Error('No layered background capture was produced');
     const image = nativeImage.createFromBuffer(Buffer.from(capture.dataUrl.split(',')[1], 'base64'));
     const size = image.getSize();
-    const largeHtml = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:1920px;height:1080px}.backdrop,.large-target{position:absolute;inset:0}.backdrop{background:rgb(128,192,128);clip-path:polygon(7px 0,8px 0,8px 100%,7px 100%)}.large-target{background-image:linear-gradient(rgb(128,128,128),rgb(128,128,128)),linear-gradient(transparent,transparent);mix-blend-mode:multiply}</style><section class="slide"><div class="backdrop"></div><div class="large-target"></div></section>';
+    const largeHtml = '<!doctype html><style>html,body{margin:0}.slide{position:relative;width:1920px;height:1080px}.compositor{position:absolute;inset:0;opacity:.999}.backdrop,.large-target{position:absolute;inset:0}.backdrop{background:rgb(128,192,128);clip-path:polygon(7px 0,8px 0,8px 100%,7px 100%)}.large-target{background-image:linear-gradient(rgb(128,128,128),rgb(128,128,128)),linear-gradient(transparent,transparent);mix-blend-mode:multiply}</style><section class="slide"><div class="compositor"><div class="backdrop"></div><div class="large-target"></div></div></section>';
     await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(largeHtml));
     await nextFrames(window);
     const dbg = window.webContents.debugger;

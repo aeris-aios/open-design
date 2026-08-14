@@ -883,6 +883,21 @@ export function isolateLayeredPptxBackground(
       ? Array.from(document.querySelectorAll<HTMLElement>(`[data-od-pptx-compositing-member="${id}"]`))
       : [],
   );
+  const backdropDependentMembers = Array.from(compositingMembers).filter((element) => {
+    const style = getComputedStyle(element);
+    const mixBlendMode = (style.mixBlendMode || "normal").trim().toLowerCase();
+    const backdropFilter = (
+      style.backdropFilter ||
+      style.getPropertyValue?.("backdrop-filter") ||
+      style.getPropertyValue?.("-webkit-backdrop-filter") ||
+      "none"
+    ).trim().toLowerCase();
+    return (mixBlendMode !== "" && mixBlendMode !== "normal") ||
+      (backdropFilter !== "" && backdropFilter !== "none");
+  });
+  const backdropPaintTargets = backdropDependentMembers.length > 0
+    ? backdropDependentMembers
+    : [target];
   const entirePaintRoots = new Set(
     flattenCompositingContext
       ? Array.from(compositingMembers).filter((element) =>
@@ -942,10 +957,13 @@ export function isolateLayeredPptxBackground(
     let sampledTogether = false;
     const paintsBehindAt = (x: number, y: number): boolean => {
       const paintStack = document.elementsFromPoint(x, y);
-      const targetIndex = paintStack.indexOf(target);
       const elementIndex = paintStack.indexOf(element);
-      if (targetIndex >= 0 && elementIndex >= 0) sampledTogether = true;
-      return targetIndex >= 0 && elementIndex > targetIndex;
+      if (elementIndex < 0) return false;
+      return backdropPaintTargets.some((paintTarget) => {
+        const targetIndex = paintStack.indexOf(paintTarget);
+        if (targetIndex >= 0) sampledTogether = true;
+        return targetIndex >= 0 && elementIndex > targetIndex;
+      });
     };
     if (points.some(([x, y]) => paintsBehindAt(x, y))) return true;
 
@@ -977,7 +995,10 @@ export function isolateLayeredPptxBackground(
       }
       return clips;
     };
-    const clippedPaintBoxes = [...paintClipChain(element), ...paintClipChain(target)]
+    const clippedPaintBoxes = [
+      ...paintClipChain(element),
+      ...backdropPaintTargets.flatMap((paintTarget) => paintClipChain(paintTarget)),
+    ]
       .filter((candidate, index, candidates) => candidates.indexOf(candidate) === index);
     if (clippedPaintBoxes.length === 0) return false;
 
@@ -1026,7 +1047,10 @@ export function isolateLayeredPptxBackground(
       element.style.setProperty("pointer-events", "auto", "important");
     }
     for (const element of [slide, ...Array.from(slide.querySelectorAll<HTMLElement>("*"))]) {
-      if (element === target || element.contains(target) || target.contains(element)) continue;
+      const isCapturedDescendant = target.contains(element) && (
+        !flattenCompositingContext || compositingMembers.has(element)
+      );
+      if (element === target || element.contains(target) || isCapturedDescendant) continue;
       if (paintsBehindTarget(element)) addBlendBackdropElement(element);
     }
 
@@ -1115,6 +1139,7 @@ export function isolateLayeredPptxBackground(
       );
       continue;
     }
+    if (blendBackdropElements.has(descendant)) continue;
     if (!flattenCompositingContext) {
       descendant.style.setProperty("visibility", "hidden", "important");
       continue;
