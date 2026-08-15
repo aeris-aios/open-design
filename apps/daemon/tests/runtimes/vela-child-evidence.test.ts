@@ -71,7 +71,7 @@ describe('Vela OpenCode child evidence adapter', () => {
   it('pins only the approved unpublished candidate and negotiates exact schema v1', () => {
     expect(VELA_CHILD_EVIDENCE_CANDIDATE).toEqual({
       repository: 'PowerformerAI/vela',
-      commit: '1d52465dd24878ef430ebba56fb63a4327a48554',
+      commit: '41c9242a22ec915ed9b08c1be08b043164905cf9',
       fixture: 'apps/cli/internal/agent/testdata/opencode_child_evidence_wire_v1.golden.json',
       published: false,
       verifiedRuntimeSupport: false,
@@ -81,7 +81,7 @@ describe('Vela OpenCode child evidence adapter', () => {
       supported: true,
       schemaVersion: VELA_CHILD_EVIDENCE_SCHEMA_VERSION,
       producerName: 'Vela OpenCode',
-      producerVersion: '0.0.0',
+      producerVersion: '1.2.3',
       reason: 'supported_candidate',
       candidatePublished: false,
       candidateCommit: VELA_CHILD_EVIDENCE_CANDIDATE.commit,

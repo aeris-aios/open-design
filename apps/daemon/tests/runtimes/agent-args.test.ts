@@ -72,12 +72,18 @@ test('cursor-agent declares the --trust capability probe (issue #4461 root cause
   assert.equal(cursorAgent.capabilityFlags?.['--trust'], 'trust');
 });
 
-test('opencode args keep the documented run/json argv and ignore unsupported reasoning options', () => {
+test('opencode args pass the verified model variant without changing the default argv', () => {
   agentCapabilities.delete('opencode');
   const prompt = 'design a dashboard';
   const baseArgs = opencode.buildArgs(prompt, [], [], {});
   assert.equal(opencode.promptViaStdin, true);
   assert.equal(opencode.reasoningOptions, undefined);
+  assert.deepEqual(opencode.fallbackModels.find(
+    (model) => model.id === 'openai/gpt-5.6-sol',
+  )?.reasoningOptions?.map((option) => option.id), [
+    'default',
+    'high',
+  ]);
   assert.deepEqual(opencode.helpArgs, ['run', '--help']);
   assert.deepEqual(opencode.capabilityFlags?.['--dangerously-skip-permissions'], 'skipPermissions');
   assert.equal(baseArgs.includes('-'), false);
@@ -106,13 +112,33 @@ test('opencode args keep the documented run/json argv and ignore unsupported rea
     [],
     [],
     {
-      model: 'anthropic/claude-sonnet-4-5',
+      model: 'openai/gpt-5.6-sol',
       reasoning: 'high',
     },
   );
-  assert.equal(withReasoning.some((arg) => arg.includes('reason')), false);
-  assert.equal(withReasoning.includes('--thinking'), false);
-  assert.deepEqual(withReasoning, withModel);
+  assert.deepEqual(withReasoning, [
+    'run',
+    '--format',
+    'json',
+    '-m',
+    'openai/gpt-5.6-sol',
+    '--variant',
+    'high',
+  ]);
+  assert.deepEqual(opencode.buildArgs(prompt, [], [], {
+    model: 'anthropic/claude-sonnet-4-5',
+    reasoning: 'high',
+  }), withModel);
+  assert.deepEqual(opencode.buildArgs(prompt, [], [], {
+    model: 'openai/gpt-5.6-sol',
+    reasoning: 'default',
+  }), [
+    'run',
+    '--format',
+    'json',
+    '-m',
+    'openai/gpt-5.6-sol',
+  ]);
   assert.equal(withModel.includes('--dangerously-skip-permissions'), false);
   assert.equal(withModel.includes('--model'), false);
 });

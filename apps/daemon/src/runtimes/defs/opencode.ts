@@ -29,14 +29,21 @@ export const opencodeAgentDef = {
         id: 'anthropic/claude-sonnet-4-5',
         label: 'anthropic/claude-sonnet-4-5',
       },
+      {
+        id: 'openai/gpt-5.6-sol',
+        label: 'openai/gpt-5.6-sol',
+        reasoningOptions: [
+          { id: 'default', label: 'Default' },
+          { id: 'high', label: 'High' },
+        ],
+      },
       { id: 'openai/gpt-5', label: 'openai/gpt-5' },
       { id: 'google/gemini-2.5-pro', label: 'google/gemini-2.5-pro' },
     ],
-    // OpenCode's CLI help currently exposes model selection and session
-    // controls, but not an explicit per-run reasoning / effort flag. Keep
-    // `reasoningOptions` undefined and do not synthesize argv for
-    // `options.reasoning`; that would advertise a control the adapter cannot
-    // actually pass through. See issue #2828.
+    // OpenCode 1.18.x exposes `run --variant <effort>`. Keep the adapter's
+    // declared surface deliberately narrow: `high` is verified against the
+    // connected GPT-5.6 Sol catalog, while `default` leaves provider/model
+    // selection to OpenCode.
     //
     // Prompt delivered via stdin (`opencode run` with no message argv) to
     // avoid Windows `spawn ENAMETOOLONG` while preserving OpenCode's
@@ -65,6 +72,12 @@ export const opencodeAgentDef = {
       }
       if (options.model && options.model !== 'default') {
         args.push('-m', options.model);
+      }
+      if (
+        options.model === 'openai/gpt-5.6-sol' &&
+        options.reasoning === 'high'
+      ) {
+        args.push('--variant', 'high');
       }
       return args;
     },

@@ -19,7 +19,7 @@ export const VELA_CHILD_EVIDENCE_ADAPTER_VERSION =
  */
 export const VELA_CHILD_EVIDENCE_CANDIDATE = Object.freeze({
   repository: 'PowerformerAI/vela',
-  commit: '1d52465dd24878ef430ebba56fb63a4327a48554',
+  commit: '41c9242a22ec915ed9b08c1be08b043164905cf9',
   fixture: 'apps/cli/internal/agent/testdata/opencode_child_evidence_wire_v1.golden.json',
   published: false,
   verifiedRuntimeSupport: false,

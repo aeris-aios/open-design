@@ -18,7 +18,11 @@ import {
 import { createJsonEventStreamHandler } from '../../src/runtimes/json-event-stream.js';
 
 const fixturePath = fileURLToPath(new URL(
-  '../fixtures/od-next-runtime-capabilities/opencode-1.18.4.synthetic.json',
+  '../fixtures/od-next-runtime-capabilities/opencode-1.18.18.synthetic.json',
+  import.meta.url,
+));
+const sanitizedRealSeedPath = fileURLToPath(new URL(
+  '../fixtures/od-next-runtime-capabilities/opencode-1.18.18.sanitized-real-seed.json',
   import.meta.url,
 ));
 
@@ -47,10 +51,64 @@ function collectCandidate(overrides: Record<string, unknown> = {}): OpenCodeTask
 }
 
 describe('native OpenCode child evidence', () => {
+  it('replays locally recorded success and parent-recovered failure seeds without promoting them to production evidence', () => {
+    const seed = JSON.parse(readFileSync(sanitizedRealSeedPath, 'utf8')) as {
+      fixtureKind: string;
+      recordingDigest: string;
+      cases: Array<{
+        caseId: string;
+        candidate: OpenCodeTaskTerminalCandidate;
+        variant?: string;
+        parentRecovered?: boolean;
+        sanitizedChildExport: unknown;
+      }>;
+    };
+    expect(seed.fixtureKind).toBe('sanitized_real_seed_unattested');
+    expect(seed.recordingDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(seed.cases.map((entry) => entry.caseId)).toEqual([
+      'child_success',
+      'child_failure_parent_recovers',
+    ]);
+    const [success, failure] = seed.cases;
+    expect(success).toMatchObject({
+      variant: 'high',
+      candidate: {
+        cliVersion: '1.18.18',
+        promptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        promptBytes: 88,
+        model: { providerId: 'openai', modelId: 'gpt-5.6-sol' },
+      },
+    });
+    expect(verifyOpenCodeChildExport({
+      candidate: success!.candidate,
+      sanitizedExport: success!.sanitizedChildExport,
+    })).toMatchObject([
+      { state: 'started' },
+      {
+        state: 'completed',
+        usage: { inputTokens: 9011, outputTokens: 7 },
+      },
+    ]);
+    expect(failure!.parentRecovered).toBe(true);
+    const failedFacts = verifyOpenCodeChildExport({
+      candidate: failure!.candidate,
+      sanitizedExport: failure!.sanitizedChildExport,
+    });
+    expect(failedFacts).toMatchObject([
+      { state: 'started' },
+      { state: 'failed' },
+    ]);
+    expect(failedFacts[1]?.usage).toBeUndefined();
+    const serialized = JSON.stringify(seed);
+    expect(serialized).not.toContain('/Users/');
+    expect(serialized).not.toContain('/private/');
+    expect(serialized).not.toContain('sk-');
+  });
+
   it('captures a terminal native Task candidate without retaining Prompt text', () => {
     const [candidate] = collectCandidate();
     expect(candidate).toMatchObject({
-      cliVersion: '1.18.4',
+      cliVersion: '1.18.18',
       rootSessionId: 'ses_root_synthetic',
       childSessionId: 'ses_child_synthetic',
       toolCallId: 'call_task_synthetic',
@@ -75,7 +133,7 @@ describe('native OpenCode child evidence', () => {
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
     createOpenCodeRootTaskEvidenceCollector({
       rootSessionId: data.rootSessionId,
-      cliVersion: '1.18.4',
+      cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
     }).observe(frame);
     expect(candidates).toEqual([]);
@@ -85,7 +143,7 @@ describe('native OpenCode child evidence', () => {
     const data = fixture();
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
     const collector = createOpenCodeRootTaskEvidenceCollector({
-      cliVersion: '1.18.4',
+      cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
     });
     for (const frame of data.frames) collector.observe(frame);
@@ -93,14 +151,14 @@ describe('native OpenCode child evidence', () => {
 
     const drifted: OpenCodeTaskTerminalCandidate[] = [];
     const driftedCollector = createOpenCodeRootTaskEvidenceCollector({
-      cliVersion: '1.18.5',
+      cliVersion: '1.18.4',
       onCandidate: (candidate) => drifted.push(candidate),
     });
     for (const frame of data.frames) driftedCollector.observe(frame);
     expect(drifted).toEqual([]);
     const [candidate] = collectCandidate();
     expect(verifyOpenCodeChildExport({
-      candidate: { ...candidate!, cliVersion: '1.18.5' },
+      candidate: { ...candidate!, cliVersion: '1.18.4' },
       sanitizedExport: data.sanitizedChildExport,
     })).toEqual([]);
   });
@@ -121,7 +179,7 @@ describe('native OpenCode child evidence', () => {
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
     createOpenCodeRootTaskEvidenceCollector({
       rootSessionId: data.rootSessionId,
-      cliVersion: '1.18.4',
+      cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
     }).observe(frame);
     expect(candidates).toEqual([]);
@@ -141,7 +199,7 @@ describe('native OpenCode child evidence', () => {
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
     createOpenCodeRootTaskEvidenceCollector({
       rootSessionId: data.rootSessionId,
-      cliVersion: '1.18.4',
+      cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
     }).observe(frame);
     expect(candidates[0]?.state).toBe(expected);
@@ -158,7 +216,7 @@ describe('native OpenCode child evidence', () => {
       const candidates: OpenCodeTaskTerminalCandidate[] = [];
       createOpenCodeRootTaskEvidenceCollector({
         rootSessionId: data.rootSessionId,
-        cliVersion: '1.18.4',
+        cliVersion: '1.18.18',
         onCandidate: (candidate) => candidates.push(candidate),
       }).observe(frame);
       expect(candidates).toEqual([]);
@@ -283,7 +341,7 @@ describe('native OpenCode child evidence', () => {
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
     const collector = createOpenCodeRootTaskEvidenceCollector({
       rootSessionId: data.rootSessionId,
-      cliVersion: '1.18.4',
+      cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
     });
     collector.observe(frame);
@@ -296,7 +354,7 @@ describe('native OpenCode child evidence', () => {
     const handler = createJsonEventStreamHandler('opencode', (event) => events.push(event), {
       openCodeChildEvidence: {
         rootSessionId: data.rootSessionId,
-        cliVersion: '1.18.4',
+        cliVersion: '1.18.18',
         onCandidate: () => { throw new Error('observer failed'); },
       },
     });

@@ -1,0 +1,107 @@
+{
+  "fixtureKind": "sanitized_real_seed_unattested",
+  "runtime": "native_opencode",
+  "cliVersion": "1.18.18",
+  "recordingDigest": "sha256:d369b504580de9064b31ad4dfd90efbc9574db4d9e2f6fad06473745f5d97613",
+  "anonymizationVersion": "od-runtime-evidence/v1",
+  "note": "Locally recorded structural seed. It is not a production capability declaration until the remaining cases and runtime-owner attestation exist.",
+  "cases": [
+    {
+      "caseId": "child_success",
+      "candidate": {
+        "adapterVersion": "od-opencode-child-evidence/v1",
+        "cliVersion": "1.18.18",
+        "rootSessionId": "root-success",
+        "childSessionId": "child-success",
+        "toolCallId": "call-success",
+        "state": "completed",
+        "observedAtMs": 1786817056110,
+        "startedAtMs": 1786817053114,
+        "endedAtMs": 1786817056110,
+        "promptHash": "fc9b6c72f15109309e4cd5d9c6a18e79093cc887b4d962c322b6c805de51cc3a",
+        "promptBytes": 88,
+        "model": {
+          "providerId": "openai",
+          "modelId": "gpt-5.6-sol"
+        }
+      },
+      "variant": "high",
+      "sanitizedChildExport": {
+        "info": {
+          "id": "child-success",
+          "parentID": "root-success",
+          "version": "1.18.18"
+        },
+        "messages": [
+          {
+            "info": {
+              "id": "assistant-success",
+              "sessionID": "child-success",
+              "role": "assistant",
+              "finish": "stop",
+              "time": {
+                "created": 1786817053124,
+                "completed": 1786817056105
+              },
+              "tokens": {
+                "total": 9018,
+                "input": 9011,
+                "output": 7,
+                "reasoning": 0,
+                "cache": {
+                  "write": 0,
+                  "read": 0
+                }
+              },
+              "providerID": "openai",
+              "modelID": "gpt-5.6-sol",
+              "variant": "high"
+            },
+            "parts": []
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "child_failure_parent_recovers",
+      "candidate": {
+        "adapterVersion": "od-opencode-child-evidence/v1",
+        "cliVersion": "1.18.18",
+        "rootSessionId": "root-failure",
+        "childSessionId": "child-failure",
+        "toolCallId": "call-failure",
+        "state": "failed",
+        "observedAtMs": 1786817282929,
+        "startedAtMs": 1786817282912,
+        "endedAtMs": 1786817282929,
+        "promptHash": "b2ebe006e96d3dee549c2114b4ea2d9c1e99c17599e74c50d9f754217cfbf0d9",
+        "promptBytes": 19,
+        "model": {
+          "providerId": "openai",
+          "modelId": "controlled-invalid-model"
+        }
+      },
+      "parentRecovered": true,
+      "sanitizedChildExport": {
+        "info": {
+          "id": "child-failure",
+          "parentID": "root-failure",
+          "version": "1.18.18"
+        },
+        "messages": [
+          {
+            "info": {
+              "id": "message-failure",
+              "sessionID": "child-failure",
+              "role": "user",
+              "time": {
+                "created": 1786817282915
+              }
+            },
+            "parts": []
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -10,7 +10,7 @@ import {
 export const OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION =
   'od-opencode-child-evidence/v1' as const;
 
-export const OPENCODE_CHILD_EVIDENCE_CLI_VERSION = '1.18.4' as const;
+export const OPENCODE_CHILD_EVIDENCE_CLI_VERSION = '1.18.18' as const;
 
 type RecordValue = Record<string, unknown>;
 
@@ -79,7 +79,7 @@ function terminalStateFromTaskTool(state: RecordValue): OpenCodeTaskTerminalCand
   if (error === 'cancelled' || error === 'canceled' || error === 'task cancelled' || error === 'task canceled') {
     return 'canceled';
   }
-  // OpenCode 1.18.4 has no stable native Task timeout terminal shape. Do not
+  // OpenCode 1.18.18 has no stable native Task timeout terminal shape. Do not
   // relabel a timeout-looking error as either cancellation or failure.
   if (error.includes('timeout') || error.includes('timed out')) return undefined;
   return error ? 'failed' : undefined;
@@ -88,7 +88,7 @@ function terminalStateFromTaskTool(state: RecordValue): OpenCodeTaskTerminalCand
 /**
  * Observe only terminal native Task parts from the root OpenCode JSON stream.
  *
- * OpenCode 1.18.4 filters child-session events out of `run --format json`.
+ * OpenCode 1.18.18 filters child-session events out of `run --format json`.
  * The terminal root Task part nevertheless carries a child `sessionId`, a
  * `parentSessionId`, and the root tool call id. The raw Prompt is reduced to a
  * hash and byte count synchronously and is never retained in a fact.

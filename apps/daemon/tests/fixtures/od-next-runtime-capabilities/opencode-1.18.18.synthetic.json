@@ -1,7 +1,7 @@
 {
   "fixtureKind": "contract_only",
   "runtime": "native_opencode",
-  "cliVersion": "1.18.4",
+  "cliVersion": "1.18.18",
   "note": "Synthetic contract fixture only. It is not a sanitized-real capability declaration.",
   "rootSessionId": "ses_root_synthetic",
   "frames": [
