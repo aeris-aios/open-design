@@ -641,7 +641,7 @@ describe('EntryShell Home submit handoff', () => {
     }) as typeof fetch;
     let resolveCreate: (accepted: boolean) => void = () => undefined;
     const onCreateProject = vi.fn(
-      () => new Promise<boolean>((resolve) => { resolveCreate = resolve; }),
+      (_input: { pluginId?: string }) => new Promise<boolean>((resolve) => { resolveCreate = resolve; }),
     );
     renderHome({ onCreateProject });
 
@@ -651,6 +651,13 @@ describe('EntryShell Home submit handoff', () => {
     fireEvent.click(submit);
 
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+    expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({
+      pendingPrompt: 'Build a landing page',
+      conversationMode: 'design',
+    }));
+    // HomeView's hidden default-router identity is provenance, not an
+    // explicit user plugin choice on the public create contract.
+    expect(onCreateProject.mock.calls[0]?.[0]?.pluginId).toBeUndefined();
     expect(submit.disabled).toBe(true);
     // #5517: the submit is icon-only (spinner while sending) — assert the
     // busy state through aria instead of the removed label text.

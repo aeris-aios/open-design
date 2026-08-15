@@ -396,10 +396,14 @@ function finalizeOk(args: {
   // the foreign key is satisfied and `expires_at` clears in one statement.
   const { db } = args.input;
   const snap = args.snapshot;
-  if (args.input.projectId) {
+  // Rollout activation is run-scoped authority. It must not replace the
+  // user's durable project/conversation plugin pin; rollback then affects new
+  // tasks while this run remains linked to its immutable strategy snapshot.
+  const runScopedStrategy = Boolean(args.input.internalStrategyActivation);
+  if (args.input.projectId && !runScopedStrategy) {
     linkSnapshotToProject(db, snap.snapshotId, args.input.projectId);
   }
-  if (args.input.conversationId) {
+  if (args.input.conversationId && !runScopedStrategy) {
     linkSnapshotToConversation(db, snap.snapshotId, args.input.conversationId);
   }
   if (args.input.runId) {

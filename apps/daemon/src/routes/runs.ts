@@ -56,6 +56,7 @@ import {
 } from '../db.js';
 import { readVelaLoginStatus } from '../integrations/vela.js';
 import { getDetectedRuntimeVersions } from '../runtimes/detection.js';
+import { resolveBundledOdNextRuntimeCapability } from '../runtimes/od-next-capability-gate.js';
 import {
   deriveLangfuseDeliveryState,
   readTelemetrySinkConfig,
@@ -79,15 +80,27 @@ import {
 } from '../strategies/od-next/automatic-simple-production.js';
 import {
   cancelStrategyTaskExecution,
+  createStrategyTaskExecution,
   getStrategyTaskExecution,
   getStrategyTaskExecutionByRunId,
   type StrategyTaskExecutionRecord,
   StrategyTaskTransitionConflictError,
 } from '../strategies/task-store.js';
-import { beginStrategyClarification } from '../strategies/od-next/coordinator.js';
+import {
+  beginStrategyClarification,
+  prepareStrategyRequest,
+} from '../strategies/od-next/coordinator.js';
+import {
+  evaluateOdNextRollout,
+  odNextTaskTypeForProjectMetadata,
+  readOdNextRolloutPolicy,
+  readOdNextRolloutStop,
+  type OdNextRolloutDecision,
+} from '../strategies/od-next/rollout.js';
 import {
   buildConnectorProbe,
   getInstalledPlugin,
+  resolvePluginFolder,
   resolvePluginSnapshot,
 } from '../plugins/index.js';
 import { getSnapshot, linkSnapshotToRun } from '../plugins/snapshots.js';
@@ -509,6 +522,7 @@ export interface RegisterRunRoutesDeps {
     ) => Response<unknown> | void;
   };
   paths: {
+    BUNDLED_PLUGINS_DIR?: string;
     PROJECTS_DIR: string;
     RUNTIME_DATA_DIR: string;
   };
@@ -930,7 +944,7 @@ function toOdNativeEvent(record: RunEventRecord): OdNativeEvent | null {
 export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   const { db, design } = ctx;
   const { createSseResponse, sendApiError } = ctx.http;
-  const { PROJECTS_DIR, RUNTIME_DATA_DIR } = ctx.paths;
+  const { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR } = ctx.paths;
   const { detectAgents, getAgentDef } = ctx.agents;
   const { startChatRun } = ctx.chat;
   const {
@@ -1601,9 +1615,33 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       preparedWorkspaceScope = prepared.workspaceScope;
     }
     let resolvedSnapshot = null;
+    let strategyRolloutDecision: OdNextRolloutDecision | null = null;
+    let rolloutCapabilitySnapshot: ReturnType<
+      typeof resolveBundledOdNextRuntimeCapability
+    >['snapshot'] = null;
+    const idempotentStrategyRetry = typeof requestBody.clientRequestId === 'string'
+      && requestBody.clientRequestId
+      ? design.runs.list({
+          projectId: typeof requestBody.projectId === 'string'
+            ? requestBody.projectId
+            : undefined,
+          conversationId: typeof requestBody.conversationId === 'string'
+            ? requestBody.conversationId
+            : undefined,
+        }).find((candidate) => (
+          candidate.clientRequestId === requestBody.clientRequestId
+          && Boolean(projectStrategyTaskByRunId(db, candidate.id))
+        )) ?? null
+      : null;
     if (clarificationContinuation) {
+      const internalStrategyContinuation = Boolean(
+        clarificationTask?.strategyId === 'od-next-strategy'
+        && clarificationContinuation.snapshot.pluginId === clarificationTask.strategyId
+        && clarificationContinuation.snapshot.strategy?.id === clarificationTask.strategyId,
+      );
       if (
-        ctx.plugins.authorizePluginRequest
+        !internalStrategyContinuation
+        && ctx.plugins.authorizePluginRequest
         && !await ctx.plugins.authorizePluginRequest(
           req,
           res,
@@ -1616,30 +1654,136 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         snapshotId: clarificationTask!.snapshotId,
         snapshot: clarificationContinuation.snapshot,
       };
+    } else if (idempotentStrategyRetry?.appliedPluginSnapshotId) {
+      const retrySnapshot = getSnapshot(db, idempotentStrategyRetry.appliedPluginSnapshotId);
+      if (retrySnapshot) {
+        resolvedSnapshot = {
+          ok: true,
+          status: 200,
+          snapshotId: retrySnapshot.snapshotId,
+          snapshot: retrySnapshot,
+          created: false,
+        };
+      }
     } else if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
-      const explicitPlugin =
-        requestBody.pluginId || requestBody.appliedPluginSnapshotId;
       let runResolveBody: JsonRecord = requestBody;
-      if (!explicitPlugin) {
-        const projectRow = toProjectRecord(getProject(db, requestBody.projectId));
+      const rolloutProject = toProjectRecord(getProject(db, requestBody.projectId));
+      const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(
+        toScenarioProjectMetadata(rolloutProject?.metadata),
+      );
+      const suppliedSnapshotWasNamed = typeof requestBody.appliedPluginSnapshotId === 'string'
+        && requestBody.appliedPluginSnapshotId.trim().length > 0;
+      const suppliedPluginWasNamed = typeof requestBody.pluginId === 'string'
+        && requestBody.pluginId.trim().length > 0;
+      const projectHasExplicitPin = Boolean(rolloutProject?.appliedPluginSnapshotId);
+      const automaticDefaultScenario = rolloutProject?.metadata?.automaticDefaultScenario;
+      const projectPinIsAutomaticDefault = Boolean(
+        projectHasExplicitPin
+        && automaticDefaultScenario
+        && automaticDefaultScenario.pluginId === defaultPluginId
+        && automaticDefaultScenario.snapshotId === rolloutProject?.appliedPluginSnapshotId,
+      );
+      const suppliedSnapshotIsAutomaticDefault = Boolean(
+        suppliedSnapshotWasNamed
+        && projectPinIsAutomaticDefault
+        && requestBody.appliedPluginSnapshotId === automaticDefaultScenario?.snapshotId,
+      );
+      const explicitUserPlugin = Boolean(
+        (suppliedSnapshotWasNamed && !suppliedSnapshotIsAutomaticDefault)
+        || suppliedPluginWasNamed
+        || (projectHasExplicitPin && !projectPinIsAutomaticDefault),
+      );
+      const rolloutPolicy = readOdNextRolloutPolicy();
+      const rolloutMayObserve = !explicitUserPlugin
+        && rolloutPolicy.requestedMode !== 'off'
+        && rolloutPolicy.contentEnabled
+        && rolloutPolicy.behaviorEnabled;
+      const rolloutFolder = rolloutMayObserve && BUNDLED_PLUGINS_DIR
+        ? path.join(BUNDLED_PLUGINS_DIR, 'scenarios', 'od-next-strategy')
+        : null;
+      const rolloutResolved = rolloutFolder
+        ? await resolvePluginFolder({
+            folder: rolloutFolder,
+            folderId: 'od-next-strategy',
+            sourceKind: 'bundled',
+            source: rolloutFolder,
+            trust: 'bundled',
+          })
+        : null;
+      const rolloutPlugin = rolloutResolved?.ok ? rolloutResolved.record : null;
+      if (!explicitUserPlugin && rolloutPlugin) {
+        const versions = getDetectedRuntimeVersions(effectiveAgentId);
+        const capability = effectiveAgentId
+          ? resolveBundledOdNextRuntimeCapability({
+              agentId: effectiveAgentId,
+              ...(versions?.agentCliVersion
+                ? { agentCliVersion: versions.agentCliVersion }
+                : {}),
+              ...(versions?.runtimeCompanionName
+                ? { runtimeCompanionName: versions.runtimeCompanionName }
+                : {}),
+              ...(versions?.runtimeCompanionVersion
+                ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
+                : {}),
+            })
+          : null;
+        const runtimeCapabilityVerified = Boolean(
+          capability?.reason === 'capability_resolved'
+          && capability.snapshot?.nativeSessionContinuation.support === 'verified',
+        );
+        strategyRolloutDecision = evaluateOdNextRollout({
+          policy: rolloutPolicy,
+          assignmentIdentity: `${requestBody.projectId}:${String(requestBody.conversationId ?? '')}`,
+          taskType: odNextTaskTypeForProjectMetadata(rolloutProject?.metadata),
+          agentId: effectiveAgentId,
+          agentVersion: versions?.agentCliVersion ?? null,
+          sourceKind: rolloutPlugin.sourceKind,
+          runtimeCapabilityVerified,
+          runtimeCapabilityReason: capability?.reason ?? 'runtime_out_of_scope',
+          stoppedMode: readOdNextRolloutStop(db)?.mode ?? null,
+        });
+        if (strategyRolloutDecision.effectiveMode === 'active') {
+          rolloutCapabilitySnapshot = capability?.snapshot ?? null;
+        }
+        console.info('[od-next-rollout]', {
+          requestedMode: strategyRolloutDecision.requestedMode,
+          effectiveMode: strategyRolloutDecision.effectiveMode,
+          taskType: strategyRolloutDecision.taskType,
+          agentId: effectiveAgentId,
+          agentVersion: versions?.agentCliVersion ?? null,
+          sourceKind: rolloutPlugin.sourceKind,
+          assignmentBucket: strategyRolloutDecision.assignmentBucket,
+          reasonCodes: strategyRolloutDecision.reasonCodes,
+        });
+      }
+      if (!explicitUserPlugin) {
+        const projectRow = rolloutProject;
         const hasPin =
           typeof projectRow?.appliedPluginSnapshotId === 'string'
           && projectRow.appliedPluginSnapshotId.length > 0;
-        if (!hasPin) {
-          const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(
-            toScenarioProjectMetadata(projectRow?.metadata),
-          );
+        if (strategyRolloutDecision?.effectiveMode === 'active') {
+          runResolveBody = {
+            ...requestBody,
+            pluginId: 'od-next-strategy',
+            appliedPluginSnapshotId: undefined,
+          };
+        } else if (!hasPin) {
+          const fallbackPluginId = defaultPluginId;
           if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
             runResolveBody = { ...requestBody, pluginId: fallbackPluginId };
           }
         }
       }
+      const activatingStrategy = strategyRolloutDecision?.effectiveMode === 'active'
+        && runResolveBody.pluginId === 'od-next-strategy'
+        && rolloutPlugin;
       // Authorize the final plugin id, not only the literal request field.
       // Project-kind fallback may synthesize a pluginId, and it must not gain
       // a bypass around the same scoped catalog resolver.
       if (
         typeof runResolveBody.pluginId === 'string'
         && runResolveBody.pluginId.length > 0
+        && !activatingStrategy
         && ctx.plugins.authorizePluginRequest
         && !await ctx.plugins.authorizePluginRequest(
           req,
@@ -1677,9 +1821,17 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         registry: registryView,
         connectorProbe: buildConnectorProbe(connectorService),
         requireSnapshotProjectMatch: true,
+        ...(activatingStrategy && strategyRolloutDecision?.taskType
+          ? {
+              internalStrategyActivation: {
+                taskType: strategyRolloutDecision.taskType,
+                plugin: rolloutPlugin,
+              },
+            }
+          : {}),
       });
       if (resolved && !resolved.ok) {
-        if (!explicitPlugin) {
+        if (!explicitUserPlugin) {
           console.warn(
             `[plugins] default-scenario fallback skipped for run on project ${requestBody.projectId}: ${resolved.body?.error?.code ?? 'unknown'}`,
           );
@@ -1698,6 +1850,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       // Always overwrite the untrusted HTTP field, including for an unbound
       // project. The absence of a persisted binding is itself authoritative.
       workspaceScope: preparedWorkspaceScope,
+      ...(strategyRolloutDecision?.effectiveMode === 'active'
+        ? { strategyRolloutDecision }
+        : {}),
     };
     if (resolvedSnapshot?.ok) {
       meta.appliedPluginSnapshotId = resolvedSnapshot.snapshotId;
@@ -2078,12 +2233,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       : resolvedSnapshot?.ok
         ? resolvedSnapshot.snapshot
         : null;
-    meta.requestFingerprint = runRequestFingerprint(meta, fingerprintSnapshot);
+    const fingerprintMeta = { ...meta };
+    delete fingerprintMeta.strategyRolloutDecision;
+    meta.requestFingerprint = runRequestFingerprint(fingerprintMeta, fingerprintSnapshot);
     let preparedRun;
     try {
       preparedRun = internalRuns.prepare({
         meta,
-        ...((runUserSeed || clarificationTask)
+        ...((runUserSeed || clarificationTask || strategyRolloutDecision?.effectiveMode === 'active')
           ? {
               beforeClaimCommit: (candidate) => {
                 seedRunUserMessage();
@@ -2094,6 +2251,51 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                     nextRunId: candidate.id,
                     answer: clarificationContinuation.answer,
                   });
+                }
+                if (
+                  !clarificationContinuation
+                  && strategyRolloutDecision?.effectiveMode === 'active'
+                  && resolvedSnapshot?.ok
+                  && resolvedSnapshot.snapshot.strategy
+                ) {
+                  const taskExecutionId = `odnext_${createHash('sha256')
+                    .update(candidate.id)
+                    .digest('hex')
+                    .slice(0, 32)}`;
+                  createStrategyTaskExecution(db, {
+                    taskExecutionId,
+                    projectId: candidate.projectId!,
+                    conversationId: candidate.conversationId!,
+                    snapshotId: resolvedSnapshot.snapshotId,
+                    selectedAgentId: candidate.agentId!,
+                    initialRunId: candidate.id,
+                  });
+                  const preparedStrategy = prepareStrategyRequest(db, {
+                    taskExecutionId,
+                    preference: 'full_plan',
+                    directEdit: {
+                      editableBaselineExists: false,
+                      localAndUnambiguous: false,
+                      canonicalDeliverableStable: false,
+                      deliverableSetStable: false,
+                      dependenciesBounded: false,
+                    },
+                    intake: {
+                      inputRefs: [{ id: 'request', accessible: true }],
+                      selectedAgentAvailable: true,
+                      nativeContinuation: strategyRolloutDecision.syntheticCanary
+                        ? 'verified'
+                        : rolloutCapabilitySnapshot?.nativeSessionContinuation.support
+                          ?? 'unknown',
+                      taskProfileAvailable: true,
+                      dependencies: [],
+                    },
+                  });
+                  if (preparedStrategy.action !== 'running') {
+                    throw new Error(
+                      `OD Next rollout preflight blocked: ${preparedStrategy.reasonCodes.join(',')}`,
+                    );
+                  }
                 }
               },
             }

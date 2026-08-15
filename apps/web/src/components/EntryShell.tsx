@@ -1343,7 +1343,6 @@ export function EntryShell({
     const pluginInputs = defaultPluginInputsForCreate(input, pluginId);
     return onCreateProject({
       ...input,
-      ...(pluginId ? { pluginId } : {}),
       ...(pluginInputs ? { pluginInputs } : {}),
     });
   }
@@ -1498,7 +1497,9 @@ export function EntryShell({
         : {}),
       metadata,
       pendingPrompt: payload.prompt,
-      ...(payload.pluginId ? { pluginId: payload.pluginId } : {}),
+      ...(payload.pluginId && !payload.pluginSelectionProvenance
+        ? { pluginId: payload.pluginId }
+        : {}),
       ...(payload.pluginSource ? { pluginSource: payload.pluginSource } : {}),
       ...(payload.pluginType ? { pluginType: payload.pluginType } : {}),
       ...(payload.appliedPluginSnapshotId

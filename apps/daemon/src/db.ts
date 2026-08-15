@@ -24,6 +24,7 @@ import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media/tasks.js';
 import { migrateLibrary } from './library-store.js';
 import { migratePlugins } from './plugins/persistence.js';
+import { migrateOdNextRolloutStore } from './strategies/od-next/rollout.js';
 import { migrateStrategyTaskStore } from './strategies/task-store.js';
 
 type SqliteDb = Database.Database;
@@ -544,6 +545,7 @@ function migrate(db: SqliteDb): void {
   migrateLibrary(db);
   migratePlugins(db);
   migrateStrategyTaskStore(db);
+  migrateOdNextRolloutStore(db);
   migrateCollabSyncSnapshots(db);
   migrateCommentRelayOutbox(db);
 }

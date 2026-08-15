@@ -57,6 +57,7 @@ import {
 } from '../analytics/run-task';
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
+import { resolveQuestionFormStrategyTaskExecutionId } from '../runtime/strategy-question-continuation';
 import {
   type AmrWalletSnapshot,
   type ByokChatProviderConfig,
@@ -11153,11 +11154,27 @@ export function ProjectView({
               initialDraft={chatInitialDraft}
               onboardingStarterPath={onboardingEntryRef.current?.productType ?? null}
               questionFormSubmitDisabled={currentConversationActionDisabled}
-              onSubmitQuestionForm={(text, attachments = [], context, sourceAssistantMessageId) => {
+              onSubmitQuestionForm={async (text, attachments = [], context, sourceAssistantMessageId) => {
                 if (currentConversationActionDisabled) return false;
-                const sourceAssistant = sourceAssistantMessageId
+                let sourceAssistant = sourceAssistantMessageId
                   ? messages.find((message) => message.id === sourceAssistantMessageId)
                   : undefined;
+                const strategyTaskExecutionId = await resolveQuestionFormStrategyTaskExecutionId({
+                  ...(sourceAssistant?.strategyTaskExecutionId
+                    ? { persistedTaskExecutionId: sourceAssistant.strategyTaskExecutionId }
+                    : {}),
+                  ...(sourceAssistant?.runId ? { sourceRunId: sourceAssistant.runId } : {}),
+                  fetchRunStatus: (runId) => fetchChatRunStatus(
+                    runId,
+                    projectRunWorkspaceContext,
+                  ),
+                });
+                if (sourceAssistant && strategyTaskExecutionId) {
+                  sourceAssistant = {
+                    ...sourceAssistant,
+                    strategyTaskExecutionId,
+                  };
+                }
                 const questionTaskAnalytics = sourceAssistant
                   ? buildRecoveryTaskAnalytics(
                       messages,
@@ -11188,8 +11205,8 @@ export function ProjectView({
                   ...(questionTaskAnalytics
                     ? { taskAnalytics: questionTaskAnalytics }
                     : {}),
-                  ...(sourceAssistant?.strategyTaskExecutionId
-                    ? { strategyTaskExecutionId: sourceAssistant.strategyTaskExecutionId }
+                  ...(strategyTaskExecutionId
+                    ? { strategyTaskExecutionId }
                     : {}),
                 });
               }}

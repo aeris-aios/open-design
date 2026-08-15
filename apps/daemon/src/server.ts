@@ -462,6 +462,12 @@ import {
 } from './strategies/od-next/automatic-simple-production.js';
 import type { OdNextComplexRuntimeEvidence } from './strategies/od-next/complex-production.js';
 import {
+  latchOdNextRolloutStop,
+  odNextRolloutSignalForRun,
+  readOdNextRolloutPolicy,
+  stopModeForOdNextSignal,
+} from './strategies/od-next/rollout.js';
+import {
   getStrategyTaskExecutionByRunId,
   reconcileStrategyTaskRunTerminal,
 } from './strategies/task-store.js';
@@ -7292,6 +7298,7 @@ export async function startServer({
   // fallback and delayed final-message writes share this process-local gate;
   // the durable delivery terminal keeps the same guarantee across restarts.
   const reportedRuns = new Set();
+  const terminalTelemetryFallbackTimers = new Set<ReturnType<typeof setTimeout>>();
 
   const reportFinalizedMessage = createFinalizedMessageTelemetryReporter({
     design,
@@ -7312,6 +7319,7 @@ export async function startServer({
   }) => {
     if (!shouldReportRunCompletionTelemetryFallbackStatus(status)) return;
     const timer = setTimeout(() => {
+      terminalTelemetryFallbackTimers.delete(timer);
       if (reportedRuns.has(run.id)) return;
       if (run.assistantMessageId) {
         const messageTelemetry = getMessageTelemetryFinalizationState(db, run.assistantMessageId);
@@ -7335,6 +7343,7 @@ export async function startServer({
         },
       );
     }, LANGFUSE_TERMINAL_FALLBACK_DELAY_MS);
+    terminalTelemetryFallbackTimers.add(timer);
     timer.unref?.();
   };
 
@@ -11366,7 +11375,23 @@ export async function startServer({
       return 'unknown';
     };
     const finishStrategyAwarePhysicalRun = (status, code = null, signal = null) => {
-      return design.runs.finish(run, status, code, signal);
+      const maxDurationRaw = Number(process.env.OD_NEXT_STRATEGY_MAX_RUN_DURATION_MS);
+      const thresholdSignal = strategyTaskAtStart
+        ? odNextRolloutSignalForRun({
+            durationMs: Math.max(0, Date.now() - run.createdAt),
+            maxDurationMs: Number.isFinite(maxDurationRaw) ? maxDurationRaw : null,
+          })
+        : null;
+      if (thresholdSignal) {
+        latchOdNextRolloutStop(db, { mode: 'observe', reasonCode: thresholdSignal });
+        design.runs.emit(run, 'diagnostic', {
+          type: 'od_next_rollout_stop',
+          mode: 'observe',
+          reason_code: thresholdSignal,
+        });
+      }
+      const finished = design.runs.finish(run, status, code, signal);
+      return finished;
     };
     const finishWithRetryDecision = (status, code = null, signal = null) => {
       lifecycle.mark('finalize_start');
@@ -13884,6 +13909,10 @@ export async function startServer({
         if (strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request') {
           const blocked = blockAutomaticContinuation(db, { runId: run.id });
           if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
+          latchOdNextRolloutStop(db, {
+            mode: 'observe',
+            reasonCode: 'native_resume_failed',
+          });
           send('error', createSseErrorPayload(
             'AGENT_SESSION_RESUME_FAILED',
             'The locked OD Next native session is unavailable; the task was blocked without cold re-seeding.',
@@ -14479,7 +14508,23 @@ export async function startServer({
                   agentId: strategyTaskAtStart.selectedAgentId,
                   productionRoutes: plan.runManifest.productionRoutes,
                 })
-              : undefined;
+              : plan
+                && strategyTaskAtStart.strategyId === 'od-next-strategy'
+                && readOdNextRolloutPolicy().localSyntheticCanary
+                && process.env.NODE_ENV !== 'production'
+                ? {
+                    productionRoutes: plan.runManifest.productionRoutes.map((id) => ({ id, available: true })),
+                    dependencies: [],
+                    inputs: [],
+                    renderers: [],
+                    exporters: [],
+                    templates: [],
+                    outputKinds: plan.taskProfile.requiredDeliverables.map((item) => ({
+                      id: item.kind,
+                      supported: true,
+                    })),
+                  }
+                : undefined;
             const lockedPlan = plan ?? strategyTaskAtStart.planContract;
             if (
               lockedPlan?.fullPlan.executionMode === 'complex'
@@ -14575,6 +14620,21 @@ export async function startServer({
             return;
           }
           run.strategyTask = projectStrategyTask(transition.result.task, run.id);
+          if (transition.result.action === 'blocked') {
+            const signal = transition.result.reasonCodes.some((code) => (
+              code.includes('route_mismatch') || code.includes('execution_mode_mismatch')
+            ))
+              ? 'route_mode_drift'
+              : transition.result.reasonCodes.some((code) => code.includes('protocol'))
+                ? 'machine_contract_leak'
+                : transition.result.reasonCodes.some((code) => code.includes('child'))
+                  ? 'complex_child_unverified'
+                  : null;
+            const stopMode = signal ? stopModeForOdNextSignal(signal) : null;
+            if (signal && stopMode) {
+              latchOdNextRolloutStop(db, { mode: stopMode, reasonCode: signal });
+            }
+          }
           if (transition.start && transition.prepared?.kind === 'ready') {
             const nextRun = transition.prepared.run;
             nextRun.strategyTask = projectStrategyTask(transition.result.task, nextRun.id);
@@ -14839,7 +14899,7 @@ export async function startServer({
     db,
     design,
     http: httpDeps,
-    paths: { PROJECTS_DIR, RUNTIME_DATA_DIR },
+    paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
     chat: { startChatRun },
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
@@ -15412,7 +15472,12 @@ export async function startServer({
   //   - `apps/daemon/tests/version-route.test.ts` → expects `{ url, server }`
   return await new Promise((resolve, reject) => {
     let daemonShutdownStarted = false;
+    const clearTerminalTelemetryFallbackTimers = () => {
+      for (const timer of terminalTelemetryFallbackTimers) clearTimeout(timer);
+      terminalTelemetryFallbackTimers.clear();
+    };
     const cleanupDaemonBackgroundWork = () => {
+      clearTerminalTelemetryFallbackTimers();
       telemetry.disposeFatalHandlers();
       composioConnectorProvider.stopCatalogRefreshLoop();
       orbitService.stop();
@@ -15429,6 +15494,7 @@ export async function startServer({
       if (daemonShutdownStarted) return;
       daemonShutdownStarted = true;
       daemonShuttingDown = true;
+      clearTerminalTelemetryFallbackTimers();
       await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
       await terminalService.shutdownActive();
       await design.analytics.shutdown();

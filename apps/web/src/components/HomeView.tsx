@@ -2700,6 +2700,9 @@ export function HomeView({
         sessionMode === 'design'
           ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
           : submittedActive?.record.id ?? null;
+      const pluginSelectionProvenance = sessionMode === 'design' && !submittedActive
+        ? 'automatic-default' as const
+        : null;
       // The example-prompt override is a one-shot marker. Decide whether to
       // send it now, but defer spending the marker until the create is
       // accepted — a rejected attempt stays retryable and must resend it.
@@ -2711,6 +2714,7 @@ export function HomeView({
       const accepted = await onSubmit({
         prompt: trimmed,
         pluginId: routedPluginId,
+        ...(pluginSelectionProvenance ? { pluginSelectionProvenance } : {}),
         ...(submittedActive?.record.source
           ? { pluginSource: submittedActive.record.source }
           : {}),

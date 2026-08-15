@@ -54,6 +54,14 @@ export const OD_NEXT_RUNTIME_PATH_DESCRIPTORS = [
  */
 export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY: readonly RuntimeCapabilityRegistryEntryV1[] = [];
 
+/**
+ * Trusted production fixture manifests. X1 intentionally leaves this empty;
+ * a future evidence update must add a sanitized-real manifest and its exact
+ * registry tuple together in this owner module.
+ */
+export const OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS:
+  readonly RuntimeCapabilityFixtureManifestV1[] = [];
+
 export type OdNextCapabilityResolutionReason =
   | 'runtime_out_of_scope'
   | 'agent_cli_version_missing'
@@ -419,6 +427,29 @@ export function resolveOdNextRuntimeCapability(
       source: snapshotSource,
     }),
   };
+}
+
+export function resolveBundledOdNextRuntimeCapability(input: {
+  agentId: string;
+  agentCliVersion?: string | null;
+  runtimeCompanionName?: string | null;
+  runtimeCompanionVersion?: string | null;
+  capturedAt?: number;
+}): OdNextRuntimeCapabilityResolution {
+  const fixture = OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS.find((candidate) => (
+    candidate.agentId === input.agentId
+    && candidate.agentCliVersion === (input.agentCliVersion?.trim() || undefined)
+    && (candidate.runtimeCompanionName ?? undefined)
+      === (input.runtimeCompanionName?.trim() || undefined)
+    && (candidate.runtimeCompanionVersion ?? undefined)
+      === (input.runtimeCompanionVersion?.trim() || undefined)
+  ));
+  return resolveOdNextRuntimeCapability({
+    ...input,
+    fixtureVersion: fixture?.fixtureVersion ?? 'od-next-runtime-contract/v1',
+    ...(fixture ? { fixtureManifest: fixture } : {}),
+    registry: OD_NEXT_RUNTIME_CAPABILITY_REGISTRY,
+  });
 }
 
 export type OdNextExecutionMode = 'simple' | 'complex';

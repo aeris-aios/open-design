@@ -439,7 +439,14 @@ export function prepareAutomaticStrategyContinuation<
         };
       }
     }
-  } catch {
+  } catch (error) {
+    console.warn('[od-next] automatic continuation claim failed', {
+      taskExecutionId: input.task.taskExecutionId,
+      inputStage: input.task.inputStage,
+      reasonCodes: error instanceof OdNextAutomaticProductionError
+        ? error.reasonCodes
+        : ['od_next_next_run_claim_failed'],
+    });
     // The assistant-message claim transaction rolled back both the coordinator
     // transition and the physical Run. Re-run without a continuation mapping
     // so protocol/preflight failures converge the source task to blocked.

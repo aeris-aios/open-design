@@ -218,6 +218,13 @@ export interface ProjectMetadata {
    * identity is still loading; it is never Workspace ownership or authority.
    */
   localCatalogScopes?: ProjectResourceCatalogScopes;
+  /**
+   * Daemon-stamped identity of the scenario snapshot selected only by the
+   * product's hidden Design-mode default router. Rollout may treat it as
+   * automatic only while the persisted project pin still matches this exact
+   * identity; explicit create/run selections remain user authority.
+   */
+  automaticDefaultScenario?: { pluginId: string; snapshotId: string };
   // Stored on design-system projects so the review overview can remember
   // which generated sections were accepted or sent back for another pass.
   designSystemReview?: Record<string, DesignSystemReviewEntry>;

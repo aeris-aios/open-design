@@ -28,7 +28,7 @@ vi.mock('node:crypto', async (importOriginal) => {
 
 import { closeDatabase, openDatabase } from '../src/db.js';
 import { createSnapshot, linkSnapshotToProject } from '../src/plugins/snapshots.js';
-import { resolvePluginFolder } from '../src/plugins/registry.js';
+import { resolvePluginFolder, upsertInstalledPlugin } from '../src/plugins/registry.js';
 import { createBundledStrategyBindingV2 } from '../src/plugins/strategy-package.js';
 import { startServer, type StartServerOptions } from '../src/server.js';
 import {
@@ -36,6 +36,7 @@ import {
   getStrategyTaskExecution,
 } from '../src/strategies/task-store.js';
 import { prepareStrategyRequest } from '../src/strategies/od-next/coordinator.js';
+import { latchOdNextRolloutStop } from '../src/strategies/od-next/rollout.js';
 import { hashOdNextRuntimeCapabilitySnapshotV1 } from '../src/runtimes/od-next-capability-gate.js';
 
 type StartedServer = {
@@ -124,12 +125,172 @@ describe('OD Next automatic production through the real server', () => {
   let sequence = 0;
 
   afterEach(async () => {
+    delete process.env.OD_NEXT_STRATEGY_ROLLOUT;
+    delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
+    delete process.env.OD_NEXT_STRATEGY_MAX_RUN_DURATION_MS;
     uuidControl.forced.length = 0;
     await stopServer(started);
     started = null;
     closeDatabase();
     if (binDir) await rm(binDir, { recursive: true, force: true });
     binDir = null;
+  });
+
+  it('keeps off/observe public POST behavior ordinary and idempotent with zero strategy tasks', async () => {
+    const fixture = await createPublicRolloutFixture('inert');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
+    const body = publicRunRequest(fixture, 'Run the ordinary public fixture.', 'inert-request');
+    const created = await postRun(started!.url, body);
+    expect(created.strategyTask).toBeUndefined();
+    expect(created.pluginId).toBe('example-web-prototype');
+    await waitForRunTerminal(started!.url, created.runId as string);
+
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'observe';
+    const replayed = await postRun(started!.url, body);
+    expect(replayed).toMatchObject({ runId: created.runId, reused: true });
+    expect(replayed.strategyTask).toBeUndefined();
+    expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
+      .toBe(0);
+    const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.stdin).not.toContain('OD Next Strategy V2');
+    expect(invocations[0]?.stdin).not.toContain('open-design.strategy-state/v2');
+  });
+
+  it('keeps active retry/task pinned while rollback sends a new public request through the ordinary path', async () => {
+    const fixture = await createPublicRolloutFixture('rollback', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    expect(fixture.projectMetadata?.automaticDefaultScenario).toEqual({
+      pluginId: 'example-web-prototype',
+      snapshotId: fixture.appliedPluginSnapshotId,
+    });
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const activeBody = publicRunRequest(
+      fixture,
+      'Hold the public rollout run open until canceled.',
+      'active-request',
+    );
+    const active = await postRun(started!.url, activeBody);
+    expect(active.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    expect((database().prepare(
+      'SELECT applied_plugin_snapshot_id AS snapshotId FROM projects WHERE id = ?',
+    ).get(fixture.projectId) as { snapshotId: string | null }).snapshotId)
+      .toBe(fixture.appliedPluginSnapshotId);
+
+    latchOdNextRolloutStop(database(), {
+      mode: 'observe',
+      reasonCode: 'threshold_exceeded',
+    });
+    const replayed = await postRun(started!.url, activeBody);
+    expect(replayed).toMatchObject({
+      runId: active.runId,
+      taskExecutionId: active.taskExecutionId,
+      reused: true,
+    });
+
+    const ordinary = await postRun(
+      started!.url,
+      publicRunRequest(fixture, 'Run after rollback.', 'ordinary-after-rollback'),
+    );
+    expect(ordinary.strategyTask).toBeUndefined();
+    expect(ordinary.pluginId).toBe('example-web-prototype');
+    await waitForRunTerminal(started!.url, ordinary.runId as string);
+
+    const canceledResponse = await fetch(
+      `${started!.url}/api/runs/${encodeURIComponent(active.runId as string)}/cancel`,
+      { method: 'POST' },
+    );
+    expect(canceledResponse.status).toBe(200);
+    expect(await waitForRunTerminal(started!.url, active.runId as string)).toMatchObject({
+      status: 'canceled',
+      strategyTask: {
+        taskExecutionId: active.taskExecutionId,
+        outcome: 'canceled',
+        terminal: true,
+      },
+    });
+    expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
+      .toBe(1);
+  });
+
+  it('never overrides explicit plugin, snapshot, or existing project-pin authority', async () => {
+    const fixture = await createPublicRolloutFixture(
+      'authority',
+      'design',
+      'example-web-prototype',
+    );
+    started = fixture.started;
+    binDir = fixture.binDir;
+    expect(fixture.projectMetadata?.automaticDefaultScenario).toBeUndefined();
+    const strategyTaskCountAtStart = (
+      database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }
+    ).count;
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+
+    const pinned = await postRun(
+      started.url,
+      publicRunRequest(fixture, 'Use the pinned default.', 'pinned-authority'),
+    );
+    expect(pinned.strategyTask).toBeUndefined();
+    expect(pinned.pluginId).toBe('example-web-prototype');
+
+    const explicitDefault = await postRun(started.url, {
+      ...publicRunRequest(fixture, 'Use the explicit default.', 'explicit-default'),
+      pluginId: 'example-web-prototype',
+    });
+    expect(explicitDefault.strategyTask).toBeUndefined();
+    expect(explicitDefault.pluginId).toBe('example-web-prototype');
+
+    const invalidSnapshot = await fetch(`${started.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...publicRunRequest(fixture, 'Use a missing snapshot.', 'missing-snapshot'),
+        appliedPluginSnapshotId: 'missing-snapshot',
+      }),
+    });
+    expect(invalidSnapshot.status).toBe(404);
+    expect(await invalidSnapshot.json()).toMatchObject({
+      error: { code: 'snapshot-not-found' },
+    });
+
+    const officialSource = path.resolve(
+      import.meta.dirname,
+      '../../../plugins/_official/scenarios/od-next-strategy',
+    );
+    const resolvedCollision = await resolvePluginFolder({
+      folder: officialSource,
+      folderId: 'od-next-strategy',
+      sourceKind: 'bundled',
+      source: officialSource,
+      trust: 'bundled',
+    });
+    if (!resolvedCollision.ok) throw new Error(resolvedCollision.errors.join('; '));
+    upsertInstalledPlugin(database(), {
+      ...resolvedCollision.record,
+      sourceKind: 'user',
+      source: 'community-collision-fixture',
+      trust: 'restricted',
+    });
+    const collidingId = await fetch(`${started.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...publicRunRequest(fixture, 'Use an explicit colliding id.', 'colliding-id'),
+        pluginId: 'od-next-strategy',
+      }),
+    });
+    expect(collidingId.status).toBe(409);
+    expect(await collidingId.json()).toMatchObject({
+      error: { code: 'capabilities-required' },
+    });
+    expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
+      .toBe(strategyTaskCountAtStart);
   });
 
   it('runs parsed plan -> serialization repair -> production after each source end and remains exactly-once across restart', async () => {
@@ -521,6 +682,110 @@ describe('OD Next automatic production through the real server', () => {
     };
   }
 });
+
+async function createPublicRolloutFixture(
+  label: string,
+  conversationMode: 'design' | 'chat' | 'plan' = 'chat',
+  pluginId?: string,
+) {
+  const suffix = `${label}-${Date.now()}`;
+  const binDir = await mkdtemp(path.join(os.tmpdir(), `od-next-public-${label}-`));
+  const { bin, logPath } = await writePublicRolloutCodex(binDir, label);
+  const started = await startDaemon();
+  const projectId = `od-next-public-${suffix}`;
+  const projectResponse = await fetch(`${started.url}/api/projects`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: projectId,
+      name: `OD Next public ${label}`,
+      metadata: { kind: 'prototype' },
+      conversationMode,
+      ...(pluginId ? { pluginId } : {}),
+      skipDiscoveryBrief: true,
+    }),
+  });
+  expect(projectResponse.status).toBe(200);
+  const { conversationId, appliedPluginSnapshotId, project } = await projectResponse.json() as {
+    conversationId: string;
+    appliedPluginSnapshotId?: string;
+    project?: { metadata?: { automaticDefaultScenario?: { pluginId: string; snapshotId: string } } };
+  };
+  const configResponse = await fetch(`${started.url}/api/app-config`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      agentId: 'codex',
+      agentCliEnv: { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
+      telemetry: { metrics: false, content: false, artifactManifest: false },
+      privacyDecisionAt: Date.now(),
+    }),
+  });
+  expect(configResponse.status).toBe(200);
+  const agentsResponse = await fetch(`${started.url}/api/agents`);
+  expect(agentsResponse.status).toBe(200);
+  return {
+    started,
+    binDir,
+    projectId,
+    conversationId,
+    appliedPluginSnapshotId,
+    projectMetadata: project?.metadata,
+    logPath,
+  };
+}
+
+function publicRunRequest(
+  fixture: { projectId: string; conversationId: string },
+  message: string,
+  id: string,
+) {
+  return {
+    projectId: fixture.projectId,
+    conversationId: fixture.conversationId,
+    agentId: 'codex',
+    userMessageId: `user-${id}`,
+    assistantMessageId: `assistant-${id}`,
+    clientRequestId: id,
+    message,
+    currentPrompt: message,
+  };
+}
+
+async function writePublicRolloutCodex(
+  dir: string,
+  label: string,
+): Promise<{ bin: string; logPath: string }> {
+  const bin = path.join(dir, `codex-public-${label}`);
+  const logPath = path.join(dir, `codex-public-${label}.jsonl`);
+  await writeFile(bin, `#!/usr/bin/env node
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+const logPath = ${JSON.stringify(logPath)};
+if (argv.includes('--version')) { console.log('codex-e2e 0.0.0'); process.exit(0); }
+if (argv.includes('--help')) { console.log('Usage: codex exec'); process.exit(0); }
+let stdin = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { stdin += chunk; });
+process.stdin.on('end', () => {
+  fs.appendFileSync(logPath, JSON.stringify({ argv, stdin, cwd: process.cwd(), startedAt: Date.now() }) + '\\n');
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: 'public-rollout-session' }));
+  console.log(JSON.stringify({ type: 'turn.started' }));
+  if (stdin.includes('Hold the public rollout run open until canceled.')) {
+    setInterval(() => {}, 1 << 30);
+    return;
+  }
+  console.log(JSON.stringify({
+    type: 'item.completed',
+    item: { id: 'answer', type: 'agent_message', text: 'Ordinary public run completed.' },
+  }));
+  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }));
+  setTimeout(() => process.exit(0), 5);
+});
+`, 'utf8');
+  await chmod(bin, 0o755);
+  return { bin, logPath };
+}
 
 async function runOdCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
   const env = { ...process.env };

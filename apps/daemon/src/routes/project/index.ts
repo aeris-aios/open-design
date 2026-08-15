@@ -3603,7 +3603,9 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // inside the otherwise extensible project metadata object.
       const clientMetadata = metadata && typeof metadata === 'object'
         ? Object.fromEntries(
-            Object.entries(metadata).filter(([key]) => key !== 'localCatalogScopes'),
+            Object.entries(metadata).filter(([key]) => (
+              key !== 'localCatalogScopes' && key !== 'automaticDefaultScenario'
+            )),
           )
         : null;
       const projectMetadata =
@@ -3657,23 +3659,26 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const initialSessionMode = normalizeChatSessionMode(
         req.body?.conversationMode ?? req.body?.sessionMode,
       );
+      const defaultScenarioPluginId = defaultScenarioPluginIdForProjectMetadata(
+        projectMetadata && typeof projectMetadata.kind === 'string'
+          ? projectMetadata as Parameters<
+              typeof defaultScenarioPluginIdForProjectMetadata
+            >[0]
+          : null,
+      );
       const explicitPlugin =
         typeof req.body?.pluginId === 'string' && req.body.pluginId.trim().length > 0
           ? true
           : typeof req.body?.appliedPluginSnapshotId === 'string'
             && req.body.appliedPluginSnapshotId.trim().length > 0;
+      const automaticDefaultRouting = initialSessionMode === 'design'
+        && Boolean(defaultScenarioPluginId)
+        && !explicitPlugin;
       let resolveBody =
         explicitPlugin ? (req.body as Record<string, unknown>) : null;
       if (!resolveBody && initialSessionMode === 'design') {
-        const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(
-          projectMetadata && typeof projectMetadata.kind === 'string'
-            ? projectMetadata as Parameters<
-                typeof defaultScenarioPluginIdForProjectMetadata
-              >[0]
-            : null,
-        );
-        if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
-          resolveBody = { ...(req.body || {}), pluginId: fallbackPluginId };
+        if (defaultScenarioPluginId && getInstalledPlugin(db, defaultScenarioPluginId)) {
+          resolveBody = { ...(req.body || {}), pluginId: defaultScenarioPluginId };
         }
       }
       let project;
@@ -3719,7 +3724,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           }
         }
         project = db.transaction(() => {
-          const createdProject = insertProject(db, {
+          let createdProject = insertProject(db, {
             id,
             name: name.trim(),
             skillId: normalizedSkillId,
@@ -3774,6 +3779,17 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
               }
             } else {
               pluginResolutionState.snapshot = resolved;
+              if (resolved && automaticDefaultRouting && defaultScenarioPluginId) {
+                createdProject = updateProject(db, id, {
+                  metadata: {
+                    ...(projectMetadata ?? {}),
+                    automaticDefaultScenario: {
+                      pluginId: defaultScenarioPluginId,
+                      snapshotId: resolved.snapshotId,
+                    },
+                  },
+                }) ?? createdProject;
+              }
             }
           }
           return createdProject;
@@ -4355,6 +4371,18 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             'localCatalogScopes can only be set during project creation',
           );
         }
+        if (
+          'automaticDefaultScenario' in patch.metadata
+          && JSON.stringify(patch.metadata.automaticDefaultScenario)
+            !== JSON.stringify(existingMeta?.automaticDefaultScenario)
+        ) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'automaticDefaultScenario is daemon-owned',
+          );
+        }
         if ('fromTrustedPicker' in patch.metadata
             && patch.metadata.fromTrustedPicker !== existingMeta?.fromTrustedPicker) {
           return sendApiError(
@@ -4434,6 +4462,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           patch.metadata = {
             ...patch.metadata,
             localCatalogScopes: existingMeta.localCatalogScopes,
+          };
+        }
+        if (existingMeta?.automaticDefaultScenario) {
+          patch.metadata = {
+            ...patch.metadata,
+            automaticDefaultScenario: existingMeta.automaticDefaultScenario,
           };
         }
       }
