@@ -236,7 +236,7 @@ const MESSAGE_CENTER_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const PROJECT_STRING_FLAGS = new Set([
   'daemon-url', 'name', 'skill', 'design-system', 'plugin', 'metadata-json',
   'pending-prompt', 'project', 'conversation', 'message', 'prompt',
-  'prompt-file', 'path', 'dir', 'as',
+  'prompt-file', 'task-execution', 'path', 'dir', 'as',
   'agent', 'model', 'service-tier', 'snapshot-id', 'inputs', 'grant-caps', 'editor',
   'title', 'label', 'against', 'seed-from', 'fork-after', 'mode',
   'source',
@@ -7232,6 +7232,7 @@ async function runRun(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
   od run start --project <projectId> [--conversation <id>] [--message "<text>"]
+               [--prompt-file <path|->] [--task-execution <id>]
                [--plugin <id>] [--inputs <json>] [--grant-caps a,b]
                [--agent claude|codex|opencode] [--model <id>] [--service-tier <id>]
                [--workspace <id> --workspace-member <id>] [--follow] [--json]
@@ -7271,7 +7272,8 @@ Common options:
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       const runs = data?.runs ?? [];
       for (const r of runs) {
-        console.log(`${r.id}\t${r.status}\tproject=${r.projectId ?? '-'}\tplugin=${r.pluginId ?? '-'}`);
+        const task = r.strategyTask;
+        console.log(`${r.id}\t${r.status}\tproject=${r.projectId ?? '-'}\tplugin=${r.pluginId ?? '-'}${task ? `\ttask=${task.taskExecutionId}\tactive=${task.activeRunId}\toutcome=${task.outcome}` : ''}`);
       }
       return;
     }
@@ -7309,6 +7311,9 @@ Common options:
       console.log(`workspace\t${storage.kind ?? '-'}\t${storage.baseDir ?? '-'}`);
       console.log(`provenance\t${provenance?.kind ?? '-'}\twriteback=${provenance?.writeback ?? '-'}`);
       console.log(`project\t${data?.project?.id ?? '-'}\tfiles=${data?.project?.fileCount ?? 0}`);
+      if (data?.strategyTask) {
+        console.log(`task\t${data.strategyTask.taskExecutionId}\tactive=${data.strategyTask.activeRunId}\toutcome=${data.strategyTask.outcome}`);
+      }
       const artifacts = Array.isArray(data?.artifacts) ? data.artifacts : [];
       for (const artifact of artifacts) {
         console.log(`artifact\t${artifact.file ?? '-'}\t${artifact.kind ?? '-'}\t${artifact.title ?? '-'}`);
@@ -7326,7 +7331,13 @@ Common options:
         headers: workspaceHeaders,
       });
       if (!resp.ok) return structuredHttpFailure(resp, 'run-not-found');
-      console.log(`[run] cancelled ${id}`);
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const canceledRun = data?.run ?? {};
+      console.log(`[run] cancelled ${canceledRun.id ?? id}`);
+      if (canceledRun.strategyTask) {
+        console.log(`task\t${canceledRun.strategyTask.taskExecutionId}\tactive=${canceledRun.strategyTask.activeRunId}\toutcome=${canceledRun.strategyTask.outcome}`);
+      }
       return;
     }
     case 'continue': {
@@ -7473,6 +7484,7 @@ Common options:
         body.grantCaps = String(flags['grant-caps']).split(',').map((c) => c.trim()).filter(Boolean);
       }
       if (flags['snapshot-id']) body.appliedPluginSnapshotId = flags['snapshot-id'];
+      if (flags['task-execution']) body.taskExecutionId = flags['task-execution'];
       const resp = await fetch(`${base}/api/runs`, {
         method:  'POST',
         headers: { 'content-type': 'application/json', ...workspaceHeaders },
@@ -7513,36 +7525,60 @@ Common options:
 // Stream the SSE events at /api/runs/:id/events as ND-JSON on stdout.
 // Each line is one event: { event, data } so a code agent can parse it
 // without needing an SSE library.
-async function streamRunEvents(base, runId, workspaceHeaders = {}) {
-  const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
-    headers: { accept: 'text/event-stream', ...workspaceHeaders },
-  });
-  if (!resp.ok || !resp.body) {
-    console.error(`run watch failed: ${resp.status}`);
-    process.exit(1);
-  }
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+async function streamRunEvents(base, initialRunId, workspaceHeaders = {}) {
+  let runId = initialRunId;
+  const visited = new Set();
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split('\n\n');
-    buffer = blocks.pop() ?? '';
-    for (const block of blocks) {
-      const lines = block.split('\n');
-      const eventLine = lines.find((l) => l.startsWith('event: '));
-      const dataLine  = lines.find((l) => l.startsWith('data: '));
-      const event = eventLine ? eventLine.slice('event: '.length) : 'message';
-      const dataRaw = dataLine ? dataLine.slice('data: '.length) : '';
-      let parsed;
-      try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
-      process.stdout.write(JSON.stringify({ event, data: parsed }) + '\n');
-      if (event === 'end') {
-        return;
+    if (visited.has(runId)) {
+      console.error(`run watch failed: cyclic strategy task chain at ${runId}`);
+      process.exit(1);
+    }
+    visited.add(runId);
+    const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
+      headers: { accept: 'text/event-stream', ...workspaceHeaders },
+    });
+    if (!resp.ok || !resp.body) {
+      console.error(`run watch failed: ${resp.status}`);
+      process.exit(1);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let nextRunId = null;
+    let ended = false;
+    while (!ended) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() ?? '';
+      for (const block of blocks) {
+        const lines = block.split('\n');
+        const eventLine = lines.find((l) => l.startsWith('event: '));
+        const dataLines = lines
+          .filter((line) => line.startsWith('data: '))
+          .map((line) => line.slice('data: '.length));
+        const event = eventLine ? eventLine.slice('event: '.length) : 'message';
+        const dataRaw = dataLines.join('\n');
+        let parsed;
+        try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
+        process.stdout.write(JSON.stringify({ event, data: parsed }) + '\n');
+        if (event !== 'end') continue;
+        const task = parsed?.strategyTask;
+        if (task && task.terminal !== true) {
+          const candidate = task.activeRunId !== runId
+            ? task.activeRunId
+            : task.nextRunId;
+          if (typeof candidate === 'string' && candidate.length > 0 && candidate !== runId) {
+            nextRunId = candidate;
+          }
+        }
+        ended = true;
+        break;
       }
     }
+    if (!nextRunId) return;
+    runId = nextRunId;
   }
 }
 

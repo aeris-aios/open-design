@@ -889,6 +889,16 @@ export interface ChatMessage {
   endedAt?: number;
   sessionMode?: ChatSessionMode;
   runContext?: RunContextSelection;
+  /**
+   * Daemon-issued logical task handle for an OD Next assistant turn. Unlike
+   * taskAnalytics, this value is behavioral: question-form answers pass it
+   * back explicitly and reload recovery follows its active physical Run.
+   */
+  strategyTaskExecutionId?: string;
+  /** Number of leading visible characters owned by completed predecessor Runs. */
+  strategyTaskPrefixLength?: number;
+  /** Number of leading normalized events owned by completed predecessor Runs. */
+  strategyTaskPrefixEventCount?: number;
   /** Analytics-only task lineage persisted with the message so retries,
    *  resumes and clarification answers survive reloads without splitting one
    *  user intent into unrelated failures. */

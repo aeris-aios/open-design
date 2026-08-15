@@ -3237,6 +3237,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ...(status.error !== undefined ? { error: status.error } : {}),
         ...(status.errorCode !== undefined ? { errorCode: status.errorCode } : {}),
       },
+      ...(status.strategyTask ? { strategyTask: status.strategyTask } : {}),
       workspace: status.workspace ?? {
         storage: { kind: 'od-owned', baseDir: null },
         provenance: null,

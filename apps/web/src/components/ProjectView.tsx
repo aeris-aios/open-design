@@ -383,6 +383,8 @@ type ProjectChatSendMeta = ChatSendMeta & {
   acceptQueuedHomeHandoff?: boolean;
   /** Stable task lineage for retries, resumes and clarification answers. */
   taskAnalytics?: ChatTaskExecutionAnalytics;
+  /** Explicit daemon-issued OD Next continuation handle. */
+  strategyTaskExecutionId?: string;
 };
 
 export function mergeSavedPreviewComment(current: PreviewComment[], saved: PreviewComment): PreviewComment[] {
@@ -5054,11 +5056,21 @@ export function ProjectView({
           hasGenericDisconnectFailureEvent(message);
         const replayingTerminalRun =
           shouldReplayTerminalRunMessage(message) || spuriouslyFailedPending;
-        const needsFullReplay =
+        const needsReplayForMessage =
           isActiveRunStatus(message.runStatus) ||
           replayingTerminalRun ||
           spuriouslyFailedPending ||
           recoverableGenericDisconnectFailed;
+        // A predecessor can be persisted as physically succeeded immediately
+        // before the logical task advances. Probe daemon task truth even when
+        // this row otherwise looks terminal; completed task rows bail out
+        // below without replaying their final Run again.
+        const needsTaskProjectionProbe = Boolean(
+          message.strategyTaskExecutionId
+          && message.runId
+          && message.runStatus === 'succeeded',
+        );
+        const needsFullReplay = needsReplayForMessage || needsTaskProjectionProbe;
         if (!needsFullReplay) continue;
         const fallbackRun = !message.runId
           ? activeByMessage.get(message.id) ?? historicalByMessage.get(message.id) ?? null
@@ -5102,10 +5114,10 @@ export function ProjectView({
           );
         }
 
-        const status = fallbackRun
+        const physicalStatus = fallbackRun
           ?? await fetchChatRunStatus(runId, projectRunWorkspaceContext);
         if (cancelled) return;
-        if (!status) {
+        if (!physicalStatus) {
           // `fetchChatRunStatus` returns null on ANY non-OK response or fetch
           // exception (providers/daemon.ts:686), not only when the daemon has
           // permanently forgotten the run.  For a spuriously-failed pending
@@ -5145,6 +5157,62 @@ export function ProjectView({
             completedReattachRunsRef.current.add(runId);
           }
           continue;
+        }
+        const projectedActiveRunId = physicalStatus.strategyTask?.activeRunId;
+        const taskRunAdvanced = Boolean(
+          projectedActiveRunId
+          && projectedActiveRunId !== runId,
+        );
+        const reattachRunId = taskRunAdvanced && projectedActiveRunId
+          ? projectedActiveRunId
+          : runId;
+        const projectedTaskStatus: ChatMessage['runStatus'] =
+          physicalStatus.strategyTask?.terminal === true
+            ? physicalStatus.strategyTask.outcome === 'canceled'
+              ? 'canceled'
+              : physicalStatus.strategyTask.outcome === 'blocked'
+                ? 'failed'
+                : 'succeeded'
+            : 'running';
+        // A crash may persist the predecessor Run after the daemon has already
+        // advanced the logical task. Treat the daemon projection as the
+        // subscription truth: the predecessor's physical `succeeded` status
+        // is not the user task terminal state.
+        const status = taskRunAdvanced
+          ? {
+              ...physicalStatus,
+              id: reattachRunId,
+              status: projectedTaskStatus,
+            }
+          : physicalStatus;
+        if (
+          taskRunAdvanced
+          && (
+            finalizingLocalRunIdsRef.current.has(reattachRunId)
+            || reattachControllersRef.current.has(reattachRunId)
+            || completedReattachRunsRef.current.has(reattachRunId)
+          )
+        ) {
+          continue;
+        }
+        if (
+          needsTaskProjectionProbe
+          && !needsReplayForMessage
+          && !taskRunAdvanced
+          && (!status.strategyTask || status.strategyTask.terminal)
+        ) {
+          completedReattachRunsRef.current.add(runId);
+          continue;
+        }
+        if (status.strategyTask?.taskExecutionId) {
+          updateMessageById(
+            message.id,
+            (prev) => ({
+              ...prev,
+              strategyTaskExecutionId: status.strategyTask!.taskExecutionId,
+            }),
+            true,
+          );
         }
         // When the daemon authoritative status is 'failed', the run ended in a
         // genuine failure.  For spuriously-failed pending messages this means
@@ -5210,7 +5278,7 @@ export function ProjectView({
           );
         }
 
-        if (shouldReplayTerminalRunMessage(message)) {
+        if (shouldReplayTerminalRunMessage(message) && !taskRunAdvanced) {
           const replayedContent = textContentFromAgentEvents(message.events);
           if (replayedContent.trim().length > 0) {
             const parser = createArtifactParser();
@@ -5375,8 +5443,47 @@ export function ProjectView({
 
         const controller = new AbortController();
         const cancelController = new AbortController();
-        reattachControllersRef.current.set(runId, controller);
-        reattachCancelControllersRef.current.set(runId, cancelController);
+        const ownedReattachRunIds = new Set<string>();
+        const claimReattachRun = (claimedRunId: string) => {
+          ownedReattachRunIds.add(claimedRunId);
+          reattachControllersRef.current.set(claimedRunId, controller);
+          reattachCancelControllersRef.current.set(claimedRunId, cancelController);
+        };
+        const releaseReattachRuns = () => {
+          for (const claimedRunId of ownedReattachRunIds) {
+            if (reattachControllersRef.current.get(claimedRunId) === controller) {
+              reattachControllersRef.current.delete(claimedRunId);
+            }
+            if (reattachCancelControllersRef.current.get(claimedRunId) === cancelController) {
+              reattachCancelControllersRef.current.delete(claimedRunId);
+            }
+          }
+        };
+        const completeReattachRuns = () => {
+          for (const claimedRunId of ownedReattachRunIds) {
+            completedReattachRunsRef.current.add(claimedRunId);
+          }
+        };
+        claimReattachRun(runId);
+        claimReattachRun(reattachRunId);
+        let activeReattachRunId = reattachRunId;
+        if (taskRunAdvanced) {
+          updateMessageById(
+            message.id,
+            (prev) => ({
+              ...prev,
+              runId: reattachRunId,
+              runStatus: status.status,
+              lastRunEventId: undefined,
+              strategyTaskPrefixLength: message.content.length,
+              strategyTaskPrefixEventCount: message.events?.length ?? 0,
+              ...(status.strategyTask?.taskExecutionId
+                ? { strategyTaskExecutionId: status.strategyTask.taskExecutionId }
+                : {}),
+            }),
+            true,
+          );
+        }
         if (!isTerminalRunStatus(status.status)) {
           abortRef.current = controller;
           cancelRef.current = cancelController;
@@ -5391,6 +5498,19 @@ export function ProjectView({
           status.status === 'queued' ||
           status.status === 'running' ||
           status.status === 'succeeded';
+        const taskPrefixLength = taskRunAdvanced
+          ? message.content.length
+          : Math.max(0, message.strategyTaskPrefixLength ?? 0);
+        const taskPrefixEventCount = taskRunAdvanced
+          ? message.events?.length ?? 0
+          : Math.max(0, message.strategyTaskPrefixEventCount ?? 0);
+        const preserveTaskPrefix = needsFullReplay && taskPrefixLength > 0;
+        const preservedTaskPrefixContent = preserveTaskPrefix
+          ? message.content.slice(0, taskPrefixLength)
+          : '';
+        const preservedTaskPrefixEvents = preserveTaskPrefix
+          ? [...(message.events ?? []).slice(0, taskPrefixEventCount)]
+          : [];
         if (needsFullReplay && daemonStatusIsRecoverable) {
           updateMessageById(
             message.id,
@@ -5402,7 +5522,14 @@ export function ProjectView({
             // keep their original terminal timestamp; resetting it here causes
             // prev.endedAt ?? Date.now() to re-stamp to reload time and drifts
             // persisted run durations forward.
-            (prev) => ({ ...prev, content: '', events: [], producedFiles: undefined, ...(spuriouslyFailedPending ? { endedAt: undefined } : {}) }),
+            (prev) => ({
+              ...prev,
+              content: preservedTaskPrefixContent,
+              events: preservedTaskPrefixEvents,
+              producedFiles: undefined,
+              ...(spuriouslyFailedPending ? { endedAt: undefined } : {}),
+            }),
+            true,
           );
           // When the failed-message recovery moves back to running/succeeded,
           // clear any stale "daemon stream disconnected" error banner that the
@@ -5430,8 +5557,16 @@ export function ProjectView({
         const parser = createArtifactParser();
         let parsedArtifact: Artifact | null = null;
         let liveHtml = '';
-        let replayedContent = needsFullReplay ? '' : message.content;
-        let replayedEvents: AgentEvent[] = needsFullReplay ? [] : [...(message.events ?? [])];
+        let replayedContent = needsFullReplay
+          ? preserveTaskPrefix
+            ? preservedTaskPrefixContent
+            : ''
+          : message.content;
+        let replayedEvents: AgentEvent[] = needsFullReplay
+          ? preserveTaskPrefix
+            ? preservedTaskPrefixEvents
+            : []
+          : [...(message.events ?? [])];
         let latestReattachRunStatus: ChatMessage['runStatus'] = status.status;
         let authoritativeReattachArtifactPaths = status.artifactPaths;
         const applyContentDelta = (delta: string) => {
@@ -5491,20 +5626,42 @@ export function ProjectView({
 
         const shouldPublishRunFinishedEvent =
           isActiveRunStatus(message.runStatus)
+          || isActiveRunStatus(status.status)
           || spuriouslyFailedPending
           || recoverableGenericDisconnectFailed;
         void reattachDaemonRun({
           agentId: message.agentId,
-          runId,
+          runId: reattachRunId,
           projectId: project.id,
           conversationId: reattachConversationId,
           workspaceContext: projectRunWorkspaceContext,
           signal: controller.signal,
           cancelSignal: cancelController.signal,
-          initialLastEventId: needsFullReplay ? null : message.lastRunEventId ?? null,
+          initialLastEventId:
+            needsFullReplay || taskRunAdvanced ? null : message.lastRunEventId ?? null,
           publishRunFinishedEvent: shouldPublishRunFinishedEvent,
           onArtifactPaths: (paths) => {
             authoritativeReattachArtifactPaths = paths;
+          },
+          onRunCreated: (nextRunId, strategyTask) => {
+            activeReattachRunId = nextRunId;
+            claimReattachRun(nextRunId);
+            textBuffer.flush();
+            updateMessageById(
+              message.id,
+              (prev) => ({
+                ...prev,
+                runId: nextRunId,
+                runStatus: 'running',
+                lastRunEventId: undefined,
+                strategyTaskPrefixLength: replayedContent.length,
+                strategyTaskPrefixEventCount: replayedEvents.length,
+                ...(strategyTask?.taskExecutionId
+                  ? { strategyTaskExecutionId: strategyTask.taskExecutionId }
+                  : {}),
+              }),
+              true,
+            );
           },
           handlers: {
             onDelta: (delta) => {
@@ -5549,9 +5706,8 @@ export function ProjectView({
               // Clear stale retry count for successfully recovered run.
               transientFailedRetriesRef.current.delete(runId);
               genericDisconnectRetriesRef.current.delete(runId);
-              completedReattachRunsRef.current.add(runId);
-              reattachControllersRef.current.delete(runId);
-              reattachCancelControllersRef.current.delete(runId);
+              completeReattachRuns();
+              releaseReattachRuns();
               clearCurrentRunStreamingMarker(reattachConversationId, controller, cancelController);
               // Clear any stale error banner set by the original onError path
               // (e.g. "daemon stream disconnected") so the chat does not show it
@@ -5576,8 +5732,8 @@ export function ProjectView({
               // daemon's terminal time. Re-probe now, at the end of
               // recovery, for the authoritative terminal `updatedAt`.
               const endedAt = await resolveTerminalEndedAt(
-                runId,
-                status,
+                activeReattachRunId,
+                activeReattachRunId === runId ? status : null,
                 projectRunWorkspaceContext,
               );
               updateMessageById(
@@ -5925,9 +6081,13 @@ export function ProjectView({
                         message.id,
                         (prev) => ({
                           ...removeErrorStatusEvent(prev, err.message, errorCode),
-                          content: '',
-                          events: [],
-                          runStatus: 'succeeded',
+                          content: preservedTaskPrefixContent,
+                          events: preservedTaskPrefixEvents,
+                          // A non-empty prefix would otherwise make the
+                          // terminal-replay heuristic treat this row as fully
+                          // restored. Keep it recoverable until the active
+                          // Run's complete visible suffix is replayed.
+                          runStatus: preserveTaskPrefix ? 'running' : 'succeeded',
                           // Adopt the daemon's authoritative terminal timestamp rather
                           // than the stale disconnect-time stamp taken when the generic
                           // disconnect first fired.
@@ -5975,7 +6135,7 @@ export function ProjectView({
                       { telemetryFinalized: true },
                     );
                     skipFinalPersistNow = true;
-                    completedReattachRunsRef.current.add(runId);
+                    completeReattachRuns();
                     genericDisconnectRetriesRef.current.delete(runId);
                     genericDisconnectBackoffUntilRef.current.delete(runId);
                   }
@@ -5986,10 +6146,9 @@ export function ProjectView({
                 transientFailedRetriesRef.current.delete(runId);
                 genericDisconnectRetriesRef.current.delete(runId);
                 genericDisconnectBackoffUntilRef.current.delete(runId);
-                completedReattachRunsRef.current.add(runId);
+                completeReattachRuns();
               }
-              reattachControllersRef.current.delete(runId);
-              reattachCancelControllersRef.current.delete(runId);
+              releaseReattachRuns();
               clearCurrentRunStreamingMarker(reattachConversationId, controller, cancelController);
               if (!skipFinalPersistNow) persistNow({ telemetryFinalized: true });
               if (shouldRetryAfterControllerCleanup && !shouldRefreshConversationAfterCleanup) {
@@ -6020,9 +6179,8 @@ export function ProjectView({
               transientFailedRetriesRef.current.delete(runId);
               genericDisconnectRetriesRef.current.delete(runId);
               genericDisconnectBackoffUntilRef.current.delete(runId);
-              completedReattachRunsRef.current.add(runId);
-              reattachControllersRef.current.delete(runId);
-              reattachCancelControllersRef.current.delete(runId);
+              completeReattachRuns();
+              releaseReattachRuns();
               clearCurrentRunStreamingMarker(reattachConversationId, controller, cancelController);
             }
             if (isTerminalRunStatus(runStatus)) {
@@ -6058,8 +6216,7 @@ export function ProjectView({
             textBuffer.cancel();
             unregisterTextBuffer();
             if (persistTimer) clearProjectTimeout(persistTimer);
-            reattachControllersRef.current.delete(runId);
-            reattachCancelControllersRef.current.delete(runId);
+            releaseReattachRuns();
             clearActiveRunRefs(reattachConversationId, controller, cancelController);
           });
       }
@@ -7812,17 +7969,39 @@ export function ProjectView({
             : {}),
           titleGeneration: isFirstTurn ? { enabled: true } : undefined,
           locale,
+          ...(meta?.strategyTaskExecutionId
+            ? { taskExecutionId: meta.strategyTaskExecutionId }
+            : {}),
           ...(runAnalyticsHints ? { analyticsHints: runAnalyticsHints } : {}),
-          onRunCreated: (runId) => {
+          onRunCreated: (runId, strategyTask) => {
+            // A successor boundary must include the final predecessor delta
+            // and buffered text event even when the 250ms UI batch has not
+            // fired yet.
+            textBuffer.flush();
             const resolvedTaskAnalytics = {
               ...taskAnalytics,
               initialRunId: taskAnalytics.initialRunId ?? runId,
             };
+            const strategyTaskExecutionId = strategyTask?.taskExecutionId
+              ?? meta?.strategyTaskExecutionId;
+            const isTaskSuccessor = Boolean(
+              strategyTask
+              && latestAssistantMsg.runId
+              && latestAssistantMsg.runId !== runId,
+            );
             const pinnedAssistant = {
               ...latestAssistantMsg,
               runId,
               runStatus: 'queued' as const,
               taskAnalytics: resolvedTaskAnalytics,
+              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(isTaskSuccessor
+                ? {
+                    strategyTaskPrefixLength: latestAssistantMsg.content.length,
+                    strategyTaskPrefixEventCount: latestAssistantMsg.events?.length ?? 0,
+                  }
+                : {}),
+              lastRunEventId: undefined,
             };
             latestAssistantMsg = pinnedAssistant;
             currentRunId = runId;
@@ -7836,6 +8015,14 @@ export function ProjectView({
               runId,
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,
+              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(isTaskSuccessor
+                ? {
+                    strategyTaskPrefixLength: prev.content.length,
+                    strategyTaskPrefixEventCount: prev.events?.length ?? 0,
+                  }
+                : {}),
+              lastRunEventId: undefined,
             }));
           },
           onArtifactPaths: (paths) => {
@@ -7981,6 +8168,9 @@ export function ProjectView({
           }),
           titleGeneration: isFirstTurn ? { enabled: true } : undefined,
           locale,
+          ...(meta?.strategyTaskExecutionId
+            ? { taskExecutionId: meta.strategyTaskExecutionId }
+            : {}),
           analyticsHints: {
             ...(meta?.entryFrom ? { entryFrom: meta.entryFrom } : {}),
             ...(byokSessionTurn
@@ -7996,16 +8186,32 @@ export function ProjectView({
             recoveryActionType: taskAnalytics.recoveryActionType,
             recoveryActionInstanceId: taskAnalytics.recoveryActionInstanceId,
           },
-          onRunCreated: (runId) => {
+          onRunCreated: (runId, strategyTask) => {
+            textBuffer.flush();
             const resolvedTaskAnalytics = {
               ...taskAnalytics,
               initialRunId: taskAnalytics.initialRunId ?? runId,
             };
+            const strategyTaskExecutionId = strategyTask?.taskExecutionId
+              ?? meta?.strategyTaskExecutionId;
+            const isTaskSuccessor = Boolean(
+              strategyTask
+              && latestAssistantMsg.runId
+              && latestAssistantMsg.runId !== runId,
+            );
             const pinnedAssistant = {
               ...latestAssistantMsg,
               runId,
               runStatus: 'queued' as const,
               taskAnalytics: resolvedTaskAnalytics,
+              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(isTaskSuccessor
+                ? {
+                    strategyTaskPrefixLength: latestAssistantMsg.content.length,
+                    strategyTaskPrefixEventCount: latestAssistantMsg.events?.length ?? 0,
+                  }
+                : {}),
+              lastRunEventId: undefined,
             };
             latestAssistantMsg = pinnedAssistant;
             void saveMessage(project.id, runConversationId, pinnedAssistant, {
@@ -8016,6 +8222,14 @@ export function ProjectView({
               runId,
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,
+              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(isTaskSuccessor
+                ? {
+                    strategyTaskPrefixLength: prev.content.length,
+                    strategyTaskPrefixEventCount: prev.events?.length ?? 0,
+                  }
+                : {}),
+              lastRunEventId: undefined,
             }));
           },
           onRunStatus: (runStatus) => {
@@ -10973,6 +11187,9 @@ export function ProjectView({
                   ...(context ? { context } : {}),
                   ...(questionTaskAnalytics
                     ? { taskAnalytics: questionTaskAnalytics }
+                    : {}),
+                  ...(sourceAssistant?.strategyTaskExecutionId
+                    ? { strategyTaskExecutionId: sourceAssistant.strategyTaskExecutionId }
                     : {}),
                 });
               }}

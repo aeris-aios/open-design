@@ -1,7 +1,10 @@
 import type { Server } from 'node:http';
+import { execFile } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppliedStrategyBindingV2,
@@ -63,6 +66,11 @@ type Invocation = {
 };
 
 const THREAD_ID = '019fffaa-0000-7000-8000-000000000010';
+const execFileP = promisify(execFile);
+const DAEMON_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REPO_ROOT = path.resolve(DAEMON_ROOT, '../..');
+const CLI_SRC = path.resolve(DAEMON_ROOT, 'src/cli.ts');
+const TSX_CLI = path.resolve(REPO_ROOT, 'node_modules/tsx/dist/cli.mjs');
 const EXECUTION_PREFLIGHT = {
   productionRoutes: [{ id: 'html', available: true }],
   dependencies: [],
@@ -169,6 +177,45 @@ describe('OD Next automatic production through the real server', () => {
     expect(statuses.at(-1)?.strategyTask).toMatchObject({
       taskExecutionId: fixture.taskExecutionId,
       inputStage: 'production',
+      outcome: 'completed',
+      terminal: true,
+    });
+    const resultPackageResponse = await fetch(
+      `${started!.url}/api/runs/${fixture.initialRunId}/result-package`,
+    );
+    expect(resultPackageResponse.status).toBe(200);
+    const resultPackage = await resultPackageResponse.json() as {
+      run: { id: string };
+      strategyTask?: RunStatus['strategyTask'];
+    };
+    expect(resultPackage.run.id).toBe(terminal.terminalRunId);
+    expect(resultPackage.strategyTask).toMatchObject({
+      taskExecutionId: fixture.taskExecutionId,
+      inputStage: 'production',
+      outcome: 'completed',
+      terminal: true,
+    });
+    const watched = await runOdCli([
+      'run',
+      'watch',
+      fixture.initialRunId,
+      '--daemon-url',
+      started!.url,
+    ]);
+    const watchedEnds = watched.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { event: string; data: RunStatus })
+      .filter((event) => event.event === 'end');
+    expect(watched.stdout).toContain('Prepared a simple plan.');
+    expect(watched.stdout).not.toContain('<open-design-plan-contract>');
+    expect(watched.stdout).not.toContain('<open-design-runtime-state>');
+    expect(watchedEnds.map((event) => event.data.strategyTask?.inputStage)).toEqual([
+      'contract_repair',
+      'production',
+      'production',
+    ]);
+    expect(watchedEnds.at(-1)?.data.strategyTask).toMatchObject({
       outcome: 'completed',
       terminal: true,
     });
@@ -474,6 +521,17 @@ describe('OD Next automatic production through the real server', () => {
     };
   }
 });
+
+async function runOdCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  return execFileP(process.execPath, [TSX_CLI, CLI_SRC, ...args], {
+    cwd: DAEMON_ROOT,
+    env,
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+}
 
 function database() {
   const dataDir = process.env.OD_DATA_DIR;
