@@ -80,6 +80,7 @@ export type LangfuseDropReason =
   | 'payload_too_large'
   | 'payload_build_error'
   | 'export_mapping_mismatch'
+  | 'task_hierarchy_rollout'
   | 'relay_429'
   | 'relay_413'
   | 'relay_5xx'
@@ -2249,6 +2250,8 @@ async function postVelaBatch(
   opts: {
     allowAnonymousAuthFallback?: boolean;
     deliveryIdempotencyKey?: string;
+    fallbackConfig?: TelemetrySinkConfig | null;
+    maxTotalAttempts?: number;
     onAttempt?: TransportAttemptObserver;
   } = {},
 ): Promise<LangfuseDeliveryState> {
@@ -2260,10 +2263,16 @@ async function postVelaBatch(
   const envelope = buildVelaEnvelope(batch, installationId);
   const body = JSON.stringify(envelope);
   const idempotencyKey = opts.deliveryIdempotencyKey ?? velaIdempotencyKey(envelope);
-  const attempts = config.retries + 1;
+  const maxTotalAttempts = Math.max(
+    1,
+    opts.maxTotalAttempts ?? Number.MAX_SAFE_INTEGER,
+  );
+  const attempts = Math.min(config.retries + 1, maxTotalAttempts);
+  let attemptCount = 0;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      attemptCount += 1;
       opts.onAttempt?.();
       const response = await fetchImpl(
         `${config.apiUrl}/api/v1/open-design/telemetry`,
@@ -2290,18 +2299,25 @@ async function postVelaBatch(
         allowAnonymousAuthFallback &&
         (response.status === 401 || response.status === 403)
       ) {
-        const fallback = readTelemetrySinkConfig();
-        if (fallback) {
+        const fallback = opts.fallbackConfig === undefined
+          ? readTelemetrySinkConfig()
+          : opts.fallbackConfig;
+        const fallbackAttempts = maxTotalAttempts - attemptCount;
+        if (fallback && fallbackAttempts > 0) {
+          const cappedFallback = {
+            ...fallback,
+            retries: Math.min(fallback.retries, fallbackAttempts - 1),
+          };
           const serialized = JSON.stringify({ batch });
-          return fallback.kind === 'relay'
+          return cappedFallback.kind === 'relay'
             ? postRelayBatch(
-                fallback,
+                cappedFallback,
                 serialized,
                 fetchImpl,
                 opts.onAttempt,
                 opts.deliveryIdempotencyKey,
               )
-            : postLangfuseBatch(fallback, batch, fetchImpl, opts.onAttempt);
+            : postLangfuseBatch(cappedFallback, batch, fetchImpl, opts.onAttempt);
         }
       }
       if (
@@ -2341,6 +2357,83 @@ async function postVelaBatch(
     langfuse_delivery_status: 'failed',
     langfuse_drop_reason: 'network_error',
   };
+}
+
+export interface PostLegacyTelemetryBatchOptions {
+  installationId?: string | null;
+  fetchImpl?: typeof fetch;
+  deliveryIdempotencyKey?: string;
+  fallbackConfig?: TelemetrySinkConfig | null;
+  maxTotalAttempts?: number;
+  onAttempt?: () => void;
+}
+
+/**
+ * Deliver an already-sanitized legacy ingestion batch through the same
+ * effective sink priority as the single-Run compatibility exporter.
+ *
+ * Task-level observability owns payload assembly and durable delivery state;
+ * this helper owns only the existing Vela/Relay/direct wire behavior. Keeping
+ * the sink routing here prevents the rollout service from learning credentials
+ * or reimplementing fallback semantics.
+ */
+export async function postLegacyTelemetryBatch(
+  config: RunTelemetrySinkConfig,
+  batch: unknown[],
+  options: PostLegacyTelemetryBatchOptions = {},
+): Promise<LangfuseDeliveryState> {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (config.kind === 'langfuse') {
+    return postLangfuseBatch(config, batch, fetchImpl, options.onAttempt);
+  }
+  if (config.kind === 'relay') {
+    return postRelayBatch(
+      config,
+      JSON.stringify({ batch }),
+      fetchImpl,
+      options.onAttempt,
+      options.deliveryIdempotencyKey,
+    );
+  }
+  const installationId = options.installationId?.trim() ?? '';
+  if (installationId) {
+    return postVelaBatch(config, batch, installationId, fetchImpl, {
+      ...(options.deliveryIdempotencyKey
+        ? { deliveryIdempotencyKey: options.deliveryIdempotencyKey }
+        : {}),
+      ...(options.onAttempt ? { onAttempt: options.onAttempt } : {}),
+      ...(options.fallbackConfig !== undefined
+        ? { fallbackConfig: options.fallbackConfig }
+        : {}),
+      ...(options.maxTotalAttempts !== undefined
+        ? { maxTotalAttempts: options.maxTotalAttempts }
+        : {}),
+    });
+  }
+  const fallback = options.fallbackConfig === undefined
+    ? readTelemetrySinkConfig()
+    : options.fallbackConfig;
+  if (!fallback) {
+    return {
+      langfuse_expected: false,
+      langfuse_delivery_status: 'not_expected',
+      langfuse_drop_reason: 'missing_sink_config',
+    };
+  }
+  const fallbackAttempts = Math.max(1, options.maxTotalAttempts ?? fallback.retries + 1);
+  const cappedFallback = {
+    ...fallback,
+    retries: Math.min(fallback.retries, fallbackAttempts - 1),
+  };
+  return cappedFallback.kind === 'relay'
+    ? postRelayBatch(
+        cappedFallback,
+        JSON.stringify({ batch }),
+        fetchImpl,
+        options.onAttempt,
+        options.deliveryIdempotencyKey,
+      )
+    : postLangfuseBatch(cappedFallback, batch, fetchImpl, options.onAttempt);
 }
 
 function waitBeforeRetry(attempt: number): Promise<void> {

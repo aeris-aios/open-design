@@ -527,6 +527,250 @@ describe('Langfuse message finalization gate', () => {
     }));
   });
 
+  it('routes mapped send-mode runs to one task hierarchy without changing execution outcome', async () => {
+    const run = {
+      id: 'run-task-hierarchy',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const beginTelemetryDelivery = vi.fn(() => ({
+      version: 1,
+      idempotencyKey: 'od-run-telemetry-v1-task-hierarchy',
+      status: 'in_flight',
+      attemptCount: 1,
+      crashWindow: true,
+      startedAt: 1,
+    }));
+    const finalizeTelemetryDelivery = vi.fn();
+    const completion = Promise.resolve({ action: 'sent' });
+    const beginFinalizeForRun = vi.fn(() => ({
+      durableTaskTruth: true,
+      suppressSingleRun: true,
+      completion,
+    }));
+    const finalizeForRun = vi.fn(async () => ({ action: 'sent' }));
+    const report = vi.fn();
+    const reportedRuns = new Set<string>();
+    const reporter = createFinalizedMessageTelemetryReporter({
+      design: {
+        runs: {
+          get: vi.fn(() => run),
+          beginTelemetryDelivery,
+          finalizeTelemetryDelivery,
+        },
+      },
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns,
+      taskObservationRollout: {
+        modeForRun: vi.fn(() => 'send' as const),
+        beginFinalizeForRun,
+        finalizeForRun,
+      },
+      report,
+    });
+
+    reporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+
+    expect(report).not.toHaveBeenCalled();
+    expect(beginFinalizeForRun).toHaveBeenCalledWith(run.id);
+    expect(finalizeForRun).not.toHaveBeenCalled();
+    expect(beginTelemetryDelivery).toHaveBeenCalledWith(run);
+    expect(beginFinalizeForRun.mock.invocationCallOrder[0]).toBeLessThan(
+      beginTelemetryDelivery.mock.invocationCallOrder[0]!,
+    );
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
+      langfuse_expected: false,
+      langfuse_delivery_status: 'not_expected',
+      langfuse_drop_reason: 'task_hierarchy_rollout',
+      langfuse_attempt_count: 0,
+      langfuse_idempotency_key: 'od-run-telemetry-v1-task-hierarchy',
+    });
+    expect(reportedRuns).toContain(run.id);
+    expect(run.status).toBe('succeeded');
+  });
+
+  it('does not upgrade an observed task to hierarchy send after restart', async () => {
+    const run: any = {
+      id: 'run-observe-then-send',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const legacyReport = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+    const taskNetwork = vi.fn();
+    let observed = false;
+    const beginTelemetryDelivery = vi.fn(() =>
+      run.telemetryDelivery ?? {
+        version: 1,
+        idempotencyKey: 'od-run-telemetry-v1-observe-then-send',
+        status: 'in_flight',
+        attemptCount: 0,
+        crashWindow: true,
+        startedAt: 1,
+      });
+    const finalizeTelemetryDelivery = vi.fn((_run: any, delivery: any) => {
+      if (run.telemetryDelivery?.finalizedAt) return;
+      run.telemetryDelivery = {
+        version: 1,
+        idempotencyKey: 'od-run-telemetry-v1-observe-then-send',
+        status: delivery.langfuse_delivery_status,
+        attemptCount: delivery.langfuse_attempt_count ?? 1,
+        crashWindow: false,
+        finalizedAt: 2,
+      };
+    });
+    const design = {
+      runs: {
+        get: vi.fn(() => run),
+        beginTelemetryDelivery,
+        finalizeTelemetryDelivery,
+      },
+    };
+    const observeReporter = createFinalizedMessageTelemetryReporter({
+      design,
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      taskObservationRollout: {
+        modeForRun: () => 'observe',
+        beginFinalizeForRun: vi.fn(),
+        finalizeForRun: vi.fn(async () => {
+          observed = true;
+          return { action: 'observed' };
+        }),
+      },
+      report: legacyReport,
+    });
+
+    observeReporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observed).toBe(true);
+    expect(legacyReport).toHaveBeenCalledOnce();
+    expect(run.telemetryDelivery).toMatchObject({
+      status: 'accepted',
+      finalizedAt: 2,
+    });
+
+    const beginFinalizeForRun = vi.fn(() => ({
+      durableTaskTruth: observed,
+      suppressSingleRun: observed,
+      completion: observed
+        ? Promise.resolve({ action: 'already_finalized' })
+        : Promise.resolve(taskNetwork()),
+    }));
+    const sendReporter = createFinalizedMessageTelemetryReporter({
+      design,
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      taskObservationRollout: {
+        modeForRun: () => 'send',
+        beginFinalizeForRun,
+        finalizeForRun: vi.fn(async () => ({ action: 'already_finalized' })),
+      },
+      report: legacyReport,
+    });
+
+    sendReporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1235 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+
+    expect(taskNetwork).not.toHaveBeenCalled();
+    expect(beginFinalizeForRun).toHaveBeenCalledWith(run.id);
+    expect(legacyReport).toHaveBeenCalledOnce();
+    expect(run.telemetryDelivery).toMatchObject({
+      status: 'accepted',
+      finalizedAt: 2,
+    });
+  });
+
+  it('keeps the single-run compatibility obligation when the task claim fails', async () => {
+    const run = {
+      id: 'run-task-claim-failed',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const beginTelemetryDelivery = vi.fn(() => ({
+      version: 1,
+      idempotencyKey: 'od-run-telemetry-v1-claim-fallback',
+      status: 'in_flight',
+      attemptCount: 0,
+      crashWindow: true,
+      startedAt: 1,
+    }));
+    const finalizeTelemetryDelivery = vi.fn();
+    const report = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+    const reporter = createFinalizedMessageTelemetryReporter({
+      design: {
+        runs: {
+          get: vi.fn(() => run),
+          beginTelemetryDelivery,
+          finalizeTelemetryDelivery,
+        },
+      },
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      taskObservationRollout: {
+        modeForRun: () => 'send',
+        beginFinalizeForRun: () => {
+          throw new Error('synthetic task store unavailable');
+        },
+        finalizeForRun: vi.fn(),
+      },
+      report,
+    });
+
+    reporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(report).toHaveBeenCalledOnce();
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+    });
+    expect(finalizeTelemetryDelivery).not.toHaveBeenCalledWith(
+      run,
+      expect.objectContaining({ langfuse_drop_reason: 'task_hierarchy_rollout' }),
+    );
+    expect(run.status).toBe('succeeded');
+  });
+
   it.each([
     {
       label: 'not_expected',

@@ -336,6 +336,192 @@ describe('durable run terminal reconciliation', () => {
       });
   });
 
+  it('terminalizes mapped send-mode single-run recovery without a legacy network replay', async () => {
+    const runId = 'run-task-rollout-upgrade';
+    const runDir = path.join(tmpDir, runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: runId,
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: 'm1',
+      agentId: 'codex',
+      status: 'failed',
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      errorCode: 'AGENT_EXIT_1',
+      telemetryDelivery: {
+        version: 1,
+        idempotencyKey: 'od-run-telemetry-v1-upgrade-fixture',
+        status: 'in_flight',
+        attemptCount: 1,
+        crashWindow: true,
+        startedAt: 1_900,
+      },
+    }));
+    const reportLangfuse = vi.fn();
+    let crashBeforeTaskClaim = true;
+    const beginTaskObservationForRun = vi.fn(() => {
+      if (crashBeforeTaskClaim) {
+        crashBeforeTaskClaim = false;
+        throw new Error('simulated crash before task delivery claim');
+      }
+      return {
+        suppressSingleRun: true,
+        completion: Promise.resolve({ action: 'sent' }),
+      };
+    });
+    const options = {
+      analytics: { capture: vi.fn() },
+      appVersion: '0.15.1',
+      db,
+      reportLangfuse,
+      taskObservationModeForRun: vi.fn(() => 'send' as const),
+      beginTaskObservationForRun,
+      runsLogDir: tmpDir,
+    };
+
+    await expect(reconcileDurableRunTerminals(options)).rejects.toThrow(
+      'simulated crash before task delivery claim',
+    );
+    expect(reportLangfuse).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(path.join(runDir, 'state.json'), 'utf8')))
+      .toMatchObject({
+        telemetryDelivery: { status: 'in_flight', crashWindow: true },
+      });
+
+    await expect(reconcileDurableRunTerminals(options)).resolves.toMatchObject({
+      langfuseReplayed: 1,
+    });
+    await expect(reconcileDurableRunTerminals(options)).resolves.toMatchObject({
+      langfuseReplayed: 0,
+    });
+
+    expect(reportLangfuse).not.toHaveBeenCalled();
+    expect(beginTaskObservationForRun).toHaveBeenCalledTimes(2);
+    expect(beginTaskObservationForRun).toHaveBeenNthCalledWith(1, runId);
+    expect(beginTaskObservationForRun).toHaveBeenNthCalledWith(2, runId);
+    expect(JSON.parse(fs.readFileSync(path.join(runDir, 'state.json'), 'utf8')))
+      .toMatchObject({
+        langfuseCompletedAt: expect.any(Number),
+        telemetryDelivery: {
+          status: 'not_expected',
+          attemptCount: 1,
+          crashWindow: false,
+          dropReason: 'task_hierarchy_rollout',
+          finalizedAt: expect.any(Number),
+        },
+      });
+  });
+
+  it.each(['off', 'observe'] as const)(
+    'preserves legacy startup delivery in %s task-observation mode',
+    async (mode) => {
+      const runId = `run-task-rollout-${mode}`;
+      const runDir = path.join(tmpDir, runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+        schemaVersion: 1,
+        id: runId,
+        projectId: 'p1',
+        conversationId: 'c1',
+        assistantMessageId: 'm1',
+        agentId: 'codex',
+        status: 'failed',
+        createdAt: 1_000,
+        updatedAt: 2_000,
+        telemetryDelivery: {
+          version: 1,
+          idempotencyKey: `od-run-telemetry-v1-${mode}`,
+          status: 'in_flight',
+          attemptCount: 0,
+          crashWindow: true,
+          startedAt: 1_900,
+        },
+      }));
+      const reportLangfuse = vi.fn(async () => ({
+        langfuse_expected: true,
+        langfuse_delivery_status: 'accepted' as const,
+      }));
+      const beginTaskObservationForRun = vi.fn(() => ({
+        suppressSingleRun: false,
+        completion: Promise.resolve(),
+      }));
+
+      await reconcileDurableRunTerminals({
+        analytics: { capture: vi.fn() },
+        appVersion: '0.15.1',
+        db,
+        reportLangfuse,
+        taskObservationModeForRun: () => mode,
+        beginTaskObservationForRun,
+        runsLogDir: tmpDir,
+      });
+
+      expect(reportLangfuse).toHaveBeenCalledOnce();
+      expect(beginTaskObservationForRun).toHaveBeenCalledTimes(
+        mode === 'observe' ? 1 : 0,
+      );
+    },
+  );
+
+  it('keeps startup observe best-effort when local finalization rejects', async () => {
+    const runId = 'run-task-rollout-observe-reject';
+    const runDir = path.join(tmpDir, runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: runId,
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: 'm1',
+      agentId: 'codex',
+      status: 'failed',
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      telemetryDelivery: {
+        version: 1,
+        idempotencyKey: 'od-run-telemetry-v1-observe-reject',
+        status: 'in_flight',
+        attemptCount: 0,
+        crashWindow: true,
+        startedAt: 1_900,
+      },
+    }));
+    const reportLangfuse = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(reconcileDurableRunTerminals({
+      analytics: { capture: vi.fn() },
+      appVersion: '0.15.1',
+      db,
+      reportLangfuse,
+      taskObservationModeForRun: () => 'observe',
+      beginTaskObservationForRun: () => ({
+        suppressSingleRun: false,
+        completion: Promise.reject(new Error('synthetic observe failure')),
+      }),
+      runsLogDir: tmpDir,
+    })).resolves.toMatchObject({ langfuseReplayed: 1 });
+
+    expect(warn).toHaveBeenCalledWith(
+      '[telemetry] task observation failed in startup observe mode',
+    );
+    expect(reportLangfuse).toHaveBeenCalledOnce();
+    expect(JSON.parse(fs.readFileSync(path.join(runDir, 'state.json'), 'utf8')))
+      .toMatchObject({
+        telemetryDelivery: {
+          status: 'accepted',
+          crashWindow: false,
+          finalizedAt: expect.any(Number),
+        },
+      });
+  });
+
   it('retries an accepted telemetry delivery after a crash before checkpoint', async () => {
     const runId = 'run-langfuse-crash-window';
     const runDir = path.join(tmpDir, runId);

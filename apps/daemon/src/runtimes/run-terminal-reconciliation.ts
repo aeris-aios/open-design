@@ -86,6 +86,11 @@ interface ReconciliationOptions {
   appVersionInfo?: unknown;
   db: Database.Database;
   reportLangfuse(args: Record<string, unknown>): unknown | Promise<unknown>;
+  taskObservationModeForRun?: (runId: string) => 'off' | 'observe' | 'send';
+  beginTaskObservationForRun?: (runId: string) => {
+    suppressSingleRun: boolean;
+    completion: Promise<unknown>;
+  };
   runsLogDir: string;
 }
 
@@ -383,22 +388,52 @@ export async function reconcileDurableRunTerminals(
       // here until the terminal result write, this exact in-flight marker is
       // the only startup-replay eligibility signal.
       writeState(entry.filePath, state);
-      const rawDelivery = await Promise.resolve(options.reportLangfuse({
-        db: options.db,
-        dataDir: path.dirname(options.runsLogDir),
-        run: hydrateRun(state, events),
-        persistedRunStatus: state.status,
-        persistedEndedAt: state.updatedAt,
-        appVersion: options.appVersionInfo ?? null,
-        deliveryIdempotencyKey: state.telemetryDelivery.idempotencyKey,
-        onDeliveryAttempt: () => {
-          state.telemetryDelivery = recordRunTelemetryDeliveryAttempt(
-            state.telemetryDelivery,
-            state.id,
-          );
-          writeState(entry.filePath, state);
-        },
-      }));
+      const taskObservationMode = options.taskObservationModeForRun?.(state.id) ?? 'off';
+      let suppressSingleRun = false;
+      if (taskObservationMode === 'observe') {
+        // Observe is best effort and must never own or block the compatibility
+        // obligation. A local aggregation/storage fault still replays the
+        // legacy single-Run delivery below.
+        try {
+          const handle = options.beginTaskObservationForRun?.(state.id);
+          if (handle) await handle.completion;
+        } catch {
+          console.warn('[telemetry] task observation failed in startup observe mode');
+        }
+      } else if (taskObservationMode === 'send') {
+        // Claim/finalize task delivery before deciding whether it owns this
+        // Run. Persisted observed rows return suppressSingleRun=false because
+        // their compatibility trace remains the permanent delivery contract.
+        if (!options.beginTaskObservationForRun) {
+          throw new Error('Task observation send mode requires a startup finalizer.');
+        }
+        const handle = options.beginTaskObservationForRun(state.id);
+        await handle.completion;
+        suppressSingleRun = handle.suppressSingleRun;
+      }
+      const rawDelivery = suppressSingleRun
+        ? {
+            langfuse_expected: false,
+            langfuse_delivery_status: 'not_expected',
+            langfuse_drop_reason: 'task_hierarchy_rollout',
+            langfuse_attempt_count: 0,
+          }
+        : await Promise.resolve(options.reportLangfuse({
+            db: options.db,
+            dataDir: path.dirname(options.runsLogDir),
+            run: hydrateRun(state, events),
+            persistedRunStatus: state.status,
+            persistedEndedAt: state.updatedAt,
+            appVersion: options.appVersionInfo ?? null,
+            deliveryIdempotencyKey: state.telemetryDelivery.idempotencyKey,
+            onDeliveryAttempt: () => {
+              state.telemetryDelivery = recordRunTelemetryDeliveryAttempt(
+                state.telemetryDelivery,
+                state.id,
+              );
+              writeState(entry.filePath, state);
+            },
+          }));
       const delivery: RunTelemetryDeliveryResult = isObject(rawDelivery)
         && typeof rawDelivery.langfuse_expected === 'boolean'
         && typeof rawDelivery.langfuse_delivery_status === 'string'

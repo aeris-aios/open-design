@@ -20,6 +20,7 @@ import {
   safeTaskObservationUsageValueSources,
   safeTaskObservationUsageValues,
   strategyTaskRootObservationId,
+  type TaskObservationExportContextV1,
   type StrategyTaskObservationAggregateV1,
 } from './task-observation-aggregation.js';
 
@@ -38,6 +39,7 @@ export interface TaskObservationExportOptions {
   fetchImpl?: typeof fetch;
   deliveryIdempotencyKey?: string;
   onDeliveryAttempt?: () => void;
+  context?: TaskObservationExportContextV1;
   /** Test-only retry delay override. Production callers should omit it. */
   retryDelayMs?: number;
 }
@@ -183,6 +185,7 @@ function attributes(
 
 function taskTraceAttributes(
   aggregate: StrategyTaskObservationAggregateV1,
+  context?: TaskObservationExportContextV1,
 ): OtlpAttribute[] {
   const limitations = safeTaskObservationLimitationCodes(aggregate.limitations);
   return attributes([
@@ -193,7 +196,12 @@ function taskTraceAttributes(
       'od-next-strategy-v2',
       aggregate.root.route,
       aggregate.root.executionMode,
+      ...(context
+        ? [`environment:${context.environment}`, `rollout:${context.tag}`]
+        : []),
     ].filter((value): value is string => typeof value === 'string')],
+    ['deployment.environment.name', context?.environment],
+    ['langfuse.trace.metadata.rollout_tag', context?.tag],
     ['langfuse.trace.metadata.task_execution_id', aggregate.root.taskExecutionId],
     ['langfuse.trace.metadata.route', aggregate.root.route],
     ['langfuse.trace.metadata.execution_mode', aggregate.root.executionMode],
@@ -435,6 +443,7 @@ function buildObservationSpan(
  */
 export function buildOtlpTaskObservationPayload(
   aggregate: StrategyTaskObservationAggregateV1,
+  context?: TaskObservationExportContextV1,
 ): OtlpTraceExportRequestV1 {
   const traceId = otlpTaskTraceId(aggregate.root.taskExecutionId);
   const rootObservationId = strategyTaskRootObservationId(aggregate.root.taskExecutionId);
@@ -442,7 +451,7 @@ export function buildOtlpTaskObservationPayload(
     throw new Error('Task aggregate root does not use its stable observation identity.');
   }
   const rootSpanId = otlpTaskSpanId(aggregate.root.observationId);
-  const propagated = taskTraceAttributes(aggregate);
+  const propagated = taskTraceAttributes(aggregate, context);
   const spans = [
     buildRootSpan(aggregate, traceId, rootSpanId, propagated),
     ...aggregate.observations.map((observation) => (
@@ -554,6 +563,7 @@ export function legacyAndOtlpTaskMappingsMatch(
   aggregate: StrategyTaskObservationAggregateV1,
   legacyBatch: readonly unknown[],
   otlpPayload: OtlpTraceExportRequestV1,
+  context?: TaskObservationExportContextV1,
 ): boolean {
   const legacyEvents = legacyBatch.filter((event): event is {
     type: string;
@@ -592,7 +602,7 @@ export function legacyAndOtlpTaskMappingsMatch(
   const root = spans.find((span) => (
     attributeValue(span, 'langfuse.observation.metadata.observation_id') === aggregate.root.observationId
   ));
-  const propagatedTraceAttributes = taskTraceAttributes(aggregate);
+  const propagatedTraceAttributes = taskTraceAttributes(aggregate, context);
   const expectedTraceId = otlpTaskTraceId(aggregate.root.taskExecutionId);
   const expectedRootInput = jsonString({
     taskExecutionId: aggregate.root.taskExecutionId,
@@ -892,6 +902,7 @@ export async function exportTaskObservationAggregate(
     aggregate,
     prefs: opts.prefs,
     hasEffectiveSink: opts.config !== null,
+    ...(opts.context ? { context: opts.context } : {}),
   });
   if (!plan.expectation.expected) {
     return withDiagnostics({
@@ -905,8 +916,8 @@ export async function exportTaskObservationAggregate(
   try {
     const legacyBatch = plan.batch;
     if (mode === 'otlp') {
-      const otlpPayload = buildOtlpTaskObservationPayload(aggregate);
-      if (!legacyAndOtlpTaskMappingsMatch(aggregate, legacyBatch, otlpPayload)) {
+      const otlpPayload = buildOtlpTaskObservationPayload(aggregate, opts.context);
+      if (!legacyAndOtlpTaskMappingsMatch(aggregate, legacyBatch, otlpPayload, opts.context)) {
         return withDiagnostics({
           langfuse_expected: true,
           langfuse_delivery_status: 'failed',
@@ -926,7 +937,8 @@ export async function exportTaskObservationAggregate(
       ? legacyAndOtlpTaskMappingsMatch(
           aggregate,
           legacyBatch,
-          buildOtlpTaskObservationPayload(aggregate),
+          buildOtlpTaskObservationPayload(aggregate, opts.context),
+          opts.context,
         )
       : true;
     let attemptCount = 0;

@@ -499,6 +499,7 @@ import {
   readRunTelemetrySinkConfig,
 } from './langfuse-trace.js';
 import { reconcileDurableRunTerminals } from './runtimes/run-terminal-reconciliation.js';
+import { createTaskObservationRolloutService } from './observability/task-observation-rollout.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { newInsertId, readAnalyticsContext, type AnalyticsService } from './analytics.js';
 import {
@@ -1974,6 +1975,7 @@ export function createFinalizedMessageTelemetryReporter({
   db,
   dataDir,
   reportedRuns,
+  taskObservationRollout,
   getAppVersion = () => null,
   report = reportRunCompletedFromDaemon,
 }: {
@@ -1981,6 +1983,15 @@ export function createFinalizedMessageTelemetryReporter({
   db: unknown;
   dataDir: string;
   reportedRuns: Set<string>;
+  taskObservationRollout?: {
+    modeForRun(runId: string): 'off' | 'observe' | 'send';
+    beginFinalizeForRun(runId: string): {
+      durableTaskTruth: boolean;
+      suppressSingleRun: boolean;
+      completion: Promise<unknown>;
+    };
+    finalizeForRun(runId: string): Promise<unknown>;
+  };
   getAppVersion?: () => any;
   report?: typeof reportRunCompletedFromDaemon;
 }) {
@@ -2078,6 +2089,64 @@ export function createFinalizedMessageTelemetryReporter({
         status: saved.runStatus,
       });
       return;
+    }
+    const taskObservationMode = taskObservationRollout?.modeForRun(run.id) ?? 'off';
+    if (taskObservationMode === 'observe') {
+      void taskObservationRollout!.finalizeForRun(run.id).catch((error) => {
+        console.warn('[telemetry] task observation failed in observe mode', String(error));
+      });
+    } else if (taskObservationMode === 'send') {
+      let taskCompletion: Promise<unknown> | null = null;
+      try {
+        // Establish task-level durable truth before erasing the compatibility
+        // single-Run obligation. The returned completion may continue across
+        // network I/O, but the SQLite claim is already committed here.
+        const handle = taskObservationRollout!.beginFinalizeForRun(run.id);
+        if (handle.suppressSingleRun) taskCompletion = handle.completion;
+      } catch (error) {
+        // A claim/storage failure leaves this Run on the compatibility path;
+        // never suppress the only recoverable telemetry obligation.
+        console.warn('[telemetry] task observation claim failed', String(error));
+      }
+      if (!taskCompletion) {
+        // Fall through to the existing single-Run reporter below.
+      } else {
+        // A task hierarchy replaces, rather than supplements, every mapped
+        // single-Run trace. Persist this compatibility delivery as terminal so
+        // startup reconciliation cannot resurrect it after a daemon restart.
+        const deliveryAttempt = design.runs.beginTelemetryDelivery?.(run);
+        const delivery = {
+          langfuse_expected: false,
+          langfuse_delivery_status: 'not_expected',
+          langfuse_drop_reason: 'task_hierarchy_rollout',
+          langfuse_attempt_count: 0,
+          ...(deliveryAttempt?.idempotencyKey
+            ? { langfuse_idempotency_key: deliveryAttempt.idempotencyKey }
+            : {}),
+        };
+        design.runs.finalizeTelemetryDelivery?.(run, delivery);
+        reportedRuns.add(run.id);
+        captureResult({
+          analyticsContext: options.analyticsContext,
+          conversationId: options.conversationId ?? saved.conversationId,
+          delivery,
+          projectId: options.projectId,
+          reportTrigger,
+          reportResult: 'skipped',
+          run,
+          runId: run.id,
+          skipReason: 'not_expected',
+          status: saved.runStatus,
+        });
+        void taskCompletion.catch((error) => {
+          // Observability is deliberately detached from execution completion.
+          // The task rollout service persists a terminal delivery result for all
+          // expected transport failures; this catch only protects composition or
+          // storage faults from escaping the finalized-message path.
+          console.warn('[telemetry] task observation delivery failed', String(error));
+        });
+        return;
+      }
     }
     const existingDelivery = run.telemetryDelivery;
     if (
@@ -7170,6 +7239,22 @@ export async function startServer({
     claimAssistantMessage: (run, options) =>
       pinAssistantMessageOnRunCreate(db, run, options),
   });
+  const taskObservationRollout = createTaskObservationRolloutService({
+    db,
+    getRun: (runId) => design.runs.get(runId),
+    readTelemetry: async () => {
+      const appConfig = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
+      return {
+        prefs: appConfig.telemetry ?? {},
+        installationId: appConfig.installationId ?? null,
+      };
+    },
+    configuredEnv: configuredAmrEnv,
+  });
+  console.info(
+    '[telemetry] effective task observation rollout',
+    taskObservationRollout.diagnostic(),
+  );
 
   // Runs are process-local, but their terminal obligations are durable. On a
   // fresh daemon boot, repair stale message rows and replay any PostHog or
@@ -7181,10 +7266,18 @@ export async function startServer({
     appVersionInfo: telemetry.getCachedAppVersion(),
     db,
     reportLangfuse: reportRunCompletedFromDaemon,
+    taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
+    beginTaskObservationForRun: (runId) => taskObservationRollout.beginFinalizeForRun(runId),
     runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
-  }).then((reconciled) => {
+  }).then(async (reconciled) => {
     if (reconciled.interrupted > 0 || reconciled.messagesReconciled > 0) {
       console.warn('[runs] reconciled interrupted run terminals', reconciled);
+    }
+    const taskObservationsRecovered = await taskObservationRollout.reconcileCrashWindows();
+    if (taskObservationsRecovered > 0) {
+      console.warn('[telemetry] reconciled task observation crash windows', {
+        recovered: taskObservationsRecovered,
+      });
     }
   }).catch((error) => {
     console.warn('[runs] terminal reconciliation failed', error);
@@ -7205,6 +7298,7 @@ export async function startServer({
     db,
     dataDir: RUNTIME_DATA_DIR,
     reportedRuns,
+    taskObservationRollout,
     getAppVersion: telemetry.getCachedAppVersion,
   });
   const reportRunCompletionTelemetryFallback = ({

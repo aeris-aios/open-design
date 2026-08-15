@@ -108,6 +108,11 @@ export interface LegacyTaskObservationExportPlan {
   batch: unknown[];
 }
 
+export interface TaskObservationExportContextV1 {
+  environment: string;
+  tag: string;
+}
+
 export class InvalidTaskObservationAggregateError extends Error {
   constructor(message: string) {
     super(message);
@@ -685,6 +690,7 @@ function safeModelName(observation: NormalizedAgentObservationV1): string | unde
  */
 export function buildLegacyTaskObservationPayload(
   aggregate: StrategyTaskObservationAggregateV1,
+  context?: TaskObservationExportContextV1,
 ): unknown[] {
   const traceId = aggregate.root.observationId;
   const nowIso = new Date(aggregate.root.updatedAt).toISOString();
@@ -702,6 +708,16 @@ export function buildLegacyTaskObservationPayload(
     id: traceId,
     name: 'open-design-strategy-task',
     timestamp: new Date(aggregate.root.createdAt).toISOString(),
+    ...(context
+      ? {
+          environment: context.environment,
+          tags: [
+            'od-next-v2',
+            `environment:${context.environment}`,
+            `rollout:${context.tag}`,
+          ],
+        }
+      : {}),
     metadata: {
       schema: aggregate.schema,
       taskExecutionId: aggregate.root.taskExecutionId,
@@ -715,6 +731,12 @@ export function buildLegacyTaskObservationPayload(
       snapshotId: aggregate.root.snapshotId,
       planContractHash: aggregate.root.planContractHash,
       selectedAgentId: aggregate.root.selectedAgentId,
+      ...(context
+        ? {
+            environment: context.environment,
+            rolloutTag: context.tag,
+          }
+        : {}),
       coverage: aggregate.coverage,
       stageTotals: aggregate.stageTotals,
       limitations: safeTaskObservationLimitationCodes(aggregate.limitations),
@@ -783,6 +805,7 @@ export function prepareLegacyTaskObservationExport(input: {
   aggregate: StrategyTaskObservationAggregateV1;
   prefs: TelemetryPrefs;
   hasEffectiveSink: boolean;
+  context?: TaskObservationExportContextV1;
 }): LegacyTaskObservationExportPlan {
   const expectation = deriveRunTelemetryExportExpectation(
     input.prefs,
@@ -791,7 +814,7 @@ export function prepareLegacyTaskObservationExport(input: {
   return {
     expectation,
     batch: expectation.expected
-      ? buildLegacyTaskObservationPayload(input.aggregate)
+      ? buildLegacyTaskObservationPayload(input.aggregate, input.context)
       : [],
   };
 }
