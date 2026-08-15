@@ -460,6 +460,7 @@ import {
   prepareAutomaticStrategyContinuation,
   projectStrategyTask,
 } from './strategies/od-next/automatic-simple-production.js';
+import type { OdNextComplexRuntimeEvidence } from './strategies/od-next/complex-production.js';
 import {
   getStrategyTaskExecutionByRunId,
   reconcileStrategyTaskRunTerminal,
@@ -2608,6 +2609,18 @@ export interface StartServerOptions {
     agentId: string;
     productionRoutes: readonly string[];
   }) => OdNextExecutionPreflightInput | undefined | Promise<OdNextExecutionPreflightInput | undefined>) | null;
+  /**
+   * Daemon-owned, runtime-neutral capability/Child facts for complex OD Next
+   * Production. Runtime adapters normalize their native events before this
+   * boundary; HTTP bodies, assistant prose, and raw stdout are never inputs.
+   */
+  odNextComplexProductionResolver?: ((input: {
+    phase: 'eligibility' | 'completion';
+    taskExecutionId: string;
+    runId: string;
+    agentId: string;
+    plan: import('@open-design/contracts').OpenDesignPlanContractV2;
+  }) => OdNextComplexRuntimeEvidence | undefined | Promise<OdNextComplexRuntimeEvidence | undefined>) | null;
 }
 
 export interface StartServerResult {
@@ -2627,6 +2640,7 @@ export async function startServer({
   runtime = null,
   staticDir = STATIC_DIR,
   odNextExecutionPreflightResolver = null,
+  odNextComplexProductionResolver = null,
 }: StartServerOptions = {}) {
   host = normalizeDaemonBindHost(host);
   let resolvedPort = port;
@@ -14362,6 +14376,7 @@ export async function startServer({
           const plan = strategyProtocolResult.planContract
             ?? strategyProtocolResult.repairPlanContract;
           let executionPreflight;
+          let complexRuntimeEvidence;
           try {
             executionPreflight = plan && odNextExecutionPreflightResolver
               ? await odNextExecutionPreflightResolver({
@@ -14371,6 +14386,21 @@ export async function startServer({
                   productionRoutes: plan.runManifest.productionRoutes,
                 })
               : undefined;
+            const lockedPlan = plan ?? strategyTaskAtStart.planContract;
+            if (
+              lockedPlan?.fullPlan.executionMode === 'complex'
+              && odNextComplexProductionResolver
+            ) {
+              complexRuntimeEvidence = await odNextComplexProductionResolver({
+                phase: strategyProtocolResult.runtimeState?.outcome === 'completed'
+                  ? 'completion'
+                  : 'eligibility',
+                taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                runId: run.id,
+                agentId: strategyTaskAtStart.selectedAgentId,
+                plan: lockedPlan,
+              });
+            }
           } catch (error) {
             if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
             send('error', createSseErrorPayload(
@@ -14394,6 +14424,7 @@ export async function startServer({
               parsed: strategyProtocolResult,
               toolUseCount: strategyToolUseCount,
               ...(executionPreflight ? { executionPreflight } : {}),
+              ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}),
               ...(strategyProtocolResult.runtimeState?.outcome === 'completed'
                 ? {
                     completionEvidence: {

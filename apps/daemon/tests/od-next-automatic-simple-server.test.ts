@@ -5,9 +5,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppliedStrategyBindingV2,
+  OdNextRuntimeCapabilitySnapshotV1,
   OpenDesignPlanContractV2,
 } from '@open-design/contracts';
-import { OD_NEXT_PROMPT_STAGE_CONTRACT_V2 } from '@open-design/contracts';
+import {
+  normalizeAgentObservationV1,
+  OD_NEXT_PROMPT_STAGE_CONTRACT_V2,
+} from '@open-design/contracts';
 
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
 
@@ -29,6 +33,7 @@ import {
   getStrategyTaskExecution,
 } from '../src/strategies/task-store.js';
 import { prepareStrategyRequest } from '../src/strategies/od-next/coordinator.js';
+import { hashOdNextRuntimeCapabilitySnapshotV1 } from '../src/runtimes/od-next-capability-gate.js';
 
 type StartedServer = {
   url: string;
@@ -82,7 +87,30 @@ const INTAKE_PASSED = {
   dependencies: [],
 };
 
-describe('OD Next automatic simple production through the real server', () => {
+function complexCapabilitySnapshot(): OdNextRuntimeCapabilitySnapshotV1 {
+  const withoutHash: Omit<OdNextRuntimeCapabilitySnapshotV1, 'snapshotHash'> = {
+    schema: 'open-design.od-next-runtime-capability-snapshot/v1',
+    runtimePath: 'codex',
+    agentId: 'codex',
+    agentCliVersion: 'synthetic-cli-simulating-fixture/1',
+    runtimeAdapterVersion: 'synthetic-adapter/1',
+    fixtureVersion: 'synthetic-gate/v1',
+    fixtureHash: `sha256:${'d'.repeat(64)}`,
+    nativeSessionContinuation: {
+      support: 'verified', evidenceLevel: 'L0', source: 'sanitized_fixture_replay',
+    },
+    nativeSubagents: {
+      support: 'verified', evidenceLevel: 'L2', source: 'sanitized_fixture_replay',
+    },
+    capturedAt: 100,
+  };
+  return {
+    ...withoutHash,
+    snapshotHash: hashOdNextRuntimeCapabilitySnapshotV1(withoutHash),
+  };
+}
+
+describe('OD Next automatic production through the real server', () => {
   let started: StartedServer | null = null;
   let binDir: string | null = null;
   let sequence = 0;
@@ -309,9 +337,68 @@ describe('OD Next automatic simple production through the real server', () => {
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
   });
 
+  it('runs a synthetic verified complex package chain and requires normalized Child evidence', async () => {
+    const capability = complexCapabilitySnapshot();
+    const fixture = await createFixture('complex', { capability });
+    await stopServer(started);
+    started = await startDaemon(
+      () => EXECUTION_PREFLIGHT,
+      ({ phase, taskExecutionId, runId }) => {
+        if (phase === 'eligibility') return { capabilitySnapshot: capability };
+        const rootId = `task-run:${runId}`;
+        const fact = (
+          id: string,
+          kind: 'task_run' | 'child_agent',
+          status: 'running' | 'completed',
+          packageId?: string,
+        ) => normalizeAgentObservationV1({
+          identity: {
+            observationId: id,
+            taskExecutionId,
+            runId,
+            taskRunIndex: 1,
+            ...(kind === 'child_agent' ? { parentObservationId: rootId } : {}),
+          },
+          kind,
+          stage: 'production',
+          status,
+          ...(packageId ? { attributes: { buildPackageId: packageId } } : {}),
+        });
+        return {
+          capabilitySnapshot: capability,
+          taskRunObservationId: rootId,
+          observations: [
+            fact(rootId, 'task_run', 'running'),
+            fact('child-shell', 'child_agent', 'running', 'shell'),
+            fact('child-shell', 'child_agent', 'completed', 'shell'),
+            fact('child-flow', 'child_agent', 'running', 'flow'),
+            fact('child-flow', 'child_agent', 'completed', 'flow'),
+            fact(rootId, 'task_run', 'completed'),
+          ],
+        };
+      },
+    );
+
+    uuidControl.forced.push(fixture.initialRunId);
+    await postRun(started.url, createRunRequest(fixture, 'Build the complex prototype.'));
+    const terminal = await waitForTask(fixture.taskExecutionId, 'completed');
+    expect(terminal).toMatchObject({
+      executionMode: 'complex',
+      terminalRunId: terminal.runs[1]?.runId,
+    });
+    expect(terminal.runs.map((run) => run.inputStage)).toEqual(['request', 'production']);
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(2);
+  });
+
   async function createFixture(
-    mode: 'repair' | 'direct',
-    { selectedAgentId = 'codex' }: { selectedAgentId?: string } = {},
+    mode: 'repair' | 'direct' | 'complex',
+    {
+      selectedAgentId = 'codex',
+      capability,
+    }: {
+      selectedAgentId?: string;
+      capability?: OdNextRuntimeCapabilitySnapshotV1;
+    } = {},
   ) {
     const suffix = `${mode}-${Date.now()}-${++sequence}`;
     binDir = await mkdtemp(path.join(os.tmpdir(), `od-next-server-${mode}-`));
@@ -363,7 +450,7 @@ describe('OD Next automatic simple production through the real server', () => {
     const { bin, logPath } = await writeStrategyCodex(
       binDir,
       mode,
-      planContract(snapshot.snapshotId, snapshot.strategy!),
+      planContract(snapshot.snapshotId, snapshot.strategy!, mode, capability),
     );
     const configResponse = await fetch(`${started.url}/api/app-config`, {
       method: 'PUT',
@@ -397,11 +484,13 @@ function database() {
 async function startDaemon(
   resolver: NonNullable<StartServerOptions['odNextExecutionPreflightResolver']> =
     () => EXECUTION_PREFLIGHT,
+  complexResolver: StartServerOptions['odNextComplexProductionResolver'] = null,
 ): Promise<StartedServer> {
   return await startServer({
     port: 0,
     returnServer: true,
     odNextExecutionPreflightResolver: resolver,
+    odNextComplexProductionResolver: complexResolver,
   }) as StartedServer;
 }
 
@@ -459,6 +548,8 @@ async function createStrategySnapshot(projectId: string, conversationId: string)
 function planContract(
   snapshotId: string,
   strategy: AppliedStrategyBindingV2,
+  mode: 'repair' | 'direct' | 'complex' = 'repair',
+  capability = complexCapabilitySnapshot(),
 ): OpenDesignPlanContractV2 {
   return {
     schema: 'open-design.plan-contract/v2',
@@ -489,14 +580,34 @@ function planContract(
       taskSpecific: {},
     },
     fullPlan: {
-      executionMode: 'simple',
-      steps: [{ id: 'build', objective: 'Build', outputs: ['prototype'] }],
+      executionMode: mode === 'complex' ? 'complex' : 'simple',
+      steps: mode === 'complex'
+        ? [
+            { id: 'shell', objective: 'Build shell', outputs: ['shell'] },
+            { id: 'flow', objective: 'Build flow', outputs: ['flow'], dependsOn: ['shell'] },
+          ]
+        : [{ id: 'build', objective: 'Build', outputs: ['prototype'] }],
       readinessArtifacts: [],
-      buildPackages: [],
+      buildPackages: mode === 'complex'
+        ? [
+            {
+              id: 'shell', objective: 'Build shell', inputs: ['design-spec'], outputs: ['shell'],
+              sharedConstraints: ['Use the frozen design spec.'], dependsOn: [],
+              allowedResources: ['project-source'],
+            },
+            {
+              id: 'flow', objective: 'Build flow', inputs: ['shell'], outputs: ['flow'],
+              sharedConstraints: ['Use the frozen design spec.'], dependsOn: ['shell'],
+              allowedResources: ['project-source'],
+            },
+          ]
+        : [],
     },
     runManifest: {
       selectedAgentId: 'codex',
-      capabilitySnapshotHash: 'c'.repeat(64),
+      capabilitySnapshotHash: mode === 'complex'
+        ? capability.snapshotHash.slice('sha256:'.length)
+        : 'c'.repeat(64),
       inputRefs: ['request'],
       productionRoutes: ['html'],
       preflight: { intake: 'passed', execution: 'passed' },
@@ -516,13 +627,14 @@ function runtimeState(input: {
   route?: 'direct_edit' | 'full_plan';
   inputStage?: 'request' | 'contract_repair' | 'production';
   outcome: 'plan_ready' | 'completed';
+  executionMode?: 'simple' | 'complex';
 }) {
   return {
     schema: 'open-design.strategy-state/v2',
     route: input.route ?? 'full_plan',
     inputStage: input.inputStage ?? 'request',
     outcome: input.outcome,
-    executionMode: 'simple',
+    executionMode: input.executionMode ?? 'simple',
     reasonCodes: [],
   };
 }
@@ -534,7 +646,7 @@ function machineBlock(tag: string, value: unknown, fenced = false): string {
 
 async function writeStrategyCodex(
   dir: string,
-  mode: 'repair' | 'direct',
+  mode: 'repair' | 'direct' | 'complex',
   plan: OpenDesignPlanContractV2,
 ): Promise<{ bin: string; logPath: string }> {
   const bin = path.join(dir, `codex-${mode}`);
@@ -558,6 +670,16 @@ async function writeStrategyCodex(
   const direct = machineBlock('open-design-runtime-state', runtimeState({
     route: 'direct_edit',
     outcome: 'completed',
+  }));
+  const complexPlan = [
+    'Prepared a complex plan.',
+    machineBlock('open-design-plan-contract', plan),
+    machineBlock('open-design-runtime-state', runtimeState({
+      outcome: 'plan_ready', executionMode: 'complex',
+    })),
+  ].join('\n');
+  const complexProduction = machineBlock('open-design-runtime-state', runtimeState({
+    inputStage: 'production', outcome: 'completed', executionMode: 'complex',
   }));
 
   await writeFile(bin, `#!/usr/bin/env node
@@ -583,6 +705,11 @@ function finish() {
   if (mode === 'direct') {
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Direct</title>');
     text = ${JSON.stringify(direct)};
+  } else if (mode === 'complex' && stdin.includes('native continuation — production')) {
+    fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Complex</title>');
+    text = ${JSON.stringify(complexProduction)};
+  } else if (mode === 'complex') {
+    text = ${JSON.stringify(complexPlan)};
   } else if (stdin.includes('native continuation — contract_repair')) {
     text = ${JSON.stringify(repaired)};
   } else if (stdin.includes('native continuation — production')) {

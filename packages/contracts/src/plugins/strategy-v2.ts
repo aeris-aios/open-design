@@ -275,7 +275,7 @@ const BuildPackageV2Schema = z.object({
   objective: z.string().min(1),
   inputs: z.array(z.string().min(1)),
   outputs: z.array(z.string().min(1)).min(1),
-  sharedConstraints: z.array(z.string().min(1)),
+  sharedConstraints: z.array(z.string().min(1)).min(1),
   dependsOn: z.array(z.string().min(1)),
   allowedResources: z.array(z.string().min(1)),
 }).strict();
@@ -352,6 +352,32 @@ export const FullPlanV2Schema = z.object({
       path: ['buildPackages'],
       message: 'Complex plans require at least two Build Packages.',
     });
+  }
+  if (value.executionMode === 'complex') {
+    const outputOwners = new Map<string, string>();
+    for (const [index, buildPackage] of value.buildPackages.entries()) {
+      const localOutputs = new Set<string>();
+      for (const output of buildPackage.outputs) {
+        if (localOutputs.has(output)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['buildPackages', index, 'outputs'],
+            message: `Build Package ${buildPackage.id} outputs must be unique.`,
+          });
+        }
+        localOutputs.add(output);
+        const owner = outputOwners.get(output);
+        if (owner && owner !== buildPackage.id) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['buildPackages', index, 'outputs'],
+            message: `Build output ${output} is already owned by Build Package ${owner}.`,
+          });
+        } else {
+          outputOwners.set(output, buildPackage.id);
+        }
+      }
+    }
   }
   validateDependencyGraph(value.steps, 'steps', context);
   validateDependencyGraph(value.buildPackages, 'buildPackages', context);

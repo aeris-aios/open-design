@@ -23,6 +23,11 @@ import {
 } from './coordinator.js';
 import type { OdNextMachineProtocolStream } from './protocol.js';
 import type { OdNextExecutionPreflightInput } from './resolver.js';
+import {
+  evaluateOdNextComplexEligibility,
+  evaluateOdNextComplexProduction,
+  type OdNextComplexRuntimeEvidence,
+} from './complex-production.js';
 
 type SqliteDb = Database.Database;
 
@@ -121,6 +126,60 @@ export function beginAutomaticSimpleProduction(db: SqliteDb, input: {
   });
 }
 
+/** Claim a complex Production Run only after the exact locked capability
+ * snapshot proves native continuation plus structured native Child support. */
+export function beginAutomaticComplexProduction(db: SqliteDb, input: {
+  task: StrategyTaskExecutionRecord;
+  sourceRunId: string;
+  nextRunId: string;
+  capabilitySnapshot?: unknown;
+  updatedAt?: number;
+}): StrategyTaskExecutionRecord {
+  const current = input.task;
+  if (
+    current.route !== 'full_plan'
+    || current.outcome !== 'plan_ready'
+    || current.executionMode !== 'complex'
+    || !current.planContract
+    || !current.planContractHash
+    || !['request', 'clarification', 'contract_repair'].includes(current.inputStage)
+  ) {
+    throw new OdNextAutomaticProductionError(
+      'Only a hash-bound complex Full Plan can enter automatic production.',
+      ['od_next_complex_production_not_ready'],
+    );
+  }
+  if (current.latestRunId !== input.sourceRunId) {
+    throw new OdNextAutomaticProductionError(
+      'Production must continue from the latest physical Run.',
+      ['od_next_task_run_mismatch'],
+    );
+  }
+  const eligibility = evaluateOdNextComplexEligibility({
+    plan: current.planContract,
+    selectedAgentId: current.selectedAgentId,
+    capabilitySnapshot: input.capabilitySnapshot,
+  });
+  if (!eligibility.eligible) {
+    throw new OdNextAutomaticProductionError(
+      'Complex Production requires its exact verified native Child capability snapshot.',
+      eligibility.reasonCodes,
+    );
+  }
+  return compareAndTransitionStrategyTaskExecution(db, {
+    taskExecutionId: current.taskExecutionId,
+    expectedRevision: current.revision,
+    to: {
+      route: 'full_plan',
+      inputStage: 'production',
+      outcome: 'running',
+      executionMode: 'complex',
+    },
+    nextRun: { runId: input.nextRunId, sourceRunId: input.sourceRunId },
+    ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
+  });
+}
+
 /**
  * Allocate the next physical Run and claim the task transition inside the
  * assistant-message transaction. The returned Run is deliberately not started:
@@ -211,8 +270,43 @@ export function prepareAutomaticStrategyContinuation<
     physicalStatus: 'succeeded' | 'failed' | 'canceled';
     deliverableValid: boolean;
   };
+  complexRuntimeEvidence?: OdNextComplexRuntimeEvidence;
   updatedAt?: number;
 }): PreparedAutomaticStrategyContinuation<TRun> {
+  const complexPlanningReasonCodes = (() => {
+    const plan = input.parsed.planContract ?? input.parsed.repairPlanContract;
+    if (
+      input.parsed.issues.length > 0
+      || input.parsed.runtimeState?.outcome !== 'plan_ready'
+      || plan?.fullPlan.executionMode !== 'complex'
+    ) return [];
+    return evaluateOdNextComplexEligibility({
+      plan,
+      selectedAgentId: input.task.selectedAgentId,
+      capabilitySnapshot: input.complexRuntimeEvidence?.capabilitySnapshot,
+    }).reasonCodes;
+  })();
+  const complexCompletionReasonCodes = (() => {
+    if (
+      input.task.inputStage !== 'production'
+      || input.task.executionMode !== 'complex'
+      || input.parsed.runtimeState?.outcome !== 'completed'
+      || !input.task.planContract
+    ) return [];
+    const mapping = input.task.runs.find((candidate) => (
+      candidate.runId === input.task.latestRunId
+    ));
+    return evaluateOdNextComplexProduction({
+      plan: input.task.planContract,
+      selectedAgentId: input.task.selectedAgentId,
+      taskExecutionId: input.task.taskExecutionId,
+      runId: input.task.latestRunId,
+      taskRunIndex: mapping?.taskRunIndex ?? input.task.runs.length - 1,
+      ...(input.complexRuntimeEvidence
+        ? { evidence: input.complexRuntimeEvidence }
+        : {}),
+    }).reasonCodes;
+  })();
   const finalize = (repairRun?: { runId: string; sourceRunId: string }) =>
     finalizeStrategyPlanningResult(input.db, {
       taskExecutionId: input.task.taskExecutionId,
@@ -222,6 +316,17 @@ export function prepareAutomaticStrategyContinuation<
       ...(input.toolUseCount === undefined ? {} : { toolUseCount: input.toolUseCount }),
       ...(input.executionPreflight ? { executionPreflight: input.executionPreflight } : {}),
       ...(input.completionEvidence ? { completionEvidence: input.completionEvidence } : {}),
+      ...(
+        complexPlanningReasonCodes.length > 0
+        || complexCompletionReasonCodes.length > 0
+          ? {
+              productionEnforcementReasonCodes: [
+                ...complexPlanningReasonCodes,
+                ...complexCompletionReasonCodes,
+              ],
+            }
+          : {}
+      ),
       ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
     });
 
@@ -237,8 +342,17 @@ export function prepareAutomaticStrategyContinuation<
     && input.parsed.runtimeState?.outcome === 'plan_ready'
     && input.parsed.runtimeState.executionMode === 'simple'
     && Boolean(input.parsed.planContract);
+  const complexPlanCandidate =
+    input.parsed.issues.length === 0
+    && input.parsed.runtimeState?.outcome === 'plan_ready'
+    && input.parsed.runtimeState.executionMode === 'complex'
+    && Boolean(input.parsed.planContract);
 
-  if (!repairCandidate && !simplePlanCandidate) {
+  if (!repairCandidate && !simplePlanCandidate && !complexPlanCandidate) {
+    return { result: finalize(), start: false };
+  }
+
+  if (complexPlanCandidate && complexPlanningReasonCodes.length > 0) {
     return { result: finalize(), start: false };
   }
 
@@ -280,12 +394,20 @@ export function prepareAutomaticStrategyContinuation<
             accepted.reasonCodes,
           );
         }
-        const claimed = beginAutomaticSimpleProduction(input.db, {
-          task: accepted.task,
-          sourceRunId: input.task.latestRunId,
-          nextRunId: nextRun.id,
-          ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
-        });
+        const claimed = accepted.task.executionMode === 'complex'
+          ? beginAutomaticComplexProduction(input.db, {
+              task: accepted.task,
+              sourceRunId: input.task.latestRunId,
+              nextRunId: nextRun.id,
+              capabilitySnapshot: input.complexRuntimeEvidence?.capabilitySnapshot,
+              ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
+            })
+          : beginAutomaticSimpleProduction(input.db, {
+              task: accepted.task,
+              sourceRunId: input.task.latestRunId,
+              nextRunId: nextRun.id,
+              ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
+            });
         result = { ...accepted, task: claimed };
       },
     });

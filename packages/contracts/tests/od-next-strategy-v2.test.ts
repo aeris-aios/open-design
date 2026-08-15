@@ -235,6 +235,14 @@ describe('OD Next V2 planning contracts', () => {
     const cyclic = complexPlan();
     cyclic.buildPackages[0]!.dependsOn = ['flow'];
     expect(() => FullPlanV2Schema.parse(cyclic)).toThrow(/acyclic/);
+
+    const missingSharedConstraints = complexPlan();
+    missingSharedConstraints.buildPackages[0]!.sharedConstraints = [];
+    expect(() => FullPlanV2Schema.parse(missingSharedConstraints)).toThrow();
+
+    const duplicateOutput = complexPlan();
+    duplicateOutput.buildPackages[1]!.outputs = ['shell'];
+    expect(() => FullPlanV2Schema.parse(duplicateOutput)).toThrow(/already owned/);
   });
 
   it.each([

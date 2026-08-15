@@ -230,6 +230,7 @@ export function finalizeStrategyPlanningTurn(db: SqliteDb, input: {
     physicalStatus: 'succeeded' | 'failed' | 'canceled';
     deliverableValid: boolean;
   };
+  productionEnforcementReasonCodes?: readonly string[];
   updatedAt?: number;
 }): OdNextCoordinatorResult {
   return finalizeStrategyPlanningResult(db, {
@@ -249,6 +250,7 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
     physicalStatus: 'succeeded' | 'failed' | 'canceled';
     deliverableValid: boolean;
   };
+  productionEnforcementReasonCodes?: readonly string[];
   updatedAt?: number;
 }): OdNextCoordinatorResult {
   const current = requireTask(db, input.taskExecutionId);
@@ -295,6 +297,9 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
     toolUseCount: input.toolUseCount ?? 0,
     ...(input.executionPreflight ? { executionPreflight: input.executionPreflight } : {}),
     ...(input.completionEvidence ? { completionEvidence: input.completionEvidence } : {}),
+    ...(input.productionEnforcementReasonCodes
+      ? { productionEnforcementReasonCodes: input.productionEnforcementReasonCodes }
+      : {}),
   });
   if (reasonCodes.length > 0) {
     return blockTask(db, current, parsed.visibleText, reasonCodes, input.updatedAt);
@@ -338,6 +343,7 @@ function validateAcceptedTurn(
       physicalStatus: 'succeeded' | 'failed' | 'canceled';
       deliverableValid: boolean;
     };
+    productionEnforcementReasonCodes?: readonly string[];
   },
 ): string[] {
   const reasonCodes: string[] = [];
@@ -372,6 +378,7 @@ function validateAcceptedTurn(
     } else {
       reasonCodes.push(...runExecutionPreflight(input.executionPreflight).reasonCodes);
     }
+    reasonCodes.push(...(input.productionEnforcementReasonCodes ?? []));
   } else if (plan) {
     reasonCodes.push('od_next_protocol_plan_contract_unexpected');
   }
@@ -400,6 +407,7 @@ function validateAcceptedTurn(
     if (input.completionEvidence?.deliverableValid !== true) {
       reasonCodes.push('od_next_canonical_deliverable_invalid');
     }
+    reasonCodes.push(...(input.productionEnforcementReasonCodes ?? []));
   }
   return uniqueReasonCodes(reasonCodes);
 }
