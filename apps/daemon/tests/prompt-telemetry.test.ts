@@ -1,14 +1,51 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PROMPT_STACK_REDACTION_VERSION,
   PROMPT_STACK_PATH_MARKER,
   buildPromptStackFlatMetadata,
+  buildSafeChildPromptTelemetry,
   buildPromptStackTelemetry,
   promptStackWithoutContent,
   redactLocalPaths,
 } from '../src/prompt-telemetry.js';
 
 describe('prompt telemetry builder', () => {
+  it('builds bounded child-injected Prompt telemetry with the shared secret and path redaction', () => {
+    const telemetry = buildSafeChildPromptTelemetry([
+      'Inspect /Users/alice/private/design.ts with sk-test-1234567890123456789012.',
+      'Return only the structural result.',
+    ]);
+
+    expect(telemetry.hash).toMatch(/^sha256:/u);
+    expect(telemetry.bytes).toBeGreaterThan(0);
+    expect(telemetry.safePayload).toMatchObject({
+      type: 'open-design.child-injected-prompt',
+      redactionVersion: PROMPT_STACK_REDACTION_VERSION,
+      messageCount: 2,
+    });
+    const serialized = JSON.stringify(telemetry.safePayload);
+    expect(serialized).toContain('Inspect');
+    expect(serialized).toContain(PROMPT_STACK_PATH_MARKER);
+    expect(serialized).toContain('[REDACTED:sk_key]');
+    expect(serialized).not.toContain('/Users/alice');
+    expect(serialized).not.toContain('sk-test-');
+  });
+
+  it('caps each Child Prompt segment and the aggregate redacted body', () => {
+    const telemetry = buildSafeChildPromptTelemetry(Array.from(
+      { length: 20 },
+      (_, index) => `${index}:${'x'.repeat(24 * 1024)}`,
+    ));
+
+    expect(telemetry.truncated).toBe(true);
+    expect(telemetry.safePayload.truncated).toBe(true);
+    expect(telemetry.safePayload.redactedContentBytes).toBeLessThanOrEqual(64 * 1024);
+    expect(telemetry.safePayload.capturedMessageCount).toBe(16);
+    expect(telemetry.safePayload.messages.every((message) => (
+      Buffer.byteLength(message.redactedContent, 'utf8') <= 16 * 1024
+    ))).toBe(true);
+  });
   it('redacts local paths and secrets before hashing or content capture', () => {
     const telemetry = buildPromptStackTelemetry({
       composedPrompt:

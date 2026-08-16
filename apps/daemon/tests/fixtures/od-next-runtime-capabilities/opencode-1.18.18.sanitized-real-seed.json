@@ -1,10 +1,11 @@
 {
-  "fixtureKind": "sanitized_real_seed_unattested",
+  "fixtureKind": "sanitized_real_best_effort",
   "runtime": "native_opencode",
   "cliVersion": "1.18.18",
-  "recordingDigest": "sha256:dddc424a541e8c684f6a0387108111aea9da3539cf1debb783f2473255b1912d",
+  "recordingDigest": "sha256:b1224716a340401879cfb2f366d1252e9f837ce24050d9b0dfa4430f89492fc5",
   "anonymizationVersion": "od-runtime-evidence/v1",
-  "note": "Locally recorded structural seed. It is not a production capability declaration until runtime-owner attestation and registry approval exist.",
+  "evidenceReview": "open_design_best_effort",
+  "note": "Locally recorded structural evidence reviewed by Open Design. It does not imply OpenCode upstream endorsement and is valid only for the exact reviewed tuple.",
   "caseCoverage": [
     {
       "caseId": "main_run",

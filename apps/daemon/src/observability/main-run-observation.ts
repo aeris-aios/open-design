@@ -32,6 +32,10 @@ export interface StructuredMainRunObservationV1Input {
   timing?: RunTimingAnalytics;
   startedAtMs?: number;
   endedAtMs?: number;
+  agentCliVersion?: string;
+  runtimeCompanionName?: string;
+  runtimeCompanionVersion?: string;
+  runtimeAdapterVersion?: string;
 }
 
 function usageValues(
@@ -242,6 +246,16 @@ export function buildStructuredMainRunObservationV1(
     attributes: {
       ...(input.usage?.agent_reported_model
         ? { agentReportedModel: input.usage.agent_reported_model }
+        : {}),
+      ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
+      ...(input.runtimeCompanionName
+        ? { runtimeCompanionName: input.runtimeCompanionName }
+        : {}),
+      ...(input.runtimeCompanionVersion
+        ? { runtimeCompanionVersion: input.runtimeCompanionVersion }
+        : {}),
+      ...(input.runtimeAdapterVersion
+        ? { runtimeAdapterVersion: input.runtimeAdapterVersion }
         : {}),
     },
     limitations: [

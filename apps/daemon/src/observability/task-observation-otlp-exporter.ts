@@ -19,6 +19,7 @@ import {
   safeTaskObservationLimitationCodes,
   safeTaskObservationUsageValueSources,
   safeTaskObservationUsageValues,
+  safeTaskObservationRuntimeVersions,
   strategyTaskRootObservationId,
   type TaskObservationExportContextV1,
   type StrategyTaskObservationAggregateV1,
@@ -212,6 +213,11 @@ function taskTraceAttributes(
     ['langfuse.trace.metadata.snapshot_id', aggregate.root.snapshotId],
     ['langfuse.trace.metadata.plan_contract_hash', aggregate.root.planContractHash],
     ['langfuse.trace.metadata.selected_agent_id', aggregate.root.selectedAgentId],
+    ['langfuse.trace.metadata.agent_cli_versions', jsonString(aggregate.root.agentCliVersions)],
+    ['langfuse.trace.metadata.runtime_companion_versions',
+      jsonString(aggregate.root.runtimeCompanionVersions)],
+    ['langfuse.trace.metadata.runtime_adapter_versions',
+      jsonString(aggregate.root.runtimeAdapterVersions)],
     ['langfuse.trace.metadata.coverage', jsonString(aggregate.coverage)],
     ['langfuse.trace.metadata.stage_totals', jsonString(aggregate.stageTotals)],
     ['langfuse.trace.metadata.limitations', jsonString(limitations)],
@@ -381,6 +387,7 @@ function buildObservationSpan(
   const usageValueSources = safeTaskObservationUsageValueSources(observation);
   const usageLimitations = safeTaskObservationLimitationCodes(observation.usage.limitations);
   const limitations = safeTaskObservationLimitationCodes(observation.limitations);
+  const runtimeVersions = safeTaskObservationRuntimeVersions(observation);
   const parentObservationId = observation.kind === 'task_run'
     ? aggregate.root.observationId
     : observation.identity.parentObservationId!;
@@ -431,6 +438,11 @@ function buildObservationSpan(
         ['langfuse.observation.metadata.timing_availability', observation.timing.availability],
         ['langfuse.observation.metadata.timing_mapping', timing.mapping],
         ['langfuse.observation.metadata.limitations', jsonString(limitations)],
+        ['langfuse.observation.metadata.agent_cli_version', runtimeVersions.agentCliVersion],
+        ['langfuse.observation.metadata.runtime_companion_version',
+          runtimeVersions.runtimeCompanionVersion],
+        ['langfuse.observation.metadata.runtime_adapter_version',
+          runtimeVersions.runtimeAdapterVersion],
       ]),
     ],
     status: spanStatus(observation.status),
@@ -514,6 +526,9 @@ const TASK_TRACE_ATTRIBUTE_KEYS = [
   'langfuse.trace.metadata.snapshot_id',
   'langfuse.trace.metadata.plan_contract_hash',
   'langfuse.trace.metadata.selected_agent_id',
+  'langfuse.trace.metadata.agent_cli_versions',
+  'langfuse.trace.metadata.runtime_companion_versions',
+  'langfuse.trace.metadata.runtime_adapter_versions',
   'langfuse.trace.metadata.coverage',
   'langfuse.trace.metadata.stage_totals',
   'langfuse.trace.metadata.limitations',
@@ -591,6 +606,9 @@ export function legacyAndOtlpTaskMappingsMatch(
       snapshotId: aggregate.root.snapshotId,
       planContractHash: aggregate.root.planContractHash,
       selectedAgentId: aggregate.root.selectedAgentId,
+      agentCliVersions: aggregate.root.agentCliVersions,
+      runtimeCompanionVersions: aggregate.root.runtimeCompanionVersions,
+      runtimeAdapterVersions: aggregate.root.runtimeAdapterVersions,
       coverage: aggregate.coverage,
       stageTotals: aggregate.stageTotals,
       limitations: rootLimitations,
@@ -660,6 +678,7 @@ export function legacyAndOtlpTaskMappingsMatch(
     const legacyTiming = legacyObservationTiming(observation);
     const otlpTiming = observationTiming(observation, aggregate.root.updatedAt);
     const usageAccounted = observation.turnAccounting?.disposition !== 'exclude_inherited';
+    const runtimeVersions = safeTaskObservationRuntimeVersions(observation);
     const expectedEventType = observation.kind === 'model_call'
       ? 'generation-create'
       : 'span-create';
@@ -703,6 +722,7 @@ export function legacyAndOtlpTaskMappingsMatch(
         turnAccountingOwnerObservationId: observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
         limitations,
+        ...runtimeVersions,
       }) ||
       attributeValue(otlp, 'langfuse.observation.type') !== expectedObservationType ||
       attributeValue(otlp, 'langfuse.observation.level') !== observationLevel(observation.status) ||
@@ -747,6 +767,12 @@ export function legacyAndOtlpTaskMappingsMatch(
         otlpTiming.mapping ||
       attributeValue(otlp, 'langfuse.observation.metadata.limitations') !==
         jsonString(limitations) ||
+      attributeValue(otlp, 'langfuse.observation.metadata.agent_cli_version') !==
+        runtimeVersions.agentCliVersion ||
+      attributeValue(otlp, 'langfuse.observation.metadata.runtime_companion_version') !==
+        runtimeVersions.runtimeCompanionVersion ||
+      attributeValue(otlp, 'langfuse.observation.metadata.runtime_adapter_version') !==
+        runtimeVersions.runtimeAdapterVersion ||
       jsonString(otlp.status) !== jsonString(spanStatus(observation.status))
     ) {
       return false;

@@ -20,6 +20,10 @@ import {
   type NormalizedUsageEvidenceV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
+import {
+  buildSafeChildPromptTelemetry,
+  type SafeChildPromptInput,
+} from '../prompt-telemetry.js';
 
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const DATE_PART_PATTERN = /^\d{2}$/u;
@@ -65,6 +69,7 @@ export interface CollectCodexChildEvidenceInput {
   taskRunIndex: number;
   stage: StrategyInputStageV2;
   parentObservationId: string;
+  agentCliVersion?: string;
   runStartedAtMs?: number;
   runEndedAtMs?: number;
   maxDayDirectories?: number;
@@ -85,6 +90,8 @@ export interface CodexChildEvidenceCollection {
 interface PromptIdentity {
   hash: string;
   bytes: number;
+  safePayload: SafeChildPromptInput;
+  truncated: boolean;
 }
 
 interface UsageValues extends Record<string, number | undefined> {
@@ -311,9 +318,12 @@ function parseRolloutStructure(source: string, expectedSessionId: string): Parse
     const turn = turns.get(activeTurnId);
     if (!turn || record.type !== 'event_msg') continue;
     if (payload.type === 'user_message' && typeof payload.message === 'string') {
+      const safe = buildSafeChildPromptTelemetry([payload.message]);
       turn.promptIdentities.push({
         hash: sha256(payload.message),
         bytes: Buffer.byteLength(payload.message, 'utf8'),
+        safePayload: safe.safePayload,
+        truncated: safe.truncated,
       });
       continue;
     }
@@ -565,19 +575,33 @@ function normalizedPrompt(
       source: 'rollout',
       hash: prompts[0]?.hash,
       bytes,
-      safePayload: { contentRedacted: true, messageCount: 1 },
-      limitations: ['child_prompt_content_redacted'],
+      safePayload: prompts[0]?.safePayload,
+      limitations: [
+        'child_prompt_safe_payload_redacted',
+        ...(prompts[0]?.truncated ? ['child_prompt_safe_payload_truncated'] : []),
+      ],
     };
   }
+  const combinedSafe = buildSafeChildPromptTelemetry(prompts.flatMap((prompt) => (
+    prompt.safePayload.messages.map((message) => message.redactedContent)
+  )));
+  const truncated = combinedSafe.truncated || prompts.some((prompt) => prompt.truncated);
   return {
     availability: 'partial',
     source: 'rollout',
     hash: stableDigest(prompts.map((prompt) => prompt.hash)),
     bytes,
-    safePayload: { contentRedacted: true, messageCount: prompts.length },
+    safePayload: {
+      ...combinedSafe.safePayload,
+      rawBytes: bytes,
+      truncated,
+    } satisfies SafeChildPromptInput,
     limitations: [
-      'child_prompt_content_redacted',
+      'child_prompt_safe_payload_redacted',
       'multiple_child_messages_aggregated',
+      ...(truncated
+        ? ['child_prompt_safe_payload_truncated']
+        : []),
     ],
   };
 }
@@ -953,6 +977,8 @@ export async function collectCodexChildEvidence(
           ...(childAccounting ? { turnAccounting: childAccounting } : {}),
           attributes: {
             runtimePath: 'codex',
+            ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
+            runtimeAdapterVersion: 'od-codex-child-evidence/v1',
             providerTurnHash: stableDigest([turn.turnId]),
             promptContentRedacted: true,
           },
@@ -979,6 +1005,8 @@ export async function collectCodexChildEvidence(
             },
             attributes: {
               runtimePath: 'codex',
+              ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
+              runtimeAdapterVersion: 'od-codex-child-evidence/v1',
               providerTurnHash: stableDigest([turn.turnId]),
               modelCallCount: turn.modelCalls.length,
               promptContentRedacted: true,
@@ -1012,6 +1040,8 @@ export async function collectCodexChildEvidence(
             ...(childAccounting ? { turnAccounting: childAccounting } : {}),
             attributes: {
               runtimePath: 'codex',
+              ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
+              runtimeAdapterVersion: 'od-codex-child-evidence/v1',
               providerTurnHash: stableDigest([turn.turnId]),
               promptContentRedacted: true,
               terminalEvidence: terminal.limitations.length === 0

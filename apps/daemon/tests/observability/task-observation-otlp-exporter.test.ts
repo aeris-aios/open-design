@@ -145,6 +145,10 @@ function aggregate(): StrategyTaskObservationAggregateV1 {
         kind: 'task_run',
         promptBoundary: 'hostComposed',
         usage: usage(100, 10),
+        attributes: {
+          agentCliVersion: 'opencode 1.18.18',
+          runtimeAdapterVersion: 'od-opencode-json-events/v1',
+        },
       }),
       observation({
         id: childId,
@@ -248,6 +252,9 @@ const LEGACY_TRACE_METADATA_FIELDS = [
   'snapshotId',
   'planContractHash',
   'selectedAgentId',
+  'agentCliVersions',
+  'runtimeCompanionVersions',
+  'runtimeAdapterVersions',
   'coverage',
   'stageTotals',
   'limitations',
@@ -267,6 +274,9 @@ const OTLP_TRACE_STRING_ATTRIBUTE_FIELDS = [
   'langfuse.trace.metadata.snapshot_id',
   'langfuse.trace.metadata.plan_contract_hash',
   'langfuse.trace.metadata.selected_agent_id',
+  'langfuse.trace.metadata.agent_cli_versions',
+  'langfuse.trace.metadata.runtime_companion_versions',
+  'langfuse.trace.metadata.runtime_adapter_versions',
   'langfuse.trace.metadata.coverage',
   'langfuse.trace.metadata.stage_totals',
   'langfuse.trace.metadata.limitations',
@@ -311,6 +321,9 @@ const OTLP_OBSERVATION_METADATA_FIELDS = [
   'langfuse.observation.metadata.usage_limitations',
   'langfuse.observation.metadata.timing_availability',
   'langfuse.observation.metadata.limitations',
+  'langfuse.observation.metadata.agent_cli_version',
+  'langfuse.observation.metadata.runtime_companion_version',
+  'langfuse.observation.metadata.runtime_adapter_version',
 ] as const;
 
 describe('task observation OTLP exporter', () => {
@@ -333,6 +346,14 @@ describe('task observation OTLP exporter', () => {
     const tool = spanFor(first, 'tool-fixture');
     expect(root.parentSpanId).toBeUndefined();
     expect(run.parentSpanId).toBe(root.spanId);
+    expect(stringAttribute(
+      root,
+      'langfuse.trace.metadata.agent_cli_versions',
+    )).toBe(JSON.stringify(['opencode 1.18.18']));
+    expect(stringAttribute(
+      run,
+      'langfuse.observation.metadata.agent_cli_version',
+    )).toBe('opencode 1.18.18');
     expect(child.parentSpanId).toBe(run.spanId);
     expect(model.parentSpanId).toBe(child.spanId);
     expect(tool.parentSpanId).toBe(child.spanId);

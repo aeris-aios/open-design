@@ -228,7 +228,7 @@ describe('Vela OpenCode child evidence adapter', () => {
       ],
       prompt: {
         ...(updateOf(fixture()[2]!).prompt as RecordValue),
-        text: 'private prompt body',
+        text: 'Inspect /Users/alice/private/design.ts with sk-test-1234567890123456789012.',
         safePayload: { token: 'secret' },
       },
       usage: {
@@ -240,7 +240,12 @@ describe('Vela OpenCode child evidence adapter', () => {
     const serialized = JSON.stringify(facts[1]);
     expect(serialized).not.toContain('sk-do-not-forward');
     expect(serialized).not.toContain('/private/user/workspace');
-    expect(serialized).not.toContain('private prompt body');
+    expect(serialized).toContain('open-design.child-injected-prompt');
+    expect(serialized).toContain('Inspect');
+    expect(serialized).toContain('[REDACTED:path]');
+    expect(serialized).toContain('[REDACTED:sk_key]');
+    expect(serialized).not.toContain('/Users/alice');
+    expect(serialized).not.toContain('sk-test-');
     expect(serialized).not.toContain('Bearer secret');
     expect(facts[1]?.sourceEvidence).toEqual([
       'root_task_metadata',

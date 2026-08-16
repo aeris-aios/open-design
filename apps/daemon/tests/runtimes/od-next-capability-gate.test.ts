@@ -11,6 +11,8 @@ import {
 } from '@open-design/contracts';
 import {
   OD_NEXT_RUNTIME_CAPABILITY_REGISTRY,
+  OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS,
+  OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
   OD_NEXT_RUNTIME_PATH_DESCRIPTORS,
   evaluateOdNextExecutionEligibility,
   hashRuntimeCapabilityFixtureManifestV1,
@@ -115,8 +117,11 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('parses four contract-only fixture groups but keeps the production registry empty and unknown', () => {
-    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toEqual([]);
+  it('keeps contract-only fixture groups unknown while registering only the reviewed OpenCode exact tuple', () => {
+    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(1);
+    expect(OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS).toEqual([
+      OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+    ]);
     const manifests = fixtureFiles.map(readFixture);
     expect(manifests.map((manifest) => manifest.runtimePath)).toEqual(
       OD_NEXT_RUNTIME_PATH_DESCRIPTORS.map((descriptor) => descriptor.runtimePath),
@@ -150,6 +155,45 @@ describe('OD Next runtime capability gate', () => {
         reason: 'native_continuation_not_verified',
       });
     }
+  });
+
+  it('resolves OpenCode 1.18.18 from Open Design best-effort replay and rejects version drift', () => {
+    const seed = JSON.parse(readFileSync(
+      join(fixtureDir, 'opencode-1.18.18.sanitized-real-seed.json'),
+      'utf8',
+    )) as { recordingDigest: string };
+    expect(OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.provenance).toMatchObject({
+      kind: 'sanitized_real',
+      evidenceReview: 'open_design_best_effort',
+      recordingDigest: seed.recordingDigest,
+    });
+    const exact = resolveOdNextRuntimeCapability({
+      agentId: 'opencode',
+      agentCliVersion: '1.18.18',
+      fixtureVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    });
+    expect(exact).toMatchObject({
+      tupleMatched: true,
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: '1.18.18',
+        nativeSessionContinuation: { support: 'verified', source: 'sanitized_fixture_replay' },
+        nativeSubagents: {
+          support: 'verified',
+          evidenceLevel: 'L2',
+          source: 'sanitized_fixture_replay',
+        },
+      },
+    });
+    expect(resolveOdNextRuntimeCapability({
+      agentId: 'opencode',
+      agentCliVersion: '1.18.19',
+      fixtureVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    }).reason).not.toBe('capability_resolved');
   });
 
   it('matches only an exact tuple while refusing synthetic fixtures as verification', () => {

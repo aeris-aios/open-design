@@ -10,6 +10,9 @@ const KIB = 1024;
 const DAEMON_SYSTEM_PROMPT_MAX_BYTES = 128 * KIB;
 const SECTION_MAX_BYTES = 64 * KIB;
 const TOTAL_REDACTED_CONTENT_MAX_BYTES = 512 * KIB;
+const CHILD_PROMPT_MESSAGE_MAX_BYTES = 16 * KIB;
+const CHILD_PROMPT_TOTAL_MAX_BYTES = 64 * KIB;
+const CHILD_PROMPT_MAX_MESSAGES = 16;
 
 export type PromptTelemetrySectionKind =
   | 'formOverride'
@@ -84,6 +87,32 @@ export interface StructuredPromptStackInput {
   }>;
 }
 
+export interface SafeChildPromptInput extends Record<string, unknown> {
+  type: 'open-design.child-injected-prompt';
+  redactionVersion: typeof PROMPT_STACK_REDACTION_VERSION;
+  messageCount: number;
+  capturedMessageCount: number;
+  rawBytes: number;
+  redactedContentBytes: number;
+  redactedContentBudgetBytes: number;
+  truncated: boolean;
+  messages: Array<{
+    ordinal: number;
+    rawBytes: number;
+    redactedBytes: number;
+    fingerprint: string;
+    truncated: boolean;
+    redactedContent: string;
+  }>;
+}
+
+export interface SafeChildPromptTelemetry {
+  hash: string;
+  bytes: number;
+  safePayload: SafeChildPromptInput;
+  truncated: boolean;
+}
+
 interface MutablePromptTelemetrySection extends PromptTelemetrySection {
   redactedSource: string;
 }
@@ -155,6 +184,58 @@ export function redactLocalPaths(input: string): string {
 
 function redactPromptText(input: string): string {
   return redactLocalPaths(redactSecrets(input));
+}
+
+/**
+ * Capture the runtime-visible Child task text without retaining its raw body.
+ * The same secret/path redaction used for host-composed Prompt telemetry runs
+ * before bounded content enters a Normalized observation. Callers may persist
+ * the returned object; they must never persist the input strings separately.
+ */
+export function buildSafeChildPromptTelemetry(
+  messages: readonly string[],
+): SafeChildPromptTelemetry {
+  const rawBytes = messages.reduce((total, message) => total + byteLength(message), 0);
+  let remaining = CHILD_PROMPT_TOTAL_MAX_BYTES;
+  let truncated = messages.length > CHILD_PROMPT_MAX_MESSAGES;
+  const safeMessages = messages.slice(0, CHILD_PROMPT_MAX_MESSAGES).map((message, ordinal) => {
+    const redacted = redactPromptText(message);
+    const messageRawBytes = byteLength(message);
+    const redactedBytes = byteLength(redacted);
+    const limit = Math.min(CHILD_PROMPT_MESSAGE_MAX_BYTES, remaining);
+    const redactedContent = truncateUtf8(redacted, Math.max(0, limit));
+    const contentBytes = byteLength(redactedContent);
+    remaining -= contentBytes;
+    const messageTruncated = contentBytes < redactedBytes;
+    truncated ||= messageTruncated;
+    return {
+      ordinal,
+      rawBytes: messageRawBytes,
+      redactedBytes,
+      fingerprint: sha256(redacted),
+      truncated: messageTruncated,
+      redactedContent,
+    };
+  });
+  return {
+    hash: sha256(JSON.stringify(messages)),
+    bytes: rawBytes,
+    safePayload: {
+      type: 'open-design.child-injected-prompt',
+      redactionVersion: PROMPT_STACK_REDACTION_VERSION,
+      messageCount: messages.length,
+      capturedMessageCount: safeMessages.length,
+      rawBytes,
+      redactedContentBytes: safeMessages.reduce(
+        (total, message) => total + byteLength(message.redactedContent),
+        0,
+      ),
+      redactedContentBudgetBytes: CHILD_PROMPT_TOTAL_MAX_BYTES,
+      truncated,
+      messages: safeMessages,
+    },
+    truncated,
+  };
 }
 
 function stripRuntimeToolPromptTokens(input: string): string {

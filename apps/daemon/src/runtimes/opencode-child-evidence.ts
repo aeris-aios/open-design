@@ -6,6 +6,10 @@ import {
   type NormalizedAgentObservationV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
+import {
+  buildSafeChildPromptTelemetry,
+  type SafeChildPromptInput,
+} from '../prompt-telemetry.js';
 
 export const OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION =
   'od-opencode-child-evidence/v1' as const;
@@ -26,6 +30,7 @@ export interface OpenCodeTaskTerminalCandidate {
   endedAtMs?: number;
   promptHash?: string;
   promptBytes?: number;
+  promptSafePayload?: SafeChildPromptInput;
   model?: {
     providerId: string;
     modelId: string;
@@ -64,11 +69,17 @@ function nonNegativeNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-function promptIdentity(value: unknown): { hash: string; bytes: number } | undefined {
+function promptIdentity(value: unknown): {
+  hash: string;
+  bytes: number;
+  safePayload: SafeChildPromptInput;
+} | undefined {
   if (typeof value !== 'string') return undefined;
+  const safe = buildSafeChildPromptTelemetry([value]);
   return {
     hash: createHash('sha256').update(value, 'utf8').digest('hex'),
     bytes: Buffer.byteLength(value, 'utf8'),
+    safePayload: safe.safePayload,
   };
 }
 
@@ -158,7 +169,13 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
         observedAtMs: now(),
         ...(startedAtMs === undefined ? {} : { startedAtMs }),
         ...(endedAtMs === undefined ? {} : { endedAtMs }),
-        ...(prompt ? { promptHash: prompt.hash, promptBytes: prompt.bytes } : {}),
+        ...(prompt
+          ? {
+              promptHash: prompt.hash,
+              promptBytes: prompt.bytes,
+              promptSafePayload: prompt.safePayload,
+            }
+          : {}),
         ...(providerId && modelId ? { model: { providerId, modelId } } : {}),
       });
     } catch {
@@ -285,6 +302,96 @@ export interface AdaptOpenCodeChildFactInput {
   stage: StrategyInputStageV2;
 }
 
+/**
+ * Map the root Task terminal candidate when post-run child export is not yet
+ * available. This is deliberately L1/partial: it is sufficient to expose the
+ * bounded childInjected Prompt, but never substitutes for the two-sided L2
+ * parent/child verification used by capability enforcement.
+ */
+export function adaptOpenCodeTaskCandidateV1(input: {
+  candidate: OpenCodeTaskTerminalCandidate;
+  taskExecutionId: string;
+  runId: string;
+  taskRunIndex: number;
+  taskRunObservationId: string;
+  stage: StrategyInputStageV2;
+}): NormalizedAgentObservationV1 {
+  const fact = input.candidate;
+  const startedAtMs = fact.startedAtMs ?? fact.observedAtMs;
+  const endedAtMs = fact.endedAtMs ?? fact.observedAtMs;
+  return NormalizedAgentObservationV1Schema.parse({
+    schema: NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
+    identity: {
+      observationId: `opencode-child-candidate:${input.runId}:${fact.childSessionId}`,
+      taskExecutionId: input.taskExecutionId,
+      runId: input.runId,
+      taskRunIndex: input.taskRunIndex,
+      parentObservationId: input.taskRunObservationId,
+      runtimeSessionId: fact.childSessionId,
+    },
+    kind: 'child_agent',
+    stage: input.stage,
+    status: fact.state,
+    prompt: {
+      hostComposed: {
+        availability: 'unobservable',
+        limitations: ['The daemon did not compose the native OpenCode Child Prompt.'],
+      },
+      childInjected: fact.promptHash !== undefined && fact.promptBytes !== undefined
+        ? {
+            availability: fact.promptSafePayload ? 'exact' : 'partial',
+            source: 'runtime',
+            hash: fact.promptHash,
+            bytes: fact.promptBytes,
+            ...(fact.promptSafePayload ? { safePayload: fact.promptSafePayload } : {}),
+            limitations: fact.promptSafePayload
+              ? ['child_prompt_safe_payload_redacted']
+              : ['child_prompt_hash_only'],
+          }
+        : {
+            availability: 'unavailable',
+            source: 'unknown',
+            limitations: ['child_prompt_not_observed'],
+          },
+      agentEffectiveContext: {
+        availability: 'unobservable',
+        limitations: ['OpenCode does not expose effective Child context in this boundary.'],
+      },
+    },
+    usage: {
+      availability: 'unavailable',
+      source: 'unknown',
+      accountingMode: 'unknown',
+      limitations: ['child_usage_requires_sanitized_export'],
+    },
+    timing: {
+      availability: fact.startedAtMs !== undefined && fact.endedAtMs !== undefined
+        ? 'complete'
+        : 'partial',
+      evidence: [{
+        source: 'runtime',
+        clockDomain: 'unix_epoch_ms',
+        startedAtMs,
+        endedAtMs,
+        durationMs: Math.max(0, endedAtMs - startedAtMs),
+      }],
+      limitations: ['root_task_terminal_boundary_not_child_export'],
+    },
+    limitations: [
+      'opencode_root_task_candidate_only',
+      'child_export_required_for_l2_parent_verification',
+    ],
+    attributes: {
+      runtimeAdapterVersion: fact.adapterVersion,
+      agentCliVersion: fact.cliVersion,
+      nativeTaskToolCallId: fact.toolCallId,
+      rootSessionId: fact.rootSessionId,
+      evidenceLevel: 'L1',
+      ...(fact.model ? { model: fact.model.modelId, provider: fact.model.providerId } : {}),
+    },
+  });
+}
+
 function observationId(runId: string, childSessionId: string): string {
   return `opencode-child:${runId}:${childSessionId}`;
 }
@@ -369,7 +476,10 @@ export function adaptOpenCodeChildRuntimeFactV1(
             source: 'runtime' as const,
             hash: fact.promptHash,
             bytes: fact.promptBytes,
-            limitations: ['Only hash and byte length are retained from native Task input.'],
+            ...(fact.promptSafePayload ? { safePayload: fact.promptSafePayload } : {}),
+            limitations: fact.promptSafePayload
+              ? ['Child Prompt text is redacted and bounded before observation storage.']
+              : ['Only hash and byte length are retained from native Task input.'],
           }
         : {
             availability: 'unavailable' as const,

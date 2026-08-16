@@ -55,6 +55,7 @@ describe('native OpenCode child evidence', () => {
   it('replays local success, recovered failure, and resume seeds without promoting production evidence', () => {
     const seed = JSON.parse(readFileSync(sanitizedRealSeedPath, 'utf8')) as {
       fixtureKind: string;
+      evidenceReview: string;
       recordingDigest: string;
       caseCoverage: Array<{
         caseId: string;
@@ -76,7 +77,8 @@ describe('native OpenCode child evidence', () => {
         sanitizedChildExport: unknown;
       }>;
     };
-    expect(seed.fixtureKind).toBe('sanitized_real_seed_unattested');
+    expect(seed.fixtureKind).toBe('sanitized_real_best_effort');
+    expect(seed.evidenceReview).toBe('open_design_best_effort');
     expect(seed.recordingDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
     const { recordingDigest: _recordingDigest, ...digestInput } = structuredClone(seed);
     expect(seed.recordingDigest).toBe(
@@ -215,7 +217,7 @@ describe('native OpenCode child evidence', () => {
     expect(serialized).not.toContain('sk-');
   });
 
-  it('captures a terminal native Task candidate without retaining Prompt text', () => {
+  it('captures a terminal native Task candidate with only bounded redacted Prompt text', () => {
     const [candidate] = collectCandidate();
     expect(candidate).toMatchObject({
       cliVersion: '1.18.18',
@@ -228,7 +230,11 @@ describe('native OpenCode child evidence', () => {
       promptBytes: 35,
     });
     expect(candidate?.promptHash).toMatch(/^[a-f0-9]{64}$/u);
-    expect(JSON.stringify(candidate)).not.toContain('Inspect the synthetic fixture');
+    expect(candidate?.promptSafePayload).toMatchObject({
+      type: 'open-design.child-injected-prompt',
+      messageCount: 1,
+    });
+    expect(JSON.stringify(candidate)).toContain('Inspect the synthetic fixture');
   });
 
   it('requires the root stream id and Task parent metadata to agree', () => {

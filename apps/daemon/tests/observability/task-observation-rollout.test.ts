@@ -15,6 +15,7 @@ import {
 } from '../../src/observability/task-observation-rollout.js';
 import { runTelemetryDeliveryIdempotencyKey } from '../../src/observability/delivery-state.js';
 import { reconcileDurableRunTerminals } from '../../src/runtimes/run-terminal-reconciliation.js';
+import { buildSafeChildPromptTelemetry } from '../../src/prompt-telemetry.js';
 import {
   compareAndTransitionStrategyTaskExecution,
   createStrategyTaskExecution,
@@ -191,6 +192,12 @@ interface DeliveryFixtureRow {
   finalizedAt: number | null;
 }
 
+type SyntheticRunLike = Omit<ReturnType<typeof syntheticRun>, 'events'> & {
+  agentId?: string;
+  preflightAgentCliVersion?: string;
+  events: Array<{ event: string; timestamp: number; data: unknown }>;
+};
+
 describe('task observation rollout', () => {
   let tempDir: string;
   let db: Database.Database;
@@ -214,7 +221,7 @@ describe('task observation rollout', () => {
     env?: Record<string, string>;
     fetchImpl?: typeof fetch;
     configuredEnv?: Record<string, string>;
-    getRun?: (runId: string) => ReturnType<typeof syntheticRun> | null;
+    getRun?: (runId: string) => SyntheticRunLike | null;
   }) {
     return createTaskObservationRolloutService({
       db,
@@ -349,6 +356,61 @@ describe('task observation rollout', () => {
       ],
     });
     expect(batch.filter((event) => event.type === 'span-create')).toHaveLength(1);
+  });
+
+  it('exports redacted childInjected Prompt and exact runtime versions from persisted runtime facts', async () => {
+    const prompt =
+      'Inspect /Users/alice/private/design.ts with sk-test-1234567890123456789012.';
+    const safePrompt = buildSafeChildPromptTelemetry([prompt]);
+    const runWithChild = () => ({
+      ...syntheticRun(),
+      agentId: 'opencode',
+      preflightAgentCliVersion: '1.18.18',
+      events: [
+        ...syntheticRun().events,
+        {
+          event: 'agent',
+          timestamp: 1_900,
+          data: {
+            type: 'diagnostic',
+            name: 'opencode_child_task_candidate',
+            adapterVersion: 'od-opencode-child-evidence/v1',
+            cliVersion: '1.18.18',
+            rootSessionId: 'root-fixture',
+            childSessionId: 'child-fixture',
+            toolCallId: 'tool-fixture',
+            state: 'completed',
+            observedAtMs: 1_900,
+            startedAtMs: 1_500,
+            endedAtMs: 1_900,
+            promptHash: 'a'.repeat(64),
+            promptBytes: Buffer.byteLength(prompt, 'utf8'),
+            promptSafePayload: safePrompt.safePayload,
+          },
+        },
+      ],
+    });
+    const requests: string[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+      requests.push(String(init?.body));
+      return acceptedResponse();
+    });
+
+    await expect(service({
+      mode: 'send',
+      fetchImpl,
+      getRun: (runId) => runId === 'run-1' ? runWithChild() : null,
+    }).finalizeForRun('run-1')).resolves.toMatchObject({ action: 'sent' });
+
+    const serialized = requests.join('\n');
+    expect(serialized).toContain('open-design.child-injected-prompt');
+    expect(serialized).toContain('1.18.18');
+    expect(serialized).toContain('od-opencode-json-events/v1');
+    expect(serialized).toContain('Inspect');
+    expect(serialized).toContain('[REDACTED:path]');
+    expect(serialized).toContain('[REDACTED:sk_key]');
+    expect(serialized).not.toContain('/Users/alice');
+    expect(serialized).not.toContain('sk-test-');
   });
 
   it('exports one root with the durable request/clarification/repair/production run chain', async () => {

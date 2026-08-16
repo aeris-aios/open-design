@@ -90,8 +90,44 @@ export interface StrategyTaskObservationRootV1 {
   snapshotId: string;
   planContractHash: string | null;
   selectedAgentId: string;
+  agentCliVersions: string[];
+  runtimeCompanionVersions: string[];
+  runtimeAdapterVersions: string[];
   createdAt: number;
   updatedAt: number;
+}
+
+const SAFE_RUNTIME_VERSION_ATTRIBUTE_KEYS = [
+  'agentCliVersion',
+  'runtimeCompanionVersion',
+  'runtimeAdapterVersion',
+] as const;
+
+function safeRuntimeVersion(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= 128 && !/[\u0000-\u001f\u007f]/u.test(trimmed)
+    ? trimmed
+    : undefined;
+}
+
+export function safeTaskObservationRuntimeVersions(
+  observation: NormalizedAgentObservationV1,
+): Partial<Record<typeof SAFE_RUNTIME_VERSION_ATTRIBUTE_KEYS[number], string>> {
+  return Object.fromEntries(SAFE_RUNTIME_VERSION_ATTRIBUTE_KEYS.flatMap((key) => {
+    const value = safeRuntimeVersion(observation.attributes?.[key]);
+    return value ? [[key, value] as const] : [];
+  }));
+}
+
+function distinctRuntimeVersions(
+  observations: readonly NormalizedAgentObservationV1[],
+  key: typeof SAFE_RUNTIME_VERSION_ATTRIBUTE_KEYS[number],
+): string[] {
+  return [...new Set(observations.flatMap((observation) => {
+    const value = safeRuntimeVersion(observation.attributes?.[key]);
+    return value ? [value] : [];
+  }))].sort(compareCodeUnits);
 }
 
 export interface StrategyTaskObservationAggregateV1 {
@@ -546,6 +582,12 @@ export function aggregateStrategyTaskObservations(input: {
       snapshotId: input.task.snapshotId,
       planContractHash: input.task.planContractHash ?? null,
       selectedAgentId: input.task.selectedAgentId,
+      agentCliVersions: distinctRuntimeVersions(sorted, 'agentCliVersion'),
+      runtimeCompanionVersions: distinctRuntimeVersions(
+        sorted,
+        'runtimeCompanionVersion',
+      ),
+      runtimeAdapterVersions: distinctRuntimeVersions(sorted, 'runtimeAdapterVersion'),
       createdAt: input.task.createdAt,
       updatedAt: input.task.updatedAt,
     },
@@ -731,6 +773,9 @@ export function buildLegacyTaskObservationPayload(
       snapshotId: aggregate.root.snapshotId,
       planContractHash: aggregate.root.planContractHash,
       selectedAgentId: aggregate.root.selectedAgentId,
+      agentCliVersions: aggregate.root.agentCliVersions,
+      runtimeCompanionVersions: aggregate.root.runtimeCompanionVersions,
+      runtimeAdapterVersions: aggregate.root.runtimeAdapterVersions,
       ...(context
         ? {
             environment: context.environment,
@@ -782,6 +827,7 @@ export function buildLegacyTaskObservationPayload(
         turnAccountingOwnerObservationId:
           observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
+        ...safeTaskObservationRuntimeVersions(observation),
         limitations: safeTaskObservationLimitationCodes(observation.limitations),
       },
     };

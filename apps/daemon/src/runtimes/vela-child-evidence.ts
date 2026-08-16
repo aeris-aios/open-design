@@ -5,6 +5,10 @@ import {
   type RuntimeObservationEvidenceLevelV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
+import {
+  buildSafeChildPromptTelemetry,
+  type SafeChildPromptInput,
+} from '../prompt-telemetry.js';
 
 export const VELA_CHILD_EVIDENCE_EXTENSION =
   'vela.opencode.child_agent_lifecycle' as const;
@@ -79,6 +83,7 @@ export interface VelaChildRuntimeFact {
   prompt?: {
     sha256: string;
     bytes: number;
+    safePayload?: SafeChildPromptInput;
   };
   usage?: {
     completeness: 'complete' | 'partial';
@@ -270,7 +275,11 @@ function parsePrompt(value: unknown): VelaChildRuntimeFact['prompt'] | undefined
   if (!isRecord(value) || value.availability !== 'hash_only') return undefined;
   const sha256 = safeSha256(value.sha256);
   const bytes = nonNegativeInteger(value.bytes);
-  return sha256 && bytes !== undefined ? { sha256, bytes } : undefined;
+  if (!sha256 || bytes === undefined) return undefined;
+  const safe = typeof value.text === 'string'
+    ? buildSafeChildPromptTelemetry([value.text]).safePayload
+    : undefined;
+  return { sha256, bytes, ...(safe ? { safePayload: safe } : {}) };
 }
 
 const USAGE_SOURCES = new Set([
@@ -611,7 +620,10 @@ export function adaptVelaChildRuntimeFactV1(
         source: 'acp' as const,
         hash: fact.prompt.sha256,
         bytes: fact.prompt.bytes,
-        limitations: ['Only Prompt hash and byte length are retained from Vela.'],
+        ...(fact.prompt.safePayload ? { safePayload: fact.prompt.safePayload } : {}),
+        limitations: fact.prompt.safePayload
+          ? ['Vela Child Prompt text was re-redacted and bounded by Open Design.']
+          : ['Only Prompt hash and byte length are retained from Vela.'],
       }
     : {
         availability: 'unavailable' as const,

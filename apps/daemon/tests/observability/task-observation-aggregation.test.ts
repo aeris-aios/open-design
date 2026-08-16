@@ -165,6 +165,10 @@ function runObservation(
     stage: run.inputStage,
     usage: completeUsage(100 + run.taskRunIndex, 10 + run.taskRunIndex),
     prompt: exactPrompt(run.inputStage),
+    attributes: {
+      agentCliVersion: 'opencode 1.18.18',
+      runtimeAdapterVersion: 'od-opencode-json-events/v1',
+    },
     ...overrides,
   });
 }
@@ -275,6 +279,8 @@ describe('strategy task observation aggregation', () => {
       executionMode: 'simple',
       taskType: 'prototype',
       planContractHash: 'sha256:plan',
+      agentCliVersions: ['opencode 1.18.18'],
+      runtimeAdapterVersions: ['od-opencode-json-events/v1'],
     });
     expect(aggregate.observations.filter((fact) => fact.kind === 'task_run').map(
       (fact) => [fact.stage, fact.identity.taskRunIndex, fact.identity.parentObservationId],
@@ -392,11 +398,25 @@ describe('strategy task observation aggregation', () => {
 
     expect(trace).toMatchObject({
       type: 'trace-create',
-      body: { id: 'strategy-task:task-1', name: 'open-design-strategy-task' },
+      body: {
+        id: 'strategy-task:task-1',
+        name: 'open-design-strategy-task',
+        metadata: {
+          agentCliVersions: ['opencode 1.18.18'],
+          runtimeAdapterVersions: ['od-opencode-json-events/v1'],
+        },
+      },
     });
     expect(productionRun).toMatchObject({
       type: 'span-create',
-      body: { traceId: 'strategy-task:task-1', name: 'strategy-stage:production' },
+      body: {
+        traceId: 'strategy-task:task-1',
+        name: 'strategy-stage:production',
+        metadata: {
+          agentCliVersion: 'opencode 1.18.18',
+          runtimeAdapterVersion: 'od-opencode-json-events/v1',
+        },
+      },
     });
     expect(productionRun?.body).not.toHaveProperty('parentObservationId');
     expect(child?.body.parentObservationId).toBe(

@@ -81,7 +81,7 @@ export type RuntimeCapabilityFixtureCaseV1 = z.infer<
   typeof RuntimeCapabilityFixtureCaseV1Schema
 >;
 
-export const RuntimeFixtureProvenanceV1Schema = z.discriminatedUnion('kind', [
+export const RuntimeFixtureProvenanceV1Schema = z.union([
   z.object({
     kind: z.literal('contract_only'),
     reason: z.literal('x1_runtime_fixture_missing'),
@@ -94,8 +94,18 @@ export const RuntimeFixtureProvenanceV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('sanitized_real'),
     recordingDigest: sha256Schema,
     anonymizationVersion: nonEmptyStringSchema,
-    runtimeOwnerAttestation: nonEmptyStringSchema,
-  }).strict(),
+    evidenceReview: z.literal('open_design_best_effort').optional(),
+    /** @deprecated Older manifests may carry this review note. */
+    runtimeOwnerAttestation: nonEmptyStringSchema.optional(),
+  }).strict().superRefine((provenance, context) => {
+    if (!provenance.evidenceReview && !provenance.runtimeOwnerAttestation) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['evidenceReview'],
+        message: 'Sanitized real fixtures require an Open Design evidence review.',
+      });
+    }
+  }),
 ]);
 export type RuntimeFixtureProvenanceV1 = z.infer<
   typeof RuntimeFixtureProvenanceV1Schema

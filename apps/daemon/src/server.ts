@@ -436,6 +436,7 @@ import {
 import { narrowProjectCritiqueOverride } from './critique/spawn-inputs.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
+import { getDetectedRuntimeVersions } from './runtimes/detection.js';
 import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
@@ -506,6 +507,8 @@ import {
 } from './langfuse-trace.js';
 import { reconcileDurableRunTerminals } from './runtimes/run-terminal-reconciliation.js';
 import { createTaskObservationRolloutService } from './observability/task-observation-rollout.js';
+import { strategyTaskRunObservationId } from './observability/task-observation-aggregation.js';
+import { collectCodexChildEvidence } from './runtimes/codex-child-evidence.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { newInsertId, readAnalyticsContext, type AnalyticsService } from './analytics.js';
 import {
@@ -13553,6 +13556,12 @@ export async function startServer({
         }
         noteFirstTokenFromAgentEvent(ev);
         emitAgentEvent(ev);
+      }, {
+        onChildRuntimeFact: (fact) => sendAgentEvent({
+          type: 'diagnostic',
+          name: 'claude_child_runtime_fact',
+          ...fact,
+        }),
       });
       child.stdout.on('data', (chunk) => copilot.feed(chunk));
       child.on('close', () => copilot.flush());
@@ -13778,6 +13787,21 @@ export async function startServer({
       const handler = createJsonEventStreamHandler(
         def.eventParser || def.id,
         sendAgentEvent,
+        def.id === 'opencode'
+          ? {
+              openCodeChildEvidence: {
+                cliVersion:
+                  run.preflightAgentCliVersion
+                  ?? getDetectedRuntimeVersions(def.id)?.agentCliVersion
+                  ?? '',
+                onCandidate: (candidate) => sendAgentEvent({
+                  type: 'diagnostic',
+                  name: 'opencode_child_task_candidate',
+                  ...candidate,
+                }),
+              },
+            }
+          : {},
       );
       child.stdout.on('data', (chunk) => handler.feed(chunk));
       child.on('close', () => handler.flush());
@@ -13890,6 +13914,46 @@ export async function startServer({
       }
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
+      if (
+        def.id === 'codex' &&
+        strategyTaskAtStart &&
+        capturedSessionId &&
+        typeof spawnedAgentEnv?.CODEX_HOME === 'string'
+      ) {
+        const mapping = strategyTaskAtStart.runs.find((candidate) => (
+          candidate.runId === run.id
+        ));
+        if (mapping) {
+          try {
+            const childEvidence = await collectCodexChildEvidence({
+              codexHome: spawnedAgentEnv.CODEX_HOME,
+              parentSessionId: capturedSessionId,
+              taskExecutionId: strategyTaskAtStart.taskExecutionId,
+              runId: run.id,
+              taskRunIndex: mapping.taskRunIndex,
+              stage: mapping.inputStage,
+              parentObservationId: strategyTaskRunObservationId(
+                strategyTaskAtStart.taskExecutionId,
+                run.id,
+              ),
+              ...(run.preflightAgentCliVersion
+                ? { agentCliVersion: run.preflightAgentCliVersion }
+                : {}),
+              runStartedAtMs: run.createdAt,
+              runEndedAtMs: Date.now(),
+            });
+            for (const observation of childEvidence.observations) {
+              sendAgentEvent({
+                type: 'diagnostic',
+                name: 'normalized_agent_observation_v1',
+                observation,
+              });
+            }
+          } catch (error) {
+            console.warn('[observability] Codex child evidence unavailable', String(error));
+          }
+        }
+      }
       // Resume-target-missing recovery runs BEFORE the generic fatal/stream-error
       // short-circuits. The signal arrives differently per adapter: codex reports
       // "no rollout found for thread id" as a stream `error` event, while AMR/vela

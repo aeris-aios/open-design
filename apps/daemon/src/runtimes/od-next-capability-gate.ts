@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import {
   OD_NEXT_RUNTIME_CAPABILITY_SNAPSHOT_V1_SCHEMA,
+  OD_NEXT_RUNTIME_CAPABILITY_EVIDENCE_V1_SCHEMA,
+  OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
   OdNextRuntimeCapabilitySnapshotV1Schema,
   RuntimeCapabilityFixtureManifestV1Schema,
   RuntimeCapabilityRegistryEntryV1Schema,
@@ -48,19 +50,63 @@ export const OD_NEXT_RUNTIME_PATH_DESCRIPTORS = [
   },
 ] as const satisfies readonly OdNextRuntimePathDescriptor[];
 
-/**
- * X1 has not supplied a trusted version tuple or sanitized real fixture yet.
- * Keep production empty: ordinary runtime availability is not OD Next proof.
- */
-export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY: readonly RuntimeCapabilityRegistryEntryV1[] = [];
+const ALL_REQUIRED_CASES = [
+  { id: 'main_run', expectedMinimumEvidence: 'L0' },
+  { id: 'tool', expectedMinimumEvidence: 'L1' },
+  { id: 'child_success', expectedMinimumEvidence: 'L2' },
+  { id: 'child_failure_parent_recovers', expectedMinimumEvidence: 'L2' },
+  { id: 'cancel', expectedMinimumEvidence: 'L0' },
+  { id: 'timeout', expectedMinimumEvidence: 'L0' },
+  { id: 'resume', expectedMinimumEvidence: 'L0' },
+] as const;
 
 /**
- * Trusted production fixture manifests. X1 intentionally leaves this empty;
- * a future evidence update must add a sanitized-real manifest and its exact
- * registry tuple together in this owner module.
+ * Open Design-owned best-effort replay for the exact native OpenCode tuple.
+ * The source recording is reduced to structural facts in the checked-in seed;
+ * no upstream or runtime-owner endorsement is implied.
  */
+export const OPENCODE_1_18_18_BEST_EFFORT_MANIFEST =
+  RuntimeCapabilityFixtureManifestV1Schema.parse({
+    schema: OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
+    fixtureVersion: 'opencode-1.18.18-seven-path/v1',
+    runtimePath: 'native-opencode',
+    agentId: 'opencode',
+    agentCliVersion: '1.18.18',
+    runtimeAdapterVersion: 'od-opencode-json-events/v1',
+    provenance: {
+      kind: 'sanitized_real',
+      recordingDigest:
+        'sha256:b1224716a340401879cfb2f366d1252e9f837ce24050d9b0dfa4430f89492fc5',
+      anonymizationVersion: 'od-runtime-evidence/v1',
+      evidenceReview: 'open_design_best_effort',
+    },
+    containsSensitiveContent: false,
+    cases: ALL_REQUIRED_CASES,
+  });
+
 export const OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS:
-  readonly RuntimeCapabilityFixtureManifestV1[] = [];
+  readonly RuntimeCapabilityFixtureManifestV1[] = [
+    OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+  ];
+
+export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
+  readonly RuntimeCapabilityRegistryEntryV1[] = [RuntimeCapabilityRegistryEntryV1Schema.parse({
+    runtimePath: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.runtimePath,
+    agentId: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.agentId,
+    agentCliVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.agentCliVersion!,
+    runtimeAdapterVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.runtimeAdapterVersion,
+    fixtureVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.fixtureVersion,
+    fixtureHash: hashRuntimeCapabilityFixtureManifestV1(
+      OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+    ),
+    evidence: {
+      schema: OD_NEXT_RUNTIME_CAPABILITY_EVIDENCE_V1_SCHEMA,
+      source: 'fixture_replay',
+      nativeSessionContinuation: { support: 'verified', evidenceLevel: 'L0' },
+      nativeSubagents: { support: 'verified', evidenceLevel: 'L2' },
+      caseResults: ALL_REQUIRED_CASES.map(({ id }) => ({ id, outcome: 'passed' })),
+    },
+  })];
 
 export type OdNextCapabilityResolutionReason =
   | 'runtime_out_of_scope'

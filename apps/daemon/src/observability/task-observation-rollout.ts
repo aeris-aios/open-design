@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
 
+import { NormalizedAgentObservationV1Schema } from '@open-design/contracts';
 import type { TelemetryPrefs } from '../app-config.js';
 import {
   HARD_BATCH_MAX_BYTES,
@@ -28,6 +29,20 @@ import {
   type RunTelemetryDeliveryResult,
 } from './delivery-state.js';
 import { buildStructuredMainRunObservationV1 } from './main-run-observation.js';
+import { getDetectedRuntimeVersions } from '../runtimes/detection.js';
+import { OD_NEXT_RUNTIME_PATH_DESCRIPTORS } from '../runtimes/od-next-capability-gate.js';
+import {
+  adaptOpenCodeTaskCandidateV1,
+  type OpenCodeTaskTerminalCandidate,
+} from '../runtimes/opencode-child-evidence.js';
+import {
+  adaptVelaChildRuntimeFactV1,
+  type VelaChildRuntimeFact,
+} from '../runtimes/vela-child-evidence.js';
+import {
+  adaptClaudeChildRuntimeFactV1,
+  type ClaudeChildRuntimeFact,
+} from '../runtimes/claude-child-evidence.js';
 import {
   aggregateStrategyTaskObservations,
   buildLegacyTaskObservationPayload,
@@ -69,6 +84,8 @@ interface TaskRunLike {
   analyticsTelemetry?: Parameters<typeof summarizeRunTimingAnalytics>[0]['telemetry'];
   model?: string | null;
   resolvedModelId?: string | null;
+  agentId?: string | null;
+  preflightAgentCliVersion?: string | null;
 }
 
 type PersistedDeliveryStatus =
@@ -281,7 +298,11 @@ function taskAggregate(
       ...(run.analyticsTelemetry ? { telemetry: run.analyticsTelemetry } : {}),
       events: run.events,
     });
-    return [buildStructuredMainRunObservationV1({
+    const detectedVersions = getDetectedRuntimeVersions(run.agentId);
+    const runtimeAdapterVersion = OD_NEXT_RUNTIME_PATH_DESCRIPTORS.find(
+      (descriptor) => descriptor.agentId === run.agentId,
+    )?.runtimeAdapterVersion;
+    const taskRunObservation = buildStructuredMainRunObservationV1({
       taskExecutionId: task.taskExecutionId,
       runId: run.id,
       taskRunIndex: mapping.taskRunIndex,
@@ -293,7 +314,70 @@ function taskAggregate(
       timing,
       startedAtMs: run.createdAt,
       endedAtMs: run.updatedAt,
-    })];
+      ...(run.preflightAgentCliVersion || detectedVersions?.agentCliVersion
+        ? {
+            agentCliVersion:
+              run.preflightAgentCliVersion ?? detectedVersions!.agentCliVersion!,
+          }
+        : {}),
+      ...(detectedVersions?.runtimeCompanionName
+        ? { runtimeCompanionName: detectedVersions.runtimeCompanionName }
+        : {}),
+      ...(detectedVersions?.runtimeCompanionVersion
+        ? { runtimeCompanionVersion: detectedVersions.runtimeCompanionVersion }
+        : {}),
+      ...(runtimeAdapterVersion ? { runtimeAdapterVersion } : {}),
+    });
+    const childObservations = run.events.flatMap((record) => {
+      if (record.event !== 'agent' || !record.data || typeof record.data !== 'object') {
+        return [];
+      }
+      const diagnostic = record.data as Record<string, unknown>;
+      if (diagnostic.type !== 'diagnostic') return [];
+      try {
+        if (diagnostic.name === 'normalized_agent_observation_v1') {
+          const parsed = NormalizedAgentObservationV1Schema.safeParse(
+            diagnostic.observation,
+          );
+          return parsed.success ? [parsed.data] : [];
+        }
+        if (diagnostic.name === 'opencode_child_task_candidate') {
+          return [adaptOpenCodeTaskCandidateV1({
+            candidate: diagnostic as unknown as OpenCodeTaskTerminalCandidate,
+            taskExecutionId: task.taskExecutionId,
+            runId: run.id,
+            taskRunIndex: mapping.taskRunIndex,
+            taskRunObservationId: taskRunObservation.identity.observationId,
+            stage: mapping.inputStage,
+          })];
+        }
+        if (diagnostic.name === 'vela_opencode_child_agent_lifecycle') {
+          return [adaptVelaChildRuntimeFactV1({
+            fact: diagnostic as unknown as VelaChildRuntimeFact,
+            taskExecutionId: task.taskExecutionId,
+            runId: run.id,
+            taskRunIndex: mapping.taskRunIndex,
+            taskRunObservationId: taskRunObservation.identity.observationId,
+            stage: mapping.inputStage,
+          })];
+        }
+        if (diagnostic.name === 'claude_child_runtime_fact') {
+          return [adaptClaudeChildRuntimeFactV1({
+            fact: diagnostic as unknown as ClaudeChildRuntimeFact,
+            taskExecutionId: task.taskExecutionId,
+            runId: run.id,
+            taskRunIndex: mapping.taskRunIndex,
+            taskRunObservationId: taskRunObservation.identity.observationId,
+            stage: mapping.inputStage,
+          })];
+        }
+      } catch {
+        // Runtime evidence is an optional side channel. Malformed or stale
+        // facts lower task coverage; they never block terminal delivery.
+      }
+      return [];
+    });
+    return [taskRunObservation, ...childObservations];
   });
   return aggregateStrategyTaskObservations({ task, observations });
 }

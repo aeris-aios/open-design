@@ -154,9 +154,10 @@ afterEach(async () => {
 });
 
 describe('collectCodexChildEvidence', () => {
-  it('collects declared child and grandchild lifecycles without exposing prompt text', async () => {
+  it('collects declared child and grandchild lifecycles with bounded redacted Prompt text', async () => {
     const home = await codexHome();
-    const secretPrompt = 'never-upload-this-prompt';
+    const secretPrompt =
+      'Inspect /Users/alice/private/design.ts with sk-test-1234567890123456789012.';
     await writeRollout(home, PARENT, [
       metadata(PARENT),
       ...turn({
@@ -212,7 +213,12 @@ describe('collectCodexChildEvidence', () => {
     ])).toMatchObject({ outcome: 'passed' });
     expect(serialized).not.toContain(secretPrompt);
     expect(serialized).not.toContain(home);
-    expect(serialized).toContain('contentRedacted');
+    expect(serialized).toContain('open-design.child-injected-prompt');
+    expect(serialized).toContain('Inspect');
+    expect(serialized).toContain('[REDACTED:path]');
+    expect(serialized).toContain('[REDACTED:sk_key]');
+    expect(serialized).not.toContain('/Users/alice');
+    expect(serialized).not.toContain('sk-test-');
     expect(result.limitations).toContain('codex_inherited_turn_excluded');
 
     const depthLimited = await collectCodexChildEvidence(collectInput(home, {
