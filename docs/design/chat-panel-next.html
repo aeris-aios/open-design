@@ -558,7 +558,11 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
   transition: border-color var(--duration-faster) var(--ease-out);
 }
 button.att-i:hover { border-color: var(--border-strong); }
-.att-i .ph { display: block; height: 78px; }
+/* 图片区 1:1。用 aspect-ratio 声明比例,不写死高度 ——
+   卡宽以后再调(已经调过一次 74→104),高度会自己跟上,不用回来重算。
+   原先是 104 宽配写死的 78 高,减掉左右边框实际是 102:78 ≈ 17:13,
+   既不是 4:3 也不是任何声明过的比例,是撞出来的。 */
+.att-i .ph { display: block; aspect-ratio: 1 / 1; height: auto; }
 .att-i .nm { display: block; padding: 4px 6px; border-top: 1px solid var(--border-soft); background: var(--bg); font-size: var(--t-cap); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 失败态只把红给外框和「重试」。文件名是事实、不是状态,
    跟着变红等于把红用在了三个层级上,红就不指向要点的那个东西了。 */
