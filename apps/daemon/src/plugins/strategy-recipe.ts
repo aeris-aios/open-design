@@ -169,6 +169,7 @@ export async function resolveOdNextStrategyRequestRecipeV2(input: {
       snapshotId,
       packageHash: binding.packageHash,
       taskProfileDigest: binding.selectedTaskProfile.sha256,
+      taskProfileVersion: binding.selectedTaskProfile.version,
       taskType: binding.selectedTaskProfile.taskType,
       executionProfile: input.executionProfile,
       coreStrategy: assets.coreStrategy,

@@ -1,11 +1,28 @@
 import { describe, expect, it } from 'vitest';
+import type { OpenDesignPlanContractV2 } from '@open-design/contracts';
 
 import {
   decideStrategyRequestRoute,
+  resolveDaemonOwnedOdNextExecutionPreflight,
   resolveStrategyFields,
   runExecutionPreflight,
   runIntakePreflight,
 } from '../../../src/strategies/od-next/resolver.js';
+
+function daemonPlan(
+  taskType: string,
+  route: string,
+  outputKind: string,
+  inputRefs: string[] = ['request'],
+): OpenDesignPlanContractV2 {
+  return {
+    taskProfile: {
+      taskType,
+      requiredDeliverables: [{ id: outputKind, kind: outputKind }],
+    },
+    runManifest: { productionRoutes: [route], inputRefs },
+  } as OpenDesignPlanContractV2;
+}
 
 describe('OD Next resolver and preflight', () => {
   it('preserves locked values unless one explicit user change produces a ChangeSet', () => {
@@ -119,5 +136,28 @@ describe('OD Next resolver and preflight', () => {
       templates: [],
       outputKinds: [{ id: 'prototype', supported: true }],
     })).toEqual({ status: 'passed', reasonCodes: [] });
+  });
+
+  it('allows only daemon-owned routes and output kinds for the four production profiles', () => {
+    for (const [taskType, route, outputKind] of [
+      ['prototype', 'prototype-html', 'prototype'],
+      ['ppt', 'deck-html', 'presentation'],
+      ['marketing', 'marketing-html', 'image'],
+      ['hyperframes', 'hyperframes-html', 'video'],
+    ] as const) {
+      expect(runExecutionPreflight(resolveDaemonOwnedOdNextExecutionPreflight(
+        daemonPlan(taskType, route, outputKind),
+      ))).toEqual({ status: 'passed', reasonCodes: [] });
+    }
+    expect(runExecutionPreflight(resolveDaemonOwnedOdNextExecutionPreflight(
+      daemonPlan('audio', 'audio-render', 'audio', ['host-path']),
+    ))).toEqual({
+      status: 'blocked',
+      reasonCodes: [
+        'od_next_preflight_route_unavailable:audio-render',
+        'od_next_preflight_input_unavailable:host-path',
+        'od_next_preflight_output_unsupported:audio',
+      ],
+    });
   });
 });

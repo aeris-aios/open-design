@@ -1,6 +1,6 @@
 # OD Next Presentation Task Profile v2.0.0
 
-> Rollout: reserved
+> Rollout: active
 
 ## Profile fields
 

@@ -55,14 +55,14 @@
             "taskType": "ppt",
             "path": "./assets/task-profiles/ppt.md",
             "version": "2.0.0",
-            "rollout": "reserved",
+            "rollout": "active",
             "projectKinds": ["deck"]
           },
           {
             "taskType": "marketing",
             "path": "./assets/task-profiles/marketing.md",
             "version": "2.0.0",
-            "rollout": "reserved",
+            "rollout": "active",
             "projectKinds": ["image"]
           },
           {

@@ -276,6 +276,61 @@ export interface OdNextExecutionPreflightInput {
   outputKinds: ReadonlyArray<{ id: string; supported: boolean }>;
 }
 
+const DAEMON_OWNED_PRODUCTION_ROUTES = {
+  prototype: new Set(['html', 'prototype-html']),
+  ppt: new Set(['ppt-html', 'html', 'deck-html']),
+  marketing: new Set(['marketing-html', 'html', 'image-html']),
+  hyperframes: new Set(['hyperframes-html', 'html']),
+} as const;
+
+const DAEMON_OWNED_OUTPUT_KINDS = {
+  prototype: new Set(['prototype', 'html', 'source']),
+  ppt: new Set(['presentation', 'ppt', 'deck', 'html', 'source']),
+  marketing: new Set(['image', 'marketing', 'html', 'source']),
+  hyperframes: new Set(['video', 'hyperframes', 'html', 'source', 'rendered-video']),
+} as const;
+
+export function daemonOwnedOdNextPlanningCatalog(
+  taskType: keyof typeof DAEMON_OWNED_PRODUCTION_ROUTES,
+): { productionRoutes: string[]; outputKinds: string[] } {
+  return {
+    productionRoutes: [...DAEMON_OWNED_PRODUCTION_ROUTES[taskType]],
+    outputKinds: [...DAEMON_OWNED_OUTPUT_KINDS[taskType]],
+  };
+}
+
+/**
+ * Production preflight owned by the daemon, not the model. It recognizes only
+ * the four bundled OD Next artifact profiles and a finite route/output
+ * allowlist. Unknown future artifact types or route strings fail closed and
+ * continue through ordinary Open Design unless explicitly added here.
+ */
+export function resolveDaemonOwnedOdNextExecutionPreflight(
+  plan: import('@open-design/contracts').OpenDesignPlanContractV2,
+): OdNextExecutionPreflightInput {
+  const taskType = plan.taskProfile.taskType as keyof typeof DAEMON_OWNED_PRODUCTION_ROUTES;
+  const routes = DAEMON_OWNED_PRODUCTION_ROUTES[taskType];
+  const outputKinds = DAEMON_OWNED_OUTPUT_KINDS[taskType];
+  return {
+    productionRoutes: plan.runManifest.productionRoutes.map((id) => ({
+      id,
+      available: Boolean(routes?.has(id)),
+    })),
+    dependencies: [],
+    inputs: plan.runManifest.inputRefs.map((id) => ({
+      id,
+      available: id === 'request',
+    })),
+    renderers: [],
+    exporters: [],
+    templates: [],
+    outputKinds: plan.taskProfile.requiredDeliverables.map(({ kind }) => ({
+      id: kind,
+      supported: Boolean(outputKinds?.has(kind)),
+    })),
+  };
+}
+
 export interface OdNextPreflightResult {
   status: 'passed' | 'blocked';
   reasonCodes: string[];

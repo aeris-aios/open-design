@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execAgentFile } from './invocation.js';
 import { AGENT_DEFS } from './registry.js';
 import {
@@ -45,6 +46,11 @@ export interface DetectedRuntimeVersions {
 // Keep the result as daemon-lifetime provenance so run telemetry can name the
 // exact executable family without spawning another process on every turn.
 const detectedRuntimeVersions = new Map<string, DetectedRuntimeVersions>();
+const detectedRuntimeVersionScopes = new Map<string, string>();
+const detectedRuntimeVersionProbes = new Map<
+  string,
+  Promise<DetectedRuntimeVersions | null>
+>();
 
 export function getDetectedRuntimeVersions(
   agentId: string | null | undefined,
@@ -52,6 +58,46 @@ export function getDetectedRuntimeVersions(
   if (!agentId) return null;
   const remembered = detectedRuntimeVersions.get(agentId);
   return remembered ? { ...remembered } : null;
+}
+
+/**
+ * Resolve exact runtime provenance for one selected agent without requiring a
+ * prior Settings or `/api/agents` request to have warmed the daemon cache.
+ *
+ * OD Next uses this at its capability boundary. The cache remains the normal
+ * fast path; after a daemon restart, the selected CLI is probed once through
+ * the same bounded detection path used by the agent picker. A failed or
+ * unknown probe stays null so callers can fail closed without affecting
+ * ordinary Run execution.
+ */
+export async function ensureDetectedRuntimeVersions(
+  agentId: string | null | undefined,
+  configuredAgentEnv: Record<string, string> = {},
+): Promise<DetectedRuntimeVersions | null> {
+  if (!agentId) return null;
+  const def = AGENT_DEFS.find((candidate) => candidate.id === agentId);
+  if (!def) return null;
+  const context = runtimeVersionProbeContext(def, configuredAgentEnv);
+  if (!context) return null;
+  const remembered = getDetectedRuntimeVersions(agentId);
+  if (
+    remembered
+    && detectedRuntimeVersionScopes.get(agentId) === context.scope
+  ) {
+    return remembered;
+  }
+  const probeKey = `${agentId}:${context.scope}`;
+  const existing = detectedRuntimeVersionProbes.get(probeKey);
+  if (existing) return existing;
+  const probe = probeRuntimeVersionsOnly(def, context);
+  detectedRuntimeVersionProbes.set(probeKey, probe);
+  try {
+    return await probe;
+  } finally {
+    if (detectedRuntimeVersionProbes.get(probeKey) === probe) {
+      detectedRuntimeVersionProbes.delete(probeKey);
+    }
+  }
 }
 
 function configuredEnvForAgent(
@@ -195,6 +241,69 @@ async function probeAmrOpenCodeVersion(
   } catch {
     return null;
   }
+}
+
+type RuntimeVersionProbeContext = {
+  launchPath: string;
+  probeEnv: NodeJS.ProcessEnv;
+  scope: string;
+};
+
+function runtimeVersionProbeContext(
+  def: RuntimeAgentDef,
+  configuredEnv: Record<string, string>,
+): RuntimeVersionProbeContext | null {
+  const launch = resolveAgentLaunch(def, configuredEnv);
+  if (!launch.selectedPath || !launch.launchPath) return null;
+  const probeEnv = applyAgentLaunchEnv(
+    spawnEnvForAgent(
+      def.id,
+      {
+        ...process.env,
+        ...(def.env || {}),
+      },
+      configuredEnv,
+      undefined,
+      { resolvedBin: launch.selectedPath },
+    ),
+    launch,
+  );
+  const companionPath = def.id === 'amr'
+    ? resolveAmrOpenCodeExecutable(probeEnv)
+    : null;
+  return {
+    launchPath: launch.launchPath,
+    probeEnv,
+    scope: createHash('sha256').update(JSON.stringify({
+      agentId: def.id,
+      selectedPath: launch.selectedPath,
+      launchPath: launch.launchPath,
+      companionPath,
+    })).digest('hex'),
+  };
+}
+
+async function probeRuntimeVersionsOnly(
+  def: RuntimeAgentDef,
+  context: RuntimeVersionProbeContext,
+): Promise<DetectedRuntimeVersions | null> {
+  const [outcome, amrOpenCodeVersion] = await Promise.all([
+    probeVersionAtPath(def, context.launchPath, context.probeEnv),
+    probeAmrOpenCodeVersion(def, context.probeEnv),
+  ]);
+  if (outcome.kind !== 'spawned' || !outcome.version) return null;
+  const versions: DetectedRuntimeVersions = {
+    agentCliVersion: outcome.version,
+    ...(amrOpenCodeVersion
+      ? {
+          runtimeCompanionName: 'opencode',
+          runtimeCompanionVersion: amrOpenCodeVersion,
+        }
+      : {}),
+  };
+  detectedRuntimeVersions.set(def.id, versions);
+  detectedRuntimeVersionScopes.set(def.id, context.scope);
+  return { ...versions };
 }
 
 function unavailableAgent(
@@ -349,6 +458,10 @@ async function probe(
   };
   if (Object.keys(runtimeVersions).length > 0) {
     detectedRuntimeVersions.set(def.id, runtimeVersions);
+    detectedRuntimeVersionScopes.set(
+      def.id,
+      runtimeVersionProbeContext(def, configuredEnv)?.scope ?? '',
+    );
   }
   return {
     ...stripFns(def),

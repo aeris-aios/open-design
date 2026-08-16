@@ -55,8 +55,8 @@ describe('bundled OD Next Strategy V2 package', () => {
       profile.projectKinds,
     ])).toEqual([
       ['prototype', 'active', ['prototype']],
-      ['ppt', 'reserved', ['deck']],
-      ['marketing', 'reserved', ['image']],
+      ['ppt', 'active', ['deck']],
+      ['marketing', 'active', ['image']],
       ['hyperframes', 'active', ['video']],
     ]);
   });

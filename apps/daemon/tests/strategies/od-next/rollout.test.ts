@@ -22,6 +22,37 @@ function syntheticPolicy() {
 }
 
 describe('OD Next controlled rollout', () => {
+  it('defaults production rollout to all four owned artifact types while retaining explicit off', () => {
+    const policy = readOdNextRolloutPolicy({});
+    expect(policy).toMatchObject({
+      requestedMode: 'active',
+      eligibleTaskTypes: ['prototype', 'ppt', 'marketing', 'hyperframes'],
+      productionActiveApproved: true,
+      assignmentPercent: 100,
+    });
+    expect(readOdNextRolloutPolicy({ OD_NEXT_STRATEGY_ROLLOUT: 'off' }).requestedMode)
+      .toBe('off');
+    expect([
+      odNextTaskTypeForProjectMetadata({ kind: 'prototype' }),
+      odNextTaskTypeForProjectMetadata({ kind: 'deck' }),
+      odNextTaskTypeForProjectMetadata({ kind: 'image' }),
+      odNextTaskTypeForProjectMetadata({ kind: 'video', videoModel: 'hyperframes-html' }),
+    ]).toEqual(['prototype', 'ppt', 'marketing', 'hyperframes']);
+    expect(odNextTaskTypeForProjectMetadata({ kind: 'audio' })).toBeNull();
+    expect(odNextTaskTypeForProjectMetadata({ kind: 'video', videoModel: 'veo-3' })).toBeNull();
+    for (const taskType of ['prototype', 'ppt', 'marketing', 'hyperframes'] as const) {
+      expect(evaluateOdNextRollout({
+        policy,
+        assignmentIdentity: `default:${taskType}`,
+        taskType,
+        agentId: 'opencode',
+        agentVersion: '1.18.18',
+        sourceKind: 'bundled',
+        runtimeCapabilityVerified: true,
+      })).toMatchObject({ requestedMode: 'active', effectiveMode: 'active', eligible: true });
+    }
+  });
+
   it('keeps off and observe behavior-inert and never calls an active bucket eligible', () => {
     for (const requestedMode of ['off', 'observe'] as const) {
       const decision = evaluateOdNextRollout({
@@ -36,7 +67,7 @@ describe('OD Next controlled rollout', () => {
     }
   });
 
-  it('allows only explicit local synthetic active while X1/X2 remain unresolved', () => {
+  it('requires exact runtime evidence and keeps the local synthetic escape hatch explicit', () => {
     const base = {
       assignmentIdentity: 'project:conversation',
       taskType: 'prototype' as const,
@@ -50,10 +81,7 @@ describe('OD Next controlled rollout', () => {
     })).toMatchObject({
       effectiveMode: 'observe',
       eligible: false,
-      reasonCodes: expect.arrayContaining([
-        'od_next_rollout_x1_capability_fixture_unverified',
-        'od_next_rollout_x2_active_unapproved',
-      ]),
+      reasonCodes: expect.arrayContaining(['od_next_rollout_x1_capability_fixture_unverified']),
     });
     expect(evaluateOdNextRollout({
       ...base,
@@ -71,7 +99,7 @@ describe('OD Next controlled rollout', () => {
         assignmentPercent: 0,
       },
       assignmentIdentity: 'same-id',
-      taskType: 'ppt',
+      taskType: null,
       agentId: 'cursor',
       agentVersion: 'cursor-e2e 0.0.0',
       sourceKind: 'community',

@@ -6,8 +6,8 @@
     "extraction": "prebuild-semantics-only"
   },
   "taskProfileCoverage": {
-    "active": ["prototype", "hyperframes"],
-    "reservedExtensionSlots": ["ppt", "marketing"]
+    "active": ["prototype", "ppt", "marketing", "hyperframes"],
+    "reservedExtensionSlots": []
   },
   "cases": [
     {

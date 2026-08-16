@@ -55,7 +55,10 @@ import {
   upsertMessage,
 } from '../db.js';
 import { readVelaLoginStatus } from '../integrations/vela.js';
-import { getDetectedRuntimeVersions } from '../runtimes/detection.js';
+import {
+  ensureDetectedRuntimeVersions,
+  getDetectedRuntimeVersions,
+} from '../runtimes/detection.js';
 import { resolveBundledOdNextRuntimeCapability } from '../runtimes/od-next-capability-gate.js';
 import {
   deriveLangfuseDeliveryState,
@@ -1668,6 +1671,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     } else if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
       let runResolveBody: JsonRecord = requestBody;
       const rolloutProject = toProjectRecord(getProject(db, requestBody.projectId));
+      const snapshotConversationId =
+        typeof requestBody.conversationId === 'string' && requestBody.conversationId
+          ? requestBody.conversationId
+          : getFirstProjectConversation(db, requestBody.projectId)?.id ?? null;
       const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(
         toScenarioProjectMetadata(rolloutProject?.metadata),
       );
@@ -1712,7 +1719,17 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         : null;
       const rolloutPlugin = rolloutResolved?.ok ? rolloutResolved.record : null;
       if (!explicitUserPlugin && rolloutPlugin) {
-        const versions = getDetectedRuntimeVersions(effectiveAgentId);
+        let versions = null;
+        if (effectiveAgentId) {
+          const appCfg = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
+          versions = await ensureDetectedRuntimeVersions(
+            effectiveAgentId,
+            agentCliEnvForAgent(
+              (appCfg as { agentCliEnv?: AgentCliEnv }).agentCliEnv,
+              effectiveAgentId,
+            ),
+          );
+        }
         const capability = effectiveAgentId
           ? resolveBundledOdNextRuntimeCapability({
               agentId: effectiveAgentId,
@@ -1733,7 +1750,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         );
         strategyRolloutDecision = evaluateOdNextRollout({
           policy: rolloutPolicy,
-          assignmentIdentity: `${requestBody.projectId}:${String(requestBody.conversationId ?? '')}`,
+          assignmentIdentity: `${requestBody.projectId}:${snapshotConversationId ?? ''}`,
           taskType: odNextTaskTypeForProjectMetadata(rolloutProject?.metadata),
           agentId: effectiveAgentId,
           agentVersion: versions?.agentCliVersion ?? null,
@@ -1815,9 +1832,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         db,
         body: runResolveBody,
         projectId: requestBody.projectId,
-        conversationId: typeof requestBody.conversationId === 'string'
-          ? requestBody.conversationId
-          : null,
+        conversationId: snapshotConversationId,
         registry: registryView,
         connectorProbe: buildConnectorProbe(connectorService),
         requireSnapshotProjectMatch: true,

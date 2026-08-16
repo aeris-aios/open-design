@@ -45,6 +45,9 @@ the remaining frozen decisions.
 - A task chain uses one locked route: Direct Edit or Full Plan.
 - Direct Edit is confined to the request stage and always uses simple mode.
 - Full Plan may use request, clarification, contract_repair, and production.
+- Full Plan request and clarification are planning-only. They may read bounded
+  inputs, but they do not create, edit, render, or dispatch deliverables;
+  Build starts only in the production continuation.
 - Full Plan asks at most one clarification round containing one to three
   questions that would materially change the result.
 - Contract repair only serializes the already-frozen semantic plan into the

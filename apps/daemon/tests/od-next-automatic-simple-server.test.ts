@@ -36,7 +36,10 @@ import {
   getStrategyTaskExecution,
 } from '../src/strategies/task-store.js';
 import { prepareStrategyRequest } from '../src/strategies/od-next/coordinator.js';
-import { latchOdNextRolloutStop } from '../src/strategies/od-next/rollout.js';
+import {
+  clearOdNextRolloutStop,
+  latchOdNextRolloutStop,
+} from '../src/strategies/od-next/rollout.js';
 import { hashOdNextRuntimeCapabilitySnapshotV1 } from '../src/runtimes/od-next-capability-gate.js';
 
 type StartedServer = {
@@ -215,6 +218,37 @@ describe('OD Next automatic production through the real server', () => {
     });
     expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
       .toBe(1);
+  });
+
+  it('binds an active headless request and its strategy Snapshot to the project conversation', async () => {
+    const fixture = await createPublicRolloutFixture('headless-conversation', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+
+    const request = publicRunRequest(
+      fixture,
+      'Hold the public rollout run open until canceled.',
+      'headless-conversation-request',
+    );
+    delete (request as { conversationId?: string }).conversationId;
+    const created = await postRun(started.url, request);
+    expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+
+    const task = getStrategyTaskExecution(database(), created.taskExecutionId as string);
+    expect(task?.conversationId).toBe(fixture.conversationId);
+    expect(database().prepare(
+      'SELECT conversation_id AS conversationId FROM applied_plugin_snapshots WHERE id = ?',
+    ).get(task?.snapshotId) as { conversationId: string | null }).toEqual({
+      conversationId: fixture.conversationId,
+    });
+
+    await fetch(
+      `${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`,
+      { method: 'POST' },
+    );
   });
 
   it('never overrides explicit plugin, snapshot, or existing project-pin authority', async () => {
@@ -762,7 +796,7 @@ async function writePublicRolloutCodex(
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const logPath = ${JSON.stringify(logPath)};
-if (argv.includes('--version')) { console.log('codex-e2e 0.0.0'); process.exit(0); }
+if (argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
 if (argv.includes('--help')) { console.log('Usage: codex exec'); process.exit(0); }
 let stdin = '';
 process.stdin.setEncoding('utf8');
@@ -1011,7 +1045,7 @@ const path = require('node:path');
 const argv = process.argv.slice(2);
 const logPath = ${JSON.stringify(logPath)};
 const mode = ${JSON.stringify(mode)};
-if (argv.includes('--version')) { console.log('codex-cli 0.133.0'); process.exit(0); }
+if (argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
 if (argv.includes('--help')) { console.log('Usage: codex exec [--sandbox MODE]'); process.exit(0); }
 let stdin = '';
 let finished = false;

@@ -21,7 +21,14 @@ export interface OdNextStrategyRequestRecipeV2 {
   snapshotId: string;
   packageHash: string;
   taskProfileDigest: string;
+  taskProfileVersion: string;
   taskType: Exclude<StrategyTaskTypeV2, 'generic'>;
+  planningFacts?: {
+    capabilitySnapshotHash: string;
+    inputRefs: ReadonlyArray<string>;
+    productionRoutes: ReadonlyArray<string>;
+    outputKinds: ReadonlyArray<string>;
+  } | undefined;
   executionProfile: 'filesystem' | 'text_artifact';
   coreStrategy: string;
   generalOrchestration: string;
@@ -277,6 +284,8 @@ const DISCOVERY_AND_PLANNING_SECTION = `## Discovery, planning, and Build surfac
 
 On the request stage, use the supplied task facts to choose the allowed route and prepare the Task Profile, Design Spec, Full Plan, stable Todo plan, Build Requirements, and any Build Packages required by the locked execution mode.
 
+For a Full Plan route, the request and clarification stages are planning-only. You may read the bounded inputs needed to freeze the plan, but do not create, edit, render, or dispatch a deliverable until Open Design continues the same native session into the production stage. Direct Edit remains the only route allowed to perform Build work on the request stage.
+
 Ask only when one unresolved answer would materially change scope, direction, the canonical deliverable, main outputs, editability, or substantial rework. Use one inline \`<question-form>\` containing one to three questions with recommended defaults. The form is assistant text parsed by the host, not a native tool call. If the known context is sufficient, continue without a form.
 
 Keep the Todo plan live while performing Build work. Direct Edit stays local and bounded. Full Plan freezes its decisions before Production, and every Build Package uses the same frozen Design Spec.`;
@@ -424,6 +433,23 @@ function renderMachineOutputSection(
   context: OdNextStrategyStableRequestContextV2,
 ): string {
   const selectedAgentId = context.agentId?.trim() || 'selected-agent-id-from-runtime';
+  const planningFacts = input.planningFacts;
+  if (
+    planningFacts
+    && !SHA256_HEX.test(planningFacts.capabilitySnapshotHash)
+  ) {
+    throw new TypeError('OD Next planning capabilitySnapshotHash must be 64 lowercase hex characters.');
+  }
+  const inputRefs = planningFacts?.inputRefs.length
+    ? [...planningFacts.inputRefs]
+    : ['user-request'];
+  const productionRoutes = planningFacts?.productionRoutes.length
+    ? [...planningFacts.productionRoutes]
+    : ['declared-production-route'];
+  const outputKinds = planningFacts?.outputKinds.length
+    ? [...planningFacts.outputKinds]
+    : ['artifact'];
+  const canonicalOutputKind = outputKinds[0] ?? 'artifact';
   const planContractExample = {
     schema: OD_NEXT_PLAN_CONTRACT_SCHEMA,
     strategy: {
@@ -435,17 +461,17 @@ function renderMachineOutputSection(
     taskProfile: {
       schemaVersion: '2',
       taskType: input.taskType,
-      taskProfileVersion: 'resolved-task-profile-version',
+      taskProfileVersion: input.taskProfileVersion,
       goal: 'replace-with-resolved-goal',
       contextAndAudience: 'replace-with-resolved-context-and-audience',
-      inputsAndReferences: ['user-request'],
+      inputsAndReferences: inputRefs,
       constraints: [],
       canonicalDeliverable: {
         id: 'canonical-deliverable',
-        kind: 'artifact',
+        kind: canonicalOutputKind,
         format: 'declared-format',
       },
-      requiredDeliverables: [{ id: 'canonical-deliverable', kind: 'artifact' }],
+      requiredDeliverables: [{ id: 'canonical-deliverable', kind: canonicalOutputKind }],
       designSpec: {
         source: 'resolved-baseline',
         version: 'resolved-design-spec-version',
@@ -468,9 +494,9 @@ function renderMachineOutputSection(
     },
     runManifest: {
       selectedAgentId,
-      capabilitySnapshotHash: '0'.repeat(64),
-      inputRefs: ['user-request'],
-      productionRoutes: ['declared-production-route'],
+      capabilitySnapshotHash: planningFacts?.capabilitySnapshotHash ?? '0'.repeat(64),
+      inputRefs,
+      productionRoutes: [productionRoutes[0] ?? 'declared-production-route'],
       preflight: { intake: 'passed', execution: 'passed' },
     },
     decisionSummary: {
@@ -491,9 +517,19 @@ function renderMachineOutputSection(
     reasonCodes: [],
   } satisfies StrategyRuntimeStateV2;
 
+  const runtimeFacts = planningFacts
+    ? `\n\nOpen Design runtime-owned planning facts (copy these exact values into the contract; do not replace them with placeholders):\n\n${stableJson({
+      taskProfileVersion: input.taskProfileVersion,
+      capabilitySnapshotHash: planningFacts.capabilitySnapshotHash,
+      inputRefs,
+      allowedProductionRoutes: productionRoutes,
+      supportedOutputKinds: outputKinds,
+    })}`
+    : '';
+
   return `## Strict machine wire protocol and user output boundary
 
-The JSON field sets below are the exact V2 contract shapes. Replace example values with resolved run values; do not add fields. Emit JSON only between the matching tags, without Markdown fences or a second copy. Emit exactly one Runtime State block on every response. Emit at most one Plan Contract block, only when a complete Full Plan is ready. Keep machine blocks separate from visible prose.
+The JSON field sets below are the exact V2 contract shapes. Replace example values with resolved run values; do not add fields. Runtime-owned planning facts must be copied byte-for-byte. Every buildRequirements entry is an object with exactly id and text; every readinessArtifacts entry is an object with exactly id, version, and a 64-character lowercase-hex digest. designSpec.source is exactly existing-artifact, brand, or resolved-baseline. Emit JSON only between the matching tags, without Markdown fences or a second copy. Emit exactly one Runtime State block on every response. Emit at most one Plan Contract block, only when a complete Full Plan is ready. Keep machine blocks separate from visible prose.${runtimeFacts}
 
 Plan Contract wrapper and exact shape:
 

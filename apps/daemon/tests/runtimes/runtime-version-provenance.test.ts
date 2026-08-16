@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   detectAgents,
+  ensureDetectedRuntimeVersions,
   getDetectedRuntimeVersions,
 } from '../../src/runtimes/detection.js';
 
@@ -36,6 +37,16 @@ describe('runtime version provenance', () => {
     expect(getDetectedRuntimeVersions('claude')).toEqual({
       agentCliVersion: 'claude 9.8.7',
     });
+  });
+
+  it('re-probes when the configured executable changes instead of reusing another binary scope', async () => {
+    const first = executable('claude-first', 'claude 1.0.0');
+    const second = executable('claude-second', 'claude 2.0.0');
+
+    await expect(ensureDetectedRuntimeVersions('claude', { CLAUDE_BIN: first }))
+      .resolves.toEqual({ agentCliVersion: 'claude 1.0.0' });
+    await expect(ensureDetectedRuntimeVersions('claude', { CLAUDE_BIN: second }))
+      .resolves.toEqual({ agentCliVersion: 'claude 2.0.0' });
   });
 
   it.runIf(process.platform !== 'win32')(

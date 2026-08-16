@@ -211,8 +211,8 @@ describe('OD Next Strategy V2 pre-Build fixture boundary', () => {
       extraction: 'prebuild-semantics-only',
     });
     expect(prebuild.taskProfileCoverage).toEqual({
-      active: ['prototype', 'hyperframes'],
-      reservedExtensionSlots: ['ppt', 'marketing'],
+      active: ['prototype', 'ppt', 'marketing', 'hyperframes'],
+      reservedExtensionSlots: [],
     });
   });
 

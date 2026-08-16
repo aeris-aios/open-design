@@ -15,8 +15,8 @@ demo harness, or companion service.
 The source material was not copied verbatim. `prebuild-cases.json` reduces it
 to route, stage, Task Profile, Preflight, clarification, Plan Contract,
 contract-serialization repair, and simple/complex Build expectations. The PPT
-and marketing Task Profile slots are reserved independently so later content
-work can extend them without changing the prototype/hyperframes baseline.
+and marketing Task Profiles are active alongside prototype and HyperFrames;
+the fixture freezes all four Open Design-owned production artifact lanes.
 
 ## Deletion rule
 

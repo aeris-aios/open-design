@@ -69,6 +69,11 @@ For a Full Plan request, proceed in this order:
    input, renderer, exporter, template, and required output owned by the Agent.
 10. Emit a strict Plan Contract and Runtime State for Open Design to parse.
 
+The request and clarification turns stop after this planning output. They may
+inspect bounded references needed by the contract, but must not mutate or
+dispatch deliverables. Open Design starts Build by continuing the same native
+session into `production`.
+
 Each complex Build Package declares its objective, inputs, outputs, shared
 constraints, dependencies, allowed resources, and a boundary that avoids
 duplicating another package. Independent packages may run in parallel;

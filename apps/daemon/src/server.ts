@@ -436,7 +436,11 @@ import {
 import { narrowProjectCritiqueOverride } from './critique/spawn-inputs.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
-import { getDetectedRuntimeVersions } from './runtimes/detection.js';
+import {
+  ensureDetectedRuntimeVersions,
+  getDetectedRuntimeVersions,
+} from './runtimes/detection.js';
+import { resolveBundledOdNextRuntimeCapability } from './runtimes/od-next-capability-gate.js';
 import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
@@ -455,7 +459,11 @@ import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
 import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
-import type { OdNextExecutionPreflightInput } from './strategies/od-next/resolver.js';
+import {
+  daemonOwnedOdNextPlanningCatalog,
+  resolveDaemonOwnedOdNextExecutionPreflight,
+  type OdNextExecutionPreflightInput,
+} from './strategies/od-next/resolver.js';
 import {
   blockAutomaticContinuation,
   prepareAutomaticStrategyContinuation,
@@ -2686,6 +2694,7 @@ export interface StartServerOptions {
     runId: string;
     agentId: string;
     productionRoutes: readonly string[];
+    plan: import('@open-design/contracts').OpenDesignPlanContractV2;
   }) => OdNextExecutionPreflightInput | undefined | Promise<OdNextExecutionPreflightInput | undefined>) | null;
   /**
    * Daemon-owned, runtime-neutral capability/Child facts for complex OD Next
@@ -9726,7 +9735,7 @@ export async function startServer({
     ) {
       const snapshot = getSnapshot(db, appliedPluginSnapshotId);
       if (snapshot?.strategy) {
-        odNextStrategyRecipe = await resolveOdNextStrategyRequestRecipeV2({
+        const resolvedRecipe = await resolveOdNextStrategyRequestRecipeV2({
           bundledPluginsDir: BUNDLED_PLUGINS_DIR,
           snapshot,
           executionProfile: executionProfileFromStreamFormat(streamFormat),
@@ -9738,6 +9747,42 @@ export async function startServer({
             return loadBundledAtomBodiesStrict(db, atomIds);
           },
         });
+        if (resolvedRecipe) {
+          const versions = await ensureDetectedRuntimeVersions(
+            agentId,
+            agentCliEnvForAgent(appConfigForPrompt?.agentCliEnv, agentId),
+          );
+          const capability = resolveBundledOdNextRuntimeCapability({
+            agentId,
+            ...(versions?.agentCliVersion
+              ? { agentCliVersion: versions.agentCliVersion }
+              : {}),
+            ...(versions?.runtimeCompanionName
+              ? { runtimeCompanionName: versions.runtimeCompanionName }
+              : {}),
+            ...(versions?.runtimeCompanionVersion
+              ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
+              : {}),
+          });
+          if (
+            capability.reason !== 'capability_resolved'
+            || !capability.snapshot
+          ) {
+            throw new Error(
+              `OD Next runtime planning facts unavailable: ${capability.reason}`,
+            );
+          }
+          const catalog = daemonOwnedOdNextPlanningCatalog(resolvedRecipe.taskType);
+          odNextStrategyRecipe = {
+            ...resolvedRecipe,
+            planningFacts: {
+              capabilitySnapshotHash: capability.snapshot.snapshotHash.replace(/^sha256:/, ''),
+              inputRefs: ['request'],
+              productionRoutes: catalog.productionRoutes,
+              outputKinds: catalog.outputKinds,
+            },
+          };
+        }
       }
     }
 
@@ -14571,6 +14616,7 @@ export async function startServer({
                   runId: run.id,
                   agentId: strategyTaskAtStart.selectedAgentId,
                   productionRoutes: plan.runManifest.productionRoutes,
+                  plan,
                 })
               : plan
                 && strategyTaskAtStart.strategyId === 'od-next-strategy'
@@ -14588,7 +14634,9 @@ export async function startServer({
                       supported: true,
                     })),
                   }
-                : undefined;
+                : plan && strategyTaskAtStart.strategyId === 'od-next-strategy'
+                  ? resolveDaemonOwnedOdNextExecutionPreflight(plan)
+                  : undefined;
             const lockedPlan = plan ?? strategyTaskAtStart.planContract;
             if (
               lockedPlan?.fullPlan.executionMode === 'complex'

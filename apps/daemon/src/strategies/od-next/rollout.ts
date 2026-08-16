@@ -27,7 +27,12 @@ export interface OdNextRolloutDecision {
   reasonCodes: string[];
 }
 
-const DEFAULT_TASK_TYPES: readonly OdNextRolloutTaskType[] = ['prototype', 'hyperframes'];
+const DEFAULT_TASK_TYPES: readonly OdNextRolloutTaskType[] = [
+  'prototype',
+  'ppt',
+  'marketing',
+  'hyperframes',
+];
 const DEFAULT_AGENTS = ['codex', 'claude', 'opencode', 'amr'] as const;
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -40,6 +45,7 @@ function list(value: string | undefined): string[] {
 }
 
 function mode(value: string | undefined): OdNextRolloutMode {
+  if (value === undefined || value.trim() === '') return 'active';
   return value === 'observe' || value === 'active' ? value : 'off';
 }
 
@@ -62,7 +68,7 @@ export function readOdNextRolloutPolicy(
     eligibleAgents: list(env.OD_NEXT_STRATEGY_AGENTS).length > 0
       ? list(env.OD_NEXT_STRATEGY_AGENTS)
       : DEFAULT_AGENTS,
-    productionActiveApproved: bool(env.OD_NEXT_STRATEGY_PRODUCTION_ACTIVE_APPROVED, false),
+    productionActiveApproved: bool(env.OD_NEXT_STRATEGY_PRODUCTION_ACTIVE_APPROVED, true),
     localSyntheticCanary: bool(env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY, false),
   };
 }

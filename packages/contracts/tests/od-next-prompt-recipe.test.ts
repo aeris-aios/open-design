@@ -29,6 +29,7 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
   snapshotId: 'snapshot-contracts-recipe',
   packageHash: A,
   taskProfileDigest: B,
+  taskProfileVersion: '2.0.0',
   taskType: 'prototype',
   executionProfile: 'filesystem',
   coreStrategy: '# Core\n\nKeep route and execution facts locked.',
@@ -75,8 +76,36 @@ describe('OD Next V2 prompt recipe', () => {
     expect(prompt).toContain('Design Spec');
     expect(prompt).toContain('Full Plan');
     expect(prompt).toContain('Build Packages');
+    expect(prompt).toContain('request and clarification stages are planning-only');
+    expect(prompt).toContain('Direct Edit remains the only route allowed to perform Build work');
     expect(prompt).toContain(`strategy package: \`${A}\``);
     expect(prompt).toContain(`selected Task Skill digest: \`${B}\``);
+  });
+
+  it('pins daemon-owned planning facts into the strict machine example', () => {
+    const prompt = composeOdNextStrategyRequestPromptV2({
+      ...recipe,
+      planningFacts: {
+        capabilitySnapshotHash: B,
+        inputRefs: ['request'],
+        productionRoutes: ['html', 'prototype-html'],
+        outputKinds: ['prototype', 'html'],
+      },
+    });
+    const contract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);
+    expect(OpenDesignPlanContractV2Schema.parse(contract)).toMatchObject({
+      taskProfile: {
+        taskProfileVersion: '2.0.0',
+        canonicalDeliverable: { kind: 'prototype' },
+      },
+      runManifest: {
+        capabilitySnapshotHash: B,
+        inputRefs: ['request'],
+        productionRoutes: ['html'],
+      },
+    });
+    expect(prompt).toContain('"allowedProductionRoutes": [');
+    expect(prompt).toContain('"prototype-html"');
   });
 
   it('renders real stable request facts through the shared recipe owner', () => {
