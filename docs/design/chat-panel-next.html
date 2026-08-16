@@ -563,7 +563,18 @@ button.att-i:hover { border-color: var(--border-strong); }
    原先是 104 宽配写死的 78 高,减掉左右边框实际是 102:78 ≈ 17:13,
    既不是 4:3 也不是任何声明过的比例,是撞出来的。 */
 .att-i .ph { display: block; aspect-ratio: 1 / 1; height: auto; }
-.att-i .nm { display: block; padding: 4px 6px; border-top: 1px solid var(--border-soft); background: var(--bg); font-size: var(--t-cap); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 文件名:主名省略,后缀永远保留。
+   直接给整串挂 text-overflow:ellipsis 会从尾部截,后缀第一个被吃掉 ——
+   「商品卡组件规格说明.pdf」变成「商品卡组件规格说…」,看不出这是什么文件。
+   所以把主名和后缀拆成两段:主名可收缩、超了打省略号;后缀 flex:none,
+   永不参与截断。 */
+.att-i .nm {
+  display: flex; align-items: baseline;
+  padding: 4px 6px; border-top: 1px solid var(--border-soft); background: var(--bg);
+  font-size: var(--t-cap); color: var(--text-muted);
+}
+.att-i .nm .base { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-i .nm .ext { flex: none; white-space: nowrap; }
 /* 失败态只把红给外框和「重试」。文件名是事实、不是状态,
    跟着变红等于把红用在了三个层级上,红就不指向要点的那个东西了。 */
 .att-i.is-fail { border-color: var(--red); }
@@ -1009,8 +1020,8 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>成功 · 显示缩略图</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm">首页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm">设置页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">设置页</span><span class="ext">.png</span></span></button>
               </div>
             </div>
           </div>
@@ -1024,7 +1035,7 @@ button.att-i:hover { border-color: var(--border-strong); }
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>重试
                     </button>
                   </span>
-                  <span class="nm">规范.pdf</span>
+                  <span class="nm"><span class="base">规范</span><span class="ext">.pdf</span></span>
                 </span>
               </div>
             </div>
@@ -1036,7 +1047,7 @@ button.att-i:hover { border-color: var(--border-strong); }
                 <button class="att-i att-ov" type="button" aria-label="预览 首页.png">
                   <span class="ph"><span class="mini"></span></span>
                   <span class="act" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
-                  <span class="nm">首页.png</span>
+                  <span class="nm"><span class="base">首页</span><span class="ext">.png</span></span>
                 </button>
               </div>
             </div>
@@ -1045,20 +1056,39 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>多附件 · 永远单行,超出横向滚动</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm">首页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm">设置页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 列表页.png"><span class="ph"><span class="mini"></span></span><span class="nm">列表页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 详情页.png"><span class="ph"><span class="mini"></span></span><span class="nm">详情页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 结算页.png"><span class="ph"><span class="mini"></span></span><span class="nm">结算页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 搜索页.png"><span class="ph"><span class="mini"></span></span><span class="nm">搜索页.png</span></button>
-                <button class="att-i" type="button" aria-label="预览 我的.png"><span class="ph"><span class="mini"></span></span><span class="nm">我的.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">设置页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 列表页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">列表页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 详情页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">详情页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 结算页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">结算页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 搜索页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">搜索页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 我的.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">我的</span><span class="ext">.png</span></span></button>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>文件名过长 · 主名省略,后缀始终可见</span><i></i></div>
+            <div class="st-b">
+              <div class="att">
+                <button class="att-i" type="button" aria-label="预览 商品卡组件规格说明终稿.png">
+                  <span class="ph"><span class="mini"></span></span>
+                  <span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.png</span></span>
+                </button>
+                <button class="att-i" type="button" aria-label="预览 跨端适配检查清单-v3.pdf">
+                  <span class="ph"><span class="mini"></span></span>
+                  <span class="nm"><span class="base">跨端适配检查清单-v3</span><span class="ext">.pdf</span></span>
+                </button>
+                <button class="att-i" type="button" aria-label="预览 商城首页.sketch">
+                  <span class="ph"><span class="mini"></span></span>
+                  <span class="nm"><span class="base">商城首页</span><span class="ext">.sketch</span></span>
+                </button>
               </div>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>展示</b>文件名、类型图标、缩略图。</span>
+          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>文件名</b> — 主名放不下时打省略号,<b>后缀不参与截断、永远可见</b>:整串一起截会先吃掉后缀,人就看不出这是什么文件了。<b>展示</b>文件名、类型图标、缩略图。</span>
         </div>
       </article>
 
