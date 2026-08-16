@@ -788,7 +788,32 @@ button.att-i:hover { border-color: var(--border-strong); }
   border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
   background: color-mix(in srgb, var(--brand-soft) 88%, var(--bg-panel));
 }
-.vpv { display: block; aspect-ratio: 4 / 3; background: var(--bg-subtle); border-bottom: 1px solid var(--border-soft); overflow: hidden; }
+.vpv { position: relative; display: block; aspect-ratio: 4 / 3; background: var(--bg-subtle); border-bottom: 1px solid var(--border-soft); overflow: hidden; }
+
+/* 选中标记:光靠一圈边框,四张图并排时不够跳 —— 边框只在卡的外沿,
+   眼睛落在图上时看不到。所以在图内角上放一个明确的勾选圈。
+   ------------------------------------------------------------
+   用【圆形】而不是方形:这是 4 选 1,圆=单选是文件里已经立下的规矩
+   (见 .opts.mod-single / .mod-multi),视觉方向卡不该破例。
+   未选中也画空圈,不是选中才冒出来 —— 空圈在告诉人"这几张是可选的",
+   要是平时没有、选中才出现,人得先点一下才知道能点。
+   带白底和一圈描边,是为了压住底下任意深浅的预览图。 */
+.vpv .pick {
+  position: absolute; inset-inline-end: 6px; top: 6px;
+  display: grid; place-items: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--bg); border: 1.5px solid var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  transition: background-color var(--duration-faster) var(--ease-out),
+              border-color var(--duration-faster) var(--ease-out);
+}
+.vpv .pick svg { width: 11px; height: 11px; opacity: 0; color: var(--brand-text); }
+.vopt:hover .vpv .pick { border-color: var(--text-soft); }
+.vopt.is-on .vpv .pick {
+  background: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
+}
+.vopt.is-on .vpv .pick svg { opacity: 1; }
 .vmeta { display: block; padding: 7px 9px; }
 .vt { display: flex; align-items: center; gap: 5px; font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); }
 .vopt.is-on .vt { color: var(--brand-text); }
@@ -1404,19 +1429,19 @@ button.att-i:hover { border-color: var(--border-strong); }
                 <div class="q">这套电商 App 原型走哪种感觉?四张预览用的是同一份示例内容,比的是风格。</div>
                 <div class="opts mod-visual">
                   <button class="vopt is-on" type="button">
-                    <span class="vpv"><span class="pv mod-calm"><i class="h"></i><i class="img"></i><i class="t"></i></span></span>
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="pv mod-calm"><i class="h"></i><i class="img"></i><i class="t"></i></span></span>
                     <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
                   </button>
                   <button class="vopt" type="button">
-                    <span class="vpv"><span class="pv mod-edit"><i class="h"></i><i class="img"></i><i class="t"></i></span></span>
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="pv mod-edit"><i class="h"></i><i class="img"></i><i class="t"></i></span></span>
                     <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
                   </button>
                   <button class="vopt" type="button">
-                    <span class="vpv"><span class="pv mod-pop"><i class="h"></i><span class="g"><i></i><i></i><i></i><i></i></span></span></span>
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="pv mod-pop"><i class="h"></i><span class="g"><i></i><i></i><i></i><i></i></span></span></span>
                     <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
                   </button>
                   <button class="vopt" type="button">
-                    <span class="vpv"><span class="pv mod-dense"><i class="h"></i><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span></span></span>
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="pv mod-dense"><i class="h"></i><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span></span></span>
                     <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
                   </button>
                 </div>
