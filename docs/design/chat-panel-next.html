@@ -547,21 +547,34 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 /* 卡片放大到 104 —— 单行滚动后横向不再吃紧,而缩略图放大才看得清是哪一页,
    也才够大到能稳稳点中(74px 时接近误触区)。380px 的消息宽度下可见 3.4 张,
    露出的那半张正好当"还有更多"的暗示。 */
-.att-i { flex: none; width: 104px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); background: var(--bg-subtle); }
+/* 整张卡就是预览的点击区 —— 文档写的是「点缩略图弹层看大图」,
+   所以卡本身是 <button>,不是挂个角标了事。角标只是提示,不是唯一热区。
+   失败态那张例外:它里面已经有「重试」按钮,button 不能嵌 button,
+   而且失败的附件本来也没有大图可看。 */
+.att-i {
+  flex: none; width: 104px; border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg-subtle);
+  padding: 0; text-align: left; display: block;
+  transition: border-color var(--duration-faster) var(--ease-out);
+}
+button.att-i:hover { border-color: var(--border-strong); }
 .att-i .ph { display: block; height: 78px; }
 .att-i .nm { display: block; padding: 4px 6px; border-top: 1px solid var(--border-soft); background: var(--bg); font-size: var(--t-cap); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 失败态只把红给外框和「重试」。文件名是事实、不是状态,
    跟着变红等于把红用在了三个层级上,红就不指向要点的那个东西了。 */
 .att-i.is-fail { border-color: var(--red); }
+/* hover 角标只留图标,不带「预览」二字 —— 眼睛图标本身已经说清了,
+   在 104px 宽的卡上再压两个汉字会盖掉近一半缩略图。
+   文案挪进 aria-label,读屏仍然读得到。 */
 .att-ov { position: relative; }
 .att-ov .act {
-  position: absolute; inset-inline-end: 4px; top: 4px;
-  display: inline-flex; align-items: center; gap: 3px;
-  padding: 2px 6px; border-radius: var(--radius-sm);
-  background: var(--text-strong); color: var(--bg); font-size: var(--t-cap); font-weight: 600;
+  position: absolute; inset-inline-end: 5px; top: 5px;
+  display: grid; place-items: center;
+  width: 22px; height: 22px; border-radius: var(--radius-sm);
+  background: var(--text-strong); color: var(--bg);
   box-shadow: var(--shadow-sm);
 }
-.att-ov .act svg { width: 10px; height: 10px; }
+.att-ov .act svg { width: 13px; height: 13px; }
 
 /* ---------- 缩略图占位 ----------
    一块纯灰压住图片该占的范围,不画界面细节。这是【占位图】不是效果图 ——
@@ -579,8 +592,15 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 }
 .fold > summary::-webkit-details-marker { display: none; }
 .fold > summary:hover { color: var(--text-strong); }
+/* 箭头一律靠右。原来右对齐是靠耗时 .ms 的 auto 外边距撑出来的,
+   于是没有耗时的那几条(执行计划、记忆组件)箭头就贴在文字后面。
+   现在两个都能自己靠右,谁先出现谁吃掉空白:
+     · 有耗时  → .ms 吃空白靠右,.ms + .chev 把箭头的 auto 清掉,紧跟其后
+     · 没耗时  → .chev 自己吃空白靠右
+   这样不用给每条 summary 补一个空的耗时占位。 */
 .fold > summary .ms { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
-.fold > summary .chev { display: inline-flex; transition: transform var(--duration-faster) var(--ease-out); }
+.fold > summary .chev { margin-left: auto; display: inline-flex; transition: transform var(--duration-faster) var(--ease-out); }
+.fold > summary .ms + .chev { margin-left: 0; }
 .fold[open] > summary .chev { transform: rotate(180deg); }
 .fold .body { padding: 0 11px 10px; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); }
 .fold .body.mod-scroll { max-height: 96px; overflow-y: auto; }
@@ -888,8 +908,8 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-l mod-def"><span>成功 · 显示缩略图</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">首页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">设置页.png</span></span>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm">首页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm">设置页.png</span></button>
               </div>
             </div>
           </div>
@@ -912,11 +932,11 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-l"><span>hover · 浮出预览</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <span class="att-i att-ov">
+                <button class="att-i att-ov" type="button" aria-label="预览 首页.png">
                   <span class="ph"><span class="mini"></span></span>
-                  <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>预览</span>
+                  <span class="act" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
                   <span class="nm">首页.png</span>
-                </span>
+                </button>
               </div>
             </div>
           </div>
@@ -924,13 +944,13 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
             <div class="st-l"><span>多附件 · 永远单行,超出横向滚动</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">首页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">设置页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">列表页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">详情页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">结算页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">搜索页.png</span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><span class="nm">我的.png</span></span>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm">首页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm">设置页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 列表页.png"><span class="ph"><span class="mini"></span></span><span class="nm">列表页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 详情页.png"><span class="ph"><span class="mini"></span></span><span class="nm">详情页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 结算页.png"><span class="ph"><span class="mini"></span></span><span class="nm">结算页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 搜索页.png"><span class="ph"><span class="mini"></span></span><span class="nm">搜索页.png</span></button>
+                <button class="att-i" type="button" aria-label="预览 我的.png"><span class="ph"><span class="mini"></span></span><span class="nm">我的.png</span></button>
               </div>
             </div>
           </div>
