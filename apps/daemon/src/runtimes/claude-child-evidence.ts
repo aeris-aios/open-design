@@ -342,6 +342,7 @@ export function createClaudeChildEvidenceCollector(input: {
 
 export interface AdaptClaudeChildFactInput {
   fact: ClaudeChildRuntimeFact;
+  agentCliVersion?: string;
   taskExecutionId: string;
   runId: string;
   taskRunIndex: number;
@@ -432,6 +433,9 @@ export function adaptClaudeChildRuntimeFactV1(
     ],
     attributes: {
       runtimeAdapterVersion: fact.adapterVersion,
+      ...(input.agentCliVersion
+        ? { agentCliVersion: input.agentCliVersion }
+        : {}),
       nativeTaskToolUseId: fact.childId,
       source: fact.source,
       sourceEventType: fact.sourceEventType,

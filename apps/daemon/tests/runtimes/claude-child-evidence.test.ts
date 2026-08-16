@@ -6,7 +6,9 @@ import { evaluateRuntimeEvidenceGraphV1 } from '@open-design/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { buildStructuredMainRunObservationV1 } from '../../src/observability/main-run-observation.js';
+import { safeTaskObservationRuntimeVersions } from '../../src/observability/task-observation-aggregation.js';
 import {
+  CLAUDE_CHILD_EVIDENCE_ADAPTER_VERSION,
   adaptClaudeChildRuntimeFactV1,
   createClaudeChildEvidenceCollector,
   type ClaudeChildRuntimeFact,
@@ -66,6 +68,7 @@ function root(status: 'running' | 'completed') {
 function adapt(fact: ClaudeChildRuntimeFact) {
   return adaptClaudeChildRuntimeFactV1({
     fact,
+    agentCliVersion: '2.1.219 (Claude Code)',
     taskExecutionId: 'task-execution-1',
     runId: 'run-1',
     taskRunIndex: 1,
@@ -114,6 +117,14 @@ describe('Claude native Child evidence side channel', () => {
     expect(observations[2]).toMatchObject({
       prompt: { childInjected: { availability: 'unavailable' } },
       usage: { availability: 'unavailable', accountingMode: 'unknown' },
+      attributes: {
+        agentCliVersion: '2.1.219 (Claude Code)',
+        runtimeAdapterVersion: CLAUDE_CHILD_EVIDENCE_ADAPTER_VERSION,
+      },
+    });
+    expect(safeTaskObservationRuntimeVersions(observations[2]!)).toEqual({
+      agentCliVersion: '2.1.219 (Claude Code)',
+      runtimeAdapterVersion: CLAUDE_CHILD_EVIDENCE_ADAPTER_VERSION,
     });
     expect(mainEvents).toContainEqual({ type: 'turn_end', stopReason: 'tool_use' });
     expect(mainEvents).toContainEqual({ type: 'turn_end', stopReason: 'end_turn' });

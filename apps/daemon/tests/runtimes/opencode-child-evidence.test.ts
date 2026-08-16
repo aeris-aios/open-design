@@ -8,7 +8,9 @@ import {
 } from '@open-design/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { safeTaskObservationRuntimeVersions } from '../../src/observability/task-observation-aggregation.js';
 import {
+  OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
   adaptOpenCodeChildRuntimeFactV1,
   collectOpenCodeChildRuntimeFacts,
   createOpenCodeRootTaskEvidenceCollector,
@@ -516,6 +518,15 @@ describe('native OpenCode child evidence', () => {
       status: 'completed',
       usage: { accountingMode: 'additive', availability: 'complete' },
       prompt: { childInjected: { availability: 'partial' } },
+      attributes: {
+        agentCliVersion: '1.18.18',
+        runtimeAdapterVersion: OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
+      },
+    });
+    expect(observations[1]?.attributes).not.toHaveProperty('runtimeCliVersion');
+    expect(safeTaskObservationRuntimeVersions(observations[1]!)).toEqual({
+      agentCliVersion: '1.18.18',
+      runtimeAdapterVersion: OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
     });
     expect(observations[1]?.turnAccounting).toBeUndefined();
     const parent = normalizeAgentObservationV1({

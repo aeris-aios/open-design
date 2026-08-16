@@ -505,7 +505,7 @@ export function adaptOpenCodeChildRuntimeFactV1(
     limitations: fact.limitations,
     attributes: {
       runtimeAdapterVersion: fact.adapterVersion,
-      runtimeCliVersion: fact.cliVersion,
+      agentCliVersion: fact.cliVersion,
       nativeTaskToolCallId: fact.toolCallId,
       rootSessionId: fact.rootSessionId,
       source: fact.source,

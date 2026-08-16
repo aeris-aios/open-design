@@ -65,6 +65,7 @@ export interface VelaChildEvidenceNegotiation {
 export interface VelaChildRuntimeFact {
   adapterVersion: typeof VELA_CHILD_EVIDENCE_ADAPTER_VERSION;
   schemaVersion: typeof VELA_CHILD_EVIDENCE_SCHEMA_VERSION;
+  producerVersion?: string;
   evidenceId: string;
   state: VelaChildLifecycleStatus;
   phase: 'start' | 'end';
@@ -152,6 +153,15 @@ function safeSha256(value: unknown): string | undefined {
 
 function safeProducerIdentity(value: unknown): string | undefined {
   return safeString(value, 128);
+}
+
+function observableProducerVersion(value: unknown): string | undefined {
+  const version = safeProducerIdentity(value);
+  // Vela versions before the candidate fix advertised this literal ACP
+  // placeholder even though the root CLI already exposed its real build via
+  // `--version`. Treat the placeholder as absent so telemetry can fall back to
+  // the independently probed executable instead of publishing false identity.
+  return version === '0.0.0' ? undefined : version;
 }
 
 export function negotiateVelaChildEvidence(
@@ -502,8 +512,13 @@ export function createVelaChildEvidenceConsumer(input: {
       ) {
         return { handled: true, accepted: false, reason: 'acp_session_mismatch' };
       }
-      const fact = parseWireFact(update, now);
-      if (!fact) return { handled: true, accepted: false, reason: 'invalid_wire_shape' };
+      const parsedFact = parseWireFact(update, now);
+      if (!parsedFact) return { handled: true, accepted: false, reason: 'invalid_wire_shape' };
+      const producerVersion = observableProducerVersion(negotiation.producerVersion);
+      const fact: VelaChildRuntimeFact = {
+        ...parsedFact,
+        ...(producerVersion ? { producerVersion } : {}),
+      };
       if (fact.childSessionId === fact.rootSessionId) {
         return { handled: true, accepted: false, reason: 'parent_cycle' };
       }
@@ -560,6 +575,8 @@ export function createVelaChildEvidenceConsumer(input: {
 
 export interface AdaptVelaChildFactInput {
   fact: VelaChildRuntimeFact;
+  agentCliVersion?: string;
+  runtimeCompanionVersion?: string;
   taskExecutionId: string;
   runId: string;
   taskRunIndex: number;
@@ -614,6 +631,21 @@ export function adaptVelaChildRuntimeFactV1(
   ) {
     throw new TypeError('Unsupported Vela child evidence adapter/schema version.');
   }
+  const probedAgentCliVersion = safeProducerIdentity(input.agentCliVersion);
+  const producerVersion = observableProducerVersion(fact.producerVersion);
+  if (
+    probedAgentCliVersion &&
+    producerVersion &&
+    probedAgentCliVersion !== producerVersion
+  ) {
+    throw new TypeError(
+      `Vela CLI version mismatch: probe=${probedAgentCliVersion} ACP=${producerVersion}`,
+    );
+  }
+  const agentCliVersion = producerVersion ?? probedAgentCliVersion;
+  const runtimeCompanionVersion = safeProducerIdentity(
+    input.runtimeCompanionVersion,
+  );
   const prompt = fact.prompt
     ? {
         availability: 'partial' as const,
@@ -692,6 +724,8 @@ export function adaptVelaChildRuntimeFactV1(
     ],
     attributes: {
       runtimeAdapterVersion: fact.adapterVersion,
+      ...(agentCliVersion ? { agentCliVersion } : {}),
+      ...(runtimeCompanionVersion ? { runtimeCompanionVersion } : {}),
       wireSchemaVersion: fact.schemaVersion,
       producerCandidateCommit: VELA_CHILD_EVIDENCE_CANDIDATE.commit,
       producerCandidatePublished: false,

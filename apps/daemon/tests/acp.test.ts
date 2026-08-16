@@ -721,7 +721,7 @@ test('attachAcpSession consumes negotiated Vela child evidence only on the AMR p
       availability: 'hash_only',
       sha256: 'a'.repeat(64),
       bytes: 4,
-      text: 'do not forward this Prompt',
+      text: 'Summarize the public fixture.',
     },
     usage: {
       availability: 'available',
@@ -764,7 +764,7 @@ test('attachAcpSession consumes negotiated Vela child evidence only on the AMR p
       usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
     });
   const serialized = JSON.stringify(events);
-  expect(serialized).not.toContain('do not forward this Prompt');
+  expect(serialized).toContain('Summarize the public fixture.');
   expect(serialized).not.toContain('Bearer do-not-forward');
   expect(serialized).not.toContain('/Users/alice/private.log');
   expect(events).toContainEqual(expect.objectContaining({

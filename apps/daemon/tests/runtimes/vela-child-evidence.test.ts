@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { safeTaskObservationRuntimeVersions } from '../../src/observability/task-observation-aggregation.js';
 import {
   VELA_CHILD_EVIDENCE_ADAPTER_VERSION,
   VELA_CHILD_EVIDENCE_CANDIDATE,
@@ -176,18 +177,27 @@ describe('Vela OpenCode child evidence adapter', () => {
 
     const normalized = facts.map((fact) => adaptVelaChildRuntimeFactV1({
       fact,
+      agentCliVersion: '1.2.3',
+      runtimeCompanionVersion: '1.18.18',
       taskExecutionId: 'task-1',
       runId: 'run-1',
       taskRunIndex: 0,
       taskRunObservationId: 'task-run:run-1:0',
       stage: 'production',
     }));
+    expect(facts[0]?.producerVersion).toBe('1.2.3');
     expect(normalized[0]).toMatchObject({
       kind: 'child_agent',
       status: 'running',
       usage: { availability: 'unavailable' },
       timing: { availability: 'partial' },
-      attributes: { evidenceLevel: 'L1', l3Eligible: false },
+      attributes: {
+        agentCliVersion: '1.2.3',
+        runtimeCompanionVersion: '1.18.18',
+        runtimeAdapterVersion: VELA_CHILD_EVIDENCE_ADAPTER_VERSION,
+        evidenceLevel: 'L1',
+        l3Eligible: false,
+      },
     });
     expect(normalized[1]).toMatchObject({
       status: 'completed',
@@ -210,6 +220,57 @@ describe('Vela OpenCode child evidence adapter', () => {
       attributes: { nativeStatus: 'timed_out' },
     });
     expect(normalized.every((observation) => observation.turnAccounting === undefined)).toBe(true);
+    expect(safeTaskObservationRuntimeVersions(normalized[1]!)).toEqual({
+      agentCliVersion: '1.2.3',
+      runtimeCompanionVersion: '1.18.18',
+      runtimeAdapterVersion: VELA_CHILD_EVIDENCE_ADAPTER_VERSION,
+    });
+  });
+
+  it('fails closed when the CLI probe and ACP handshake report different Vela versions', () => {
+    const facts: VelaChildRuntimeFact[] = [];
+    const consumer = newConsumer(facts);
+    expect(observe(consumer, updateOf(fixture()[1]!)).accepted).toBe(true);
+
+    expect(() => adaptVelaChildRuntimeFactV1({
+      fact: facts[0]!,
+      agentCliVersion: 'different-vela-build',
+      runtimeCompanionVersion: '1.18.18',
+      taskExecutionId: 'task-1',
+      runId: 'run-1',
+      taskRunIndex: 0,
+      taskRunObservationId: 'task-run:run-1:0',
+      stage: 'production',
+    })).toThrow(/Vela CLI version mismatch/);
+  });
+
+  it('uses the real CLI probe when an older Vela handshake reports the 0.0.0 placeholder', () => {
+    const facts: VelaChildRuntimeFact[] = [];
+    const consumer = createVelaChildEvidenceConsumer({
+      onFact: (fact) => facts.push(fact),
+      now: () => 9_999,
+    });
+    const initialize = structuredClone(resultOf(fixture()[0]!));
+    (initialize.agentInfo as RecordValue).version = '0.0.0';
+    consumer.negotiate(initialize);
+    expect(observe(consumer, updateOf(fixture()[1]!)).accepted).toBe(true);
+    expect(facts[0]?.producerVersion).toBeUndefined();
+
+    const observation = adaptVelaChildRuntimeFactV1({
+      fact: facts[0]!,
+      agentCliVersion: 'vela-cli-probed-0.9.1',
+      runtimeCompanionVersion: '1.18.18',
+      taskExecutionId: 'task-1',
+      runId: 'run-1',
+      taskRunIndex: 0,
+      taskRunObservationId: 'task-run:run-1:0',
+      stage: 'production',
+    });
+    expect(safeTaskObservationRuntimeVersions(observation)).toEqual({
+      agentCliVersion: 'vela-cli-probed-0.9.1',
+      runtimeCompanionVersion: '1.18.18',
+      runtimeAdapterVersion: VELA_CHILD_EVIDENCE_ADAPTER_VERSION,
+    });
   });
 
   it('drops unknown and malicious fields instead of forwarding them', () => {

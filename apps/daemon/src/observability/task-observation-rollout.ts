@@ -354,6 +354,12 @@ function taskAggregate(
         if (diagnostic.name === 'vela_opencode_child_agent_lifecycle') {
           return [adaptVelaChildRuntimeFactV1({
             fact: diagnostic as unknown as VelaChildRuntimeFact,
+            ...(detectedVersions?.agentCliVersion
+              ? { agentCliVersion: detectedVersions.agentCliVersion }
+              : {}),
+            ...(detectedVersions?.runtimeCompanionVersion
+              ? { runtimeCompanionVersion: detectedVersions.runtimeCompanionVersion }
+              : {}),
             taskExecutionId: task.taskExecutionId,
             runId: run.id,
             taskRunIndex: mapping.taskRunIndex,
@@ -364,6 +370,9 @@ function taskAggregate(
         if (diagnostic.name === 'claude_child_runtime_fact') {
           return [adaptClaudeChildRuntimeFactV1({
             fact: diagnostic as unknown as ClaudeChildRuntimeFact,
+            ...(detectedVersions?.agentCliVersion
+              ? { agentCliVersion: detectedVersions.agentCliVersion }
+              : {}),
             taskExecutionId: task.taskExecutionId,
             runId: run.id,
             taskRunIndex: mapping.taskRunIndex,
