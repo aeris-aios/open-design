@@ -756,6 +756,68 @@ button.att-i:hover { border-color: var(--border-strong); }
 .opt .own-ta::placeholder { color: var(--text-soft); }
 .opt .own-ta:focus { border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong)); }
 
+/* ---- 视觉方向:看图选择 ----
+   来源 specs/current/studio-chat-visual-discovery.md:
+   风格这类问题不能用文字选项 ——「Modern minimal」「Editorial」这种抽象词,
+   用户只能生成完才知道自己选了什么。规格要求按产物类型筛 3–5 个方向,
+   每个给预览图,并且【同一份示例内容、同一画幅】,让人比的是风格不是题材。
+
+   下面每张预览是 CSS 画的结构缩影,四个方向的差别落在版式本身
+   (留白量、字重块的粗细、圆角、信息密度),不是同一个模板换颜色 ——
+   规格里专门点了这一条。正式素材是"内置精选预览图",到位后替换 .vpv
+   内部即可,外框和交互不用动。 */
+.opts.mod-visual { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 0 11px 10px; }
+.vopt {
+  display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); text-align: left;
+  transition: border-color var(--duration-faster) var(--ease-out), background-color var(--duration-faster) var(--ease-out);
+}
+.vopt:hover { border-color: var(--border-strong); }
+.vopt.is-on {
+  border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
+  background: color-mix(in srgb, var(--brand-soft) 88%, var(--bg-panel));
+}
+.vpv { display: block; aspect-ratio: 4 / 3; background: var(--bg-subtle); border-bottom: 1px solid var(--border-soft); overflow: hidden; }
+.vmeta { display: block; padding: 7px 9px; }
+.vt { display: flex; align-items: center; gap: 5px; font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); }
+.vopt.is-on .vt { color: var(--brand-text); }
+.vrec {
+  flex: none; padding: 0 5px; border-radius: var(--radius-pill);
+  background: var(--brand-soft); border: 1px solid var(--brand-weak);
+  font-size: var(--t-cap); font-weight: 600; color: var(--brand-text);
+}
+.vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
+
+/* 四个方向的结构缩影 —— 差别在版式,不在配色 */
+.pv { height: 100%; display: flex; flex-direction: column; padding: 7px; background: var(--bg); }
+.pv i { display: block; background: var(--border); border-radius: 1px; }
+/* 容器 span(.g / .r)只负责排布,不能吃底色 —— 否则格子间隙被填满,
+   网格看起来就是一整块。 */
+.pv span { display: block; background: none; }
+/* ① 克制留白:细字重、大留白、元素少 */
+.pv.mod-calm { gap: 6px; padding: 11px; }
+.pv.mod-calm .h { height: 3px; width: 46%; background: var(--text-soft); }
+.pv.mod-calm .img { flex: 1; border-radius: 2px; background: var(--bg-muted); }
+.pv.mod-calm .t { height: 2px; width: 62%; }
+/* ② 编辑杂志:粗标题压顶,大图,小注 */
+.pv.mod-edit { gap: 4px; }
+.pv.mod-edit .h { height: 9px; background: var(--text-strong); }
+.pv.mod-edit .img { flex: 1; background: var(--bg-muted); }
+.pv.mod-edit .t { height: 2px; width: 40%; }
+/* ③ 活泼消费:圆角卡片网格,块头大 */
+.pv.mod-pop { gap: 4px; }
+.pv.mod-pop .h { height: 4px; width: 34%; border-radius: 999px; background: var(--text-soft); }
+.pv.mod-pop .g { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.pv.mod-pop .g i { border-radius: 4px; background: var(--bg-muted); }
+/* ④ 数据密集:细行密排,信息量大 */
+.pv.mod-dense { gap: 2px; padding: 6px; }
+.pv.mod-dense .h { height: 3px; width: 28%; background: var(--text-strong); }
+.pv.mod-dense .r { display: flex; gap: 3px; }
+.pv.mod-dense .r i { height: 2px; }
+.pv.mod-dense .r i:first-child { flex: 2; }
+.pv.mod-dense .r i:last-child { flex: 1; background: var(--bg-muted); }
+
 .card > .foot { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-top: 1px solid var(--border-soft); background: var(--bg-panel); }
 .card > .foot .sp { flex: 1; }
 .card.is-stale { background: var(--bg-panel); opacity: 0.75; }
@@ -1314,6 +1376,36 @@ button.att-i:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
+            <div class="st-l"><span>视觉方向 · 看图选择(风格类问题不能用文字选项)</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>先定个视觉方向</b><span class="n">4 选 1</span></div>
+                <div class="q">这套电商 App 原型走哪种感觉?四张预览用的是同一份示例内容,比的是风格。</div>
+                <div class="opts mod-visual">
+                  <button class="vopt is-on" type="button">
+                    <span class="vpv"><span class="pv mod-calm"><i class="h"></i><i class="img"></i><i class="t"></i></span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pv mod-edit"><i class="h"></i><i class="img"></i><i class="t"></i></span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pv mod-pop"><i class="h"></i><span class="g"><i></i><i></i><i></i><i></i></span></span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pv mod-dense"><i class="h"></i><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span><span class="r"><i></i><i></i></span></span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                  </button>
+                </div>
+                <div class="foot">
+                  <button class="btn mod-ghost mod-sm" type="button">帮我决定</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="st">
             <div class="st-l"><span>已回答 · 点发送后收成陈述</span><i></i></div>
             <div class="st-b">
               <div class="answered"><span class="k">已确认</span><span>设置页<b>沿用列表页的商品卡组件</b></span></div>
@@ -1322,7 +1414,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」是选项之一。选中它会<b>原地长出输入框</b>,并且底部多出一个发送键 —— 单选本是"点了即发送",但这一项点下去还没有内容可发,不给发送键就走不下去。输入框放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
+          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」是选项之一。选中它会<b>原地长出输入框</b>,并且底部多出一个发送键 —— 单选本是"点了即发送",但这一项点下去还没有内容可发,不给发送键就走不下去。输入框放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。<b>视觉方向另走看图选择</b>:风格用「Modern minimal」这类抽象词,人只能生成完才知道自己选了什么。按产物类型筛 3–5 个方向、各给预览图,四张用同一份示例内容和同一画幅 —— 比的是风格不是题材;其中一个是 Agent 推荐项,再给一条「帮我决定」的出口。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
         </div>
       </article>
 
