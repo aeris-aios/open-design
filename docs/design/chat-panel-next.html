@@ -850,16 +850,31 @@ button.att-i:hover { border-color: var(--border-strong); }
 .rsn .ta:focus { border-color: var(--border-strong); }
 
 /* ---- 下一步引导 ---- */
-.nexts { display: flex; flex-direction: column; gap: 5px; }
-.nexts button {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--bg); font-size: var(--t-mini); color: var(--text); text-align: left;
-  transition: border-color var(--duration-faster) var(--ease-out), background-color var(--duration-faster) var(--ease-out), color var(--duration-faster) var(--ease-out);
+/* 三条建议是【一组】,不是三个独立物件。
+   ------------------------------------------------------------
+   原来每条各有一圈边框,一屏里就多出三个方框、三道圆角、三条描边,
+   视觉上碎成三件东西 —— 而它们本来是同一件事的三个选项。
+   改成一个外框 + 内部发丝分割线:外框负责"这是一组",分割线负责"有三条"。
+   点击热区仍然是每一行各自一个,不是整框一个按钮。
+   外框 overflow:hidden,行的 hover 底色才会被外框圆角裁齐,
+   否则首尾两行的高亮会顶出圆角、露出直角。 */
+.nexts {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); overflow: hidden;
 }
-.nexts button:hover { border-color: var(--border-strong); background: var(--bg-panel); color: var(--text-strong); }
+.nexts button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 11px; border: none; border-top: 1px solid var(--border-soft);
+  background: none; font-size: var(--t-mini); color: var(--text); text-align: left;
+  transition: background-color var(--duration-faster) var(--ease-out), color var(--duration-faster) var(--ease-out);
+}
+.nexts button:first-child { border-top: none; }
+.nexts button:hover { background: var(--bg-panel); color: var(--text-strong); }
 .nexts button svg { flex: none; width: 12px; height: 12px; color: var(--text-soft); }
 .nexts button:hover svg { color: var(--text-strong); }
+/* hover 高亮只落在被指的那一行 —— 文档「包含的状态」写的就是"hover 单条高亮" */
+.nexts button.is-hover { background: var(--bg-panel); color: var(--text-strong); }
+.nexts button.is-hover svg { color: var(--text-strong); }
 
 /* ---- Queue ---- */
 .queue { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
@@ -1761,10 +1776,20 @@ button.att-i:hover { border-color: var(--border-strong); }
               </div>
             </div>
           </div>
+          <div class="st">
+            <div class="st-l"><span>hover · 只高亮被指的那一条</span><i></i></div>
+            <div class="st-b">
+              <div class="nexts">
+                <button type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5l7 7-7 7"/></svg>再加一页订单列表</button>
+                <button class="is-hover" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5l7 7-7 7"/></svg>把商品卡换成两列布局</button>
+                <button type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5l7 7-7 7"/></svg>补一套深色模式</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          <span><b>点击填入输入框</b> — 单击某条,内容作为新 Prompt 填入输入框(不直接发送)。hover 单条高亮。</span>
+          <span><b>点击填入输入框</b> — 单击某条,内容作为新 Prompt 填入输入框(不直接发送)。三条共用<b>一个外框</b>、内部发丝分割 —— 它们是同一件事的三个选项,各带一圈边框会碎成三个独立物件。<b>点击热区仍是每行各一个</b>,不是整框一个按钮;hover 只高亮被指的那一条。</span>
         </div>
       </article>
 
