@@ -373,6 +373,16 @@ body {
   overflow: auto; display: block; background: var(--bg-subtle);
 }
 svg { stroke-width: 1.75px; stroke-linecap: round; stroke-linejoin: round; }
+/* ---- 全文只有一个对号 ----
+   之前有四种写法:SVG(stroke-width=3)、文字 ✓、CSS 边框旋转画的、
+   还有一条别的路径 —— 形状、粗细、大小全不一样。
+   统一成一条路径 + 一个【视觉】笔画粗细。
+   关键是 vector-effect:non-scaling-stroke:SVG 的 stroke-width 默认跟着
+   viewBox 缩放,同一条路径画在 10px 的方钮里和 15px 的完成标记里,
+   笔画会差一倍以上 —— 那正是它们看起来像两个图标的原因。
+   加上它之后粗细恒定,像字体一样,尺寸只改大小不改笔画。
+   例外:终端输出里的 ✓ 是日志正文,真实终端就是打这个字符,不动。 */
+.ck { fill: none; stroke: currentColor; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 button { font-family: inherit; border: none; background: none; cursor: pointer; color: inherit; font-size: var(--font-size-13); }
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) {
@@ -726,11 +736,11 @@ button.att-i:hover { border-color: var(--border-strong); }
 }
 /* 多选选中:实心方块 + 白勾(纯 CSS 画,不额外塞 svg 进标记) */
 .opts.mod-multi .opt.is-on .box { border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong)); background: var(--brand); }
-.opts.mod-multi .opt.is-on .box::after {
-  content: ''; width: 4px; height: 8px; margin-top: -2px;
-  border: solid var(--brand-text); border-width: 0 1.8px 1.8px 0;
-  transform: rotate(45deg);
-}
+/* 多选的勾用统一那条路径,不再用 CSS 边框旋转拼 —— 拼出来的勾
+   角度和端点跟 SVG 那个对不上,并排放就是两种形状。 */
+.opt .box svg { width: 10px; height: 10px; opacity: 0; }
+.opts.mod-single .opt .box svg { display: none; }   /* 单选是圆点,不该有勾 */
+.opts.mod-multi .opt.is-on .box svg { opacity: 1; color: var(--brand-text); }
 /* 「自己填」是选项之一,不是卡片外的补充说明 —— 文档把「自定义」和
    单选/多选/跳过并列写在支持的操作里,它就该和其它选项躺在同一列。 */
 .opt.mod-own { color: var(--text-muted); border-style: dashed; }
@@ -826,6 +836,10 @@ button.att-i:hover { border-color: var(--border-strong); }
 .steps { padding: 4px 0; }
 .steps li { display: flex; gap: 8px; padding: 5px 11px; font-size: var(--t-mini); line-height: var(--lh-row); color: var(--text); list-style: none; }
 .steps li .k { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); width: 15px; }
+/* 已完成那几步的勾:和完成标记、多选勾用同一条路径同一笔画。
+   原来这里是文字 ✓ —— 那是字体里的字形,粗细和端点由字体决定,
+   跟旁边 SVG 画的勾必然对不上。 */
+.steps li .k svg { display: block; width: 11px; height: 11px; margin-top: 3px; }
 .steps li.is-done { color: var(--text-muted); }
 .steps li.is-done .k { color: var(--brand-text); }
 .steps li.is-now { color: var(--text-strong); font-weight: 600; }
@@ -1320,9 +1334,9 @@ button.att-i:hover { border-color: var(--border-strong); }
                 <div class="h"><b>还需要确认一件事</b></div>
                 <div class="q">设置页要不要沿用列表页的商品卡组件?</div>
                 <div class="opts mod-stack mod-single">
-                  <button class="opt is-on" type="button"><span class="box"></span><span>沿用列表页那张商品卡,抽成两页共享的组件</span></button>
-                  <button class="opt" type="button"><span class="box"></span><span>设置页单独写一套,不跟列表页绑</span></button>
-                  <button class="opt mod-own" type="button"><span class="box"></span><span>自己填 —— 用你自己的说法</span></button>
+                  <button class="opt is-on" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>沿用列表页那张商品卡,抽成两页共享的组件</span></button>
+                  <button class="opt" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>设置页单独写一套,不跟列表页绑</span></button>
+                  <button class="opt mod-own" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>自己填 —— 用你自己的说法</span></button>
                 </div>
                 <div class="foot">
                   <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
@@ -1337,10 +1351,10 @@ button.att-i:hover { border-color: var(--border-strong); }
                 <div class="h"><b>这几页都要跟着改吗</b><span class="n">已选 2</span></div>
                 <div class="q">除了设置页,还有哪几页要一起换成新的商品卡?</div>
                 <div class="opts mod-stack mod-multi">
-                  <button class="opt is-on" type="button"><span class="box"></span><span>商品详情页</span></button>
-                  <button class="opt is-on" type="button"><span class="box"></span><span>搜索结果页 —— 里面那张卡是列表页的窄版</span></button>
-                  <button class="opt" type="button"><span class="box"></span><span>结算页的商品缩略图</span></button>
-                  <button class="opt mod-own" type="button"><span class="box"></span><span>自己填 —— 用你自己的说法</span></button>
+                  <button class="opt is-on" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>商品详情页</span></button>
+                  <button class="opt is-on" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>搜索结果页 —— 里面那张卡是列表页的窄版</span></button>
+                  <button class="opt" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>结算页的商品缩略图</span></button>
+                  <button class="opt mod-own" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>自己填 —— 用你自己的说法</span></button>
                 </div>
                 <div class="foot">
                   <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
@@ -1357,10 +1371,10 @@ button.att-i:hover { border-color: var(--border-strong); }
                 <div class="h"><b>还需要确认一件事</b></div>
                 <div class="q">设置页要不要沿用列表页的商品卡组件?</div>
                 <div class="opts mod-stack mod-single">
-                  <button class="opt" type="button"><span class="box"></span><span>沿用列表页那张商品卡,抽成两页共享的组件</span></button>
-                  <button class="opt" type="button"><span class="box"></span><span>设置页单独写一套,不跟列表页绑</span></button>
+                  <button class="opt" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>沿用列表页那张商品卡,抽成两页共享的组件</span></button>
+                  <button class="opt" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>设置页单独写一套,不跟列表页绑</span></button>
                   <div class="opt mod-own is-on is-open">
-                    <span class="box"></span>
+                    <span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
                     <span class="own">
                       <span class="own-l">自己填</span>
                       <textarea class="own-ta" rows="2" placeholder="用你自己的说法写 —— 比如「只有价格那一行沿用,其余重画」"></textarea>
@@ -1468,7 +1482,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>已确认 · 按钮消失,收起为一行</span><i></i></div>
             <div class="st-b">
               <details class="fold">
-                <summary><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                <summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="body">1 复刻商品列表页 · 2 抽出商品卡 · 3 做设置页 · 4 接上跳转</div>
               </details>
             </div>
@@ -1479,8 +1493,8 @@ button.att-i:hover { border-color: var(--border-strong); }
               <div class="card">
                 <div class="h"><b>执行中</b><span class="n">2 / 4</span></div>
                 <ol class="steps">
-                  <li class="is-done"><span class="k">✓</span><span>复刻商品列表页结构与栅格</span></li>
-                  <li class="is-done"><span class="k">✓</span><span>抽出商品卡为共享组件</span></li>
+                  <li class="is-done"><span class="k"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
+                  <li class="is-done"><span class="k"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span></li>
                   <li class="is-now"><span class="k">3</span><span>按同一套间距做设置页</span></li>
                   <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
                 </ol>
@@ -1504,11 +1518,11 @@ button.att-i:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l mod-def"><span>执行中 · 当前组展开,已完成的组自动收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
               <details class="fold" open style="margin-top:6px">
                 <summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="ms">第 3/4 步</span></summary>
                 <div class="body">
-                  <div class="tool"><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
+                  <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
                   <div class="tool"><span class="mk is-run"></span><span class="nm">写 <code>settings.css</code></span><span class="ms"></span></div>
                 </div>
               </details>
@@ -1517,7 +1531,7 @@ button.att-i:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>完成 · 整体收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务 · 耗时 1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转</div></details>
+              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务 · 耗时 1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转</div></details>
             </div>
           </div>
         </div>
@@ -1578,7 +1592,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>执行中 / 成功 / 失败</span><i></i></div>
             <div class="st-b">
               <div class="tool"><span class="mk is-run"></span><span class="nm">读取 <code>首页.png</code></span><span class="ms"></span></div>
-              <div class="tool"><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">读取 <code>tokens.css</code></span><span class="ms">0.3s</span></div>
+              <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">读取 <code>tokens.css</code></span><span class="ms">0.3s</span></div>
               <div class="tool is-fail"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><span class="nm">读取 <code>规范.pdf</code></span><button class="why" type="button">失败</button><span class="ms">1.2s</span></div>
             </div>
           </div>
@@ -1600,7 +1614,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>执行中 / 成功 / 失败</span><i></i></div>
             <div class="st-b">
               <div class="tool"><span class="mk is-run"></span><span class="nm">写 <code>settings.css</code></span><span class="ms"></span></div>
-              <div class="tool"><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>product-list.html</code></span><span class="ms">1.4s</span></div>
+              <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>product-list.html</code></span><span class="ms">1.4s</span></div>
               <div class="tool is-fail"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><span class="nm">写 <code>dist/bundle.js</code> · 目录只读</span><span class="ms">0.2s</span></div>
             </div>
           </div>
@@ -1635,7 +1649,7 @@ button.att-i:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>成功 · 收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span><span><code style="font-family:var(--mono)">npm run build</code></span><span class="ms">8.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span><code style="font-family:var(--mono)">npm run build</code></span><span class="ms">8.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="term" style="border:none;margin-top:2px"><div class="ok">✓ built in 8.42s · dist/ 已更新</div></div>
               </details>
             </div>
@@ -1678,7 +1692,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>成功 · 收起为一行 + 缩略图条</span><i></i></div>
             <div class="st-b">
               <div class="tool">
-                <span class="mk is-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span>
+                <span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
                 <span class="nm">生成 4 张</span>
                 <span class="strip">
                   <span class="th"><span class="fill mod-a" style="position:absolute;inset:0"></span></span>
