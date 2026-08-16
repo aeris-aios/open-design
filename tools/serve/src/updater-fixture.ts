@@ -131,6 +131,7 @@ async function inspectClosureDistributionBlobs(
 function rebaseClosureDistributionManifest(
   manifest: ClosureDistributionManifest,
   origin: string,
+  version: string,
 ): ClosureDistributionManifest {
   return createClosureDistributionManifest({
     blobs: Object.fromEntries(Object.entries(manifest.blobs).map(([digest, artifact]) => [digest, {
@@ -141,7 +142,7 @@ function rebaseClosureDistributionManifest(
     identity: {
       channel: manifest.identity.channel,
       protocolVersion: manifest.identity.protocolVersion,
-      version: manifest.identity.version,
+      version,
     },
     required: manifest.required,
     resources: manifest.resources,
@@ -354,9 +355,15 @@ export async function startUpdaterFixtureServer(options: UpdaterFixtureOptions =
   const rawClosureManifest = options.closureManifestPath == null
     ? null
     : JSON.parse(await readFile(options.closureManifestPath, "utf8")) as unknown;
+  const closureManifestRecord = rawClosureManifest != null && typeof rawClosureManifest === "object"
+    ? rawClosureManifest as Record<string, unknown>
+    : null;
+  const isDistributionManifest = closureManifestRecord?.blobs != null
+    && closureManifestRecord.required != null
+    && closureManifestRecord.identity != null;
   let closureManifest: ClosureCandidateManifest | null = rawClosureManifest == null
     ? null
-    : (rawClosureManifest as { schemaVersion?: unknown }).schemaVersion === 2
+    : isDistributionManifest
       ? null
       : validateClosureCandidateManifest(rawClosureManifest);
   const rawClosureDistribution = options.closureDistributionManifestPath == null
@@ -573,7 +580,7 @@ export async function startUpdaterFixtureServer(options: UpdaterFixtureOptions =
     closureDistribution != null
     && (options.closureDistributionManifestPath != null || options.rebaseClosureUrl === true)
   ) {
-    closureDistribution = rebaseClosureDistributionManifest(closureDistribution, origin);
+    closureDistribution = rebaseClosureDistributionManifest(closureDistribution, origin, version);
   }
   if (closureManifest != null && options.rebaseClosureUrl === true) {
     const closureArchiveUrl = `${origin}/${channel}/closure/${closureManifest.identity.platform}/versions/${closureManifest.identity.version}/closure.zip`;
