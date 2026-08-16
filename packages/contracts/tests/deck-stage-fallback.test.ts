@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DECK_SLIDE_SELECTOR,
+  DECK_STRUCTURED_SLIDE_SELECTOR,
   htmlUsesDeckStageElement,
   injectDeckStageFallback,
 } from '../src/runtime/deck-stage-fallback.js';
 
 describe('deck-stage fallback runtime injection', () => {
+  it('publishes one selector contract for legacy, modern, and imported slide markers', () => {
+    expect(DECK_SLIDE_SELECTOR).toBe('.slide, [data-screen-label], .deck-slide, .ppt-slide');
+    for (const container of ['deck-stage', '.deck', '.deck-stage', '.deck-shell', '#deck', 'body']) {
+      for (const marker of ['.slide', '[data-screen-label]', '.deck-slide', '.ppt-slide']) {
+        expect(DECK_STRUCTURED_SLIDE_SELECTOR).toContain(`${container} > ${marker}`);
+      }
+    }
+  });
+
   it('does nothing for ordinary HTML without a deck-stage element', () => {
     const html = '<!doctype html><html><body><main>Hero</main></body></html>';
 
@@ -22,6 +33,9 @@ describe('deck-stage fallback runtime injection', () => {
     expect(out).toContain('data-od-deck-stage-fallback');
     expect(out).toContain("window.customElements.define('deck-stage'");
     expect(out).toContain("type: 'od:slide-state'");
+    expect(out).toContain('get index()');
+    expect(out).toContain('goTo(index)');
+    expect(out).toContain("this.go('next')");
     expect(out.indexOf('data-od-deck-stage-fallback')).toBeLessThan(out.indexOf('</body>'));
   });
 

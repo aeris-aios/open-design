@@ -5,9 +5,33 @@ const DECK_STAGE_FALLBACK_MARKER = 'data-od-deck-stage-fallback';
  * The selector family that identifies a deck's slide elements. Single source of
  * truth shared by the runtime `<deck-stage>` fallback (below) and any host-side
  * static slide extraction (e.g. the web app's shadow-root thumbnail parser), so
- * both agree on what counts as a slide. Ordered structured→generic.
+ * both agree on what counts as a slide.
  */
-export const DECK_SLIDE_SELECTOR = '.slide, [data-screen-label], .deck-slide, .ppt-slide';
+const DECK_SLIDE_MARKERS = [
+  '.slide',
+  '[data-screen-label]',
+  '.deck-slide',
+  '.ppt-slide',
+] as const;
+const DECK_SLIDE_CONTAINERS = [
+  'deck-stage',
+  '.deck',
+  '.deck-stage',
+  '.deck-shell',
+  '#deck',
+  'body',
+] as const;
+
+export const DECK_SLIDE_SELECTOR = DECK_SLIDE_MARKERS.join(', ');
+
+/**
+ * Prefer direct children of known deck containers before using the generic
+ * marker selector. This keeps decorative `.slide` nodes elsewhere in an
+ * artifact out of the deck while accepting every persisted slide convention.
+ */
+export const DECK_STRUCTURED_SLIDE_SELECTOR = DECK_SLIDE_CONTAINERS
+  .flatMap((container) => DECK_SLIDE_MARKERS.map((marker) => `${container} > ${marker}`))
+  .join(', ');
 
 const DECK_STAGE_FALLBACK_SCRIPT = `<script data-od-deck-stage-fallback>(function(){
   if (window.__odDeckStageFallbackInstalled) return;
@@ -105,6 +129,14 @@ const DECK_STAGE_FALLBACK_SCRIPT = `<script data-od-deck-stage-fallback>(functio
       return numeric(this.getAttribute('height'), 1080);
     }
 
+    get index() {
+      return this._index;
+    }
+
+    get length() {
+      return this._slides.length;
+    }
+
     _syncSize() {
       this.style.setProperty('--od-deck-stage-width', this.designWidth + 'px');
       this.style.setProperty('--od-deck-stage-height', this.designHeight + 'px');
@@ -195,6 +227,22 @@ const DECK_STAGE_FALLBACK_SCRIPT = `<script data-od-deck-stage-fallback>(functio
         this._index = slides.length - 1;
       }
       this._apply();
+    }
+
+    goTo(index) {
+      this.go('go', index);
+    }
+
+    next() {
+      this.go('next');
+    }
+
+    prev() {
+      this.go('prev');
+    }
+
+    reset() {
+      this.go('first');
     }
 
     _onMessage(ev) {
