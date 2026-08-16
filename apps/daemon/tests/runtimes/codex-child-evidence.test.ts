@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   evaluateRuntimeEvidenceGraphV1,
@@ -17,6 +20,10 @@ const CHILD = '20000000-0000-4000-8000-000000000002';
 const GRANDCHILD = '30000000-0000-4000-8000-000000000003';
 const SIBLING = '40000000-0000-4000-8000-000000000004';
 const BASE_TIME = Date.parse('2026-08-14T00:00:00.000Z');
+const sanitizedRealSeedPath = fileURLToPath(new URL(
+  '../fixtures/od-next-runtime-capabilities/codex-0.147.0.sanitized-real-seed.json',
+  import.meta.url,
+));
 
 const temporaryRoots: string[] = [];
 
@@ -58,7 +65,7 @@ function turn(input: {
   prompt?: string;
   usage?: Record<string, number>;
   childActivities?: Array<{ sessionId: string; kind: string; atMs: number }>;
-  terminal?: 'complete' | 'abort-canceled' | 'abort-failed' | 'none';
+  terminal?: 'complete' | 'complete-failed' | 'abort-canceled' | 'abort-failed' | 'none';
 }): Array<Record<string, unknown>> {
   const records: Array<Record<string, unknown>> = [
     event(input.startedAtMs, { type: 'task_started', turn_id: input.id }),
@@ -86,10 +93,21 @@ function turn(input: {
   if (input.terminal === 'abort-canceled' || input.terminal === 'abort-failed') {
     records.push(event(input.startedAtMs + 900, {
       type: 'turn_aborted',
-      reason: input.terminal === 'abort-canceled' ? 'cancelled' : 'runtime_error',
+      reason: input.terminal === 'abort-canceled' ? 'interrupted' : 'runtime_error',
     }));
   } else if (input.terminal !== 'none') {
-    records.push(event(input.startedAtMs + 900, { type: 'task_complete', turn_id: input.id }));
+    records.push(event(input.startedAtMs + 900, {
+      type: 'task_complete',
+      turn_id: input.id,
+      ...(input.terminal === 'complete-failed'
+        ? {
+            error: {
+              message: 'stream disconnected before response.completed',
+              codex_error_info: 'other',
+            },
+          }
+        : {}),
+    }));
   }
   return records;
 }
@@ -131,14 +149,17 @@ function collectInput(home: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function root(status: NormalizedAgentObservationV1['status']): NormalizedAgentObservationV1 {
+function root(
+  status: NormalizedAgentObservationV1['status'],
+  runtimeSessionId = PARENT,
+): NormalizedAgentObservationV1 {
   return normalizeAgentObservationV1({
     identity: {
       observationId: 'root',
       taskExecutionId: 'task-1',
       runId: 'run-1',
       taskRunIndex: 0,
-      runtimeSessionId: PARENT,
+      runtimeSessionId,
     },
     kind: 'task_run',
     stage: 'production',
@@ -154,6 +175,121 @@ afterEach(async () => {
 });
 
 describe('collectCodexChildEvidence', () => {
+  it('replays the exact Codex 0.147.0 best-effort success, started failure, and cancel records', async () => {
+    const seed = JSON.parse(readFileSync(sanitizedRealSeedPath, 'utf8')) as {
+      fixtureKind: string;
+      cliVersion: string;
+      sourceTag: string;
+      sourceCommit: string;
+      recordingDigest: string;
+      evidenceReview: string;
+      caseCoverage: Array<{
+        caseId: string;
+        outcome: string;
+        minimumEvidence: string;
+        evidence: Record<string, unknown>;
+      }>;
+      replayCases: Array<{
+        caseId: 'child_success' | 'child_failure_parent_recovers' | 'cancel';
+        parentSessionId: string;
+        parentTurnId: string;
+        childSessionId: string;
+        parentRollout: Record<string, unknown>[];
+        childRollout: Record<string, unknown>[];
+      }>;
+    };
+    expect(seed).toMatchObject({
+      fixtureKind: 'sanitized_real_best_effort',
+      cliVersion: 'codex-cli 0.147.0',
+      sourceTag: 'rust-v0.147.0',
+      sourceCommit: 'be6e8eac029b183056b7e4402879f15d2c85f61b',
+      evidenceReview: 'open_design_best_effort',
+    });
+    const { recordingDigest: _recordingDigest, ...digestInput } = structuredClone(seed);
+    expect(seed.recordingDigest).toBe(
+      `sha256:${createHash('sha256').update(JSON.stringify(digestInput)).digest('hex')}`,
+    );
+    expect(seed.caseCoverage.map(({ caseId }) => caseId)).toEqual([
+      'main_run',
+      'tool',
+      'child_success',
+      'child_failure_parent_recovers',
+      'cancel',
+      'timeout',
+      'resume',
+    ]);
+    expect(seed.caseCoverage.every(({ outcome }) => outcome === 'passed')).toBe(true);
+    const coverage = Object.fromEntries(
+      seed.caseCoverage.map(({ caseId, evidence }) => [caseId, evidence]),
+    );
+    expect(coverage['child_failure_parent_recovers']).toMatchObject({
+      childTerminal: 'failed',
+      terminalErrorCode: 'other',
+      parentTerminal: 'completed',
+      parentError: false,
+    });
+    expect(Number(coverage['child_failure_parent_recovers']?.['parentTerminalAtMs']))
+      .toBeGreaterThan(Number(coverage['child_failure_parent_recovers']?.['childTerminalAtMs']));
+    expect(coverage['cancel']).toMatchObject({
+      parentActivityKind: 'interrupted',
+      childAbortReason: 'interrupted',
+      childTerminal: 'canceled',
+    });
+    expect(coverage['timeout']).toMatchObject({
+      hostRunStatus: 'failed',
+      hostSignal: 'SIGTERM',
+      nativeTerminalObserved: false,
+    });
+    expect(coverage['resume']).toMatchObject({
+      priorTurnId: 'child-success-turn',
+      resumeTurnId: 'child-resume-turn',
+      resumeTerminal: 'completed',
+    });
+    expect(Number(coverage['resume']?.['resumeStartedAtMs']))
+      .toBeGreaterThan(Number(coverage['resume']?.['priorTerminalAtMs']));
+    expect(JSON.stringify(seed)).not.toMatch(
+      /\/Users\/|\/home\/|BEGIN [A-Z ]+PRIVATE KEY|sk-[A-Za-z0-9]/u,
+    );
+
+    for (const replay of seed.replayCases) {
+      const home = await codexHome();
+      await writeRollout(home, replay.parentSessionId, replay.parentRollout);
+      await writeRollout(home, replay.childSessionId, replay.childRollout);
+      const result = await collectCodexChildEvidence(collectInput(home, {
+        parentSessionId: replay.parentSessionId,
+        parentTurnId: replay.parentTurnId,
+        agentCliVersion: seed.cliVersion,
+        runStartedAtMs: Date.parse(String(replay.parentRollout[1]?.timestamp)),
+        runEndedAtMs: Date.parse(String(replay.parentRollout.at(-1)?.timestamp)),
+      }));
+      const expectedStatus = replay.caseId === 'child_success'
+        ? 'completed'
+        : replay.caseId === 'cancel'
+          ? 'canceled'
+          : 'failed';
+      const terminal = result.observations.find((observation) => (
+        observation.kind === 'child_agent' && observation.status === expectedStatus
+      ));
+      expect(terminal).toMatchObject({
+        status: expectedStatus,
+        identity: { runtimeSessionId: replay.childSessionId },
+        attributes: {
+          agentCliVersion: 'codex-cli 0.147.0',
+          terminalEvidence: replay.caseId === 'cancel'
+            ? 'parent_sub_agent_activity'
+            : 'child_task_complete',
+        },
+      });
+      if (replay.caseId !== 'cancel') {
+        expect(evaluateRuntimeFixtureCaseV1(replay.caseId, [
+          root('running', replay.parentSessionId),
+          ...result.observations,
+          root('completed', replay.parentSessionId),
+        ])).toMatchObject({ outcome: 'passed' });
+      }
+    }
+  });
+
   it('collects declared child and grandchild lifecycles with bounded redacted Prompt text', async () => {
     const home = await codexHome();
     const secretPrompt =
@@ -233,7 +369,7 @@ describe('collectCodexChildEvidence', () => {
     ))).toBe(false);
   });
 
-  it('uses parent lifecycle status for failure recovery and cancel evidence', async () => {
+  it('uses the Child task_complete error and turn_aborted status for failure and cancel evidence', async () => {
     const home = await codexHome();
     await writeRollout(home, PARENT, [
       metadata(PARENT),
@@ -243,13 +379,14 @@ describe('collectCodexChildEvidence', () => {
         terminal: 'none',
         childActivities: [
           { sessionId: CHILD, kind: 'started', atMs: 1_000 },
-          { sessionId: CHILD, kind: 'failed', atMs: 6_000 },
           { sessionId: SIBLING, kind: 'started', atMs: 1_500 },
-          { sessionId: SIBLING, kind: 'cancelled', atMs: 6_500 },
         ],
       }),
     ]);
-    for (const [sessionId, prompt] of [[CHILD, 'failed child'], [SIBLING, 'canceled child']] as const) {
+    for (const [sessionId, prompt, terminal] of [
+      [CHILD, 'failed child', 'complete-failed'],
+      [SIBLING, 'canceled child', 'abort-canceled'],
+    ] as const) {
       await writeRollout(home, sessionId, [
         metadata(sessionId, PARENT),
         ...turn({
@@ -257,6 +394,7 @@ describe('collectCodexChildEvidence', () => {
           startedAtMs: sessionId === CHILD ? 2_000 : 2_500,
           prompt,
           usage: { input_tokens: 2, output_tokens: 1 },
+          terminal,
         }),
       ]);
     }
@@ -274,6 +412,11 @@ describe('collectCodexChildEvidence', () => {
     expect(childStatuses).toContain('failed');
     expect(childStatuses).toContain('canceled');
     expect(fixture).toMatchObject({ outcome: 'passed' });
+    expect(result.observations).toContainEqual(expect.objectContaining({
+      kind: 'child_agent',
+      status: 'failed',
+      attributes: expect.objectContaining({ terminalEvidence: 'child_task_complete' }),
+    }));
 
     const sessionLimited = await collectCodexChildEvidence(collectInput(home, {
       maxChildSessions: 1,

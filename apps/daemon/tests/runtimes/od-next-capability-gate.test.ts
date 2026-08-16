@@ -10,6 +10,7 @@ import {
   type RuntimeCapabilityRegistryEntryV1,
 } from '@open-design/contracts';
 import {
+  CODEX_0_147_0_BEST_EFFORT_MANIFEST,
   OD_NEXT_RUNTIME_CAPABILITY_REGISTRY,
   OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS,
   OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
@@ -117,9 +118,10 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('keeps contract-only fixture groups unknown while registering only the reviewed OpenCode exact tuple', () => {
-    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(1);
+  it('keeps contract-only groups unknown while registering the reviewed Codex and OpenCode tuples', () => {
+    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(2);
     expect(OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS).toEqual([
+      CODEX_0_147_0_BEST_EFFORT_MANIFEST,
       OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
     ]);
     const manifests = fixtureFiles.map(readFixture);
@@ -155,6 +157,45 @@ describe('OD Next runtime capability gate', () => {
         reason: 'native_continuation_not_verified',
       });
     }
+  });
+
+  it('resolves Codex 0.147.0 only from the exact best-effort replay tuple', () => {
+    const seed = JSON.parse(readFileSync(
+      join(fixtureDir, 'codex-0.147.0.sanitized-real-seed.json'),
+      'utf8',
+    )) as { recordingDigest: string };
+    expect(CODEX_0_147_0_BEST_EFFORT_MANIFEST.provenance).toMatchObject({
+      kind: 'sanitized_real',
+      evidenceReview: 'open_design_best_effort',
+      recordingDigest: seed.recordingDigest,
+    });
+    const exact = resolveOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion: 'codex-cli 0.147.0',
+      fixtureVersion: CODEX_0_147_0_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    });
+    expect(exact).toMatchObject({
+      tupleMatched: true,
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: 'codex-cli 0.147.0',
+        nativeSessionContinuation: { support: 'verified', source: 'sanitized_fixture_replay' },
+        nativeSubagents: {
+          support: 'verified',
+          evidenceLevel: 'L2',
+          source: 'sanitized_fixture_replay',
+        },
+      },
+    });
+    expect(resolveOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion: 'codex-cli 0.147.1',
+      fixtureVersion: CODEX_0_147_0_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    }).reason).not.toBe('capability_resolved');
   });
 
   it('resolves OpenCode 1.18.18 from Open Design best-effort replay and rejects version drift', () => {

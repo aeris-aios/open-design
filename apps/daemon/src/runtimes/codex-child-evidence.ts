@@ -113,6 +113,8 @@ interface ParsedTurn {
   startedAtMs?: number;
   endedAtMs?: number;
   abortedStatus?: ChildTerminalStatus;
+  completedStatus?: Extract<ChildTerminalStatus, 'completed' | 'failed'>;
+  malformedCompletionError?: boolean;
   promptIdentities: PromptIdentity[];
   modelCalls: UsageValues[];
   childActivities: ChildActivity[];
@@ -202,13 +204,15 @@ function terminalFromActivityKind(kind: string): ChildTerminalStatus | undefined
     return 'completed';
   }
   if (kind === 'failed' || kind === 'errored') return 'failed';
-  if (kind === 'canceled' || kind === 'cancelled') return 'canceled';
+  if (kind === 'canceled' || kind === 'cancelled' || kind === 'interrupted') return 'canceled';
   return undefined;
 }
 
 function terminalFromAbortPayload(payload: Record<string, unknown>): ChildTerminalStatus {
   const reason = normalizeActivityKind(payload.reason ?? payload.status);
-  return reason === 'canceled' || reason === 'cancelled' ? 'canceled' : 'failed';
+  return reason === 'canceled' || reason === 'cancelled' || reason === 'interrupted'
+    ? 'canceled'
+    : 'failed';
 }
 
 function safeSessionId(value: unknown): string | undefined {
@@ -267,14 +271,15 @@ function parseRolloutStructure(source: string, expectedSessionId: string): Parse
     .map((record) => isRecord(record.payload) ? record.payload : null)
     .filter((payload): payload is Record<string, unknown> => Boolean(
       payload &&
-      (safeSessionId(payload.id) === expectedSessionId ||
-        safeSessionId(payload.session_id) === expectedSessionId)
+      (safeSessionId(payload.id) ?? safeSessionId(payload.session_id)) === expectedSessionId
     ));
   if (metadata.length === 0) return null;
   const parentDeclarations = metadata.map((payload) => {
-    const metadataIds = [safeSessionId(payload.id), safeSessionId(payload.session_id)]
-      .filter((value): value is string => Boolean(value));
-    if (metadataIds.some((value) => value !== expectedSessionId)) return null;
+    // In Codex 0.147.0 Child rollouts `id` is the Child thread id while the
+    // legacy `session_id` can still identify the root session. Treat `id` as
+    // authoritative and use session_id only for older records without id.
+    const metadataId = safeSessionId(payload.id) ?? safeSessionId(payload.session_id);
+    if (metadataId !== expectedSessionId) return null;
     return declaredParentSessionId(payload);
   });
   if (parentDeclarations.some((declaration) => declaration === null)) return null;
@@ -376,7 +381,24 @@ function parseRolloutStructure(source: string, expectedSessionId: string): Parse
         ? payload.turn_id.trim()
         : activeTurnId;
       const completed = completedTurnId ? turns.get(completedTurnId) : undefined;
-      if (completed && recordAtMs !== undefined) completed.endedAtMs = recordAtMs;
+      if (completed) {
+        if (recordAtMs !== undefined) completed.endedAtMs = recordAtMs;
+        if (payload.error === undefined || payload.error === null) {
+          completed.completedStatus = 'completed';
+        } else if (
+          isRecord(payload.error) &&
+          typeof payload.error.message === 'string' &&
+          payload.error.message.trim().length > 0
+        ) {
+          // Codex 0.147.0 records a terminal inference failure on the Child's
+          // task_complete payload. Parent sub_agent_activity only has
+          // started/interacted/interrupted, so this is the runtime-owned
+          // failed terminal rather than a status inferred from prose.
+          completed.completedStatus = 'failed';
+        } else {
+          completed.malformedCompletionError = true;
+        }
+      }
       if (completedTurnId === activeTurnId) activeTurnId = undefined;
     }
   }
@@ -645,6 +667,7 @@ function terminalFromEvidence(input: {
   status?: ChildTerminalStatus;
   endedAtMs?: number;
   conflict?: boolean;
+  source?: 'parent_sub_agent_activity' | 'child_turn_aborted' | 'child_task_complete';
   limitations: string[];
 } {
   const explicit = input.activities
@@ -659,6 +682,14 @@ function terminalFromEvidence(input: {
       candidate.status !== undefined
     ));
   const statuses = new Set(explicit.map((candidate) => candidate.status));
+  if (input.turn.abortedStatus) statuses.add(input.turn.abortedStatus);
+  if (input.turn.completedStatus) statuses.add(input.turn.completedStatus);
+  if (input.turn.malformedCompletionError) {
+    return {
+      conflict: true,
+      limitations: ['codex_child_terminal_payload_malformed'],
+    };
+  }
   if (statuses.size > 1) {
     return {
       conflict: true,
@@ -676,6 +707,7 @@ function terminalFromEvidence(input: {
     return {
       status: explicitStatus,
       ...(endedAtMs !== undefined ? { endedAtMs } : {}),
+      source: 'parent_sub_agent_activity',
       limitations: [],
     };
   }
@@ -683,14 +715,16 @@ function terminalFromEvidence(input: {
     return {
       status: input.turn.abortedStatus,
       ...(input.turn.endedAtMs !== undefined ? { endedAtMs: input.turn.endedAtMs } : {}),
+      source: 'child_turn_aborted',
       limitations: ['codex_child_terminal_from_turn_aborted'],
     };
   }
-  if (input.turn.endedAtMs !== undefined) {
+  if (input.turn.completedStatus) {
     return {
-      status: 'completed',
-      endedAtMs: input.turn.endedAtMs,
-      limitations: ['codex_child_terminal_from_task_complete'],
+      status: input.turn.completedStatus,
+      ...(input.turn.endedAtMs !== undefined ? { endedAtMs: input.turn.endedAtMs } : {}),
+      source: 'child_task_complete',
+      limitations: [],
     };
   }
   return { limitations: ['codex_child_terminal_not_observed'] };
@@ -1044,11 +1078,7 @@ export async function collectCodexChildEvidence(
               runtimeAdapterVersion: 'od-codex-child-evidence/v1',
               providerTurnHash: stableDigest([turn.turnId]),
               promptContentRedacted: true,
-              terminalEvidence: terminal.limitations.length === 0
-                ? 'parent_sub_agent_activity'
-                : turn.abortedStatus
-                  ? 'child_turn_aborted'
-                  : 'child_task_complete',
+              ...(terminal.source ? { terminalEvidence: terminal.source } : {}),
             },
             limitations: [...turnLimitations, ...terminal.limitations],
           }));

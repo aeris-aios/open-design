@@ -61,6 +61,32 @@ const ALL_REQUIRED_CASES = [
 ] as const;
 
 /**
+ * Exact Codex 0.147.0 tuple replayed by Open Design against the installed CLI
+ * and the matching rust-v0.147.0 source. The failure case uses a local
+ * Responses endpoint that closes only the already-started Child stream, so it
+ * exercises Codex's native task_complete.error and parent recovery path
+ * without sending telemetry or inference data to an online service.
+ */
+export const CODEX_0_147_0_BEST_EFFORT_MANIFEST =
+  RuntimeCapabilityFixtureManifestV1Schema.parse({
+    schema: OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
+    fixtureVersion: 'codex-0.147.0-seven-path/v1',
+    runtimePath: 'codex',
+    agentId: 'codex',
+    agentCliVersion: 'codex-cli 0.147.0',
+    runtimeAdapterVersion: 'od-codex-json-events/v1',
+    provenance: {
+      kind: 'sanitized_real',
+      recordingDigest:
+        'sha256:729d0e58e80e7b8b81eb90ad286471a26c3df80411f0b0f7092c19d157b50cc6',
+      anonymizationVersion: 'od-runtime-evidence/v1',
+      evidenceReview: 'open_design_best_effort',
+    },
+    containsSensitiveContent: false,
+    cases: ALL_REQUIRED_CASES,
+  });
+
+/**
  * Open Design-owned best-effort replay for the exact native OpenCode tuple.
  * The source recording is reduced to structural facts in the checked-in seed;
  * no upstream or runtime-owner endorsement is implied.
@@ -86,19 +112,21 @@ export const OPENCODE_1_18_18_BEST_EFFORT_MANIFEST =
 
 export const OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS:
   readonly RuntimeCapabilityFixtureManifestV1[] = [
+    CODEX_0_147_0_BEST_EFFORT_MANIFEST,
     OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
   ];
 
 export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
-  readonly RuntimeCapabilityRegistryEntryV1[] = [RuntimeCapabilityRegistryEntryV1Schema.parse({
-    runtimePath: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.runtimePath,
-    agentId: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.agentId,
-    agentCliVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.agentCliVersion!,
-    runtimeAdapterVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.runtimeAdapterVersion,
-    fixtureVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.fixtureVersion,
-    fixtureHash: hashRuntimeCapabilityFixtureManifestV1(
-      OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
-    ),
+  readonly RuntimeCapabilityRegistryEntryV1[] = [
+    CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+    OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+  ].map((manifest) => RuntimeCapabilityRegistryEntryV1Schema.parse({
+    runtimePath: manifest.runtimePath,
+    agentId: manifest.agentId,
+    agentCliVersion: manifest.agentCliVersion!,
+    runtimeAdapterVersion: manifest.runtimeAdapterVersion,
+    fixtureVersion: manifest.fixtureVersion,
+    fixtureHash: hashRuntimeCapabilityFixtureManifestV1(manifest),
     evidence: {
       schema: OD_NEXT_RUNTIME_CAPABILITY_EVIDENCE_V1_SCHEMA,
       source: 'fixture_replay',
@@ -106,7 +134,7 @@ export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
       nativeSubagents: { support: 'verified', evidenceLevel: 'L2' },
       caseResults: ALL_REQUIRED_CASES.map(({ id }) => ({ id, outcome: 'passed' })),
     },
-  })];
+  }));
 
 export type OdNextCapabilityResolutionReason =
   | 'runtime_out_of_scope'
