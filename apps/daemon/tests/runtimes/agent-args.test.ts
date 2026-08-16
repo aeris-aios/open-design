@@ -4,7 +4,12 @@ import {
   AGENT_DEFS, aider, antigravity, assert, claude, codex, copilot, cursorAgent, deepseek, devin, detectAgents, grokBuild, join, kilo, kimi, kiro, mkdtempSync, opencode, pi, qoder, qwen, rmSync, spawnEnvForAgent, tmpdir, vibe, writeFileSync, chmodSync,
 } from './helpers/test-helpers.js';
 import { writeAntigravityModelSelection } from '../../src/runtimes/defs/antigravity.js';
+import { parseOpenCodeModels } from '../../src/runtimes/defs/opencode.js';
 import { agentCapabilities } from '../../src/runtimes/capabilities.js';
+import {
+  getRememberedLiveModels,
+  rememberLiveModels,
+} from '../../src/runtimes/models.js';
 import type { TestAgentDef } from './helpers/test-helpers.js';
 
 // ---- Cursor Agent --trust capability (issue #4461) -------------------------
@@ -72,18 +77,16 @@ test('cursor-agent declares the --trust capability probe (issue #4461 root cause
   assert.equal(cursorAgent.capabilityFlags?.['--trust'], 'trust');
 });
 
-test('opencode args pass the verified model variant without changing the default argv', () => {
+test('opencode args pass model-supported variants without changing the default argv', () => {
   agentCapabilities.delete('opencode');
   const prompt = 'design a dashboard';
   const baseArgs = opencode.buildArgs(prompt, [], [], {});
   assert.equal(opencode.promptViaStdin, true);
   assert.equal(opencode.reasoningOptions, undefined);
-  assert.deepEqual(opencode.fallbackModels.find(
+  assert.deepEqual(opencode.listModels?.args, ['models', '--verbose']);
+  assert.equal(opencode.fallbackModels.find(
     (model) => model.id === 'openai/gpt-5.6-sol',
-  )?.reasoningOptions?.map((option) => option.id), [
-    'default',
-    'high',
-  ]);
+  )?.reasoningOptions, undefined);
   assert.deepEqual(opencode.helpArgs, ['run', '--help']);
   assert.deepEqual(opencode.capabilityFlags?.['--dangerously-skip-permissions'], 'skipPermissions');
   assert.equal(baseArgs.includes('-'), false);
@@ -107,24 +110,6 @@ test('opencode args pass the verified model variant without changing the default
     '-m',
     'anthropic/claude-sonnet-4-5',
   ]);
-  const withReasoning = opencode.buildArgs(
-    prompt,
-    [],
-    [],
-    {
-      model: 'openai/gpt-5.6-sol',
-      reasoning: 'high',
-    },
-  );
-  assert.deepEqual(withReasoning, [
-    'run',
-    '--format',
-    'json',
-    '-m',
-    'openai/gpt-5.6-sol',
-    '--variant',
-    'high',
-  ]);
   assert.deepEqual(opencode.buildArgs(prompt, [], [], {
     model: 'anthropic/claude-sonnet-4-5',
     reasoning: 'high',
@@ -141,6 +126,101 @@ test('opencode args pass the verified model variant without changing the default
   ]);
   assert.equal(withModel.includes('--dangerously-skip-permissions'), false);
   assert.equal(withModel.includes('--model'), false);
+});
+
+test('opencode parses live verbose variant metadata and only forwards variants advertised for that model', () => {
+  const previous = getRememberedLiveModels('opencode');
+  const parsed = parseOpenCodeModels([
+    'openai/gpt-5.6-sol',
+    '{ "variants": { "high": {} } }',
+    'openai/gpt-5.6-terra',
+    '{ "variants": { "high": {} } }',
+    'openai/gpt-5.6-luna',
+    '{ "variants": { "max": {} } }',
+    'custom/reasoner',
+    '{',
+    '  "id": "reasoner",',
+    '  "variants": {',
+    '    "low": { "reasoningEffort": "low" },',
+    '    "ultra": { "reasoningEffort": "ultra" }',
+    '  }',
+    '}',
+    'custom/plain',
+    '{',
+    '  "id": "plain",',
+    '  "variants": {}',
+    '}',
+  ].join('\n'));
+  assert.deepEqual(parsed?.find((model) => model.id === 'custom/reasoner')?.reasoningOptions, [
+    { id: 'default', label: 'Default' },
+    { id: 'low', label: 'low' },
+    { id: 'ultra', label: 'ultra' },
+  ]);
+  assert.equal(parsed?.find((model) => model.id === 'custom/plain')?.reasoningOptions, undefined);
+
+  rememberLiveModels('opencode', parsed ?? []);
+  try {
+    assert.deepEqual(opencode.buildArgs('', [], [], {
+      model: 'openai/gpt-5.6-sol',
+      reasoning: 'high',
+    }), [
+      'run',
+      '--format',
+      'json',
+      '-m',
+      'openai/gpt-5.6-sol',
+      '--variant',
+      'high',
+    ]);
+    assert.deepEqual(opencode.buildArgs('', [], [], {
+      model: 'openai/gpt-5.6-terra',
+      reasoning: 'high',
+    }), [
+      'run',
+      '--format',
+      'json',
+      '-m',
+      'openai/gpt-5.6-terra',
+      '--variant',
+      'high',
+    ]);
+    assert.deepEqual(opencode.buildArgs('', [], [], {
+      model: 'openai/gpt-5.6-luna',
+      reasoning: 'max',
+    }), [
+      'run',
+      '--format',
+      'json',
+      '-m',
+      'openai/gpt-5.6-luna',
+      '--variant',
+      'max',
+    ]);
+    assert.deepEqual(opencode.buildArgs('', [], [], {
+      model: 'custom/reasoner',
+      reasoning: 'ultra',
+    }), [
+      'run',
+      '--format',
+      'json',
+      '-m',
+      'custom/reasoner',
+      '--variant',
+      'ultra',
+    ]);
+    assert.deepEqual(opencode.buildArgs('', [], [], {
+      model: 'custom/plain',
+      reasoning: 'ultra',
+    }), [
+      'run',
+      '--format',
+      'json',
+      '-m',
+      'custom/plain',
+    ]);
+  } finally {
+    rememberLiveModels('opencode', previous);
+  }
 });
 
 test('opencode passes --dangerously-skip-permissions when the help probe finds it', () => {

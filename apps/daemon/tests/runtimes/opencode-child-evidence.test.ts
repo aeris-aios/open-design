@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -51,25 +52,109 @@ function collectCandidate(overrides: Record<string, unknown> = {}): OpenCodeTask
 }
 
 describe('native OpenCode child evidence', () => {
-  it('replays locally recorded success and parent-recovered failure seeds without promoting them to production evidence', () => {
+  it('replays local success, recovered failure, and resume seeds without promoting production evidence', () => {
     const seed = JSON.parse(readFileSync(sanitizedRealSeedPath, 'utf8')) as {
       fixtureKind: string;
       recordingDigest: string;
+      caseCoverage: Array<{
+        caseId: string;
+        outcome: string;
+        minimumEvidence: string;
+        nativeChildTerminal?: string;
+        evidence: Record<string, unknown>;
+      }>;
       cases: Array<{
         caseId: string;
         candidate: OpenCodeTaskTerminalCandidate;
         variant?: string;
         parentRecovered?: boolean;
+        resumeLink?: {
+          priorToolCallId: string;
+          currentToolCallId: string;
+          taskId: string;
+        };
         sanitizedChildExport: unknown;
       }>;
     };
     expect(seed.fixtureKind).toBe('sanitized_real_seed_unattested');
     expect(seed.recordingDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    const { recordingDigest: _recordingDigest, ...digestInput } = structuredClone(seed);
+    expect(seed.recordingDigest).toBe(
+      `sha256:${createHash('sha256').update(JSON.stringify(digestInput)).digest('hex')}`,
+    );
+    expect(seed.caseCoverage.map((entry) => entry.caseId)).toEqual([
+      'main_run',
+      'tool',
+      'child_success',
+      'child_failure_parent_recovers',
+      'cancel',
+      'timeout',
+      'resume',
+    ]);
+    expect(seed.caseCoverage).toEqual(expect.arrayContaining([
+      expect.objectContaining({ caseId: 'cancel', outcome: 'passed', minimumEvidence: 'L0', nativeChildTerminal: 'unavailable' }),
+      expect.objectContaining({ caseId: 'timeout', outcome: 'passed', minimumEvidence: 'L0', nativeChildTerminal: 'unavailable' }),
+      expect.objectContaining({ caseId: 'resume', outcome: 'passed', minimumEvidence: 'L0' }),
+    ]));
+    const coverage = Object.fromEntries(
+      seed.caseCoverage.map((entry) => [entry.caseId, entry.evidence]),
+    );
+    expect(coverage['main_run']).toMatchObject({
+      rootSessionId: 'root-success',
+      terminalFinish: 'stop',
+      terminalError: false,
+    });
+    expect(Number(coverage['main_run']?.['completedAtMs'])).toBeGreaterThan(
+      Number(coverage['main_run']?.['startedAtMs']),
+    );
+    expect(coverage['tool']).toMatchObject({
+      rootSessionId: 'root-success',
+      childSessionId: 'child-success',
+      toolCallId: 'call-success',
+      status: 'completed',
+    });
+    expect(Number(coverage['tool']?.['endedAtMs'])).toBeGreaterThan(
+      Number(coverage['tool']?.['startedAtMs']),
+    );
+    expect(coverage['child_failure_parent_recovers']).toMatchObject({
+      rootSessionId: 'root-failure',
+      childSessionId: 'child-failure',
+      toolCallId: 'call-failure',
+      childTerminal: 'failed',
+      parentTerminal: 'completed',
+      parentError: false,
+    });
+    expect(Number(coverage['child_failure_parent_recovers']?.['parentTerminalAtMs']))
+      .toBeGreaterThan(Number(coverage['child_failure_parent_recovers']?.['childTerminalAtMs']));
+    expect(coverage['cancel']).toMatchObject({
+      hostRunStatus: 'canceled',
+      hostSignal: 'SIGKILL',
+      childExitedBeforeReturn: true,
+      processGroupDescendantExited: true,
+    });
+    expect(coverage['timeout']).toMatchObject({
+      hostRunStatus: 'failed',
+      terminalTrigger: 'inactivity_watchdog',
+      errorCode: 'AGENT_EXECUTION_FAILED',
+      processGroupTerminationRequested: 'SIGTERM',
+    });
+    expect(coverage['resume']).toMatchObject({
+      rootSessionId: 'root-success',
+      childSessionId: 'child-success',
+      priorToolCallId: 'call-success',
+      priorTaskId: null,
+      resumeToolCallId: 'call-resume',
+      resumeTaskId: 'child-success',
+      resumeTerminal: 'completed',
+    });
+    expect(Number(coverage['resume']?.['resumeStartedAtMs']))
+      .toBeGreaterThan(Number(coverage['resume']?.['priorEndedAtMs']));
     expect(seed.cases.map((entry) => entry.caseId)).toEqual([
       'child_success',
       'child_failure_parent_recovers',
+      'resume',
     ]);
-    const [success, failure] = seed.cases;
+    const [success, failure, resume] = seed.cases;
     expect(success).toMatchObject({
       variant: 'high',
       candidate: {
@@ -99,6 +184,31 @@ describe('native OpenCode child evidence', () => {
       { state: 'failed' },
     ]);
     expect(failedFacts[1]?.usage).toBeUndefined();
+    expect(resume).toMatchObject({
+      resumeLink: {
+        priorToolCallId: success?.candidate.toolCallId,
+        currentToolCallId: resume?.candidate.toolCallId,
+        taskId: success?.candidate.childSessionId,
+      },
+      variant: 'high',
+      candidate: {
+        cliVersion: '1.18.18',
+        rootSessionId: success?.candidate.rootSessionId,
+        childSessionId: success?.candidate.childSessionId,
+        promptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        promptBytes: 59,
+      },
+    });
+    expect(verifyOpenCodeChildExport({
+      candidate: resume!.candidate,
+      sanitizedExport: resume!.sanitizedChildExport,
+    })).toMatchObject([
+      { state: 'started' },
+      {
+        state: 'completed',
+        usage: { inputTokens: 9039, outputTokens: 7 },
+      },
+    ]);
     const serialized = JSON.stringify(seed);
     expect(serialized).not.toContain('/Users/');
     expect(serialized).not.toContain('/private/');
