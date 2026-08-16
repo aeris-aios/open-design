@@ -609,8 +609,32 @@ button.att-i:hover { border-color: var(--border-strong); }
 .fold .body { padding: 0 11px 10px; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); }
 .fold .body.mod-scroll { max-height: 96px; overflow-y: auto; }
 
-.breath { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-soft); animation: breath 1.4s var(--ease-out) infinite; }
-@keyframes breath { 0%,100% { opacity: 0.3; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
+/* 「跑动中」的动效不能只压在一颗点上 —— 7px 的呼吸点动了也几乎看不见,
+   人会以为界面卡住了。所以让点和 Thinking 这个词一起动:
+   点做呼吸,词做流光扫过,两者合起来才有足够的运动面积。 */
+.breath {
+  flex: none; width: 7px; height: 7px; border-radius: 50%;
+  /* --brand(#87ea5c)在浅底上只有约 1.7:1,7px 的点会发飘。
+     往 --brand-text 掺一点压成中绿,兼顾"是品牌绿"和"看得见"。 */
+  background: color-mix(in srgb, var(--brand) 72%, var(--brand-text));
+  animation: breath 1.4s var(--ease-out) infinite;
+}
+@keyframes breath { 0%,100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+
+/* 流光:一条亮带在字上从右往左扫。用 background-clip:text 做,
+   所以底色渐变的三个停靠点都得是可读色 —— 万一动画被
+   prefers-reduced-motion 停住,停在任何一帧文字都还看得清。 */
+.shimmer {
+  background: linear-gradient(90deg,
+    var(--text-muted) 0%, var(--text-muted) 30%,
+    var(--brand-text) 50%,
+    var(--text-muted) 70%, var(--text-muted) 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+@keyframes shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
 
 /* ---- 纯文案(开始执行 / 总结) ---- */
 .say { font-size: var(--t-body); line-height: var(--lh-body); color: var(--text); }
@@ -1054,10 +1078,10 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>生成中 · 呼吸点 + 流式追加,限高贴底</span><i></i></div>
+            <div class="st-l mod-def"><span>生成中 · 绿点呼吸 + Thinking 流光,内容流式追加</span><i></i></div>
             <div class="st-b">
               <details class="fold" open>
-                <summary><span class="breath"></span><span>思考中</span><span class="ms">3s</span></summary>
+                <summary><span class="breath"></span><span class="shimmer">Thinking</span><span class="ms">3s</span></summary>
                 <div class="body mod-scroll">
                   先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。<br>
                   设置页要和它共用同一套间距与卡片圆角,否则两屏放一起会明显不是一个产品。<br>
@@ -1070,7 +1094,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>结束 · 自动收起为一行摘要</span><i></i></div>
             <div class="st-b">
               <details class="fold">
-                <summary><span>已思考 12 秒</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                <summary><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="body">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。</div>
               </details>
             </div>
@@ -1079,7 +1103,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>手动展开 · 此后不再自动收起</span><i></i></div>
             <div class="st-b">
               <details class="fold" open>
-                <summary><span>已思考 12 秒</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                <summary><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="body">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。设置页要和它共用同一套间距与卡片圆角。</div>
               </details>
             </div>
@@ -1087,7 +1111,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
-          <span><b>展开收起</b> — 点标题行任意位置(整行热区,不只是箭头)。</span>
+          <span><b>展开收起</b> — 点标题行任意位置(整行热区,不只是箭头)。<b>跑动中的动效</b> — 绿点呼吸 + 「Thinking」流光扫过。只让一颗 7px 的点闪,运动面积太小,人会以为界面卡住了;点和词一起动才够看得见。文案统一用 <b>Thinking</b>,不翻译。</span>
         </div>
       </article>
 
