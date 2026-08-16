@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +24,13 @@ const fixturePath = join(
   '..',
   'fixtures',
   'vela-opencode-child-evidence-wire-v1.golden.json',
+);
+const sanitizedRealSeedPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'fixtures',
+  'od-next-runtime-capabilities',
+  'vela-opencode-0.0.1-local-opencode-1.18.18.sanitized-real-seed.json',
 );
 
 function fixture(): RecordValue[] {
@@ -72,9 +80,11 @@ describe('Vela OpenCode child evidence adapter', () => {
   it('pins only the approved unpublished candidate and negotiates exact schema v1', () => {
     expect(VELA_CHILD_EVIDENCE_CANDIDATE).toEqual({
       repository: 'PowerformerAI/vela',
-      commit: '41c9242a22ec915ed9b08c1be08b043164905cf9',
+      commit: 'c833b74e82e31c89414b7eaf01edabab1e2d0b06',
       fixture: 'apps/cli/internal/agent/testdata/opencode_child_evidence_wire_v1.golden.json',
       published: false,
+      bestEffortEvidenceVerified: true,
+      verifiedOpenCodeVersion: '1.18.18',
       verifiedRuntimeSupport: false,
     });
     expect(negotiateVelaChildEvidence(resultOf(fixture()[0]!))).toMatchObject({
@@ -106,6 +116,92 @@ describe('Vela OpenCode child evidence adapter', () => {
       supported: false,
       schemaVersion: 2,
       reason: 'unsupported_schema_version',
+    });
+  });
+
+  it('replays the local Terra seven-path seed while keeping the unpublished tuple out of production', () => {
+    const seed = JSON.parse(readFileSync(sanitizedRealSeedPath, 'utf8')) as {
+      fixtureKind: string;
+      evidenceReview: string;
+      velaVersion: string;
+      velaCommit: string;
+      openCodeVersion: string;
+      model: string;
+      recordingDigest: string;
+      caseCoverage: Array<{ caseId: string; outcome: string; evidence: Record<string, unknown> }>;
+      wire: RecordValue[];
+    };
+    const { recordingDigest: _recordingDigest, ...digestInput } = structuredClone(seed);
+    expect(seed.recordingDigest).toBe(
+      `sha256:${createHash('sha256').update(JSON.stringify(digestInput)).digest('hex')}`,
+    );
+    expect(seed).toMatchObject({
+      fixtureKind: 'sanitized_real_best_effort',
+      evidenceReview: 'open_design_best_effort',
+      velaVersion: '0.0.1-od-next-local',
+      velaCommit: VELA_CHILD_EVIDENCE_CANDIDATE.commit,
+      openCodeVersion: '1.18.18',
+      model: 'gpt-5.6-terra',
+    });
+    expect(seed.caseCoverage.map(({ caseId }) => caseId)).toEqual([
+      'main_run',
+      'tool',
+      'child_success',
+      'child_failure_parent_recovers',
+      'cancel',
+      'timeout',
+      'resume',
+    ]);
+    expect(seed.caseCoverage.every(({ outcome }) => outcome === 'passed')).toBe(true);
+    const coverage = Object.fromEntries(seed.caseCoverage.map(({ caseId, evidence }) => [caseId, evidence]));
+    expect(coverage['child_failure_parent_recovers']).toMatchObject({
+      childTerminal: 'failed',
+      parentTerminal: 'completed',
+      parentTerminalAfterChild: true,
+      parentStopReason: 'end_turn',
+    });
+    expect(coverage['cancel']).toMatchObject({ childStarted: true, childTerminal: 'cancelled' });
+    expect(coverage['timeout']).toMatchObject({
+      childStarted: true,
+      childTerminal: 'timed_out',
+      terminalSource: 'parent_prompt_timeout',
+    });
+    expect(coverage['resume']).toMatchObject({
+      resumeTaskId: 'child-success',
+      sameRootSession: true,
+      sameChildSession: true,
+    });
+
+    const facts: VelaChildRuntimeFact[] = [];
+    for (let pairStart = 0; pairStart < seed.wire.length; pairStart += 2) {
+      const consumer = createVelaChildEvidenceConsumer({ onFact: (fact) => facts.push(fact) });
+      consumer.negotiate({
+        protocolVersion: 1,
+        agentInfo: { name: 'Vela OpenCode', version: seed.velaVersion },
+        agentCapabilities: {
+          extensions: { [VELA_CHILD_EVIDENCE_EXTENSION]: { schemaVersion: 1 } },
+        },
+      });
+      for (const [offset, update] of seed.wire.slice(pairStart, pairStart + 2).entries()) {
+        const observed = consumer.observe({
+          expectedAcpSessionId: 'acp-session',
+          envelopeAcpSessionId: 'acp-session',
+          update,
+        });
+        expect(observed, `wire[${pairStart + offset}] rejected: ${observed.reason ?? 'unknown'}`)
+          .toMatchObject({ handled: true, accepted: true });
+      }
+    }
+    expect(facts.map(({ state }) => state)).toEqual([
+      'running', 'completed',
+      'running', 'failed',
+      'running', 'cancelled',
+      'running', 'timed_out',
+    ]);
+    expect(VELA_CHILD_EVIDENCE_CANDIDATE).toMatchObject({
+      bestEffortEvidenceVerified: true,
+      verifiedRuntimeSupport: false,
+      published: false,
     });
   });
 

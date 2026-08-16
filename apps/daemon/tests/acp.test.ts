@@ -749,7 +749,7 @@ test('attachAcpSession consumes negotiated Vela child evidence only on the AMR p
       supported: true,
       schemaVersion: 1,
       candidatePublished: false,
-      candidateCommit: '41c9242a22ec915ed9b08c1be08b043164905cf9',
+      candidateCommit: 'c833b74e82e31c89414b7eaf01edabab1e2d0b06',
     });
   expect(diagnostics.find((payload) => (
     payload.name === 'vela_opencode_child_agent_lifecycle' && payload.state === 'completed'

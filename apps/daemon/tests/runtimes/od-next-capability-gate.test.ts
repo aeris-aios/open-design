@@ -15,6 +15,7 @@ import {
   OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS,
   OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
   OD_NEXT_RUNTIME_PATH_DESCRIPTORS,
+  VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
   evaluateOdNextExecutionEligibility,
   hashRuntimeCapabilityFixtureManifestV1,
   resolveOdNextRuntimeCapability,
@@ -118,11 +119,12 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('keeps contract-only groups unknown while registering the reviewed Codex and OpenCode tuples', () => {
+  it('keeps unpublished groups unknown while registering the reviewed Codex and native OpenCode tuples', () => {
     expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(2);
     expect(OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS).toEqual([
       CODEX_0_147_0_BEST_EFFORT_MANIFEST,
       OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+      VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
     ]);
     const manifests = fixtureFiles.map(readFixture);
     expect(manifests.map((manifest) => manifest.runtimePath)).toEqual(
@@ -157,6 +159,38 @@ describe('OD Next runtime capability gate', () => {
         reason: 'native_continuation_not_verified',
       });
     }
+  });
+
+  it('accepts the Vela seven-path replay as best-effort evidence without promoting the unpublished build', () => {
+    const seed = JSON.parse(readFileSync(
+      join(fixtureDir, 'vela-opencode-0.0.1-local-opencode-1.18.18.sanitized-real-seed.json'),
+      'utf8',
+    )) as { recordingDigest: string };
+    expect(VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST.provenance).toMatchObject({
+      kind: 'sanitized_real',
+      evidenceReview: 'open_design_best_effort',
+      recordingDigest: seed.recordingDigest,
+    });
+    expect(resolveOdNextRuntimeCapability({
+      agentId: 'amr',
+      agentCliVersion: '0.0.1-od-next-local',
+      runtimeCompanionName: 'opencode',
+      runtimeCompanionVersion: '1.18.18',
+      fixtureVersion: VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    })).toMatchObject({
+      includedInInitialRollout: true,
+      tupleMatched: true,
+      reason: 'capability_tuple_unverified',
+      snapshot: {
+        runtimePath: 'vela-opencode',
+        agentCliVersion: '0.0.1-od-next-local',
+        runtimeCompanionVersion: '1.18.18',
+        nativeSessionContinuation: { support: 'unknown' },
+        nativeSubagents: { support: 'unknown' },
+      },
+    });
   });
 
   it('resolves Codex 0.147.0 only from the exact best-effort replay tuple', () => {

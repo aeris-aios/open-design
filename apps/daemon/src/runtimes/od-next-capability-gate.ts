@@ -110,10 +110,38 @@ export const OPENCODE_1_18_18_BEST_EFFORT_MANIFEST =
     cases: ALL_REQUIRED_CASES,
   });
 
+/**
+ * Provider-backed local replay for the unpublished Vela candidate paired with
+ * native OpenCode 1.18.18. All seven paths pass, but the tuple intentionally
+ * remains outside the production registry until Vela publishes an immutable
+ * build that reports this exact producer version.
+ */
+export const VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST =
+  RuntimeCapabilityFixtureManifestV1Schema.parse({
+    schema: OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
+    fixtureVersion: 'vela-opencode-0.0.1-local-opencode-1.18.18-seven-path/v1',
+    runtimePath: 'vela-opencode',
+    agentId: 'amr',
+    agentCliVersion: '0.0.1-od-next-local',
+    runtimeAdapterVersion: 'od-vela-opencode-acp/v1',
+    runtimeCompanionName: 'opencode',
+    runtimeCompanionVersion: '1.18.18',
+    provenance: {
+      kind: 'sanitized_real',
+      recordingDigest:
+        'sha256:6fe49f1e0946b2220052b2239494786879c03c972b5be12dee30a7973872f6aa',
+      anonymizationVersion: 'od-runtime-evidence/v1',
+      evidenceReview: 'open_design_best_effort',
+    },
+    containsSensitiveContent: false,
+    cases: ALL_REQUIRED_CASES,
+  });
+
 export const OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS:
   readonly RuntimeCapabilityFixtureManifestV1[] = [
     CODEX_0_147_0_BEST_EFFORT_MANIFEST,
     OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
+    VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
   ];
 
 export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
