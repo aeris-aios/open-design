@@ -654,6 +654,36 @@ button.att-i:hover { border-color: var(--border-strong); }
 .opt.is-on { border-color: var(--selected); background: var(--selected-soft); color: var(--text-strong); font-weight: 600; }
 .opt .ic { flex: none; display: grid; place-items: center; height: calc(var(--t-mini) * var(--lh-row)); color: var(--text-soft); }
 .opt .ic svg { width: 13px; height: 13px; }
+
+/* ---- 单选 / 多选靠【控件形状】区分,不靠文字说明 ----
+   圆形 = 单选,点了即发送;方形 = 多选,可以勾几个再点「确认」。
+   这是跨平台的通用约定,人不必先读说明就知道点下去会发生什么 ——
+   而这两种模式的提交行为确实不同(文档:单选点选项即发送,
+   多选点选多个后点「确认」统一提交),所以底部按钮也跟着变。
+   控件与首行文字顶对齐:选项可能换行,居中会让控件掉到文字块中间。 */
+.opt .box {
+  flex: none; width: 15px; height: 15px; margin-top: 1px;
+  border: 1.5px solid var(--border-strong); background: var(--bg);
+  display: grid; place-items: center;
+  transition: border-color var(--duration-faster) var(--ease-out),
+              background-color var(--duration-faster) var(--ease-out);
+}
+.opts.mod-single .opt .box { border-radius: 50%; }
+.opts.mod-multi  .opt .box { border-radius: var(--radius-sm); }
+.opt:hover .box { border-color: var(--text-soft); }
+
+/* 单选选中:圆环内一颗实心点 */
+.opts.mod-single .opt.is-on .box { border-color: var(--selected); }
+.opts.mod-single .opt.is-on .box::after {
+  content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--selected);
+}
+/* 多选选中:实心方块 + 白勾(纯 CSS 画,不额外塞 svg 进标记) */
+.opts.mod-multi .opt.is-on .box { border-color: var(--selected); background: var(--selected); }
+.opts.mod-multi .opt.is-on .box::after {
+  content: ''; width: 4px; height: 8px; margin-top: -2px;
+  border: solid var(--bg); border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg);
+}
 /* 「自己填」是选项之一,不是卡片外的补充说明 —— 文档把「自定义」和
    单选/多选/跳过并列写在支持的操作里,它就该和其它选项躺在同一列。 */
 .opt.mod-own { color: var(--text-muted); border-style: dashed; }
@@ -1072,21 +1102,38 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>待选 · 选项可点,输入框保持可用</span><i></i></div>
+            <div class="st-l mod-def"><span>单选 · 圆钮,点了即发送(底部无「确认」)</span><i></i></div>
             <div class="st-b">
               <div class="card">
                 <div class="h"><b>还需要确认一件事</b></div>
                 <div class="q">设置页要不要沿用列表页的商品卡组件?</div>
-                <div class="opts mod-stack">
-                  <button class="opt" type="button">沿用列表页那张商品卡,抽成两页共享的组件</button>
-                  <button class="opt" type="button">设置页单独写一套,不跟列表页绑</button>
-                  <button class="opt mod-own" type="button">
-                    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></span>
-                    <span>自己填 —— 用你自己的说法</span>
-                  </button>
+                <div class="opts mod-stack mod-single">
+                  <button class="opt is-on" type="button"><span class="box"></span><span>沿用列表页那张商品卡,抽成两页共享的组件</span></button>
+                  <button class="opt" type="button"><span class="box"></span><span>设置页单独写一套,不跟列表页绑</span></button>
+                  <button class="opt mod-own" type="button"><span class="box"></span><span>自己填 —— 用你自己的说法</span></button>
                 </div>
                 <div class="foot">
                   <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>多选 · 方钮,选完点「确认」统一提交</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>这几页都要跟着改吗</b><span class="n">已选 2</span></div>
+                <div class="q">除了设置页,还有哪几页要一起换成新的商品卡?</div>
+                <div class="opts mod-stack mod-multi">
+                  <button class="opt is-on" type="button"><span class="box"></span><span>商品详情页</span></button>
+                  <button class="opt is-on" type="button"><span class="box"></span><span>搜索结果页 —— 里面那张卡是列表页的窄版</span></button>
+                  <button class="opt" type="button"><span class="box"></span><span>结算页的商品缩略图</span></button>
+                  <button class="opt mod-own" type="button"><span class="box"></span><span>自己填 —— 用你自己的说法</span></button>
+                </div>
+                <div class="foot">
+                  <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button">确认</button>
                 </div>
               </div>
             </div>
@@ -1100,7 +1147,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b> — 点选项即发送,不必再点发送。<b>多选</b> — 点选多个后点「确认」统一提交。<b>自定义</b> — 「自己填」就是选项之一,点开在原地写,不必跑到下面的输入框。<b>跳过</b> — 交由 Agent 判断。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
+          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」就是选项之一,点开在原地写,不必跑到下面的输入框。<b>跳过</b> — 交由 Agent 判断。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
         </div>
       </article>
 
