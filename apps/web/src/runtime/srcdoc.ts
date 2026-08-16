@@ -15,6 +15,8 @@
  * after every navigation so the host can render its own counter / dots.
  */
 import {
+  DECK_EXPLICIT_SLIDE_SELECTOR,
+  DECK_SCREEN_SLIDE_SELECTOR,
   DECK_SLIDE_SELECTOR,
   DECK_STRUCTURED_SLIDE_SELECTOR,
   injectDeckStageFallback,
@@ -2904,7 +2906,10 @@ function injectDeckBridge(
     if (stageSlides.length) return stageSlides;
     var structured = document.querySelectorAll(${JSON.stringify(DECK_STRUCTURED_SLIDE_SELECTOR)});
     if (structured.length) return structured;
-    return document.querySelectorAll(${JSON.stringify(DECK_SLIDE_SELECTOR)});
+    var explicit = document.querySelectorAll(${JSON.stringify(DECK_EXPLICIT_SLIDE_SELECTOR)});
+    if (explicit.length) return explicit;
+    var screenLabeled = document.querySelectorAll(${JSON.stringify(DECK_SCREEN_SLIDE_SELECTOR)});
+    return screenLabeled.length > 1 ? screenLabeled : [];
   }
   function deckStageForSlides(list){
     var stage = document.querySelector('deck-stage');

@@ -24,6 +24,7 @@ import {
   planDeckImageCapture,
   requestPreviewSnapshot,
   sourceLooksLikeExportableDeck,
+  sourceLooksLikeNavigableDeck,
 } from '../../src/runtime/exports';
 import { workspaceContextFixture } from '../helpers/workspace-context';
 
@@ -125,6 +126,24 @@ describe('sourceLooksLikeExportableDeck (#4604 horizontal deck export)', () => {
     expect(sourceLooksLikeExportableDeck('')).toBe(false);
     expect(sourceLooksLikeExportableDeck(null)).toBe(false);
     expect(sourceLooksLikeExportableDeck(undefined)).toBe(false);
+  });
+});
+
+describe('sourceLooksLikeNavigableDeck', () => {
+  it('does not turn a lone prototype annotation into deck chrome', () => {
+    expect(
+      sourceLooksLikeNavigableDeck('<h1 data-screen-label="Hero title">Prototype</h1>'),
+    ).toBe(false);
+  });
+
+  it('keeps explicit and multi-screen persisted decks navigable', () => {
+    expect(sourceLooksLikeNavigableDeck(
+      '<deck-stage><section data-screen-label="Cover">A</section></deck-stage>',
+    )).toBe(true);
+    expect(sourceLooksLikeNavigableDeck(
+      '<main><section data-screen-label="Cover">A</section>' +
+      '<section data-screen-label="Agenda">B</section></main>',
+    )).toBe(true);
   });
 });
 

@@ -13,21 +13,28 @@ const DECK_SLIDE_MARKERS = [
   '.deck-slide',
   '.ppt-slide',
 ] as const;
+const DECK_EXPLICIT_SLIDE_MARKERS = [
+  '.slide',
+  '.deck-slide',
+  '.ppt-slide',
+] as const;
 const DECK_SLIDE_CONTAINERS = [
   'deck-stage',
   '.deck',
   '.deck-stage',
   '.deck-shell',
   '#deck',
-  'body',
 ] as const;
 
 export const DECK_SLIDE_SELECTOR = DECK_SLIDE_MARKERS.join(', ');
+export const DECK_EXPLICIT_SLIDE_SELECTOR = DECK_EXPLICIT_SLIDE_MARKERS.join(', ');
+export const DECK_SCREEN_SLIDE_SELECTOR = '[data-screen-label]';
 
 /**
- * Prefer direct children of known deck containers before using the generic
- * marker selector. This keeps decorative `.slide` nodes elsewhere in an
- * artifact out of the deck while accepting every persisted slide convention.
+ * Prefer direct children of known deck containers before using generic marker
+ * fallbacks. `body` is deliberately not a container: `data-screen-label` is
+ * also the annotation identity used by ordinary prototypes, so one annotated
+ * body descendant is not sufficient evidence of a deck.
  */
 export const DECK_STRUCTURED_SLIDE_SELECTOR = DECK_SLIDE_CONTAINERS
   .flatMap((container) => DECK_SLIDE_MARKERS.map((marker) => `${container} > ${marker}`))

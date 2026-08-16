@@ -139,6 +139,19 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.slides[1]).toContain('02 Agenda');
   });
 
+  it('does not treat a lone prototype annotation as a deck slide', () => {
+    const html = `<!doctype html><html><head><style>
+      h1 { color: tomato; }
+    </style></head><body><main>
+      <h1 data-screen-label="Hero title">Prototype headline</h1>
+    </main></body></html>`;
+
+    const parsed = parseDeckThumbnails(html);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('no-slides');
+  });
+
   it('rewrites viewport units in CSS to canvas px (renderable, faithful)', () => {
     // No explicit px canvas → defaults to 1920×1080; 100vw→1920px, 100vh→1080px.
     const html = `<!doctype html><html><head><style>

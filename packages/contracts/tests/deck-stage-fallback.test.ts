@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DECK_EXPLICIT_SLIDE_SELECTOR,
+  DECK_SCREEN_SLIDE_SELECTOR,
   DECK_SLIDE_SELECTOR,
   DECK_STRUCTURED_SLIDE_SELECTOR,
   htmlUsesDeckStageElement,
@@ -10,11 +12,14 @@ import {
 describe('deck-stage fallback runtime injection', () => {
   it('publishes one selector contract for legacy, modern, and imported slide markers', () => {
     expect(DECK_SLIDE_SELECTOR).toBe('.slide, [data-screen-label], .deck-slide, .ppt-slide');
-    for (const container of ['deck-stage', '.deck', '.deck-stage', '.deck-shell', '#deck', 'body']) {
+    expect(DECK_EXPLICIT_SLIDE_SELECTOR).toBe('.slide, .deck-slide, .ppt-slide');
+    expect(DECK_SCREEN_SLIDE_SELECTOR).toBe('[data-screen-label]');
+    for (const container of ['deck-stage', '.deck', '.deck-stage', '.deck-shell', '#deck']) {
       for (const marker of ['.slide', '[data-screen-label]', '.deck-slide', '.ppt-slide']) {
         expect(DECK_STRUCTURED_SLIDE_SELECTOR).toContain(`${container} > ${marker}`);
       }
     }
+    expect(DECK_STRUCTURED_SLIDE_SELECTOR).not.toContain('body >');
   });
 
   it('does nothing for ordinary HTML without a deck-stage element', () => {
