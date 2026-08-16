@@ -1000,10 +1000,17 @@ button.att-i:hover { border-color: var(--border-strong); }
 
 /* ---- 升级 ---- */
 .up { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
-.up .h { display: flex; align-items: center; gap: 8px; padding: 10px 11px; }
-.up .h .amt { flex: 1; font-size: var(--t-body); color: var(--text-strong); }
+/* 两行了(数字 + 后果),顶对齐,按钮跟第一行齐平 */
+.up .h { display: flex; align-items: flex-start; gap: 8px; padding: 10px 11px; }
+.up .h .amt { flex: 1; min-width: 0; }
+.up .h .amt .n { display: block; font-size: var(--t-body); color: var(--text-strong); }
 .up .h .amt b { font-family: var(--mono); font-weight: 700; }
 .up .h .amt.is-out b { color: var(--red); }
+/* 只报数字不报后果,人没有行动的理由 —— $3.20 是多是少他不知道。
+   这一行讲的是"不充会怎样",不是促销。刻意不写"还能跑 N 轮"之类的
+   估算:单轮消耗随任务浮动,给个数反而是承诺了做不到的精确。 */
+.up .h .amt .why { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
+.up .h .amt.is-out .why { color: var(--red); }
 .up .meter { height: 4px; background: var(--border-soft); }
 .up .meter i { display: block; height: 100%; background: var(--amber); }
 .up .meter i.is-out { background: var(--red); }
@@ -1978,7 +1985,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>额度不足 · &lt; 5 美金</span><i></i></div>
             <div class="st-b">
               <div class="up">
-                <div class="h"><span class="amt">剩余额度 <b>$3.20</b></span><button class="btn mod-primary mod-sm" type="button">Upgrade</button></div>
+                <div class="h"><span class="amt"><span class="n">剩余额度 <b>$3.20</b></span><span class="why">余额可能撑不完下一个任务 —— 中途用尽会停在半成品上</span></span><button class="btn mod-primary mod-sm" type="button">Upgrade</button></div>
                 <div class="meter"><i style="width:16%"></i></div>
               </div>
             </div>
@@ -1987,7 +1994,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>额度耗尽 · = 0 美金</span><i></i></div>
             <div class="st-b">
               <div class="up">
-                <div class="h"><span class="amt is-out">剩余额度 <b>$0.00</b></span><button class="btn mod-primary mod-sm" type="button">Upgrade</button></div>
+                <div class="h"><span class="amt is-out"><span class="n">剩余额度 <b>$0.00</b></span><span class="why">现在无法开始新任务</span></span><button class="btn mod-primary mod-sm" type="button">Upgrade</button></div>
                 <div class="meter"><i class="is-out" style="width:100%"></i></div>
               </div>
             </div>
@@ -2006,7 +2013,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-          <span><b>Upgrade</b> — 点击跳转 Web 页面,并按会员身份与是否 Team Owner 唤起对应弹窗。展示当前剩余额度。</span>
+          <span><b>Upgrade</b> — 点击跳转 Web 页面,并按会员身份与是否 Team Owner 唤起对应弹窗。展示当前剩余额度,<b>并说清不充会怎样</b> —— 只报数字人没有行动的理由,$3.20 是多是少他不知道。两态说的是两件不同的事:快用完是"可能停在半成品上",已用完是"发不出去"。刻意不写"还能跑 N 轮"这类估算:单轮消耗随任务浮动,给个数等于承诺了做不到的精确。</span>
         </div>
       </article>
 
