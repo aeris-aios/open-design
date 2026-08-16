@@ -735,6 +735,27 @@ button.att-i:hover { border-color: var(--border-strong); }
    单选/多选/跳过并列写在支持的操作里,它就该和其它选项躺在同一列。 */
 .opt.mod-own { color: var(--text-muted); border-style: dashed; }
 .opt.mod-own:hover { color: var(--text-strong); border-style: solid; }
+
+/* 选中「自己填」后原地展开输入框。
+   ------------------------------------------------------------
+   这一步不是可选的润色,是单选模式的逻辑缺口:单选\"点了即发送\",
+   但「自己填」点下去还没有内容可发 —— 所以选中它必然要
+   ①原地长出输入框 ②底部多出一个发送键(其它选项不需要)。
+   输入框放在选项内部而不是卡片外面:它属于这一个选项,
+   放外面会让人以为那是另一个独立的输入区。 */
+.opt.is-open { border-style: solid; cursor: default; }
+.opt .own { flex: 1; min-width: 0; display: block; }
+.opt .own-l { display: block; font-weight: 600; }
+.opt .own-ta {
+  display: block; width: 100%; margin-top: 6px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text-strong);
+  font-family: inherit; font-size: var(--t-mini); line-height: var(--lh-row);
+  resize: none; outline: none;
+}
+.opt .own-ta::placeholder { color: var(--text-soft); }
+.opt .own-ta:focus { border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong)); }
+
 .card > .foot { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-top: 1px solid var(--border-soft); background: var(--bg-panel); }
 .card > .foot .sp { flex: 1; }
 .card.is-stale { background: var(--bg-panel); opacity: 0.75; }
@@ -903,6 +924,13 @@ button.att-i:hover { border-color: var(--border-strong); }
 .btn.mod-ghost:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
 .btn.mod-sm { padding: 4px 11px; font-size: var(--t-mini); }
 .btn.mod-sm svg { width: 11px; height: 11px; }
+/* 禁用态 —— 没写字之前发不出去。这是唯一允许降对比的状态。 */
+.btn:disabled { background: var(--bg-subtle); border-color: transparent; color: var(--text-faint); cursor: not-allowed; }
+.btn:disabled:hover { background: var(--bg-subtle); color: var(--text-faint); }
+.btn:disabled:active { transform: none; }
+/* 注意位置:必须排在 .btn.mod-primary / mod-secondary 之后。
+   它们同为两个类的特异性,写在前面会被后面的变体整条盖掉 —— 之前就是
+   这么踩的坑,禁用的发送键渲染出来还是实心深色。 */
 
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -1210,6 +1238,31 @@ button.att-i:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
+            <div class="st-l"><span>选中「自己填」· 原地长出输入框,并多出发送键</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>还需要确认一件事</b></div>
+                <div class="q">设置页要不要沿用列表页的商品卡组件?</div>
+                <div class="opts mod-stack mod-single">
+                  <button class="opt" type="button"><span class="box"></span><span>沿用列表页那张商品卡,抽成两页共享的组件</span></button>
+                  <button class="opt" type="button"><span class="box"></span><span>设置页单独写一套,不跟列表页绑</span></button>
+                  <div class="opt mod-own is-on is-open">
+                    <span class="box"></span>
+                    <span class="own">
+                      <span class="own-l">自己填</span>
+                      <textarea class="own-ta" rows="2" placeholder="用你自己的说法写 —— 比如「只有价格那一行沿用,其余重画」"></textarea>
+                    </span>
+                  </div>
+                </div>
+                <div class="foot">
+                  <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button" disabled>发送</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="st">
             <div class="st-l"><span>已回答 · 点发送后收成陈述</span><i></i></div>
             <div class="st-b">
               <div class="answered"><span class="k">已确认</span><span>设置页<b>沿用列表页的商品卡组件</b></span></div>
@@ -1218,7 +1271,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」就是选项之一,点开在原地写,不必跑到下面的输入框。<b>跳过</b> — 交由 Agent 判断。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
+          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」是选项之一。选中它会<b>原地长出输入框</b>,并且底部多出一个发送键 —— 单选本是"点了即发送",但这一项点下去还没有内容可发,不给发送键就走不下去。输入框放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
         </div>
       </article>
 
