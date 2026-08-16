@@ -651,7 +651,19 @@ button.att-i:hover { border-color: var(--border-strong); }
               background-color var(--duration-faster) var(--ease-out);
 }
 .opt:hover { border-color: var(--border-strong); background: var(--bg-panel); }
-.opt.is-on { border-color: var(--selected); background: var(--selected-soft); color: var(--text-strong); font-weight: 600; }
+/* 选中态用品牌绿,不用中性的 --selected。
+   tokens.css 开篇就写着 brand green 的用途包含 "selected assists",
+   选中态本就在它的授权范围内;而整屏中性灰会让人分不清哪里是自己选的。
+   配色照搬产品里既有的可选项约定(OnboardingModelSource.module.css):
+     边框 = color-mix(--brand 82%, --border-strong)
+     底色 = --brand-soft 掺 --bg-panel
+     前景 = --brand-text(#0d5400,在浅绿底上约 11:1,远超正文 4.5 的要求)
+   不自己调新绿。 */
+.opt.is-on {
+  border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
+  background: color-mix(in srgb, var(--brand-soft) 88%, var(--bg-panel));
+  color: var(--brand-text); font-weight: 600;
+}
 .opt .ic { flex: none; display: grid; place-items: center; height: calc(var(--t-mini) * var(--lh-row)); color: var(--text-soft); }
 .opt .ic svg { width: 13px; height: 13px; }
 
@@ -673,15 +685,15 @@ button.att-i:hover { border-color: var(--border-strong); }
 .opt:hover .box { border-color: var(--text-soft); }
 
 /* 单选选中:圆环内一颗实心点 */
-.opts.mod-single .opt.is-on .box { border-color: var(--selected); }
+.opts.mod-single .opt.is-on .box { border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong)); }
 .opts.mod-single .opt.is-on .box::after {
-  content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--selected);
+  content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--brand-text);
 }
 /* 多选选中:实心方块 + 白勾(纯 CSS 画,不额外塞 svg 进标记) */
-.opts.mod-multi .opt.is-on .box { border-color: var(--selected); background: var(--selected); }
+.opts.mod-multi .opt.is-on .box { border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong)); background: var(--brand); }
 .opts.mod-multi .opt.is-on .box::after {
   content: ''; width: 4px; height: 8px; margin-top: -2px;
-  border: solid var(--bg); border-width: 0 1.8px 1.8px 0;
+  border: solid var(--brand-text); border-width: 0 1.8px 1.8px 0;
   transform: rotate(45deg);
 }
 /* 「自己填」是选项之一,不是卡片外的补充说明 —— 文档把「自定义」和
@@ -868,7 +880,12 @@ button.att-i:hover { border-color: var(--border-strong); }
 /* 选中态用产品面的 --selected,不用品牌绿。tokens/colors.css 注释里写明
    --selected 是「这一项是当前选中的」专用色,刻意与 --accent 分开,
    好让主 CTA 和选中态同屏共存不打架。绿只留给通过态(✓)。 */
-.chip.is-on { border-color: var(--selected); background: var(--selected-soft); color: var(--text-strong); font-weight: 600; }
+/* 同上:选中即绿,与 .opt.is-on 保持一套 */
+.chip.is-on {
+  border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
+  background: color-mix(in srgb, var(--brand-soft) 88%, var(--bg-panel));
+  color: var(--brand-text); font-weight: 600;
+}
 .chip.mod-sm { padding: 3px 9px; font-size: var(--t-cap); }
 </style>
 </head>
