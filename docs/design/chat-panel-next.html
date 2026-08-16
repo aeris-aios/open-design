@@ -632,6 +632,32 @@ button.att-i:hover { border-color: var(--border-strong); }
 .card > .h .n { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); }
 .card > .q { padding: 10px 11px 8px; font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-strong); }
 .card > .opts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 11px 10px; }
+
+/* ---- 答题选项:纵向一行一个(mod-stack) ----
+   选项文案长度不可控。横排时长选项会自己折成两行,几个选项高矮不齐,
+   眼睛得在参差的边界之间来回找 —— 而这是要人做决定的地方,最不该费眼。
+   纵排后每个选项占满整宽,再长的文案换行也仍然是一个规整的块,
+   而且左边界对齐,扫一列就读完。
+   注意只作用在答题选项上:报错卡里的 Discord / 飞书社群是入口链接,
+   短且并列合理,那里保持横排。 */
+.card > .opts.mod-stack { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 6px; }
+.opt {
+  display: flex; align-items: flex-start; gap: 8px;
+  width: 100%; padding: 8px 11px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); text-align: left;
+  font-size: var(--t-mini); line-height: var(--lh-row); color: var(--text);
+  transition: border-color var(--duration-faster) var(--ease-out),
+              background-color var(--duration-faster) var(--ease-out);
+}
+.opt:hover { border-color: var(--border-strong); background: var(--bg-panel); }
+.opt.is-on { border-color: var(--selected); background: var(--selected-soft); color: var(--text-strong); font-weight: 600; }
+.opt .ic { flex: none; display: grid; place-items: center; height: calc(var(--t-mini) * var(--lh-row)); color: var(--text-soft); }
+.opt .ic svg { width: 13px; height: 13px; }
+/* 「自己填」是选项之一,不是卡片外的补充说明 —— 文档把「自定义」和
+   单选/多选/跳过并列写在支持的操作里,它就该和其它选项躺在同一列。 */
+.opt.mod-own { color: var(--text-muted); border-style: dashed; }
+.opt.mod-own:hover { color: var(--text-strong); border-style: solid; }
 .card > .foot { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-top: 1px solid var(--border-soft); background: var(--bg-panel); }
 .card > .foot .sp { flex: 1; }
 .card.is-stale { background: var(--bg-panel); opacity: 0.75; }
@@ -1051,14 +1077,16 @@ button.att-i:hover { border-color: var(--border-strong); }
               <div class="card">
                 <div class="h"><b>还需要确认一件事</b></div>
                 <div class="q">设置页要不要沿用列表页的商品卡组件?</div>
-                <div class="opts">
-                  <button class="chip" type="button">沿用,做成共享组件</button>
-                  <button class="chip" type="button">设置页单独写</button>
+                <div class="opts mod-stack">
+                  <button class="opt" type="button">沿用列表页那张商品卡,抽成两页共享的组件</button>
+                  <button class="opt" type="button">设置页单独写一套,不跟列表页绑</button>
+                  <button class="opt mod-own" type="button">
+                    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></span>
+                    <span>自己填 —— 用你自己的说法</span>
+                  </button>
                 </div>
                 <div class="foot">
                   <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
-                  <span class="sp"></span>
-                  <span style="font-size:var(--t-cap);color:var(--text-soft)">也可以直接在下面输入</span>
                 </div>
               </div>
             </div>
@@ -1072,7 +1100,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b> — 点选项即发送,不必再点发送。<b>多选</b> — 点选多个后点「确认」统一提交。<b>自定义</b> — 自行输入。<b>跳过</b> — 交由 Agent 判断。展示问题 + 2–4 个可点选项。</span>
+          <span><b>单选</b> — 点选项即发送,不必再点发送。<b>多选</b> — 点选多个后点「确认」统一提交。<b>自定义</b> — 「自己填」就是选项之一,点开在原地写,不必跑到下面的输入框。<b>跳过</b> — 交由 Agent 判断。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
         </div>
       </article>
 
