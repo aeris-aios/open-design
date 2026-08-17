@@ -353,10 +353,12 @@ const previewComment = (id: string, note: string, updatedAt: number): PreviewCom
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 /**
@@ -506,7 +508,7 @@ describe('a Home auto-send identifies its caller before the project scope resolv
     ).toEqual(CALLER_CONTEXT);
   });
 
-  it('sends query and headers together for the scoped HTML fetch used by auto-open analysis', async () => {
+  it('keeps fetch headers while using the project-authoritative raw URL for auto-open analysis', async () => {
     workspaceScopeMocks.projectScope = {
       loading: false,
       scope: {
@@ -545,10 +547,7 @@ describe('a Home auto-send identifies its caller before the project scope resolv
         String(input).includes(`/api/projects/${PROJECT_ID}/raw/index.html`),
       );
       expect(rawCall).toBeDefined();
-      expect(String(rawCall?.[0])).toBe(
-        `/api/projects/${PROJECT_ID}/raw/index.html?workspaceId=${TEAM_WORKSPACE}`
-          + `&workspaceMemberId=${TEAM_MEMBER}`,
-      );
+      expect(String(rawCall?.[0])).toBe(`/api/projects/${PROJECT_ID}/raw/index.html`);
       expect(rawCall?.[1]).toEqual(expect.objectContaining({
         headers: expect.objectContaining({
           'x-od-workspace-id': TEAM_WORKSPACE,
@@ -589,6 +588,84 @@ describe('a Home auto-send identifies its caller before the project scope resolv
     expect(mockedFetchPreviewComments).toHaveBeenCalledTimes(1);
 
     comments.resolve([]);
+  });
+
+  it('keeps the established transcript when an authority-scoped reload fails', async () => {
+    window.sessionStorage.removeItem(`od:auto-send-first:${PROJECT_ID}`);
+    const persistedMessage: ChatMessage = {
+      id: 'persisted-assistant',
+      role: 'assistant',
+      content: 'Persisted answer',
+      createdAt: 1,
+    };
+    mockedListMessages.mockResolvedValueOnce([persistedMessage]);
+    const view = renderProjectView({
+      project: { ...project(), pendingPrompt: '' },
+    });
+
+    await waitFor(() => {
+      expect(chatPaneSpy.mock.calls.at(-1)?.[0].messages).toEqual([persistedMessage]);
+    });
+
+    const reload = deferred<ChatMessage[]>();
+    mockedListMessages.mockReturnValueOnce(reload.promise);
+    workspaceScopeMocks.projectScope = {
+      loading: false,
+      scope: {
+        kind: 'team',
+        projectId: PROJECT_ID,
+        workspaceId: TEAM_WORKSPACE,
+        visibility: 'team',
+        context: {
+          ...CALLER_CONTEXT,
+          role: 'admin',
+          permissions: buildWorkspacePermissions({
+            role: 'admin',
+            lifecycleState: 'active',
+          }),
+        } as WorkspaceCollabContext & { workspaceType: 'team' },
+      },
+    };
+    view.rerender(projectViewElement({
+      project: { ...project(), pendingPrompt: '' },
+    }));
+
+    await waitFor(() => expect(mockedListMessages).toHaveBeenCalledTimes(2));
+    expect(chatPaneSpy.mock.calls.at(-1)?.[0].messages).toEqual([persistedMessage]);
+
+    await act(async () => {
+      reload.reject(new Error('workspace directory unavailable'));
+      await reload.promise.catch(() => undefined);
+    });
+
+    expect(chatPaneSpy.mock.calls.at(-1)?.[0].messages).toEqual([persistedMessage]);
+    expect(chatPaneSpy.mock.calls.at(-1)?.[0].messagesConversationId).toBeNull();
+    expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
+  });
+
+  it('reuses one Home handoff identity across ProjectView remounts', async () => {
+    const firstView = renderProjectView();
+    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalledTimes(1));
+    const firstRun = mockedStreamViaDaemon.mock.calls[0]?.[0];
+    firstView.unmount();
+
+    window.sessionStorage.setItem(`od:auto-send-first:${PROJECT_ID}`, '1');
+    renderProjectView();
+    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalledTimes(2));
+    const replayedRun = mockedStreamViaDaemon.mock.calls[1]?.[0];
+
+    expect({
+      clientRequestId: replayedRun?.clientRequestId,
+      userMessageId: replayedRun?.userMessageId,
+      assistantMessageId: replayedRun?.assistantMessageId,
+    }).toEqual({
+      clientRequestId: firstRun?.clientRequestId,
+      userMessageId: firstRun?.userMessageId,
+      assistantMessageId: firstRun?.assistantMessageId,
+    });
+    expect(firstRun?.clientRequestId).toMatch(/^[A-Za-z0-9._-]+$/);
+    expect(firstRun?.userMessageId).toMatch(/^[A-Za-z0-9._-]+$/);
+    expect(firstRun?.assistantMessageId).toMatch(/^[A-Za-z0-9._-]+$/);
   });
 
   it('does not let the initial comments read replace a newer SSE refresh', async () => {

@@ -357,6 +357,9 @@ type BrandBrowserSnapshotExtractionResult =
   | { status: 'miss'; message: string | null };
 
 type ProjectChatSendMeta = ChatSendMeta & {
+  /** Stable persisted row ids for a replayable handoff such as Home auto-send. */
+  userMessageId?: string;
+  assistantMessageId?: string;
   queueOnly?: boolean;
   retryOfAssistantId?: string;
   sessionMode?: ChatSessionMode;
@@ -1068,6 +1071,18 @@ function saveChatPanelWidth(width: number): void {
 
 function autoSendFirstMessageKey(projectId: string): string {
   return `od:auto-send-first:${projectId}`;
+}
+
+function homeAutoSendIdentity(projectId: string): Pick<
+  ProjectChatSendMeta,
+  'assistantMessageId' | 'clientRequestId' | 'userMessageId'
+> {
+  const handoffId = `home-auto-send-${projectId}`;
+  return {
+    clientRequestId: handoffId,
+    userMessageId: `${handoffId}-user`,
+    assistantMessageId: `${handoffId}-assistant`,
+  };
 }
 
 function autoSendPromptKey(projectId: string): string {
@@ -2546,6 +2561,7 @@ export function ProjectView({
   }, [project.id]);
   const projectRunAuthorityKeyRef = useRef(projectRunAuthorityKey);
   projectRunAuthorityKeyRef.current = projectRunAuthorityKey;
+  const conversationsLoadedProjectIdRef = useRef<string | null>(null);
   // Live mirror of the full project prop, for async handlers whose useCallback
   // deps only track `project.id` (e.g. the project-events handler below):
   // comparing a re-fetched record against a stale closure copy would
@@ -2640,25 +2656,29 @@ export function ProjectView({
   // dropped), create one on the fly.
   useEffect(() => {
     let cancelled = false;
+    const revalidatingCurrentProject =
+      conversationsLoadedProjectIdRef.current === project.id;
     const generation = conversationMaterializationGenerationController.begin();
     const requestWorkspaceContext = projectRunWorkspaceContextRef.current;
     conversationMaterializationRecoveryRef.current = null;
     setPendingEmptyConversationSeed(null);
-    setConversations([]);
-    setActiveConversationId(null);
-    setMessagesConversationId(null);
-    setFailedMessagesConversationId(null);
-    setMessageLoadRetryNonce(0);
     setConversationLoadError(null);
-    setMessages([]);
-    commitPreviewComments([]);
-    setAttachedComments([]);
-    setStreaming(false);
-    streamingConversationIdRef.current = null;
-    setStreamingConversationId(null);
     setError(null);
-    setArtifact(null);
-    savedArtifactRef.current = null;
+    if (!revalidatingCurrentProject) {
+      setConversations([]);
+      setActiveConversationId(null);
+      setMessagesConversationId(null);
+      setFailedMessagesConversationId(null);
+      setMessageLoadRetryNonce(0);
+      setMessages([]);
+      commitPreviewComments([]);
+      setAttachedComments([]);
+      setStreaming(false);
+      streamingConversationIdRef.current = null;
+      setStreamingConversationId(null);
+      setArtifact(null);
+      savedArtifactRef.current = null;
+    }
     (async () => {
       try {
         const list = await listConversationsWithRetry(
@@ -2666,12 +2686,15 @@ export function ProjectView({
           requestWorkspaceContext,
         );
         if (cancelled) return;
+        conversationsLoadedProjectIdRef.current = project.id;
         if (list.length === 0) {
           // Conversation reads can settle before collaboration ownership. Keep
           // the empty result and let the effect below seed only after the
           // fail-closed viewer gate proves this caller may mutate. This avoids
           // both a member's POST -> 403 loop and reloading the whole transcript
           // when status later confirms an owner.
+          setConversations([]);
+          setActiveConversationId(null);
           setPendingEmptyConversationSeed({
             projectId: project.id,
             authorityKey: projectRunAuthorityKey,
@@ -2706,8 +2729,10 @@ export function ProjectView({
             : null;
         conversationMaterializationRecoveryRef.current = materializationRecovery;
         setPendingEmptyConversationSeed(null);
-        setConversations([]);
-        setActiveConversationId(null);
+        if (!revalidatingCurrentProject) {
+          setConversations([]);
+          setActiveConversationId(null);
+        }
         setConversationLoadError(message);
         setError(message);
       }
@@ -2934,22 +2959,28 @@ export function ProjectView({
       setStreamingConversationId(null);
       return;
     }
-    // Reset the initialized flag so auto-send waits for the new
-    // conversation's DB read to settle before checking messages.length.
+    const reloadingCurrentConversation =
+      messagesConversationIdRef.current === activeConversationId;
+    // Reset the initialized flag so auto-send waits for this authoritative DB
+    // read to settle before checking messages.length. A same-conversation
+    // authority refresh keeps the prior transcript visible, but invalidates
+    // its initialized state until the refresh succeeds.
     setMessagesInitialized(false);
     let cancelled = false;
     const requestWorkspaceContext = projectRunWorkspaceContextRef.current;
-    setMessages([]);
-    commitPreviewComments([]);
-    const commentsGeneration = previewCommentsGenerationRef.current;
-    setAttachedComments([]);
-    setArtifact(null);
     setMessagesConversationId(null);
     setFailedMessagesConversationId(null);
     setStreaming(false);
     streamingConversationIdRef.current = null;
     setStreamingConversationId(null);
-    savedArtifactRef.current = null;
+    if (!reloadingCurrentConversation) {
+      setMessages([]);
+      commitPreviewComments([]);
+      setAttachedComments([]);
+      setArtifact(null);
+      savedArtifactRef.current = null;
+    }
+    const commentsGeneration = previewCommentsGenerationRef.current;
     if (messagesConversationIdRef.current !== activeConversationId) {
       messagesConversationIdRef.current = null;
     }
@@ -2969,7 +3000,7 @@ export function ProjectView({
           setPreviewComments(comments);
         }).catch(() => {
           if (cancelled || previewCommentsGenerationRef.current !== commentsGeneration) return;
-          setPreviewComments([]);
+          if (!reloadingCurrentConversation) setPreviewComments([]);
         });
         const list = await listMessages(
           project.id,
@@ -2989,12 +3020,14 @@ export function ProjectView({
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : 'Could not load messages for this conversation.';
-        setMessages([]);
-        commitPreviewComments([]);
-        setAttachedComments([]);
-        setArtifact(null);
+        if (!reloadingCurrentConversation) {
+          setMessages([]);
+          commitPreviewComments([]);
+          setAttachedComments([]);
+          setArtifact(null);
+          savedArtifactRef.current = null;
+        }
         setError(message);
-        savedArtifactRef.current = null;
         messagesConversationIdRef.current = null;
         setMessagesConversationId(null);
         setFailedMessagesConversationId(activeConversationId);
@@ -6115,9 +6148,11 @@ export function ProjectView({
           project.id,
           activeConversationId,
           projectRunWorkspaceContext,
-        ).catch(() => []);
+        ).catch(() => null);
         if (cancelled) return;
-        const recoveryMessages = serverMessages.length > 0 ? serverMessages : messagesRef.current;
+        const recoveryMessages = serverMessages && serverMessages.length > 0
+          ? serverMessages
+          : messagesRef.current;
         for (const message of recoveryMessages) {
           if (cancelled) return;
           if (!hasRecoverableArtifactMessage(message)) continue;
@@ -6705,7 +6740,7 @@ export function ProjectView({
       setError(null);
       const startedAt = Date.now();
       const userMsg: ChatMessage = retryTarget?.userMsg ?? {
-        id: randomUUID(),
+        id: meta?.userMessageId ?? randomUUID(),
         role: 'user',
         content: prompt,
         createdAt: startedAt,
@@ -6750,7 +6785,7 @@ export function ProjectView({
             )
           : apiProtocolModelLabel(config.apiProtocol, config.model);
       const preTurnFileNames = projectFiles.map((f) => f.name);
-      const assistantId = randomUUID();
+      const assistantId = meta?.assistantMessageId ?? randomUUID();
       const assistantMsg: ChatMessage = {
         id: assistantId,
         role: 'assistant',
@@ -10705,6 +10740,7 @@ export function ProjectView({
     autoSendInFlightRef.current = true;
     void handleSend(seed, attachments, [], {
         ...(context ? { context } : {}),
+        ...homeAutoSendIdentity(project.id),
         acceptQueuedHomeHandoff: true,
         // Only reuse Home's decision for the exact persisted project scope.
         // A workspace/member mismatch falls through to handleSend's normal gate.

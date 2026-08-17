@@ -1865,6 +1865,9 @@ export function DesignSystemDetailView({
     ).then((messages) => {
       if (cancelled) return;
       setProjectChatMessages(messages);
+    }).catch((error) => {
+      if (cancelled) return;
+      console.warn('Failed to load design-system project messages', error);
     });
     return () => {
       cancelled = true;

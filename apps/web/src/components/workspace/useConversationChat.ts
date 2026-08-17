@@ -112,14 +112,24 @@ export function useConversationChat(
     setMessages([]);
     setError(null);
     void (async () => {
-      const list = await listMessages(
-        projectId,
-        conversationId,
-        ctx.workspaceContext,
-      );
-      if (cancelled) return;
-      setMessages(list);
-      setLoading(false);
+      try {
+        const list = await listMessages(
+          projectId,
+          conversationId,
+          ctx.workspaceContext,
+        );
+        if (cancelled) return;
+        setMessages(list);
+        setLoading(false);
+      } catch (loadError) {
+        if (cancelled) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Could not load messages for this conversation.',
+        );
+        setLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
