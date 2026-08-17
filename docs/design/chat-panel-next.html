@@ -864,9 +864,13 @@ button.att-i:hover { border-color: var(--border-strong); }
 /* 已完成那几步的勾:和完成标记、多选勾用同一条路径同一笔画。
    原来这里是文字 ✓ —— 那是字体里的字形,粗细和端点由字体决定,
    跟旁边 SVG 画的勾必然对不上。 */
-.steps li .k svg { display: block; width: 11px; height: 11px; margin-top: 3px; }
+/* 完成标记直接复用 .mk.is-ok —— 和工具调用行、任务进度用的是同一个类,
+   不是"长得像"而是同一份样式。
+   之前这里是个裸勾:没有底色,和未完成那几步的数字视觉重量差不多,
+   扫一眼分不出哪些做完了 —— 而"做完没做完"正是这个列表要回答的事。
+   .mk 是 15px 的圆,首行文字是 18px(12×1.5),下移 1.5px 才与第一行同心。 */
+.steps li .mk { margin-top: 1.5px; }
 .steps li.is-done { color: var(--text-muted); }
-.steps li.is-done .k { color: var(--brand-text); }
 .steps li.is-now { color: var(--text-strong); font-weight: 600; }
 
 /* ---- 答后陈述 ---- */
@@ -1525,8 +1529,8 @@ button.att-i:hover { border-color: var(--border-strong); }
               <div class="card">
                 <div class="h"><b>执行中</b><span class="n">2 / 4</span></div>
                 <ol class="steps">
-                  <li class="is-done"><span class="k"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
-                  <li class="is-done"><span class="k"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span></li>
+                  <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
+                  <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span></li>
                   <li class="is-now"><span class="k">3</span><span>按同一套间距做设置页</span></li>
                   <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
                 </ol>
