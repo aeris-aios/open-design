@@ -10,6 +10,10 @@ const loaderPath = path.join(
   repoRoot,
   'skills/web-clone/scripts/lib/playwright-loader.mjs',
 );
+const systemBrowserPath = path.join(
+  repoRoot,
+  'skills/web-clone/scripts/lib/system-browser.mjs',
+);
 const skillPath = path.join(repoRoot, 'skills/web-clone/SKILL.md');
 const reconPath = path.join(repoRoot, 'skills/web-clone/scripts/recon-site.mjs');
 
@@ -37,6 +41,7 @@ async function importLoader() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const root of tempDirs.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -114,6 +119,29 @@ describe('Website Clone main-path browser runtime', () => {
       projectId: 'project-1',
     });
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  it('keeps daemon brokering authoritative when source Playwright is visible in CI', async () => {
+    vi.stubEnv('OD_DAEMON_URL', 'http://127.0.0.1:7456');
+    vi.stubEnv('OD_PROJECT_ID', 'project-ci');
+    const browser = { close: vi.fn() };
+    const systemBrowser = await import(pathToFileURL(systemBrowserPath).href) as {
+      systemChromium: {
+        connectOverDaemon: (options: unknown) => Promise<unknown>;
+      };
+    };
+    const connectOverDaemon = vi
+      .spyOn(systemBrowser.systemChromium, 'connectOverDaemon')
+      .mockResolvedValue(browser);
+    const localPlaywrightLaunch = vi.fn();
+    const { launchChromium } = await importLoader();
+
+    await expect(launchChromium({ launch: localPlaywrightLaunch })).resolves.toBe(browser);
+    expect(connectOverDaemon).toHaveBeenCalledWith({
+      daemonUrl: 'http://127.0.0.1:7456',
+      projectId: 'project-ci',
+    });
+    expect(localPlaywrightLaunch).not.toHaveBeenCalled();
   });
 
   it('forbids project-local Playwright installation and documents navigation timeout separately', () => {

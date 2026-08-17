@@ -97,13 +97,21 @@ export function findSystemChromiumExecutable({
 }
 
 export async function launchChromium(chromium, options = {}) {
+  // A staged skill can still see Playwright from a source checkout (notably in
+  // CI). That must not bypass the product path: agent sandboxes frequently
+  // cannot spawn Chrome, while the daemon owns a trusted browser process. Use
+  // the zero-dependency adapter for daemon brokering even when the caller's
+  // chromium object came from an already-installed Playwright package.
+  const daemonChromium = typeof chromium.connectOverDaemon === "function"
+    ? chromium
+    : systemChromium;
   if (
-    typeof chromium.connectOverDaemon === "function"
+    typeof daemonChromium.connectOverDaemon === "function"
     && process.env.OD_DAEMON_URL
     && process.env.OD_PROJECT_ID
   ) {
     try {
-      return await chromium.connectOverDaemon({
+      return await daemonChromium.connectOverDaemon({
         daemonUrl: process.env.OD_DAEMON_URL,
         projectId: process.env.OD_PROJECT_ID,
       });
