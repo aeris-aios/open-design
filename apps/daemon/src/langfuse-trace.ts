@@ -2455,7 +2455,9 @@ export async function reportRunCompleted(
         ? postRelayBatch(fallback, serialized, fetchImpl)
         : postLangfuseBatch(fallback, batch, fetchImpl);
     }
-    return postVelaBatch(config, batch, installationId, fetchImpl);
+    return postVelaBatch(config, batch, installationId, fetchImpl, {
+      allowAnonymousAuthFallback: opts.deliveryPurpose !== 'object-registration',
+    });
   }
   if (config.kind === 'relay') {
     return postRelayBatch(config, serialized, fetchImpl);
