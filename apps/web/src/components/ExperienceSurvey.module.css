@@ -1,37 +1,45 @@
 /* Experience survey card. Floats bottom-right above the workspace after a
-   successful export. It is mounted globally (App.tsx), not inside a route, so
-   navigating project → home keeps the same card and the same answers — the
-   user is answering once about the product, not once per screen.
+   successful export, mounted globally (App.tsx) so navigating project → home
+   keeps the same card and the same answers.
 
-   Deliberately NOT a modal: it must never block the export/share flow the user
-   just completed. Colors come from tokens so dark mode follows the app theme
-   with no second palette. */
+   It is a floating functional layer, so it takes the liquid-glass material and
+   vibrancy foregrounds rather than a solid content-card surface — the same
+   treatment the nav rail, toolbars and popovers use. Never a modal: it must
+   not block the export the user just finished. */
 .card {
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
   bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 1400;
-  /* 380 rather than 340: the 0–10 scale is eleven targets on one row, and at
-     340 the last three wrapped onto a second row that rendered twice as wide
-     as the first — the scale stopped reading as one continuous scale. */
+  /* 380 rather than 340: the 0–10 scale is eleven cells on one row, and at 340
+     the last cells could not hold a legible width. */
   width: 380px;
   max-width: calc(100vw - 32px);
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-  padding: 15px 16px 14px;
-  border-radius: var(--radius-lg, 14px);
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #dbdbdb);
-  color: var(--text, #494949);
+  overflow: hidden;
+  border-radius: var(--radius-lg, 16px);
+  border: 1px solid var(--material-separator, rgba(73, 73, 73, 0.18));
+  background: var(--glass-regular, rgba(250, 250, 250, 0.66));
+  -webkit-backdrop-filter: var(--glass-backdrop, blur(28px) saturate(1.8));
+  backdrop-filter: var(--glass-backdrop, blur(28px) saturate(1.8));
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
   box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.06),
-    0 18px 48px rgba(0, 0, 0, 0.16);
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 12px 32px rgba(0, 0, 0, 0.1),
+    0 32px 64px rgba(0, 0, 0, 0.08);
   pointer-events: auto;
 }
 
-/* Below 900px the workspace collapses and a 340px card starts to crowd the
-   composer, so the card goes full-width and sits above the safe area. */
+/* Glass thickness: a bright sheen along the top edge, the same cue the rest of
+   the material system uses to keep a frosted pane from reading as flat fill. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: var(--glass-edge-highlight, rgba(255, 255, 255, 0.65));
+  pointer-events: none;
+}
+
 @media (max-width: 900px) {
   .card {
     left: 12px;
@@ -42,6 +50,25 @@
   }
 }
 
+/* Progress reads as one thin line across the top rather than four dots: it
+   shows how much is left without adding another object to parse. */
+.progress {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--brand-text, #0d5400);
+  opacity: 0.85;
+  transform-origin: left center;
+  transition: transform 320ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 16px 14px;
+}
+
 .head {
   display: flex;
   align-items: center;
@@ -49,13 +76,9 @@
 }
 
 .tag {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: var(--radius-sm, 5px);
-  background: var(--brand-soft, #ebffde);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--brand-text, #0d5400);
 }
 
@@ -66,17 +89,21 @@
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: var(--radius-sm, 5px);
+  border-radius: var(--radius-sm, 6px);
   background: transparent;
-  color: var(--text-soft, #848484);
+  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
   cursor: pointer;
   font: inherit;
+  font-size: 15px;
   line-height: 1;
+  transition:
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .close:hover {
-  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
-  color: var(--text, #494949);
+  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
 }
 
 .close:focus-visible {
@@ -86,167 +113,191 @@
 
 .question {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 600;
-  line-height: 1.45;
-  color: var(--text-strong, #202020);
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
   text-wrap: balance;
 }
 
-.scale {
-  display: flex;
-  gap: 5px;
-}
-
-/* An explicit 11-column grid rather than flex wrapping: every step of the
-   scale gets the same width, and no step can fall to a second row where it
-   would render twice as wide as its neighbours and stop reading as one
-   continuous scale. */
-.scale.wide {
+/* The scale sits in one inset rail so eleven cells read as a single control
+   rather than eleven separate boxes. */
+.rail {
   display: grid;
-  /* minmax(0, 1fr), not 1fr: a bare 1fr floors at min-content, so the
-     two-digit "10" column refuses to shrink to its share and pushes the last
-     step outside the card. */
-  grid-template-columns: repeat(11, minmax(0, 1fr));
-  gap: 3px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
 }
 
-.scaleButton {
-  flex: 1 1 0;
+.rail.five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/* minmax(0, 1fr), not 1fr: a bare 1fr floors at min-content, so the two-digit
+   "10" column refuses to shrink to its share and pushes the last cell out. */
+.rail.eleven {
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+}
+
+.cell {
+  height: 32px;
   min-width: 0;
-  height: 34px;
-  border-radius: var(--radius-md, 8px);
-  border: 1px solid var(--border, #dbdbdb);
-  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
-  color: var(--text, #494949);
+  border: 0;
+  border-radius: var(--radius-sm, 7px);
+  background: transparent;
+  color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
   font: inherit;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition:
-    background 0.14s ease,
-    border-color 0.14s ease,
-    transform 0.14s cubic-bezier(0.23, 1, 0.32, 1);
+    background 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.scale.wide .scaleButton {
-  flex: 1 1 24px;
+.rail.eleven .cell {
   height: 30px;
   font-size: 12px;
 }
 
-.scaleButton:hover {
-  background: var(--brand-soft, #ebffde);
-  border-color: var(--brand-weak, #d0ffb5);
-  transform: translateY(-1px);
+.cell:hover {
+  background: var(--bg, #fff);
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
-.scaleButton:focus-visible {
+.cell:active {
+  transform: scale(0.94);
+}
+
+.cell:focus-visible {
   outline: 2px solid var(--brand-text, #0d5400);
-  outline-offset: 1px;
+  outline-offset: -1px;
+}
+
+/* Held for a beat before the step advances, so the tap is acknowledged
+   instead of the card silently swapping content underneath the finger. */
+.cell.picked {
+  background: var(--brand, #87ea5c);
+  color: var(--brand-text, #0d5400);
+  font-weight: 650;
+  box-shadow: none;
 }
 
 .bounds {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-top: -4px;
+  margin-top: -6px;
   font-size: 10.5px;
-  color: var(--text-soft, #848484);
+  letter-spacing: 0.01em;
+  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
 }
 
 .options {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
 .option {
-  padding: 8px 11px;
+  padding: 9px 11px;
   text-align: left;
-  border-radius: var(--radius-md, 8px);
-  border: 1px solid var(--border-soft, #ededed);
-  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
-  color: var(--text, #494949);
+  border: 0;
+  border-radius: var(--radius-md, 9px);
+  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
+  color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
   font: inherit;
   font-size: 12.5px;
   cursor: pointer;
   transition:
-    background 0.14s ease,
-    border-color 0.14s ease;
+    background 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .option:hover {
-  background: var(--brand-soft, #ebffde);
-  border-color: var(--brand-weak, #d0ffb5);
+  background: var(--bg, #fff);
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.option:active {
+  transform: scale(0.985);
 }
 
 .option:focus-visible {
   outline: 2px solid var(--brand-text, #0d5400);
-  outline-offset: 1px;
+  outline-offset: -1px;
+}
+
+.option.picked {
+  background: var(--brand, #87ea5c);
+  color: var(--brand-text, #0d5400);
+  font-weight: 600;
 }
 
 .textarea {
   width: 100%;
-  min-height: 66px;
+  min-height: 68px;
   resize: none;
-  padding: 9px 10px;
-  border-radius: var(--radius-md, 8px);
-  border: 1px solid var(--border, #dbdbdb);
-  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
-  color: var(--text, #494949);
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 9px);
+  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
   font: inherit;
   font-size: 12.5px;
+  line-height: 1.55;
+  transition:
+    background 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .textarea::placeholder {
-  color: var(--text-faint, #bdbdbd);
+  color: var(--vibrancy-label-quaternary, rgba(73, 73, 73, 0.24));
 }
 
 .textarea:focus {
-  outline: 2px solid var(--brand-weak, #d0ffb5);
-  outline-offset: 0;
-  border-color: transparent;
+  outline: none;
+  background: var(--bg, #fff);
+  border-color: var(--brand-weak, #d0ffb5);
 }
 
 .foot {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 2px;
+  gap: 8px;
+  margin-top: 2px;
 }
 
-.steps {
-  display: flex;
-  gap: 4px;
-}
-
-.step {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--bg-fill, rgba(0, 0, 0, 0.12));
-}
-
-.step.on {
-  background: var(--brand-text, #0d5400);
+.count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
 }
 
 .skip {
   margin-left: auto;
   border: 0;
   background: transparent;
-  color: var(--text-soft, #848484);
+  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
   font: inherit;
-  font-size: 11.5px;
-  padding: 3px 6px;
-  border-radius: var(--radius-sm, 5px);
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 6px);
   cursor: pointer;
+  transition:
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .skip:hover {
-  color: var(--text, #494949);
-  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
 }
 
 .skip:focus-visible {
@@ -254,51 +305,50 @@
   outline-offset: 1px;
 }
 
+/* Sizing only — colour, hover and focus come from the shared Button primitive
+   so this stays in step with every other primary action in the app. */
 .submit {
-  border: 1px solid var(--accent-strong, #202020);
-  background: var(--accent-strong, #202020);
-  color: var(--accent-contrast, #fafafa);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 5px 13px;
+  font-size: 12px;
+  padding: 6px 14px;
   border-radius: 999px;
-  cursor: pointer;
-}
-
-.submit:focus-visible {
-  outline: 2px solid var(--brand-text, #0d5400);
-  outline-offset: 2px;
 }
 
 .thanks {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 2px 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 2px 0 4px;
 }
 
 .thanksMark {
+  flex: none;
   width: 26px;
   height: 26px;
   display: grid;
   place-items: center;
-  margin-bottom: 3px;
   border-radius: 50%;
-  background: var(--brand-soft, #ebffde);
+  background: var(--brand, #87ea5c);
   color: var(--brand-text, #0d5400);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.thanksText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .thanksTitle {
   margin: 0;
   font-size: 13.5px;
   font-weight: 650;
-  color: var(--text-strong, #202020);
+  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
 }
 
 .thanksBody {
   margin: 0;
   font-size: 12px;
-  color: var(--text-soft, #848484);
+  line-height: 1.5;
+  color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
 }
