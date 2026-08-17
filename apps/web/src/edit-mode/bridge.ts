@@ -1082,12 +1082,23 @@ export function buildManualEditBridge(enabled: boolean): string {
     try {
       var baseUrl = new URL(document.baseURI || location.href);
       var nextUrl = new URL(href, baseUrl);
+      if (nextUrl.origin !== baseUrl.origin) return null;
+      var fileRoot = null;
       var rawMarker = '/raw/';
       var rawIndex = baseUrl.pathname.lastIndexOf(rawMarker);
-      if (nextUrl.origin !== baseUrl.origin || rawIndex < 0) return null;
-      var rawRoot = baseUrl.pathname.slice(0, rawIndex + rawMarker.length);
-      if (nextUrl.pathname.indexOf(rawRoot) !== 0) return null;
-      var fileName = decodeURIComponent(nextUrl.pathname.slice(rawRoot.length));
+      if (rawIndex >= 0) {
+        fileRoot = baseUrl.pathname.slice(0, rawIndex + rawMarker.length);
+      } else {
+        var previewMarker = '/preview/';
+        var previewIndex = baseUrl.pathname.lastIndexOf(previewMarker);
+        if (previewIndex < 0) return null;
+        var scopeStart = previewIndex + previewMarker.length;
+        var scopeEnd = baseUrl.pathname.indexOf('/', scopeStart);
+        if (scopeEnd < 0 || scopeEnd === scopeStart) return null;
+        fileRoot = baseUrl.pathname.slice(0, scopeEnd + 1);
+      }
+      if (nextUrl.pathname.indexOf(fileRoot) !== 0) return null;
+      var fileName = decodeURIComponent(nextUrl.pathname.slice(fileRoot.length));
       if (
         !fileName ||
         fileName.charAt(0) === '/' ||
