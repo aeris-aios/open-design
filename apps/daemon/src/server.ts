@@ -3194,6 +3194,7 @@ export async function startServer({
       return verifyWorkspaceRequestContext({
         ...input,
         fetchWorkspaceDirectory: fetchDirectory,
+        configuredEnv: configuredAmrEnv(),
       });
     }
     // Local/dev has no signed membership directory. Its explicit request
@@ -3238,7 +3239,7 @@ export async function startServer({
         role: claimed.role,
         memberStatus: claimed.memberStatus,
         lifecycleState: claimed.lifecycleState,
-      }),
+      }, configuredAmrEnv()),
     };
   };
   const verifyWorkspaceReadAuthority = (req: unknown) =>
@@ -3252,6 +3253,7 @@ export async function startServer({
           // A miss is intentionally returned as unavailable. The project gate
           // then falls through to the existing fresh authority verifier.
           fetchWorkspaceDirectory: workspaceDirectoryAuthority.cached,
+          configuredEnv: configuredAmrEnv(),
         })
       : undefined;
   const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
@@ -3293,7 +3295,9 @@ export async function startServer({
         && item.memberStatus === 'active'
         && item.lifecycleState === 'active',
     );
-    return membership ? workspaceContextFromDirectoryItem(membership) : null;
+    return membership
+      ? workspaceContextFromDirectoryItem(membership, configuredAmrEnv())
+      : null;
   };
   const teamResourceVersions = createTeamResourceVersionStore(RUNTIME_DATA_DIR);
   const teamProjectContentResourceId = (
@@ -3502,7 +3506,7 @@ export async function startServer({
       if (cached) {
         return {
           ok: true as const,
-          context: workspaceContextFromDirectoryItem(cached),
+          context: workspaceContextFromDirectoryItem(cached, configuredAmrEnv()),
         };
       }
     }
@@ -3520,6 +3524,7 @@ export async function startServer({
     ...(fetchProjectCreationWorkspaceDirectory
       ? { fetchWorkspaceDirectory: fetchProjectCreationWorkspaceDirectory }
       : {}),
+    configuredEnv: configuredAmrEnv,
   });
   function persistWorkspaceProjectSyncState(
     projectId: string,
@@ -3742,7 +3747,9 @@ export async function startServer({
         && item.memberStatus === 'active'
         && item.lifecycleState !== 'deleted',
     );
-    return membership ? workspaceContextFromDirectoryItem(membership) : null;
+    return membership
+      ? workspaceContextFromDirectoryItem(membership, configuredAmrEnv())
+      : null;
   };
 
   // Uncached remote catalog authority for both comment relay delivery and the
@@ -5043,6 +5050,7 @@ export async function startServer({
   let workspaceAnalyticsService: AnalyticsService | null = null;
   registerCollabContextRoutes(app, {
     workspaceContext: collab.workspaceContext,
+    configuredEnv: configuredAmrEnv,
     verifyWorkspaceReadAuthority: verifyWorkspaceContextReadAuthority,
     readCachedWorkspaceAuthority: cachedWorkspaceContextForRequest,
     activeWorkspace,
@@ -7370,7 +7378,7 @@ export async function startServer({
         );
         return null;
       }
-      authority = workspaceContextFromDirectoryItem(item);
+      authority = workspaceContextFromDirectoryItem(item, configuredAmrEnv());
     } else {
       authority = workspaceContextFromDirectoryItem({
         workspaceId: binding.workspaceId,
@@ -7381,7 +7389,7 @@ export async function startServer({
         role: 'owner',
         memberStatus: 'active',
         lifecycleState: 'active',
-      });
+      }, configuredAmrEnv());
     }
     const scopedAuthorize = createAuthorizeProjectRequest({
       db,
@@ -7707,6 +7715,7 @@ export async function startServer({
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
     fetchWorkspaceDirectory,
+    configuredEnv: configuredAmrEnv,
     fetchProjectCreationWorkspaceDirectory,
     createWorkspaceOwnedDesignSystem: createWorkspaceOwnedDesignSystemForContext,
     pluginScope: {

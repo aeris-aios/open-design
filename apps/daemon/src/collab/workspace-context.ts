@@ -214,7 +214,8 @@ export function resolveWorkspaceSettingsUrl(
   // The selected profile's build-injected origin is authoritative whenever a
   // runtime selection exists; explicit URLs remain the compatibility source for
   // deployments that do not support profile switching.
-  if (base && hasRuntimeProfile) {
+  if (hasRuntimeProfile) {
+    if (!base) return undefined;
     return withWorkspaceDeepLink(`${base.replace(/\/$/, '')}/settings`, workspaceId);
   }
   if (typeof explicit === 'string' && explicit.trim()) {

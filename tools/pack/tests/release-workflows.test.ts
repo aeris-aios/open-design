@@ -459,6 +459,9 @@ describe("release workflows", () => {
     // operator can aim a build at feature-test or test.
     expect(beta).toContain("OPEN_DESIGN_AMR_PROFILE: ${{ inputs.amr_profile }}");
     expect(prerelease).toContain("OPEN_DESIGN_AMR_PROFILE: ${{ inputs.amr_profile }}");
+    expect(beta).toContain(
+      "(inputs.amr_profile == 'prod' || inputs.amr_profile == '') && secrets.VELA_WEB_URL_PROD || ''",
+    );
 
     // preview and stable are production channels by definition. Pinning the pair
     // instead of accepting an input removes the footgun of publishing a stable

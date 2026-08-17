@@ -64,6 +64,16 @@ describe('resolveWorkspaceSettingsUrl', () => {
       OPEN_DESIGN_AMR_PROFILE: 'feature-test',
     })).toBe('https://feature.example/settings?workspaceId=ws-1&source=open_design');
   });
+
+  it('fails closed instead of reusing an explicit URL when the selected profile has no trusted origin', () => {
+    expect(resolveWorkspaceSettingsUrl('ws-1', 'https://prod.example/settings', {
+      OPEN_DESIGN_AMR_PROFILE: 'prod',
+      OD_VELA_WEB_URL: 'https://prod.example',
+      OD_VELA_WEB_URLS: JSON.stringify({ prod: 'https://prod.example' }),
+    }, {
+      OPEN_DESIGN_AMR_PROFILE: 'feature-test',
+    })).toBeUndefined();
+  });
 });
 
 describe('parseWorkspaceCollabContext', () => {
