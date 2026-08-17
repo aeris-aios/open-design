@@ -1177,8 +1177,19 @@ button.att-d:hover { border-color: var(--border-strong); }
    16:10 是网页/应用界面的常见比例,卡宽以后再变高度会自己跟上。 */
 .art .thumb { display: block; aspect-ratio: 16 / 10; height: auto; background: var(--bg-subtle); }
 .art .b { padding: 7px 9px; }
-.art .nm { font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.art .kd { margin-top: 1px; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
+/* 卡上只写文件名,不再另起一行中文标题。
+   ------------------------------------------------------------
+   原来是「商品列表页」+「product-list.html」两行。三样东西在说同一件事:
+   缩略图说它长什么样,中文标题说它是哪一页,文件名也说它是哪一页 ——
+   而中文标题是三者里唯一没有额外用处的那个。
+   文件名不能省:这张卡上的动作是预览 / 发布 / 导出,都是对【文件】做的,
+   导出下来、发布出去看到的也是这个名字,它是你之后唯一能对上的凭据。
+   所以留下来的是文件名,并且升为主标签 —— 深色、跟正文同级;
+   等宽字体保留,它本来就是个文件名,不是一句话。 */
+.art .kd {
+  font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .art .ops { display: flex; gap: 5px; padding: 0 9px 9px; }
 
 /* ---- Tooltip:纯图标按钮唯一的名字 ----
@@ -2420,7 +2431,7 @@ button.att-d:hover { border-color: var(--border-strong); }
               <div class="arts">
                 <div class="art">
                   <span class="thumb"><span class="mini"></span></span>
-                  <div class="b"><div class="nm">商品列表页</div><div class="kd">product-list.html</div></div>
+                  <div class="b"><div class="kd">product-list.html</div></div>
                   <div class="ops">
                     <button class="btn mod-primary mod-sm" type="button">预览</button>
                     <button class="btn mod-ghost mod-sm" type="button">发布</button>
@@ -2429,7 +2440,7 @@ button.att-d:hover { border-color: var(--border-strong); }
                 </div>
                 <div class="art">
                   <span class="thumb"><span class="mini"></span></span>
-                  <div class="b"><div class="nm">设置页</div><div class="kd">settings.html</div></div>
+                  <div class="b"><div class="kd">settings.html</div></div>
                   <div class="ops">
                     <button class="btn mod-primary mod-sm" type="button">预览</button>
                     <button class="btn mod-ghost mod-sm" type="button">发布</button>
@@ -2447,7 +2458,7 @@ button.att-d:hover { border-color: var(--border-strong); }
               <div class="arts">
                 <div class="art">
                   <span class="thumb"><span class="mini"></span></span>
-                  <div class="b"><div class="nm">商品卡组件规格</div><div class="kd">product-card.md</div></div>
+                  <div class="b"><div class="kd">product-card.md</div></div>
                   <div class="ops">
                     <button class="btn mod-primary mod-sm" type="button">预览</button>
                     <button class="btn mod-ghost mod-sm" type="button">导出</button>
@@ -2459,7 +2470,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>预览</b> — 点卡片在右侧预览。<b>发布</b> — 一键发布到线上并给出链接,<b>仅产物为 HTML 时出现</b>。<b>导出</b> — 一键导出。</span>
+          <span><b>预览</b> — 点卡片在右侧预览。<b>发布</b> — 一键发布到线上并给出链接,<b>仅产物为 HTML 时出现</b>。<b>导出</b> — 一键导出。<b>卡上只写文件名,不另起一行中文标题</b> —— 原来是「商品列表页」+「product-list.html」两行,三样东西在说同一件事:缩略图说它长什么样,中文标题说它是哪一页,文件名也说它是哪一页。三者里只有文件名有额外用处 —— 这张卡上的动作(预览 / 发布 / 导出)都是对文件做的,导出下来、发布出去看到的也是这个名字,它是你之后唯一能对上的凭据。所以留文件名并升为主标签,等宽字体保留:它本来就是个文件名,不是一句话。<b>展示</b>缩略图 + 文件名。</span>
         </div>
       </article>
 
