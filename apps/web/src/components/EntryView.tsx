@@ -60,8 +60,6 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
 };
 
 interface Props {
-  projectCreateError?: string | null;
-  onProjectCreateErrorConsumed?: () => void;
   // Union of functional skills + design templates — used for id-based
   // lookups (DesignsTab project chips, NewProjectPanel skill picker).
   // The Templates gallery itself reads `designTemplates` instead so it
@@ -250,8 +248,6 @@ export function sortConnectorsForSearch(
 }
 
 export function EntryView({
-  projectCreateError = null,
-  onProjectCreateErrorConsumed,
   skills,
   designTemplates,
   designSystems,
@@ -376,8 +372,6 @@ export function EntryView({
 
   return (
     <EntryShell
-      projectCreateError={projectCreateError}
-      onProjectCreateErrorConsumed={onProjectCreateErrorConsumed}
       skills={skills}
       designTemplates={designTemplates}
       designSystems={designSystems}

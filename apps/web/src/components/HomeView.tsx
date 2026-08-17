@@ -246,8 +246,6 @@ const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
 
 interface Props {
   isActive?: boolean;
-  createError?: string | null;
-  onCreateErrorConsumed?: () => void;
   projects: Project[];
   projectsLoading?: boolean;
   designSystems?: DesignSystemSummary[];
@@ -448,8 +446,6 @@ export function seedHomeComposerPrompt(prompt: string): void {
 
 export function HomeView({
   isActive = true,
-  createError = null,
-  onCreateErrorConsumed,
   projects,
   projectsLoading,
   designSystems = EMPTY_DESIGN_SYSTEMS,
@@ -717,18 +713,6 @@ export function HomeView({
     examplePromptInfoRef.current = info;
   }, []);
   const [error, setError] = useState<string | null>(null);
-  const [createFailureError, setCreateFailureError] = useState<string | null>(null);
-  // Auto-send project creation temporarily replaces EntryView with the
-  // optimistic project surface. If that request fails, this HomeView instance
-  // has already unmounted, so its submit() continuation cannot leave an
-  // in-flow error behind. App retains the failure and hands it to the newly
-  // mounted Home; consume it here so the reviewed composer error survives the
-  // optimistic route round-trip instead of flashing only as a global toast.
-  useEffect(() => {
-    if (!isActive || !createError) return;
-    setCreateFailureError(t('home.createFailed'));
-    onCreateErrorConsumed?.();
-  }, [createError, isActive, onCreateErrorConsumed, t]);
   const [daemonRecoveryActive, setDaemonRecoveryActive] = useState(false);
   useEffect(() => {
     if (!daemonRecoveryActive) return;
@@ -2524,7 +2508,6 @@ export function HomeView({
   // snapshot and builds the same payload the manual flow does).
   function submitScenario(scenario: PlaceholderScenario) {
     if (sending) return;
-    setCreateFailureError(null);
     setError(null);
     if (pluginsLoading) return;
     const chip = scenario.chipId ? findChip(scenario.chipId) : null;
@@ -2570,7 +2553,6 @@ export function HomeView({
     // The send button disables itself while sending, but the Enter-to-send
     // path lands here directly — swallow re-entry during the in-flight window.
     if (sending) return;
-    setCreateFailureError(null);
     const trimmed = prompt.trim();
     if (!trimmed && stagedFiles.length === 0) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
@@ -2951,7 +2933,7 @@ export function HomeView({
         onPickConnector={useConnector}
         onPickChip={pickChip}
         contextItemCount={contextItemCount}
-        error={createFailureError ?? error}
+        error={error}
         workingDir={workingDir}
         recentDirs={recentDirs}
         onPickWorkingDir={handlePickWorkingDir}

@@ -408,8 +408,6 @@ export interface ProjectTitleHint {
 }
 
 interface Props {
-  projectCreateError?: string | null;
-  onProjectCreateErrorConsumed?: () => void;
   skills: SkillSummary[];
   designTemplates: SkillSummary[];
   designSystems: DesignSystemSummary[];
@@ -553,8 +551,6 @@ function inactiveViewProps(active: boolean) {
 }
 
 export function EntryShell({
-  projectCreateError = null,
-  onProjectCreateErrorConsumed,
   skills,
   designTemplates,
   designSystems,
@@ -1730,8 +1726,6 @@ export function EntryShell({
             <div className="entry-main__view-home" data-testid="entry-view-home" data-active={view === 'home' ? 'true' : 'false'} {...inactiveViewProps(view === 'home')}>
               <HomeView
                 isActive={view === 'home'}
-                createError={projectCreateError}
-                onCreateErrorConsumed={onProjectCreateErrorConsumed}
                 projects={homeProjectsList}
                 projectsLoading={projectsLoading}
                 designSystems={designSystems}
