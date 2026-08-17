@@ -38,6 +38,13 @@ export interface ExperienceSurveyAnswers {
 
 interface Props {
   /**
+   * Privacy → "Share usage data". Answers travel on the same analytics
+   * pipeline as everything else, so with consent off the card must not appear
+   * at all: asking someone for feedback and then dropping it on the floor is
+   * worse than never asking.
+   */
+  metricsConsent?: boolean;
+  /**
    * Reports a finished response. The card retires itself either way, so this
    * fires at most once per install.
    */
@@ -46,6 +53,17 @@ interface Props {
   onExposure?: () => void;
   /** Fires when the user closes the card without finishing. */
   onDismiss?: (answers: Partial<ExperienceSurveyAnswers>) => void;
+}
+
+/**
+ * Modals in this app lock the page by setting `document.body.style.overflow`,
+ * so that is the one signal available without a global modal registry. The
+ * card must not surface behind an open dialog: it sits below the dialog's
+ * layer and gets caught by its backdrop blur, which looks like a rendering
+ * bug rather than a deliberate stack.
+ */
+function isModalOpen(): boolean {
+  return document.body.style.overflow === 'hidden';
 }
 
 const IMPROVEMENT_KEYS = [
@@ -80,7 +98,12 @@ const stepMotion: Variants = {
   exit: { opacity: 0, y: -4, transition: { duration: 0.12, ease: EASE_OUT } },
 };
 
-export function ExperienceSurvey({ onSubmit, onExposure, onDismiss }: Props) {
+export function ExperienceSurvey({
+  metricsConsent = false,
+  onSubmit,
+  onExposure,
+  onDismiss,
+}: Props) {
   const t = useT();
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState<Step>('satisfaction');
@@ -123,20 +146,45 @@ export function ExperienceSurvey({ onSubmit, onExposure, onDismiss }: Props) {
   // Arm on export. The delay gives the user a beat to see their export land
   // before anything else asks for attention.
   useEffect(() => {
+    if (!metricsConsent) return;
     let armTimer: number | null = null;
+    let modalWatcher: MutationObserver | null = null;
+
+    const reveal = () => {
+      if (isSurveyRetired()) return;
+      if (isModalOpen()) {
+        // Stay armed and wait the dialog out rather than dropping the chance:
+        // the export already happened, and this is the only one we get.
+        modalWatcher?.disconnect();
+        modalWatcher = new MutationObserver(() => {
+          if (isModalOpen()) return;
+          modalWatcher?.disconnect();
+          modalWatcher = null;
+          reveal();
+        });
+        modalWatcher.observe(document.body, {
+          attributes: true,
+          attributeFilter: ['style'],
+        });
+        return;
+      }
+      setVisible(true);
+    };
+
     const unsubscribe = onExportSucceeded(() => {
       if (isSurveyRetired() || exposedRef.current || armTimer !== null) return;
       armTimer = window.setTimeout(() => {
         armTimer = null;
-        if (isSurveyRetired()) return;
-        setVisible(true);
+        reveal();
       }, SURVEY_DELAY_MS);
     });
+
     return () => {
       unsubscribe();
+      modalWatcher?.disconnect();
       if (armTimer !== null) window.clearTimeout(armTimer);
     };
-  }, []);
+  }, [metricsConsent]);
 
   useEffect(() => {
     if (!visible || exposedRef.current) return;
