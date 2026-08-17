@@ -1403,45 +1403,38 @@ button.att-d:hover { border-color: var(--border-strong); }
    还是只能猜。
    .is-tip 是给稿子用的常开态:评审看的是静态截图,鼠标停不上去。 */
 [data-tip] { position: relative; }
+/* 浅色气泡,不带小三角。
+   ------------------------------------------------------------
+   深色实心的气泡太抢:它是被动的标签,只在你把鼠标停住时出现,不该比它解释
+   的那个按钮还重。浅底 + 细边 + 软阴影已经足够把它从正文里分出来。
+   —— 和 25 · 选中浮条 / 注释全文那种深色磨砂是两回事:那两个是你要伸手去点
+   的浮层,该跳出来;这个只是个名字。
+   小三角一并去掉:它一直是这份稿子里最容易出错的东西(浅底之后还得叠两层
+   三角才画得出边框),而气泡贴着按钮出现,指向本来就不含糊。 */
 [data-tip]::after {
   content: attr(data-tip);
-  position: absolute; bottom: calc(100% + 5px); left: 50%; translate: -50% 0;
-  z-index: 5; padding: 3px 7px; border-radius: var(--radius-sm);
-  background: var(--text-strong); color: var(--bg);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; translate: -50% 0;
+  z-index: 5; padding: 5px 9px; border-radius: var(--radius);
+  background: var(--bg-elevated); color: var(--text-strong);
+  border: 1px solid var(--border); box-shadow: var(--shadow-md);
   font-size: var(--t-cap); line-height: 1.4; font-weight: 500;
   white-space: nowrap; pointer-events: none;
   opacity: 0; transition: opacity var(--duration-faster) var(--ease-out);
 }
-[data-tip]::before {
-  content: ""; position: absolute; bottom: calc(100% + 1px); left: 50%; translate: -50% 0;
-  /* 只留上边框:整个盒子就是 8×4 的三角,不会有一半藏在气泡底下 ——
-     写成四边 4px 的话可见三角落在盒子的上半段,正好被 tip 盖住,等于没画。 */
-  z-index: 5; border: 4px solid transparent; border-bottom: 0; border-top-color: var(--text-strong);
-  pointer-events: none; opacity: 0;
-  transition: opacity var(--duration-faster) var(--ease-out);
-}
-[data-tip]:hover::after, [data-tip]:hover::before,
-[data-tip]:focus-visible::after, [data-tip]:focus-visible::before,
-[data-tip].is-tip::after, [data-tip].is-tip::before { opacity: 1; }
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after,
+[data-tip].is-tip::after { opacity: 1; }
 
-/* 贴边补正。
-   ------------------------------------------------------------
-   气泡默认居中在按钮上方,而按钮常常就贴在一个 overflow 容器的边上:
-   队列限了高(overflow-y:auto —— 一轴非 visible,另一轴也跟着变裁剪区),
-   面板头部贴着面板顶边,产物卡的 ⋯ 贴着滚动区右缘。居中的气泡有一半在
-   容器外,被切成半截,比不出还糟。
-   这三个 modifier 不改气泡样式,只改它相对按钮的锚点;小三角始终留在
-   按钮正中,所以指向不会跟着漂。 */
+/* 贴边补正。气泡默认居中在按钮上方,而按钮常常就贴在一个 overflow 容器的边上:
+   队列限了高(一轴非 visible,另一轴也跟着变裁剪区),面板头部贴着面板顶边,
+   产物卡的 ⋯ 贴着滚动区右缘。居中的气泡有一半在容器外,被切成半截比不出还糟。
+   这几个 modifier 只改锚点,不改样式。 */
 [data-tip].mod-tip-s::after { left: 0; translate: 0 0; }              /* 左缘对齐按钮左缘 */
 [data-tip].mod-tip-e::after { left: auto; right: 0; translate: 0 0; } /* 右缘对齐按钮右缘 */
 /* 队列第一行:卡头去掉之后它上面已经没有东西,朝上的气泡会顶出限高容器。 */
 [data-tip].mod-tip-b::after,
-.queue .q:first-child [data-tip]::after { bottom: auto; top: calc(100% + 5px); }  /* 翻到按钮下方 */
-[data-tip].mod-tip-b::before,
-.queue .q:first-child [data-tip]::before {
-  bottom: auto; top: calc(100% + 1px);
-  border-top: 0; border-bottom: 4px solid var(--text-strong); border-top-color: transparent;
-}
+.queue .q:first-child [data-tip]::after { bottom: auto; top: calc(100% + 6px); }
+
 
 /* ---- 反馈行 ---- */
 /* 回合状态:这一轮结束了没有、花了多少。
