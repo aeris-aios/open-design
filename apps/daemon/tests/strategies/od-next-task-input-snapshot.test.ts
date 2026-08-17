@@ -225,6 +225,30 @@ describe('OD Next task-scoped input snapshots', () => {
     expect(readFileSync(restarted.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
   });
 
+  it('rejects an intermediate attachments-directory symlink even with identical bytes', () => {
+    const f = fixture();
+    writeFileSync(path.join(f.projectRoot, 'brief.txt'), 'identical frozen bytes');
+    const descriptor = createOdNextTaskInputSnapshot({
+      ...f,
+      taskExecutionId: 'odnext_intermediate_symlink',
+      projectAttachments: ['brief.txt'],
+    });
+    const attachmentsDir = path.join(descriptor.snapshotDir, 'attachments');
+    const originalAttachmentsDir = path.join(descriptor.snapshotDir, 'attachments-original');
+    const externalAttachmentsDir = path.join(f.root, 'external-attachments');
+    renameSync(attachmentsDir, originalAttachmentsDir);
+    mkdirSync(externalAttachmentsDir);
+    writeFileSync(
+      path.join(externalAttachmentsDir, 'attachment-001.txt'),
+      readFileSync(path.join(originalAttachmentsDir, 'attachment-001.txt')),
+      { mode: 0o400 },
+    );
+    symlinkSync(externalAttachmentsDir, attachmentsDir, 'dir');
+
+    expect(() => loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot))
+      .toThrow(/symlink|realpath escapes/);
+  });
+
   it('uses no-follow bounded reads and caps when loading canonical files', () => {
     const f = fixture();
     writeFileSync(path.join(f.projectRoot, 'one.txt'), '12345');

@@ -12,6 +12,7 @@ import {
   isAcpPartialRedactToolName,
 } from '../src/agent-protocol/acp/updates.js';
 import { countNewArtifacts } from '../src/runtimes/run-artifacts.js';
+import { excludeAcpImagePathsAlreadyDeliveredAsResources } from '../src/runtimes/chat-prompt-inputs.js';
 
 const DEFAULT_MODEL_OPTION = { id: 'default', label: 'Default (CLI config)' };
 
@@ -227,7 +228,10 @@ test('attachAcpSession includes frozen PDF, text, and image attachments as ACP r
     prompt: 'describe this image',
     cwd: '/tmp/od-project',
     model: null,
-    imagePaths: [imagePath],
+    imagePaths: excludeAcpImagePathsAlreadyDeliveredAsResources(
+      [imagePath],
+      [pdfPath, textPath, imagePath],
+    ),
     resourcePaths: [pdfPath, textPath, imagePath],
     mcpServers: [],
     send: () => {},
@@ -245,6 +249,37 @@ test('attachAcpSession includes frozen PDF, text, and image attachments as ACP r
       { type: 'text', text: 'describe this image' },
       { type: 'resource_link', uri: pdfPath },
       { type: 'resource_link', uri: textPath },
+      { type: 'resource_link', uri: imagePath },
+    ],
+  });
+});
+
+test('attachAcpSession preserves duplicate ordinary image resource links', () => {
+  const child = new FakeAcpChild();
+  const writes: string[] = [];
+  child.stdin.on('data', (chunk) => writes.push(String(chunk)));
+  const imagePath = '/tmp/ordinary-duplicate.png';
+
+  attachAcpSession({
+    child: child as never,
+    prompt: 'describe both image occurrences',
+    cwd: '/tmp/od-project',
+    model: null,
+    imagePaths: [imagePath, imagePath],
+    mcpServers: [],
+    send: () => {},
+  });
+  child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })}\n`);
+  child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })}\n`);
+
+  const promptRequest = writes
+    .map((line) => JSON.parse(line) as { method?: string; params?: unknown })
+    .find((entry) => entry.method === 'session/prompt');
+  expect(promptRequest?.params).toEqual({
+    sessionId: 'session-1',
+    prompt: [
+      { type: 'text', text: 'describe both image occurrences' },
+      { type: 'resource_link', uri: imagePath },
       { type: 'resource_link', uri: imagePath },
     ],
   });

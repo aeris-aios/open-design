@@ -90,7 +90,8 @@ export function buildAcpSessionNewParams(cwd: string, { mcpServers, envFormat = 
  * Assembles the `prompt` array for a `session/prompt` ACP call. Always
  * includes a leading `{ type: 'text', text: prompt }` block, followed by
  * one `{ type: 'resource_link', uri: resourcePath }` block per non-empty
- * attachment path. Empty, non-string, and duplicate paths are skipped.
+ * attachment path. Empty and non-string paths are skipped. Duplicate paths
+ * retain their caller-provided order for ordinary ACP compatibility.
  *
  * @param prompt - The text prompt to send as the first block.
  * @param resourcePaths - Optional file/image attachment paths to append.
@@ -98,11 +99,8 @@ export function buildAcpSessionNewParams(cwd: string, { mcpServers, envFormat = 
  */
 export function buildPromptBlocks(prompt: string, resourcePaths: string[]): Array<Record<string, string>> {
   const blocks: Array<Record<string, string>> = [{ type: 'text', text: prompt }];
-  const seen = new Set<string>();
   for (const resourcePath of resourcePaths) {
     if (typeof resourcePath !== 'string' || resourcePath.trim().length === 0) continue;
-    if (seen.has(resourcePath)) continue;
-    seen.add(resourcePath);
     blocks.push({ type: 'resource_link', uri: resourcePath });
   }
   return blocks;

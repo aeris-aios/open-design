@@ -152,6 +152,37 @@ function readOnlyNoFollowFlags(): number {
   return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW;
 }
 
+function assertManagedPathHasNoSymlinkComponents(
+  managedRoot: string,
+  targetPath: string,
+): void {
+  const root = path.resolve(managedRoot);
+  const target = path.resolve(targetPath);
+  if (!within(root, target)) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next managed input escapes its managed root.',
+    );
+  }
+  const relative = path.relative(root, target);
+  const segments = relative.split(path.sep).filter(Boolean);
+  let current = root;
+  for (const segment of segments.slice(0, -1)) {
+    current = path.join(current, segment);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next managed input path contains a symlink or non-directory component.',
+      );
+    }
+  }
+  const real = fs.realpathSync(target);
+  if (!within(fs.realpathSync(root), real)) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next managed input realpath escapes its managed root.',
+    );
+  }
+}
+
 function mediaTypeFromBytes(bytes: Buffer): { mediaType: string; extension: string } {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     return { mediaType: 'image/png', extension: '.png' };
@@ -525,8 +556,10 @@ function parseManifest(bytes: Buffer): SnapshotManifest {
 function readManagedSnapshotFile(
   filePath: string,
   maxBytes: number,
+  managedRoot: string,
   beforeOpen?: (filePath: string) => void,
 ): Buffer {
+  assertManagedPathHasNoSymlinkComponents(managedRoot, filePath);
   const pathStat = fs.lstatSync(filePath, { bigint: true });
   if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
     throw new OdNextTaskInputSnapshotError(
@@ -619,6 +652,7 @@ export function loadOdNextTaskInputSnapshot(
   const manifestBytes = readManagedSnapshotFile(
     manifestPath,
     limits.manifestCapBytes ?? DEFAULT_OD_NEXT_INPUT_MANIFEST_CAP_BYTES,
+    snapshotDir,
     hooks.beforeOpenManifest,
   );
   if (sha256(manifestBytes) !== descriptor.manifestSha256) {
@@ -682,7 +716,12 @@ export function loadOdNextTaskInputSnapshot(
     if (!within(snapshotDir, absolute)) {
       throw new OdNextTaskInputSnapshotError('OD Next task input file escapes its snapshot.');
     }
-    const bytes = readManagedSnapshotFile(absolute, fileCap, hooks.beforeOpenFile);
+    const bytes = readManagedSnapshotFile(
+      absolute,
+      fileCap,
+      snapshotDir,
+      hooks.beforeOpenFile,
+    );
     const detected = mediaTypeFromBytes(bytes);
     if (
       bytes.length !== file.bytes

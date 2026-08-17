@@ -107,6 +107,7 @@ import {
   resolveSafeProjectAttachments,
   resolveSafePromptImagePaths,
   resolveOdNextRequestUserPrompt,
+  excludeAcpImagePathsAlreadyDeliveredAsResources,
   selectPromptImagePaths,
 } from './runtimes/chat-prompt-inputs.js';
 import {
@@ -162,6 +163,7 @@ export {
   resolveResearchCommandContract,
   resolveSafeProjectAttachments,
   resolveSafePromptImagePaths,
+  excludeAcpImagePathsAlreadyDeliveredAsResources,
   selectPromptImagePaths,
 } from './runtimes/chat-prompt-inputs.js';
 export {
@@ -11156,6 +11158,12 @@ export async function startServer({
       transportSourceImages,
       amrStagedImages,
     );
+    const acpPromptImagePaths = odNextTaskInputSnapshot
+      ? excludeAcpImagePathsAlreadyDeliveredAsResources(
+          promptImagePaths,
+          odNextTaskInputSnapshot.attachmentPaths,
+        )
+      : promptImagePaths;
     const taskConfigPendingFact = isOdNextRequestStage
       ? odNextTaskInputSnapshot?.taskConfigText ?? ''
       : '';
@@ -13862,7 +13870,7 @@ export async function startServer({
         prompt: composed,
         cwd: effectiveCwd,
         model: safeModel,
-        imagePaths: def.supportsImagePaths ? promptImagePaths : [],
+        imagePaths: def.supportsImagePaths ? acpPromptImagePaths : [],
         resourcePaths: odNextTaskInputSnapshot?.attachmentPaths ?? [],
         mcpServers,
         envFormat: def.acpMcpEnvFormat ?? 'array',

@@ -943,3 +943,12 @@ export function selectPromptImagePaths(
 ) {
   return agentId === 'amr' ? amrStagedImages : safeImages;
 }
+
+export function excludeAcpImagePathsAlreadyDeliveredAsResources(
+  imagePaths: string[],
+  resourcePaths: string[],
+): string[] {
+  if (resourcePaths.length === 0) return imagePaths;
+  const delivered = new Set(resourcePaths);
+  return imagePaths.filter((imagePath) => !delivered.has(imagePath));
+}
