@@ -1480,16 +1480,17 @@ button.att-d:hover { border-color: var(--border-strong); }
    队列钉在输入框上方,它长一分,对话流水就少一分 —— 而队列是"待办",
    流水才是你正在看的东西,不能让待办把正在看的挤出屏幕。
    三行半的来历:单行 = 7px 上下内边距 + 20px 行高 = 34px,加 1px 分隔线;
-   3.5 × 35 ≈ 122,再加卡头 31px。露出的半行不是缺陷,正好当"下面还有"的提示 ——
+   3.5 × 35 ≈ 122。露出的半行不是缺陷,正好当"下面还有"的提示 ——
    跟附件条行尾裁掉的半张卡是同一招。
    两行的消息会吃掉更多高度,那时可见条数不足三条半,这是对的:
    限的是【高度】不是【条数】,占屏幕多少才是这里要控制的东西。
-   卡头 sticky:一旦滚起来,「N 条」是唯一能知道总数的地方,不能跟着滚走
-   —— 和 Plan 卡限高后保留「N 步」是同一条理由。 */
+   不再单起一行卡头写「排队中 · N 条」:队列就贴在输入框底下,是什么一目了然;
+   行首的序号已经把"第几条"说清楚了,标题和计数都是复述。代价是滚在顶部时
+   看不到总数 —— 换来的是少占一行、少一层框。 */
 .queue {
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg-panel); overflow: hidden;
-  max-height: 153px; overflow-y: auto;
+  max-height: 122px; overflow-y: auto;
 }
 .queue .q {
   /* 顶对齐而不是居中:消息可能两行,居中会让序号、手柄、动作按钮
@@ -1527,24 +1528,6 @@ button.att-d:hover { border-color: var(--border-strong); }
   overflow: hidden;
   line-height: var(--lh-row);
 }
-/* 状态和总数放【头部一次】,行里不再逐条挂标签。
-   ------------------------------------------------------------
-   原来每行都有一个「排队中」—— 它们全在队列里,这是队列的定义,
-   等于把"队列"这个词在每行重复一遍,三个橙色胶囊还把注意力从消息
-   内容上拽走。反过来,真正想一眼知道的"还排着几条"却没有。
-   规矩:整块共有的信息归头部,行里只放这一行独有的(序号、内容、操作)。 */
-.queue .qh {
-  position: sticky; top: 0; z-index: 1;
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 10px; background: var(--bg-subtle);
-  border-bottom: 1px solid var(--border-soft);
-  /* 用正常文字色,不上橙。「排队中」是中性的状态标签,不是警告 ——
-     --amber 在这套系统里是提醒色,用在这儿等于把"有几条排着"说成"出事了"。
-     「已发送」同理去掉绿:两个块靠标签文字本身就分得开,不需要拿颜色区分
-     两个词。颜色留给真的需要注意的地方。 */
-  font-size: var(--t-cap); font-weight: 600; color: var(--text-strong);
-}
-.queue .qh .c { margin-inline-start: auto; font-family: var(--mono); font-weight: 400; color: var(--text-muted); }
 /* 22px 的按钮盒对 18px 的首行,上移 2px 才与第一行同心 */
 .qops { display: flex; gap: 1px; margin-top: -2px; }
 .qops button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--radius-sm); color: var(--text-soft); }
@@ -2886,7 +2869,6 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>排队中 · 生成中按发送即进入</span><i></i></div>
             <div class="st-b">
               <div class="queue">
-                <div class="qh"><span>排队中</span><span class="c">3 条</span></div>
                 <div class="q">
                   <span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
                   <span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span>
@@ -2921,7 +2903,6 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>条数多 · 限高约三行半,其余滚动(不能把流水挤出屏幕)</span><i></i></div>
             <div class="st-b">
               <div class="queue">
-                <div class="qh"><span>排队中</span><span class="c">6 条</span></div>
                 <div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div><div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">商品卡换成两列</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div><div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">3</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div><div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">4</span><span class="tx">搜索结果页里那张窄版卡同步改</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div><div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">5</span><span class="tx">价格行的字号调大一档</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div><div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">6</span><span class="tx">我的页面顶部加个头像区</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
               </div>
             </div>
@@ -2931,7 +2912,6 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="msg-me"><div class="bub">设置页也加上深色模式开关</div></div>
               <div class="queue" style="margin-top:10px">
-                <div class="qh"><span>排队中</span><span class="c">2 条</span></div>
                 <div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">商品卡换成两列</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
                 <div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" class="mod-tip-e" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
               </div>
