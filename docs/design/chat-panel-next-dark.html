@@ -1142,7 +1142,12 @@ button.att-d:hover { border-color: var(--border-strong); }
    一句稍长的就折行,读起来像被夹住;而标签的宽度还随字数变,
    三种问法收出来的答案起始位置对不齐。
    改成上下两行之后,答案永远从同一个左边界开始,宽度也是整卡。 */
-.answered { padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); line-height: var(--lh-row); }
+/* 卡宽跟着内容走,不拉满。已回答的澄清多半是一行短句,拉满会在右边留一
+   大片空白 —— 那片空白不表示任何东西,只是让人以为还有内容没加载出来。
+   写 width 而不是 align-self:flex-start,是为了在 block 和 flex 两种父容器里
+   都成立(cross-size 不是 auto,flex 的 stretch 就不生效)。 */
+.answered { width: fit-content; max-width: 100%;
+  padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); line-height: var(--lh-row); }
 .answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-soft); }
 .answered .k svg { flex: none; width: 13px; height: 13px; }
 .answered .ab { color: var(--text); }
