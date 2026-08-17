@@ -865,8 +865,11 @@ button.att-i:hover { border-color: var(--border-strong); }
 .tool .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool .nm code { font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong); }
 .tool .ms { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
-.tool.is-fail { border-color: var(--red-border); background: var(--red-bg); color: var(--red); }
-.tool.is-fail .ms { color: var(--red); }
+/* 红只标错误本身,不染内容。
+   原来整行(读取什么、耗时)全是红,"读取 规范.pdf"是这一步在做的事,
+   不是错误;耗时更只是数据。一整行红反而让真正的错误标记淹没在里面。
+   现在:行文字回正常色、耗时回常规灰,只剩「失败」两个字是红的。 */
+.tool.is-fail { border-color: var(--red-border); background: var(--red-bg); color: var(--text); }
 /* 同上:不加下划线,与「重发」保持同一条规则 */
 .tool.is-fail .why { font-size: var(--t-cap); font-weight: 600; color: var(--red); }
 .tool.is-fail .why:hover { color: color-mix(in srgb, var(--red) 70%, var(--text-strong)); }
@@ -874,7 +877,11 @@ button.att-i:hover { border-color: var(--border-strong); }
 .mk { flex: none; display: grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; }
 .mk svg { width: 10px; height: 10px; }
 .mk.is-ok { background: var(--brand-weak); color: var(--brand-text); }
-.mk.is-fail { background: var(--bg); color: var(--red); }
+/* 失败标记不加底色圆:圆占掉 15px,里面的感叹号只剩 10px,显得很小。
+   去掉底后同一个 15px 全给图标本身。通过态 .is-ok 保留绿底圆 ——
+   它需要底色把"完成"标出来,而失败已经有整行红边红底在说话了。 */
+.mk.is-fail { background: none; color: var(--red); }
+.mk.is-fail svg { width: 15px; height: 15px; }
 .mk.is-run { border: 1.5px solid var(--border); border-top-color: var(--text-strong); animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -886,7 +893,12 @@ button.att-i:hover { border-color: var(--border-strong); }
 }
 .term div { white-space: pre-wrap; }
 .term .ok { color: var(--brand-text); }
-.term .er { color: var(--red); }
+/* 终端正文用正常深色,不整行红 —— 那是代码/日志内容,不是错误状态本身。
+   只有行首的 ✗ 标记是红的。 */
+.term .er { color: var(--text-strong); }
+.term .er::first-letter { color: var(--red); font-weight: 700; }
+/* 卡头右侧的「失败」二字,是这张卡唯一的红 */
+.card > .h .fx { flex: none; margin-inline-start: 6px; font-size: var(--t-cap); font-weight: 600; color: var(--red); }
 
 /* ---- 生图 ---- */
 .imgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -1715,7 +1727,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>失败 · 展示错误</span><i></i></div>
             <div class="st-b">
               <div class="card" style="border-color:var(--red-border)">
-                <div class="h" style="background:var(--red-bg);color:var(--red)"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b style="color:var(--red)">npm run build</b><span class="n">2.1s</span></div>
+                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>npm run build</b><span class="n">2.1s</span><span class="fx">失败</span></div>
                 <div class="term"><div class="er">✗ Could not resolve "./ProductCard" from src/pages/List.tsx</div></div>
               </div>
             </div>
