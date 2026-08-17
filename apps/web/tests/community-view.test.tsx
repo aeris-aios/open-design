@@ -215,6 +215,22 @@ describe('CommunityView catalogue source', () => {
     expect(readFacetCardCounts()).toEqual([1, 2, 1]);
   });
 
+  it('falls back to the first available type when the catalogue has no Prototype templates', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      plugins: [PITCH_DECK, SALES_DECK],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    await renderCommunity();
+
+    const facets = readFacets();
+    expect(facets.map((facet) => facet.label)).toEqual(['Slides']);
+    expect(facets[0]!.tab.classList.contains('is-active')).toBe(true);
+    expect(renderedCards()).toHaveLength(2);
+  });
+
   it('leaves hidden and design-system plugins out of the gallery', async () => {
     await renderCommunity();
 
