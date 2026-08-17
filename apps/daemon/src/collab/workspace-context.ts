@@ -11,6 +11,7 @@ import type {
   WorkspaceProviderMode,
   WorkspaceType,
 } from '@open-design/contracts';
+import { resolveEffectiveVelaConsoleOrigin } from '../integrations/vela-console-origin.js';
 
 // The daemon's single B-integration point . Presence + sync need the
 // caller's workspace identity (workspaceMemberId + role + lifecycle). In
@@ -192,6 +193,7 @@ export function resolveWorkspaceSettingsUrl(
   workspaceId: string,
   explicit: unknown,
   env: NodeJS.ProcessEnv = process.env,
+  configuredEnv: Record<string, string> = {},
 ): string | undefined {
   // B's web console supports workspace deep links (?workspaceId=…): the target
   // page opens directly when it matches the account's Active Workspace, and
@@ -204,7 +206,7 @@ export function resolveWorkspaceSettingsUrl(
   if (typeof explicit === 'string' && explicit.trim()) {
     return withWorkspaceDeepLink(explicit.trim(), workspaceId);
   }
-  const base = env.OD_VELA_WEB_URL?.trim();
+  const base = resolveEffectiveVelaConsoleOrigin(env, configuredEnv);
   if (!base) return undefined;
   return withWorkspaceDeepLink(`${base.replace(/\/$/, '')}/settings`, workspaceId);
 }
