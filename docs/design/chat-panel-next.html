@@ -501,12 +501,41 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 
 /* ---- 用户消息 ---- */
 .msg-me { display: flex; justify-content: flex-end; }
+/* ---- 长串兜底 ----
+   凡是承载【用户输入或外部数据】的容器,都要能把一串没有空格的东西断开:
+   链接、token、路径、base64。中文自己会断,带空格的英文也会断,所以这个
+   坑平时不露头 —— 一旦有人贴一条长链接,文字就会直接冲出圆角被裁掉。
+   用 anywhere 不用 break-all:前者只在真的放不下时才断,正常单词仍然整词
+   换行;后者会把每个英文单词都拆散。 */
+.bub, .doc .nm, .att-d .nm, .answered .ab, .answered .al li,
+.term div, .queue .q .tx { overflow-wrap: anywhere; }
+
 .bub {
   max-width: min(84%, 380px); padding: 9px 13px;
   border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
   background: var(--text-strong); color: var(--bg);
   font-size: var(--t-body); line-height: var(--lh-body);
 }
+
+/* 超长消息折到 8 行,其余点「展开」。
+   ------------------------------------------------------------
+   这是流水里唯一没有上限的东西 —— Plan、Queue、附件、终端都限了高,
+   而用户自己贴进来的内容才是最没法预估的那个:一段日志、一份需求文档、
+   一整个报错堆栈。不封顶的话,一条消息就能把上下文全顶出屏幕。
+   8 行的来历:13px × 1.7 行高 ≈ 22px,8 行 176px —— 大约是面板高度的
+   四分之一,既能读出这条在说什么,又不至于独占一屏。
+   折的是【自己发的话】,所以只折不截:点开就是全文,不做省略号。 */
+.bub.mod-clamp {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 8;
+  overflow: hidden;
+}
+.msg-more {
+  display: flex; justify-content: flex-end; margin-top: 4px;
+}
+.msg-more button {
+  font-size: var(--t-cap); font-weight: 600; color: var(--text-muted);
+}
+.msg-more button:hover { color: var(--text-strong); }
 /* hover 操作位与气泡的对齐 —— 一条规则同时满足两种情况:
    .msg-act 的高度 = 单行气泡高(行盒 + 气泡上下 padding),再底部对齐。
      · 单行:两者等高,底对齐即视觉居中。
@@ -519,7 +548,6 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
   flex: none; display: grid; place-items: center;
   height: calc(var(--t-body) * var(--lh-body) + 18px);
 }
-/* 尺寸取设计系统 components.css 的 .icon-btn 规格(30×30 / 图标 16),
    不自己定尺寸。原来用的是 .btn.mod-sm,图标只有 11px。 */
 .msg-act button {
   display: grid; place-items: center; width: 30px; height: 30px;
@@ -1199,7 +1227,6 @@ button.att-d:hover { border-color: var(--border-strong); }
 .imgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .shot { position: relative; aspect-ratio: 3/4; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); background: var(--bg-subtle); }
 /* 生图的占位跟附件缩略图共用 .mini —— 全站只有一种占位灰。
-   原来这里另有一套 .fill / .mod-a / .mod-b(深灰 / 绿 / 中灰),两个毛病:
    ① 那是凭空发明的"四张图不一样"的效果,而占位图的职责只是压住范围,
       画出差异反而抢注意力(绿色那块尤其像个状态,不像一张图);
    ② 规则写成了 .shot .fill,缩略图条里的 .th 不在 .shot 下面,
@@ -1510,11 +1537,6 @@ button.att-d:hover { border-color: var(--border-strong); }
 .errb .d { margin-top: 4px; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); }
 .errb .ops { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 
-.noteb { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); color: var(--text-muted); }
-.noteb svg { flex: none; width: 13px; height: 13px; color: var(--text-soft); }
-.noteb .sp { flex: 1; }
-.noteb.mod-net { border-color: var(--amber-border); background: var(--amber-bg); color: var(--amber); }
-.noteb.mod-net svg { color: var(--amber); animation: spin 1.1s linear infinite; }
 /* ---- 重连:流水里的一行,不是全局横幅 ----
    它跟工具调用共用 .tool 那副行壳 —— 断线是"这次会话正在发生的一件事",
    跟"读了哪个文件"是同一类流水事件,理当排在同一条时间线上。
@@ -1600,7 +1622,6 @@ button.att-d:hover { border-color: var(--border-strong); }
    认出目的地靠的是图形不是读字。
    与产品其它图标同一套),不自己描摹商标。 */
 .chip svg { flex: none; width: 14px; height: 14px; }
-.chip svg.mod-solid { stroke: none; fill: currentColor; }
 /* 平台标识:源文件在 docs/design/assets/{discord,feishu}.svg,
    这里内联的是同一份路径。
    ------------------------------------------------------------
@@ -1662,6 +1683,19 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b"><div class="msg-me"><div class="bub">把这一屏重做成能跑的原型,再加一个视觉风格一致的设置页</div></div></div>
           </div>
           <div class="st">
+            <div class="st-l"><span>超长消息 · 折到 8 行,点「展开」看全文</span><i></i></div>
+            <div class="st-b">
+              <div class="msg-me"><div class="bub mod-clamp">把这一屏重做成能跑的原型,再加一个视觉风格一致的设置页,两页共用同一套间距和圆角。列表页的商品卡要能复用到设置页里那两处小卡上,间距按 8 的倍数走,圆角统一 12px。另外结算页那张缩略图也一起换掉,价格行的字号调大一档 —— 现在两页放一起看着不像一套。跨端那边先不用管,等这两页定了再说。</div></div>
+              <div class="msg-more"><button type="button">展开</button></div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>长链接 · 没有空格也要断开,不能冲出气泡</span><i></i></div>
+            <div class="st-b">
+              <div class="msg-me"><div class="bub">https://powerformer.feishu.cn/docx/VtOwd4ON2oYZj0xd6OTceubcnDe?from=space&amp;token=eyJhbGciOiJIUzI1NiJ9</div></div>
+            </div>
+          </div>
+          <div class="st">
             <div class="st-l"><span>失败 · 网络或服务异常</span><i></i></div>
             <div class="st-b">
               <div class="msg-me"><div class="bub">把这一屏重做成能跑的原型</div></div>
@@ -1700,7 +1734,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>复制</b> — hover 后点复制图标。<b>展示</b>消息文案。</span>
+          <span><b>复制</b> — hover 后点复制图标。<b>超长时折到 8 行</b>,点「展开」看全文 —— 只折不截,那是你自己发的话。<b>展示</b>消息文案。</span>
         </div>
       </article>
 
@@ -2672,6 +2706,19 @@ button.att-d:hover { border-color: var(--border-strong); }
                 <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
                 <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
                 <button class="is-tip" type="button" aria-label="Fork" data-tip="以此新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
+                <span class="tm">14:32</span>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>踩被选中 · 用红不用绿,它跟赞不是一回事</span><i></i></div>
+            <div class="st-b">
+              <div class="fb">
+                <span class="fin"><i></i>已完成<span class="cost">12.4s · 3.2k</span></span><span class="sp"></span>
+                <button type="button" aria-label="赞" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
+                <button class="is-on mod-down" type="button" aria-label="踩" aria-pressed="true"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
+                <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <button type="button" aria-label="Fork" data-tip="以此新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
                 <span class="tm">14:32</span>
               </div>
             </div>
