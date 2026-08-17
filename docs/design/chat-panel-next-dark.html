@@ -1613,7 +1613,14 @@ button.att-d:hover { border-color: var(--border-strong); }
    「看这里」。三个状态都去框:形状不随状态变,只有失败那格把图标变红 ——
    颜色留给真需要注意的那一个。 */
 .tool:has(.wifi) { border-color: transparent; background: none; padding: 5px 2px; }
-.tool .wifi { flex: none; width: 14px; height: 14px; color: var(--text-soft); }
+/* 这个图标要的不是更大的盒子,是更满的盒子。
+   ------------------------------------------------------------
+   wifi 的三条弧在 24 的 viewBox 里只占 x 5~19、y 7.75~18,墨迹连一半都不到,
+   把 width 从 14 调到 18 只是把空白一起放大 —— 实测墨迹仍只有 7.2px,而旁边
+   中文有 12.5px,所以糊。把 viewBox 裁到墨迹本身(4 6.5 16 13)之后,同样的
+   17×14 里画的全是线。量的是【看得见的墨】,不是元素的框 ——
+   和失败标记去掉底色圆是同一条。 */
+.tool .wifi { flex: none; width: 17px; height: 14px; stroke-width: 2px; color: var(--text-soft); }
 /* 失败那一行不换图标,只换颜色。
    三态用同一枚 wifi:图标说的是"连接"这件事,它没变;变的是结果,
    而结果已经由红色和文案说清楚了。再换一个打叉的 wifi,等于把同一个
@@ -2002,19 +2009,19 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l mod-def"><span>重连中 · 第几次 / 共几次,可展开看详情</span><i></i></div>
             <div class="st-b">
-              <div class="tool"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">2/5</span></span><button class="ch mod-tip-e" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div class="tool"><svg class="wifi" viewBox="4 6.5 16 13" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">2/5</span></span><button class="ch mod-tip-e" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>最后一次 · 5/5,下一格就是失败</span><i></i></div>
             <div class="st-b">
-              <div class="tool"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">5/5</span></span><button class="ch mod-tip-e" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div class="tool"><svg class="wifi" viewBox="4 6.5 16 13" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">5/5</span></span><button class="ch mod-tip-e" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>重连失败 · 次数用尽,交回给人</span><i></i></div>
             <div class="st-b">
-              <div class="tool is-fail"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">连不上,已停止重连</span><button class="btn mod-secondary mod-sm" type="button">重新连接</button></div>
+              <div class="tool is-fail"><svg class="wifi" viewBox="4 6.5 16 13" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">连不上,已停止重连</span><button class="btn mod-secondary mod-sm" type="button">重新连接</button></div>
             </div>
           </div>
         </div>
