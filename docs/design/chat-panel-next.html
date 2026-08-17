@@ -785,6 +785,16 @@ button.att-d:hover { border-color: var(--border-strong); }
 }
 .fold > summary::-webkit-details-marker { display: none; }
 .fold > summary:hover { color: var(--text-strong); }
+/* 记忆的书签用深绿,不用灰。
+   这一行是整条流水里唯一"东西被存下来了"的信号,而它原来跟旁边一堆
+   折叠行长得一模一样(同样的灰、同样的字号),扫过去根本注意不到。
+   ------------------------------------------------------------
+   用 --brand-text 这一档而不是 --brand:后者是亮绿,是给填充块和脉冲点
+   用的,单独一枚 15px 的实心图标压在白底上会发飘;--brand-text 本来
+   就是"白底上的绿文字"那一档,深到能站住。
+   只染图标不染文字:文字要跟其它折叠行保持一致,绿的是那个标记,
+   不是那句话。 */
+.fold > summary .memo-ic { color: var(--brand-text); }
 /* 箭头一律靠右。原来右对齐是靠耗时 .ms 的 auto 外边距撑出来的,
    于是没有耗时的那几条(执行计划、记忆组件)箭头就贴在文字后面。
    现在两个都能自己靠右,谁先出现谁吃掉空白:
@@ -2190,13 +2200,13 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l mod-def"><span>收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15" style="color:var(--text-muted)"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
+              <details class="fold"><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>展开 · 查看被记忆的内容</span><i></i></div>
             <div class="st-b">
-              <details class="fold" open><summary><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15" style="color:var(--text-muted)"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <details class="fold" open><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="body">
                   · 商品卡做成可复用的共享组件<br>
                   · 卡片圆角统一 12px<br>
