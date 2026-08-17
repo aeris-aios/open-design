@@ -943,6 +943,43 @@ button.att-i:hover { border-color: var(--border-strong); }
 .art .kd { margin-top: 1px; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
 .art .ops { display: flex; gap: 5px; padding: 0 9px 9px; }
 
+/* ---- Tooltip:纯图标按钮唯一的名字 ----
+   面板里所有只有图标、没有文字的按钮(赞/踩/复制/Fork、Queue 行的
+   立即发送/编辑/取消排队/拖动、气泡上的复制)都挂 data-tip。
+   ------------------------------------------------------------
+   这不是装饰:图标是压缩过的词,压缩率越高越省地方也越容易解错 ——
+   「Fork」那三个圆点没人第一次就读得出是"以此为上下文新开会话",
+   「↑」和纸飞机同屏时到底哪个是发送也是靠 tip 才分得开。
+   之前只写了 aria-label,那只有读屏软件听得到,用眼睛的人反而没有。
+
+   走 ::after + attr() 而不是原生 title:原生 tip 要等半秒到两秒
+   (各家浏览器不一,不可控),等到时手已经点下去了,起不到"先告诉你
+   再点"的作用;而且原生样式跟不上这套配色。
+   同时挂 :focus-visible —— 键盘走到这个按钮时也要出,否则纯键盘用户
+   还是只能猜。
+   .is-tip 是给稿子用的常开态:评审看的是静态截图,鼠标停不上去。 */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 5px); left: 50%; translate: -50% 0;
+  z-index: 5; padding: 3px 7px; border-radius: var(--radius-sm);
+  background: var(--text-strong); color: var(--bg);
+  font-size: var(--t-cap); line-height: 1.4; font-weight: 500;
+  white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity var(--duration-faster) var(--ease-out);
+}
+[data-tip]::before {
+  content: ""; position: absolute; bottom: calc(100% + 1px); left: 50%; translate: -50% 0;
+  /* 只留上边框:整个盒子就是 8×4 的三角,不会有一半藏在气泡底下 ——
+     写成四边 4px 的话可见三角落在盒子的上半段,正好被 tip 盖住,等于没画。 */
+  z-index: 5; border: 4px solid transparent; border-bottom: 0; border-top-color: var(--text-strong);
+  pointer-events: none; opacity: 0;
+  transition: opacity var(--duration-faster) var(--ease-out);
+}
+[data-tip]:hover::after, [data-tip]:hover::before,
+[data-tip]:focus-visible::after, [data-tip]:focus-visible::before,
+[data-tip].is-tip::after, [data-tip].is-tip::before { opacity: 1; }
+
 /* ---- 反馈行 ---- */
 .fb { display: flex; align-items: center; gap: 2px; }
 .fb button {
@@ -1199,7 +1236,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="msg-row is-hover">
                 <span class="msg-act">
-                  <button type="button" aria-label="复制">
+                  <button type="button" aria-label="复制" data-tip="复制这条">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                   </button>
                 </span>
@@ -1212,7 +1249,7 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="msg-row is-hover">
                 <span class="msg-act">
-                  <button type="button" aria-label="复制">
+                  <button type="button" aria-label="复制" data-tip="复制这条">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                   </button>
                 </span>
@@ -2000,10 +2037,22 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>默认 · 图标组 + 时间</span><i></i></div>
             <div class="st-b">
               <div class="fb">
-                <button type="button" aria-label="赞"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
-                <button type="button" aria-label="踩"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
-                <button type="button" aria-label="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
-                <button type="button" aria-label="Fork"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
+                <button type="button" aria-label="赞" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
+                <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
+                <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <button type="button" aria-label="Fork" data-tip="以此新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
+                <span class="tm">14:32</span>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>hover · 出 Tooltip,把图标翻译成一句话</span><i></i></div>
+            <div class="st-b" style="padding-top:30px">
+              <div class="fb">
+                <button type="button" aria-label="赞" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
+                <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
+                <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <button class="is-tip" type="button" aria-label="Fork" data-tip="以此新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
                 <span class="tm">14:32</span>
               </div>
             </div>
@@ -2012,9 +2061,9 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>已选 · 图标变填充,再点取消</span><i></i></div>
             <div class="st-b">
               <div class="fb">
-                <button class="is-on" type="button" aria-label="赞" aria-pressed="true"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
-                <button type="button" aria-label="踩"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
-                <button type="button" aria-label="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <button class="is-on" type="button" aria-label="赞" data-tip="有帮助" aria-pressed="true"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
+                <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
+                <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
                 <span class="tm">14:32</span>
               </div>
             </div>
@@ -2041,7 +2090,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg>
-          <span><b>赞 / 踩</b> — 单击切换,互斥。<b>复制</b> — 复制该条回复全文。<b>Fork</b> — 以此为上下文新开会话。hover 展示 Tooltip 与时间点。</span>
+          <span><b>赞 / 踩</b> — 单击切换,互斥。<b>复制</b> — 复制该条回复全文。<b>Fork</b> — 以此为上下文新开会话。<b>Tooltip</b> — 四个都是纯图标,hover 或键盘聚焦时出深色 tip 说出它是什么(有帮助 / 没帮助 / 复制回复 / 以此新开会话)。图标是压缩过的词,压得越狠越省地方也越容易解错 —— Fork 那三个圆点没人第一次就读得出是"新开会话"。之前只写了 aria-label,那只有读屏软件听得到,用眼睛的人反而没有。这条规则对面板里所有纯图标按钮生效(Queue 行的立即发送 / 编辑 / 取消排队 / 拖动、气泡上的复制),不只这一组。时间点常驻在图标右侧,不进 tip。</span>
         </div>
       </article>
 
@@ -2100,30 +2149,30 @@ button.att-i:hover { border-color: var(--border-strong); }
               <div class="queue">
                 <div class="qh"><span>排队中</span><span class="c">3 条</span></div>
                 <div class="q">
-                  <span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
+                  <span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
                   <span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span>
                   <span class="qops">
-                    <button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
-                    <button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-                    <button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button>
+                    <button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+                    <button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+                    <button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button>
                   </span>
                 </div>
                 <div class="q">
-                  <span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
+                  <span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
                   <span class="ix">2</span><span class="tx">商品卡换成两列</span>
                   <span class="qops">
-                    <button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
-                    <button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-                    <button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button>
+                    <button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+                    <button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+                    <button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button>
                   </span>
                 </div>
                 <div class="q">
-                  <span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
+                  <span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
                   <span class="ix">3</span><span class="tx">结算页那张商品缩略图也一起换掉,顺便把价格行的字号调大一档 —— 现在两页放一起看着不像一套</span>
                   <span class="qops">
-                    <button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
-                    <button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-                    <button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button>
+                    <button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+                    <button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+                    <button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button>
                   </span>
                 </div>
               </div>
@@ -2135,8 +2184,8 @@ button.att-i:hover { border-color: var(--border-strong); }
               <div class="msg-me"><div class="bub">设置页也加上深色模式开关</div></div>
               <div class="queue" style="margin-top:10px">
                 <div class="qh"><span>排队中</span><span class="c">2 条</span></div>
-                <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">商品卡换成两列</span><span class="qops"><button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
-                <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
+                <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">商品卡换成两列</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
+                <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
               </div>
             </div>
           </div>
