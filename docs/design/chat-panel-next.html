@@ -1113,7 +1113,16 @@ button.att-d:hover { border-color: var(--border-strong); }
 .term .er { color: var(--text-strong); }
 .term .er::first-letter { color: var(--red); font-weight: 700; }
 /* 卡头右侧的「失败」二字,是这张卡唯一的红 */
-.card > .h .fx { flex: none; margin-inline-start: 6px; font-size: var(--t-cap); font-weight: 600; color: var(--red); }
+/* 状态在前、耗时在后 —— 全文件统一这一个顺序。
+   两条理由:
+   ① 出没出事是要先知道的,耗时是知道之后才想看的补充;
+      读到「2.1s」再读到「失败」,等于先给了一个用不上的数。
+   ② 工具调用那一行早就是这个顺序(失败 1.2s),而卡头是反的,
+      同一份稿子里两种排法,实现时必然各写各的。
+   .fx 接过 auto 外边距(原来靠后面的 .n 把自己推到最右),
+   换位之后由它来顶住右侧,.n 跟在它后面。 */
+.card > .h .fx { flex: none; margin-inline-start: auto; font-size: var(--t-cap); font-weight: 600; color: var(--red); }
+.card > .h .fx + .n { margin-left: 6px; }
 
 /* ---- 生图 ---- */
 .imgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -2305,7 +2314,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>失败 · 展示错误</span><i></i></div>
             <div class="st-b">
               <div class="card" style="border-color:var(--red-border)">
-                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>npm run build</b><span class="n">2.1s</span><span class="fx">失败</span></div>
+                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>npm run build</b><span class="fx">失败</span><span class="n">2.1s</span></div>
                 <div class="term"><div class="er">✗ Could not resolve "./ProductCard" from src/pages/List.tsx</div></div>
               </div>
             </div>
