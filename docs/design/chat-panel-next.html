@@ -734,7 +734,25 @@ button.att-d:hover { border-color: var(--border-strong); }
   display: flex; align-items: baseline;
   font-size: var(--t-mini); color: var(--text-strong);
 }
-.att-d .nm .base { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 省略号切在【中间】,不切在结尾。
+   ------------------------------------------------------------
+   两个理由,都是实打实的:
+   ① 被吃掉的正好是最该留的。文件名的分辨力几乎全在末尾 —— 「-v3」
+      「终稿」「第三轮评审后」;从尾巴截,「跨端适配检查清单-v3.md」和
+      「跨端适配检查清单-v2.md」会截成一模一样的东西。
+   ② 「…」紧挨着后缀的点,「说…」+「.md」连读就是四个点糊成一片,
+      人一眼分不清哪个是省略、哪个是扩展名的分隔符。
+   ------------------------------------------------------------
+   ------------------------------------------------------------
+   这里的稿子直接写的是【切好的结果】,因为纯 CSS 做不到。
+   试过把主名拆成"头段(text-overflow:ellipsis)+ 尾段(flex:none)":
+   两段确实各归各位,但接缝处会空出一道 37px 的缝 —— ellipsis 是按
+   "整字放不下就换成省略号"来截的,而省略号比一个汉字窄得多,
+   那点差额留在了收缩项的盒子里,CSS 关不掉。
+   所以【实现时要在 JS 里量】:按可用宽度算出头段能放几个字,
+   拼成一段连续文本再渲染。切法是"末尾保留一个词" ——
+   中文留最后 2–3 字,拉丁留最后一个单词,-v3 这种版本尾巴算作一个词。 */
+.att-d .nm .base { min-width: 0; overflow: hidden; white-space: nowrap; }
 .att-d .nm .ext { flex: none; white-space: nowrap; }
 .att-d .meta { display: block; margin-top: 1px; font-size: var(--t-cap); color: var(--text-faint); }
 /* 「×」跟图卡同一个位置:右上角。两张卡形状不同,但"删除在哪儿"必须
@@ -1537,7 +1555,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>文档 · 出不了预览的换一张更宽的卡,不硬塞缩略图</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件…明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button>
                 <button class="att-d" type="button" aria-label="打开 埋点清单-v3.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">埋点清单-v3</span><span class="ext">.csv</span></span><span class="meta">4 KB</span></span></button>
               </div>
             </div>
@@ -1547,7 +1565,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="att">
                 <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
-                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">跨端适配检查清单-v3</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">跨端适配检…-v3</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button>
                 <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button>
               </div>
             </div>
@@ -1567,10 +1585,10 @@ button.att-d:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>文件名过长 · 只截主名,后缀永远完整</span><i></i></div>
+            <div class="st-l"><span>文件名过长 · 省略号切在中间,末尾保留一个词</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件规格说明终稿-第三轮评审后</span><span class="ext">.md</span></span><span class="meta">18 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件…评审后</span><span class="ext">.md</span></span><span class="meta">18 KB</span></span></button>
                 <button class="att-d" type="button" aria-label="打开 埋点.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">埋点</span><span class="ext">.csv</span></span><span class="meta">2 KB</span></span></button>
               </div>
             </div>
@@ -1651,7 +1669,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>发送前 · 文档同在一行,「×」位置不变</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件…明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
                 <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
               </div>
             </div>
