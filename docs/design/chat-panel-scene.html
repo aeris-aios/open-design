@@ -1189,7 +1189,10 @@ button.att-d:hover { border-color: var(--border-strong); }
 .answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-muted); }
 .answered .k svg { flex: none; width: 13px; height: 13px; }
 .answered .ab { color: var(--text); }
-.answered b { color: var(--text-strong); font-weight: 600; }
+/* 只用颜色分层,不再叠字重。答案是 --text-strong、旁边的关键词 .ak 是 --text-soft,
+   两档颜色已经把"这是答案"和"这是问的哪件事"分开了;再加一档字重是同一件事
+   说两遍。规则不能删 —— <b> 有浏览器默认的 700,删了反而更重。 */
+.answered b { color: var(--text-strong); font-weight: inherit; }
 .answered .al { margin: 0; padding: 0; list-style: none; }
 .answered .al li { color: var(--text-strong); }
 /* 每条前面先写问题的重点词,后面才是答案。
