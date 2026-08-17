@@ -194,6 +194,7 @@ function aggregate(): StrategyTaskObservationAggregateV1 {
         status: 'failed',
         promptBoundary: 'childInjected',
         usage: usage(40, 4),
+        attributes: { buildPackageId: 'shell', model: 'claude-haiku-4-5' },
         limitations: ['child_failed_parent_recovered'],
       }),
       observation({
@@ -223,7 +224,11 @@ function aggregate(): StrategyTaskObservationAggregateV1 {
         id: 'tool-fixture',
         kind: 'tool',
         parentId: childId,
-        attributes: { toolName: 'Bash', opaqueRuntimePayload: 'token=fixture-secret' },
+        attributes: {
+          toolName: 'Bash',
+          toolCallHash: 'c'.repeat(64),
+          opaqueRuntimePayload: 'token=fixture-secret',
+        },
         timing: {
           availability: 'unavailable',
           limitations: ['timing_not_observed'],
@@ -326,6 +331,10 @@ const LEGACY_OBSERVATION_METADATA_FIELDS = [
   'taskRunIndex',
   'stage',
   'status',
+  'buildPackageId',
+  'modelName',
+  'toolName',
+  'toolCallHash',
   'promptAvailability',
   'usageAvailability',
   'usageSource',
@@ -346,6 +355,10 @@ const OTLP_OBSERVATION_METADATA_FIELDS = [
   'langfuse.observation.metadata.task_run_index',
   'langfuse.observation.metadata.stage',
   'langfuse.observation.metadata.status',
+  'langfuse.observation.metadata.build_package_id',
+  'langfuse.observation.metadata.model_name',
+  'langfuse.observation.metadata.tool_name',
+  'langfuse.observation.metadata.tool_call_hash',
   'langfuse.observation.metadata.prompt_availability',
   'langfuse.observation.metadata.usage_availability',
   'langfuse.observation.metadata.usage_source',
@@ -397,6 +410,9 @@ describe('task observation OTLP exporter', () => {
     expect(model.spanId).toBe(otlpTaskSpanId('model-owner'));
 
     expect(stringAttribute(child, 'langfuse.observation.metadata.status')).toBe('failed');
+    expect(stringAttribute(child, 'langfuse.observation.metadata.model_name')).toBe(
+      'claude-haiku-4-5',
+    );
     expect(stringAttribute(child, 'langfuse.observation.level')).toBe('ERROR');
     expect(stringAttribute(model, 'langfuse.observation.type')).toBe('generation');
     expect(stringAttribute(model, 'langfuse.observation.model.name')).toBe('gpt-fixture');
@@ -415,12 +431,20 @@ describe('task observation OTLP exporter', () => {
     expect(stringAttribute(tool, 'langfuse.observation.metadata.timing_mapping')).toBe(
       'aggregate_updated_at_zero_duration',
     );
+    expect(stringAttribute(tool, 'langfuse.observation.metadata.tool_name')).toBe('Bash');
+    expect(stringAttribute(tool, 'langfuse.observation.metadata.tool_call_hash')).toBe(
+      'c'.repeat(64),
+    );
     expect(tool.startTimeUnixNano).toBe(tool.endTimeUnixNano);
     expect(stringAttribute(tool, 'langfuse.observation.input')).toBeUndefined();
     const legacyTool = legacyEventFor(buildLegacyTaskObservationPayload(source), 'tool-fixture');
     expect(legacyTool.body.input).toBeUndefined();
     expect(legacyTool.body.startTime).toBeUndefined();
     expect(legacyTool.body.endTime).toBeUndefined();
+    expect(legacyTool.body.metadata).toMatchObject({
+      toolName: 'Bash',
+      toolCallHash: 'c'.repeat(64),
+    });
     expect(JSON.stringify(first)).not.toContain('fixture-secret');
     expect(JSON.stringify(first)).not.toContain('must-not-export');
     expect(JSON.stringify(first)).not.toContain('/Users/alice');
@@ -448,6 +472,17 @@ describe('task observation OTLP exporter', () => {
     expect(JSON.parse(
       stringAttribute(model, 'langfuse.observation.metadata.usage_limitations')!,
     )).toEqual(['usage_provider_reported']);
+    expect(
+      (legacyEventFor(
+        buildLegacyTaskObservationPayload(source),
+        'child-fixture',
+      ).body.metadata as Record<string, unknown>)
+        .buildPackageId,
+    ).toBe('shell');
+    expect(stringAttribute(
+      spanFor(first, 'child-fixture'),
+      'langfuse.observation.metadata.build_package_id',
+    )).toBe('shell');
   });
 
   it('keeps legacy and OTLP hierarchy, status, usage, and limitations equivalent', () => {
@@ -464,6 +499,31 @@ describe('task observation OTLP exporter', () => {
     const broken = structuredClone(otlp);
     spanFor(broken, 'child-fixture').parentSpanId = otlpTaskSpanId('wrong-parent');
     expect(legacyAndOtlpTaskMappingsMatch(source, legacy, broken)).toBe(false);
+  });
+
+  it('rejects omission of safe Child model and tool behavior metadata', () => {
+    const source = aggregate();
+    const legacy = buildLegacyTaskObservationPayload(source);
+    const otlp = buildOtlpTaskObservationPayload(source);
+
+    const legacyWithoutTool = structuredClone(legacy);
+    delete (legacyEventFor(legacyWithoutTool, 'tool-fixture').body.metadata as Record<string, unknown>)
+      .toolName;
+    expect(legacyAndOtlpTaskMappingsMatch(source, legacyWithoutTool, otlp)).toBe(false);
+
+    const otlpWithoutToolHash = structuredClone(otlp);
+    const toolSpan = spanFor(otlpWithoutToolHash, 'tool-fixture');
+    toolSpan.attributes = toolSpan.attributes.filter((attribute) => (
+      attribute.key !== 'langfuse.observation.metadata.tool_call_hash'
+    ));
+    expect(legacyAndOtlpTaskMappingsMatch(source, legacy, otlpWithoutToolHash)).toBe(false);
+
+    const otlpWithoutChildModel = structuredClone(otlp);
+    const childSpan = spanFor(otlpWithoutChildModel, 'child-fixture');
+    childSpan.attributes = childSpan.attributes.filter((attribute) => (
+      attribute.key !== 'langfuse.observation.metadata.model_name'
+    ));
+    expect(legacyAndOtlpTaskMappingsMatch(source, legacy, otlpWithoutChildModel)).toBe(false);
   });
 
   it.each(LEGACY_TRACE_METADATA_FIELDS)(

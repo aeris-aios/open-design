@@ -111,6 +111,30 @@ export const OPENCODE_1_18_18_BEST_EFFORT_MANIFEST =
   });
 
 /**
+ * Open Design-owned replay of the exact Claude 2.1.233 Agent stream-json
+ * protocol. The checked-in seed contains structural identities only; no
+ * Prompt body, output, path, credential, or upstream endorsement is retained.
+ */
+export const CLAUDE_2_1_233_BEST_EFFORT_MANIFEST =
+  RuntimeCapabilityFixtureManifestV1Schema.parse({
+    schema: OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
+    fixtureVersion: 'claude-2.1.233-seven-path/v1',
+    runtimePath: 'claude-code',
+    agentId: 'claude',
+    agentCliVersion: '2.1.233 (Claude Code)',
+    runtimeAdapterVersion: 'od-claude-stream-json/v1',
+    provenance: {
+      kind: 'sanitized_real',
+      recordingDigest:
+        'sha256:5681a9a211562e119efc470b6846a4be8b3ee822f4e15f8967c19871e69c9b8b',
+      anonymizationVersion: 'od-runtime-evidence/v1',
+      evidenceReview: 'open_design_best_effort',
+    },
+    containsSensitiveContent: false,
+    cases: ALL_REQUIRED_CASES,
+  });
+
+/**
  * Provider-backed local replay for the unpublished Vela candidate paired with
  * native OpenCode 1.18.18. All seven paths pass, but the tuple intentionally
  * remains outside the production registry until Vela publishes an immutable
@@ -140,6 +164,7 @@ export const VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST =
 export const OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS:
   readonly RuntimeCapabilityFixtureManifestV1[] = [
     CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+    CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
     OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
     VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
   ];
@@ -147,6 +172,7 @@ export const OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS:
 export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
   readonly RuntimeCapabilityRegistryEntryV1[] = [
     CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+    CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
     OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
   ].map((manifest) => RuntimeCapabilityRegistryEntryV1Schema.parse({
     runtimePath: manifest.runtimePath,

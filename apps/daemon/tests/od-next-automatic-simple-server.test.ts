@@ -46,7 +46,10 @@ import {
   clearOdNextRolloutStop,
   latchOdNextRolloutStop,
 } from '../src/strategies/od-next/rollout.js';
-import { hashOdNextRuntimeCapabilitySnapshotV1 } from '../src/runtimes/od-next-capability-gate.js';
+import {
+  hashOdNextRuntimeCapabilitySnapshotV1,
+  resolveBundledOdNextRuntimeCapability,
+} from '../src/runtimes/od-next-capability-gate.js';
 
 type StartedServer = {
   url: string;
@@ -58,6 +61,7 @@ type RunStatus = {
   id: string;
   status: string;
   updatedAt: number;
+  eventsLogPath: string;
   error?: string | null;
   errorCode?: string | null;
   strategyTask?: {
@@ -1084,6 +1088,56 @@ describe('OD Next automatic production through the real server', () => {
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(2);
   });
 
+  it('binds native Claude Agents to complex Build Packages and completes from durable facts', async () => {
+    const capabilityResult = resolveBundledOdNextRuntimeCapability({
+      agentId: 'claude',
+      agentCliVersion: '2.1.233 (Claude Code)',
+    });
+    expect(capabilityResult.reason).toBe('capability_resolved');
+    if (!capabilityResult.snapshot) throw new Error('expected verified Claude capability');
+    const fixture = await createFixture('complex', {
+      selectedAgentId: 'claude',
+      capability: capabilityResult.snapshot,
+    });
+    if (!started) throw new Error('expected running daemon fixture');
+
+    queueFixtureIds(fixture);
+    await postRun(started.url, createRunRequest(fixture, 'Build the complex prototype.'));
+    const terminal = await waitForTask(fixture.taskExecutionId, 'completed');
+    expect(terminal).toMatchObject({ executionMode: 'complex' });
+    expect(terminal.runs.map((run) => run.inputStage)).toEqual(['request', 'production']);
+
+    const invocations = await readClaudeInvocations(fixture.logPath, fixture.projectId);
+    expect(invocations).toHaveLength(2);
+    const production = invocations[1]!;
+    const agentsFlag = production.argv.indexOf('--agents');
+    expect(agentsFlag).toBeGreaterThan(-1);
+    const nativeAgents = JSON.parse(production.argv[agentsFlag + 1]!) as Record<string, unknown>;
+    const handles = Object.keys(nativeAgents);
+    expect(handles).toHaveLength(2);
+    expect(handles.every((handle) => /^od-build-\d+-[a-f0-9]{16}$/.test(handle))).toBe(true);
+    expect(JSON.stringify(nativeAgents)).not.toContain('shell');
+    expect(JSON.stringify(nativeAgents)).not.toContain('flow');
+    const productionPrompt = (JSON.parse(production.stdin) as any).message.content[0].text;
+    expect(productionPrompt).toContain('"buildPackageId":"shell"');
+    expect(productionPrompt).toContain('"buildPackageId":"flow"');
+    expect(production.argv).toContain('--forward-subagent-text');
+
+    const productionRun = await getRun(started.url, terminal.runs[1]!.runId);
+    const childFacts = await readClaudeChildRuntimeFacts(productionRun.eventsLogPath);
+    expect(childFacts.filter((fact) => fact.state === 'completed').map((fact) => (
+      fact.buildPackageId
+    ))).toEqual(['shell', 'flow']);
+    const childToolFacts = await readClaudeChildToolRuntimeFacts(productionRun.eventsLogPath);
+    expect(childToolFacts.filter((fact) => fact.state === 'completed').map((fact) => (
+      [fact.buildPackageId, fact.toolName]
+    ))).toEqual([['shell', 'Bash'], ['flow', 'Bash']]);
+    const persistedEvents = await readFile(productionRun.eventsLogPath, 'utf8');
+    expect(persistedEvents).not.toContain('INTERNAL_CHILD_TEXT_SHOULD_NOT_PERSIST');
+    expect(persistedEvents).not.toContain('INTERNAL_CHILD_TOOL_INPUT');
+    expect(persistedEvents).not.toContain('INTERNAL_CHILD_TOOL_OUTPUT');
+  });
+
   async function createFixture(
     mode: 'repair' | 'direct' | 'complex',
     {
@@ -1110,17 +1164,18 @@ describe('OD Next automatic production through the real server', () => {
         .toString(16)
         .padStart(12, '0')}`;
       const taskExecutionId = `odnext_${taskOwnerUuid.replaceAll('-', '')}`;
-      const { bin, logPath } = await writeStrategyCodex(
-        binDir,
-        mode,
-        planContract(template.snapshotId, template.strategy, mode, capability),
-      );
+      const plan = planContract(template.snapshotId, template.strategy, mode, capability);
+      const { bin, logPath } = selectedAgentId === 'claude'
+        ? await writeStrategyClaude(binDir, plan)
+        : await writeStrategyCodex(binDir, mode, plan);
       const configResponse = await fetch(`${started.url}/api/app-config`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          agentId: 'codex',
-          agentCliEnv: { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
+          agentId: selectedAgentId,
+          agentCliEnv: selectedAgentId === 'claude'
+            ? { claude: { CLAUDE_BIN: bin } }
+            : { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
           telemetry: { metrics: false, content: false, artifactManifest: false },
           privacyDecisionAt: Date.now(),
         }),
@@ -1201,17 +1256,18 @@ describe('OD Next automatic production through the real server', () => {
       process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
     }
 
-    const { bin, logPath } = await writeStrategyCodex(
-      binDir,
-      mode,
-      planContract(snapshot.snapshotId, snapshot.strategy!, mode, capability),
-    );
+    const plan = planContract(snapshot.snapshotId, snapshot.strategy!, mode, capability);
+    const { bin, logPath } = selectedAgentId === 'claude'
+      ? await writeStrategyClaude(binDir, plan)
+      : await writeStrategyCodex(binDir, mode, plan);
     const configResponse = await fetch(`${started.url}/api/app-config`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        agentId: 'codex',
-        agentCliEnv: { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
+        agentId: selectedAgentId,
+        agentCliEnv: selectedAgentId === 'claude'
+          ? { claude: { CLAUDE_BIN: bin } }
+          : { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
         telemetry: { metrics: false, content: false, artifactManifest: false },
         privacyDecisionAt: Date.now(),
       }),
@@ -1501,7 +1557,7 @@ function planContract(
         : [],
     },
     runManifest: {
-      selectedAgentId: 'codex',
+      selectedAgentId: mode === 'complex' ? capability.agentId : 'codex',
       capabilitySnapshotHash: mode === 'complex'
         ? capability.snapshotHash.slice('sha256:'.length)
         : 'c'.repeat(64),
@@ -1651,6 +1707,137 @@ setTimeout(finish, 1500);
   return { bin, logPath };
 }
 
+async function writeStrategyClaude(
+  dir: string,
+  plan: OpenDesignPlanContractV2,
+): Promise<{ bin: string; logPath: string }> {
+  const bin = path.join(dir, 'claude-complex');
+  const logPath = path.join(dir, 'claude-complex.jsonl');
+  const complexPlan = [
+    'Prepared a complex plan.',
+    machineBlock('open-design-plan-contract', plan),
+    machineBlock('open-design-runtime-state', runtimeState({
+      outcome: 'plan_ready',
+      executionMode: 'complex',
+    })),
+  ].join('\n');
+  const complexProduction = machineBlock('open-design-runtime-state', runtimeState({
+    inputStage: 'production',
+    outcome: 'completed',
+    executionMode: 'complex',
+  }));
+  await writeFile(bin, `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const argv = process.argv.slice(2);
+const logPath = ${JSON.stringify(logPath)};
+if (argv.includes('--version')) { fs.writeSync(1, '2.1.233 (Claude Code)\\n'); process.exit(0); }
+if (argv.includes('--help')) {
+  fs.writeSync(1, 'Usage: claude -p [--include-partial-messages] [--forward-subagent-text] [--agents JSON] [--resume ID]\\n');
+  process.exit(0);
+}
+let stdin = '';
+let finished = false;
+function w(value) { fs.writeSync(1, JSON.stringify(value) + '\\n'); }
+function finish() {
+  if (finished || stdin.length === 0) return;
+  finished = true;
+  fs.appendFileSync(logPath, JSON.stringify({ argv, stdin, cwd: process.cwd(), startedAt: Date.now() }) + '\\n');
+  const production = stdin.includes('native continuation — production');
+  const snapshotPath = logPath + '.snapshot';
+  const detectedSnapshot = /applied snapshot:[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+    || /"snapshotId"\\s*:\\s*"([a-f0-9-]{36})"/.exec(stdin)?.[1];
+  if (detectedSnapshot) fs.writeFileSync(snapshotPath, detectedSnapshot);
+  const appliedSnapshot = detectedSnapshot
+    || (fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null);
+  let text = production ? ${JSON.stringify(complexProduction)} : ${JSON.stringify(complexPlan)};
+  if (appliedSnapshot) text = text.replaceAll(${JSON.stringify(plan.strategy.snapshotId)}, appliedSnapshot);
+  w({ type: 'system', subtype: 'init', model: 'claude-haiku-4-5', session_id: 'claude-complex-session', claude_code_version: '2.1.233' });
+  if (production) {
+    const agentsIndex = argv.indexOf('--agents');
+    const agents = agentsIndex >= 0 ? JSON.parse(argv[agentsIndex + 1]) : {};
+    const handles = Object.keys(agents);
+    for (let index = 0; index < handles.length; index += 1) {
+      const handle = handles[index];
+      const toolId = 'native-agent-' + index;
+      w({
+        type: 'assistant', parent_tool_use_id: null,
+        message: { id: 'delegate-' + index, stop_reason: 'tool_use', content: [{
+          type: 'tool_use', id: toolId, name: 'Agent',
+          input: { prompt: 'Execute the daemon-bound package only.', subagent_type: handle, model: 'haiku', isolation: 'worktree' },
+        }] },
+      });
+      w({
+        type: 'assistant', parent_tool_use_id: toolId,
+        message: { id: 'child-work-' + index, stop_reason: 'tool_use', content: [
+          { type: 'text', text: 'INTERNAL_CHILD_TEXT_SHOULD_NOT_PERSIST' },
+          { type: 'tool_use', id: 'child-tool-' + index, name: 'Bash', input: { command: 'INTERNAL_CHILD_TOOL_INPUT' } },
+        ] },
+      });
+      w({
+        type: 'user', parent_tool_use_id: toolId,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'child-tool-' + index, content: 'INTERNAL_CHILD_TOOL_OUTPUT' }] },
+      });
+      w({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: toolId, content: 'completed' }] },
+        tool_use_result: {
+          status: 'completed', agentId: 'child-' + index, agentType: handle,
+          resolvedModel: 'claude-haiku-4-5', totalDurationMs: 10 + index,
+          totalTokens: 3, usage: { input_tokens: 2, output_tokens: 1 },
+        },
+      });
+    }
+    fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Claude Complex</title>');
+  }
+  w({ type: 'assistant', parent_tool_use_id: null, message: { id: 'final', content: [{ type: 'text', text }], stop_reason: 'end_turn' } });
+  w({ type: 'result', subtype: 'success', is_error: false, session_id: 'claude-complex-session', stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 }, duration_ms: 30 });
+  setTimeout(() => process.exit(0), 10);
+}
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { stdin += chunk; setTimeout(finish, 0); });
+process.stdin.on('end', finish);
+process.stdin.on('error', finish);
+setTimeout(finish, 1500);
+`, 'utf8');
+  await chmod(bin, 0o755);
+  return { bin, logPath };
+}
+
+async function readClaudeChildRuntimeFacts(
+  eventsLogPath: string,
+): Promise<Array<Record<string, any>>> {
+  const raw = await readFile(eventsLogPath, 'utf8');
+  return raw.trim().split('\n').flatMap((line) => {
+    try {
+      const record = JSON.parse(line) as { event?: string; data?: Record<string, any> };
+      return record.event === 'agent'
+        && record.data?.name === 'claude_child_runtime_fact'
+        ? [record.data]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+async function readClaudeChildToolRuntimeFacts(
+  eventsLogPath: string,
+): Promise<Array<Record<string, any>>> {
+  const raw = await readFile(eventsLogPath, 'utf8');
+  return raw.trim().split('\n').flatMap((line) => {
+    try {
+      const record = JSON.parse(line) as { event?: string; data?: Record<string, any> };
+      return record.event === 'agent'
+        && record.data?.name === 'claude_child_tool_runtime_fact'
+        ? [record.data]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function createRunRequest(
   fixture: {
     projectId: string;
@@ -1754,6 +1941,21 @@ async function readProjectInvocations(logPath: string, projectId: string): Promi
       invocation.argv[0] === 'exec'
       && invocation.cwd.includes(projectId),
     );
+}
+
+async function readClaudeInvocations(logPath: string, projectId: string): Promise<Invocation[]> {
+  let raw = '';
+  try {
+    raw = await readFile(logPath, 'utf8');
+  } catch {
+    return [];
+  }
+  return raw
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Invocation)
+    .filter((invocation) => invocation.cwd.includes(projectId));
 }
 
 async function waitForInvocationCount(

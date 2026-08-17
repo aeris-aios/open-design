@@ -323,6 +323,37 @@ describe('OD Next V2 prompt recipe', () => {
     expect(production).not.toContain(recipe.generalOrchestration);
     expect(production).not.toContain(recipe.taskSkill);
     expect(production).not.toContain(B);
+    const complexProduction = composeOdNextStrategyContinuationV2({
+      stage: 'production',
+      nativeSessionResume: true,
+      taskExecutionId: 'task-1',
+      taskRunIndex: 2,
+      planContractHash: A,
+      nativeBuildPackageBindings: [{
+        buildPackageId: 'shell',
+        nativeAgentHandle: 'od-build-1-0123456789abcdef',
+        dependsOn: [],
+      }, {
+        buildPackageId: 'flow',
+        nativeAgentHandle: 'od-build-2-fedcba9876543210',
+        dependsOn: ['shell'],
+      }],
+    });
+    expect(complexProduction).toContain('structured `subagent_type` handle');
+    expect(complexProduction).toContain('od-build-1-0123456789abcdef');
+    expect(complexProduction).toContain('"dependsOn":["shell"]');
+    expect(() => composeOdNextStrategyContinuationV2({
+      stage: 'production',
+      nativeSessionResume: true,
+      taskExecutionId: 'task-1',
+      taskRunIndex: 2,
+      planContractHash: A,
+      nativeBuildPackageBindings: [{
+        buildPackageId: 'shell',
+        nativeAgentHandle: 'shell-from-prose',
+        dependsOn: [],
+      }],
+    })).toThrow(/daemon-issued/);
     expect(() => composeOdNextStrategyContinuationV2({
       stage: 'production',
       nativeSessionResume: false,

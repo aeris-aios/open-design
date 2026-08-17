@@ -16,7 +16,11 @@ import {
 import {
   buildLegacyTaskObservationPayload,
   prepareLegacyTaskObservationExport,
+  safeTaskObservationBuildPackageId,
   safeTaskObservationLimitationCodes,
+  safeTaskObservationModelName,
+  safeTaskObservationToolCallHash,
+  safeTaskObservationToolName,
   safeTaskObservationUsageValueSources,
   safeTaskObservationUsageValues,
   safeTaskObservationRuntimeVersions,
@@ -326,13 +330,6 @@ function observationUsageDetails(
   });
 }
 
-function modelName(observation: NormalizedAgentObservationV1): string | undefined {
-  const value = observation.attributes?.['model'];
-  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
-    ? value
-    : undefined;
-}
-
 function buildRootSpan(
   aggregate: StrategyTaskObservationAggregateV1,
   traceId: string,
@@ -410,7 +407,7 @@ function buildObservationSpan(
         ['langfuse.observation.level', observationLevel(observation.status)],
         ['langfuse.observation.input', input === undefined ? undefined : jsonString(input)],
         ['langfuse.observation.model.name', observation.kind === 'model_call'
-          ? modelName(observation)
+          ? safeTaskObservationModelName(observation)
           : undefined],
         ['langfuse.observation.usage_details', usageDetails],
         ['langfuse.observation.metadata.observation_id', observation.identity.observationId],
@@ -419,6 +416,14 @@ function buildObservationSpan(
         ['langfuse.observation.metadata.task_run_index', String(observation.identity.taskRunIndex)],
         ['langfuse.observation.metadata.stage', observation.stage],
         ['langfuse.observation.metadata.status', observation.status],
+        ['langfuse.observation.metadata.build_package_id',
+          safeTaskObservationBuildPackageId(observation)],
+        ['langfuse.observation.metadata.model_name',
+          safeTaskObservationModelName(observation)],
+        ['langfuse.observation.metadata.tool_name',
+          safeTaskObservationToolName(observation)],
+        ['langfuse.observation.metadata.tool_call_hash',
+          safeTaskObservationToolCallHash(observation)],
         ['langfuse.observation.metadata.prompt_availability', prompt?.availability],
         ['langfuse.observation.metadata.usage_availability', observation.usage.availability],
         ['langfuse.observation.metadata.usage_source', observation.usage.source],
@@ -673,7 +678,7 @@ export function legacyAndOtlpTaskMappingsMatch(
     const input = safeObservationInput(observation);
     const expectedInput = input === undefined ? undefined : jsonString(input);
     const expectedModel = observation.kind === 'model_call'
-      ? modelName(observation)
+      ? safeTaskObservationModelName(observation)
       : undefined;
     const legacyTiming = legacyObservationTiming(observation);
     const otlpTiming = observationTiming(observation, aggregate.root.updatedAt);
@@ -710,6 +715,10 @@ export function legacyAndOtlpTaskMappingsMatch(
         taskRunIndex: observation.identity.taskRunIndex,
         stage: observation.stage,
         status: observation.status,
+        buildPackageId: safeTaskObservationBuildPackageId(observation),
+        modelName: safeTaskObservationModelName(observation),
+        toolName: safeTaskObservationToolName(observation),
+        toolCallHash: safeTaskObservationToolCallHash(observation),
         promptAvailability: prompt?.availability,
         usageAvailability: observation.usage.availability,
         usageSource: observation.usage.source,
@@ -732,6 +741,14 @@ export function legacyAndOtlpTaskMappingsMatch(
         String(observation.identity.taskRunIndex) ||
       attributeValue(otlp, 'langfuse.observation.metadata.stage') !== observation.stage ||
       attributeValue(otlp, 'langfuse.observation.metadata.status') !== observation.status ||
+      attributeValue(otlp, 'langfuse.observation.metadata.build_package_id') !==
+        safeTaskObservationBuildPackageId(observation) ||
+      attributeValue(otlp, 'langfuse.observation.metadata.model_name') !==
+        safeTaskObservationModelName(observation) ||
+      attributeValue(otlp, 'langfuse.observation.metadata.tool_name') !==
+        safeTaskObservationToolName(observation) ||
+      attributeValue(otlp, 'langfuse.observation.metadata.tool_call_hash') !==
+        safeTaskObservationToolCallHash(observation) ||
       attributeValue(otlp, 'langfuse.observation.metadata.prompt_availability') !==
         prompt?.availability ||
       attributeValue(otlp, 'langfuse.observation.input') !== expectedInput ||

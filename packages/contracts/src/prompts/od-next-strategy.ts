@@ -93,6 +93,11 @@ export type OdNextStrategyContinuationV2 =
       taskExecutionId: string;
       taskRunIndex: number;
       planContractHash: string;
+      nativeBuildPackageBindings?: readonly {
+        buildPackageId: string;
+        nativeAgentHandle: string;
+        dependsOn: readonly string[];
+      }[];
     };
 
 function requireSha256(value: string, field: string): string {
@@ -621,7 +626,32 @@ export function composeOdNextStrategyContinuationV2(
   } else if (input.stage === 'contract_repair') {
     payload = `# OD Next native continuation — contract_repair\n\nThe semantic plan in this native session is frozen. Make one serialization-only attempt that addresses the issue below. Use no tools, do not re-plan, and preserve the locked route, execution mode, Design Spec, steps, and Build Packages.\n\n## Serialization issue\n\n${requireText(input.serializationIssue, 'serializationIssue')}`;
   } else {
-    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question.`;
+    const bindings = input.nativeBuildPackageBindings ?? [];
+    const packageIds = bindings.map(({ buildPackageId }) => requireText(
+      buildPackageId,
+      'nativeBuildPackageBindings.buildPackageId',
+    ));
+    const handles = bindings.map(({ nativeAgentHandle }) => {
+      const handle = requireText(
+        nativeAgentHandle,
+        'nativeBuildPackageBindings.nativeAgentHandle',
+      );
+      if (!/^od-build-[1-9][0-9]*-[a-f0-9]{16}$/.test(handle)) {
+        throw new TypeError('nativeAgentHandle must use the daemon-issued OD Next format.');
+      }
+      return handle;
+    });
+    if (new Set(packageIds).size !== packageIds.length || new Set(handles).size !== handles.length) {
+      throw new TypeError('Native Build Package bindings must be one-to-one.');
+    }
+    const bindingBlock = bindings.length === 0
+      ? ''
+      : `\n\n## Native Build Package bindings\n\nFor every Build Package below, invoke exactly one native \`Agent\` Child with the exact structured \`subagent_type\` handle. Observe dependency order: a dependent Child may start only after every declared dependency Child completed. Do not substitute a package id written in Prompt, description, prose, or output; Open Design verifies only the native handle.\n\n\`\`\`json\n${JSON.stringify(bindings.map((binding) => ({
+          buildPackageId: requireText(binding.buildPackageId, 'buildPackageId'),
+          nativeAgentHandle: requireText(binding.nativeAgentHandle, 'nativeAgentHandle'),
+          dependsOn: binding.dependsOn.map((dependency) => requireText(dependency, 'dependsOn')),
+        })))}\n\`\`\``;
+    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question.${bindingBlock}`;
   }
   return serializeOdNextRequestTurnV1({
     taskExecutionId: input.taskExecutionId,

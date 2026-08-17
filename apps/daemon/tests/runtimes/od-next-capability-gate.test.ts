@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -11,6 +12,7 @@ import {
 } from '@open-design/contracts';
 import {
   CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+  CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
   OD_NEXT_RUNTIME_CAPABILITY_REGISTRY,
   OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS,
   OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
@@ -119,10 +121,11 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('keeps unpublished groups unknown while registering the reviewed Codex and native OpenCode tuples', () => {
-    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(2);
+  it('keeps unpublished groups unknown while registering the reviewed Codex, Claude, and native OpenCode tuples', () => {
+    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(3);
     expect(OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS).toEqual([
       CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+      CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
       OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
       VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
     ]);
@@ -159,6 +162,53 @@ describe('OD Next runtime capability gate', () => {
         reason: 'native_continuation_not_verified',
       });
     }
+  });
+
+  it('resolves Claude 2.1.233 only after replaying the digest-bound seven-path seed', () => {
+    const seed = JSON.parse(readFileSync(
+      join(fixtureDir, 'claude-2.1.233.sanitized-real-seed.json'),
+      'utf8',
+    )) as {
+      recordingDigest: string;
+      cases: Array<{ caseId: string; outcome: string }>;
+    };
+    const digest = `sha256:${createHash('sha256')
+      .update(JSON.stringify(seed.cases), 'utf8')
+      .digest('hex')}`;
+    expect(seed.recordingDigest).toBe(digest);
+    expect(seed.cases.map(({ caseId }) => caseId)).toEqual(
+      CLAUDE_2_1_233_BEST_EFFORT_MANIFEST.cases.map(({ id }) => id),
+    );
+    expect(seed.cases.every(({ outcome }) => outcome === 'passed')).toBe(true);
+    expect(CLAUDE_2_1_233_BEST_EFFORT_MANIFEST.provenance).toMatchObject({
+      kind: 'sanitized_real',
+      evidenceReview: 'open_design_best_effort',
+      recordingDigest: digest,
+    });
+
+    const exact = resolveOdNextRuntimeCapability({
+      agentId: 'claude',
+      agentCliVersion: '2.1.233 (Claude Code)',
+      fixtureVersion: CLAUDE_2_1_233_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    });
+    expect(exact).toMatchObject({
+      tupleMatched: true,
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: '2.1.233 (Claude Code)',
+        nativeSessionContinuation: { support: 'verified' },
+        nativeSubagents: { support: 'verified', evidenceLevel: 'L2' },
+      },
+    });
+    expect(resolveOdNextRuntimeCapability({
+      agentId: 'claude',
+      agentCliVersion: '2.1.234 (Claude Code)',
+      fixtureVersion: CLAUDE_2_1_233_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    }).reason).not.toBe('capability_resolved');
   });
 
   it('accepts the Vela seven-path replay as best-effort evidence without promoting the unpublished build', () => {

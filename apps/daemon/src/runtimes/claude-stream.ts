@@ -23,6 +23,7 @@ import { createRoleMarkerGuard, type RoleMarkerGuard } from '../role-marker-guar
 import {
   createClaudeChildEvidenceCollector,
   type ClaudeChildRuntimeFact,
+  type ClaudeChildToolRuntimeFact,
   type ClaudeOpenChildTerminationReason,
 } from './claude-child-evidence.js';
 
@@ -49,7 +50,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export interface ClaudeStreamHandlerOptions {
   suppressHtmlArtifactsAfterFileWrite?: boolean;
   onChildRuntimeFact?: (fact: ClaudeChildRuntimeFact) => void;
+  onChildToolRuntimeFact?: (fact: ClaudeChildToolRuntimeFact) => void;
   childEvidenceNow?: () => number;
+  nativeBuildPackageBindings?: Readonly<Record<string, string>>;
+  /** Consume forwarded Child frames only as native evidence, never as parent UI output. */
+  suppressForwardedSubagentEvents?: boolean;
 }
 
 export function createClaudeStreamHandler(
@@ -57,10 +62,16 @@ export function createClaudeStreamHandler(
   options: ClaudeStreamHandlerOptions = {},
 ) {
   let buffer = '';
-  const childEvidence = options.onChildRuntimeFact
+  const childEvidence = options.onChildRuntimeFact || options.onChildToolRuntimeFact
     ? createClaudeChildEvidenceCollector({
-        onFact: options.onChildRuntimeFact,
+        ...(options.onChildRuntimeFact ? { onFact: options.onChildRuntimeFact } : {}),
+        ...(options.onChildToolRuntimeFact
+          ? { onToolFact: options.onChildToolRuntimeFact }
+          : {}),
         ...(options.childEvidenceNow ? { now: options.childEvidenceNow } : {}),
+        ...(options.nativeBuildPackageBindings
+          ? { nativeBuildPackageBindings: options.nativeBuildPackageBindings }
+          : {}),
       })
     : null;
 
@@ -391,6 +402,13 @@ export function createClaudeStreamHandler(
     if (!isRecord(obj)) return;
 
     childEvidence?.observe(obj);
+    if (
+      options.suppressForwardedSubagentEvents === true &&
+      typeof obj.parent_tool_use_id === 'string' &&
+      obj.parent_tool_use_id.trim().length > 0
+    ) {
+      return;
+    }
 
     if (obj.type === 'system' && obj.subtype === 'init') {
       onEvent({

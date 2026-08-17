@@ -715,10 +715,43 @@ export function safeTaskObservationLimitationCodes(
   ));
 }
 
-function safeModelName(observation: NormalizedAgentObservationV1): string | undefined {
+/** Plan-owned Build Package ids are observable only when they fit a bounded
+ * identifier shape; arbitrary provider attributes never cross the sink. */
+export function safeTaskObservationBuildPackageId(
+  observation: NormalizedAgentObservationV1,
+): string | undefined {
+  const value = observation.attributes?.['buildPackageId'];
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
+    ? value
+    : undefined;
+}
+
+export function safeTaskObservationModelName(
+  observation: NormalizedAgentObservationV1,
+): string | undefined {
   const model = observation.attributes?.['model'];
   return typeof model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(model)
     ? model
+    : undefined;
+}
+
+export function safeTaskObservationToolName(
+  observation: NormalizedAgentObservationV1,
+): string | undefined {
+  const value = observation.attributes?.['toolName'];
+  return observation.kind === 'tool' &&
+    typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/.test(value)
+    ? value
+    : undefined;
+}
+
+export function safeTaskObservationToolCallHash(
+  observation: NormalizedAgentObservationV1,
+): string | undefined {
+  const value = observation.attributes?.['toolCallHash'];
+  return observation.kind === 'tool' &&
+    typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+    ? value
     : undefined;
 }
 
@@ -810,6 +843,10 @@ export function buildLegacyTaskObservationPayload(
         taskRunIndex: observation.identity.taskRunIndex,
         stage: observation.stage,
         status: observation.status,
+        buildPackageId: safeTaskObservationBuildPackageId(observation),
+        modelName: safeTaskObservationModelName(observation),
+        toolName: safeTaskObservationToolName(observation),
+        toolCallHash: safeTaskObservationToolCallHash(observation),
         ...(promptBoundary
           ? { promptAvailability: promptBoundary.availability }
           : {}),
@@ -838,7 +875,7 @@ export function buildLegacyTaskObservationPayload(
       pushEvent('generation-create', {
         ...common,
         ...(usage ? { usage } : {}),
-        model: safeModelName(observation),
+        model: safeTaskObservationModelName(observation),
       });
     } else {
       pushEvent('span-create', common);

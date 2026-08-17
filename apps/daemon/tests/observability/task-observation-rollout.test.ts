@@ -547,6 +547,124 @@ describe('task observation rollout', () => {
     expect(serialized).not.toContain('sk-test-');
   });
 
+  it('exports parent and Claude Child tool behavior as safe nested Langfuse spans', async () => {
+    const childPrompt = buildSafeChildPromptTelemetry(['Inspect the frozen package.']);
+    const rawParentToolCallId = 'raw-parent-agent-call';
+    const rawChildToolCallId = 'raw-child-bash-call';
+    const childToolHash = createHash('sha256')
+      .update(rawChildToolCallId, 'utf8')
+      .digest('hex');
+    const run = {
+      ...syntheticRun(),
+      agentId: 'claude',
+      preflightAgentCliVersion: '2.1.233',
+      events: [
+        ...syntheticRun().events,
+        {
+          event: 'agent', timestamp: 1_300,
+          data: {
+            type: 'tool_use', id: rawParentToolCallId, name: 'Agent',
+            input: { prompt: 'must not export from generic tool telemetry' },
+          },
+        },
+        {
+          event: 'agent', timestamp: 1_310,
+          data: {
+            type: 'diagnostic', name: 'claude_child_runtime_fact',
+            adapterVersion: 'od-claude-child-evidence/v1',
+            childId: rawParentToolCallId,
+            state: 'started',
+            source: 'claude_stream_json',
+            sourceEventType: 'assistant.parent_tool_use_id',
+            observedAtMs: 1_310,
+            startedAtMs: 1_310,
+            runtimeSessionId: 'claude-session',
+            runtimeReportedVersion: '2.1.233',
+            promptHash: childPrompt.hash,
+            promptBytes: childPrompt.bytes,
+            promptSafePayload: childPrompt.safePayload,
+          },
+        },
+        {
+          event: 'agent', timestamp: 1_400,
+          data: {
+            type: 'diagnostic', name: 'claude_child_tool_runtime_fact',
+            adapterVersion: 'od-claude-child-evidence/v1',
+            childId: rawParentToolCallId,
+            toolCallHash: childToolHash,
+            toolName: 'Bash',
+            state: 'completed',
+            source: 'claude_stream_json',
+            sourceEventType: 'user.child_tool_result',
+            observedAtMs: 1_400,
+            startedAtMs: 1_350,
+            endedAtMs: 1_400,
+            runtimeSessionId: 'claude-session',
+            runtimeReportedVersion: '2.1.233',
+          },
+        },
+        {
+          event: 'agent', timestamp: 1_450,
+          data: {
+            type: 'diagnostic', name: 'claude_child_runtime_fact',
+            adapterVersion: 'od-claude-child-evidence/v1',
+            childId: rawParentToolCallId,
+            state: 'completed',
+            source: 'claude_stream_json',
+            sourceEventType: 'user.tool_result',
+            observedAtMs: 1_450,
+            startedAtMs: 1_310,
+            endedAtMs: 1_450,
+            runtimeSessionId: 'claude-session',
+            runtimeReportedVersion: '2.1.233',
+            promptHash: childPrompt.hash,
+            promptBytes: childPrompt.bytes,
+            promptSafePayload: childPrompt.safePayload,
+            resolvedModel: 'claude-haiku-4-5',
+            usage: { inputTokens: 7, outputTokens: 3 },
+          },
+        },
+        {
+          event: 'agent', timestamp: 1_460,
+          data: {
+            type: 'tool_result', toolUseId: rawParentToolCallId,
+            content: 'must not export from generic tool telemetry', isError: false,
+          },
+        },
+      ],
+    };
+    const requests: string[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+      requests.push(String(init?.body));
+      return acceptedResponse();
+    });
+
+    await expect(service({
+      mode: 'send',
+      fetchImpl,
+      getRun: (runId) => runId === 'run-1' ? run : null,
+    }).finalizeForRun('run-1')).resolves.toMatchObject({ action: 'sent' });
+
+    const serialized = requests.join('\n');
+    expect(serialized).toContain('claude-haiku-4-5');
+    expect(serialized).toContain('2.1.233');
+    expect(serialized).toContain('"toolName":"Agent"');
+    expect(serialized).toContain('"toolName":"Bash"');
+    expect(serialized).toContain(childToolHash);
+    expect(serialized).not.toContain(rawChildToolCallId);
+    expect(serialized).not.toContain('must not export from generic tool telemetry');
+    const batch = JSON.parse(requests[0]!) as {
+      batch: Array<{ body: Record<string, unknown> }>;
+    };
+    const byId = new Map(batch.batch.map((event) => [event.body.id, event.body]));
+    const parentToolId = `agent-tool:run-1:${createHash('sha256')
+      .update(rawParentToolCallId, 'utf8').digest('hex')}`;
+    const childId = `claude-child:run-1:${rawParentToolCallId}`;
+    const childToolId = `claude-child-tool:run-1:${rawParentToolCallId}:${childToolHash}`;
+    expect(byId.get(childId)?.parentObservationId).toBe(parentToolId);
+    expect(byId.get(childToolId)?.parentObservationId).toBe(childId);
+  });
+
   it('exports one root with the durable request/clarification/repair/production run chain', async () => {
     db.prepare(`
       UPDATE strategy_task_executions

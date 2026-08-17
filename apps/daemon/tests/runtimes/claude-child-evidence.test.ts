@@ -6,12 +6,15 @@ import { evaluateRuntimeEvidenceGraphV1 } from '@open-design/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { buildStructuredMainRunObservationV1 } from '../../src/observability/main-run-observation.js';
+import { adaptMainRunToolObservationsV1 } from '../../src/observability/runtime-child-observations.js';
 import { safeTaskObservationRuntimeVersions } from '../../src/observability/task-observation-aggregation.js';
 import {
   CLAUDE_CHILD_EVIDENCE_ADAPTER_VERSION,
   adaptClaudeChildRuntimeFactV1,
+  adaptClaudeChildToolRuntimeFactV1,
   createClaudeChildEvidenceCollector,
   type ClaudeChildRuntimeFact,
+  type ClaudeChildToolRuntimeFact,
 } from '../../src/runtimes/claude-child-evidence.js';
 import { createClaudeStreamHandler } from '../../src/runtimes/claude-stream.js';
 
@@ -104,6 +107,137 @@ function evaluate(facts: ClaudeChildRuntimeFact[]) {
 }
 
 describe('Claude native Child evidence side channel', () => {
+  it('observes Child tools while suppressing forwarded Child text and tool payloads from the parent stream', () => {
+    const mainEvents: Array<Record<string, unknown>> = [];
+    const childFacts: ClaudeChildRuntimeFact[] = [];
+    const toolFacts: ClaudeChildToolRuntimeFact[] = [];
+    let now = 10_000;
+    const handler = createClaudeStreamHandler(
+      (event) => mainEvents.push(event),
+      {
+        onChildRuntimeFact: (fact) => childFacts.push(fact),
+        onChildToolRuntimeFact: (fact) => toolFacts.push(fact),
+        suppressForwardedSubagentEvents: true,
+        childEvidenceNow: () => {
+          now += 10;
+          return now;
+        },
+      },
+    );
+    const frames = [
+      {
+        type: 'system', subtype: 'init', session_id: 'session-child-tools',
+        claude_code_version: '2.1.233',
+      },
+      {
+        type: 'assistant', parent_tool_use_id: null,
+        message: {
+          content: [{
+            type: 'tool_use', id: 'agent-call-raw', name: 'Agent',
+            input: { prompt: 'Inspect the build safely.', subagent_type: 'od-build-1' },
+          }],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        type: 'assistant', parent_tool_use_id: 'agent-call-raw',
+        message: {
+          content: [
+            { type: 'text', text: 'CHILD_TEXT_MUST_NOT_REACH_PARENT' },
+            {
+              type: 'tool_use', id: 'child-tool-call-raw', name: 'Bash',
+              input: { command: 'printf CHILD_TOOL_INPUT_MUST_NOT_EXPORT' },
+            },
+          ],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        type: 'user', parent_tool_use_id: 'agent-call-raw',
+        message: {
+          content: [{
+            type: 'tool_result', tool_use_id: 'child-tool-call-raw',
+            content: 'CHILD_TOOL_OUTPUT_MUST_NOT_EXPORT',
+          }],
+        },
+      },
+      {
+        type: 'user', parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'agent-call-raw', content: 'done' }],
+        },
+        tool_use_result: {
+          status: 'completed', agentId: 'native-child-1', agentType: 'od-build-1',
+          resolvedModel: 'claude-haiku-4-5',
+          usage: { input_tokens: 7, output_tokens: 3 },
+        },
+      },
+    ];
+    for (const frame of frames) handler.feed(`${JSON.stringify(frame)}\n`);
+    handler.flush();
+
+    expect(childFacts.map((fact) => fact.state)).toEqual(['started', 'completed']);
+    expect(toolFacts.map((fact) => [fact.toolName, fact.state])).toEqual([
+      ['Bash', 'started'],
+      ['Bash', 'completed'],
+    ]);
+    expect(toolFacts[1]?.toolCallHash).toMatch(/^[a-f0-9]{64}$/);
+    const toolObservation = adaptClaudeChildToolRuntimeFactV1({
+      fact: toolFacts[1]!,
+      agentCliVersion: '2.1.233 (Claude Code)',
+      taskExecutionId: 'task-execution-1',
+      runId: 'run-1',
+      taskRunIndex: 1,
+      stage: 'production',
+    });
+    expect(toolObservation).toMatchObject({
+      kind: 'tool',
+      status: 'completed',
+      identity: { parentObservationId: 'claude-child:run-1:agent-call-raw' },
+      attributes: { toolName: 'Bash' },
+    });
+    const serialized = JSON.stringify({ mainEvents, toolObservation });
+    expect(serialized).not.toContain('CHILD_TEXT_MUST_NOT_REACH_PARENT');
+    expect(serialized).not.toContain('CHILD_TOOL_INPUT_MUST_NOT_EXPORT');
+    expect(serialized).not.toContain('CHILD_TOOL_OUTPUT_MUST_NOT_EXPORT');
+    expect(serialized).not.toContain('child-tool-call-raw');
+    expect(mainEvents).toContainEqual(expect.objectContaining({ type: 'tool_use', name: 'Agent' }));
+    expect(mainEvents).not.toContainEqual(expect.objectContaining({ name: 'Bash' }));
+  });
+
+  it('normalizes parent Agent tool behavior for every runtime without retaining arguments or results', () => {
+    const observations = adaptMainRunToolObservationsV1({
+      events: [
+        {
+          event: 'agent', timestamp: 1_000,
+          data: { type: 'tool_use', id: 'raw-parent-call', name: 'Read', input: { path: '/secret' } },
+        },
+        {
+          event: 'agent', timestamp: 1_020,
+          data: { type: 'tool_result', toolUseId: 'raw-parent-call', content: 'secret output' },
+        },
+      ],
+      taskExecutionId: 'task-execution-1',
+      runId: 'run-1',
+      taskRunIndex: 1,
+      taskRunObservationId: 'task-run:task-execution-1:run-1',
+      stage: 'production',
+      agentCliVersion: 'runtime 1.0.0',
+      runtimeAdapterVersion: 'adapter/v1',
+    });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]).toMatchObject({
+      kind: 'tool',
+      status: 'completed',
+      identity: { parentObservationId: 'task-run:task-execution-1:run-1' },
+      attributes: { toolName: 'Read', agentCliVersion: 'runtime 1.0.0' },
+    });
+    const serialized = JSON.stringify(observations);
+    expect(serialized).not.toContain('raw-parent-call');
+    expect(serialized).not.toContain('/secret');
+    expect(serialized).not.toContain('secret output');
+  });
+
   it('normalizes a matched Task sidechain lifecycle to L2 without inventing Prompt or usage', () => {
     const { mainEvents, facts } = replay('child_success');
 
@@ -130,6 +264,169 @@ describe('Claude native Child evidence side channel', () => {
     expect(mainEvents).toContainEqual({ type: 'turn_end', stopReason: 'end_turn' });
   });
 
+  it('normalizes the real Claude 2.1.233 Agent tool/result shape with safe Prompt and independent usage', () => {
+    const facts = collect([
+      {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'session-real-shape',
+        claude_code_version: '2.1.233',
+      },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{
+            type: 'tool_use',
+            id: 'agent-success',
+            name: 'Agent',
+            input: {
+              prompt: 'Inspect /Users/example/private.txt with token sk-test-1234567890123456789012 and answer safely.',
+              subagent_type: 'general-purpose',
+              model: 'haiku',
+              isolation: 'remote',
+            },
+          }],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'agent-success',
+            content: [{ type: 'text', text: 'sanitized child result' }],
+          }],
+        },
+        tool_use_result: {
+          status: 'completed',
+          agentId: 'native-agent-1',
+          agentType: 'general-purpose',
+          resolvedModel: 'claude-haiku-4-5',
+          totalDurationMs: 321,
+          totalTokens: 15,
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 2,
+            output_tokens_details: { thinking_tokens: 1 },
+          },
+        },
+      },
+    ]);
+
+    expect(facts.map((fact) => fact.state)).toEqual(['started', 'completed']);
+    expect(JSON.stringify(facts)).not.toContain('/Users/example/private.txt');
+    expect(JSON.stringify(facts)).not.toContain('sk-test-1234567890123456789012');
+    const terminal = adapt(facts[1]!);
+    expect(terminal).toMatchObject({
+      status: 'completed',
+      prompt: {
+        childInjected: {
+          availability: 'exact',
+          source: 'provider_stream',
+          safePayload: {
+            type: 'open-design.child-injected-prompt',
+            messages: [{
+              redactedContent: expect.stringContaining('[REDACTED:path]'),
+            }],
+          },
+        },
+        agentEffectiveContext: { availability: 'unobservable' },
+      },
+      usage: {
+        availability: 'complete',
+        source: 'provider_stream',
+        accountingMode: 'unknown',
+        values: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+          thoughtTokens: 1,
+          cacheReadTokens: 2,
+          cacheWriteTokens: 0,
+        },
+      },
+      attributes: {
+        runtimeReportedVersion: '2.1.233',
+        nativeAgentId: 'native-agent-1',
+        nativeAgentType: 'general-purpose',
+        model: 'claude-haiku-4-5',
+      },
+    });
+    expect(evaluate(facts)).toMatchObject({ valid: true, evidenceLevel: 'L2' });
+  });
+
+  it('uses a root Agent tool_result error as explicit Child failure while leaving parent recovery to the main stream', () => {
+    const facts = collect([
+      { type: 'system', subtype: 'init', session_id: 'session-failure', claude_code_version: '2.1.233' },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{
+            type: 'tool_use',
+            id: 'agent-failure',
+            name: 'Agent',
+            input: { prompt: 'Return a controlled failure.', subagent_type: 'failure-agent' },
+          }],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'agent-failure',
+            content: 'controlled provider failure',
+            is_error: true,
+          }],
+        },
+        tool_use_result: 'controlled provider failure',
+      },
+    ]);
+
+    expect(facts.map((fact) => fact.state)).toEqual(['started', 'failed']);
+    expect(facts[1]).toMatchObject({
+      sourceEventType: 'user.tool_result',
+      terminationReason: 'assistant_error',
+    });
+  });
+
+  it('attaches a Build Package only through a daemon-owned native agent handle binding', () => {
+    const facts: ClaudeChildRuntimeFact[] = [];
+    const collector = createClaudeChildEvidenceCollector({
+      onFact: (fact) => facts.push(fact),
+      now: () => 100,
+      nativeBuildPackageBindings: { 'od-package-a': 'package-a' },
+    });
+    collector.observe({ type: 'system', subtype: 'init', session_id: 'session-package' });
+    collector.observe({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [{
+          type: 'tool_use',
+          id: 'agent-package',
+          name: 'Agent',
+          input: {
+            prompt: 'The prose claims package-b but is not an ownership source.',
+            subagent_type: 'od-package-a',
+          },
+        }],
+        stop_reason: 'tool_use',
+      },
+    });
+
+    expect(facts[0]).toMatchObject({ buildPackageId: 'package-a' });
+    expect(adapt(facts[0]!)).toMatchObject({
+      attributes: { buildPackageId: 'package-a', nativeAgentType: 'od-package-a' },
+    });
+  });
+
   it('keeps child failure separate while the parent main turn recovers', () => {
     const { mainEvents, facts } = replay('child_failure_parent_recovers');
 
@@ -147,8 +444,8 @@ describe('Claude native Child evidence side channel', () => {
 
     expect(facts.map((fact) => `${fact.childId}:${fact.state}`)).toEqual([
       'task-a:started',
-      'task-a:completed',
       'task-b:started',
+      'task-a:completed',
       'task-b:completed',
     ]);
   });
@@ -291,11 +588,11 @@ describe('Claude native Child evidence side channel', () => {
     ], 'stream_incomplete');
     const duplicateFacts = facts.filter((fact) => fact.childId === 'task-dup');
 
-    expect(duplicateFacts.map((fact) => fact.state)).toEqual(['conflicted']);
-    expect(duplicateFacts[0]).toMatchObject({
+    expect(duplicateFacts.map((fact) => fact.state)).toEqual(['started', 'conflicted']);
+    expect(duplicateFacts[1]).toMatchObject({
       conflictReasons: ['task_parent_rebound'],
     });
-    expect(adapt(duplicateFacts[0]!)).toMatchObject({
+    expect(adapt(duplicateFacts[1]!)).toMatchObject({
       status: 'running',
       limitations: expect.arrayContaining([
         expect.stringContaining('must not be promoted to L2'),
@@ -337,6 +634,74 @@ describe('Claude native Child evidence side channel', () => {
       ['conflicted', 'session-a'],
     ]);
     expect(facts[1]).toMatchObject({ conflictReasons: ['runtime_session_changed'] });
+    expect(evaluate(facts)).toMatchObject({ valid: false, evidenceLevel: 'L0' });
+  });
+
+  it('poisons a native Agent type rebound instead of retaining the requested package handle', () => {
+    const facts = collect([
+      { type: 'system', subtype: 'init', session_id: 'session-agent-type' },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{
+            type: 'tool_use', id: 'agent-type', name: 'Agent',
+            input: { prompt: 'bound work', subagent_type: 'od-build-1-aaaaaaaaaaaaaaaa' },
+          }],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'agent-type', content: 'done' }] },
+        tool_use_result: {
+          status: 'completed', agentId: 'native-type',
+          agentType: 'od-build-2-bbbbbbbbbbbbbbbb',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      },
+    ], 'stream_incomplete');
+
+    expect(facts.map((fact) => fact.state)).toEqual(['started', 'conflicted']);
+    expect(facts[1]).toMatchObject({ conflictReasons: ['native_agent_type_rebound'] });
+    expect(evaluate(facts)).toMatchObject({ valid: false, evidenceLevel: 'L0' });
+  });
+
+  it('poisons both tool lifecycles when one native Agent id is reused', () => {
+    const facts = collect([
+      { type: 'system', subtype: 'init', session_id: 'session-agent-id' },
+      {
+        type: 'assistant', parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_use', id: 'agent-a', name: 'Agent', input: { prompt: 'a', subagent_type: 'type-a' } },
+            { type: 'tool_use', id: 'agent-b', name: 'Agent', input: { prompt: 'b', subagent_type: 'type-b' } },
+          ],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'agent-a', content: 'done' }] },
+        tool_use_result: { status: 'completed', agentId: 'native-shared', agentType: 'type-a' },
+      },
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'agent-b', content: 'done' }] },
+        tool_use_result: { status: 'completed', agentId: 'native-shared', agentType: 'type-b' },
+      },
+    ], 'stream_incomplete');
+
+    expect(facts.map((fact) => [fact.childId, fact.state])).toEqual([
+      ['agent-a', 'started'],
+      ['agent-b', 'started'],
+      ['agent-a', 'completed'],
+      ['agent-a', 'conflicted'],
+      ['agent-b', 'conflicted'],
+    ]);
+    expect(facts.slice(-2).every((fact) => (
+      fact.conflictReasons?.includes('native_agent_id_reused')
+    ))).toBe(true);
     expect(evaluate(facts)).toMatchObject({ valid: false, evidenceLevel: 'L0' });
   });
 

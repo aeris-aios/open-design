@@ -1058,6 +1058,48 @@ test('claude flags promptViaStdin and never embeds the prompt in argv', () => {
   assert.ok(args.includes('-p'), 'claude argv must include -p');
 });
 
+test('claude enables native Child behavior frames only for an observed OD Next Run', () => {
+  assert.equal(
+    claude.buildArgs('', [], [], {}, {}).includes('--forward-subagent-text'),
+    false,
+  );
+  assert.equal(
+    claude.capabilityFlags?.['--forward-subagent-text'],
+    'forwardSubagentText',
+  );
+  agentCapabilities.set('claude', { forwardSubagentText: true });
+  try {
+    assert.equal(claude.buildArgs('', [], [], {}, {
+      observeNativeChildBehavior: true,
+    }).includes('--forward-subagent-text'), true);
+  } finally {
+    agentCapabilities.delete('claude');
+  }
+  assert.throws(
+    () => claude.buildArgs('', [], [], {}, { observeNativeChildBehavior: true }),
+    /advertised --forward-subagent-text support/,
+  );
+});
+
+test('claude registers daemon-issued Build Package handles and rejects an unadvertised CLI', () => {
+  const bindings = [{ nativeAgentHandle: 'od-build-1-0123456789abcdef', buildPackageId: 'package-a' }];
+  agentCapabilities.set('claude', { customAgents: true });
+  try {
+    const args = claude.buildArgs('', [], [], {}, { nativeBuildPackageBindings: bindings });
+    const flag = args.indexOf('--agents');
+    assert.ok(flag >= 0);
+    const definitions = JSON.parse(args[flag + 1]!);
+    assert.deepEqual(Object.keys(definitions), ['od-build-1-0123456789abcdef']);
+    assert.equal(JSON.stringify(definitions).includes('package-a'), false);
+  } finally {
+    agentCapabilities.delete('claude');
+  }
+  assert.throws(
+    () => claude.buildArgs('', [], [], {}, { nativeBuildPackageBindings: bindings }),
+    /advertised --agents support/,
+  );
+});
+
 // ---- Claude Code --add-dir capability (issue #430) -------------------------
 // Skill seeds (`skills/<id>/assets/template.html`) and design-system specs
 // (`design-systems/<id>/DESIGN.md`) live outside the project cwd. Without

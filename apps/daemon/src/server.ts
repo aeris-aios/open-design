@@ -453,6 +453,11 @@ import {
 } from './runtimes/detection.js';
 import { resolveBundledOdNextRuntimeCapability } from './runtimes/od-next-capability-gate.js';
 import {
+  createOdNextNativeBuildPackageBindings,
+  nativeBuildPackageBindingMap,
+} from './strategies/od-next/native-build-package.js';
+import { resolveDaemonOwnedOdNextComplexRuntimeEvidence } from './strategies/od-next/complex-runtime-evidence.js';
+import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
   classifyAgentAuthFailure,
@@ -12645,6 +12650,35 @@ export async function startServer({
     }
 
     let args;
+    const observeClaudeNativeChildBehavior =
+      def.id === 'claude' && strategyTaskAtStart !== null;
+    const nativeBuildPackageBindings =
+      def.id === 'claude'
+      && strategyTaskAtStart?.executionMode === 'complex'
+      && strategyTaskAtStart.inputStage === 'production'
+      && strategyTaskAtStart.planContract
+      && strategyTaskAtStart.planContractHash
+      && strategyRunMapping
+        ? (() => {
+            const version = run.preflightAgentCliVersion
+              ?? getDetectedRuntimeVersions(def.id)?.agentCliVersion;
+            const capability = resolveBundledOdNextRuntimeCapability({
+              agentId: def.id,
+              agentCliVersion: version,
+            });
+            if (capability.reason !== 'capability_resolved') {
+              throw new TypeError(
+                'Claude native Build Package bindings require the exact verified CLI tuple.',
+              );
+            }
+            return createOdNextNativeBuildPackageBindings({
+              taskExecutionId: strategyTaskAtStart.taskExecutionId,
+              taskRunIndex: strategyRunMapping.taskRunIndex,
+              planContractHash: strategyTaskAtStart.planContractHash,
+              plan: strategyTaskAtStart.planContract,
+            });
+          })()
+        : [];
     try {
       args = def.buildArgs(
         composed,
@@ -12662,6 +12696,12 @@ export async function startServer({
             def.id === 'codex'
             && run.externalPluginAnalytics?.externalPluginId
               === OPEN_DESIGN_PLUGIN_ID,
+          ...(nativeBuildPackageBindings.length > 0
+            ? { nativeBuildPackageBindings }
+            : {}),
+          ...(observeClaudeNativeChildBehavior
+            ? { observeNativeChildBehavior: true }
+            : {}),
         },
       );
     } catch (err) {
@@ -14101,9 +14141,43 @@ export async function startServer({
         try {
           applyClaudeStreamJsonRunBookkeeping(run, ev);
         } catch {}
-      }, { suppressHtmlArtifactsAfterFileWrite: def.id === 'claude' });
+      }, {
+        suppressHtmlArtifactsAfterFileWrite: def.id === 'claude',
+        ...(observeClaudeNativeChildBehavior
+          ? {
+              suppressForwardedSubagentEvents: true,
+              onChildRuntimeFact: (fact) => sendAgentEvent({
+                type: 'diagnostic',
+                name: 'claude_child_runtime_fact',
+                ...fact,
+              }),
+              onChildToolRuntimeFact: (fact) => sendAgentEvent({
+                type: 'diagnostic',
+                name: 'claude_child_tool_runtime_fact',
+                ...fact,
+              }),
+            }
+          : {}),
+        ...(nativeBuildPackageBindings.length > 0
+          ? {
+              nativeBuildPackageBindings: nativeBuildPackageBindingMap(
+                nativeBuildPackageBindings,
+              ),
+            }
+          : {}),
+      });
       child.stdout.on('data', (chunk) => claude.feed(chunk));
-      child.on('close', () => claude.flush());
+      child.on('close', () => {
+        claude.flush();
+        claude.finishOpenChildEvidence(
+          run.cancelRequested
+            ? 'canceled'
+            : run.terminalTrigger === 'first_output_deadline'
+              || run.terminalTrigger === 'inactivity_watchdog'
+              ? 'timeout'
+              : 'stream_incomplete',
+        );
+      });
     } else if (def.streamFormat === 'qoder-stream-json') {
       trackingSubstantiveOutput = true;
       const qoder = createQoderStreamHandler(sendAgentEvent);
@@ -15159,19 +15233,52 @@ export async function startServer({
                   ? resolveDaemonOwnedOdNextExecutionPreflight(plan)
                   : undefined;
             const lockedPlan = plan ?? strategyTaskAtStart.planContract;
-            if (
-              lockedPlan?.fullPlan.executionMode === 'complex'
-              && odNextComplexProductionResolver
-            ) {
-              complexRuntimeEvidence = await odNextComplexProductionResolver({
-                phase: strategyProtocolResult.runtimeState?.outcome === 'completed'
-                  ? 'completion'
-                  : 'eligibility',
-                taskExecutionId: strategyTaskAtStart.taskExecutionId,
-                runId: run.id,
-                agentId: strategyTaskAtStart.selectedAgentId,
-                plan: lockedPlan,
-              });
+            if (lockedPlan?.fullPlan.executionMode === 'complex') {
+              const phase = strategyProtocolResult.runtimeState?.outcome === 'completed'
+                ? 'completion'
+                : 'eligibility';
+              if (odNextComplexProductionResolver) {
+                complexRuntimeEvidence = await odNextComplexProductionResolver({
+                  phase,
+                  taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                  runId: run.id,
+                  agentId: strategyTaskAtStart.selectedAgentId,
+                  plan: lockedPlan,
+                });
+              } else {
+                const mapping = strategyTaskAtStart.runs.find((candidate) => (
+                  candidate.runId === run.id
+                ));
+                const versions = getDetectedRuntimeVersions(
+                  strategyTaskAtStart.selectedAgentId,
+                );
+                if (mapping) {
+                  complexRuntimeEvidence = resolveDaemonOwnedOdNextComplexRuntimeEvidence({
+                    phase,
+                    taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                    runId: run.id,
+                    taskRunIndex: mapping.taskRunIndex,
+                    stage: mapping.inputStage,
+                    agentId: strategyTaskAtStart.selectedAgentId,
+                    agentCliVersion:
+                      run.preflightAgentCliVersion
+                      ?? versions?.agentCliVersion,
+                    ...(versions?.runtimeCompanionName
+                      ? { runtimeCompanionName: versions.runtimeCompanionName }
+                      : {}),
+                    ...(versions?.runtimeCompanionVersion
+                      ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
+                      : {}),
+                    plan: lockedPlan,
+                    run: {
+                      status: run.status,
+                      createdAt: run.createdAt,
+                      updatedAt: Date.now(),
+                      events: run.events,
+                    },
+                  });
+                }
+              }
             }
           } catch (error) {
             if (run.cancelRequested || design.runs.isTerminal(run.status)) return;

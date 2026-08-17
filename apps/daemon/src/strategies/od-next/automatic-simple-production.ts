@@ -28,6 +28,7 @@ import {
   evaluateOdNextComplexProduction,
   type OdNextComplexRuntimeEvidence,
 } from './complex-production.js';
+import { createOdNextNativeBuildPackageBindings } from './native-build-package.js';
 
 type SqliteDb = Database.Database;
 
@@ -374,6 +375,19 @@ export function prepareAutomaticStrategyContinuation<
   }
 
   const stage = repairCandidate ? 'contract_repair' : 'production';
+  // The binding transport below is the exact Claude 2.1.233 `--agents` /
+  // structured `subagent_type` contract. Other runtimes keep their existing
+  // continuation text and remain fail-closed until their own native handle
+  // owner is wired; never teach Codex/OpenCode a Claude tool shape.
+  const nativeBuildPackageBindings = complexPlanCandidate
+    && input.task.selectedAgentId === 'claude'
+    ? createOdNextNativeBuildPackageBindings({
+        taskExecutionId: input.task.taskExecutionId,
+        taskRunIndex: input.task.runs.length,
+        planContractHash: strategyPlanContractHash(input.parsed.planContract!),
+        plan: input.parsed.planContract!,
+      })
+    : [];
   const instruction = repairCandidate
       ? composeOdNextStrategyContinuationV2({
           stage: 'contract_repair',
@@ -388,6 +402,9 @@ export function prepareAutomaticStrategyContinuation<
           taskExecutionId: input.task.taskExecutionId,
           taskRunIndex: input.task.runs.length,
           planContractHash: strategyPlanContractHash(input.parsed.planContract!),
+          ...(nativeBuildPackageBindings.length > 0
+            ? { nativeBuildPackageBindings }
+            : {}),
         });
   let result: OdNextCoordinatorResult | null = null;
   try {

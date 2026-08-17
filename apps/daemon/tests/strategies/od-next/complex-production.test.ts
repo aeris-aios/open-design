@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../../../src/db.js';
 import { createSnapshot } from '../../../src/plugins/snapshots.js';
 import { hashOdNextRuntimeCapabilitySnapshotV1 } from '../../../src/runtimes/od-next-capability-gate.js';
+import { resolveBundledOdNextRuntimeCapability } from '../../../src/runtimes/od-next-capability-gate.js';
+import { createClaudeChildEvidenceCollector } from '../../../src/runtimes/claude-child-evidence.js';
 import {
   prepareAutomaticStrategyContinuation,
 } from '../../../src/strategies/od-next/automatic-simple-production.js';
@@ -25,6 +27,11 @@ import {
   evaluateOdNextComplexEligibility,
 } from '../../../src/strategies/od-next/complex-production.js';
 import { prepareStrategyRequest } from '../../../src/strategies/od-next/coordinator.js';
+import { resolveDaemonOwnedOdNextComplexRuntimeEvidence } from '../../../src/strategies/od-next/complex-runtime-evidence.js';
+import {
+  createOdNextNativeBuildPackageBindings,
+  nativeBuildPackageBindingMap,
+} from '../../../src/strategies/od-next/native-build-package.js';
 import { OdNextMachineProtocolStream } from '../../../src/strategies/od-next/protocol.js';
 import {
   cancelStrategyTaskExecution,
@@ -350,6 +357,111 @@ describe('OD Next complex production enforcement', () => {
         taskRunObservationId: ROOT_OBSERVATION_ID,
       })).toEqual({ eligible: true, reasonCodes: [] });
     }
+  });
+
+  it('derives opaque bindings and resolves completion from durable Claude native Agent facts', () => {
+    const capability = resolveBundledOdNextRuntimeCapability({
+      agentId: 'claude',
+      agentCliVersion: '2.1.233 (Claude Code)',
+      capturedAt: 1,
+    }).snapshot!;
+    const plan = OpenDesignPlanContractV2Schema.parse({
+      ...planContract(snapshot, capability),
+      runManifest: {
+        ...planContract(snapshot, capability).runManifest,
+        selectedAgentId: 'claude',
+      },
+    });
+    const bindings = createOdNextNativeBuildPackageBindings({
+      taskExecutionId: TASK_ID,
+      taskRunIndex: 1,
+      planContractHash: 'f'.repeat(64),
+      plan,
+    });
+    expect(bindings.map(({ buildPackageId }) => buildPackageId)).toEqual(['shell', 'flow']);
+    expect(bindings.every(({ nativeAgentHandle }) => (
+      /^od-build-[1-9][0-9]*-[a-f0-9]{16}$/.test(nativeAgentHandle)
+    ))).toBe(true);
+    const facts: Array<Record<string, unknown>> = [];
+    let now = 100;
+    const collector = createClaudeChildEvidenceCollector({
+      now: () => ++now,
+      nativeBuildPackageBindings: nativeBuildPackageBindingMap(bindings),
+      onFact: (fact) => facts.push({
+        type: 'diagnostic',
+        name: 'claude_child_runtime_fact',
+        ...fact,
+      }),
+    });
+    collector.observe({
+      type: 'system', subtype: 'init', session_id: 'session-complex', claude_code_version: '2.1.233',
+    });
+    for (const [index, binding] of bindings.entries()) {
+      const childId = `child-${index + 1}`;
+      collector.observe({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{
+            type: 'tool_use',
+            id: childId,
+            name: 'Agent',
+            input: {
+              subagent_type: binding.nativeAgentHandle,
+              prompt: index === 0
+                ? 'This prose mentions flow but the native handle owns shell.'
+                : 'Execute the second package.',
+            },
+          }],
+          stop_reason: 'tool_use',
+        },
+      });
+      collector.observe({
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: childId, content: 'ok' }],
+        },
+        tool_use_result: {
+          status: 'completed',
+          agentId: `native-${index + 1}`,
+          agentType: binding.nativeAgentHandle,
+          resolvedModel: 'claude-haiku-4-5',
+          totalTokens: 3,
+          usage: { input_tokens: 2, output_tokens: 1 },
+        },
+      });
+    }
+    const evidence = resolveDaemonOwnedOdNextComplexRuntimeEvidence({
+      phase: 'completion',
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      stage: 'production',
+      agentId: 'claude',
+      agentCliVersion: '2.1.233 (Claude Code)',
+      plan,
+      run: {
+        status: 'succeeded',
+        createdAt: 90,
+        updatedAt: 200,
+        events: facts.map((data) => ({ event: 'agent', data })),
+      },
+    });
+    expect(evidence).toBeDefined();
+    if (!evidence?.observations || !evidence.taskRunObservationId) {
+      throw new Error('expected daemon-owned complex completion evidence');
+    }
+    expect(evidence?.observations?.filter((item: any) => (
+      item.kind === 'child_agent' && item.status === 'completed'
+    )).map((item: any) => item.attributes.buildPackageId)).toEqual(['shell', 'flow']);
+    expect(evaluateOdNextComplexChildEvidence({
+      plan,
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      observations: evidence.observations,
+      taskRunObservationId: evidence.taskRunObservationId,
+    })).toEqual({ eligible: true, reasonCodes: [] });
   });
 
   it('fails closed for unknown, unsupported, missing, mismatched, and drifted capability snapshots', () => {
