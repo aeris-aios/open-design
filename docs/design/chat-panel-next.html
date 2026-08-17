@@ -947,10 +947,16 @@ button.att-d:hover { border-color: var(--border-strong); }
    选中是你的选择、会变。两个都用绿就分不清,而当推荐项恰好被选中时
    两层绿叠在一起,标签直接消失(原来就是这样)。
    深色药丸在白底和浅绿底上读起来一样,且一眼就不是选中色。 */
+/* 字号只能是 12 —— 产品的字号阶梯下限就是 12,本文件禁止私开 11px
+   (见文件头「字号」那段)。所以让它退后一档靠的是【字重和体量】,不是字号:
+     · 字重 500 而不是 600:它现在跟被它标注的标题一样重,标注不该压过被标注的东西
+     · 内边距收到 0 5px、圆角贴着字:药丸越小越像个角标,越大越像个按钮
+     · 底色改成 82% 的墨,不是纯墨:在白底和浅绿底上都还读得清,但不再是全场最黑的一块
+   实心不透明这一条不动:推荐项可能落在绿色的选中卡上,浅色药丸在那儿会糊掉。 */
 .vrec {
-  flex: none; padding: 1px 6px; border-radius: var(--radius-pill);
-  background: var(--text-strong); border: none;
-  font-size: var(--t-cap); font-weight: 600; color: var(--bg);
+  flex: none; padding: 0 5px; border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-strong) 82%, transparent); border: none;
+  font-size: var(--t-cap); font-weight: 500; line-height: 1.6; color: var(--bg);
 }
 .vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
 
