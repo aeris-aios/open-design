@@ -2696,16 +2696,17 @@ export function HomeView({
       // route through the default design router; in Ask mode they stay plain
       // chat conversations with no hidden router plugin.
       const resolvedSkillId = submittedActive ? null : activeSkill?.id ?? null;
+      // Ask stays a plain conversation unless the user explicitly chose a
+      // plugin/preset. The fresh-Home deck chip is a silent default
+      // (`explicitPick === false`) and must not leak any plugin payload into
+      // Ask merely because it finished binding before the mode switch.
+      const submittedPlugin =
+        sessionMode === 'design' || submittedActive?.explicitPick
+          ? submittedActive
+          : null;
       const routedPluginId =
-        sessionMode === 'design'
-          ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
-          // Ask stays a plain conversation unless the user explicitly chose a
-          // plugin/preset. The fresh-Home deck chip is a silent default
-          // (`explicitPick === false`) and must not leak design routing into
-          // Ask merely because it finished binding before the mode switch.
-          : submittedActive?.explicitPick
-            ? submittedActive.record.id
-            : null;
+        submittedPlugin?.record.id
+        ?? (sessionMode === 'design' ? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID : null);
       // The example-prompt override is a one-shot marker. Decide whether to
       // send it now, but defer spending the marker until the create is
       // accepted — a rejected attempt stays retryable and must resend it.
@@ -2717,20 +2718,20 @@ export function HomeView({
       const accepted = await onSubmit({
         prompt: trimmed,
         pluginId: routedPluginId,
-        ...(submittedActive?.record.source
-          ? { pluginSource: submittedActive.record.source }
+        ...(submittedPlugin?.record.source
+          ? { pluginSource: submittedPlugin.record.source }
           : {}),
-        pluginType: submittedActive?.record.marketplaceTrust ?? (routedPluginId ? 'official' : null),
+        pluginType: submittedPlugin?.record.marketplaceTrust ?? (routedPluginId ? 'official' : null),
         skillId: resolvedSkillId,
         ...(resolvedSkillId && activeSkillCatalogScope
           ? { skillCatalogScope: activeSkillCatalogScope }
           : resolvedSkillId && lastSettledLocalCatalogScopeRef.current
             ? { skillCatalogScope: lastSettledLocalCatalogScopeRef.current }
           : {}),
-        appliedPluginSnapshotId: submittedActive?.result?.appliedPlugin?.snapshotId ?? null,
-        pluginTitle: submittedActive?.record.title ?? null,
-        taskKind: submittedActive?.result?.appliedPlugin?.taskKind ?? null,
-        pluginInputs: submittedPluginInputs,
+        appliedPluginSnapshotId: submittedPlugin?.result?.appliedPlugin?.snapshotId ?? null,
+        pluginTitle: submittedPlugin?.record.title ?? null,
+        taskKind: submittedPlugin?.result?.appliedPlugin?.taskKind ?? null,
+        pluginInputs: submittedPlugin ? submittedPluginInputs : null,
         projectKind: submittedProjectKind,
         projectMetadata: submittedProjectMetadata,
         designSystemId: submittedDesignSystemId,

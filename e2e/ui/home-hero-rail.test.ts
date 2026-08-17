@@ -1259,6 +1259,7 @@ test('[P1] home session mode toggle switches Ask planning prompts away from desi
   await routeProjectCreates(page);
   await routeRunsAccepted(page);
   await gotoEntryHome(page);
+  const askRunRequests = trackRunRequests(page);
 
   const modeTrigger = page.getByTestId('composer-mode-trigger');
   // Design is the app default and is now represented as an explicit selection.
@@ -1278,10 +1279,15 @@ test('[P1] home session mode toggle switches Ask planning prompts away from desi
   const askBody = await askRequestPromise.then((request) => request.postDataJSON() as {
     conversationMode?: string;
     pluginId?: string | null;
+    appliedPluginSnapshotId?: string | null;
   });
 
   expect(askBody.conversationMode).toBe('chat');
-  expect(askBody.pluginId ?? null).toBeNull();
+  expect(askBody).not.toHaveProperty('pluginId');
+  expect(askBody).not.toHaveProperty('appliedPluginSnapshotId');
+  await askRunRequests.expectCount(1);
+  expect(askRunRequests.bodies[0]?.appliedPluginSnapshotId ?? null).toBeNull();
+  askRunRequests.dispose?.();
 
   await gotoEntryHome(page);
   await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
@@ -1971,7 +1977,12 @@ async function routeProjectCreates(page: Page) {
     }
     if (request.method() === 'POST') {
       createCount += 1;
-      const body = request.postDataJSON() as { id?: string; name?: string; metadata?: Record<string, unknown> };
+      const body = request.postDataJSON() as {
+        id?: string;
+        name?: string;
+        metadata?: Record<string, unknown>;
+        appliedPluginSnapshotId?: string;
+      };
       const id = body.id ?? `home-created-${createCount}`;
       await route.fulfill({
         json: {
@@ -1983,6 +1994,9 @@ async function routeProjectCreates(page: Page) {
             metadata: body.metadata ?? {},
           },
           conversationId: `conv-${id}`,
+          ...(body.appliedPluginSnapshotId
+            ? { appliedPluginSnapshotId: body.appliedPluginSnapshotId }
+            : {}),
         },
       });
       return;
