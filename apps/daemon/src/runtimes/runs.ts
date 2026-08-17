@@ -576,6 +576,9 @@ function durableRunState(run) {
       ? { deliverableArtifactKind: run.deliverableArtifactKind }
       : {}),
     ...(run.strategyTask ? { strategyTask: run.strategyTask } : {}),
+    ...(run.odNextTaskInputSnapshot
+      ? { odNextTaskInputSnapshot: run.odNextTaskInputSnapshot }
+      : {}),
     ...(typeof run.langfuseCompletedAt === 'number'
       ? { langfuseCompletedAt: run.langfuseCompletedAt }
       : {}),
@@ -887,6 +890,13 @@ export function createChatRunService({
       manualResumeAttemptCount: 0,
       rechargeWaitDurationMs: 0,
     };
+    if (
+      meta.odNextTaskInputSnapshot
+      && typeof meta.odNextTaskInputSnapshot === 'object'
+      && !Array.isArray(meta.odNextTaskInputSnapshot)
+    ) {
+      run.odNextTaskInputSnapshot = meta.odNextTaskInputSnapshot;
+    }
     if (Object.prototype.hasOwnProperty.call(meta, 'workspaceScope')) {
       run.workspaceScope = meta.workspaceScope ?? null;
     }

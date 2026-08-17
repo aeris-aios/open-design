@@ -380,7 +380,18 @@ describe('OD Next automatic production through the real server', () => {
 
   it('runs parsed plan -> serialization repair -> production after each source end and remains exactly-once across restart', async () => {
     const fixture = await createFixture('repair');
-    const body = createRunRequest(fixture, 'Build the operator prototype.');
+    const sourceAttachment = path.join(
+      process.env.OD_DATA_DIR!,
+      'projects',
+      fixture.projectId,
+      'brief.txt',
+    );
+    await mkdir(path.dirname(sourceAttachment), { recursive: true });
+    await writeFile(sourceAttachment, 'immutable brief');
+    const body = {
+      ...createRunRequest(fixture, 'Build the operator prototype.'),
+      attachments: ['brief.txt'],
+    };
 
     uuidControl.forced.push(fixture.initialRunId);
     const created = await postRun(started!.url, body);
@@ -395,6 +406,7 @@ describe('OD Next automatic production through the real server', () => {
       },
     });
     expect(uuidControl.forced).toEqual([]);
+    await rm(sourceAttachment);
 
     const initialTerminal = await waitForRunTerminal(started!.url, fixture.initialRunId);
     expect(initialTerminal.status, JSON.stringify(initialTerminal)).toBe('succeeded');
@@ -474,6 +486,12 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[0]?.stdin).toContain('<user_prompt>');
     expect(invocations[0]?.stdin).toContain('<task_config>');
     expect(invocations[0]?.stdin).toContain('<context>');
+    expect(invocations[0]?.stdin).toContain('open-design.od-next-task-configuration/v1');
+    expect(invocations[0]?.stdin).toContain('open-design.od-next-request-input-facts/v1');
+    expect(invocations[0]?.stdin).toContain('"taskType":"prototype"');
+    expect(invocations[0]?.stdin).toContain('task-input:attachments/attachment-001.txt');
+    expect(invocations[0]?.stdin).toContain('"reference":"workspace:project"');
+    expect(invocations[0]?.stdin).not.toContain(process.env.OD_DATA_DIR ?? '__missing_data_root__');
     expect(invocations[0]?.stdin).not.toContain('# User request');
     expect(invocations[1]?.argv.slice(0, 2)).toEqual(['exec', 'resume']);
     expect(invocations[2]?.argv.slice(0, 2)).toEqual(['exec', 'resume']);
@@ -489,6 +507,33 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[2]?.stdin).not.toContain('open-design.strategy-state/v2');
     expect(statuses[0]!.updatedAt).toBeLessThanOrEqual(invocations[1]!.startedAt);
     expect(statuses[1]!.updatedAt).toBeLessThanOrEqual(invocations[2]!.startedAt);
+
+    const durableInputSnapshots = await Promise.all(terminal.runs.map(async (mapping) => {
+      const state = JSON.parse(await readFile(path.join(
+        process.env.OD_DATA_DIR!,
+        'runs',
+        mapping.runId,
+        'state.json',
+      ), 'utf8')) as {
+        odNextTaskInputSnapshot?: {
+          taskExecutionId: string;
+          snapshotDir: string;
+          manifestSha256: string;
+        };
+      };
+      return state.odNextTaskInputSnapshot;
+    }));
+    expect(durableInputSnapshots).toEqual([
+      expect.objectContaining({ taskExecutionId: fixture.taskExecutionId }),
+      expect.objectContaining({ taskExecutionId: fixture.taskExecutionId }),
+      expect.objectContaining({ taskExecutionId: fixture.taskExecutionId }),
+    ]);
+    expect(new Set(durableInputSnapshots.map((snapshot) => snapshot?.manifestSha256)).size).toBe(1);
+    expect(await readFile(path.join(
+      durableInputSnapshots[0]!.snapshotDir,
+      'attachments',
+      'attachment-001.txt',
+    ), 'utf8')).toBe('immutable brief');
 
     for (const mapping of terminal.runs) {
       await getRun(started!.url, mapping.runId);

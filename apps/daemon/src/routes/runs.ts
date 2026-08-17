@@ -96,6 +96,13 @@ import {
 import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
 import { InvalidFrozenSkillPackageError } from '../strategies/od-next/frozen-skill-package.js';
 import {
+  buildOdNextTaskConfigurationV1,
+  createOdNextTaskInputSnapshot,
+  OdNextTaskInputSnapshotError,
+  removeOdNextTaskInputSnapshot,
+  type OdNextTaskInputSnapshotDescriptor,
+} from '../strategies/od-next/task-input-snapshot.js';
+import {
   evaluateOdNextRollout,
   odNextTaskTypeForProjectMetadata,
   readOdNextRolloutPolicy,
@@ -171,7 +178,10 @@ import {
   runDesignSystemCreatedForRun,
   runPreviewModuleCountForRun,
 } from '../runtimes/run-lifecycle-analytics.js';
-import { normalizeCommentAttachments } from '../runtimes/chat-prompt-inputs.js';
+import {
+  normalizeCommentAttachments,
+  UPLOAD_DIR,
+} from '../runtimes/chat-prompt-inputs.js';
 
 // Keep in sync with the web uploader's `looksLikeImage` (apps/web registry):
 // omit-pin seeds must classify the same extensions as `image` so reload chips
@@ -406,6 +416,7 @@ interface ChatRun {
     changedSections?: string[] | null;
   };
   strategyTask?: StrategyTaskProjectionV2;
+  odNextTaskInputSnapshot?: OdNextTaskInputSnapshotDescriptor | null;
 }
 
 interface RunCreateMeta extends InternalRunCreateInput, JsonRecord {
@@ -423,6 +434,7 @@ interface RunCreateMeta extends InternalRunCreateInput, JsonRecord {
   projectMetadata?: ProjectMetadata;
   workspaceScope?: RunWorkspaceScope | null;
   designSystemScope?: PinnedRunDesignSystemScope | null;
+  odNextTaskInputSnapshot?: OdNextTaskInputSnapshotDescriptor | null;
 }
 
 interface RunListFilters {
@@ -452,6 +464,8 @@ interface ChatRunService {
   ): Promise<ChatRunStatusResponse>;
   /** Undo an optimistically-created run (e.g. a failed ownership claim). */
   drop(run: ChatRun): void;
+  /** Persist daemon-owned state assigned during an atomic claim hook. */
+  persistState(run: ChatRun): void;
   isTerminal(status: ChatRunStatus): boolean;
   emit?(run: ChatRun, event: string, data: unknown): RunEventRecord;
   setAnalyticsRecovery?(run: ChatRun, recovery: {
@@ -855,6 +869,7 @@ function withoutSensitiveRunInput(body: JsonRecord): JsonRecord {
   // that startChatRun and tool-token minting will later treat as pinned.
   delete sanitized.workspaceScope;
   delete sanitized.designSystemScope;
+  delete sanitized.odNextTaskInputSnapshot;
   return sanitized;
 }
 
@@ -1918,6 +1933,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     if (clarificationContinuation) {
       applyClarificationContinuationMeta(meta, clarificationContinuation);
+      meta.odNextTaskInputSnapshot = design.runs.get(
+        clarificationContinuation.sourceRunId,
+      )?.odNextTaskInputSnapshot ?? null;
     }
     let runProject: ProjectRecord | null = null;
     if (typeof meta.projectId === 'string' && meta.projectId) {
@@ -2316,6 +2334,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const fingerprintMeta = { ...meta };
     delete fingerprintMeta.strategyRolloutDecision;
     meta.requestFingerprint = runRequestFingerprint(fingerprintMeta, fingerprintSnapshot);
+    let createdTaskInputSnapshot: OdNextTaskInputSnapshotDescriptor | null = null;
     let preparedRun;
     try {
       preparedRun = internalRuns.prepare({
@@ -2323,6 +2342,94 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ...((runUserSeed || clarificationTask || strategyRolloutDecision?.effectiveMode === 'active')
           ? {
               beforeClaimCommit: (candidate) => {
+                const preclaimedInitialTask = getStrategyTaskExecutionByRunId(db, candidate.id);
+                const snapshotTaskType = (
+                  fingerprintSnapshot?.strategy?.selectedTaskProfile?.taskType
+                );
+                const taskType = strategyRolloutDecision?.effectiveMode === 'active'
+                  ? strategyRolloutDecision.taskType
+                  : preclaimedInitialTask?.inputStage === 'request'
+                    && (
+                      snapshotTaskType === 'prototype'
+                      || snapshotTaskType === 'ppt'
+                      || snapshotTaskType === 'marketing'
+                      || snapshotTaskType === 'hyperframes'
+                    )
+                    ? snapshotTaskType
+                    : null;
+                if (!clarificationContinuation && taskType) {
+                  if (!candidate.agentId) {
+                    throw new OdNextTaskInputSnapshotError(
+                      'OD Next task inputs require a resolved task type and selected agent.',
+                    );
+                  }
+                  const taskExecutionId = preclaimedInitialTask?.taskExecutionId
+                    ?? `odnext_${createHash('sha256')
+                      .update(candidate.id)
+                      .digest('hex')
+                      .slice(0, 32)}`;
+                  const projectRoot = resolveProjectDir(
+                    PROJECTS_DIR,
+                    candidate.projectId!,
+                    runProject?.metadata,
+                  );
+                  const contextValue = requestBody.context
+                    && typeof requestBody.context === 'object'
+                    && !Array.isArray(requestBody.context)
+                      ? requestBody.context as Record<string, unknown>
+                      : {};
+                  const mcpIds = Array.isArray(contextValue.mcpServerIds)
+                    ? contextValue.mcpServerIds.filter((value) => typeof value === 'string')
+                    : [];
+                  const runToolServers = toolBundle.bundle
+                    && typeof toolBundle.bundle === 'object'
+                    && Array.isArray((toolBundle.bundle as { mcpServers?: unknown }).mcpServers)
+                      ? (toolBundle.bundle as { mcpServers: unknown[] }).mcpServers
+                      : [];
+                  const taskConfiguration = buildOdNextTaskConfigurationV1({
+                    taskType,
+                    locale: meta.locale,
+                    selectedAgentId: candidate.agentId,
+                    sessionMode: meta.sessionMode,
+                    model: meta.model,
+                    reasoning: meta.reasoning,
+                    serviceTier: meta.serviceTier,
+                    mediaExecution: mediaExecution.policy,
+                    route: preclaimedInitialTask?.route ?? 'full_plan',
+                    mode: preclaimedInitialTask?.executionMode ?? 'unresolved',
+                  });
+                  createdTaskInputSnapshot = createOdNextTaskInputSnapshot({
+                    snapshotsRoot: path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
+                    taskExecutionId,
+                    taskConfiguration,
+                    projectRoot,
+                    projectAttachments: Array.isArray(requestBody.attachments)
+                      ? requestBody.attachments.filter(
+                          (value): value is string => typeof value === 'string' && value.length > 0,
+                        )
+                      : [],
+                    uploadRoot: UPLOAD_DIR,
+                    imagePaths: Array.isArray(requestBody.imagePaths)
+                      ? requestBody.imagePaths.filter(
+                          (value): value is string => typeof value === 'string' && value.length > 0,
+                        )
+                      : [],
+                    commentCount: Array.isArray(requestBody.commentAttachments)
+                      ? requestBody.commentAttachments.length
+                      : 0,
+                    linkedDirectoryCount: Array.isArray(runProject?.metadata?.linkedDirs)
+                      ? runProject.metadata.linkedDirs.length
+                      : 0,
+                    mcpServerCount: mcpIds.length + runToolServers.length,
+                  });
+                  candidate.odNextTaskInputSnapshot = createdTaskInputSnapshot;
+                  // `createOrReuse` persisted the optimistic Run before the
+                  // claim hook ran. Persist the daemon-owned descriptor now,
+                  // while the frozen bytes already exist and before the
+                  // assistant/task claim can commit, so daemon restart never
+                  // falls back to mutable request paths.
+                  design.runs.persistState(candidate);
+                }
                 seedRunUserMessage();
                 if (clarificationContinuation && !clarificationContinuation.retry) {
                   beginStrategyClarification(db, {
@@ -2338,10 +2445,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                   && resolvedSnapshot?.ok
                   && resolvedSnapshot.snapshot.strategy
                 ) {
-                  const taskExecutionId = `odnext_${createHash('sha256')
-                    .update(candidate.id)
-                    .digest('hex')
-                    .slice(0, 32)}`;
+                  const taskExecutionId = createdTaskInputSnapshot?.taskExecutionId;
+                  if (!taskExecutionId) {
+                    throw new OdNextTaskInputSnapshotError(
+                      'OD Next task input snapshot was not created before claim.',
+                    );
+                  }
                   createStrategyTaskExecution(db, {
                     taskExecutionId,
                     projectId: candidate.projectId!,
@@ -2393,6 +2502,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         },
       });
     } catch (error) {
+      removeOdNextTaskInputSnapshot(createdTaskInputSnapshot);
+      if (error instanceof OdNextTaskInputSnapshotError) {
+        return sendApiError(res, 400, error.code, error.message);
+      }
       if (clarificationTask) {
         return sendApiError(
           res,
@@ -2402,6 +2515,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         );
       }
       throw error;
+    }
+    if (preparedRun.kind !== 'ready') {
+      removeOdNextTaskInputSnapshot(createdTaskInputSnapshot);
     }
     if (preparedRun.kind === 'idempotency_conflict') {
       return sendApiError(
@@ -3813,6 +3929,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     };
     if (clarificationContinuation) {
       applyClarificationContinuationMeta(meta, clarificationContinuation);
+      meta.odNextTaskInputSnapshot = design.runs.get(
+        clarificationContinuation.sourceRunId,
+      )?.odNextTaskInputSnapshot ?? null;
     }
     const toolBundleSupport = validateRunToolBundleForAgent(
       toolBundle.bundle,

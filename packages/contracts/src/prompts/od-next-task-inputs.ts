@@ -1,0 +1,86 @@
+import type { ChatSessionMode } from '../api/chat.js';
+import type { MediaExecutionMode, MediaSurface } from '../api/media.js';
+import type { StrategyTaskTypeV2 } from '../plugins/strategy-v2.js';
+import type {
+  StrategyExecutionModeV2,
+  StrategyRouteV2,
+} from '../plugins/strategy-v2.js';
+
+export const OD_NEXT_TASK_CONFIGURATION_SCHEMA_V1 =
+  'open-design.od-next-task-configuration/v1' as const;
+export const OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1 =
+  'open-design.od-next-request-input-facts/v1' as const;
+
+export type OdNextProductionTaskTypeV1 = Exclude<StrategyTaskTypeV2, 'generic'>;
+
+export interface OdNextTaskConfigurationV1 {
+  schema: typeof OD_NEXT_TASK_CONFIGURATION_SCHEMA_V1;
+  taskType: OdNextProductionTaskTypeV1;
+  locale: string;
+  selectedAgentId: string;
+  route: StrategyRouteV2;
+  mode: StrategyExecutionModeV2 | 'unresolved';
+  configuration: {
+    sessionMode: ChatSessionMode;
+    model?: string;
+    reasoning?: string;
+    serviceTier?: string;
+    mediaExecution: {
+      mode: MediaExecutionMode;
+      allowedSurfaces?: MediaSurface[];
+      allowedModels?: string[];
+    };
+  };
+}
+
+export interface OdNextAttachmentFactV1 {
+  id: string;
+  order: number;
+  kind: 'file' | 'image';
+  reference: string;
+  mediaType: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface OdNextRequestInputFactsV1 {
+  schema: typeof OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1;
+  attachments: OdNextAttachmentFactV1[];
+  comments: { count: number };
+  workspace: {
+    project: { reference: 'workspace:project'; access: 'out_of_band' } | null;
+    linkedDirectories: Array<{
+      reference: string;
+      access: 'out_of_band';
+    }>;
+  };
+  mcp: {
+    serverCount: number;
+    registration: 'out_of_band';
+  };
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+    )).join(',')}}`;
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new TypeError('OD Next canonical facts contain an unsupported value.');
+  return encoded;
+}
+
+export function serializeOdNextTaskConfigurationV1(
+  value: OdNextTaskConfigurationV1,
+): string {
+  return canonicalJson(value);
+}
+
+export function serializeOdNextRequestInputFactsV1(
+  value: OdNextRequestInputFactsV1,
+): string {
+  return canonicalJson(value);
+}

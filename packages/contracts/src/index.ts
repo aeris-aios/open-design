@@ -68,6 +68,7 @@ export * from './sse/proxy.js';
 export * from './prompts/system.js';
 export * from './prompts/od-next-strategy.js';
 export * from './prompts/od-next-prompt-bundle.js';
+export * from './prompts/od-next-task-inputs.js';
 export * from './prompts/plugin-block.js';
 export * from './prompts/atom-block.js';
 export * from './critique.js';

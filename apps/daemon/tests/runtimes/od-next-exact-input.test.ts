@@ -234,8 +234,8 @@ describe('chat Agent exact-text production choke point', () => {
       odNextRequestBundle: {
         stableContext: 'stable context',
         priorTranscript: '## user\nprior request',
-        taskConfigPendingFact: '{"state":"pending_task_04_snapshot"}',
-        requestInputPendingFact: '{"state":"pending_task_03_snapshot"}',
+        taskConfigPendingFact: '{"schema":"open-design.od-next-task-configuration/v1","taskType":"prototype"}',
+        requestInputPendingFact: '{"schema":"open-design.od-next-request-input-facts/v1","attachments":[]}',
       },
       strategyInputStage: 'request',
     }).composedPrompt;
@@ -250,7 +250,8 @@ describe('chat Agent exact-text production choke point', () => {
     expect(exactText).not.toContain('# Instructions');
     expect(exactText).not.toContain('/Users/private/customer-a');
     expect(exactText).not.toContain('/private/tmp/secret-assets');
-    expect(exactText).toContain('pending_task_04_snapshot');
+    expect(exactText).toContain('open-design.od-next-task-configuration/v1');
+    expect(exactText).toContain('open-design.od-next-request-input-facts/v1');
     expect(() => assertSingleOdNextPromptBundleRoot(
       '<open_design_prompt_bundle version="1">\ncontent\n</open_design_prompt_bundle>',
     )).toThrow(/canonical open_design_prompt_bundle/);

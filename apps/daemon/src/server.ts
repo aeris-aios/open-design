@@ -467,6 +467,10 @@ import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
+import {
+  loadOdNextTaskInputSnapshot,
+  OdNextTaskInputSnapshotError,
+} from './strategies/od-next/task-input-snapshot.js';
 import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
 import {
   daemonOwnedOdNextPlanningCatalog,
@@ -10331,8 +10335,31 @@ export async function startServer({
 
     // Sanitise supplied image paths: must live under UPLOAD_DIR and stay
     // below the prompt-image safety cap.
+    let odNextTaskInputSnapshot = null;
+    if (run.odNextTaskInputSnapshot) {
+      try {
+        odNextTaskInputSnapshot = loadOdNextTaskInputSnapshot(
+          run.odNextTaskInputSnapshot,
+          path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
+        );
+      } catch (error) {
+        return design.runs.fail(
+          run,
+          error instanceof OdNextTaskInputSnapshotError
+            ? error.code
+            : 'OD_NEXT_INPUT_SNAPSHOT_INVALID',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    } else if (isOdNextRequestStage) {
+      return design.runs.fail(
+        run,
+        'OD_NEXT_INPUT_SNAPSHOT_INVALID',
+        'OD Next request Run is missing its immutable task input snapshot.',
+      );
+    }
     const { safeImages, oversizedImages, failedImages } =
-      resolveSafePromptImagePaths(imagePaths);
+      resolveSafePromptImagePaths(odNextTaskInputSnapshot ? [] : imagePaths);
     if (oversizedImages.length > 0) {
       return design.runs.fail(
         run,
@@ -10347,20 +10374,23 @@ export async function startServer({
         'Failed to read one or more image attachments.',
       );
     }
+    const transportSourceImages = odNextTaskInputSnapshot?.imagePaths ?? safeImages;
     const amrStagedImages =
-      def.id === 'amr'
+      def.id === 'amr' && !odNextTaskInputSnapshot
         ? await stageAmrImagePaths(cwd ?? PROJECT_ROOT, safeImages, UPLOAD_DIR)
-        : safeImages;
+        : transportSourceImages;
 
     // Project-scoped attachments: project-relative paths inside cwd. Each
     // is run through the same path-traversal guard the file CRUD endpoints
     // use, then existence-checked. Whatever survives shows up as an
     // explicit list at the bottom of the user message so the agent knows
     // to Read it.
-    const safeAttachments = cwd
+    const safeAttachments = !odNextTaskInputSnapshot && cwd
       ? resolveSafeProjectAttachments(cwd, attachments)
       : [];
-    run.projectAttachmentPaths = safeAttachments;
+    run.projectAttachmentPaths = odNextTaskInputSnapshot
+      ? odNextTaskInputSnapshot.attachmentReferences
+      : safeAttachments;
 
     // Local code agents don't accept a separate "system" channel the way the
     // Messages API does — we fold the skill + design-system prompt into the
@@ -10819,12 +10849,15 @@ export async function startServer({
         resolveRunArtifactOutcomeBeforeFinish();
       }
     };
-    const extraAllowedDirs = resolveChatExtraAllowedDirs({
-      agentId,
-      skillsDir: SKILLS_DIR,
-      designSystemsDir: DESIGN_SYSTEMS_DIR,
-      linkedDirs,
-    });
+    const extraAllowedDirs = [
+      ...resolveChatExtraAllowedDirs({
+        agentId,
+        skillsDir: SKILLS_DIR,
+        designSystemsDir: DESIGN_SYSTEMS_DIR,
+        linkedDirs,
+      }),
+      ...(odNextTaskInputSnapshot ? [odNextTaskInputSnapshot.snapshotDir] : []),
+    ];
     const researchCommandContract = resolveResearchCommandContract(
       research,
       isOdNextRequestStage
@@ -11116,14 +11149,11 @@ export async function startServer({
     const includeStableForPayload = isOdNextRequestStage || includeStableInstructions;
     const promptImagePaths = selectPromptImagePaths(
       def.id,
-      safeImages,
+      transportSourceImages,
       amrStagedImages,
     );
     const taskConfigPendingFact = isOdNextRequestStage
-      ? JSON.stringify({
-          schema: 'open-design.od-next-task-config-pending/v1',
-          state: 'pending_task_04_snapshot',
-        })
+      ? odNextTaskInputSnapshot?.taskConfigText ?? ''
       : '';
     const requestInputPendingFact = isOdNextRequestStage
       ? [
@@ -11133,21 +11163,8 @@ export async function startServer({
                 schema: 'open-design.od-next-frozen-skill-package/v1',
                 state: 'missing',
               }),
-          JSON.stringify({
-            schema: 'open-design.od-next-request-input-pending/v1',
-            attachmentSelection: {
-              state: 'pending_task_04_snapshot',
-              projectCount: safeAttachments.length,
-              commentCount: safeCommentAttachments.length,
-              imageCount: promptImagePaths.length,
-            },
-            workspaceSelection: {
-              state: 'pending_task_04_reference',
-              hasProjectWorkspace: Boolean(cwd),
-              linkedDirectoryCount: linkedDirs.length,
-            },
-          }),
-        ].join('\n\n---\n\n')
+          odNextTaskInputSnapshot?.requestInputText ?? '',
+        ].filter(Boolean).join('\n\n---\n\n')
       : '';
     const {
       composedPrompt: composed,
@@ -12295,7 +12312,7 @@ export async function startServer({
     try {
       args = def.buildArgs(
         composed,
-        safeImages,
+        promptImagePaths,
         extraAllowedDirs,
         agentOptions,
         {
@@ -13825,8 +13842,8 @@ export async function startServer({
             send(channel, payload);
           }
         },
-        imagePaths: def.supportsImagePaths ? amrStagedImages : [],
-        uploadRoot: UPLOAD_DIR,
+        imagePaths: def.supportsImagePaths ? promptImagePaths : [],
+        uploadRoot: odNextTaskInputSnapshot?.snapshotDir ?? UPLOAD_DIR,
       });
     } else if (def.streamFormat === 'acp-json-rpc') {
       const acpStageTimeoutMs = resolveAcpStageTimeoutMs(def.inactivityTimeoutMs);
@@ -13835,7 +13852,7 @@ export async function startServer({
         prompt: composed,
         cwd: effectiveCwd,
         model: safeModel,
-        imagePaths: def.supportsImagePaths ? amrStagedImages : [],
+        imagePaths: def.supportsImagePaths ? promptImagePaths : [],
         mcpServers,
         envFormat: def.acpMcpEnvFormat ?? 'array',
         executionProfile,
@@ -14862,6 +14879,8 @@ export async function startServer({
                   currentPrompt: instruction,
                   titleGeneration: undefined,
                   userMessageId: undefined,
+                  odNextTaskInputSnapshot:
+                    run.odNextTaskInputSnapshot ?? chatBody.odNextTaskInputSnapshot ?? null,
                 };
                 automaticContinuationChatBody = {
                   ...meta,

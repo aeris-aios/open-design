@@ -21,6 +21,12 @@ export interface InternalRunCreateInput extends Record<string, unknown> {
   currentPrompt?: string;
   sessionMode?: string;
   analyticsHints?: Record<string, unknown>;
+  /** Daemon-owned immutable OD Next task input descriptor; never accepted from callers. */
+  odNextTaskInputSnapshot?: {
+    taskExecutionId: string;
+    snapshotDir: string;
+    manifestSha256: string;
+  } | null;
 }
 
 export interface InternalPhysicalRun {
