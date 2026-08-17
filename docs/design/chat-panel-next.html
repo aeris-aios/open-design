@@ -2687,23 +2687,29 @@ button.att-d:hover { border-color: var(--border-strong); }
         <div class="cmp-h"><span class="no">20</span><span class="nm">网络错误</span></div>
         <div class="cmp-meta">
           <div><b>出现时机</b> 任务被断线打断后</div>
-          <div><b>默认状态</b> 仅一种状态</div>
+          <div><b>默认状态</b> 与 21 同一张卡,只有卡头那个词不同</div>
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>默认 · 只说任务停在哪,不重复说网络</span><i></i></div>
+            <div class="st-l mod-def"><span>默认 · 剩几步、分别是什么、点哪儿接着跑</span><i></i></div>
             <div class="st-b">
-              <div class="noteb">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
-                <span class="sp">任务停在第 3 步</span>
-                <button class="btn mod-ghost mod-sm" type="button">继续</button>
+              <div class="card">
+                <div class="h"><b>已中断</b><span class="n">剩余 2 步</span></div>
+                <ol class="steps">
+                  <li><span class="k">3</span><span>按同一套间距做设置页</span></li>
+                  <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
+                </ol>
+                <div class="foot">
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button">继续剩余任务</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>
-          <span><b>它跟 23 · 重连讲的不是一件事</b>:23 讲<b>通道</b>(线断了、正在自动重连),这一条讲<b>后果</b>(你那个任务停在半路了)。所以这一行<b>一个字都不提网络</b> —— 断线那件事 23 已经在说,两条前后脚出现却都在讲"网断了",就是把同一件事说两遍。这一条只说别处没有的那句:<b>停在第几步</b>。<b>为什么删不掉</b>:23 连上就整行消失(连上是常态,不需要播报),而那时任务还停在第 3 步,没人告诉你、也没人给你接着跑的入口;反过来,单个上游调用超时也会打断任务,那时通道好好的,23 根本不出现。两条的生命周期和触发条件都不一样。<b>继续</b> — <b>从断连处接着跑,不从头重跑</b>,所以必须说清停在第几步:不写清楚,人无法判断该点继续还是重发一遍,而白跑一遍前三步是实打实的时间和额度。按钮写「继续」不写「重试」,因为"重试"听起来像从头再来一次。<b>不上琥珀色</b>:它不是"正在发生",是"停住了在等你",颜色留给真正要注意的地方。</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+          <span><b>跟 21 · 暂停任务用同一张卡</b> —— 它俩是同一件事的两种起因:任务停在半路了,这是剩下的,点这儿接着跑。起因不同不该长出两种形状,那只会让人以为发生了两类不同的事。<b>唯一的差别是卡头那个词</b>:这里是「已中断」,21 是「已手动停止」—— 一个词就够把"谁停的"说清楚,而这正是两张卡之间唯一真的不同。<b>不写「网络中断」</b>:断线那件事 23 · 重连正在说,两条前后脚出现却都在讲"网断了"就是说两遍;这里只说别处没有的那句 —— 还剩什么、怎么接着跑。<b>保留原来的序号</b>(3、4 而不是重编成 1、2):序号对得上 Plan 卡,一眼知道是从哪儿断的。<b>继续剩余任务</b> — 从断点接着跑,不重跑已完成的那几步;白跑一遍前三步是实打实的时间和额度。<b>不上琥珀色</b>:它不是"正在发生",是"停住了在等你"。<b>剩余为 0 时这张卡不出现</b> —— 那意味着任务已经跑完了,断线只是发生在收尾之后,没什么要你接着做的。</span>
         </div>
       </article>
 
