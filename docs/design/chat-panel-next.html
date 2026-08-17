@@ -841,7 +841,15 @@ button.att-i:hover { border-color: var(--border-strong); }
 .card.is-stale { background: var(--bg-panel); opacity: 0.75; }
 .card.is-stale > .h { color: var(--amber); }
 
-.steps { padding: 4px 0; }
+/* 限高约 5 步,其余滚动。
+   ------------------------------------------------------------
+   文档没有规定 Plan 最多几步 —— 正因为没有上限,卡片高度才必须自己封顶,
+   否则一个 20 步的计划会把整条流水撑开、后面的内容全被推走。
+   5 步的来历:每行 = 5px 上下内边距 + 18px 行高(12×1.5)= 28px,
+   5 行 140px 再加容器 8px。步骤文案换行时会露出小半行 —— 那不是缺陷,
+   正好当"下面还有"的提示。
+   同理,卡头的「N 步」不能去掉:限高之后它是唯一能知道总数的地方。 */
+.steps { padding: 4px 0; max-height: 148px; overflow-y: auto; }
 .steps li { display: flex; gap: 8px; padding: 5px 11px; font-size: var(--t-mini); line-height: var(--lh-row); color: var(--text); list-style: none; }
 .steps li .k { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); width: 15px; }
 /* 已完成那几步的勾:和完成标记、多选勾用同一条路径同一笔画。
@@ -1471,13 +1479,13 @@ button.att-i:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>视觉方向 · 看图选择(风格类问题不能用文字选项)</span><i></i></div>
+            <div class="st-l"><span>视觉方向 · 看图选择(风格类问题不能用文字选项),没选时「确认」置灰</span><i></i></div>
             <div class="st-b">
               <div class="card">
                 <div class="h"><b>先定个视觉方向</b></div>
                 <div class="q">这套电商 App 原型走哪种感觉?四张预览用的是同一份示例内容,比的是风格。</div>
                 <div class="opts mod-visual">
-                  <button class="vopt is-on" type="button">
+                  <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
                     <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
                   </button>
@@ -1496,12 +1504,46 @@ button.att-i:hover { border-color: var(--border-strong); }
                 </div>
                 <div class="foot">
                   <button class="btn mod-ghost mod-sm" type="button">帮我决定</button>
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button" disabled>确认</button>
                 </div>
               </div>
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>推荐项没被选中 · 深色标签在白底上一样读得出</span><i></i></div>
+            <div class="st-l"><span>选中一张 · 图上落绿勾,「确认」才亮起</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>先定个视觉方向</b></div>
+                <div class="q">这套电商 App 原型走哪种感觉?四张预览用的是同一份示例内容,比的是风格。</div>
+                <div class="opts mod-visual">
+                  <button class="vopt is-on" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                  </button>
+                </div>
+                <div class="foot">
+                  <button class="btn mod-ghost mod-sm" type="button">帮我决定</button>
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button">确认</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>选的不是推荐项 · 推荐标签不跟着变绿</span><i></i></div>
             <div class="st-b">
               <div class="card">
                 <div class="h"><b>先定个视觉方向</b></div>
@@ -1526,6 +1568,8 @@ button.att-i:hover { border-color: var(--border-strong); }
                 </div>
                 <div class="foot">
                   <button class="btn mod-ghost mod-sm" type="button">帮我决定</button>
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button">确认</button>
                 </div>
               </div>
             </div>
@@ -1539,7 +1583,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」,也<b>不存在"已选中但还没提交"的常规选项</b>:点下去这张卡就收成陈述了。所以待选态画的是一个都没选 —— 画成有一项已选中,会让人以为还差一步确认,反而去找那个不存在的按钮。(唯一会停在选中态的是「自己填」,因为它还要等你写字,那一态另画。)<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」在两种模式里都是选项之一,但<b>含义不同</b>:单选选它 = 放弃其它选项、只交你写的,所以底部从"跳过"变出「确认」(单选本是点了即走,而这一项点下去还没有内容可发,不给按钮就走不下去);多选勾它 = <b>在已勾项之外再加一条</b>,「确认」本来就在、不用新增,但计数要 +1。两种模式下都是原地长出输入框,放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。提交按钮一律叫<b>「确认」</b>,不叫"发送" —— "发送"在这个面板里另有所指(输入框、Queue 的「立即发送」是发一条新消息),而这里是回答一个问题,同一个词用在两件事上会串。<b>视觉方向另走看图选择</b>:风格用「Modern minimal」这类抽象词,人只能生成完才知道自己选了什么。按产物类型筛 3–5 个方向、各给预览图,四张用同一份示例内容和同一画幅 —— 比的是风格不是题材;其中一个是 Agent 推荐项,再给一条「帮我决定」的出口。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
+          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」,也<b>不存在"已选中但还没提交"的常规选项</b>:点下去这张卡就收成陈述了。所以待选态画的是一个都没选 —— 画成有一项已选中,会让人以为还差一步确认,反而去找那个不存在的按钮。(唯一会停在选中态的是「自己填」,因为它还要等你写字,那一态另画。)<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」在两种模式里都是选项之一,但<b>含义不同</b>:单选选它 = 放弃其它选项、只交你写的,所以底部从"跳过"变出「确认」(单选本是点了即走,而这一项点下去还没有内容可发,不给按钮就走不下去);多选勾它 = <b>在已勾项之外再加一条</b>,「确认」本来就在、不用新增,但计数要 +1。两种模式下都是原地长出输入框,放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。提交按钮一律叫<b>「确认」</b>,不叫"发送" —— "发送"在这个面板里另有所指(输入框、Queue 的「立即发送」是发一条新消息),而这里是回答一个问题,同一个词用在两件事上会串。<b>视觉方向另走看图选择</b>:风格用「Modern minimal」这类抽象词,人只能生成完才知道自己选了什么。按产物类型筛 3–5 个方向、各给预览图,四张用同一份示例内容和同一画幅 —— 比的是风格不是题材;其中一个是 Agent 推荐项,再给一条「帮我决定」的出口。<b>它是单选里唯一带「确认」的一个</b> —— 文字单选点了即走,是因为选项一眼读完、点下去就是决定;而看图选择要来回比对四张图,人会先点一张、再点另一张换着看,选中态在这里是"我目前倾向这张"的暂存,不是提交。没有确认就等于第一次点错即成交,而图比文字更容易点错(图占的面积大、点中了才知道自己选的是哪个风格)。所以这张卡走两步:点图落绿勾、点「确认」才发送;一张都没选时「确认」置灰,那也是这个按钮存在的意义 —— 它替卡片说出"你还没选"。左「帮我决定」右「确认」,和其它卡的底栏同一套位置。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
         </div>
       </article>
 
@@ -1608,6 +1652,25 @@ button.att-i:hover { border-color: var(--border-strong); }
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span></li>
                   <li class="is-now"><span class="k">3</span><span>按同一套间距做设置页</span></li>
                   <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
+                </ol>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>步骤多 · 限高约 5 步,其余滚动(卡片高度不能无界)</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>执行中</b><span class="n">2 / 9</span></div>
+                <ol class="steps">
+                  <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>把商品卡抽成共享组件</span></li>
+                  <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
+                  <li class="is-now"><span class="k">3</span><span>按同一套间距做设置页</span></li>
+                  <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
+                  <li><span class="k">5</span><span>给列表页补搜索与筛选条</span></li>
+                  <li><span class="k">6</span><span>商品详情页跟着换新卡</span></li>
+                  <li><span class="k">7</span><span>结算页缩略图对齐新尺寸</span></li>
+                  <li><span class="k">8</span><span>按端适配 iOS / Android / 微信</span></li>
+                  <li><span class="k">9</span><span>收尾校验并存一版</span></li>
                 </ol>
               </div>
             </div>
