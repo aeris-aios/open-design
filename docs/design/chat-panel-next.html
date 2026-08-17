@@ -1730,7 +1730,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         <div class="cmp-h"><span class="no">21</span><span class="nm">暂停任务</span></div>
         <div class="cmp-meta">
           <div><b>出现时机</b> 用户手动暂停任务</div>
-          <div><b>默认状态</b> 列出没跑完的,给一个接着跑的入口</div>
+          <div><b>默认状态</b> 仅一种状态</div>
         </div>
         <div class="cmp-b">
           <div class="st">
@@ -1745,19 +1745,10 @@ button.att-d:hover { border-color: var(--border-strong); }
               </div>
             </div>
           </div>
-          <div class="st">
-            <div class="st-l"><span>刚好停在最后一步之后 · 没有剩余,只陈述</span><i></i></div>
-            <div class="st-b">
-              <div class="noteb">
-                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/></svg>
-                <span class="sp">已手动停止,没有未完成的步骤</span>
-              </div>
-            </div>
-          </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/></svg>
-          <span><b>继续</b> — 从断点接着跑,不重跑已完成的步骤。<b>展示</b>剩余步骤(保留原来的序号)与剩余步数;剩余为 0 时收成一行陈述,不摆空卡。</span>
+          <span><b>继续</b> — 从断点接着跑,不重跑已完成的步骤。<b>展示</b>剩余步骤(保留原来的序号)与剩余步数。剩余为 0 时这张卡不出现 —— 那一轮已经跑完,而「这轮被你停了」由回合状态行(见 15)报。</span>
         </div>
       </article>
 
