@@ -71,6 +71,8 @@ export interface UseConversationChatResult {
   error: string | null;
   /** True until the initial message load resolves. */
   loading: boolean;
+  /** A failed authoritative transcript read must never be treated as empty history. */
+  sendDisabled: boolean;
   onSend: (
     prompt: string,
     attachments: ChatAttachment[],
@@ -90,6 +92,8 @@ export function useConversationChat(
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const messageScopeKey = `${projectId}\u0000${conversationId}`;
+  const [messagesReadyScopeKey, setMessagesReadyScopeKey] = useState<string | null>(null);
 
   // Keep the latest config/agent map in refs so the stable `onSend` callback
   // always reads the current agent selection without re-subscribing the SSE.
@@ -97,6 +101,7 @@ export function useConversationChat(
   ctxRef.current = ctx;
   const messagesRef = useRef<ChatMessage[]>(messages);
   messagesRef.current = messages;
+  const messagesReadyScopeKeyRef = useRef<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const cancelRef = useRef<AbortController | null>(null);
@@ -111,6 +116,8 @@ export function useConversationChat(
     setLoading(true);
     setMessages([]);
     setError(null);
+    setMessagesReadyScopeKey(null);
+    messagesReadyScopeKeyRef.current = null;
     void (async () => {
       try {
         const list = await listMessages(
@@ -120,6 +127,8 @@ export function useConversationChat(
         );
         if (cancelled) return;
         setMessages(list);
+        setMessagesReadyScopeKey(messageScopeKey);
+        messagesReadyScopeKeyRef.current = messageScopeKey;
         setLoading(false);
       } catch (loadError) {
         if (cancelled) return;
@@ -134,7 +143,7 @@ export function useConversationChat(
     return () => {
       cancelled = true;
     };
-  }, [projectId, conversationId, ctx.workspaceContext]);
+  }, [projectId, conversationId, ctx.workspaceContext, messageScopeKey]);
 
   // Tear down the live subscription when the tab unmounts. The daemon run
   // keeps going; we only stop the browser-side SSE.
@@ -178,6 +187,7 @@ export function useConversationChat(
         sessionMode,
         workspaceContext,
       } = ctxRef.current;
+      if (messagesReadyScopeKeyRef.current !== messageScopeKey) return;
       if (cfg.mode !== 'daemon') {
         setError('Side Chat needs a local agent. Pick one in the top bar.');
         return;
@@ -352,7 +362,7 @@ export function useConversationChat(
         },
       });
     },
-    [projectId, conversationId, persist, updateAssistant],
+    [projectId, conversationId, messageScopeKey, persist, updateAssistant],
   );
 
   const onSend = useCallback(
@@ -388,5 +398,14 @@ export function useConversationChat(
     });
   }, [persist]);
 
-  return { messages, streaming, error, loading, onSend, onRetry, onStop };
+  return {
+    messages,
+    streaming,
+    error,
+    loading,
+    sendDisabled: messagesReadyScopeKey !== messageScopeKey,
+    onSend,
+    onRetry,
+    onStop,
+  };
 }

@@ -1073,11 +1073,22 @@ function autoSendFirstMessageKey(projectId: string): string {
   return `od:auto-send-first:${projectId}`;
 }
 
+function stableHandoffProjectDigest(projectId: string): string {
+  // FNV-1a 64-bit keeps the daemon-facing id bounded while preserving a
+  // deterministic identity across retries and ProjectView remounts.
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < projectId.length; index += 1) {
+    hash ^= BigInt(projectId.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(36).padStart(13, '0');
+}
+
 function homeAutoSendIdentity(projectId: string): Pick<
   ProjectChatSendMeta,
   'assistantMessageId' | 'clientRequestId' | 'userMessageId'
 > {
-  const handoffId = `home-auto-send-${projectId}`;
+  const handoffId = `home-auto-send-${stableHandoffProjectDigest(projectId)}`;
   return {
     clientRequestId: handoffId,
     userMessageId: `${handoffId}-user`,

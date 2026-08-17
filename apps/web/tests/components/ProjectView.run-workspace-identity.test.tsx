@@ -668,6 +668,27 @@ describe('a Home auto-send identifies its caller before the project scope resolv
     expect(firstRun?.assistantMessageId).toMatch(/^[A-Za-z0-9._-]+$/);
   });
 
+  it('keeps Home handoff identities within the daemon limit for a maximum-length project id', async () => {
+    const maximumLengthProjectId = 'p'.repeat(128);
+    window.sessionStorage.setItem(`od:auto-send-first:${maximumLengthProjectId}`, '1');
+
+    renderProjectView({
+      project: {
+        ...project(),
+        id: maximumLengthProjectId,
+      },
+    });
+
+    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalledTimes(1));
+    const run = mockedStreamViaDaemon.mock.calls[0]?.[0];
+    const ids = [run?.clientRequestId, run?.userMessageId, run?.assistantMessageId];
+
+    for (const id of ids) {
+      expect(id).toMatch(/^[A-Za-z0-9._-]+$/);
+      expect(id?.length).toBeLessThanOrEqual(128);
+    }
+  });
+
   it('does not let the initial comments read replace a newer SSE refresh', async () => {
     window.sessionStorage.removeItem(`od:auto-send-first:${PROJECT_ID}`);
     const initialComments = deferred<Awaited<ReturnType<typeof fetchPreviewComments>>>();
