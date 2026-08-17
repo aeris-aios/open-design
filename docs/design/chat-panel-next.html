@@ -318,7 +318,7 @@
    ------------------------------------------------------------
    来源:飞书文档《…/docx/VtOwd4ON2oYZj0xd6OTceubcnDe》第三节
    「三、OpenDesign 的生成流程」的组件表(21 行),
-   外加评审时补的 2 个(22 待发送附件 / 23 重连),共 23 个。
+   外加评审时补的 3 个(22 待发送附件 / 23 重连 / 24 回答头),共 24 个。
    表里每个组件给了:出现时机 / 默认状态 / 包含的状态 / 支持的操作 /
    展示的信息 —— 本文件把这五列逐一落成可看的样式。
 
@@ -361,6 +361,11 @@
      设计系统的调色板,而是外部品牌的固定值,改不得也不该跟着主题走。
      站点那套 tokens.css 里已经有同名分组(--plat-ios / --plat-wx / --plat-x …),
      产品这套还没有 —— 移植时应该把这一段挪进 tokens/colors.css,不要留在这儿。 */
+  --agent-claude:      #d97757;   /* agent-icons/claude.svg 原色 */
+  --agent-codex-plate: #ffffff;   /* agent-icons/codex.svg 的白底板 */
+  --agent-codex-a:     #b1a7ff;
+  --agent-codex-b:     #7a9dff;
+  --agent-codex-c:     #3941ff;
   --plat-discord:  #5865F2;
   --plat-feishu-a: #00D6B9;
   --plat-feishu-b: #3370FF;
@@ -1591,6 +1596,14 @@ button.att-d:hover { border-color: var(--border-strong); }
    进流水就没有这些事:面板本来就会渲染流水的每一行,多一种行而已。
    代价是滚上去会看不见 —— 可以接受,因为它本来就是短暂的,
    而真正需要你动手的那一态(次数用尽)会停在流水末尾不动。 */
+/* 回答头:这一段是谁答的。
+   ------------------------------------------------------------
+   尺寸照搬 apps/web 的 .role —— 20px 图标 + 8px 间距 + 13px/600。
+   只在【换人】时出现:同一个 agent 连着说不重复报名字,那是复述;
+   用户插一句之后重新出现,因为一轮结束了。 */
+.ahead { display: flex; align-items: center; gap: 8px; font-size: var(--t-body); font-weight: 600; color: var(--text-strong); }
+.ahead .ai { flex: none; width: 20px; height: 20px; }
+
 /* 重连是一条状态,不是一张卡。
    ------------------------------------------------------------
    它随时会自己消失,而且刻意不该抢注意力 —— 重连时人该做的是接着看别的。
@@ -1696,14 +1709,14 @@ button.att-d:hover { border-color: var(--border-strong); }
 <header class="hd" data-od-id="page-header">
   <span class="mark" aria-hidden="true"><svg viewBox="0 0 82 82" fill="currentColor"><path d="M41 0C76.6 0 82 5.4 82 41S76.6 82 41 82 0 76.6 0 41 5.4 0 41 0Zm-.1 15.7C26.9 15.7 15.6 27 15.6 41v21.9c0 1.9 1.5 3.4 3.4 3.4h21.9c14 0 25.3-11.3 25.3-25.3s-11.3-25.3-25.3-25.3Zm0 5.1c11.2 0 20.2 9.1 20.2 20.2s-9 20.2-20.2 20.2S20.6 52.2 20.6 41s9.1-20.2 20.3-20.2Zm-8.3 10.8c-.6-.3-1.3.4-1 1l7.7 20.3c.3.8 1.6.6 1.6-.3V41h11.8c.9 0 1.1-1.2.3-1.6l-20.4-7.8Z"/></svg></span>
   <span class="tt">OpenDesign 的生成流程 · 组件全集</span>
-  <span class="st">23 个组件(表内 21 + 表外 2)· 6 阶段 + 边界 · 静态 HTML</span>
+  <span class="st">24 个组件(表内 21 + 表外 3)· 6 阶段 + 边界 · 静态 HTML</span>
 </header>
 
 <div class="wrap">
 
   <div class="intro" data-od-id="intro">
     <span class="kicker">GENERATION FLOW</span>
-    <h1>生成流程里,会话要长出的 23 个组件</h1>
+    <h1>生成流程里,会话要长出的 24 个组件</h1>
     <p>组件清单与每个组件的「出现时机 / 默认状态 / 包含的状态 / 支持的操作 / 展示的信息」全部取自飞书文档第三节的组件表,不自行增删。配色绑<b>产品面</b>调色板(<code>design-system/tokens/</code>,即 <code>styles.css</code> 那七份),不是站点面的 <code>tokens.css</code> —— 这份稿子的去向是 <code>apps/web</code> 的 chat panel。本文件里不出现一个 hex。写成静态 HTML 而非 JS 模板 —— 改样式时看到哪就能改哪。</p>
   </div>
 
@@ -2006,6 +2019,43 @@ button.att-d:hover { border-color: var(--border-strong); }
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg>
           <span><b>展开</b> — 点 ⌄ 看具体断在哪(接口 / 超时 / 服务端)。<b>用尽后</b>停止自动重连,换成「重新连接」交回给人。<b>展示</b>第几次 / 共几次;恢复后整行消失,不留「已恢复」。</span>
+        </div>
+      </article>
+      <article class="cmp mod-w2" data-od-id="cmp-agent-head">
+        <div class="cmp-h"><span class="no">24</span><span class="nm">回答头</span><span class="ext-mark">表外</span></div>
+        <div class="cmp-meta">
+          <div><b>出现时机</b> 每轮回答的开头;换了 agent 也会再出现</div>
+          <div><b>默认状态</b> 图标 + 名字一行</div>
+        </div>
+        <div class="cmp-b">
+          <div class="st">
+            <div class="st-l mod-def"><span>默认 · 一行说清这段是谁答的</span><i></i></div>
+            <div class="st-b">
+              <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
+              <div class="say">好,先把列表页搭起来,再拿同一张商品卡去做设置页。</div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>同一个 agent 连着说 · 第二段不再报名字</span><i></i></div>
+            <div class="st-b">
+              <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
+              <div class="say">列表页做完了。</div>
+              <div class="say">设置页也照着这套间距走一版。</div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>换了模型 · 头跟着变,前后两段一眼分得开</span><i></i></div>
+            <div class="st-b">
+              <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
+              <div class="say">列表页做完了,设置页交给下一位。</div>
+              <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-codex-plate)" d="M19.503 0H4.496A4.496 4.496 0 0 0 0 4.496v15.007A4.496 4.496 0 0 0 4.496 24h15.007A4.496 4.496 0 0 0 24 19.503V4.496A4.496 4.496 0 0 0 19.503 0"/><path fill="url(#cdx)" d="M9.064 3.344a4.6 4.6 0 0 1 2.285-.312q1.5.173 2.673 1.275.016.015.037.021a.1.1 0 0 0 .043 0 4.55 4.55 0 0 1 3.046.275l.047.022.116.057a4.58 4.58 0 0 1 2.188 2.399q.313.765.315 1.595a4.2 4.2 0 0 1-.134 1.223.12.12 0 0 0 .03.115q.89.91 1.183 2.17.433 2.138-.887 3.854l-.136.166a4.55 4.55 0 0 1-2.201 1.388.12.12 0 0 0-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838q-1.78-.009-3.157-1.302a.11.11 0 0 0-.105-.024c-.388.125-.78.143-1.204.138a4.44 4.44 0 0 1-1.945-.466 4.54 4.54 0 0 1-1.61-1.335c-.152-.202-.303-.392-.414-.617a6 6 0 0 1-.37-.961 4.6 4.6 0 0 1-.014-2.298.1.1 0 0 0 .006-.056.1.1 0 0 0-.027-.048 4.5 4.5 0 0 1-1.034-1.651 3.9 3.9 0 0 1-.251-1.192 5.2 5.2 0 0 1 .141-1.6Q3.659 7.92 5.086 6.97q.318-.212.601-.33a6 6 0 0 1 .646-.227.1.1 0 0 0 .065-.066 4.5 4.5 0 0 1 .829-1.615 4.54 4.54 0 0 1 1.837-1.388m3.482 10.565a.637.637 0 0 0 0 1.272h3.636a.637.637 0 1 0 0-1.272zM8.462 9.23a.637.637 0 0 0-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 1 0 1.095.649l1.454-2.455a.64.64 0 0 0 .005-.64z"/><defs><linearGradient id="cdx" x1="12" x2="12" y1="3" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="var(--agent-codex-a)"/><stop offset=".5" stop-color="var(--agent-codex-b)"/><stop offset="1" stop-color="var(--agent-codex-c)"/></linearGradient></defs></svg><span>Codex</span></div>
+              <div class="say">接手了,先读一遍列表页的 token。</div>
+            </div>
+          </div>
+        </div>
+        <div class="cmp-ops">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20a7 7 0 0114 0"/></svg>
+          <span><b>只在换人时出现</b> —— 同一个 agent 连着说好几段,每段都报一次名字就是复述;用户插一句之后重新出现,因为那是新的一轮。这条规则和 apps/web 的 <code>showRole</code> 一致:身份和上一条不同才画。<b>图标 + 名字都要</b> —— 名字在切了模型之后是唯一能确认"现在是谁在答"的东西,图标则让人扫一眼就看出换过了。<b>不带时间</b>:时间在回合状态行(见 15)里,那里才是一轮结束时要看的地方。</span>
         </div>
       </article>
 
