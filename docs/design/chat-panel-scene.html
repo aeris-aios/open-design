@@ -834,7 +834,11 @@ button.att-d:hover { border-color: var(--border-strong); }
 
 
 /* ---- Thinking / 折叠类通用 ---- */
-.fold { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); }
+/* 卡宽跟着内容走。一行短标题的折叠块、只有两张图的生图块,拉满整栏时
+   右边那片空白不表示任何东西,只会让人以为还有内容没出来。
+   代价:靠 margin-left:auto 顶到右边的耗时/箭头会紧跟文字 —— 但它们仍在
+   各自卡片的右缘,「箭头一律靠右」这条没破。 */
+.fold { width: fit-content; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); }
 .fold > summary {
   display: flex; align-items: center; gap: 7px;
   padding: 8px 11px; cursor: pointer; list-style: none;
@@ -902,7 +906,7 @@ button.att-d:hover { border-color: var(--border-strong); }
 @keyframes blink { 50% { opacity: 0; } }
 
 /* ---- 意图澄清 / Plan / 阻塞类卡 ---- */
-.card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
+.card { width: fit-content; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
 .card > .h {
   display: flex; align-items: center; gap: 7px; padding: 9px 11px;
   border-bottom: 1px solid var(--border-soft); background: var(--bg-panel);
@@ -1176,6 +1180,10 @@ button.att-d:hover { border-color: var(--border-strong); }
   background: var(--bg); font-size: var(--t-body); color: var(--text); line-height: var(--lh-row);
 }
 .tool + .tool { margin-top: 6px; }
+/* 单独出现的一行跟着内容走;折叠块里那一摞是同一组步骤,必须等宽对齐,
+   参差不齐会让人以为它们不是一回事。 */
+.tool { width: fit-content; max-width: 100%; }
+.fold .body .tool { width: auto; }
 .tool .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool .nm code { font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong); }
 .tool .ms { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
@@ -1241,7 +1249,12 @@ button.att-d:hover { border-color: var(--border-strong); }
 .card > .h .fx + .n { margin-left: 6px; }
 
 /* ---- 生图 ---- */
-.imgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+/* 列宽写死而不是 1fr:格子数跟着图的张数走,两张就是两张的宽度,不铺满。
+   .shot 是空元素 + aspect-ratio,max-content 宽为 0 —— 用 1fr 的话父级一旦
+   fit-content 就会整块塌成 0。 */
+.imgs { display: grid; grid-auto-flow: column; grid-auto-columns: 84px; gap: 6px; width: fit-content; max-width: 100%; }
+/* 独立出现时不带内边距;套进卡里就得跟卡的其他行一样留边,否则图贴着卡边。 */
+.card > .imgs { padding: 0 11px 10px; }
 .shot { position: relative; aspect-ratio: 3/4; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); background: var(--bg-subtle); }
 /* 生图的占位跟附件缩略图共用 .mini —— 全站只有一种占位灰。
    ① 那是凭空发明的"四张图不一样"的效果,而占位图的职责只是压住范围,
