@@ -9,7 +9,6 @@ import {
   routeSuccessfulRuns,
   successfulRunEventBody,
   suppressWhatsNew,
-  trackRunRequests,
 } from '@/playwright/mock-factory';
 import { CAMPAIGN_DISMISSAL_STORAGE } from '@/playwright/campaign-dismissals';
 import { ensureRailOpen } from '@/playwright/rail';
@@ -971,11 +970,12 @@ test('[P1] home composer sends referenced workspace context into project creatio
   ]);
 });
 
-test('[P1] home staged workspace context auto-sends into the first project run', async ({ page }) => {
+test('[P1] home Ask context auto-sends into the first project run without a plugin snapshot', async ({ page }) => {
   const prompt = 'Create a project and immediately use the Home-staged context.';
   let projectId = '';
   const conversationId = 'conv-home-autosend-context';
   const runBodies: Array<Record<string, unknown>> = [];
+  let createBody: Record<string, unknown> = {};
   let createdProjectMetadata: Record<string, unknown> = {};
   const referenceProject = {
     id: 'ref-home-autosend',
@@ -998,6 +998,7 @@ test('[P1] home staged workspace context auto-sends into the first project run',
     }
     if (request.method() === 'POST') {
       const body = request.postDataJSON() as { id?: string; metadata?: Record<string, unknown>; name?: string; pendingPrompt?: string };
+      createBody = body;
       projectId = body.id ?? '';
       expect(projectId).toBeTruthy();
       createdProjectMetadata = body.metadata ?? {};
@@ -1134,6 +1135,11 @@ test('[P1] home staged workspace context auto-sends into the first project run',
   await gotoEntryHome(page);
   const input = page.getByTestId('home-hero-input');
 
+  const modeTrigger = page.getByTestId('composer-mode-trigger');
+  await modeTrigger.click();
+  await page.getByTestId('composer-mode-menu-chat').click();
+  await expect(modeTrigger).toContainText('Ask');
+
   await page.getByTestId('home-hero-plus-trigger').click();
   await page.getByTestId('composer-plus-reference-project').click();
   const referenceDialog = page.getByRole('dialog', { name: 'Reference another project' });
@@ -1153,9 +1159,12 @@ test('[P1] home staged workspace context auto-sends into the first project run',
 
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}`));
   await runRequests.expectCount(1, { timeout: 15_000 });
+  expect(createBody).not.toHaveProperty('pluginId');
+  expect(createBody).not.toHaveProperty('appliedPluginSnapshotId');
   expect(runBodies[0]?.message).toContain(prompt);
   expect(runBodies[0]?.projectId).toBe(projectId);
   expect(runBodies[0]?.conversationId).toBe(conversationId);
+  expect(runBodies[0]).not.toHaveProperty('appliedPluginSnapshotId');
   const context = runBodies[0]?.context as { workspaceItems?: Array<{ id?: string; label?: string; absolutePath?: string }> } | undefined;
   expect(context?.workspaceItems ?? []).toEqual(
     expect.arrayContaining([
@@ -1259,7 +1268,6 @@ test('[P1] home session mode toggle switches Ask planning prompts away from desi
   await routeProjectCreates(page);
   await routeRunsAccepted(page);
   await gotoEntryHome(page);
-  const askRunRequests = trackRunRequests(page);
 
   const modeTrigger = page.getByTestId('composer-mode-trigger');
   // Design is the app default and is now represented as an explicit selection.
@@ -1285,9 +1293,6 @@ test('[P1] home session mode toggle switches Ask planning prompts away from desi
   expect(askBody.conversationMode).toBe('chat');
   expect(askBody).not.toHaveProperty('pluginId');
   expect(askBody).not.toHaveProperty('appliedPluginSnapshotId');
-  await askRunRequests.expectCount(1);
-  expect(askRunRequests.bodies[0]?.appliedPluginSnapshotId ?? null).toBeNull();
-  askRunRequests.dispose?.();
 
   await gotoEntryHome(page);
   await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
