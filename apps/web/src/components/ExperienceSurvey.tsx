@@ -107,6 +107,12 @@ export function ExperienceSurvey({
   const [step, setStep] = useState<Step>('recommendation');
   const [picked, setPicked] = useState<number | null>(null);
   const answersRef = useRef<Partial<ExperienceSurveyAnswers>>({});
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // Tallest step seen so far. The card is pinned to the bottom-right corner,
+  // so a step that is shorter than the one before it drags the top edge back
+  // down — answering felt like the card was bouncing. Growing once and holding
+  // that height keeps the motion in one direction.
+  const [floor, setFloor] = useState(0);
   const exposedRef = useRef(false);
   const timersRef = useRef<number[]>([]);
 
@@ -188,6 +194,12 @@ export function ExperienceSurvey({
     exposedRef.current = true;
     onExposure?.();
   }, [visible, onExposure]);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setFloor((current) => Math.max(current, el.scrollHeight));
+  }, [step, visible]);
 
   const goTo = useCallback((next: Step) => {
     setPicked(null);
@@ -339,7 +351,11 @@ export function ExperienceSurvey({
             style={{ transform: `scaleX(${progress})` }}
             aria-hidden
           />
-          <div className={styles.body}>
+          <div
+            className={styles.body}
+            ref={bodyRef}
+            style={floor ? { minHeight: floor } : undefined}
+          >
             {head}
             {/* No AnimatePresence around the step. `mode="wait"` held the
                 outgoing question until its exit finished, so for one beat the
@@ -352,7 +368,9 @@ export function ExperienceSurvey({
               variants={stepMotion}
               initial="hidden"
               animate="visible"
-              style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+              // flex: 1 so the ratcheted height is space the step can use —
+              // the thank-you centres in it instead of stranding at the top.
+              style={{ display: 'flex', flex: 1, flexDirection: 'column', gap: 12 }}
             >
               {body}
             </motion.div>
