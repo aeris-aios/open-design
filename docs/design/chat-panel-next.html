@@ -518,7 +518,13 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 }
 .msg-act button:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
 .msg-act button svg { width: 16px; height: 16px; }
-.msg-fail { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 5px; font-size: var(--t-cap); color: var(--red); }
+/* 只留【红色感叹号 + 重发】,不写"发送失败"。
+   红加感叹号本身就是"出事了",再写四个字是把同一件事说两遍;
+   而这条挂在自己刚发出的气泡下面,除了没发出去也没有别的可能。
+   真正有信息量的是那个动作 —— 重发,所以把位置全留给它。
+   文案没了之后图标要自己报名字:svg 上挂 role="img" + aria-label,
+   否则读屏用户会听到一个"重发"按钮却不知道为什么要重发。 */
+.msg-fail { display: flex; justify-content: flex-end; align-items: center; gap: 5px; margin-top: 5px; font-size: var(--t-cap); color: var(--red); }
 .msg-fail svg { width: 13px; height: 13px; }
 /* 文字型操作一律不加下划线。可点性靠字重区分(旁边的说明是 400,
    它是 600),hover 时压深红色。
@@ -1500,8 +1506,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="msg-me"><div class="bub">把这一屏重做成能跑的原型</div></div>
               <div class="msg-fail">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-                发送失败 <button type="button">重发</button>
+                <svg role="img" aria-label="发送失败" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                <button type="button">重发</button>
               </div>
             </div>
           </div>
