@@ -2119,6 +2119,8 @@ export function ProjectView({
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     null,
   );
+  const activeConversationIdRef = useRef(activeConversationId);
+  activeConversationIdRef.current = activeConversationId;
   const [pendingEmptyConversationSeed, setPendingEmptyConversationSeed] =
     useState<{ projectId: string; authorityKey: string } | null>(null);
   const activeConversation = useMemo(
@@ -2721,7 +2723,12 @@ export function ProjectView({
           const routedMatch = routeConversationId
             ? list.find((c) => c.id === routeConversationId) ?? null
             : null;
-          setActiveConversationId(routedMatch ? routedMatch.id : list[0]!.id);
+          const retainedMatch = revalidatingCurrentProject
+            ? list.find((c) => c.id === activeConversationIdRef.current) ?? null
+            : null;
+          setActiveConversationId(
+            retainedMatch?.id ?? routedMatch?.id ?? list[0]!.id,
+          );
         }
       } catch (err) {
         if (cancelled) return;
