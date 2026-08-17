@@ -1233,7 +1233,26 @@ button.att-d:hover { border-color: var(--border-strong); }
   font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.art .ops { display: flex; gap: 5px; padding: 0 9px 9px; }
+/* 卡面只留「预览」,发布 / 导出收进「⋯」。
+   ------------------------------------------------------------
+   ① 卡上唯一高频的动作是先看看它长什么样,发布和导出是看完之后才发生
+      的事,而且一个产物一辈子只会做一次;把三个按钮平铺,等于让最常点的
+      那个跟两个几乎不点的抢位置。
+   ② 更要紧的是【卡面不再随文件类型变形】:发布只有 HTML 有,平铺时
+      HTML 卡三个按钮、md 卡两个,同一排产物长短不一 —— 这跟附件那边
+      "卡的外形不随类型变"是同一条规则。收进「⋯」之后卡面永远一样,
+      差别只在菜单里少一条。
+   ③ 文档把三个都列在「支持的操作」里,这里没有删掉任何一个,只是把
+      两个不常用的挪进二级。 */
+.art .ops { display: flex; align-items: center; gap: 5px; padding: 0 9px 9px; }
+.art .ops .sp { flex: 1; }
+.art .ops .more {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  border-radius: var(--radius-sm); color: var(--text-soft);
+  transition: background-color var(--duration-faster) var(--ease-out), color var(--duration-faster) var(--ease-out);
+}
+.art .ops .more svg { width: 14px; height: 14px; }
+.art .ops .more:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
 
 /* ---- Tooltip:纯图标按钮唯一的名字 ----
    面板里所有只有图标、没有文字的按钮(赞/踩/复制/Fork、Queue 行的
@@ -2510,42 +2529,36 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>默认 · HTML 产物带「发布」</span><i></i></div>
+            <div class="st-l mod-def"><span>默认 · 卡面只有「预览」,其余收进「⋯」</span><i></i></div>
             <div class="st-b">
               <div class="arts">
                 <div class="art">
                   <span class="thumb"><span class="mini"></span></span>
                   <div class="b"><div class="kd">product-list.html</div></div>
                   <div class="ops">
-                    <button class="btn mod-primary mod-sm" type="button">预览</button>
-                    <button class="btn mod-ghost mod-sm" type="button">发布</button>
-                    <button class="btn mod-ghost mod-sm" type="button">导出</button>
+                    <button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
                   </div>
                 </div>
                 <div class="art">
                   <span class="thumb"><span class="mini"></span></span>
                   <div class="b"><div class="kd">settings.html</div></div>
                   <div class="ops">
-                    <button class="btn mod-primary mod-sm" type="button">预览</button>
-                    <button class="btn mod-ghost mod-sm" type="button">发布</button>
-                    <button class="btn mod-ghost mod-sm" type="button">导出</button>
+                    <button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>非 HTML 产物 · 无「发布」</span><i></i></div>
+            <div class="st-l"><span>非 HTML 产物 ·「⋯」里没有「发布」,卡面一模一样</span><i></i></div>
             <div class="st-b">
-              <!-- 不改列宽:两态之间唯一该变的是按钮组(有没有「发布」),
-                   卡片尺寸跟着变会让人以为尺寸也是状态的一部分。 -->
+              <!-- 两态的卡面现在完全一样,差别只在「⋯」里有没有「发布」那一条。 -->
               <div class="arts">
                 <div class="art">
                   <span class="thumb"><span class="mini"></span></span>
                   <div class="b"><div class="kd">product-card.md</div></div>
                   <div class="ops">
-                    <button class="btn mod-primary mod-sm" type="button">预览</button>
-                    <button class="btn mod-ghost mod-sm" type="button">导出</button>
+                    <button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
                   </div>
                 </div>
               </div>
@@ -2554,7 +2567,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>预览</b> — 点卡片在右侧预览。<b>发布</b> — 发布到线上并给出链接,仅 HTML 产物有。<b>导出</b> — 一键导出。<b>展示</b>缩略图 + 文件名。</span>
+          <span><b>预览</b> — 点卡片在右侧预览,卡面上唯一的按钮。<b>发布 / 导出</b>收在「⋯」里:发布只有 HTML 产物有,平铺时卡面会随文件类型变形。<b>展示</b>缩略图 + 文件名。</span>
         </div>
       </article>
 
