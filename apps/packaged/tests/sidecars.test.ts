@@ -605,11 +605,13 @@ describe('buildPackagedDaemonSpawnEnv', () => {
       velaWebUrls: {
         prod: 'https://prod.example.invalid',
         test: 'https://test.example.invalid',
+        'feature-test': 'https://feature.example.invalid',
       },
     });
     expect(JSON.parse(env.OD_VELA_WEB_URLS ?? '{}')).toEqual({
       prod: 'https://prod.example.invalid',
       test: 'https://test.example.invalid',
+      'feature-test': 'https://feature.example.invalid',
     });
   });
 

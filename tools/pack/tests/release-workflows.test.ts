@@ -421,11 +421,12 @@ describe("release workflows", () => {
   });
 
   it("bakes both halves of the workspace-team gate into every shipping lane", async () => {
-    const [beta, preview, prerelease, stable] = await Promise.all([
+    const [beta, preview, prerelease, stable, canary] = await Promise.all([
       readFile(new URL("../../../.github/workflows/release-beta.yml", import.meta.url), "utf8"),
       readFile(new URL("../../../.github/workflows/release-preview.yml", import.meta.url), "utf8"),
       readFile(new URL("../../../.github/workflows/release-prerelease.yml", import.meta.url), "utf8"),
       readFile(new URL("../../../.github/workflows/release-stable.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../../.github/workflows/main-prerelease-win-smoke.yml", import.meta.url), "utf8"),
     ]);
 
     // workspaceTeamTransportEnv (apps/packaged/src/workspace-team.ts) enables the
@@ -437,6 +438,21 @@ describe("release workflows", () => {
     for (const workflow of [beta, preview, prerelease, stable]) {
       expect(workflow).toContain("OPEN_DESIGN_AMR_PROFILE:");
       expect(workflow).toContain("OD_VELA_WEB_URL:");
+    }
+
+    // Every package-capable lane must carry the complete map. Otherwise a
+    // stable/prod package can switch its AMR API to feature-test while its
+    // console and Workspace links remain on prod (or disappear).
+    for (const workflow of [beta, preview, prerelease, stable, canary]) {
+      expect(workflow).toContain(
+        "OD_VELA_WEB_URL_FEATURE_TEST: ${{ secrets.VELA_WEB_URL_FEATURE_TEST }}",
+      );
+      expect(workflow).toContain(
+        "OD_VELA_WEB_URL_TEST: ${{ secrets.VELA_WEB_URL_TEST }}",
+      );
+      expect(workflow).toContain(
+        "OD_VELA_WEB_URL_PROD: ${{ secrets.VELA_WEB_URL_PROD }}",
+      );
     }
 
     // beta and prerelease are validation lanes and stay dispatch-driven, so an

@@ -28,12 +28,16 @@ describe('resolveVelaConsoleOrigin', () => {
       OD_VELA_WEB_URLS: JSON.stringify({
         prod: 'https://prod.example.invalid',
         test: 'https://test.example.invalid',
+        'feature-test': 'https://feature.example.invalid',
       }),
     };
 
     expect(resolveVelaConsoleOrigin(packagedEnv, {
       OPEN_DESIGN_AMR_PROFILE: 'prod',
     })).toBe('https://prod.example.invalid');
+    expect(resolveVelaConsoleOrigin(packagedEnv, {
+      OPEN_DESIGN_AMR_PROFILE: 'feature-test',
+    })).toBe('https://feature.example.invalid');
   });
 
   it('never reuses the packaged origin after switching to an unmapped profile', () => {
