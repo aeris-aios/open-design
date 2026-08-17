@@ -19,7 +19,6 @@ import styles from './ExperienceSurvey.module.css';
 import {
   SURVEY_DELAY_MS,
   isSurveyRetired,
-  markInstallSeen,
   onExportSucceeded,
   retireSurvey,
 } from './experience-survey-trigger';
@@ -70,13 +69,9 @@ export function ExperienceSurvey({ onSubmit, onExposure, onDismiss }: Props) {
   const exposedRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    markInstallSeen();
-  }, []);
-
-  // Dev-only preview hook. The real card needs three lifetime exports and a
-  // seven-day-old install, which makes it impossible to eyeball during
-  // development or design review. Never registered in a production build.
+  // Dev-only preview hook, so the card can be eyeballed during development or
+  // design review without driving a real export. Never registered in a
+  // production build.
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') return;
     const globals = window as typeof window & {
