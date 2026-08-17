@@ -100,7 +100,7 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
   // chip (飞书 recvqxDuYM6Uxk). Keep the raw record here: the modal renders
   // from `InstalledPluginRecord`, not from the card view-model.
   const [detailsRecord, setDetailsRecord] = useState<InstalledPluginRecord | null>(null);
-  const [activeType, setActiveType] = useState<TemplateType>('Slides');
+  const [activeType, setActiveType] = useState<TemplateType>('Prototype');
   const [activeSubtype, setActiveSubtype] = useState('All');
   // Remix (and the prompt-artifact copy path it shares) hands off to a
   // fire-and-forget parent callback (`onRemixTemplate`/`onUsePrompt` return
