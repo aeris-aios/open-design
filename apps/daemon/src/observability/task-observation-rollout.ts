@@ -23,6 +23,7 @@ import {
   getStrategyTaskExecutionByRunId,
   type StrategyTaskExecutionRecord,
 } from '../strategies/task-store.js';
+import { assertOdNextExactSendPromptEvidence } from '../prompt-telemetry.js';
 import {
   runTelemetryDeliveryIdempotencyKey,
   type RunTelemetryDeliveryStateV1,
@@ -302,6 +303,18 @@ function taskAggregate(
     const runtimeAdapterVersion = OD_NEXT_RUNTIME_PATH_DESCRIPTORS.find(
       (descriptor) => descriptor.agentId === run.agentId,
     )?.runtimeAdapterVersion;
+    if (run.promptTelemetry && !run.promptTelemetry.odNextExactSend) {
+      throw new Error(
+        'Mapped OD Next Run is missing mandatory exact-send Prompt evidence.',
+      );
+    }
+    if (run.promptTelemetry?.odNextExactSend) {
+      assertOdNextExactSendPromptEvidence({
+        telemetry: run.promptTelemetry,
+        persisted: mapping.finalText,
+        stage: mapping.inputStage,
+      });
+    }
     const taskRunObservation = buildStructuredMainRunObservationV1({
       taskExecutionId: task.taskExecutionId,
       runId: run.id,

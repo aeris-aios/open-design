@@ -8,6 +8,7 @@ import {
 
 import {
   structuredPromptStackInput,
+  type OdNextExactSendPromptEvidenceV1,
   type PromptStackTelemetry,
 } from '../prompt-telemetry.js';
 import type {
@@ -36,6 +37,39 @@ export interface StructuredMainRunObservationV1Input {
   runtimeCompanionName?: string;
   runtimeCompanionVersion?: string;
   runtimeAdapterVersion?: string;
+}
+
+interface SafeOdNextHostComposedPromptV1 extends Record<string, unknown> {
+  type: 'open-design.od-next-host-composed-prompt';
+  schema: OdNextExactSendPromptEvidenceV1['schema'];
+  boundary: OdNextExactSendPromptEvidenceV1['boundary'];
+  kind: OdNextExactSendPromptEvidenceV1['kind'];
+  promptSchema: OdNextExactSendPromptEvidenceV1['promptSchema'];
+  stage: StrategyInputStageV2;
+  sha256: string;
+  utf8Bytes: number;
+  promptStack: ReturnType<typeof structuredPromptStackInput>;
+}
+
+function safeOdNextHostComposedPrompt(
+  exact: OdNextExactSendPromptEvidenceV1,
+  promptTelemetry: PromptStackTelemetry,
+  stage: StrategyInputStageV2,
+): SafeOdNextHostComposedPromptV1 {
+  if (exact.stage !== stage) {
+    throw new Error('OD Next exact-send Prompt stage does not match its task Run mapping.');
+  }
+  return {
+    type: 'open-design.od-next-host-composed-prompt',
+    schema: exact.schema,
+    boundary: exact.boundary,
+    kind: exact.kind,
+    promptSchema: exact.promptSchema,
+    stage,
+    sha256: exact.sha256,
+    utf8Bytes: exact.utf8Bytes,
+    promptStack: structuredPromptStackInput(promptTelemetry),
+  };
 }
 
 function usageValues(
@@ -208,16 +242,24 @@ export function buildStructuredMainRunObservationV1(
   const taskExecutionId = input.taskExecutionId ?? `compat-run:${input.runId}`;
   const usage = normalizeMainRunUsage(input.usage);
   const timing = normalizeMainRunTiming(input);
+  const exactPrompt = input.promptTelemetry?.odNextExactSend;
   const prompt = input.promptTelemetry
     ? {
         hostComposed: {
           availability: 'exact' as const,
           source: 'daemon',
-          hash: input.promptTelemetry.promptFingerprint,
-          bytes: input.promptTelemetry.rawBytes,
-          safePayload: structuredPromptStackInput(input.promptTelemetry),
+          hash: exactPrompt
+            ? exactPrompt.sha256
+            : input.promptTelemetry.promptFingerprint,
+          bytes: exactPrompt
+            ? exactPrompt.utf8Bytes
+            : input.promptTelemetry.rawBytes,
+          safePayload: exactPrompt
+            ? safeOdNextHostComposedPrompt(exactPrompt, input.promptTelemetry, input.stage)
+            : structuredPromptStackInput(input.promptTelemetry),
           limitations: [
             'safe_payload_redacted',
+            ...(exactPrompt ? ['raw_identity_verified_before_transport'] : []),
             ...(input.promptTelemetry.sections.some((section) => section.truncated)
               ? ['safe_payload_truncated']
               : []),

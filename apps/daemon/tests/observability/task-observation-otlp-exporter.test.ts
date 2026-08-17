@@ -132,9 +132,25 @@ function observation(input: {
         [boundary]: {
           availability: 'exact',
           source: boundary === 'hostComposed' ? 'daemon' : 'runtime',
-          hash: `sha256:${input.id}`,
-          bytes: 32,
-          safePayload: { fixture: input.id },
+          hash: boundary === 'hostComposed' ? FINAL_TEXT.sha256 : `sha256:${input.id}`,
+          bytes: boundary === 'hostComposed' ? FINAL_TEXT.utf8Bytes : 32,
+          safePayload: boundary === 'hostComposed'
+            ? {
+                type: 'open-design.od-next-host-composed-prompt',
+                schema: 'open-design.od-next-exact-send-prompt/v1',
+                boundary: 'hostComposed',
+                kind: FINAL_TEXT.kind,
+                promptSchema: FINAL_TEXT.schema,
+                stage: 'production',
+                sha256: FINAL_TEXT.sha256,
+                utf8Bytes: FINAL_TEXT.utf8Bytes,
+                promptStack: {
+                  type: 'open-design.prompt-stack',
+                  redactionVersion: 'prompt-stack-redaction-v1',
+                  sections: [{ kind: 'odNextExactFinalText', redactedContent: 'fixture' }],
+                },
+              }
+            : { fixture: input.id },
           limitations: ['safe_payload_redacted'],
         },
       },
@@ -409,6 +425,26 @@ describe('task observation OTLP exporter', () => {
     expect(JSON.stringify(first)).not.toContain('must-not-export');
     expect(JSON.stringify(first)).not.toContain('/Users/alice');
     expect(JSON.stringify(first)).not.toContain('/private/usage-secret');
+    const legacyRun = legacyEventFor(buildLegacyTaskObservationPayload(source), RUN_OBSERVATION_ID);
+    const expectedPromptInput = {
+      type: 'open-design.od-next-host-composed-prompt',
+      schema: 'open-design.od-next-exact-send-prompt/v1',
+      boundary: 'hostComposed',
+      kind: FINAL_TEXT.kind,
+      promptSchema: FINAL_TEXT.schema,
+      stage: 'production',
+      sha256: FINAL_TEXT.sha256,
+      utf8Bytes: FINAL_TEXT.utf8Bytes,
+      promptStack: {
+        type: 'open-design.prompt-stack',
+        redactionVersion: 'prompt-stack-redaction-v1',
+        sections: [{ kind: 'odNextExactFinalText', redactedContent: 'fixture' }],
+      },
+    };
+    expect(legacyRun.body.input).toEqual(expectedPromptInput);
+    expect(JSON.parse(stringAttribute(run, 'langfuse.observation.input')!)).toEqual(
+      expectedPromptInput,
+    );
     expect(JSON.parse(
       stringAttribute(model, 'langfuse.observation.metadata.usage_limitations')!,
     )).toEqual(['usage_provider_reported']);

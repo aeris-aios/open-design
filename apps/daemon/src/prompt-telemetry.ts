@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+
+import type { StrategyInputStageV2 } from '@open-design/contracts';
 
 import { redactSecrets } from './redact.js';
+import type { StrategyTaskFinalTextIdentity } from './strategies/task-store.js';
 
 export const PROMPT_STACK_REDACTION_VERSION = 'prompt-stack-redaction-v1';
 export const PROMPT_STACK_PATH_MARKER = '[REDACTED:path]';
@@ -26,6 +30,7 @@ export type PromptTelemetrySectionKind =
   | 'skillPrompt'
   | 'designSystemPrompt'
   | 'pluginStagePrompt'
+  | 'odNextExactFinalText'
   | 'cwdHint'
   | 'linkedDirsHint'
   | 'attachments'
@@ -63,6 +68,24 @@ export interface PromptStackTelemetry {
   redactedContentBytes: number;
   redactedContentBudgetBytes: number;
   sections: PromptTelemetrySection[];
+  odNextExactSend?: OdNextExactSendPromptEvidenceV1;
+}
+
+export interface OdNextExactSendPromptEvidenceV1 {
+  schema: 'open-design.od-next-exact-send-prompt/v1';
+  boundary: 'hostComposed';
+  kind: StrategyTaskFinalTextIdentity['kind'];
+  promptSchema: StrategyTaskFinalTextIdentity['schema'];
+  stage: StrategyInputStageV2;
+  sha256: string;
+  utf8Bytes: number;
+}
+
+export class InvalidOdNextExactSendPromptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidOdNextExactSendPromptError';
+  }
 }
 
 export interface StructuredPromptStackInput {
@@ -129,6 +152,7 @@ const REDACTED_CONTENT_KINDS = new Set<PromptTelemetrySectionKind>([
   'skillPrompt',
   'designSystemPrompt',
   'pluginStagePrompt',
+  'odNextExactFinalText',
 ]);
 
 const SECTION_PRIORITY = new Map<PromptTelemetrySectionKind, number>([
@@ -139,6 +163,7 @@ const SECTION_PRIORITY = new Map<PromptTelemetrySectionKind, number>([
   ['skillPrompt', 5],
   ['designSystemPrompt', 5],
   ['pluginStagePrompt', 5],
+  ['odNextExactFinalText', 1],
   ['researchCommandContract', 6],
   ['runContextPrompt', 7],
   ['echoGuard', 8],
@@ -434,6 +459,76 @@ export function buildPromptStackTelemetry({
     redactedContentBudgetBytes: TOTAL_REDACTED_CONTENT_MAX_BYTES,
     sections: outputSections,
   };
+}
+
+/**
+ * Bind the mapped OD Next identity to the exact inner text that is about to
+ * cross a runtime transport. The caller must pass the same variable used by
+ * prompt-file, argv, ACP, stdin, or stream-json encoding; wrappers are applied
+ * only after this gate and therefore never enter this identity.
+ */
+export function bindOdNextExactSendPromptEvidence(input: {
+  telemetry: PromptStackTelemetry;
+  finalText: string;
+  persisted: StrategyTaskFinalTextIdentity;
+  stage: StrategyInputStageV2;
+}): PromptStackTelemetry {
+  const utf8Bytes = byteLength(input.finalText);
+  const sha256Hex = createHash('sha256').update(input.finalText, 'utf8').digest('hex');
+  if (
+    input.telemetry.rawBytes !== utf8Bytes ||
+    input.persisted.text !== input.finalText ||
+    input.persisted.utf8Bytes !== utf8Bytes ||
+    input.persisted.sha256 !== sha256Hex
+  ) {
+    throw new InvalidOdNextExactSendPromptError(
+      'OD Next exact-send Prompt does not match its persisted SHA-256 and UTF-8 byte identity.',
+    );
+  }
+  const expectedKind = input.stage === 'request' ? 'bundle' : 'turn';
+  if (input.persisted.kind !== expectedKind) {
+    throw new InvalidOdNextExactSendPromptError(
+      'OD Next exact-send Prompt kind does not match its mapped task stage.',
+    );
+  }
+  return {
+    ...input.telemetry,
+    odNextExactSend: {
+      schema: 'open-design.od-next-exact-send-prompt/v1',
+      boundary: 'hostComposed',
+      kind: input.persisted.kind,
+      promptSchema: input.persisted.schema,
+      stage: input.stage,
+      sha256: sha256Hex,
+      utf8Bytes,
+    },
+  };
+}
+
+/**
+ * Revalidate durable exact-send evidence before task-level export. The task
+ * mapping is the persisted source of truth; this comparison deliberately does
+ * not replace the run evidence or rebuild an export payload from task state.
+ */
+export function assertOdNextExactSendPromptEvidence(input: {
+  telemetry: PromptStackTelemetry;
+  persisted: StrategyTaskFinalTextIdentity;
+  stage: StrategyInputStageV2;
+}): void {
+  const expected = bindOdNextExactSendPromptEvidence({
+    telemetry: buildPromptStackTelemetry({
+      composedPrompt: input.persisted.text,
+      sections: [{ kind: 'odNextExactFinalText', content: input.persisted.text }],
+    }),
+    finalText: input.persisted.text,
+    persisted: input.persisted,
+    stage: input.stage,
+  });
+  if (!isDeepStrictEqual(input.telemetry, expected)) {
+    throw new InvalidOdNextExactSendPromptError(
+      'Persisted OD Next exact-send Prompt evidence no longer matches its authoritative task mapping.',
+    );
+  }
 }
 
 export function promptStackWithoutContent(

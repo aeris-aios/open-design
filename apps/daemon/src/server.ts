@@ -539,7 +539,11 @@ import { reconcileDurableRunTerminals } from './runtimes/run-terminal-reconcilia
 import { createTaskObservationRolloutService } from './observability/task-observation-rollout.js';
 import { strategyTaskRunObservationId } from './observability/task-observation-aggregation.js';
 import { collectCodexChildEvidence } from './runtimes/codex-child-evidence.js';
-import { buildPromptStackTelemetry } from './prompt-telemetry.js';
+import {
+  InvalidOdNextExactSendPromptError,
+  bindOdNextExactSendPromptEvidence,
+  buildPromptStackTelemetry,
+} from './prompt-telemetry.js';
 import { newInsertId, readAnalyticsContext, type AnalyticsService } from './analytics.js';
 import {
   agentIdToTracking,
@@ -11537,53 +11541,72 @@ export async function startServer({
         image_attachment_selection: promptImagePaths,
       });
     }
-    run.promptTelemetry = buildPromptStackTelemetry({
+    const promptTelemetry = buildPromptStackTelemetry({
       composedPrompt: composed,
-      sections: [
-        { kind: 'formOverride', content: agentFormOverride },
-        // Phase 1 explicitly needs redactedContent for these aggregate prompts:
-        // they are the quickest way to inspect the system context sent to the
-        // model when diagnosing Langfuse traces.
-        { kind: 'daemonSystemPrompt', content: daemonSystemPrompt },
-        { kind: 'runtimeToolPrompt', content: runtimeToolPrompt },
-        { kind: 'researchCommandContract', content: researchCommandContract },
-        { kind: 'runContextPrompt', content: runContextPrompt },
-        { kind: 'browserUsePromptGuard', content: browserUsePromptGuard },
-        { kind: 'clientSystemPrompt', content: clientInstructionPrompt },
-        { kind: 'echoGuard', content: ECHO_GUARD },
-        { kind: 'userRequest', content: userRequestPrompt },
-        { kind: 'skillPrompt', content: promptTelemetryParts?.skillPrompt },
-        {
-          kind: 'designSystemPrompt',
-          content: promptTelemetryParts?.designSystemPrompt,
-        },
-        {
-          kind: 'pluginStagePrompt',
-          content: promptTelemetryParts?.pluginStagePrompt,
-        },
-        { kind: 'cwdHint', content: cwdHint, metadata: cwd ? [cwd] : [] },
-        {
-          kind: 'linkedDirsHint',
-          content: linkedDirsHint,
-          metadata: linkedDirs,
-        },
-        {
-          kind: 'attachments',
-          content: attachmentHint,
-          metadata: safeAttachments,
-        },
-        {
-          kind: 'commentAttachments',
-          content: commentHint,
-          metadata: safeCommentAttachments,
-        },
-        {
-          kind: 'promptImagePaths',
-          content: promptImagePaths.join('\n'),
-          metadata: promptImagePaths,
-        },
-      ],
+      sections: strategyRunMapping
+        ? [{ kind: 'odNextExactFinalText', content: composed }]
+        : [
+            { kind: 'formOverride', content: agentFormOverride },
+            // Phase 1 explicitly needs redactedContent for these aggregate prompts:
+            // they are the quickest way to inspect the system context sent to the
+            // model when diagnosing Langfuse traces.
+            { kind: 'daemonSystemPrompt', content: daemonSystemPrompt },
+            { kind: 'runtimeToolPrompt', content: runtimeToolPrompt },
+            { kind: 'researchCommandContract', content: researchCommandContract },
+            { kind: 'runContextPrompt', content: runContextPrompt },
+            { kind: 'browserUsePromptGuard', content: browserUsePromptGuard },
+            { kind: 'clientSystemPrompt', content: clientInstructionPrompt },
+            { kind: 'echoGuard', content: ECHO_GUARD },
+            { kind: 'userRequest', content: userRequestPrompt },
+            { kind: 'skillPrompt', content: promptTelemetryParts?.skillPrompt },
+            {
+              kind: 'designSystemPrompt',
+              content: promptTelemetryParts?.designSystemPrompt,
+            },
+            {
+              kind: 'pluginStagePrompt',
+              content: promptTelemetryParts?.pluginStagePrompt,
+            },
+            { kind: 'cwdHint', content: cwdHint, metadata: cwd ? [cwd] : [] },
+            {
+              kind: 'linkedDirsHint',
+              content: linkedDirsHint,
+              metadata: linkedDirs,
+            },
+            {
+              kind: 'attachments',
+              content: attachmentHint,
+              metadata: safeAttachments,
+            },
+            {
+              kind: 'commentAttachments',
+              content: commentHint,
+              metadata: safeCommentAttachments,
+            },
+            {
+              kind: 'promptImagePaths',
+              content: promptImagePaths.join('\n'),
+              metadata: promptImagePaths,
+            },
+          ],
     });
+    try {
+      run.promptTelemetry = strategyRunMapping
+        ? bindOdNextExactSendPromptEvidence({
+            telemetry: promptTelemetry,
+            finalText: composed,
+            persisted: strategyRunMapping.finalText,
+            stage: strategyRunMapping.inputStage,
+          })
+        : promptTelemetry;
+    } catch (error) {
+      if (!(error instanceof InvalidOdNextExactSendPromptError)) throw error;
+      return design.runs.fail(
+        run,
+        'OD_NEXT_TASK_STATE_INVALID',
+        error.message,
+      );
+    }
     lifecycle.mark('prompt_build_end');
     lifecycle.mark('launch_preflight_start');
     // (model resolution + AMR concretization hoisted above the resume guard)

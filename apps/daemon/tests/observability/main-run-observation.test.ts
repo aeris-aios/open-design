@@ -1,10 +1,77 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildStructuredMainRunObservationV1 } from '../../src/observability/main-run-observation.js';
-import { buildPromptStackTelemetry } from '../../src/prompt-telemetry.js';
+import {
+  bindOdNextExactSendPromptEvidence,
+  buildPromptStackTelemetry,
+} from '../../src/prompt-telemetry.js';
 import { scanRunEventsForUsageAnalytics } from '../../src/run-analytics-observability.js';
 
 describe('buildStructuredMainRunObservationV1', () => {
+  it.each([
+    ['request', 'bundle', 'open-design.od-next-prompt-bundle/v1'],
+    ['clarification', 'turn', 'open-design.od-next-request-turn/v1'],
+    ['contract_repair', 'turn', 'open-design.od-next-request-turn/v1'],
+    ['production', 'turn', 'open-design.od-next-request-turn/v1'],
+  ] as const)(
+    'uses the verified raw inner-text identity for the %s hostComposed boundary',
+    (stage, kind, promptSchema) => {
+      const finalText = `${stage} /Users/alice/private token=sk-test-1234567890123456789012`;
+      const sha256 = createHash('sha256').update(finalText, 'utf8').digest('hex');
+      const promptTelemetry = bindOdNextExactSendPromptEvidence({
+        telemetry: buildPromptStackTelemetry({
+          composedPrompt: finalText,
+          sections: [{ kind: 'odNextExactFinalText', content: finalText }],
+        }),
+        finalText,
+        persisted: {
+          kind,
+          schema: promptSchema,
+          text: finalText,
+          utf8Bytes: Buffer.byteLength(finalText, 'utf8'),
+          sha256,
+        },
+        stage,
+      });
+
+      const observation = buildStructuredMainRunObservationV1({
+        taskExecutionId: 'task-exact',
+        runId: `run-${stage}`,
+        taskRunIndex: stage === 'request' ? 0 : 1,
+        stage,
+        status: 'succeeded',
+        promptTelemetry,
+      });
+
+      expect(promptTelemetry.promptFingerprint).not.toBe(sha256);
+      expect(observation.prompt.hostComposed).toMatchObject({
+        availability: 'exact',
+        source: 'daemon',
+        hash: sha256,
+        bytes: Buffer.byteLength(finalText, 'utf8'),
+        safePayload: {
+          type: 'open-design.od-next-host-composed-prompt',
+          schema: 'open-design.od-next-exact-send-prompt/v1',
+          boundary: 'hostComposed',
+          kind,
+          promptSchema,
+          stage,
+          sha256,
+          utf8Bytes: Buffer.byteLength(finalText, 'utf8'),
+        },
+      });
+      const serialized = JSON.stringify(observation.prompt.hostComposed.safePayload);
+      expect(serialized).toContain('[REDACTED:path]');
+      expect(serialized).toContain('[REDACTED:sk_key]');
+      expect(serialized).not.toContain('/Users/alice');
+      expect(serialized).not.toContain('sk-test-');
+      expect(observation.prompt.childInjected.availability).toBe('unavailable');
+      expect(observation.prompt.agentEffectiveContext.availability).toBe('unobservable');
+    },
+  );
+
   it('adapts existing Prompt, usage, and host timing facts without changing their source semantics', () => {
     const promptTelemetry = buildPromptStackTelemetry({
       composedPrompt: 'system\nuser request',

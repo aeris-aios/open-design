@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { strategyPackageHashFromDigests } from '@open-design/plugin-runtime';
 import type { OpenDesignPlanContractV2 } from '@open-design/contracts';
@@ -15,7 +16,12 @@ import {
 } from '../../src/observability/task-observation-rollout.js';
 import { runTelemetryDeliveryIdempotencyKey } from '../../src/observability/delivery-state.js';
 import { reconcileDurableRunTerminals } from '../../src/runtimes/run-terminal-reconciliation.js';
-import { buildSafeChildPromptTelemetry } from '../../src/prompt-telemetry.js';
+import {
+  bindOdNextExactSendPromptEvidence,
+  buildPromptStackTelemetry,
+  buildSafeChildPromptTelemetry,
+  type PromptStackTelemetry,
+} from '../../src/prompt-telemetry.js';
 import {
   compareAndTransitionStrategyTaskExecution,
   createStrategyTaskExecution,
@@ -25,6 +31,7 @@ import {
 import {
   strategyTaskCreateIdentityFixture,
   strategyTaskTurnText,
+  TEST_PROMPT_BUNDLE,
 } from '../strategies/strategy-task-test-fixtures.js';
 
 const BASE_ENV = {
@@ -157,12 +164,28 @@ function seedCompletedTask(db: Database.Database): void {
 }
 
 function syntheticRun() {
+  const promptBundleIdentity = {
+    kind: 'bundle' as const,
+    schema: 'open-design.od-next-prompt-bundle/v1' as const,
+    text: TEST_PROMPT_BUNDLE,
+    utf8Bytes: Buffer.byteLength(TEST_PROMPT_BUNDLE, 'utf8'),
+    sha256: createHash('sha256').update(TEST_PROMPT_BUNDLE, 'utf8').digest('hex'),
+  };
   return {
     id: 'run-1',
     status: 'succeeded',
     createdAt: 1_000,
     updatedAt: 2_000,
     model: 'fixture-model',
+    promptTelemetry: bindOdNextExactSendPromptEvidence({
+      telemetry: buildPromptStackTelemetry({
+        composedPrompt: TEST_PROMPT_BUNDLE,
+        sections: [{ kind: 'odNextExactFinalText', content: TEST_PROMPT_BUNDLE }],
+      }),
+      finalText: TEST_PROMPT_BUNDLE,
+      persisted: promptBundleIdentity,
+      stage: 'request',
+    }),
     events: [
       {
         event: 'agent',
@@ -197,9 +220,13 @@ interface DeliveryFixtureRow {
   finalizedAt: number | null;
 }
 
-type SyntheticRunLike = Omit<ReturnType<typeof syntheticRun>, 'events'> & {
+type SyntheticRunLike = Omit<
+  ReturnType<typeof syntheticRun>,
+  'events' | 'promptTelemetry'
+> & {
   agentId?: string;
   preflightAgentCliVersion?: string;
+  promptTelemetry?: PromptStackTelemetry;
   events: Array<{ event: string; timestamp: number; data: unknown }>;
 };
 
@@ -363,6 +390,108 @@ describe('task observation rollout', () => {
     expect(batch.filter((event) => event.type === 'span-create')).toHaveLength(1);
   });
 
+  it('exports the mapped raw hostComposed identity and bounded exact-text payload', async () => {
+    const mapping = getStrategyTaskExecution(db, 'task-1')!.runs[0]!;
+    const promptTelemetry = bindOdNextExactSendPromptEvidence({
+      telemetry: buildPromptStackTelemetry({
+        composedPrompt: mapping.finalText.text,
+        sections: [{ kind: 'odNextExactFinalText', content: mapping.finalText.text }],
+      }),
+      finalText: mapping.finalText.text,
+      persisted: mapping.finalText,
+      stage: mapping.inputStage,
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async () => acceptedResponse());
+
+    await expect(service({
+      mode: 'send',
+      fetchImpl,
+      getRun: (runId) => runId === 'run-1'
+        ? { ...syntheticRun(), promptTelemetry }
+        : null,
+    }).finalizeForRun('run-1')).resolves.toMatchObject({ action: 'sent' });
+
+    const batch = JSON.parse(String(fetchImpl.mock.calls[0]![1]!.body)).batch as Array<{
+      type: string;
+      body: { name?: string; input?: Record<string, unknown> };
+    }>;
+    const runSpan = batch.find((event) => event.body.name === 'strategy-stage:request');
+    expect(runSpan?.body.input).toMatchObject({
+      type: 'open-design.od-next-host-composed-prompt',
+      schema: 'open-design.od-next-exact-send-prompt/v1',
+      boundary: 'hostComposed',
+      kind: 'bundle',
+      promptSchema: 'open-design.od-next-prompt-bundle/v1',
+      stage: 'request',
+      sha256: mapping.finalText.sha256,
+      utf8Bytes: mapping.finalText.utf8Bytes,
+      promptStack: {
+        type: 'open-design.prompt-stack',
+        sections: [{ kind: 'odNextExactFinalText' }],
+      },
+    });
+  });
+
+  it.each([
+    ['raw identity', (telemetry: PromptStackTelemetry) => {
+      telemetry.odNextExactSend!.sha256 = 'f'.repeat(64);
+    }],
+    ['safe payload', (telemetry: PromptStackTelemetry) => {
+      telemetry.sections[0]!.redactedContent = 'tampered persisted safe body';
+    }],
+    ['mandatory exact-send', (telemetry: PromptStackTelemetry) => {
+      delete telemetry.odNextExactSend;
+    }],
+  ])('fails closed before network when persisted %s evidence is tampered', async (_label, tamper) => {
+    const mapping = getStrategyTaskExecution(db, 'task-1')!.runs[0]!;
+    const promptTelemetry = bindOdNextExactSendPromptEvidence({
+      telemetry: buildPromptStackTelemetry({
+        composedPrompt: mapping.finalText.text,
+        sections: [{ kind: 'odNextExactFinalText', content: mapping.finalText.text }],
+      }),
+      finalText: mapping.finalText.text,
+      persisted: mapping.finalText,
+      stage: mapping.inputStage,
+    });
+    tamper(promptTelemetry);
+    const fetchImpl = vi.fn<typeof fetch>(async () => acceptedResponse());
+
+    await expect(service({
+      mode: 'send',
+      fetchImpl,
+      getRun: (runId) => runId === 'run-1'
+        ? { ...syntheticRun(), promptTelemetry }
+        : null,
+    }).finalizeForRun('run-1')).resolves.toMatchObject({
+      action: 'failed',
+      delivery: {
+        status: 'failed',
+        dropReason: 'payload_build_error',
+        attemptCount: 0,
+      },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('exports a mapped pre-compose failure as Prompt unavailable', async () => {
+    const { promptTelemetry: _promptTelemetry, ...preComposeFailure } = syntheticRun();
+    const fetchImpl = vi.fn<typeof fetch>(async () => acceptedResponse());
+
+    await expect(service({
+      mode: 'send',
+      fetchImpl,
+      getRun: (runId) => runId === 'run-1'
+        ? { ...preComposeFailure, status: 'failed' }
+        : null,
+    }).finalizeForRun('run-1')).resolves.toMatchObject({ action: 'sent' });
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const body = String(fetchImpl.mock.calls[0]![1]!.body);
+    expect(body).toContain('"availability":"unavailable"');
+    expect(body).not.toContain('open-design.od-next-host-composed-prompt');
+    expect(body).not.toContain('open-design.prompt-stack');
+  });
+
   it('exports redacted childInjected Prompt and exact runtime versions from persisted runtime facts', async () => {
     const prompt =
       'Inspect /Users/alice/private/design.ts with sk-test-1234567890123456789012.';
@@ -509,12 +638,27 @@ describe('task observation rollout', () => {
     const rollout = service({
       mode: 'send',
       fetchImpl,
-      getRun: (runId) => ({
-        ...syntheticRun(),
-        id: runId,
-        createdAt: 1_000 + ['run-1', 'run-clarification', 'run-repair', 'run-production']
-          .indexOf(runId) * 100,
-      }),
+      getRun: (runId) => {
+        const mapping = getStrategyTaskExecution(db, 'task-1')!.runs.find(
+          (candidate) => candidate.runId === runId,
+        )!;
+        const promptTelemetry = bindOdNextExactSendPromptEvidence({
+          telemetry: buildPromptStackTelemetry({
+            composedPrompt: mapping.finalText.text,
+            sections: [{ kind: 'odNextExactFinalText', content: mapping.finalText.text }],
+          }),
+          finalText: mapping.finalText.text,
+          persisted: mapping.finalText,
+          stage: mapping.inputStage,
+        });
+        return {
+          ...syntheticRun(),
+          promptTelemetry,
+          id: runId,
+          createdAt: 1_000 + ['run-1', 'run-clarification', 'run-repair', 'run-production']
+            .indexOf(runId) * 100,
+        };
+      },
     });
 
     await expect(rollout.finalizeForRun('run-production')).resolves.toMatchObject({
@@ -542,6 +686,7 @@ describe('task observation rollout', () => {
 
   it.each([
     { metrics: false, content: true, reason: 'metrics_consent_off' },
+    { metrics: false, content: false, reason: 'metrics_consent_off' },
     { metrics: true, content: false, reason: 'content_consent_off' },
   ])('makes zero requests when consent is disabled: $reason', async (prefs) => {
     const fetchImpl = vi.fn<typeof fetch>();

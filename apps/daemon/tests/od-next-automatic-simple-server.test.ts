@@ -284,6 +284,84 @@ describe('OD Next automatic production through the real server', () => {
       .toBe(1);
   });
 
+  it('gives Web and CLI the same Bundle identity for the same canonical Skill set', async () => {
+    const fixture = await createPublicRolloutFixture('web-cli-skill-parity', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const dataDir = process.env.OD_DATA_DIR!;
+    for (const skillId of ['bundle-skill-a', 'bundle-skill-b']) {
+      const skillDir = path.join(dataDir, 'skills', skillId);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, 'SKILL.md'), [
+        '---',
+        `name: ${skillId}`,
+        `description: ${skillId} parity fixture`,
+        '---',
+        `# ${skillId}`,
+      ].join('\n'));
+    }
+    const prompt = 'Hold the public rollout run open until canceled.';
+    const clientRequestId = 'web-cli-skill-parity-request';
+    const web = await postRun(started.url, {
+      projectId: fixture.projectId,
+      conversationId: fixture.conversationId,
+      agentId: 'codex',
+      message: prompt,
+      clientRequestId,
+      skillId: 'bundle-skill-a',
+      skillIds: ['bundle-skill-a', 'bundle-skill-b'],
+    });
+    await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
+    const webTask = getStrategyTaskExecution(database(), web.taskExecutionId as string)!;
+    await fetch(`${started.url}/api/runs/${encodeURIComponent(web.runId as string)}/cancel`, {
+      method: 'POST',
+    });
+    await waitForRunTerminal(started.url, web.runId as string);
+
+    const cliResult = await runOdCli([
+      'run',
+      'start',
+      '--project', fixture.projectId,
+      '--conversation', fixture.conversationId,
+      '--message', prompt,
+      '--skill', 'bundle-skill-a,bundle-skill-b,bundle-skill-a',
+      '--client-request-id', clientRequestId,
+      '--agent', 'codex',
+      '--daemon-url', started.url,
+      '--json',
+    ]);
+    expect(cliResult.stderr).toBe('');
+    const cli = JSON.parse(cliResult.stdout) as {
+      runId: string;
+      taskExecutionId: string;
+    };
+    await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
+    const cliTask = getStrategyTaskExecution(database(), cli.taskExecutionId)!;
+
+    expect(cli.runId).toBe(web.runId);
+    expect(cli.taskExecutionId).toBe(web.taskExecutionId);
+    expect(webTask.frozenSkillPackage.selections.map((skill) => skill.canonicalId)).toEqual([
+      'bundle-skill-a',
+      'bundle-skill-b',
+    ]);
+    expect(cliTask.frozenSkillPackage.selections.map((skill) => skill.canonicalId)).toEqual([
+      'bundle-skill-a',
+      'bundle-skill-b',
+    ]);
+    expect(cliTask.frozenSkillPackage.identity).toBe(webTask.frozenSkillPackage.identity);
+    expect(parseOdNextPromptBundleV1(cliTask.promptBundle.text)).toEqual(
+      parseOdNextPromptBundleV1(webTask.promptBundle.text),
+    );
+    expect(cliTask.promptBundle.sha256).toBe(webTask.promptBundle.sha256);
+    expect(cliTask.promptBundle.utf8Bytes).toBe(webTask.promptBundle.utf8Bytes);
+    expect(cliTask.promptBundle.text).toBe(webTask.promptBundle.text);
+
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+  });
+
   it('binds an active headless request and its strategy Snapshot to the project conversation', async () => {
     const fixture = await createPublicRolloutFixture('headless-conversation', 'design');
     started = fixture.started;
@@ -507,8 +585,13 @@ describe('OD Next automatic production through the real server', () => {
       },
     });
     expect(uuidControl.forced).toEqual([]);
-    await rm(sourcePdfAttachment);
-    await rm(sourceTextAttachment);
+    const liveMutation = [
+      'LIVE_CONTEXT_MUTATION_MUST_NOT_EXPORT',
+      '/Users/alice/live-only.txt',
+      'sk-test-1234567890123456789012',
+    ].join(' ');
+    await writeFile(sourcePdfAttachment, liveMutation);
+    await writeFile(sourceTextAttachment, liveMutation);
 
     const initialTerminal = await waitForRunTerminal(started!.url, fixture.initialRunId);
     expect(initialTerminal.status, JSON.stringify(initialTerminal)).toBe('succeeded');
@@ -651,6 +734,63 @@ describe('OD Next automatic production through the real server', () => {
       'attachments',
       'attachment-001.pdf',
     ), 'utf8')).toBe('%PDF-1.7\nimmutable brief');
+
+    const durablePromptEvidence = await Promise.all(terminal.runs.map(async (mapping) => {
+      const state = JSON.parse(await readFile(path.join(
+        process.env.OD_DATA_DIR!,
+        'runs',
+        mapping.runId,
+        'state.json',
+      ), 'utf8')) as {
+        promptTelemetry?: {
+          promptFingerprint: string;
+          rawBytes: number;
+          odNextExactSend?: {
+            schema: string;
+            boundary: string;
+            kind: string;
+            promptSchema: string;
+            stage: string;
+            sha256: string;
+            utf8Bytes: number;
+          };
+          sections: Array<{
+            kind: string;
+            redactedContent?: string;
+          }>;
+        };
+      };
+      return state.promptTelemetry;
+    }));
+    expect(durablePromptEvidence.map((telemetry) => telemetry?.odNextExactSend)).toEqual(
+      terminal.runs.map((mapping) => ({
+        boundary: 'hostComposed',
+        kind: mapping.finalText.kind,
+        promptSchema: mapping.finalText.schema,
+        schema: 'open-design.od-next-exact-send-prompt/v1',
+        stage: mapping.inputStage,
+        sha256: mapping.finalText.sha256,
+        utf8Bytes: mapping.finalText.utf8Bytes,
+      })),
+    );
+    for (const [index, telemetry] of durablePromptEvidence.entries()) {
+      expect(telemetry?.rawBytes).toBe(terminal.runs[index]!.finalText.utf8Bytes);
+      expect(telemetry?.promptFingerprint).toMatch(/^sha256:/u);
+      expect(telemetry?.sections.map((section) => section.kind)).toEqual([
+        'odNextExactFinalText',
+      ]);
+      expect(telemetry?.sections[0]?.redactedContent).toBeTruthy();
+      expect(Buffer.byteLength(
+        telemetry?.sections[0]?.redactedContent ?? '',
+        'utf8',
+      )).toBeLessThanOrEqual(64 * 1024);
+      expect(JSON.stringify(telemetry)).not.toContain(sourcePdfAttachment);
+      expect(JSON.stringify(telemetry)).not.toContain(sourceTextAttachment);
+      expect(JSON.stringify(telemetry)).not.toContain(process.env.OD_DATA_DIR!);
+      expect(JSON.stringify(telemetry)).not.toContain('LIVE_CONTEXT_MUTATION_MUST_NOT_EXPORT');
+      expect(JSON.stringify(telemetry)).not.toContain('/Users/alice/live-only.txt');
+      expect(JSON.stringify(telemetry)).not.toContain('sk-test-');
+    }
 
     for (const mapping of terminal.runs) {
       await getRun(started!.url, mapping.runId);
