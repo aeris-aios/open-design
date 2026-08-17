@@ -56,6 +56,7 @@ import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
 import { TooltipLayer } from './components/TooltipLayer';
 import { UpdateDialog } from './components/UpdateDialog';
+import { UpdaterPopup } from './components/UpdaterPopup';
 import {
   openWorkspaceTab,
   removeWorkspaceProjectTabs,
@@ -5297,6 +5298,13 @@ function AppInner() {
           <WorkspaceTopRightAccountCluster
             onOpenSettings={openSettings}
             onSignedOut={handleActiveCloudSignOut}
+            updaterSlot={
+              <UpdaterPopup
+                allowSilentUpdates={config.allowSilentUpdates}
+                silentUpdatePreferenceReady={daemonAppConfigReady}
+                onAllowSilentUpdatesChange={handleSilentUpdatePreferenceChange}
+              />
+            }
             workspaceContextOverride={
               activeProject?.workspaceId
                 ? activeProjectWorkspaceContext
