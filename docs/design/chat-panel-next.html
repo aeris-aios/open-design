@@ -1180,10 +1180,18 @@ button.att-d:hover { border-color: var(--border-strong); }
   background: var(--bg); font-size: var(--t-body); color: var(--text); line-height: var(--lh-row);
 }
 .tool + .tool { margin-top: 6px; }
-/* 单独出现的一行跟着内容走;折叠块里那一摞是同一组步骤,必须等宽对齐,
-   参差不齐会让人以为它们不是一回事。 */
-.tool { width: fit-content; max-width: 100%; }
-.fold .body .tool { width: auto; }
+/* 分两类。
+   ------------------------------------------------------------
+   【满宽】工具调用、装着它们的任务进度块、记忆 —— 这些是「一步做了什么」的
+   流水记录,一行一行往下读,左右对齐才成行;宽度参差会让人以为它们不是一组。
+   而且它们展开后都是一段更宽的内容(终端输出、文件名、偏好列表),收起时窄、
+   展开时宽,一开一合整块都在跳。
+   【内容宽】一句话就说完的状态块 —— 已确认、Thinking、执行计划、生图缩略图行。
+   它们没有展开后变宽的问题,拉满只会在右边留一片不表示任何东西的空白。 */
+.fold.mod-step, .fold:has(.term), .card:has(.term) { width: auto; }
+.fold:has(.memo-ic) { width: auto; }
+/* 生图那条例外:满宽会把缩略图甩到最右边,和标签之间隔着一片空。 */
+.tool:has(.strip) { width: fit-content; max-width: 100%; }
 .tool .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool .nm code { font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong); }
 .tool .ms { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
@@ -1389,8 +1397,11 @@ button.att-d:hover { border-color: var(--border-strong); }
    按钮正中,所以指向不会跟着漂。 */
 [data-tip].mod-tip-s::after { left: 0; translate: 0 0; }              /* 左缘对齐按钮左缘 */
 [data-tip].mod-tip-e::after { left: auto; right: 0; translate: 0 0; } /* 右缘对齐按钮右缘 */
-[data-tip].mod-tip-b::after { bottom: auto; top: calc(100% + 5px); }  /* 翻到按钮下方 */
-[data-tip].mod-tip-b::before {
+/* 队列第一行:卡头去掉之后它上面已经没有东西,朝上的气泡会顶出限高容器。 */
+[data-tip].mod-tip-b::after,
+.queue .q:first-child [data-tip]::after { bottom: auto; top: calc(100% + 5px); }  /* 翻到按钮下方 */
+[data-tip].mod-tip-b::before,
+.queue .q:first-child [data-tip]::before {
   bottom: auto; top: calc(100% + 1px);
   border-top: 0; border-bottom: 4px solid var(--text-strong); border-top-color: transparent;
 }
@@ -2417,8 +2428,8 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l mod-def"><span>执行中 · 当前组展开,已完成的组自动收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
-              <details class="fold" open style="margin-top:6px">
+              <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+              <details class="fold mod-step" open style="margin-top:6px">
                 <summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="ms">第 3/4 步</span></summary>
                 <div class="body">
                   <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
@@ -2430,7 +2441,7 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>完成 · 整体收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务 · 耗时 1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转</div></details>
+              <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务 · 耗时 1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转</div></details>
             </div>
           </div>
         </div>
