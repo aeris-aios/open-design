@@ -1591,6 +1591,13 @@ button.att-d:hover { border-color: var(--border-strong); }
    进流水就没有这些事:面板本来就会渲染流水的每一行,多一种行而已。
    代价是滚上去会看不见 —— 可以接受,因为它本来就是短暂的,
    而真正需要你动手的那一态(次数用尽)会停在流水末尾不动。 */
+/* 重连是一条状态,不是一张卡。
+   ------------------------------------------------------------
+   它随时会自己消失,而且刻意不该抢注意力 —— 重连时人该做的是接着看别的。
+   套上边框和底色,它就成了和输入框并列的第二个块,等于把「别管它」说成了
+   「看这里」。三个状态都去框:形状不随状态变,只有失败那格把图标变红 ——
+   颜色留给真需要注意的那一个。 */
+.tool:has(.wifi) { border-color: transparent; background: none; padding: 5px 2px; }
 .tool .wifi { flex: none; width: 14px; height: 14px; color: var(--text-soft); }
 /* 失败那一行不换图标,只换颜色。
    三态用同一枚 wifi:图标说的是"连接"这件事,它没变;变的是结果,
@@ -1992,7 +1999,7 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>重连失败 · 次数用尽,交回给人</span><i></i></div>
             <div class="st-b">
-              <div class="tool is-fail"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">连不上,已停止重连</span><button class="btn mod-ghost mod-sm" type="button">重新连接</button></div>
+              <div class="tool is-fail"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">连不上,已停止重连</span><button class="btn mod-secondary mod-sm" type="button">重新连接</button></div>
             </div>
           </div>
         </div>
