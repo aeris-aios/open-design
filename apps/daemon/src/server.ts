@@ -118,6 +118,7 @@ import {
   resolveChatRunInactivityTimeoutMs,
   resolveChatRunShutdownGraceMs,
 } from './runtimes/chat-run-lifecycle.js';
+import { assertOdNextSemanticRequestFactProducerCoverage } from './runtimes/od-next-exact-input.js';
 import {
   normalizeRunContextSelection,
   renderRunContextPrompt,
@@ -9875,6 +9876,24 @@ export async function startServer({
           projectInstructions,
         }
       : defaultSystemPromptInputs;
+    if (odNextStrategyRecipe) {
+      assertOdNextSemanticRequestFactProducerCoverage('daemon_system_prompt', {
+        user_selected_skills: { skillId, skillIds, skillBody, skillName },
+        strategy_task_skill: odNextStrategyRecipe.taskSkill,
+        strategy_task_type: odNextStrategyRecipe.taskType,
+        strategy_runtime_capability_facts: odNextStrategyRecipe.planningFacts,
+        project_and_design_context: {
+          metadata,
+          template,
+          designSystemBody,
+          designSystemTitle,
+          craftBody,
+          craftSections,
+          memoryBody,
+        },
+        user_and_project_instructions: { userInstructions, projectInstructions },
+      });
+    }
     const prompt = composeSystemPrompt(systemPromptInputs);
     // The chat handler also needs to know where the active skill lives
     // on disk so it can stage a per-project copy of its side files
@@ -11042,6 +11061,28 @@ export async function startServer({
       imageReferences: promptImagePaths.map((p) => `@${p}`).join(' '),
       strategyInputStage: strategyTaskAtStart?.inputStage ?? null,
     });
+    if (strategyTaskAtStart?.inputStage === 'request') {
+      assertOdNextSemanticRequestFactProducerCoverage('request', {
+        web_scoped_conversation_transcript: message,
+        current_user_turn: currentPrompt,
+        headless_message_fallback: currentPrompt == null ? message : null,
+        request_execution_configuration: {
+          sessionMode: runSessionMode,
+          locale,
+          research,
+          titleGeneration,
+          model,
+          reasoning,
+          serviceTier,
+          mediaExecution: run.mediaExecution,
+          executionProfile: executionProfileFromStreamFormat(def.streamFormat),
+        },
+        run_context_selection: context,
+        project_attachment_selection: safeAttachments,
+        comment_attachment_selection: safeCommentAttachments,
+        image_attachment_selection: promptImagePaths,
+      });
+    }
     run.promptTelemetry = buildPromptStackTelemetry({
       composedPrompt: composed,
       sections: [

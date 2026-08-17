@@ -9,6 +9,7 @@ import {
   type OdNextSemanticRequestFactEntry,
   assertOdNextExactInputMapV1,
   assertOdNextLegacyTextContributorCoverage,
+  assertOdNextSemanticRequestFactProducerCoverage,
   assertSingleOdNextPromptBundleRoot,
 } from '../../src/runtimes/od-next-exact-input.js';
 
@@ -69,11 +70,38 @@ describe('OD Next exact Agent input map v1', () => {
       'plain_stdin',
       'stream_json_stdin',
       'pi_rpc',
+      'dsh_profile_jsonl',
       'acp_json_rpc',
     ]);
     for (const path of OD_NEXT_EXACT_TEXT_DELIVERY_PATHS_V1) {
       expect(path.invariant).toContain('exactText');
     }
+  });
+
+  it('fails when a production semantic producer omits or invents a fact', () => {
+    const requestFacts = {
+      web_scoped_conversation_transcript: 'history',
+      current_user_turn: 'latest',
+      headless_message_fallback: null,
+      request_execution_configuration: {},
+      run_context_selection: null,
+      project_attachment_selection: [],
+      comment_attachment_selection: [],
+      image_attachment_selection: [],
+    };
+    expect(() => assertOdNextSemanticRequestFactProducerCoverage(
+      'request',
+      requestFacts,
+    )).not.toThrow();
+    const { image_attachment_selection: _omitted, ...missing } = requestFacts;
+    expect(() => assertOdNextSemanticRequestFactProducerCoverage(
+      'request',
+      missing,
+    )).toThrow(/missing from request: image_attachment_selection/);
+    expect(() => assertOdNextSemanticRequestFactProducerCoverage(
+      'request',
+      { ...requestFacts, invented_fact: true },
+    )).toThrow(/not registered for request: invented_fact/);
   });
 });
 
@@ -154,6 +182,9 @@ describe('chat Agent exact-text production choke point', () => {
     )).not.toThrow();
     expect(() => assertSingleOdNextPromptBundleRoot(
       '<open_design_prompt_bundle>content</open_design_prompt_bundle>\n# appended markdown',
+    )).toThrow(/one open_design_prompt_bundle root/);
+    expect(() => assertSingleOdNextPromptBundleRoot(
+      '<open_design_prompt_bundleevil>content</open_design_prompt_bundle>',
     )).toThrow(/one open_design_prompt_bundle root/);
   });
 

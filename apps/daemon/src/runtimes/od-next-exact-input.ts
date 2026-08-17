@@ -27,6 +27,7 @@ export type OdNextExactInputEntry = Readonly<{
 export type OdNextSemanticRequestFactEntry = Readonly<{
   id: string;
   classification: 'initial_bundle' | 'transport_reference' | 'out_of_band' | 'excluded';
+  producer?: 'daemon_system_prompt' | 'request';
   source: string;
   owner: string;
   textTarget?: 'system_prompt' | 'user_prompt' | 'task_config' | 'context';
@@ -324,6 +325,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'web_scoped_conversation_transcript',
     classification: 'initial_bundle',
+    producer: 'request',
     source: 'buildDaemonTranscript(history, agentId) -> ChatRequest.message',
     owner: 'Task 02 transcript/context serializer',
     textTarget: 'context',
@@ -332,6 +334,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'current_user_turn',
     classification: 'initial_bundle',
+    producer: 'request',
     source: 'latestUserPromptFromHistory(history) -> ChatRequest.currentPrompt',
     owner: 'Task 02 user_prompt serializer',
     textTarget: 'user_prompt',
@@ -340,6 +343,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'headless_message_fallback',
     classification: 'initial_bundle',
+    producer: 'request',
     source: 'od run start --message -> ChatRequest.message when currentPrompt is absent',
     owner: 'Task 02 user_prompt serializer',
     textTarget: 'user_prompt',
@@ -348,6 +352,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'user_selected_skills',
     classification: 'initial_bundle',
+    producer: 'daemon_system_prompt',
     source: 'ChatRequest.skillId + skillIds -> composeDaemonSystemPrompt()',
     owner: 'Task 03 immutable user Skill package',
     textTarget: 'context',
@@ -356,6 +361,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'strategy_task_skill',
     classification: 'initial_bundle',
+    producer: 'daemon_system_prompt',
     source: 'resolveOdNextStrategyRequestRecipeV2().taskSkill',
     owner: 'Task 02 system_prompt serializer',
     textTarget: 'system_prompt',
@@ -364,6 +370,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'strategy_task_type',
     classification: 'initial_bundle',
+    producer: 'daemon_system_prompt',
     source: 'AppliedStrategyBindingV2.selectedTaskProfile / resolvedRecipe.taskType',
     owner: 'Task 04 canonical task configuration',
     textTarget: 'task_config',
@@ -372,6 +379,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'strategy_runtime_capability_facts',
     classification: 'initial_bundle',
+    producer: 'daemon_system_prompt',
     source: 'odNextStrategyRecipe.planningFacts and capabilitySnapshotHash',
     owner: 'Task 04 canonical task configuration',
     textTarget: 'task_config',
@@ -380,6 +388,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'request_execution_configuration',
     classification: 'initial_bundle',
+    producer: 'request',
     source: 'sessionMode, locale, research, mediaExecution, titleGeneration and selected runtime profile',
     owner: 'Task 04 canonical task configuration',
     textTarget: 'task_config',
@@ -388,6 +397,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'project_and_design_context',
     classification: 'initial_bundle',
+    producer: 'daemon_system_prompt',
     source: 'metadata, template, design-system fields, craftBody/craftSections and memoryBody',
     owner: 'Task 02 context serializer',
     textTarget: 'context',
@@ -396,6 +406,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'user_and_project_instructions',
     classification: 'initial_bundle',
+    producer: 'daemon_system_prompt',
     source: 'userInstructions + projectInstructions',
     owner: 'Task 02 context serializer',
     textTarget: 'context',
@@ -404,6 +415,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'run_context_selection',
     classification: 'initial_bundle',
+    producer: 'request',
     source: 'ChatRequest.context -> renderRunContextPrompt()',
     owner: 'Task 02 context serializer',
     textTarget: 'context',
@@ -412,6 +424,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'project_attachment_selection',
     classification: 'transport_reference',
+    producer: 'request',
     source: 'ChatRequest.attachments -> resolveSafeProjectAttachments()',
     owner: 'Task 04 immutable attachment snapshot',
     textTarget: 'context',
@@ -420,6 +433,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'comment_attachment_selection',
     classification: 'transport_reference',
+    producer: 'request',
     source: 'ChatRequest.commentAttachments -> normalizeCommentAttachments()',
     owner: 'Task 04 immutable attachment snapshot',
     textTarget: 'context',
@@ -428,6 +442,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
   {
     id: 'image_attachment_selection',
     classification: 'transport_reference',
+    producer: 'request',
     source: 'ChatRequest.imagePaths -> resolveSafePromptImagePaths()',
     owner: 'Task 04 immutable attachment snapshot',
     textTarget: 'context',
@@ -473,6 +488,11 @@ export const OD_NEXT_EXACT_TEXT_DELIVERY_PATHS_V1 = [
     id: 'pi_rpc',
     source: 'attachPiRpcSession({ prompt: exactText })',
     invariant: 'prompt field equals exactText',
+  },
+  {
+    id: 'dsh_profile_jsonl',
+    source: 'attachDshProfileSession({ prompt: exactText })',
+    invariant: 'execute.prompt equals exactText',
   },
   {
     id: 'acp_json_rpc',
@@ -524,6 +544,12 @@ export function assertOdNextExactInputMapV1(
       throw new Error(`OD Next semantic request-fact map has a missing or duplicate id: ${entry.id || '<empty>'}`);
     }
     semanticIds.add(entry.id);
+    if (entry.classification !== 'excluded' && !entry.producer) {
+      throw new Error(`OD Next semantic request fact ${entry.id} is missing its production producer`);
+    }
+    if (entry.classification === 'excluded' && entry.producer) {
+      throw new Error(`OD Next excluded semantic fact ${entry.id} must not declare a production producer`);
+    }
     if (
       (entry.classification === 'initial_bundle' || entry.classification === 'transport_reference')
       && !entry.textTarget
@@ -536,6 +562,31 @@ export function assertOdNextExactInputMapV1(
     ) {
       throw new Error(`OD Next semantic non-text fact ${entry.id} must not declare a Bundle target`);
     }
+  }
+}
+
+export function assertOdNextSemanticRequestFactProducerCoverage(
+  producer: 'daemon_system_prompt' | 'request',
+  facts: Readonly<Record<string, unknown>>,
+): void {
+  assertOdNextExactInputMapV1();
+  const expected = new Set<string>(
+    (OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 as readonly OdNextSemanticRequestFactEntry[])
+      .filter((entry) => entry.producer === producer)
+      .map((entry) => entry.id),
+  );
+  const actual = new Set<string>();
+  for (const id of Object.keys(facts)) {
+    actual.add(id);
+    if (!expected.has(id)) {
+      throw new Error(`OD Next semantic request fact is not registered for ${producer}: ${id}`);
+    }
+  }
+  const missing = [...expected].filter((id) => !actual.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `OD Next semantic request facts are missing from ${producer}: ${missing.join(', ')}`,
+    );
   }
 }
 
@@ -581,14 +632,11 @@ export function assertOdNextLegacyTextContributorCoverage(
 export function assertSingleOdNextPromptBundleRoot(exactText: string): void {
   const opening = '<open_design_prompt_bundle';
   const closing = '</open_design_prompt_bundle>';
-  if (!exactText.startsWith(opening) || !exactText.endsWith(closing)) {
+  const openingTag = exactText.match(/^<open_design_prompt_bundle(?:\s+[^<>]*?)?>/)?.[0] ?? null;
+  if (!openingTag || !exactText.endsWith(closing)) {
     throw new Error('OD Next initial exact text must be one open_design_prompt_bundle root with no outer bytes');
   }
-  const openingEnd = exactText.indexOf('>');
-  if (openingEnd < opening.length - 1) {
-    throw new Error('OD Next initial exact text has an invalid open_design_prompt_bundle opening tag');
-  }
-  if (exactText.indexOf(opening, opening.length) !== -1) {
+  if (exactText.indexOf(opening, openingTag.length) !== -1) {
     throw new Error('OD Next initial exact text must not contain a second open_design_prompt_bundle root');
   }
   if (exactText.indexOf(closing) !== exactText.length - closing.length) {
