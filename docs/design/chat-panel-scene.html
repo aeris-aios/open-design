@@ -318,7 +318,7 @@
    ------------------------------------------------------------
    来源:飞书文档《…/docx/VtOwd4ON2oYZj0xd6OTceubcnDe》第三节
    「三、OpenDesign 的生成流程」的组件表(21 行),
-   外加评审时补的 3 个(22 待发送附件 / 23 重连 / 24 回答头),共 24 个。
+   外加评审时补的 4 个(22 待发送附件 / 23 重连 / 24 回答头 / 25 选中文字),共 25 个。
    表里每个组件给了:出现时机 / 默认状态 / 包含的状态 / 支持的操作 /
    展示的信息 —— 本文件把这五列逐一落成可看的样式。
 
@@ -1607,6 +1607,71 @@ button.att-d:hover { border-color: var(--border-strong); }
    进流水就没有这些事:面板本来就会渲染流水的每一行,多一种行而已。
    代价是滚上去会看不见 —— 可以接受,因为它本来就是短暂的,
    而真正需要你动手的那一态(次数用尽)会停在流水末尾不动。 */
+/* ---- 输入框 ---- */
+/* 不在文档那 21 行里,但没有它就不成其为一个面板;25 · 选中文字的第三态也要落在
+   这里。只画到"能承接上面那些组件"为止 —— 它自己的状态(聚焦、禁用、拖入文件)
+   不在这份稿的范围内。 */
+.composer { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); }
+.composer .tray { padding: 9px 9px 0; }
+.composer .ta {
+  display: block; padding: 10px 12px 2px;
+  font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-faint);
+}
+.composer .bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
+.composer .bar .sp { flex: 1; }
+.composer .bar button {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: var(--radius-sm); color: var(--text-soft);
+}
+.composer .bar button:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
+.composer .bar button svg { width: 16px; height: 16px; }
+.composer .bar .model {
+  width: auto; padding: 0 8px; font-size: var(--t-cap); color: var(--text-muted);
+}
+.composer .bar .send {
+  width: 28px; height: 28px; background: var(--text-strong); color: var(--bg);
+  border-radius: var(--radius-pill);
+}
+.composer .bar .send:hover { background: var(--text); color: var(--bg); }
+
+/* ---- 选中文字 → 添加到对话 ---- */
+/* 只放一个动作。
+   ------------------------------------------------------------
+   选中一段话之后真正想做的只有一件事:拿它接着说。复制是系统右键已有的,
+   「更多详情」「到侧边提问」都是把一个明确动作稀释成一道选择题 —— 浮条一旦
+   超过一个按钮,人就得先读完再决定,而这条浮条出现的那一刻人手还按在鼠标上。
+   所以它不是"工具栏",就是一颗按钮:形状本身已经说明只有一条路。 */
+/* 定位参照是【选区】不是整段:浮条要对准你选的那几个字,
+   段落居中会在长句里偏出去老远。 */
+.sel { position: relative; background: var(--selected-soft); border-radius: var(--radius-xs); }
+.selbar {
+  position: absolute; left: 50%; translate: -50% 0; bottom: calc(100% + 6px);
+  z-index: 6; white-space: nowrap; box-shadow: var(--shadow-md);
+  border-radius: var(--radius-pill);
+}
+/* 选区贴着面板顶边时翻到下方 —— 和 tooltip 那套边界补正同一个道理:
+   浮层默认朝上,而容器上面就没地方了。 */
+.selbar.mod-below { bottom: auto; top: calc(100% + 6px); }
+
+/* 点完之后:这段话变成输入框里的一条引用,可以再删掉。
+   引用不重排原文,只做两行截断 —— 它是"我指的是这段"的凭据,不是正文。 */
+.composer .quote {
+  position: relative; display: flex; align-items: flex-start; gap: 8px;
+  margin: 9px 9px 0;                          /* 和附件托盘同一套内缩 */
+  padding: 6px 8px 6px 11px;
+  border-radius: var(--radius-sm); background: var(--bg-subtle);
+}
+.composer .quote::before {
+  content: ""; position: absolute; left: 4px; top: 7px; bottom: 7px;
+  width: 2px; border-radius: 1px; background: var(--border-strong);
+}
+.composer .quote .tx {
+  flex: 1; min-width: 0; font-size: var(--t-mini); line-height: var(--lh-body);
+  color: var(--text-muted); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.composer .quote .del { position: static; flex: none; margin-top: 1px; }
+
 /* 回答头:这一段是谁答的。
    ------------------------------------------------------------
    尺寸照搬 apps/web 的 .role —— 20px 图标 + 8px 间距 + 13px/600。
@@ -1804,32 +1869,6 @@ body { background: var(--bg-subtle); overflow: auto; }
 }
 .dock .composer { position: relative; z-index: 1; }
 
-/* 输入框。不在文档那 21 行里,但没有它就不成其为一个面板 ——
-   这份场景稿把它画出来,只为让上面那些组件有个落脚的地方;
-   它自己的状态(聚焦、禁用、拖入文件)不在这里定。 */
-.composer { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); }
-.composer .tray { padding: 9px 9px 0; }
-.composer .ta {
-  display: block; padding: 10px 12px 2px;
-  font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-faint);
-}
-.composer .bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
-.composer .bar .sp { flex: 1; }
-.composer .bar button {
-  display: grid; place-items: center; width: 28px; height: 28px;
-  border-radius: var(--radius-sm); color: var(--text-soft);
-}
-.composer .bar button:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
-.composer .bar button svg { width: 16px; height: 16px; }
-.composer .bar .model {
-  width: auto; padding: 0 8px; font-size: var(--t-cap); color: var(--text-muted);
-}
-.composer .bar .send {
-  width: 28px; height: 28px; background: var(--text-strong); color: var(--bg);
-  border-radius: var(--radius-pill);
-}
-.composer .bar .send:hover { background: var(--text); color: var(--bg); }
-
 
 /* dock 上的重连横幅:和输入框之间靠 .dock 的 gap 撑开 */
 .dock-note { display: contents; }
@@ -1908,7 +1947,7 @@ body { background: var(--bg-subtle); overflow: auto; }
       </div>
   </div>
   <div class="scene-col">
-    <p class="scene-cap">同一个面板 · 跑完<span>过程整段收成一行 · 外面只留结果:产物、总结、反馈、下一步</span></p>
+    <p class="scene-cap">同一个面板 · 跑完<span>过程整段收成一行 · 选中一句话会浮出「添加到对话」</span></p>
       <div class="panel">
         <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
           <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
@@ -1932,7 +1971,7 @@ body { background: var(--bg-subtle); overflow: auto; }
             <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more mod-tip-e" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
         </div>
 
-        <div class="say">两页都好了,商品卡已经抽成共享组件,改一处两页都跟着变。</div>
+        <div class="say">两页都好了,<mark class="sel">商品卡已经抽成共享组件<span class="selbar"><button class="btn mod-primary mod-sm" type="button">添加到对话</button></span></mark>,改一处两页都跟着变。</div>
 
         <div class="fb">
           <span class="fin"><i></i>已完成<span class="cost">8.4k</span></span><span class="sp"></span>
