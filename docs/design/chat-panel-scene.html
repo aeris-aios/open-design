@@ -1692,24 +1692,47 @@ button.att-d:hover { border-color: var(--border-strong); }
    浮层默认朝上,而容器上面就没地方了。 */
 .selbar.mod-below { bottom: auto; top: calc(100% + 6px); }
 
-/* 点完之后:这段话变成输入框里的一条引用,可以再删掉。
-   引用不重排原文,只做两行截断 —— 它是"我指的是这段"的凭据,不是正文。 */
-.composer .quote {
-  position: relative; display: flex; align-items: flex-start; gap: 8px;
-  margin: 9px 9px 0;                          /* 和附件托盘同一套内缩 */
-  padding: 6px 8px 6px 11px;
-  border-radius: var(--radius-sm); background: var(--bg-subtle);
+/* 点完之后:输入框里多一枚芯片,不是一段引用。
+   ------------------------------------------------------------
+   输入框是给你写字的地方,把原文摊在里面等于先占掉你要写的空间;选中好几段时
+   引用块还会堆成一叠。芯片只占一行,选了几段就只是数字变 —— 一条和五条长得
+   一样高。
+   全文和 × 都只在 hover 出现:刚选的那段你自己清楚,不需要一直摆着;要核对时
+   再看。静止时它是一条状态,不是一个待办。 */
+.refs {
+  position: relative; display: inline-flex; align-items: center; gap: 5px;
+  margin: 9px 9px 0; padding: 4px 9px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: var(--t-mini); color: var(--text-strong); cursor: default;
 }
-.composer .quote::before {
-  content: ""; position: absolute; left: 4px; top: 7px; bottom: 7px;
-  width: 2px; border-radius: 1px; background: var(--border-strong);
+.refs .ic { flex: none; width: 13px; height: 13px; color: var(--text-soft); }
+.refs .del {
+  position: static; flex: none; width: 16px; height: 16px; margin-inline-start: 1px;
+  opacity: 0; transition: opacity var(--duration-faster) var(--ease-out);
 }
-.composer .quote .tx {
-  flex: 1; min-width: 0; font-size: var(--t-mini); line-height: var(--lh-body);
-  color: var(--text-muted); overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+.refs:hover .del, .refs.mod-open .del { opacity: 1; }
+/* 浮出的全文:和选中浮条同一种深色磨砂 —— 两者都是悬在内容之上的临时层,
+   长一个样人才知道它们是同一类东西。 */
+.refs .pop {
+  position: absolute; left: 0; bottom: calc(100% + 7px); z-index: 7;
+  width: max-content; max-width: 300px;
+  padding: 9px 11px; border-radius: var(--radius);
+  background: var(--overlay-glass); border: 1px solid var(--overlay-glass-edge);
+  -webkit-backdrop-filter: blur(var(--glass-regular-blur));
+  backdrop-filter: blur(var(--glass-regular-blur));
+  box-shadow: var(--shadow-md);
+  color: var(--overlay-glass-text); font-size: var(--t-mini); line-height: var(--lh-body);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--duration-faster) var(--ease-out);
 }
-.composer .quote .del { position: static; flex: none; margin-top: 1px; }
+.refs:hover .pop, .refs.mod-open .pop { opacity: 1; }
+.refs .pop ol { margin: 0; padding: 0; list-style: none; counter-reset: r; }
+.refs .pop li { display: flex; gap: 8px; overflow-wrap: anywhere; }
+.refs .pop li + li { margin-top: 6px; }
+.refs .pop li::before {
+  counter-increment: r; content: counter(r) "."; flex: none;
+  font-variant-numeric: tabular-nums; opacity: .6;
+}
 
 /* 回答头:这一段是谁答的。
    ------------------------------------------------------------
@@ -2030,7 +2053,7 @@ body { background: var(--bg-subtle); overflow: auto; }
         </div>
         <div class="dock">
           <div class="composer">
-            
+            <span class="refs"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 15a2 2 0 01-2 2H8l-4 4V5a2 2 0 012-2h12a2 2 0 012 2z"/></svg><span>1 条注释</span><button class="del" type="button" aria-label="移除注释"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="pop"><ol><li><span>商品卡已经抽成共享组件</span></li></ol></span></span>
             <div class="ta">随心输入…</div>
             <div class="bar">
               <button type="button" aria-label="添加附件" data-tip="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
