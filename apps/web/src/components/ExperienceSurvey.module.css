@@ -1,0 +1,301 @@
+/* Experience survey card. Floats bottom-right above the workspace after a
+   successful export. It is mounted globally (App.tsx), not inside a route, so
+   navigating project → home keeps the same card and the same answers — the
+   user is answering once about the product, not once per screen.
+
+   Deliberately NOT a modal: it must never block the export/share flow the user
+   just completed. Colors come from tokens so dark mode follows the app theme
+   with no second palette. */
+.card {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 1400;
+  /* 380 rather than 340: the 0–10 scale is eleven targets on one row, and at
+     340 the last three wrapped onto a second row that rendered twice as wide
+     as the first — the scale stopped reading as one continuous scale. */
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 15px 16px 14px;
+  border-radius: var(--radius-lg, 14px);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #dbdbdb);
+  color: var(--text, #494949);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.06),
+    0 18px 48px rgba(0, 0, 0, 0.16);
+  pointer-events: auto;
+}
+
+/* Below 900px the workspace collapses and a 340px card starts to crowd the
+   composer, so the card goes full-width and sits above the safe area. */
+@media (max-width: 900px) {
+  .card {
+    left: 12px;
+    right: 12px;
+    bottom: max(88px, calc(env(safe-area-inset-bottom) + 88px));
+    width: auto;
+    max-width: none;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm, 5px);
+  background: var(--brand-soft, #ebffde);
+  color: var(--brand-text, #0d5400);
+}
+
+.close {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm, 5px);
+  background: transparent;
+  color: var(--text-soft, #848484);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+.close:hover {
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text, #494949);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--brand-text, #0d5400);
+  outline-offset: 1px;
+}
+
+.question {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-strong, #202020);
+  text-wrap: balance;
+}
+
+.scale {
+  display: flex;
+  gap: 5px;
+}
+
+/* An explicit 11-column grid rather than flex wrapping: every step of the
+   scale gets the same width, and no step can fall to a second row where it
+   would render twice as wide as its neighbours and stop reading as one
+   continuous scale. */
+.scale.wide {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: 3px;
+}
+
+.scaleButton {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 34px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border, #dbdbdb);
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text, #494949);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    transform 0.14s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.scale.wide .scaleButton {
+  flex: 1 1 24px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.scaleButton:hover {
+  background: var(--brand-soft, #ebffde);
+  border-color: var(--brand-weak, #d0ffb5);
+  transform: translateY(-1px);
+}
+
+.scaleButton:focus-visible {
+  outline: 2px solid var(--brand-text, #0d5400);
+  outline-offset: 1px;
+}
+
+.bounds {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -4px;
+  font-size: 10.5px;
+  color: var(--text-soft, #848484);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.option {
+  padding: 8px 11px;
+  text-align: left;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-soft, #ededed);
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text, #494949);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.option:hover {
+  background: var(--brand-soft, #ebffde);
+  border-color: var(--brand-weak, #d0ffb5);
+}
+
+.option:focus-visible {
+  outline: 2px solid var(--brand-text, #0d5400);
+  outline-offset: 1px;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 66px;
+  resize: none;
+  padding: 9px 10px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border, #dbdbdb);
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text, #494949);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.textarea::placeholder {
+  color: var(--text-faint, #bdbdbd);
+}
+
+.textarea:focus {
+  outline: 2px solid var(--brand-weak, #d0ffb5);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.steps {
+  display: flex;
+  gap: 4px;
+}
+
+.step {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--bg-fill, rgba(0, 0, 0, 0.12));
+}
+
+.step.on {
+  background: var(--brand-text, #0d5400);
+}
+
+.skip {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft, #848484);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm, 5px);
+  cursor: pointer;
+}
+
+.skip:hover {
+  color: var(--text, #494949);
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+}
+
+.skip:focus-visible {
+  outline: 2px solid var(--brand-text, #0d5400);
+  outline-offset: 1px;
+}
+
+.submit {
+  border: 1px solid var(--accent-strong, #202020);
+  background: var(--accent-strong, #202020);
+  color: var(--accent-contrast, #fafafa);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.submit:focus-visible {
+  outline: 2px solid var(--brand-text, #0d5400);
+  outline-offset: 2px;
+}
+
+.thanks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.thanksMark {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 3px;
+  border-radius: 50%;
+  background: var(--brand-soft, #ebffde);
+  color: var(--brand-text, #0d5400);
+  font-size: 14px;
+}
+
+.thanksTitle {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-strong, #202020);
+}
+
+.thanksBody {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-soft, #848484);
+}

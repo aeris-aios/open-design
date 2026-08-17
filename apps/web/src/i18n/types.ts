@@ -5430,4 +5430,26 @@ export interface Dict {
   'campaign.deepseekV4Flash.restricted.tooltip': string;
   'campaign.deepseekV4Flash.workbenchBadge': string;
   'campaign.deepseekV4Flash.workbenchBadgeAria': string;
+
+  'experienceSurvey.tag': string;
+  'experienceSurvey.close': string;
+  'experienceSurvey.satisfaction': string;
+  'experienceSurvey.satisfactionLow': string;
+  'experienceSurvey.satisfactionHigh': string;
+  'experienceSurvey.recommendation': string;
+  'experienceSurvey.recommendationLow': string;
+  'experienceSurvey.recommendationHigh': string;
+  'experienceSurvey.improvement': string;
+  'experienceSurvey.improvement.quality': string;
+  'experienceSurvey.improvement.speed': string;
+  'experienceSurvey.improvement.export': string;
+  'experienceSurvey.improvement.collaboration': string;
+  'experienceSurvey.improvement.models': string;
+  'experienceSurvey.improvement.stability': string;
+  'experienceSurvey.comment': string;
+  'experienceSurvey.commentPlaceholder': string;
+  'experienceSurvey.skip': string;
+  'experienceSurvey.submit': string;
+  'experienceSurvey.thanksTitle': string;
+  'experienceSurvey.thanksBody': string;
 }

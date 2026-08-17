@@ -54,6 +54,7 @@ import {
 import { ProjectCreationPendingView } from './components/ProjectCreationPendingView';
 import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
+import { ExperienceSurvey } from './components/ExperienceSurvey';
 import { TooltipLayer } from './components/TooltipLayer';
 import { UpdateDialog } from './components/UpdateDialog';
 import {
@@ -5314,6 +5315,11 @@ function AppInner() {
       )}
       <TooltipLayer />
       <UpdateDialog />
+      {/* Mounted at shell level, outside the route views, so a survey armed by
+          an export inside a project stays on screen when the user navigates
+          back to home. TODO: wire onSubmit to the PostHog api-mode survey
+          response once the survey id is promoted out of draft. */}
+      <ExperienceSurvey />
       <AmrArtifactUpgradeGate
         homeVisible={route.kind === 'home' && route.view === 'home'}
         activeProjectId={route.kind === 'project' ? route.projectId : null}
