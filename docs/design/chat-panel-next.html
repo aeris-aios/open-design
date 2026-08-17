@@ -817,10 +817,16 @@ button.att-i:hover { border-color: var(--border-strong); }
 .vmeta { display: block; padding: 7px 9px; }
 .vt { display: flex; align-items: center; gap: 5px; font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); }
 .vopt.is-on .vt { color: var(--brand-text); }
+/* 「推荐」用中性深色,不借选中的绿。
+   ------------------------------------------------------------
+   推荐和选中是两件独立的事:推荐是 Agent 的建议、点不点都不变;
+   选中是你的选择、会变。两个都用绿就分不清,而当推荐项恰好被选中时
+   两层绿叠在一起,标签直接消失(原来就是这样)。
+   深色药丸在白底和浅绿底上读起来一样,且一眼就不是选中色。 */
 .vrec {
-  flex: none; padding: 0 5px; border-radius: var(--radius-pill);
-  background: var(--brand-soft); border: 1px solid var(--brand-weak);
-  font-size: var(--t-cap); font-weight: 600; color: var(--brand-text);
+  flex: none; padding: 1px 6px; border-radius: var(--radius-pill);
+  background: var(--text-strong); border: none;
+  font-size: var(--t-cap); font-weight: 600; color: var(--bg);
 }
 .vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
 
@@ -1470,6 +1476,36 @@ button.att-i:hover { border-color: var(--border-strong); }
                     <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
                   </button>
                   <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                  </button>
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                  </button>
+                </div>
+                <div class="foot">
+                  <button class="btn mod-ghost mod-sm" type="button">帮我决定</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>推荐项没被选中 · 深色标签在白底上一样读得出</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>先定个视觉方向</b><span class="n">已选 编辑杂志</span></div>
+                <div class="q">这套电商 App 原型走哪种感觉?四张预览用的是同一份示例内容,比的是风格。</div>
+                <div class="opts mod-visual">
+                  <button class="vopt" type="button">
+                    <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                  </button>
+                  <button class="vopt is-on" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
                     <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
                   </button>
