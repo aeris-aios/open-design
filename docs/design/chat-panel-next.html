@@ -601,6 +601,45 @@ button.att-i:hover { border-color: var(--border-strong); }
 }
 .att-ov .act svg { width: 13px; height: 13px; }
 
+/* ---- 发送前的托盘:同一张卡,只多两样东西 ----
+   待发送的附件跟已发送的用【同一张卡】—— 同样 104px、同样 1:1 缩略图、
+   同样的主名省略 / 后缀保留。只多:右上角一个「×」,和上传中的进度。
+   ------------------------------------------------------------
+   刻意不给"未发送"另画一套更矮的紧凑行。一旦两侧长得不一样,
+   同一批文件在按下发送的那一瞬会整个跳一下形状;更要命的是两套模板
+   会各自漂移 —— 线上那版就是这么裂的:图片走大卡、文档走单行,
+   同一行里两种高度,基线对不上。
+   卡片本身不变,状态只由叠加物承担,这条是这个组件的骨架。 */
+/* 托盘靠左。已发送那一侧要贴右,是因为它压在用户气泡上方、跟气泡右对齐;
+   而托盘在输入框里,输入框是满宽的,内容当然从左边起。
+   两处共用 .att 的单行滚动,只在这里把那个 auto 外边距归零。 */
+.att.mod-tray, .att.mod-tray > :first-child { margin-inline-start: 0; }
+.att.mod-tray { max-width: none; }
+.att-i { position: relative; }
+.att-i .del {
+  position: absolute; inset-inline-end: 4px; top: 4px; z-index: 2;
+  display: grid; place-items: center; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text-muted); box-shadow: var(--shadow-sm);
+  transition: color var(--duration-faster) var(--ease-out),
+              border-color var(--duration-faster) var(--ease-out);
+}
+.att-i .del svg { width: 10px; height: 10px; }
+.att-i .del:hover { color: var(--red); border-color: var(--red); }
+/* 「×」只在发送前有:发出去的消息撤不回,那一侧给删除键等于给一个
+   按了没用的按钮。已发送那几态里不会出现它。 */
+
+/* 上传中:缩略图压暗 + 底边一条进度。
+   进度条压在图上而不是另起一行 —— 卡的高度是常量,多一行文字就得
+   给所有卡都留出那一行的位置,而那一行只有上传的这几秒用得上。 */
+.att-i .ph { position: relative; }
+.att-i.is-up .mini { opacity: 0.45; }
+.att-i .bar {
+  position: absolute; inset-inline: 0; bottom: 0; height: 3px;
+  background: var(--bg-fill-secondary);
+}
+.att-i .bar i { display: block; height: 100%; background: var(--brand); }
+
 /* ---------- 缩略图占位 ----------
    一块纯灰压住图片该占的范围,不画界面细节。这是【占位图】不是效果图 ——
    评审要看的是缩略图的框、尺寸、排布、文件名截断,内容画得越像越抢注意力。
@@ -1284,12 +1323,47 @@ button.att-i:hover { border-color: var(--border-strong); }
       <article class="cmp mod-w2 mod-split" data-od-id="cmp-msg-att">
         <div class="cmp-h"><span class="no">2</span><span class="nm">用户消息-附件</span></div>
         <div class="cmp-meta">
-          <div><b>出现时机</b> 发送后</div>
+          <div><b>出现时机</b> 选好文件后(输入框内)→ 发送后(气泡上方)</div>
           <div><b>默认状态</b> 缩略图</div>
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>成功 · 显示缩略图</span><i></i></div>
+            <div class="st-l mod-def"><span>发送前 · 输入框内待发,每张右上角可删</span><i></i></div>
+            <div class="st-b">
+              <div class="att mod-tray">
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 跨端适配检查清单.pdf" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">跨端适配检查清单</span><span class="ext">.pdf</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 走查录屏.mov" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>发送前 · 上传中,进度压在图上不另占一行</span><i></i></div>
+            <div class="st-b">
+              <div class="att mod-tray">
+                <span class="att-i is-up"><span class="ph"><span class="mini"></span><span class="bar"><i style="width:62%"></i></span></span><button class="del" type="button" aria-label="取消上传 走查录屏.mov" data-tip="取消上传"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>发送前 · 上传失败,重试或直接移除</span><i></i></div>
+            <div class="st-b">
+              <div class="att mod-tray">
+                <span class="att-i is-fail">
+                  <span class="ph" style="display:grid;place-items:center">
+                    <button class="btn mod-ghost mod-sm" type="button" style="color:var(--red)">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>重试
+                    </button>
+                  </span>
+                  <button class="del" type="button" aria-label="移除 规范.pdf" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                  <span class="nm"><span class="base">规范</span><span class="ext">.pdf</span></span>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>发送后 · 「×」消失,卡的其余部分一模一样</span><i></i></div>
             <div class="st-b">
               <div class="att">
                 <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
@@ -1371,7 +1445,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>文件名</b> — 主名放不下时打省略号,<b>后缀不参与截断、永远可见</b>:整串一起截会先吃掉后缀,人就看不出这是什么文件了。<b>卡的外形不随文件类型变</b> — 宽固定 104px、缩略图区固定 1:1,png / pdf / mov / sketch 一个样,认不出的类型压一块灰,而不是换一个更矮的模板。这条是硬规则:一旦让高度由内容决定,有几种类型就有几种高度,同一行里紧凑行和大卡混在一起,基线对不上、后面的项被撑歪,列表就散了。类型信息由永不截断的后缀承担,不靠卡的形状。<b>展示</b>文件名、类型图标、缩略图。</span>
+          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>文件名</b> — 主名放不下时打省略号,<b>后缀不参与截断、永远可见</b>:整串一起截会先吃掉后缀,人就看不出这是什么文件了。<b>发送前 / 发送后是同一张卡</b> — 待发的附件和已发的用同一套外形:同样 104px、同样 1:1 缩略图、同样的主名省略后缀保留。发送前只多两样 —— 右上角的「×」和上传中压在图上的进度条;按下发送后「×」消失(发出去的消息撤不回,再给删除键等于给一个按了没用的按钮),其余一点不变,所以那一瞬间卡片不会跳形状。<b>上传中</b>进度压在缩略图上而不是另起一行:卡的高度是常量,多一行文字就得给所有卡都留出那一行,而那一行只有上传的那几秒用得上。<b>上传失败</b>可单独重试,也可以直接移除,不挡着其它文件发送。<b>卡的外形不随文件类型变</b> — 宽固定 104px、缩略图区固定 1:1,png / pdf / mov / sketch 一个样,认不出的类型压一块灰,而不是换一个更矮的模板。这条是硬规则:一旦让高度由内容决定,有几种类型就有几种高度,同一行里紧凑行和大卡混在一起,基线对不上、后面的项被撑歪,列表就散了。类型信息由永不截断的后缀承担,不靠卡的形状。<b>展示</b>文件名、类型图标、缩略图。</span>
         </div>
       </article>
 
