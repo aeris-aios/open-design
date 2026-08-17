@@ -78,6 +78,11 @@ export function ExperienceSurvey({ onSubmit, onExposure, onDismiss }: Props) {
       __odExperienceSurvey?: { open: () => void };
     };
     globals.__odExperienceSurvey = { open: () => setVisible(true) };
+    // `?survey=preview` opens it without a console round-trip, so a design
+    // review can just follow a link.
+    if (new URLSearchParams(window.location.search).get('survey') === 'preview') {
+      setVisible(true);
+    }
     return () => {
       delete globals.__odExperienceSurvey;
     };

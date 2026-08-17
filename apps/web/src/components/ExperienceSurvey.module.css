@@ -104,7 +104,10 @@
    continuous scale. */
 .scale.wide {
   display: grid;
-  grid-template-columns: repeat(11, 1fr);
+  /* minmax(0, 1fr), not 1fr: a bare 1fr floors at min-content, so the
+     two-digit "10" column refuses to shrink to its share and pushes the last
+     step outside the card. */
+  grid-template-columns: repeat(11, minmax(0, 1fr));
   gap: 3px;
 }
 
