@@ -626,7 +626,14 @@ button.att-i:hover { border-color: var(--border-strong); }
               border-color var(--duration-faster) var(--ease-out);
 }
 .att-i .del svg { width: 10px; height: 10px; }
-.att-i .del:hover { color: var(--red); border-color: var(--red); }
+/* hover 不变红。红在这套系统里是"出事了 / 不可逆",而「×」只是把这个
+   文件从待发列表里拿掉 —— 文件还在你磁盘上,拿掉了还能再选一次,
+   代价约等于零。给它红,等于把"移除一个附件"和"任务失败"放在同一档上,
+   真出事时红就不灵了。所以只做常规的加深。
+   也不给它挂 tooltip:「×」本身就是通用约定,不需要解释;而且托盘是
+   横向滚动容器,气泡会被裁掉 —— 之前挂了 tip,结果只有那枚小三角
+   露在卡片外面,看着像个渲染错误。名字留在 aria-label 里,读屏仍读得到。 */
+.att-i .del:hover { color: var(--text-strong); border-color: var(--border-strong); background: var(--bg); }
 /* 「×」只在发送前有:发出去的消息撤不回,那一侧给删除键等于给一个
    按了没用的按钮。已发送那几态里不会出现它。 */
 
@@ -1505,9 +1512,9 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>发送前 · 输入框内待发,每张右上角可删</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 跨端适配检查清单.pdf" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">跨端适配检查清单</span><span class="ext">.pdf</span></span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 走查录屏.mov" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 跨端适配检查清单.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">跨端适配检查清单</span><span class="ext">.pdf</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
               </div>
             </div>
           </div>
@@ -1515,8 +1522,8 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>发送前 · 上传中,进度压在图上不另占一行</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-i is-up"><span class="ph"><span class="mini"></span><span class="bar"><i style="width:62%"></i></span></span><button class="del" type="button" aria-label="取消上传 走查录屏.mov" data-tip="取消上传"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
+                <span class="att-i is-up"><span class="ph"><span class="mini"></span><span class="bar"><i style="width:62%"></i></span></span><button class="del" type="button" aria-label="取消上传 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
               </div>
             </div>
           </div>
@@ -1530,7 +1537,7 @@ button.att-i:hover { border-color: var(--border-strong); }
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>重试
                     </button>
                   </span>
-                  <button class="del" type="button" aria-label="移除 规范.pdf" data-tip="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                  <button class="del" type="button" aria-label="移除 规范.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
                   <span class="nm"><span class="base">规范</span><span class="ext">.pdf</span></span>
                 </span>
               </div>
