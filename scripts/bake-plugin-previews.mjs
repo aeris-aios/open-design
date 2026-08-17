@@ -34,12 +34,12 @@
 // Uploading <out> to R2 + committing the manifest is the CI step's job; this
 // script only renders + encodes so it stays runnable locally and in CI alike.
 
-import puppeteer from 'puppeteer-core';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // Bump when the bake recipe changes (capture geometry, timing, encoder, waits…)
 // so every plugin re-bakes even though its page content is byte-identical.
@@ -262,33 +262,78 @@ function deckSignal(cap) {
       parts.push(getComputedStyle(el).transform);
     }
     if (el.scrollWidth > el.clientWidth + 4) parts.push(`sl${el.scrollLeft}`);
+    if (el.scrollHeight > el.clientHeight + 4) parts.push(`st${el.scrollTop}`);
   }
   const a = document.querySelector('.active,.is-active,[aria-current="true"],[data-active="true"]');
   if (a) parts.push((a.id || '') + (a.className || ''));
   return parts.join('|').slice(0, 4000);
 }
 
+// Locate and optionally advance a vertically stacked deck. Some templates keep
+// html/body fixed and put the actual slide rail in an inner overflow-y
+// container, so window.scrollY alone cannot describe or drive them. Runs in the
+// page; must stay self-contained.
+export function verticalDeckState(selector, action) {
+  const slides = Array.from(document.querySelectorAll(selector)).filter((el) => {
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 1 && rect.height > 1 && style.display !== 'none' && style.visibility !== 'hidden';
+  });
+  if (slides.length < 2) return { hasStack: false, moved: false };
+
+  const isRoot = (el) => el === document.scrollingElement || el === document.documentElement || el === document.body;
+  let scroller = null;
+  let node = slides[0].parentElement;
+  while (node && !isRoot(node)) {
+    const containsAll = slides.every((slide) => node.contains(slide));
+    const overflowY = String(getComputedStyle(node).overflowY || '').toLowerCase();
+    if (
+      containsAll &&
+      node.scrollHeight > node.clientHeight + 1 &&
+      (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay')
+    ) {
+      scroller = node;
+      break;
+    }
+    node = node.parentElement;
+  }
+
+  const root = !scroller;
+  scroller ||= document.scrollingElement || document.documentElement || document.body;
+  const current = root
+    ? Math.max(
+      Number(window.scrollY || window.pageYOffset || 0),
+      Number(document.documentElement?.scrollTop || 0),
+      Number(document.body?.scrollTop || 0),
+    )
+    : Number(scroller.scrollTop || 0);
+  const origin = root ? 0 : Number(scroller.getBoundingClientRect().top || 0);
+  const tops = slides.map((el) => current + Number(el.getBoundingClientRect().top || 0) - origin);
+  const span = Math.max(1, root ? window.innerHeight : scroller.clientHeight);
+  const hasStack = Math.max(...tops) - Math.min(...tops) > span * 0.5;
+  if (!hasStack || action !== 'advance') return { hasStack, moved: false };
+
+  const currentIndex = Number(window.__odBakeVerticalSlideIndex || 0);
+  const nextIndex = currentIndex + 1;
+  if (nextIndex >= slides.length) return { hasStack, moved: false };
+  const top = tops[nextIndex];
+  window.__odBakeVerticalSlideIndex = nextIndex;
+  if (root) {
+    window.scrollTo({ left: window.scrollX, top, behavior: 'auto' });
+  } else {
+    try {
+      scroller.scrollTo({ left: scroller.scrollLeft, top, behavior: 'auto' });
+    } catch {
+      scroller.scrollTop = top;
+    }
+  }
+  return { hasStack, moved: true };
+}
+
 async function driveDeck(page, driver) {
   if (driver === 'vertical') {
-    return page.evaluate((selector) => {
-      const slides = Array.from(document.querySelectorAll(selector)).filter((el) => {
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
-        return rect.width > 1 && rect.height > 1 && style.display !== 'none' && style.visibility !== 'hidden';
-      });
-      const current = Number(window.__odBakeVerticalSlideIndex || 0);
-      const next = current + 1;
-      if (next >= slides.length) return false;
-      const target = slides[next];
-      const rect = target.getBoundingClientRect();
-      window.__odBakeVerticalSlideIndex = next;
-      window.scrollTo({
-        left: window.scrollX + rect.left,
-        top: window.scrollY + rect.top,
-        behavior: 'auto',
-      });
-      return true;
-    }, DECK_CAPTURE_SELECTOR);
+    const state = await page.evaluate(verticalDeckState, DECK_CAPTURE_SELECTOR, 'advance');
+    return state.moved;
   }
   if (driver === 'arrow') { await page.keyboard.press('ArrowRight'); return; }
   if (driver === 'wheel') {
@@ -342,17 +387,8 @@ async function probeDeckDriver(page) {
   await driveDeck(page, 'wheel');
   await sleep(900);
   if ((await page.evaluate(deckSignal, DECK_SCAN_CAP)) !== sig0) return 'wheel';
-  const hasVerticalSlideStack = await page.evaluate((selector) => {
-    const slides = Array.from(document.querySelectorAll(selector)).filter((el) => {
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return rect.width > 1 && rect.height > 1 && style.display !== 'none' && style.visibility !== 'hidden';
-    });
-    if (slides.length < 2) return false;
-    const tops = slides.map((el) => el.getBoundingClientRect().top + window.scrollY);
-    return Math.max(...tops) - Math.min(...tops) > window.innerHeight * 0.5;
-  }, DECK_CAPTURE_SELECTOR);
-  if (hasVerticalSlideStack) return 'vertical';
+  const verticalState = await page.evaluate(verticalDeckState, DECK_CAPTURE_SELECTOR, 'probe');
+  if (verticalState.hasStack) return 'vertical';
   return null;
 }
 
@@ -687,6 +723,8 @@ async function bakeOne(browser, id, hash, motion) {
 }
 
 // ---- main -----------------------------------------------------------------
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+const { default: puppeteer } = await import('puppeteer-core');
 mkdirSync(OUT, { recursive: true });
 const ids = await discoverIds();
 const motionMap = await loadMotionMap();
@@ -837,3 +875,4 @@ await Promise.all([process.stdout, process.stderr].map(
   (stream) => new Promise((resolve) => stream.write('', resolve)),
 ));
 process.exit(strictFail ? 1 : 0);
+}

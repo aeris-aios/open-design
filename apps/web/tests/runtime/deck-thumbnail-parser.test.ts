@@ -228,6 +228,36 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.designHeight).toBe(1080);
   });
 
+  it('reads a 4:3 canvas size from a tag-prefixed slide class selector', () => {
+    const html = `<!doctype html><html><head><style>
+      section.slide { width: 1200px; height: 900px; }
+    </style></head><body><main class="deck">
+      <section class="slide">A</section>
+      <section class="slide">B</section>
+    </main></body></html>`;
+
+    const parsed = parseDeckThumbnails(html);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.designWidth).toBe(1200);
+    expect(parsed.designHeight).toBe(900);
+  });
+
+  it('reads a portrait canvas size from a tag-prefixed screen-label selector', () => {
+    const html = `<!doctype html><html><head><style>
+      section[data-screen-label] { width: 900px; height: 1200px; }
+    </style></head><body><main class="deck">
+      <section data-screen-label="01 Cover">A</section>
+      <section data-screen-label="02 Detail">B</section>
+    </main></body></html>`;
+
+    const parsed = parseDeckThumbnails(html);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.designWidth).toBe(900);
+    expect(parsed.designHeight).toBe(1200);
+  });
+
   it('falls back when the deck depends on an external layout stylesheet', () => {
     const html = frameworkDeck(1).replace(
       '</head>',

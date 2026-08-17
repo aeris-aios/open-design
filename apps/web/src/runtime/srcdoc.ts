@@ -3033,7 +3033,21 @@ function injectDeckBridge(
     add(document.body);
     return targets;
   }
-  function maxScrollOffset(axis){
+  function nestedScrollTargets(list){
+    var targets = [];
+    if (!list || !list.length) return targets;
+    var node = list[0] && list[0].parentElement;
+    while (node && !isRootScrollContainer(node)) {
+      var containsAll = true;
+      for (var i=1; i<list.length; i++) {
+        if (!node.contains(list[i])) { containsAll = false; break; }
+      }
+      if (containsAll) targets.push(node);
+      node = node.parentElement;
+    }
+    return targets;
+  }
+  function maxRootScrollOffset(axis){
     var targets = scrollTargets();
     var value = axis === 'y'
       ? Number(window.scrollY || window.pageYOffset || 0)
@@ -3043,30 +3057,35 @@ function injectDeckBridge(
     }
     return value;
   }
-  function hasHorizontalScroll(){
-    var targets = scrollTargets();
-    for (var i=0; i<targets.length; i++) {
-      if (targets[i].scrollWidth > targets[i].clientWidth + 1) return true;
-    }
-    return false;
-  }
-  function scrollDeckAxis(){
-    var targets = scrollTargets();
+  function scrollDeckTarget(list){
     var axes = ['x', 'y'];
+    var nested = nestedScrollTargets(list);
+    for (var n=0; n<nested.length; n++) {
+      for (var a=0; a<axes.length; a++) {
+        var nestedAxis = axes[a];
+        if (scrollOverflow(nested[n], nestedAxis) <= 1) continue;
+        if (isScrollableOverflowMode(overflowMode(nested[n], nestedAxis))) {
+          return { axis: nestedAxis, element: nested[n], root: false };
+        }
+      }
+    }
+    var targets = scrollTargets();
     for (var a=0; a<axes.length; a++) {
       var axis = axes[a];
       for (var i=0; i<targets.length; i++) {
         var candidate = targets[i];
         if (scrollOverflow(candidate, axis) <= 1) continue;
         var mode = overflowMode(candidate, axis);
-        if (isScrollableOverflowMode(mode)) return axis;
-        if (isRootScrollContainer(candidate) && !isClippedOverflowMode(mode) && !rootScrollerClipped(axis)) return axis;
+        if (isScrollableOverflowMode(mode)) return { axis: axis, element: candidate, root: true };
+        if (!isClippedOverflowMode(mode) && !rootScrollerClipped(axis)) {
+          return { axis: axis, element: candidate, root: true };
+        }
       }
     }
-    return '';
+    return null;
   }
-  function isScrollDeck(){
-    return !!scrollDeckAxis();
+  function isScrollDeck(list){
+    return !!scrollDeckTarget(list || slides());
   }
   function findActiveByClass(list){
     for (var i=0; i<list.length; i++) {
@@ -3084,7 +3103,15 @@ function injectDeckBridge(
     }
     return -1;
   }
-  function activeIndexFromScrollRects(list, axis){
+  function activeIndexFromScrollRects(list, scrollTarget){
+    var axis = scrollTarget.axis;
+    var origin = 0;
+    if (!scrollTarget.root) {
+      try {
+        var containerRect = scrollTarget.element.getBoundingClientRect();
+        origin = Number(axis === 'y' ? containerRect.top : containerRect.left) || 0;
+      } catch (_) {}
+    }
     var best = -1;
     var distance = Infinity;
     var firstPosition = null;
@@ -3092,7 +3119,7 @@ function injectDeckBridge(
     for (var i=0; i<list.length; i++) {
       try {
         var rect = list[i].getBoundingClientRect();
-        var position = Number(axis === 'y' ? rect.top : rect.left) || 0;
+        var position = (Number(axis === 'y' ? rect.top : rect.left) || 0) - origin;
         if (firstPosition === null) firstPosition = position;
         else if (Math.abs(position - firstPosition) > 1) hasDistinctPosition = true;
         var value = Math.abs(position);
@@ -3107,12 +3134,18 @@ function injectDeckBridge(
     if (forcedScrollPageIndex >= 0) {
       return Math.max(0, Math.min(list.length - 1, forcedScrollPageIndex));
     }
-    var axis = scrollDeckAxis();
-    if (axis) {
-      var byRect = activeIndexFromScrollRects(list, axis);
+    var scrollTarget = scrollDeckTarget(list);
+    if (scrollTarget) {
+      var byRect = activeIndexFromScrollRects(list, scrollTarget);
       if (byRect >= 0) return byRect;
-      var span = Math.max(1, axis === 'y' ? window.innerHeight : window.innerWidth);
-      return Math.max(0, Math.min(list.length - 1, Math.round(maxScrollOffset(axis) / span)));
+      var axis = scrollTarget.axis;
+      var span = Math.max(1, scrollTarget.root
+        ? (axis === 'y' ? window.innerHeight : window.innerWidth)
+        : (axis === 'y' ? scrollTarget.element.clientHeight : scrollTarget.element.clientWidth));
+      var offset = scrollTarget.root
+        ? maxRootScrollOffset(axis)
+        : scrollOffsetOf(scrollTarget.element, axis);
+      return Math.max(0, Math.min(list.length - 1, Math.round(offset / span)));
     }
     var byDeckStage = activeIndexFromDeckStage(list);
     if (byDeckStage >= 0) return byDeckStage;
@@ -3292,7 +3325,7 @@ function injectDeckBridge(
     report();
     return true;
   }
-  function forceScrollDeckPage(list, target){
+  function forceScrollDeckPage(list, target, scrollTarget){
     forcedScrollPageIndex = target;
     var activeClass = activeClassName(list);
     for (var i=0; i<list.length; i++) {
@@ -3312,38 +3345,68 @@ function injectDeckBridge(
     for (var r=0; r<roots.length; r++) {
       try { roots[r].scrollLeft = 0; roots[r].scrollTop = 0; } catch (_) {}
     }
+    if (scrollTarget && !scrollTarget.root) {
+      try { scrollTarget.element.scrollLeft = 0; scrollTarget.element.scrollTop = 0; } catch (_) {}
+    }
     updateDeckChrome(target, list.length);
     report(target);
   }
   function scrollGo(i){
     var list = slides();
     var next = Math.max(0, Math.min(list.length - 1, i));
-    var axis = scrollDeckAxis() || 'x';
-    var offset = next * (axis === 'y' ? window.innerHeight : window.innerWidth);
+    var scrollTarget = scrollDeckTarget(list);
+    if (!scrollTarget) return;
+    var axis = scrollTarget.axis;
+    var span = Math.max(1, scrollTarget.root
+      ? (axis === 'y' ? window.innerHeight : window.innerWidth)
+      : (axis === 'y' ? scrollTarget.element.clientHeight : scrollTarget.element.clientWidth));
+    var offset = next * span;
+    try {
+      var firstRect = list[0].getBoundingClientRect();
+      var targetRect = list[next].getBoundingClientRect();
+      var firstPosition = Number(axis === 'y' ? firstRect.top : firstRect.left) || 0;
+      var targetPosition = Number(axis === 'y' ? targetRect.top : targetRect.left) || 0;
+      if (Math.abs(targetPosition - firstPosition) > 1) {
+        var current = scrollTarget.root
+          ? maxRootScrollOffset(axis)
+          : scrollOffsetOf(scrollTarget.element, axis);
+        var containerOrigin = 0;
+        if (!scrollTarget.root) {
+          var containerRect = scrollTarget.element.getBoundingClientRect();
+          containerOrigin = Number(axis === 'y' ? containerRect.top : containerRect.left) || 0;
+        }
+        offset = current + targetPosition - containerOrigin;
+      }
+    } catch (_) {}
     var position = axis === 'y'
       ? { top: offset, behavior: 'smooth' }
       : { left: offset, behavior: 'smooth' };
-    // Root scrolling is browser-special: setting scrollLeft/scrollTop on body
-    // or documentElement is not reliable when body owns overflow (common in
-    // horizontally paged decks). Drive the viewport as well as both root
-    // elements. This also makes vertically stacked/scrolling deck templates
-    // navigable through the same thumbnail rail.
-    try {
-      list[next].scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'start' });
-    } catch (_) {}
-    try {
-      window.scrollTo(position);
-    } catch (_) {
-      try { window.scrollTo(axis === 'y' ? 0 : offset, axis === 'y' ? offset : 0); } catch (__) {}
-    }
-    var targets = scrollTargets();
-    for (var t=0; t<targets.length; t++) {
+    if (scrollTarget.root) {
+      // Root scrolling is browser-special: setting scrollLeft/scrollTop on
+      // body or documentElement is not reliable when body owns overflow.
       try {
-        targets[t].scrollTo(position);
+        window.scrollTo(position);
+      } catch (_) {
+        try { window.scrollTo(axis === 'y' ? 0 : offset, axis === 'y' ? offset : 0); } catch (__) {}
+      }
+      var targets = scrollTargets();
+      for (var t=0; t<targets.length; t++) {
+        try {
+          targets[t].scrollTo(position);
+        } catch (_) {
+          try {
+            if (axis === 'y') targets[t].scrollTop = offset;
+            else targets[t].scrollLeft = offset;
+          } catch (__) {}
+        }
+      }
+    } else {
+      try {
+        scrollTarget.element.scrollTo(position);
       } catch (_) {
         try {
-          if (axis === 'y') targets[t].scrollTop = offset;
-          else targets[t].scrollLeft = offset;
+          if (axis === 'y') scrollTarget.element.scrollTop = offset;
+          else scrollTarget.element.scrollLeft = offset;
         } catch (__) {}
       }
     }
@@ -3359,7 +3422,7 @@ function injectDeckBridge(
       // but ignore every root scrolling API. Fall back to a single-visible-page
       // presentation so Remix never leaves the main canvas on page one while
       // the host rail claims another page is active.
-      forceScrollDeckPage(list, next);
+      forceScrollDeckPage(list, next, scrollTarget);
     }, 420);
   }
   function targetFor(action, list){
@@ -3484,7 +3547,7 @@ function injectDeckBridge(
     var list = slides();
     if (!list.length) return;
     if (navigateViaDeckStage(list, action)) return;
-    if (isScrollDeck()) {
+    if (isScrollDeck(list)) {
       scrollGo(Math.max(0, Math.min(list.length - 1, targetFor(action, list))));
       return;
     }
@@ -3505,7 +3568,7 @@ function injectDeckBridge(
     if (!list.length) return;
     var target = Math.max(0, Math.min(list.length - 1, i));
     if (navigateViaDeckStage(list, 'go', target)) return;
-    if (isScrollDeck()) { scrollGo(target); return; }
+    if (isScrollDeck(list)) { scrollGo(target); return; }
     if (activeIndex(list) === target) { report(); return; }
     stepToIndexViaKeys(target, function(stepped){
       if (stepped) { report(); return; }

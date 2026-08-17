@@ -241,7 +241,7 @@ interface DesignSize {
 // explicit `<deck-stage width height>`, then an explicit px `width`+`height` on
 // a stage/slide rule, else the 1920×1080 default.
 const STAGE_SIZE_TARGET_RE =
-  /(?:^|[^\w-])(?:deck-stage|\.deck-stage|\.canvas|#deck|\.deck|\.slide|\.ppt-slide|\.deck-slide|\[data-screen-label(?:[\s~|^$*]?=[^\]]+)?\])(?![\w-])/i;
+  /(?:^|[^\w-])deck-stage(?![\w-])|(?:\.deck-stage|\.canvas|#deck|\.deck|\.slide|\.ppt-slide|\.deck-slide|\[data-screen-label(?:[\s~|^$*]?=[^\]]+)?\])(?![\w-])/i;
 
 // A size declaration only describes the design canvas when the rule's TARGET
 // is a stage/slide. Merely mentioning `.slide` in an ancestor is insufficient:
