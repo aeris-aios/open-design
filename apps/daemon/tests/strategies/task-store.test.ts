@@ -212,6 +212,10 @@ describe('durable strategy task store', () => {
       runs: [{ runId: 'run-request', inputStage: 'request', taskRunIndex: 0 }],
     });
     expect(getStrategyTaskExecutionByRunId(db, 'run-request')).toEqual(task);
+    expect(task.frozenSkillPackage).toMatchObject({
+      schema: 'open-design.od-next-frozen-skill-package/v1',
+      selections: [],
+    });
 
     const ordinary = createSnapshot(db, {
       projectId: 'project-1',
@@ -260,6 +264,17 @@ describe('durable strategy task store', () => {
        WHERE task_execution_id = ?
     `).run(task.taskExecutionId);
     expect(() => getStrategyTaskExecution(db, task.taskExecutionId)).toThrow(/Snapshot owner/i);
+  });
+
+  it('fails closed when a mapped task loses its required frozen Skill row', () => {
+    const task = createTask(db, snapshot);
+    db.prepare(
+      'DELETE FROM strategy_task_frozen_skill_packages WHERE task_execution_id = ?',
+    ).run(task.taskExecutionId);
+    expect(() => getStrategyTaskExecution(db, task.taskExecutionId))
+      .toThrow(/missing its frozen Skill package/i);
+    expect(() => getStrategyTaskExecutionByRunId(db, task.initialRunId))
+      .toThrow(/missing its frozen Skill package/i);
   });
 
   it('pins the task Snapshot while pruning an ordinary expired Snapshot in the same sweep', () => {

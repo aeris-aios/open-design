@@ -22,6 +22,7 @@ import {
   type OtlpSpanV1,
   type TaskObservationExporterConfig,
 } from '../../src/observability/task-observation-otlp-exporter.js';
+import { createEmptyFrozenSkillPackage } from '../../src/strategies/od-next/frozen-skill-package.js';
 import type { StrategyTaskExecutionRecord } from '../../src/strategies/task-store.js';
 
 const RUN_ID = 'run-production';
@@ -53,6 +54,7 @@ StrategyTaskExecutionRecord {
     activeRunId: outcome === 'running' ? RUN_ID : null,
     terminalRunId: outcome === 'running' ? null : RUN_ID,
     runs: [{ runId: RUN_ID, inputStage: 'production', taskRunIndex: 0 }],
+    frozenSkillPackage: createEmptyFrozenSkillPackage(),
     createdAt: 1_000,
     updatedAt: 5_000,
   };

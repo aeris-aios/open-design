@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import {
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rm,
+  writeFile,
+  type FileHandle,
+} from 'node:fs/promises';
 import path from 'node:path';
 
 import { assertOdNextPlanningBuildOnlyV2 } from '@open-design/contracts';
@@ -20,8 +29,10 @@ export const OD_NEXT_FROZEN_SKILL_PACKAGE_SCHEMA =
 const MAX_SKILL_COUNT = 8;
 const MAX_SIDE_FILE_COUNT = 32;
 const MAX_SKILL_BODY_BYTES = 256 * 1024;
+const MAX_SKILL_MANIFEST_BYTES = 256 * 1024;
 const MAX_SIDE_FILE_BYTES = 256 * 1024;
 const MAX_PACKAGE_BYTES = 1024 * 1024;
+const READ_CHUNK_BYTES = 64 * 1024;
 const SIDE_FILE_REFERENCE = /\b(?:assets|references|scripts|examples)\/[A-Za-z0-9._/-]+\b/g;
 
 export interface FrozenSkillFileV1 {
@@ -44,6 +55,11 @@ export interface FrozenSkillPackageV1 {
   schema: typeof OD_NEXT_FROZEN_SKILL_PACKAGE_SCHEMA;
   identity: string;
   selections: FrozenSkillSelectionV1[];
+}
+
+interface FrozenSkillCaptureIoHooks {
+  /** Internal deterministic race hook used only by focused filesystem tests. */
+  afterOpen?: (filePath: string) => void | Promise<void>;
 }
 
 export class InvalidFrozenSkillPackageError extends Error {
@@ -89,6 +105,7 @@ export async function captureFrozenSkillPackage(input: {
   skillId?: unknown;
   skillIds?: unknown;
   catalog: readonly SkillInfo[];
+  ioHooks?: FrozenSkillCaptureIoHooks;
 }): Promise<FrozenSkillPackageV1> {
   const ids = normalizeSelectedSkillIds(input);
   const selections: FrozenSkillSelectionV1[] = [];
@@ -98,7 +115,7 @@ export async function captureFrozenSkillPackage(input: {
     if (!skill) {
       throw new InvalidFrozenSkillPackageError(`Selected Skill ${canonicalId} is unavailable.`);
     }
-    const selection = await captureSelection(skill);
+    const selection = await captureSelection(skill, input.ioHooks);
     packageBytes += selection.bodyByteLength;
     packageBytes += selection.files.reduce((sum, file) => sum + file.byteLength, 0);
     if (packageBytes > MAX_PACKAGE_BYTES) {
@@ -108,6 +125,16 @@ export async function captureFrozenSkillPackage(input: {
     }
     selections.push(selection);
   }
+  return createFrozenSkillPackage(selections);
+}
+
+export function createEmptyFrozenSkillPackage(): FrozenSkillPackageV1 {
+  return createFrozenSkillPackage([]);
+}
+
+function createFrozenSkillPackage(
+  selections: FrozenSkillSelectionV1[],
+): FrozenSkillPackageV1 {
   const packageWithoutIdentity = {
     schema: OD_NEXT_FROZEN_SKILL_PACKAGE_SCHEMA,
     selections,
@@ -147,7 +174,7 @@ export function insertFrozenSkillPackage(
 export function getFrozenSkillPackage(
   db: SqliteDb,
   taskExecutionId: string,
-): FrozenSkillPackageV1 | null {
+): FrozenSkillPackageV1 {
   const row = db.prepare(`
     SELECT schema, identity, payload_json AS payloadJson
       FROM strategy_task_frozen_skill_packages
@@ -157,7 +184,11 @@ export function getFrozenSkillPackage(
     identity?: unknown;
     payloadJson?: unknown;
   } | undefined;
-  if (!row) return null;
+  if (!row) {
+    throw new InvalidFrozenSkillPackageError(
+      'Mapped OD Next task is missing its frozen Skill package.',
+    );
+  }
   if (
     row.schema !== OD_NEXT_FROZEN_SKILL_PACKAGE_SCHEMA
     || typeof row.identity !== 'string'
@@ -241,27 +272,42 @@ export async function materializeFrozenSkillPackage(input: {
   return materialized;
 }
 
-async function captureSelection(skill: SkillInfo): Promise<FrozenSkillSelectionV1> {
+async function captureSelection(
+  skill: SkillInfo,
+  ioHooks?: FrozenSkillCaptureIoHooks,
+): Promise<FrozenSkillSelectionV1> {
   const rootStat = await lstat(skill.dir).catch(() => null);
   if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
     throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} root is not a real directory.`);
   }
-  const root = await realpath(skill.dir);
-  const manifestPath = path.join(root, 'SKILL.md');
-  const manifestStat = await lstat(manifestPath).catch(() => null);
-  if (!manifestStat?.isFile() || manifestStat.isSymbolicLink()) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} has no safe SKILL.md.`);
+  let canonicalParent: string;
+  let root: string;
+  try {
+    [canonicalParent, root] = await Promise.all([
+      realpath(path.dirname(skill.dir)),
+      realpath(skill.dir),
+    ]);
+  } catch {
+    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} root is unavailable.`);
   }
-  const raw = await readFile(manifestPath, 'utf8');
-  const manifestAfter = await lstat(manifestPath);
+  const rootAfter = await lstat(skill.dir).catch(() => null);
   if (
-    manifestAfter.dev !== manifestStat.dev
-    || manifestAfter.ino !== manifestStat.ino
-    || manifestAfter.size !== manifestStat.size
-    || manifestAfter.mtimeMs !== manifestStat.mtimeMs
+    root !== path.join(canonicalParent, path.basename(skill.dir))
+    || !rootAfter?.isDirectory()
+    || rootAfter.isSymbolicLink()
+    || !sameFileSnapshot(rootStat, rootAfter)
   ) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} changed while freezing.`);
+    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} root changed while freezing.`);
   }
+  const manifestPath = path.join(root, 'SKILL.md');
+  const raw = (await readBoundedNoFollow({
+    root,
+    rootIdentity: rootStat,
+    filePath: manifestPath,
+    maxBytes: MAX_SKILL_MANIFEST_BYTES,
+    label: `Selected Skill ${skill.id} manifest`,
+    ...(ioHooks ? { ioHooks } : {}),
+  })).toString('utf8');
   const parsed = parseFrontmatter(raw);
   const declaredId = typeof parsed.data.name === 'string' && parsed.data.name.trim()
     ? parsed.data.name.trim()
@@ -282,7 +328,7 @@ async function captureSelection(skill: SkillInfo): Promise<FrozenSkillSelectionV
   }
   const files: FrozenSkillFileV1[] = [];
   for (const relativePath of roster) {
-    files.push(await captureSideFile(root, relativePath));
+    files.push(await captureSideFile(root, rootStat, relativePath, ioHooks));
   }
   return {
     canonicalId: skill.id,
@@ -294,43 +340,161 @@ async function captureSelection(skill: SkillInfo): Promise<FrozenSkillSelectionV
   };
 }
 
-async function captureSideFile(root: string, relativePath: string): Promise<FrozenSkillFileV1> {
-  const segments = relativePath.split('/');
-  let cursor = root;
-  for (const segment of segments) {
-    cursor = path.join(cursor, segment);
-    const stat = await lstat(cursor).catch(() => null);
-    if (!stat || stat.isSymbolicLink()) {
-      throw new InvalidFrozenSkillPackageError(`Skill side file ${relativePath} is missing or symlinked.`);
-    }
-  }
-  const fileStat = await lstat(cursor);
-  if (!fileStat.isFile()) {
-    throw new InvalidFrozenSkillPackageError(`Skill side file ${relativePath} is not a regular file.`);
-  }
-  const resolved = await realpath(cursor);
-  if (!isInside(root, resolved)) {
-    throw new InvalidFrozenSkillPackageError(`Skill side file ${relativePath} escapes its Skill root.`);
-  }
-  const bytes = await readFile(resolved);
-  const after = await lstat(resolved);
-  if (
-    after.dev !== fileStat.dev
-    || after.ino !== fileStat.ino
-    || after.size !== fileStat.size
-    || after.mtimeMs !== fileStat.mtimeMs
-  ) {
-    throw new InvalidFrozenSkillPackageError(`Skill side file ${relativePath} changed while freezing.`);
-  }
-  if (bytes.byteLength > MAX_SIDE_FILE_BYTES) {
-    throw new InvalidFrozenSkillPackageError(`Skill side file ${relativePath} is too large.`);
-  }
+async function captureSideFile(
+  root: string,
+  rootIdentity: FileIdentity,
+  relativePath: string,
+  ioHooks?: FrozenSkillCaptureIoHooks,
+): Promise<FrozenSkillFileV1> {
+  const filePath = path.join(root, ...relativePath.split('/'));
+  const bytes = await readBoundedNoFollow({
+    root,
+    rootIdentity,
+    filePath,
+    maxBytes: MAX_SIDE_FILE_BYTES,
+    label: `Skill side file ${relativePath}`,
+    ...(ioHooks ? { ioHooks } : {}),
+  });
   return {
     path: relativePath,
     bytesBase64: bytes.toString('base64'),
     byteLength: bytes.byteLength,
     digest: digestBytes(bytes),
   };
+}
+
+async function readBoundedNoFollow(input: {
+  root: string;
+  rootIdentity: FileIdentity;
+  filePath: string;
+  maxBytes: number;
+  label: string;
+  ioHooks?: FrozenSkillCaptureIoHooks;
+}): Promise<Buffer> {
+  await assertRealDirectoryPath(
+    input.root,
+    input.rootIdentity,
+    path.dirname(input.filePath),
+    `${input.label} parent`,
+  );
+  const pathBefore = await lstat(input.filePath).catch(() => null);
+  if (!pathBefore?.isFile() || pathBefore.isSymbolicLink()) {
+    throw new InvalidFrozenSkillPackageError(`${input.label} is missing, symlinked, or not a file.`);
+  }
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      input.filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch {
+    throw new InvalidFrozenSkillPackageError(`${input.label} could not be opened without following links.`);
+  }
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || !sameFileIdentity(pathBefore, before)) {
+      throw new InvalidFrozenSkillPackageError(`${input.label} changed before it could be frozen.`);
+    }
+    if (before.size > input.maxBytes) {
+      throw new InvalidFrozenSkillPackageError(`${input.label} exceeds its byte limit.`);
+    }
+    await input.ioHooks?.afterOpen?.(input.filePath);
+    const bytes = await readHandleBounded(handle, input.maxBytes, input.label);
+    const after = await handle.stat();
+    if (!sameFileSnapshot(before, after) || bytes.byteLength !== after.size) {
+      throw new InvalidFrozenSkillPackageError(`${input.label} changed while freezing.`);
+    }
+    await assertRealDirectoryPath(
+      input.root,
+      input.rootIdentity,
+      path.dirname(input.filePath),
+      `${input.label} parent`,
+    );
+    const pathAfter = await lstat(input.filePath).catch(() => null);
+    if (
+      !pathAfter?.isFile()
+      || pathAfter.isSymbolicLink()
+      || !sameFileSnapshot(after, pathAfter)
+    ) {
+      throw new InvalidFrozenSkillPackageError(`${input.label} path changed while freezing.`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readHandleBounded(
+  handle: FileHandle,
+  maxBytes: number,
+  label: string,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const remainingWithSentinel = maxBytes - total + 1;
+    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, remainingWithSentinel));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+    if (total > maxBytes) {
+      throw new InvalidFrozenSkillPackageError(`${label} exceeds its byte limit.`);
+    }
+    chunks.push(chunk.subarray(0, bytesRead));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function assertRealDirectoryPath(
+  root: string,
+  rootIdentity: FileIdentity,
+  directoryPath: string,
+  label: string,
+): Promise<void> {
+  const absoluteRoot = path.resolve(root);
+  const absoluteDirectory = path.resolve(directoryPath);
+  const relative = path.relative(absoluteRoot, absoluteDirectory);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new InvalidFrozenSkillPackageError(`${label} escapes its Skill root.`);
+  }
+  let cursor = absoluteRoot;
+  const segments = relative.split(path.sep).filter(Boolean);
+  const rootStat = await lstat(cursor).catch(() => null);
+  if (
+    !rootStat?.isDirectory()
+    || rootStat.isSymbolicLink()
+    || !sameFileIdentity(rootIdentity, rootStat)
+  ) {
+    throw new InvalidFrozenSkillPackageError(`${label} contains a missing or symlinked root.`);
+  }
+  for (const segment of segments) {
+    cursor = path.join(cursor, segment);
+    const stat = await lstat(cursor).catch(() => null);
+    if (!stat?.isDirectory() || stat.isSymbolicLink()) {
+      throw new InvalidFrozenSkillPackageError(`${label} contains a missing or symlinked directory.`);
+    }
+  }
+}
+
+interface FileIdentity {
+  dev: number | bigint;
+  ino: number | bigint;
+}
+
+function sameFileIdentity(
+  left: FileIdentity,
+  right: FileIdentity,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameFileSnapshot(
+  left: { dev: number | bigint; ino: number | bigint; size: number; mtimeMs: number },
+  right: { dev: number | bigint; ino: number | bigint; size: number; mtimeMs: number },
+): boolean {
+  return sameFileIdentity(left, right)
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs;
 }
 
 function explicitSideFileRoster(body: string): string[] {
@@ -365,6 +529,19 @@ function verifyFrozenSkillPackage(value: unknown): FrozenSkillPackageV1 {
   const ids = selections.map((selection) => selection.canonicalId);
   if (new Set(ids).size !== ids.length) {
     throw new InvalidFrozenSkillPackageError('Frozen Skill package contains duplicate selections.');
+  }
+  const provisional = {
+    schema: input.schema,
+    identity: input.identity,
+    selections,
+  } as FrozenSkillPackageV1;
+  const materializedRoots = selections.map((selection) => (
+    frozenSkillMaterializedRoot(provisional, selection)
+  ));
+  if (new Set(materializedRoots).size !== materializedRoots.length) {
+    throw new InvalidFrozenSkillPackageError(
+      'Frozen Skill package contains colliding materialization roots.',
+    );
   }
   const packageBytes = selections.reduce(
     (total, selection) => total
@@ -459,15 +636,27 @@ function packageIdentityInput(input: {
   return {
     schema: input.schema,
     selections: input.selections.map((selection) => ({
-      canonicalId: selection.canonicalId,
-      name: selection.name,
-      bodyDigest: selection.bodyDigest,
-      bodyByteLength: selection.bodyByteLength,
-      files: selection.files.map((file) => ({
-        path: file.path,
-        digest: file.digest,
-        byteLength: file.byteLength,
-      })),
+      ...selectionIdentityInput(selection),
+    })),
+  };
+}
+
+function selectionIdentityInput(selection: FrozenSkillSelectionV1): {
+  canonicalId: string;
+  name: string;
+  bodyDigest: string;
+  bodyByteLength: number;
+  files: Array<{ path: string; digest: string; byteLength: number }>;
+} {
+  return {
+    canonicalId: selection.canonicalId,
+    name: selection.name,
+    bodyDigest: selection.bodyDigest,
+    bodyByteLength: selection.bodyByteLength,
+    files: selection.files.map((file) => ({
+      path: file.path,
+      digest: file.digest,
+      byteLength: file.byteLength,
     })),
   };
 }
@@ -495,21 +684,18 @@ function isSafeRelativePath(value: string): boolean {
     && value.split('/').every((segment) => Boolean(segment) && segment !== '.' && segment !== '..');
 }
 
-function isInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
-}
-
 function safeSegment(value: string): string {
   const segment = value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
   return segment || 'skill';
 }
 
 function frozenSkillMaterializedRoot(
-  frozen: FrozenSkillPackageV1,
+  _frozen: FrozenSkillPackageV1,
   selection: FrozenSkillSelectionV1,
 ): string {
-  return `.od-skills/${safeSegment(selection.canonicalId)}-${frozen.identity.slice(7, 17)}`;
+  const canonicalIdDigest = digestUtf8(selection.canonicalId).slice(7, 17);
+  const selectionDigest = digestUtf8(canonicalJson(selectionIdentityInput(selection))).slice(7, 17);
+  return `.od-skills/${safeSegment(selection.canonicalId)}-${canonicalIdDigest}-${selectionDigest}`;
 }
 
 async function assertDestinationRoot(aliasRoot: string): Promise<void> {

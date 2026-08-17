@@ -15,6 +15,7 @@ import {
   strategyTaskRootObservationId,
   strategyTaskRunObservationId,
 } from '../../src/observability/task-observation-aggregation.js';
+import { createEmptyFrozenSkillPackage } from '../../src/strategies/od-next/frozen-skill-package.js';
 import type { StrategyTaskExecutionRecord } from '../../src/strategies/task-store.js';
 
 const RUNS = [
@@ -65,6 +66,7 @@ function task(
     activeRunId: outcome === 'running' ? 'run-production' : null,
     terminalRunId: outcome === 'running' ? null : 'run-production',
     runs: RUNS.map((run) => ({ ...run })),
+    frozenSkillPackage: createEmptyFrozenSkillPackage(),
     createdAt: 1_000,
     updatedAt: 9_000,
   };

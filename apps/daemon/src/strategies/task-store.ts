@@ -16,6 +16,7 @@ import type Database from 'better-sqlite3';
 
 import { getSnapshot } from '../plugins/snapshots.js';
 import {
+  createEmptyFrozenSkillPackage,
   getFrozenSkillPackage,
   insertFrozenSkillPackage,
   migrateFrozenSkillPackageStore,
@@ -65,7 +66,7 @@ export interface StrategyTaskExecutionRecord {
   activeRunId: string | null;
   terminalRunId: string | null;
   runs: StrategyTaskRunMapping[];
-  frozenSkillPackage?: FrozenSkillPackageV1;
+  frozenSkillPackage: FrozenSkillPackageV1;
   createdAt: number;
   updatedAt: number;
 }
@@ -250,9 +251,11 @@ export function createStrategyTaskExecution(
           task_execution_id, run_id, input_stage, task_run_index, source_run_id, created_at
         ) VALUES (?, ?, 'request', 0, NULL, ?)
       `).run(taskExecutionId, initialRunId, now);
-      if (input.frozenSkillPackage) {
-        insertFrozenSkillPackage(db, taskExecutionId, input.frozenSkillPackage);
-      }
+      insertFrozenSkillPackage(
+        db,
+        taskExecutionId,
+        input.frozenSkillPackage ?? createEmptyFrozenSkillPackage(),
+      );
       // A StrategyTaskExecution is itself a durable Snapshot reference. Keep
       // run_id untouched because one task owns a chain of physical Runs, but
       // clear the unreferenced-row TTL in the same transaction that installs
@@ -682,7 +685,7 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     activeRunId: outcome === 'running' ? latestRunId : null,
     terminalRunId: TERMINAL_OUTCOMES.has(outcome) ? latestRunId : null,
     runs: mappings,
-    ...(frozenSkillPackage ? { frozenSkillPackage } : {}),
+    frozenSkillPackage,
     createdAt,
     updatedAt,
   };

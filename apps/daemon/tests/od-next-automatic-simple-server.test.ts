@@ -622,6 +622,48 @@ describe('OD Next automatic production through the real server', () => {
     });
   });
 
+  it('fails a mapped Run before live Skill staging when its frozen package row is missing', async () => {
+    const fixture = await createFixture('direct');
+    database().prepare(
+      'DELETE FROM strategy_task_frozen_skill_packages WHERE task_execution_id = ?',
+    ).run(fixture.taskExecutionId);
+
+    uuidControl.forced.push(fixture.initialRunId);
+    const created = await postRun(
+      started!.url,
+      createRunRequest(fixture, 'Do not fall back to a live Skill.'),
+    );
+    const terminal = await waitForRunTerminal(started!.url, created.runId as string);
+
+    expect(terminal).toMatchObject({
+      status: 'failed',
+      errorCode: 'OD_NEXT_SKILL_SNAPSHOT_INVALID',
+    });
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(0);
+  });
+
+  it('fails a mapped Run before live Skill staging when its frozen package is tampered', async () => {
+    const fixture = await createFixture('direct');
+    database().prepare(`
+      UPDATE strategy_task_frozen_skill_packages
+         SET payload_json = replace(payload_json, '"selections":[]', '"selections":[{}]')
+       WHERE task_execution_id = ?
+    `).run(fixture.taskExecutionId);
+
+    uuidControl.forced.push(fixture.initialRunId);
+    const created = await postRun(
+      started!.url,
+      createRunRequest(fixture, 'Do not use a tampered Skill package.'),
+    );
+    const terminal = await waitForRunTerminal(started!.url, created.runId as string);
+
+    expect(terminal).toMatchObject({
+      status: 'failed',
+      errorCode: 'OD_NEXT_SKILL_SNAPSHOT_INVALID',
+    });
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(0);
+  });
+
   it('fails closed when daemon-owned execution preflight rejects', async () => {
     const fixture = await createFixture('repair');
     await stopServer(started);

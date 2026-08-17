@@ -207,9 +207,9 @@ describe('od run CLI', () => {
     ]);
     expect(multiple.code, multiple.stderr).toBe(0);
     expect(JSON.parse(stub.requests[1]!.body)).toMatchObject({
+      skillId: 'frontend-design',
       skillIds: ['frontend-design', 'imagegen'],
     });
-    expect(JSON.parse(stub.requests[1]!.body).skillId).toBeUndefined();
   });
 
   it('continues a resumable run through the normal run creation API', async () => {

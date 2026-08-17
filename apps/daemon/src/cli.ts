@@ -7472,7 +7472,10 @@ Common options:
       if (flags.skill) {
         const selectedSkillIds = splitCommaSeparatedIds(flags.skill);
         if (selectedSkillIds.length === 1) body.skillId = selectedSkillIds[0];
-        if (selectedSkillIds.length > 1) body.skillIds = selectedSkillIds;
+        if (selectedSkillIds.length > 1) {
+          body.skillId = selectedSkillIds[0];
+          body.skillIds = selectedSkillIds;
+        }
       }
       if (flags['design-system']) body.designSystemId = flags['design-system'];
       if (flags.agent) body.agentId = flags.agent;

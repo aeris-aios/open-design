@@ -310,6 +310,11 @@ function createRunsServiceStub() {
     // Intentionally does NOT invoke `starter` — this test only asserts on the
     // HTTP response to POST /api/runs, not on real agent-process spawning.
     start: (run: any) => run,
+    fail: (run: any, code: string, message: string) => {
+      run.status = 'failed';
+      run.errorCode = code;
+      run.error = message;
+    },
     wait: async () => ({ status: 'succeeded' }),
     cancel: async (run: any) => {
       strategyTaskAtPhysicalCancel = run.strategyTask ?? null;

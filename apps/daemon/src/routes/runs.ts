@@ -94,6 +94,7 @@ import {
   prepareStrategyRequest,
 } from '../strategies/od-next/coordinator.js';
 import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
+import { InvalidFrozenSkillPackageError } from '../strategies/od-next/frozen-skill-package.js';
 import {
   evaluateOdNextRollout,
   odNextTaskTypeForProjectMetadata,
@@ -443,6 +444,7 @@ interface ChatRunService {
   statusBody(run: ChatRun): ChatRunStatusResponse;
   stream(run: ChatRun, req: Request, res: Response): void;
   start(run: ChatRun, starter: () => Promise<unknown>): ChatRun;
+  fail(run: ChatRun, code: string, message: string): void;
   wait(run: ChatRun): Promise<ChatRunStatusResponse>;
   cancel(
     run: ChatRun,
@@ -981,8 +983,16 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       pinAssistantMessageOnRunCreate(db, run, options),
   });
   const statusWithStrategyTask = (run: ChatRun): ChatRunStatusResponse => {
-    const strategyTask = projectStrategyTaskByRunId(db, run.id);
-    if (strategyTask) run.strategyTask = strategyTask;
+    try {
+      const strategyTask = projectStrategyTaskByRunId(db, run.id);
+      if (strategyTask) run.strategyTask = strategyTask;
+    } catch (error) {
+      if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
+      delete run.strategyTask;
+      if (!['succeeded', 'failed', 'canceled'].includes(run.status)) {
+        design.runs.fail(run, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      }
+    }
     return design.runs.statusBody(run);
   };
 
@@ -1577,7 +1587,15 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (!authorization.ok) return;
       authorizedBoundMutation = authorization.authorizedBoundMutation;
     }
-    const clarificationResolution = resolveClarificationContinuation(requestBody);
+    let clarificationResolution;
+    try {
+      clarificationResolution = resolveClarificationContinuation(requestBody);
+    } catch (error) {
+      if (error instanceof InvalidFrozenSkillPackageError) {
+        return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      }
+      throw error;
+    }
     if (clarificationResolution.kind === 'error') {
       return sendApiError(
         res,
@@ -1632,20 +1650,28 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     let rolloutCapabilitySnapshot: ReturnType<
       typeof resolveBundledOdNextRuntimeCapability
     >['snapshot'] = null;
-    const idempotentStrategyRetry = typeof requestBody.clientRequestId === 'string'
-      && requestBody.clientRequestId
-      ? design.runs.list({
-          projectId: typeof requestBody.projectId === 'string'
-            ? requestBody.projectId
-            : undefined,
-          conversationId: typeof requestBody.conversationId === 'string'
-            ? requestBody.conversationId
-            : undefined,
-        }).find((candidate) => (
-          candidate.clientRequestId === requestBody.clientRequestId
-          && Boolean(projectStrategyTaskByRunId(db, candidate.id))
-        )) ?? null
-      : null;
+    let idempotentStrategyRetry = null;
+    try {
+      idempotentStrategyRetry = typeof requestBody.clientRequestId === 'string'
+        && requestBody.clientRequestId
+        ? design.runs.list({
+            projectId: typeof requestBody.projectId === 'string'
+              ? requestBody.projectId
+              : undefined,
+            conversationId: typeof requestBody.conversationId === 'string'
+              ? requestBody.conversationId
+              : undefined,
+          }).find((candidate) => (
+            candidate.clientRequestId === requestBody.clientRequestId
+            && Boolean(projectStrategyTaskByRunId(db, candidate.id))
+          )) ?? null
+        : null;
+    } catch (error) {
+      if (error instanceof InvalidFrozenSkillPackageError) {
+        return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      }
+      throw error;
+    }
     if (clarificationContinuation) {
       const internalStrategyContinuation = Boolean(
         clarificationTask?.strategyId === 'od-next-strategy'
@@ -2393,7 +2419,15 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         meta.analyticsHints,
       );
     if (preparedRun.kind === 'reused') {
-      const strategyTask = projectStrategyTaskByRunId(db, run.id);
+      let strategyTask;
+      try {
+        strategyTask = projectStrategyTaskByRunId(db, run.id);
+      } catch (error) {
+        if (error instanceof InvalidFrozenSkillPackageError) {
+          return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+        }
+        throw error;
+      }
       return res.status(202).json({
         runId: run.id,
         conversationId: run.conversationId ?? null,
@@ -2449,7 +2483,21 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         // Linking is best-effort here; in-memory run still carries the id.
       }
     }
-    const strategyTask = projectStrategyTaskByRunId(db, run.id);
+    let strategyTask;
+    try {
+      strategyTask = projectStrategyTaskByRunId(db, run.id);
+    } catch (error) {
+      if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
+      design.runs.fail(run, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      return res.status(202).json({
+        runId: run.id,
+        conversationId: run.conversationId ?? null,
+        assistantMessageId: run.assistantMessageId ?? null,
+        clientRequestId: run.clientRequestId ?? null,
+        reused: false,
+        resumed: false,
+      });
+    }
     if (strategyTask) run.strategyTask = strategyTask;
     const body = {
       runId: run.id,

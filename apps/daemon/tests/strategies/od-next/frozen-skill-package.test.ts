@@ -9,6 +9,7 @@ import type { SkillInfo } from '../../../src/skills.js';
 import {
   InvalidFrozenSkillPackageError,
   captureFrozenSkillPackage,
+  createEmptyFrozenSkillPackage,
   getFrozenSkillPackage,
   insertFrozenSkillPackage,
   materializeFrozenSkillPackage,
@@ -121,6 +122,61 @@ describe('OD Next frozen user-selected Skill package', () => {
       .rejects.toThrow(/symlinked/i);
   });
 
+  it('requires an explicit row even for an empty selection package', () => {
+    const db = packageDb();
+    expect(() => getFrozenSkillPackage(db, 'task-1')).toThrow(/missing its frozen Skill package/i);
+    const empty = createEmptyFrozenSkillPackage();
+    insertFrozenSkillPackage(db, 'task-1', empty);
+    expect(getFrozenSkillPackage(db, 'task-1')).toEqual(empty);
+    db.close();
+  });
+
+  it('rejects a symlinked root and a symlinked intermediate directory', async () => {
+    const skill = await fixtureSkill();
+    const linkedRoot = `${skill.dir}-linked`;
+    temporaryRoots.push(linkedRoot);
+    await symlink(skill.dir, linkedRoot);
+    await expect(captureFrozenSkillPackage({
+      skillId: skill.id,
+      catalog: [{ ...skill, dir: linkedRoot }],
+    })).rejects.toThrow(/root is not a real directory/i);
+
+    const realReferences = path.join(skill.dir, 'real-references');
+    await mkdir(realReferences);
+    await writeFile(path.join(realReferences, 'guide.md'), 'linked guide\n');
+    await rm(path.join(skill.dir, 'references'), { recursive: true });
+    await symlink(realReferences, path.join(skill.dir, 'references'));
+    await expect(captureFrozenSkillPackage({ skillId: skill.id, catalog: [skill] }))
+      .rejects.toThrow(/symlinked directory/i);
+  });
+
+  it('fails closed when a file path is inode-swapped after its no-follow fd opens', async () => {
+    const skill = await fixtureSkill();
+    let swapped = false;
+    await expect(captureFrozenSkillPackage({
+      skillId: skill.id,
+      catalog: [skill],
+      ioHooks: {
+        afterOpen: async (filePath) => {
+          if (swapped || path.basename(filePath) !== 'guide.md') return;
+          swapped = true;
+          await rm(filePath);
+          await writeFile(filePath, 'replacement inode\n');
+        },
+      },
+    })).rejects.toThrow(/path changed while freezing/i);
+  });
+
+  it('rejects a side file above the pre-read byte cap', async () => {
+    const skill = await fixtureSkill();
+    await writeFile(
+      path.join(skill.dir, 'references', 'guide.md'),
+      Buffer.alloc(256 * 1024 + 1, 0x61),
+    );
+    await expect(captureFrozenSkillPackage({ skillId: skill.id, catalog: [skill] }))
+      .rejects.toThrow(/byte limit/i);
+  });
+
   it('does not scan unreferenced files into the explicit roster', async () => {
     const skill = await fixtureSkill();
     await writeFile(path.join(skill.dir, 'secret.env'), 'DO_NOT_FREEZE=1');
@@ -143,5 +199,24 @@ describe('OD Next frozen user-selected Skill package', () => {
       canonicalId: 'live-artifact:portfolio',
       name: 'Portfolio',
     });
+  });
+
+  it('uses canonical-id and selection digests to avoid sanitized segment collisions', async () => {
+    const first = await fixtureSkill('Foo Bar');
+    const second = await fixtureSkill('foo-bar');
+    await writeFile(path.join(second.dir, 'references', 'guide.md'), 'second guide\n');
+    const frozen = await captureFrozenSkillPackage({
+      skillIds: [first.id, second.id],
+      catalog: [first, second],
+    });
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'od-frozen-collision-'));
+    temporaryRoots.push(cwd);
+    const roots = await materializeFrozenSkillPackage({ frozen, cwd });
+    expect(new Set(roots).size).toBe(2);
+    expect(roots[0]).not.toBe(roots[1]);
+    expect(await readFile(path.join(cwd, roots[0]!, 'references/guide.md'), 'utf8'))
+      .toBe('frozen guide\n');
+    expect(await readFile(path.join(cwd, roots[1]!, 'references/guide.md'), 'utf8'))
+      .toBe('second guide\n');
   });
 });

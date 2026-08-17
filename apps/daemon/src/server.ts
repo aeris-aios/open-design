@@ -490,6 +490,7 @@ import {
   reconcileStrategyTaskRunTerminal,
 } from './strategies/task-store.js';
 import {
+  InvalidFrozenSkillPackageError,
   captureFrozenSkillPackage,
   materializeFrozenSkillPackage,
   renderFrozenSkillBundleContext,
@@ -7257,9 +7258,16 @@ export async function startServer({
       },
       beforeFinish: (run, status) => {
         if (status !== 'failed' && status !== 'canceled') return;
-        reconcileStrategyTaskRunTerminal(db, { runId: run.id, status });
-        const latestTask = getStrategyTaskExecutionByRunId(db, run.id);
-        if (latestTask) run.strategyTask = projectStrategyTask(latestTask, run.id);
+        try {
+          reconcileStrategyTaskRunTerminal(db, { runId: run.id, status });
+          const latestTask = getStrategyTaskExecutionByRunId(db, run.id);
+          if (latestTask) run.strategyTask = projectStrategyTask(latestTask, run.id);
+        } catch (error) {
+          if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
+          // The Run is already failing closed for the corrupt task state. Do
+          // not let terminal reconciliation throw and prevent persistence of
+          // that failure, and never attempt any live Skill reconstruction.
+        }
       },
     }),
     analytics: analyticsService,
@@ -10066,7 +10074,18 @@ export async function startServer({
     run.nativeSessionContinuePending = null;
     /** @type {Partial<ChatRequest> & { imagePaths?: string[] }} */
     chatBody = chatBody || {};
-    const strategyTaskAtStart = getStrategyTaskExecutionByRunId(db, run.id);
+    let strategyTaskAtStart;
+    try {
+      strategyTaskAtStart = getStrategyTaskExecutionByRunId(db, run.id);
+    } catch (error) {
+      return design.runs.fail(
+        run,
+        error instanceof InvalidFrozenSkillPackageError
+          ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+          : 'OD_NEXT_TASK_STATE_INVALID',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     const isOdNextRequestStage = strategyTaskAtStart?.inputStage === 'request';
     const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
       chatBody,
