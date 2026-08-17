@@ -317,15 +317,11 @@
   border-radius: 999px;
 }
 
-/* Centred rather than top-aligned: every step holds the same height, so a
-   two-line thank-you pinned to the top would look stranded under the space
-   the questions needed. */
 .thanks {
   display: flex;
-  flex: 1;
   align-items: center;
   gap: 10px;
-  padding: 2px 0 4px;
+  padding: 2px 0;
 }
 
 .thanksMark {

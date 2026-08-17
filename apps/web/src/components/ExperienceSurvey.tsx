@@ -354,7 +354,12 @@ export function ExperienceSurvey({
           <div
             className={styles.body}
             ref={bodyRef}
-            style={floor ? { minHeight: floor } : undefined}
+            // The floor holds between questions so answering never drags the
+            // card back down. The thank-you is exempt: it is two lines at the
+            // end of the flow, and holding the questions' height there left a
+            // band of empty card above and below it. Collapsing once, at the
+            // end, reads as the card closing up rather than wobbling.
+            style={floor && step !== 'thanks' ? { minHeight: floor } : undefined}
           >
             {head}
             {/* No AnimatePresence around the step. `mode="wait"` held the
@@ -368,9 +373,7 @@ export function ExperienceSurvey({
               variants={stepMotion}
               initial="hidden"
               animate="visible"
-              // flex: 1 so the ratcheted height is space the step can use —
-              // the thank-you centres in it instead of stranding at the top.
-              style={{ display: 'flex', flex: 1, flexDirection: 'column', gap: 12 }}
+              style={{ display: 'flex', flex: 1, flexDirection: 'column', gap: 12, justifyContent: 'center' }}
             >
               {body}
             </motion.div>
