@@ -92,6 +92,16 @@ export interface LangfuseDeliveryState {
   langfuse_drop_reason?: LangfuseDropReason;
 }
 
+export interface VelaTelemetryReceipt {
+  clientTraceId: string;
+  scopedTraceId: string;
+}
+
+export interface RunTelemetryDeliveryResult extends LangfuseDeliveryState {
+  /** Server-owned trace identity; used internally for Vela-scoped object authority. */
+  velaReceipt?: VelaTelemetryReceipt;
+}
+
 export type TelemetrySinkConfig =
   | {
       kind: 'relay';
@@ -347,7 +357,7 @@ export interface ReportRunOpts {
   fetchImpl?: typeof fetch;
   /** App-config AMR env used only when resolving the completed-run Vela sink. */
   configuredEnv?: Record<string, string>;
-  /** Keep object-authority registration anonymous and content-free. */
+  /** Emit only the content-free object-authority trace projection. */
   deliveryPurpose?: 'final' | 'object-registration';
 }
 
@@ -2109,12 +2119,12 @@ function asVelaSourceEvents(batch: unknown[]): VelaSourceEvent[] {
 }
 
 function stableVelaEventId(event: VelaSourceEvent): string {
-  const bodyId =
-    typeof event.body.id === 'string' && event.body.id.trim()
-      ? event.body.id.trim()
-      : JSON.stringify(event.body);
+  // Retries and deterministic rebuilds of the same event keep one id, while
+  // a later upsert of the same trace/observation with richer data gets a new
+  // ingestion id and cannot be mistaken for the earlier registration event.
+  const canonicalBody = JSON.stringify(event.body);
   return `od-${createHash('sha256')
-    .update(`${event.type}\n${bodyId}`, 'utf8')
+    .update(`${event.type}\n${canonicalBody}`, 'utf8')
     .digest('hex')}`;
 }
 
@@ -2152,7 +2162,7 @@ async function postVelaBatch(
   installationId: string,
   fetchImpl: typeof fetch,
   opts: { allowAnonymousAuthFallback?: boolean } = {},
-): Promise<LangfuseDeliveryState> {
+): Promise<RunTelemetryDeliveryResult> {
   // Completed-run batches may fall back to the anonymous relay when Vela
   // rejects auth (expired Control Key, etc.). Score-only feedback must not:
   // the matching trace is account-scoped on Vela, so anonymous delivery would
@@ -2179,9 +2189,12 @@ async function postVelaBatch(
         },
       );
       if (response.status === 202) {
+        const responseBody = await response.json().catch(() => null);
+        const receipt = parseVelaTelemetryReceipt(responseBody);
         return {
           langfuse_expected: true,
           langfuse_delivery_status: 'accepted',
+          ...(receipt ? { velaReceipt: receipt } : {}),
         };
       }
 
@@ -2234,6 +2247,26 @@ async function postVelaBatch(
     langfuse_expected: true,
     langfuse_delivery_status: 'failed',
     langfuse_drop_reason: 'network_error',
+  };
+}
+
+function parseVelaTelemetryReceipt(value: unknown): VelaTelemetryReceipt | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const receipt = (value as { receipt?: unknown }).receipt;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null;
+  const clientTraceId = (receipt as { clientTraceId?: unknown }).clientTraceId;
+  const scopedTraceId = (receipt as { scopedTraceId?: unknown }).scopedTraceId;
+  if (
+    typeof clientTraceId !== 'string' ||
+    clientTraceId.trim().length === 0 ||
+    typeof scopedTraceId !== 'string' ||
+    scopedTraceId.trim().length === 0
+  ) {
+    return null;
+  }
+  return {
+    clientTraceId: clientTraceId.trim(),
+    scopedTraceId: scopedTraceId.trim(),
   };
 }
 
@@ -2389,7 +2422,7 @@ function objectRegistrationBatch(batch: unknown[]): unknown[] {
 export async function reportRunCompleted(
   ctx: ReportContext,
   opts: ReportRunOpts = {},
-): Promise<LangfuseDeliveryState> {
+): Promise<RunTelemetryDeliveryResult> {
   const notExpected = deriveLangfuseDeliveryState(ctx.prefs, null);
   if (ctx.prefs.metrics !== true) return notExpected;
   if (ctx.prefs.content !== true) return notExpected;

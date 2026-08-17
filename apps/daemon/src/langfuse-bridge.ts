@@ -25,6 +25,7 @@ import { normalizeOpenDesignTelemetryRelayUrl } from './integrations/telemetry-r
 import {
   deriveLangfuseDeliveryState,
   readFeedbackTelemetrySinkConfig,
+  readRunTelemetrySinkConfig,
   reportRunCompleted,
   reportRunFeedback,
   type AgentEventSummary,
@@ -1126,13 +1127,14 @@ export async function reportRunCompletedFromDaemon(
         traceObjectFilesRaw,
         uploaded: finalManifests,
       }),
+      traceRunId = run.id,
     ): ReportContext => ({
       installationId,
       projectId: run.projectId ?? '',
       conversationId: run.conversationId ?? '',
       ...(run.agentId ? { agentId: run.agentId } : {}),
       run: {
-        runId: run.id,
+        runId: traceRunId,
         status,
         startedAt,
         endedAt,
@@ -1186,26 +1188,81 @@ export async function reportRunCompletedFromDaemon(
       ...objectManifestOptions,
       uploadMode: 'manifest-only',
     });
-    if (registrationManifests) {
-      await reportRunCompleted(
-        buildContext(mergeTraceSafeManifests(manifests, registrationManifests)),
-        {
-          config: objectRegistrationTelemetryConfig(),
-          deliveryPurpose: 'object-registration',
-          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-        },
-      );
+    const finalTelemetryConfig = readRunTelemetrySinkConfig(
+      process.env,
+      configuredAmrEnv,
+    );
+    const registrationTelemetryConfig = objectRegistrationTelemetryConfig();
+    let uploadedManifests: TraceObjectUploadManifests | undefined;
+    let finalObjectManifests = registrationManifests;
+
+    if (registrationManifests && finalTelemetryConfig) {
+      if (finalTelemetryConfig.kind === 'vela') {
+        // Vela owns the canonical Langfuse trace id. Ask it for that identity
+        // before registering object authority so the content-free relay event
+        // updates the same trace instead of creating a permanent raw-id shell.
+        const registrationDelivery = await reportRunCompleted(
+          buildContext(mergeTraceSafeManifests(manifests, registrationManifests)),
+          {
+            config: finalTelemetryConfig,
+            deliveryPurpose: 'object-registration',
+            ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+          },
+        );
+        const receipt = registrationDelivery.velaReceipt;
+        const scopedTraceId = receipt?.clientTraceId === run.id
+          ? receipt.scopedTraceId
+          : null;
+        if (scopedTraceId && registrationTelemetryConfig) {
+          const scopedObjectManifestOptions = {
+            ...objectManifestOptions,
+            runId: scopedTraceId,
+          };
+          const scopedRegistrationManifests = await buildTraceObjectManifests({
+            ...scopedObjectManifestOptions,
+            uploadMode: 'manifest-only',
+          });
+          if (scopedRegistrationManifests) {
+            await reportRunCompleted(
+              buildContext(
+                mergeTraceSafeManifests(manifests, scopedRegistrationManifests),
+                undefined,
+                scopedTraceId,
+              ),
+              {
+                config: registrationTelemetryConfig,
+                deliveryPurpose: 'object-registration',
+                ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+              },
+            );
+            uploadedManifests = await buildTraceObjectManifests(
+              scopedObjectManifestOptions,
+            );
+            finalObjectManifests = uploadedManifests ?? scopedRegistrationManifests;
+          }
+        }
+      } else if (registrationTelemetryConfig) {
+        await reportRunCompleted(
+          buildContext(mergeTraceSafeManifests(manifests, registrationManifests)),
+          {
+            config: registrationTelemetryConfig,
+            deliveryPurpose: 'object-registration',
+            ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+          },
+        );
+        uploadedManifests = await buildTraceObjectManifests(objectManifestOptions);
+        finalObjectManifests = uploadedManifests ?? registrationManifests;
+      }
     }
 
-    const uploadedManifests = await buildTraceObjectManifests(objectManifestOptions);
-    const finalManifests = mergeTraceSafeManifests(manifests, uploadedManifests);
+    const finalManifests = mergeTraceSafeManifests(manifests, finalObjectManifests);
     return await reportRunCompleted(
       buildContext(finalManifests, buildTraceObjectSummary({
         traceObjectFilesRaw,
         ...(uploadedManifests ? { uploaded: uploadedManifests } : {}),
       })),
       {
-        configuredEnv: configuredAmrEnv,
+        config: finalTelemetryConfig,
         ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       },
     );

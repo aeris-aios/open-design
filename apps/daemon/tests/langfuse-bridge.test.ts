@@ -949,6 +949,188 @@ describe('langfuse-bridge.reportRunCompletedFromDaemon', () => {
     });
   });
 
+  it('uses the Vela-scoped trace id for object authority while final telemetry stays on Vela', async () => {
+    await writeAppCfg({
+      installationId: 'install-uuid-1',
+      telemetry: { metrics: true, content: true, artifactManifest: true },
+    });
+    const projectDir = path.join(dataDir, 'projects', 'proj-1');
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(path.join(projectDir, 'index.html'), '<!doctype html><h1>artifact body</h1>');
+
+    const velaEnvelopes: any[] = [];
+    const relayRegistrations: any[][] = [];
+    const fetchSpy = vi.fn(async (url: string, init: RequestInit) => {
+      if (url === 'https://vela.example.test/api/v1/open-design/telemetry') {
+        const envelope = JSON.parse(init.body as string);
+        velaEnvelopes.push(envelope);
+        return new Response(JSON.stringify({
+          ok: true,
+          idempotencyKey: `vela-key-${velaEnvelopes.length}`,
+          receipt: {
+            clientTraceId: 'run-id-1',
+            scopedTraceId: 'scoped-run-id-1',
+          },
+        }), { status: 202 });
+      }
+      if (url === 'https://telemetry.open-design.ai/api/langfuse') {
+        relayRegistrations.push(JSON.parse(init.body as string).batch);
+        return new Response(JSON.stringify({ successes: [], errors: [] }), { status: 207 });
+      }
+      if (url === 'https://telemetry.open-design.ai/api/objects/authorize') {
+        const parsed = JSON.parse(init.body as string) as {
+          run_id: string;
+          objects: Array<{ storage_ref: string }>;
+        };
+        expect(parsed.run_id).toBe('scoped-run-id-1');
+        expect(parsed.objects[0]?.storage_ref).toContain('/runs/scoped-run-id-1/');
+        return new Response(JSON.stringify({ upload_token: 'upload-token' }), { status: 200 });
+      }
+      if (url === 'https://telemetry.open-design.ai/api/objects/batch') {
+        const parsed = JSON.parse(init.body as string) as {
+          run_id: string;
+          objects: Array<{ storage_ref: string; content_base64: string }>;
+        };
+        expect(parsed.run_id).toBe('scoped-run-id-1');
+        expect(parsed.objects[0]?.storage_ref).toContain('/runs/scoped-run-id-1/');
+        return new Response(JSON.stringify({
+          objects: parsed.objects.map((object) => ({
+            storage_ref: object.storage_ref,
+            status: 'available',
+            size_bytes: Buffer.from(object.content_base64, 'base64').byteLength,
+            sha256: 'sha256:uploaded-artifact',
+          })),
+        }), { status: 200 });
+      }
+      throw new Error(`unexpected telemetry request: ${url}`);
+    });
+
+    const velaTelemetryEnabled = process.env.OPEN_DESIGN_VELA_TELEMETRY;
+    const velaControlKey = process.env.VELA_CONTROL_KEY;
+    const velaApiUrl = process.env.VELA_API_URL;
+    process.env.OPEN_DESIGN_VELA_TELEMETRY = 'on';
+    process.env.VELA_CONTROL_KEY = 'ck_test';
+    process.env.VELA_API_URL = 'https://vela.example.test';
+    process.env.OPEN_DESIGN_OBJECT_RELAY_URL =
+      'https://telemetry.open-design.ai/api/objects/batch';
+    try {
+      await reportRunCompletedFromDaemon({
+        db: makeDbWithListMessages({
+          'conv-1': [
+            { id: 'user-1', role: 'user', content: 'Build it.' },
+            {
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'done',
+              producedFiles: [{ name: 'index.html', kind: 'html', size: 35 }],
+            },
+          ],
+        }),
+        dataDir,
+        run: makeRun() as any,
+        fetchImpl: fetchSpy as any,
+      });
+    } finally {
+      if (velaTelemetryEnabled === undefined) delete process.env.OPEN_DESIGN_VELA_TELEMETRY;
+      else process.env.OPEN_DESIGN_VELA_TELEMETRY = velaTelemetryEnabled;
+      if (velaControlKey === undefined) delete process.env.VELA_CONTROL_KEY;
+      else process.env.VELA_CONTROL_KEY = velaControlKey;
+      if (velaApiUrl === undefined) delete process.env.VELA_API_URL;
+      else process.env.VELA_API_URL = velaApiUrl;
+      delete process.env.OPEN_DESIGN_OBJECT_RELAY_URL;
+    }
+
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
+    expect(velaEnvelopes).toHaveLength(2);
+    expect(relayRegistrations).toHaveLength(1);
+
+    const velaRegistrationEvent = velaEnvelopes[0].events.find(
+      (event: { kind: string }) => event.kind === 'trace',
+    );
+    const velaRegistrationTrace = velaRegistrationEvent.data;
+    expect(velaRegistrationTrace.id).toBe('run-id-1');
+    expect(velaRegistrationTrace.metadata.registration_only).toBe(true);
+    expect(velaRegistrationTrace).not.toHaveProperty('input');
+    expect(velaRegistrationTrace).not.toHaveProperty('output');
+
+    const relayRegistrationTrace = relayRegistrations[0]![0].body;
+    expect(relayRegistrationTrace.id).toBe('scoped-run-id-1');
+    expect(relayRegistrationTrace.metadata.artifact_manifest[0].storage_ref).toContain(
+      '/runs/scoped-run-id-1/',
+    );
+
+    const velaFinalEvent = velaEnvelopes[1].events.find(
+      (event: { kind: string }) => event.kind === 'trace',
+    );
+    const velaFinalTrace = velaFinalEvent.data;
+    expect(velaFinalEvent.id).not.toBe(velaRegistrationEvent.id);
+    expect(velaFinalTrace.id).toBe('run-id-1');
+    expect(velaFinalTrace).toHaveProperty('input');
+    expect(velaFinalTrace).toHaveProperty('output');
+    expect(velaFinalTrace.metadata.artifact_manifest[0]).toMatchObject({
+      storage_ref: expect.stringContaining('/runs/scoped-run-id-1/'),
+      status: 'ok',
+      stored_in_open_design: true,
+    });
+  });
+
+  it('does not create a raw-id relay trace when Vela omits the scoped receipt', async () => {
+    await writeAppCfg({
+      installationId: 'install-uuid-1',
+      telemetry: { metrics: true, content: true, artifactManifest: true },
+    });
+    const projectDir = path.join(dataDir, 'projects', 'proj-1');
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(path.join(projectDir, 'index.html'), '<!doctype html><h1>artifact body</h1>');
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url !== 'https://vela.example.test/api/v1/open-design/telemetry') {
+        throw new Error(`unexpected non-Vela request: ${url}`);
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 202 });
+    });
+
+    const velaTelemetryEnabled = process.env.OPEN_DESIGN_VELA_TELEMETRY;
+    const velaControlKey = process.env.VELA_CONTROL_KEY;
+    const velaApiUrl = process.env.VELA_API_URL;
+    process.env.OPEN_DESIGN_VELA_TELEMETRY = 'on';
+    process.env.VELA_CONTROL_KEY = 'ck_test';
+    process.env.VELA_API_URL = 'https://vela.example.test';
+    process.env.OPEN_DESIGN_OBJECT_RELAY_URL =
+      'https://telemetry.open-design.ai/api/objects/batch';
+    try {
+      await reportRunCompletedFromDaemon({
+        db: makeDbWithListMessages({
+          'conv-1': [
+            { id: 'user-1', role: 'user', content: 'Build it.' },
+            {
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'done',
+              producedFiles: [{ name: 'index.html', kind: 'html', size: 35 }],
+            },
+          ],
+        }),
+        dataDir,
+        run: makeRun() as any,
+        fetchImpl: fetchSpy as any,
+      });
+    } finally {
+      if (velaTelemetryEnabled === undefined) delete process.env.OPEN_DESIGN_VELA_TELEMETRY;
+      else process.env.OPEN_DESIGN_VELA_TELEMETRY = velaTelemetryEnabled;
+      if (velaControlKey === undefined) delete process.env.VELA_CONTROL_KEY;
+      else process.env.VELA_CONTROL_KEY = velaControlKey;
+      if (velaApiUrl === undefined) delete process.env.VELA_API_URL;
+      else process.env.VELA_API_URL = velaApiUrl;
+      delete process.env.OPEN_DESIGN_OBJECT_RELAY_URL;
+    }
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls.map((call) => call[0])).toEqual([
+      'https://vela.example.test/api/v1/open-design/telemetry',
+      'https://vela.example.test/api/v1/open-design/telemetry',
+    ]);
+  });
+
   it('uploads modified existing files from traceObjectFiles and records object summary metadata', async () => {
     await writeAppCfg({
       installationId: 'install-uuid-1',

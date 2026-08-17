@@ -1875,7 +1875,14 @@ describe('reportRunCompleted', () => {
       timeoutMs: 1_000,
       retries: 0,
     };
-    const fetchSpy = vi.fn().mockResolvedValue(new Response('', { status: 202 }));
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      idempotencyKey: 'vela-key-1',
+      receipt: {
+        clientTraceId: 'run-1',
+        scopedTraceId: 'scoped-run-1',
+      },
+    }), { status: 202 }));
 
     const result = await reportRunCompleted(
       makeCtx({
@@ -1900,6 +1907,35 @@ describe('reportRunCompleted', () => {
       'span',
     ]);
     expect(envelope.events.every((event: any) => event.kind !== 'score')).toBe(true);
+    expect(result).toEqual({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+      velaReceipt: {
+        clientTraceId: 'run-1',
+        scopedTraceId: 'scoped-run-1',
+      },
+    });
+  });
+
+  it('accepts a Vela 202 response without a trace receipt', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(new Response('', { status: 202 }));
+
+    const result = await reportRunCompleted(
+      makeCtx({
+        prefs: { metrics: true, content: true, artifactManifest: false },
+      }),
+      {
+        config: {
+          kind: 'vela',
+          apiUrl: 'https://vela.example.test',
+          controlKey: 'ck_secret',
+          timeoutMs: 1_000,
+          retries: 0,
+        },
+        fetchImpl: fetchSpy as any,
+      },
+    );
+
     expect(result).toEqual({
       langfuse_expected: true,
       langfuse_delivery_status: 'accepted',
