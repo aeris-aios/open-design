@@ -1095,13 +1095,16 @@ button.att-d:hover { border-color: var(--border-strong); }
 .answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-soft); }
 .answered .k svg { flex: none; width: 13px; height: 13px; }
 .answered .ab { color: var(--text); }
-.answered .ab.mod-img { display: flex; align-items: center; gap: 8px; }
 .answered b { color: var(--text-strong); font-weight: 600; }
 .answered .al { margin: 0; padding: 0; list-style: none; }
 .answered .al li { color: var(--text-strong); font-weight: 600; }
 .answered .al li + li { margin-top: 2px; }
-/* 缩略图缩到跟一行字同高 —— 它在这儿是个提示物,不是要你再看一遍图 */
-.answered .av { flex: none; width: 30px; aspect-ratio: 1/1; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); }
+/* 缩略图另起一行,放在文字下面,不跟文字并排。
+   并排时它跟一行字的高度对不上 —— 字有基线,方块没有,怎么对都差一点,
+   看着像布局没写好。而且缩略图的尺寸一旦变,那一行的高度就跟着跳。
+   另起一行之后两者各占各的,对齐问题不存在了。
+   尺寸沿用面板里唯一那个缩略图尺寸 57px,不为这一处另开一档。 */
+.answered .av { display: block; margin-top: 5px; width: 57px; aspect-ratio: 1/1; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); }
 
 /* ---- 工具调用行 ---- */
 .tool {
@@ -2148,7 +2151,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="answered">
                 <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
-                <div class="ab mod-img"><span class="av"><span class="mini"></span></span><span>视觉方向<b>编辑杂志</b></span></div>
+                <div class="ab">视觉方向<b>编辑杂志</b></div>
+                <span class="av"><span class="mini"></span></span>
               </div>
             </div>
           </div>
