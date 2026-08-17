@@ -850,7 +850,7 @@ button.att-d:hover { border-color: var(--border-strong); }
    右边那片空白不表示任何东西,只会让人以为还有内容没出来。
    代价:靠 margin-left:auto 顶到右边的耗时/箭头会紧跟文字 —— 但它们仍在
    各自卡片的右缘,「箭头一律靠右」这条没破。 */
-.fold { width: fit-content; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); }
+.fold { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); }
 .fold > summary {
   display: flex; align-items: center; gap: 7px;
   padding: 8px 11px; cursor: pointer; list-style: none;
@@ -955,13 +955,15 @@ button.att-d:hover { border-color: var(--border-strong); }
 .card > .h .hd-act { margin-inline-start: auto; }
 /* 「要你拿主意」的卡走固定宽,不跟着内容缩,也不拉满。
    ------------------------------------------------------------
-   这一类是同一件事的两种问法:意图澄清(带 .q 的提问)和中断卡(卡头挂着
-   「继续」的 .hd-act)—— 都在等你点一下才往下走,所以该长一个样。
+   这一类是同一件事的三种问法:意图澄清(带 .q 的提问)、Plan 卡、中断卡
+   (后两者都是 ol.steps 列着待办)—— 都在等你点一下才往下走,该长一个样。
+   认 .steps 而不是认按钮:Plan 卡在「执行中 / 更新中」时没有按钮,但它还是
+   同一张卡,不能因为状态变了就换个宽度。
    跟着内容缩:选项一长一短,卡宽就一次一个样,可这是同一个框;
    拉满整栏:它就和下面的执行记录一样宽,看不出这是需要停下来回答的东西。
    380 = 用户消息气泡的 max-width。对话里有形状的就这两样 —— 你说的话和
    它问你的话,同宽、一左一右,来回一目了然。 */
-.card:has(> .q), .card:has(.hd-act) { width: 380px; max-width: 100%; }
+.card:has(> .q), .card:has(> .steps), .card:has(> .foot) { width: 380px; max-width: 100%; }
 .card > .q { padding: 10px 11px 8px; font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-strong); }
 .card > .opts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 11px 10px; }
 
@@ -1217,16 +1219,14 @@ button.att-d:hover { border-color: var(--border-strong); }
   background: var(--bg); font-size: var(--t-body); color: var(--text); line-height: var(--lh-row);
 }
 .tool + .tool { margin-top: 6px; }
-/* 分两类。
+/* 折叠块一律满宽,卡片跟着内容。
    ------------------------------------------------------------
-   【满宽】工具调用、装着它们的任务进度块、记忆 —— 这些是「一步做了什么」的
-   流水记录,一行一行往下读,左右对齐才成行;宽度参差会让人以为它们不是一组。
-   而且它们展开后都是一段更宽的内容(终端输出、文件名、偏好列表),收起时窄、
-   展开时宽,一开一合整块都在跳。
-   【内容宽】一句话就说完的状态块 —— 已确认、Thinking、执行计划、生图缩略图行。
-   它们没有展开后变宽的问题,拉满只会在右边留一片不表示任何东西的空白。 */
-.fold.mod-step, .fold.mod-think, .fold:has(.term), .card:has(.term) { width: auto; }
-.fold:has(.memo-ic) { width: auto; }
+   折叠块是一摞流水记录 —— Thinking、计划、记忆、每一步、命令输出,一行行往下
+   读,左右对齐才成行;宽度参差会让人以为它们不是一组。而且它们展开后都是一段
+   更宽的内容,收起窄、展开宽会让整块在开合时跳。
+   卡片是另一回事:生图卡由图的张数撑出来,提问卡固定 380(见下),它们各自有
+   自己的形状。装着终端输出的那张例外 —— 里面是代码,断行位置不该由卡宽决定。 */
+.card:has(.term) { width: auto; }
 /* 生图那条例外:满宽会把缩略图甩到最右边,和标签之间隔着一片空。 */
 .tool:has(.strip) { width: fit-content; max-width: 100%; }
 .tool .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1955,7 +1955,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
-        <details class="fold mod-think"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</div></details>
 
         <div class="say">好,先把列表页搭起来,再拿同一张商品卡去做设置页。</div>
@@ -1971,10 +1971,10 @@ body { background: var(--bg-subtle); overflow: auto; }
         <details class="fold"><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
 
-        <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
 
-        <details class="fold mod-step" open>
+        <details class="fold" open>
           <summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="ms mod-num">第 3/4 步</span></summary>
           <div class="body">
             <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
@@ -2026,7 +2026,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
-        <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务</span><span class="ms mod-num">1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务</span><span class="ms mod-num">1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">Thinking · 意图澄清 · 执行计划 · 记住 3 条偏好 · 复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转 · 生成 4 张插图</div></details>
 
         <div class="arts">
@@ -2080,7 +2080,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
-        <details class="fold mod-think"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">8s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">8s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">先把现有这屏的结构和 token 读一遍,别凭截图猜。</div></details>
 
         <div class="say">先读一遍现有的结构和 token,再动手。</div>
@@ -2137,7 +2137,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
-        <details class="fold mod-think"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">5s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">5s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">商品卡这块有两条路,得先问清楚再动手。</div></details>
 
         <div class="card">
