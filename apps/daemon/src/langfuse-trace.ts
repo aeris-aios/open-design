@@ -92,16 +92,6 @@ export interface LangfuseDeliveryState {
   langfuse_drop_reason?: LangfuseDropReason;
 }
 
-export interface VelaTelemetryReceipt {
-  clientTraceId: string;
-  scopedTraceId: string;
-}
-
-export interface RunTelemetryDeliveryResult extends LangfuseDeliveryState {
-  /** Server-owned trace identity; used internally for Vela-scoped object authority. */
-  velaReceipt?: VelaTelemetryReceipt;
-}
-
 export type TelemetrySinkConfig =
   | {
       kind: 'relay';
@@ -2162,7 +2152,7 @@ async function postVelaBatch(
   installationId: string,
   fetchImpl: typeof fetch,
   opts: { allowAnonymousAuthFallback?: boolean } = {},
-): Promise<RunTelemetryDeliveryResult> {
+): Promise<LangfuseDeliveryState> {
   // Completed-run batches may fall back to the anonymous relay when Vela
   // rejects auth (expired Control Key, etc.). Score-only feedback must not:
   // the matching trace is account-scoped on Vela, so anonymous delivery would
@@ -2189,12 +2179,9 @@ async function postVelaBatch(
         },
       );
       if (response.status === 202) {
-        const responseBody = await response.json().catch(() => null);
-        const receipt = parseVelaTelemetryReceipt(responseBody);
         return {
           langfuse_expected: true,
           langfuse_delivery_status: 'accepted',
-          ...(receipt ? { velaReceipt: receipt } : {}),
         };
       }
 
@@ -2247,26 +2234,6 @@ async function postVelaBatch(
     langfuse_expected: true,
     langfuse_delivery_status: 'failed',
     langfuse_drop_reason: 'network_error',
-  };
-}
-
-function parseVelaTelemetryReceipt(value: unknown): VelaTelemetryReceipt | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const receipt = (value as { receipt?: unknown }).receipt;
-  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null;
-  const clientTraceId = (receipt as { clientTraceId?: unknown }).clientTraceId;
-  const scopedTraceId = (receipt as { scopedTraceId?: unknown }).scopedTraceId;
-  if (
-    typeof clientTraceId !== 'string' ||
-    clientTraceId.trim().length === 0 ||
-    typeof scopedTraceId !== 'string' ||
-    scopedTraceId.trim().length === 0
-  ) {
-    return null;
-  }
-  return {
-    clientTraceId: clientTraceId.trim(),
-    scopedTraceId: scopedTraceId.trim(),
   };
 }
 
@@ -2422,7 +2389,7 @@ function objectRegistrationBatch(batch: unknown[]): unknown[] {
 export async function reportRunCompleted(
   ctx: ReportContext,
   opts: ReportRunOpts = {},
-): Promise<RunTelemetryDeliveryResult> {
+): Promise<LangfuseDeliveryState> {
   const notExpected = deriveLangfuseDeliveryState(ctx.prefs, null);
   if (ctx.prefs.metrics !== true) return notExpected;
   if (ctx.prefs.content !== true) return notExpected;

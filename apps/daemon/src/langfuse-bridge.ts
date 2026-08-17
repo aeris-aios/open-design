@@ -1127,14 +1127,13 @@ export async function reportRunCompletedFromDaemon(
         traceObjectFilesRaw,
         uploaded: finalManifests,
       }),
-      traceRunId = run.id,
     ): ReportContext => ({
       installationId,
       projectId: run.projectId ?? '',
       conversationId: run.conversationId ?? '',
       ...(run.agentId ? { agentId: run.agentId } : {}),
       run: {
-        runId: traceRunId,
+        runId: run.id,
         status,
         startedAt,
         endedAt,
@@ -1192,56 +1191,18 @@ export async function reportRunCompletedFromDaemon(
       process.env,
       configuredAmrEnv,
     );
-    const registrationTelemetryConfig = objectRegistrationTelemetryConfig();
     let uploadedManifests: TraceObjectUploadManifests | undefined;
     let finalObjectManifests = registrationManifests;
 
-    if (registrationManifests && finalTelemetryConfig) {
-      if (finalTelemetryConfig.kind === 'vela') {
-        // Vela owns the canonical Langfuse trace id. Ask it for that identity
-        // before registering object authority so the content-free relay event
-        // updates the same trace instead of creating a permanent raw-id shell.
-        const registrationDelivery = await reportRunCompleted(
-          buildContext(mergeTraceSafeManifests(manifests, registrationManifests)),
-          {
-            config: finalTelemetryConfig,
-            deliveryPurpose: 'object-registration',
-            ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-          },
-        );
-        const receipt = registrationDelivery.velaReceipt;
-        const scopedTraceId = receipt?.clientTraceId === run.id
-          ? receipt.scopedTraceId
-          : null;
-        if (scopedTraceId && registrationTelemetryConfig) {
-          const scopedObjectManifestOptions = {
-            ...objectManifestOptions,
-            runId: scopedTraceId,
-          };
-          const scopedRegistrationManifests = await buildTraceObjectManifests({
-            ...scopedObjectManifestOptions,
-            uploadMode: 'manifest-only',
-          });
-          if (scopedRegistrationManifests) {
-            await reportRunCompleted(
-              buildContext(
-                mergeTraceSafeManifests(manifests, scopedRegistrationManifests),
-                undefined,
-                scopedTraceId,
-              ),
-              {
-                config: registrationTelemetryConfig,
-                deliveryPurpose: 'object-registration',
-                ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-              },
-            );
-            uploadedManifests = await buildTraceObjectManifests(
-              scopedObjectManifestOptions,
-            );
-            finalObjectManifests = uploadedManifests ?? scopedRegistrationManifests;
-          }
-        }
-      } else if (registrationTelemetryConfig) {
+    if (registrationManifests) {
+      // Authenticated runs register object authority through Vela's signed
+      // service path. Anonymous/direct runs retain the legacy relay boundary.
+      // The authority worker handles registration_only without writing a
+      // content-free Langfuse trace.
+      const registrationTelemetryConfig = finalTelemetryConfig?.kind === 'vela'
+        ? finalTelemetryConfig
+        : objectRegistrationTelemetryConfig();
+      if (registrationTelemetryConfig) {
         await reportRunCompleted(
           buildContext(mergeTraceSafeManifests(manifests, registrationManifests)),
           {
