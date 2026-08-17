@@ -710,16 +710,26 @@ button.att-d:hover { border-color: var(--border-strong); }
    现在图标缩到跟文字一个量级,纵向内边距补成 9px,四边才对得上。 */
 .att-d .fi { flex: none; width: 15px; height: 15px; color: var(--text-soft); }
 .att-d .tx { min-width: 0; display: block; }
-/* 主名一行、后缀单独一行。
-   这一版不再拿 flex 挤后缀 —— 换行之后后缀天然占满自己那一行,
-   永远完整可见,连"别参与截断"这条规则都不用写了。
-   大写去点是 Codex 那个写法:MOV 比 .mov 更像一个"类型",不像半截文件名。 */
-.att-d .base {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* 第一行是【完整的文件名】,主名 + 后缀连在一起。
+   ------------------------------------------------------------
+   上一版把后缀拆到第二行写成 MD,想的是"换行之后它天然完整"。
+   但那样它就成了一个【类型标签】,不再是名字的一部分 —— 人嘴里说的、
+   搜索框里敲的、复制出去的都是「商品卡组件规格说明终稿.md」,
+   把 .md 摘掉,屏幕上就没有一个地方写着这个文件真正的名字。
+   所以后缀回到第一行,第二行只留体积。
+   ------------------------------------------------------------
+   于是"后缀不参与截断"这条规则又回来了(图卡那边因为整个不挂名字,
+   确实用不上了,这条现在只服务文档卡):主名 min-width:0 可收缩、
+   超了打省略号;后缀 flex:none,永远完整。
+   整串一起截的话会从尾部吃起,「商品卡组件规格说明终稿.md」先变成
+   「商品卡组件规格说明终…」—— 截掉的正好是唯一能说明它是什么的那几个字符。 */
+.att-d .nm {
+  display: flex; align-items: baseline;
   font-size: var(--t-mini); color: var(--text-strong);
 }
+.att-d .nm .base { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-d .nm .ext { flex: none; white-space: nowrap; }
 .att-d .meta { display: block; margin-top: 1px; font-size: var(--t-cap); color: var(--text-faint); }
-.att-d .meta .k { text-transform: uppercase; }
 /* 「×」跟图卡同一个位置:右上角。两张卡形状不同,但"删除在哪儿"必须
    是同一个地方 —— 一行里既有方的又有宽的,如果删除键还各在各处,
    人每换一张卡就得重新找。托盘里给右侧留出 28px,长名字不会钻到它下面。 */
@@ -1520,8 +1530,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>文档 · 出不了预览的换一张更宽的卡,不硬塞缩略图</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
-                <button class="att-d" type="button" aria-label="打开 埋点清单-v3.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">埋点清单-v3</span><span class="meta"><span class="k">csv</span> · 4 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 埋点清单-v3.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">埋点清单-v3</span><span class="ext">.csv</span></span><span class="meta">4 KB</span></span></button>
               </div>
             </div>
           </div>
@@ -1530,7 +1540,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="att">
                 <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
-                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">跨端适配检查清单-v3</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">跨端适配检查清单-v3</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button>
                 <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button>
               </div>
             </div>
@@ -1550,18 +1560,18 @@ button.att-d:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>文件名过长 · 宽卡里主名省略,后缀在下一行永远完整</span><i></i></div>
+            <div class="st-l"><span>文件名过长 · 只截主名,后缀永远完整</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">商品卡组件规格说明终稿-第三轮评审后</span><span class="meta"><span class="k">md</span> · 18 KB</span></span></button>
-                <button class="att-d" type="button" aria-label="打开 埋点.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">埋点</span><span class="meta"><span class="k">csv</span> · 2 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件规格说明终稿-第三轮评审后</span><span class="ext">.md</span></span><span class="meta">18 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 埋点.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">埋点</span><span class="ext">.csv</span></span><span class="meta">2 KB</span></span></button>
               </div>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>每一项都得有一个能认出它的东西 —— 图有画面,文档只有名字。</b>这是这个组件唯一的那条规则,两种卡都从它推出来。<b>图卡不挂文件名</b>:你认出一张图靠的是看见那一屏的样子,不是读「首页」两个字;而图片文件名多半是「截屏2026-08-17-15.18.32.png」这种东西,截进卡宽里变成「截屏2026-08-17-1…」,一个字的信息量都没有,却让每张卡永远多背一行高度。真要看名字的时刻是点开大图,弹层里有地方好好写;aria-label 留着,读屏照读。<b>文档卡必须挂名字</b>:它没有画面,名字是它唯一的身份,所以宽卡把宽度都给了名字,主名一行、类型和体积一行。<b>由此多出一条前提:走图卡的前提是缩略图真的出得来。</b>拿不到 PDF 首页、.sketch 预览、.mov 首帧的,一律退回文档卡 —— 一个既没画面又没名字的灰方块,是这套规则里唯一会出现的死格子,必须堵掉。<b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>两种卡同高,并排在同一行</b>,不分行:会让列表散架的是"同一行里高度对不齐",不是"存在两种模板"。高度靠 flex 的 stretch 自动跟住图卡,没有第二个数字要维护。<b>图卡 80px 见方</b>,这个数字顺带定下整行的高度:名字去掉之后,卡的全部职责就是"这张图认不认得出",不必再为一行字撑宽度;而文档卡靠 stretch 跟住它,自己只需要 55px(两行字加内边距)—— 图卡还是 104 的时候,文档卡里那两行字上下各空 25px,像掉在一个空盒子中间,缩到 80 只剩 12px,两种卡才像同一套东西。宽卡<b>定宽 180px</b>,不随名字长短变:图卡固定 80,文档卡也该是一个固定值,一行里每张卡宽度都不一样的话眼睛没有落点。180 是让消息区(380)刚好放下两张(180×2+7=367);名字放不下就在主名上打省略号,后缀在下一行永远完整。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>「×」两种卡同一个位置</b> —— 右上角,只在发送前有。<b>展示</b>缩略图(图)/ 文件名 + 类型 + 体积(文档)。</span>
+          <span><b>每一项都得有一个能认出它的东西 —— 图有画面,文档只有名字。</b>这是这个组件唯一的那条规则,两种卡都从它推出来。<b>图卡不挂文件名</b>:你认出一张图靠的是看见那一屏的样子,不是读「首页」两个字;而图片文件名多半是「截屏2026-08-17-15.18.32.png」这种东西,截进卡宽里变成「截屏2026-08-17-1…」,一个字的信息量都没有,却让每张卡永远多背一行高度。真要看名字的时刻是点开大图,弹层里有地方好好写;aria-label 留着,读屏照读。<b>文档卡必须挂名字</b>:它没有画面,名字是它唯一的身份,所以宽卡把宽度都给了名字,主名一行、类型和体积一行。<b>由此多出一条前提:走图卡的前提是缩略图真的出得来。</b>拿不到 PDF 首页、.sketch 预览、.mov 首帧的,一律退回文档卡 —— 一个既没画面又没名字的灰方块,是这套规则里唯一会出现的死格子,必须堵掉。<b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>两种卡同高,并排在同一行</b>,不分行:会让列表散架的是"同一行里高度对不齐",不是"存在两种模板"。高度靠 flex 的 stretch 自动跟住图卡,没有第二个数字要维护。<b>图卡 80px 见方</b>,这个数字顺带定下整行的高度:名字去掉之后,卡的全部职责就是"这张图认不认得出",不必再为一行字撑宽度;而文档卡靠 stretch 跟住它,自己只需要 55px(两行字加内边距)—— 图卡还是 104 的时候,文档卡里那两行字上下各空 25px,像掉在一个空盒子中间,缩到 80 只剩 12px,两种卡才像同一套东西。宽卡<b>定宽 180px</b>,不随名字长短变:图卡固定 80,文档卡也该是一个固定值,一行里每张卡宽度都不一样的话眼睛没有落点。180 是让消息区(380)刚好放下两张(180×2+7=367);名字放不下就只截主名,后缀永远完整。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>「×」两种卡同一个位置</b> —— 右上角,只在发送前有。<b>展示</b>缩略图(图)/ 文件名 + 类型 + 体积(文档)。</span>
         </div>
       </article>
 
@@ -1618,7 +1628,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>发送前 · 文档同在一行,「×」位置不变</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
                 <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
               </div>
             </div>
