@@ -1086,10 +1086,18 @@ button.att-d:hover { border-color: var(--border-strong); }
      视觉方向 → 带上你选中的那张缩略图。风格名是抽象词,「编辑杂志」
              四个字回头看根本想不起来长什么样,而那张图当时就在你眼前。
    顶对齐而不是居中:多选那一列可能好几行,居中会让「已确认」掉到中间。 */
-.answered { display: flex; align-items: flex-start; gap: 8px; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); line-height: var(--lh-row); }
-.answered .k { flex: none; color: var(--text-soft); }
+/* 「已确认」单独占一行,答案在下面另起一行铺满。
+   原来是左右两栏(标签在左、答案在右),多选那几条被挤在右半边,
+   一句稍长的就折行,读起来像被夹住;而标签的宽度还随字数变,
+   三种问法收出来的答案起始位置对不齐。
+   改成上下两行之后,答案永远从同一个左边界开始,宽度也是整卡。 */
+.answered { padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); line-height: var(--lh-row); }
+.answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-soft); }
+.answered .k svg { flex: none; width: 13px; height: 13px; }
+.answered .ab { color: var(--text); }
+.answered .ab.mod-img { display: flex; align-items: center; gap: 8px; }
 .answered b { color: var(--text-strong); font-weight: 600; }
-.answered .al { margin: 0; padding: 0; list-style: none; min-width: 0; }
+.answered .al { margin: 0; padding: 0; list-style: none; }
 .answered .al li { color: var(--text-strong); font-weight: 600; }
 .answered .al li + li { margin-top: 2px; }
 /* 缩略图缩到跟一行字同高 —— 它在这儿是个提示物,不是要你再看一遍图 */
@@ -2119,14 +2127,14 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>已回答 · 点「确认」后收成陈述</span><i></i></div>
             <div class="st-b">
-              <div class="answered"><span class="k">已确认</span><span>设置页<b>沿用列表页的商品卡组件</b></span></div>
+              <div class="answered"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div><div class="ab">设置页<b>沿用列表页的商品卡组件</b></div></div>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>已回答 · 多选,勾了几条就列几条</span><i></i></div>
             <div class="st-b">
               <div class="answered">
-                <span class="k">已确认</span>
+                <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
                 <ul class="al">
                   <li>商品详情页</li>
                   <li>搜索结果页</li>
@@ -2139,9 +2147,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>已回答 · 视觉方向,带上你选的那张图</span><i></i></div>
             <div class="st-b">
               <div class="answered">
-                <span class="k">已确认</span>
-                <span class="av"><span class="mini"></span></span>
-                <span>视觉方向<b>编辑杂志</b></span>
+                <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
+                <div class="ab mod-img"><span class="av"><span class="mini"></span></span><span>视觉方向<b>编辑杂志</b></span></div>
               </div>
             </div>
           </div>
