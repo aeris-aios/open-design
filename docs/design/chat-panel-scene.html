@@ -871,6 +871,8 @@ button.att-d:hover { border-color: var(--border-strong); }
 .fold > summary .ms { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
 .fold > summary .chev { margin-left: auto; display: inline-flex; transition: transform var(--duration-faster) var(--ease-out); }
 .fold > summary .ms + .chev { margin-left: 0; }
+/* 等宽里一个空格占满一格,中文夹数字会被撑得很散;只借它的数字对齐。 */
+.fold > summary .ms.mod-num, .tool .ms.mod-num { font-family: inherit; font-variant-numeric: tabular-nums; }
 .fold[open] > summary .chev { transform: rotate(180deg); }
 .fold .body { padding: 0 11px 10px; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); }
 .fold .body.mod-scroll { max-height: 96px; overflow-y: auto; }
@@ -1720,7 +1722,7 @@ body { background: var(--bg-subtle); overflow: auto; }
    构件墙里看不出来。Queue 和输入框钉在底部,不随流水滚走。 */
 .panel {
   display: flex; flex-direction: column;
-  height: 1136px;  /* 四屏里最高的那屏(收尾)所需;谁的日志都不用滚,矮的那屏靠 margin-top:auto 贴底 */
+  height: 1085px;  /* 四屏里最高的那屏(收尾)所需;谁的日志都不用滚,矮的那屏靠 margin-top:auto 贴底 */
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--bg); overflow: hidden;
 }
@@ -1812,8 +1814,6 @@ body { background: var(--bg-subtle); overflow: auto; }
 }
 .composer .bar .send:hover { background: var(--text); color: var(--bg); }
 
-/* 等宽里空格占满一格,中文夹数字会被撑开;只借它的数字对齐 */
-.fold > summary .ms.mod-num, .tool .ms.mod-num { font-family: inherit; font-variant-numeric: tabular-nums; }
 
 /* dock 上的重连横幅:和输入框之间靠 .dock 的 gap 撑开 */
 .dock-note { display: contents; }
@@ -1892,7 +1892,7 @@ body { background: var(--bg-subtle); overflow: auto; }
       </div>
   </div>
   <div class="scene-col">
-    <p class="scene-cap">同一个面板 · 收尾<span>同一段对话跑完 · Queue 空了整块消失,回合状态与下一步引导接上</span></p>
+    <p class="scene-cap">同一个面板 · 跑完<span>过程整段收成一行 · 外面只留结果:产物、总结、反馈、下一步</span></p>
       <div class="panel">
         <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
           <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
@@ -1906,29 +1906,8 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
-        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</div></details>
-
-        <div class="say">好,先把列表页搭起来,再拿同一张商品卡去做设置页。</div>
-
-        <div class="answered">
-          <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
-          <div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div>
-        </div>
-
-        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
-
-        <details class="fold"><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
-
-        <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
-
-        <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>按同一套间距做设置页</span><span class="ms">9.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">写 settings.html · 写 settings.css · 接上跳转</div></details>
-
-        <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">生成 4 张</span><span class="strip"><button class="th" type="button" aria-label="查看第 1 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 2 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 3 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 4 张大图" data-tip="查看大图"><span class="mini"></span></button></span></div>
+        <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务</span><span class="ms mod-num">1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body">Thinking · 意图澄清 · 执行计划 · 记住 3 条偏好 · 复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转 · 生成 4 张插图</div></details>
 
         <div class="arts">
           <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">product-list.html</div></div>
@@ -1940,7 +1919,7 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="say">两页都好了,商品卡已经抽成共享组件,改一处两页都跟着变。</div>
 
         <div class="fb">
-          <span class="fin"><i></i>已完成<span class="cost">1 分 12 秒 · 8.4k</span></span><span class="sp"></span>
+          <span class="fin"><i></i>已完成<span class="cost">8.4k</span></span><span class="sp"></span>
           <button type="button" aria-label="赞" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
           <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
           <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
