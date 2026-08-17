@@ -361,6 +361,12 @@
      设计系统的调色板,而是外部品牌的固定值,改不得也不该跟着主题走。
      站点那套 tokens.css 里已经有同名分组(--plat-ios / --plat-wx / --plat-x …),
      产品这套还没有 —— 移植时应该把这一段挪进 tokens/colors.css,不要留在这儿。 */
+  /* 浮层 chrome 用的深色磨砂。刻意【不跟主题翻】—— 它悬在内容之上,
+     不属于页面表面;跟着翻的话浅色主题下就成了白底浮白字。
+     port 时和 --plat-* 一起挪进 tokens/colors.css。 */
+  --overlay-glass:      rgba(32, 32, 32, 0.88);
+  --overlay-glass-text: #fafafa;   /* 底不翻,字当然也不能翻 */
+  --overlay-glass-edge: color-mix(in srgb, #fff 16%, transparent);
   --agent-claude:      #d97757;   /* agent-icons/claude.svg 原色 */
   --agent-codex-plate: #ffffff;   /* agent-icons/codex.svg 的白底板 */
   --agent-codex-a:     #b1a7ff;
@@ -1651,11 +1657,27 @@ button.att-d:hover { border-color: var(--border-strong); }
 /* 定位参照是【选区】不是整段:浮条要对准你选的那几个字,
    段落居中会在长句里偏出去老远。 */
 .sel { position: relative; background: var(--selected-soft); border-radius: var(--radius-xs); }
+/* 它不是按钮,是一条浮层。
+   ------------------------------------------------------------
+   药丸形 + 实心底会被读成"表单里的主按钮",而这东西是悬在正文上方的
+   临时 chrome:该更高、圆角更小、底面半透明,让下面的字透出来一点 ——
+   人才知道它是【浮着的】,不是版面的一部分。 */
 .selbar {
-  position: absolute; left: 50%; translate: -50% 0; bottom: calc(100% + 6px);
-  z-index: 6; white-space: nowrap; box-shadow: var(--shadow-md);
-  border-radius: var(--radius-pill);
+  position: absolute; left: 50%; translate: -50% 0; bottom: calc(100% + 7px);
+  z-index: 6; white-space: nowrap;
+  padding: 3px; border-radius: var(--radius);
+  background: var(--overlay-glass);
+  border: 1px solid var(--overlay-glass-edge);
+  -webkit-backdrop-filter: blur(var(--glass-regular-blur));
+  backdrop-filter: blur(var(--glass-regular-blur));
+  box-shadow: var(--shadow-md);
 }
+.selbar button {
+  display: block; padding: 7px 12px; border-radius: var(--radius-sm);
+  font-size: var(--t-mini); font-weight: 500; color: var(--overlay-glass-text);
+  background: none; border: 0; cursor: pointer;
+}
+.selbar button:hover { background: var(--overlay-glass-edge); }
 /* 选区贴着面板顶边时翻到下方 —— 和 tooltip 那套边界补正同一个道理:
    浮层默认朝上,而容器上面就没地方了。 */
 .selbar.mod-below { bottom: auto; top: calc(100% + 6px); }
@@ -1978,7 +2000,7 @@ body { background: var(--bg-subtle); overflow: auto; }
             <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more mod-tip-e" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
         </div>
 
-        <div class="say">两页都好了,<mark class="sel">商品卡已经抽成共享组件<span class="selbar"><button class="btn mod-primary mod-sm" type="button">添加到对话</button></span></mark>,改一处两页都跟着变。</div>
+        <div class="say">两页都好了,<mark class="sel">商品卡已经抽成共享组件<span class="selbar"><button type="button">添加到对话</button></span></mark>,改一处两页都跟着变。</div>
 
         <div class="fb">
           <span class="fin"><i></i>已完成<span class="cost">8.4k</span></span><span class="sp"></span>
