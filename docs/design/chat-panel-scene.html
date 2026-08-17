@@ -933,7 +933,11 @@ button.att-d:hover { border-color: var(--border-strong); }
   border-bottom: 1px solid var(--border-soft); background: var(--bg-panel);
   font-size: var(--t-mini); color: var(--text-strong);
 }
-.card > .h b { color: var(--text-strong); font-weight: 600; }
+/* 卡头整行已经是最深的一档,<b> 不必再加色也不必再加重 —— 同一个 rank 的
+   折叠块标题是常规字重,卡头再上一档就成了两级标题。
+   但规则不能直接删:<b> 有浏览器默认的 700,删了反而更重,所以显式收回。
+   <b> 仍留在标记里,它区分的是"标题"和旁边的计数 / 按钮,不是字重。 */
+.card > .h b { font-weight: inherit; }
 /* 数字位用 tabular-nums,不用等宽字体。
    ------------------------------------------------------------
    这一格里的内容多半是中文夹数字(「已选 2」「4 步」「旧计划 4 步」),
