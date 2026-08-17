@@ -661,46 +661,56 @@ button.att-i:hover { border-color: var(--border-strong); }
    占位和真图占的是同一个盒子,排版不会变。 */
 .mini { display: block; width: 100%; height: 100%; background: var(--bg-muted); }
 
-/* ---- 文档附件:出不了预览的走长条 ----
-   .md / .txt / .csv / .json 这类没有可看的画面。硬塞进 104×104 的灰方块,
-   那块灰不传达任何东西,而唯一有用的信息 —— 文件名 —— 反而被压在 104px 里
-   截成「跨端适配检查…」。长条把宽度还给文件名,一眼读得全。
+/* ---- 文档附件:同一行、同高、不同宽 ----
+   md / txt / csv / mov 这些没有可看的画面。硬塞进 1:1 的灰方块,那块灰
+   不传达任何东西,而唯一有用的信息 —— 文件名 —— 反而被压在 104px 里
+   截成「跨端适配检查…」。所以给它一张【更宽的卡】,把宽度还给文件名。
+   ------------------------------------------------------------
+   关键是它跟图卡【同高】,并排躺在同一行里,不另起一行。
+   之前那版把文档拆到第二行,是把"高度不一致"这个毛病错当成"不能有两种
+   模板"来治了 —— 真正会散架的是【同一行里高度对不齐】,等高就解决了,
+   不必牺牲单行。高度靠 flex 默认的 stretch 自动跟住图卡,没有第二个数字
+   要维护:以后图卡尺寸再动一次,文档卡自己跟上。
    ------------------------------------------------------------
    分界线是【能不能渲染出预览】,不是"图片还是文档":
-     png / jpg / sketch / mov(首帧) / pdf(首页) → 图卡,有画面可看
-     md / txt / csv / json / log / zip        → 长条,没有画面
-   ------------------------------------------------------------
-   这不推翻"卡的外形不随类型变"那条,是把它说准:
-   那条要防的是【同一行里混两种模板】—— 紧凑行和大卡并排,基线对不上、
-   后面的项被撑歪。分行放就没有这个问题:图片一行横向滚,文档一行纵向堆,
-   每一行内部仍然只有一种模板、高度完全一致。 */
-.docs { display: flex; flex-direction: column; gap: 6px; max-width: 380px; margin-inline-start: auto; }
-.docs.mod-tray { margin-inline-start: 0; max-width: none; }
-/* 超过三条限高滚动 —— 跟 Queue 同一条理由:它压在流水或输入框上,
-   不能由文件数决定它吃掉多少屏幕。三条 = 3 × 34 + 2 × 6 间距。 */
-.docs { max-height: 114px; overflow-y: auto; scrollbar-width: none; }
-.docs::-webkit-scrollbar { display: none; }
-.doc {
+     png / jpg / sketch / mov(首帧)/ pdf(首页) → 图卡,有画面可看
+     md / txt / csv / json / log / zip        → 宽卡,没有画面
+   宽度贴合内容(150–240px):名字短的不占地方,名字长的多要一点,
+   但不无限长 —— 一张卡吃掉整行的话,后面还有几个文件就看不出来了。 */
+.att-d {
   position: relative; flex: none;
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--bg); font-size: var(--t-mini); color: var(--text);
+  width: max-content; min-width: 150px; max-width: 240px;
+  display: flex; align-items: center; gap: 9px; padding: 0 11px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); text-align: left;
   transition: border-color var(--duration-faster) var(--ease-out);
 }
-button.doc { text-align: left; width: 100%; }
-button.doc:hover { border-color: var(--border-strong); }
-.doc > svg { flex: none; width: 14px; height: 14px; color: var(--text-soft); }
-/* 文件名同一套规则:主名可收缩打省略号,后缀 flex:none 永不参与截断。
-   跟图卡共用这条,不另写一套 —— 后缀被吃掉的话,长条也一样认不出是什么。 */
-.doc .nm { flex: 1; min-width: 0; display: flex; align-items: baseline; }
-.doc .nm .base { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc .nm .ext { flex: none; white-space: nowrap; color: var(--text-muted); }
-/* 体积放在这里而不是图卡上:长条有横向余量,图卡没有。
-   它只在这一种模板里出现,不算两套模板的差异 —— 是同一条信息在有地方
-   放的时候放出来。 */
-.doc .sz { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-faint); }
-.doc.is-fail { border-color: var(--red); }
-.doc .del { flex: none; margin-inline-end: -2px; }
+button.att-d:hover { border-color: var(--border-strong); }
+/* 左边那枚图标压在一块圆角灰上 —— 跟图卡的缩略图区是同一个角色:
+   "这一格是这个文件的脸"。图卡那块灰是缩略图,这里放不下缩略图,
+   就放一个文件图标,位置和圆角对得上,两张卡才像一家人。 */
+.att-d .ic {
+  flex: none; display: grid; place-items: center; width: 38px; height: 38px;
+  border-radius: var(--radius-sm); background: var(--bg-muted); color: var(--text-soft);
+}
+.att-d .ic svg { width: 17px; height: 17px; }
+.att-d .tx { min-width: 0; display: block; }
+/* 主名一行、后缀单独一行。
+   这一版不再拿 flex 挤后缀 —— 换行之后后缀天然占满自己那一行,
+   永远完整可见,连"别参与截断"这条规则都不用写了。
+   大写去点是 Codex 那个写法:MOV 比 .mov 更像一个"类型",不像半截文件名。 */
+.att-d .base {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--t-mini); color: var(--text-strong);
+}
+.att-d .meta { display: block; margin-top: 1px; font-size: var(--t-cap); color: var(--text-faint); }
+.att-d .meta .k { text-transform: uppercase; }
+/* 「×」跟图卡同一个位置:右上角。两张卡形状不同,但"删除在哪儿"必须
+   是同一个地方 —— 一行里既有方的又有宽的,如果删除键还各在各处,
+   人每换一张卡就得重新找。托盘里给右侧留出 28px,长名字不会钻到它下面。 */
+.att-d .del { position: absolute; inset-inline-end: 5px; top: 5px; box-shadow: var(--shadow-sm); }
+.att.mod-tray .att-d { padding-inline-end: 28px; }
+.att-d.is-fail { border-color: var(--red); }
 
 
 /* ---- Thinking / 折叠类通用 ---- */
@@ -1476,23 +1486,21 @@ button.doc:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>文档 · 出不了预览的走长条,不硬塞缩略图</span><i></i></div>
+            <div class="st-l"><span>文档 · 出不了预览的换一张更宽的卡,不硬塞缩略图</span><i></i></div>
             <div class="st-b">
-              <div class="docs">
-                <button class="doc" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg><span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.md</span></span><span class="sz">12 KB</span></button>
-                <button class="doc" type="button" aria-label="打开 埋点清单-v3.csv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg><span class="nm"><span class="base">埋点清单-v3</span><span class="ext">.csv</span></span><span class="sz">4 KB</span></button>
+              <div class="att">
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 埋点清单-v3.csv"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">埋点清单-v3</span><span class="meta"><span class="k">csv</span> · 4 KB</span></span></button>
               </div>
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>图 + 文档 · 分两行,同一行里只有一种模板</span><i></i></div>
+            <div class="st-l"><span>图 + 文档 · 同一行,同高不同宽</span><i></i></div>
             <div class="st-b">
               <div class="att">
                 <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">跨端适配检查清单-v3</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
                 <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">设置页</span><span class="ext">.png</span></span></button>
-              </div>
-              <div class="docs" style="margin-top:7px">
-                <button class="doc" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg><span class="nm"><span class="base">跨端适配检查清单-v3</span><span class="ext">.md</span></span><span class="sz">12 KB</span></button>
               </div>
             </div>
           </div>
@@ -1543,7 +1551,7 @@ button.doc:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>文件名</b> — 主名放不下时打省略号,<b>后缀不参与截断、永远可见</b>:整串一起截会先吃掉后缀,人就看不出这是什么文件了。<b>发送前 / 发送后是同一张卡</b> — 待发的附件和已发的用同一套外形:同样 104px、同样 1:1 缩略图、同样的主名省略后缀保留。发送前只多两样 —— 右上角的「×」和上传中压在图上的进度条;按下发送后「×」消失(发出去的消息撤不回,再给删除键等于给一个按了没用的按钮),其余一点不变,所以那一瞬间卡片不会跳形状。<b>上传中</b>进度压在缩略图上而不是另起一行:卡的高度是常量,多一行文字就得给所有卡都留出那一行,而那一行只有上传的那几秒用得上。<b>上传失败</b>可单独重试,也可以直接移除,不挡着其它文件发送。<b>两种模板,按【有没有预览可看】分</b> — png / jpg / sketch / mov(首帧)/ pdf(首页)走<b>图卡</b>;md / txt / csv / json / log / zip 走<b>长条</b>。后面这些没有可看的画面,硬塞进 104×104 的灰方块,那块灰不传达任何东西,而唯一有用的信息 —— 文件名 —— 反而被压在 104px 里截成「跨端适配检查…」;长条把宽度还给文件名,还顺带放得下体积。<b>但同一行里只能有一种模板</b>:图片一行横向滚、文档一行纵向堆,两者<b>分行放</b>。这条是硬规则 —— 线上那版正是把紧凑行和大卡并排塞进同一行,基线对不上、后面的项被撑歪,列表就散了。分行之后每一行内部高度完全一致,不会再有那个问题。图卡这一侧仍然宽固定 104px、缩略图区固定 1:1,认不出的类型压一块灰,不换更矮的模板。两种模板<b>共用同一套文件名规则</b>(主名省略、后缀永不参与截断),类型信息由后缀承担。<b>文档超过三条限高滚动</b>,跟 Queue 同一条理由:它压在流水上,不能由文件数决定吃掉多少屏幕。<b>展示</b>文件名、类型图标、缩略图。</span>
+          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>文件名</b> — 主名放不下时打省略号,<b>后缀不参与截断、永远可见</b>:整串一起截会先吃掉后缀,人就看不出这是什么文件了。<b>发送前 / 发送后是同一张卡</b> — 待发的附件和已发的用同一套外形:同样 104px、同样 1:1 缩略图、同样的主名省略后缀保留。发送前只多两样 —— 右上角的「×」和上传中压在图上的进度条;按下发送后「×」消失(发出去的消息撤不回,再给删除键等于给一个按了没用的按钮),其余一点不变,所以那一瞬间卡片不会跳形状。<b>上传中</b>进度压在缩略图上而不是另起一行:卡的高度是常量,多一行文字就得给所有卡都留出那一行,而那一行只有上传的那几秒用得上。<b>上传失败</b>可单独重试,也可以直接移除,不挡着其它文件发送。<b>两种模板,按【有没有预览可看】分</b> — png / jpg / sketch / mov(首帧)/ pdf(首页)走<b>方图卡</b>;md / txt / csv / json / log / zip 走<b>宽卡</b>。后面这些没有可看的画面,硬塞进 1:1 的灰方块,那块灰不传达任何东西,而唯一有用的信息 —— 文件名 —— 反而被压在 104px 里截成「跨端适配检查…」;宽卡把宽度还给文件名,主名一行、类型和体积一行。<b>两种卡同高,并排在同一行</b>,不分行 —— 会让列表散架的是"同一行里高度对不齐",不是"存在两种模板";等高就够了,不必牺牲单行(线上那版正是把紧凑行和大卡混排、基线对不上)。高度靠 flex 的 stretch 自动跟住图卡,没有第二个数字要维护:以后图卡尺寸再动,宽卡自己跟上。宽卡<b>宽度贴合内容</b>(150–240px):名字短的不占地方,名字长的多要一点,但不无限长 —— 一张卡吃掉整行的话,后面还有几个文件就看不出来了。<b>后缀单独一行</b>(MD / CSV 大写去点),换行之后它天然完整,连"别参与截断"这条都不用写了;方图卡那边窄,仍用主名省略 + 后缀 flex:none 的老办法。<b>「×」两种卡同一个位置</b> —— 右上角。形状可以不同,"删除在哪儿"不能不同,否则一行里每换一张卡就得重新找。<b>展示</b>文件名、类型图标、缩略图。</span>
         </div>
       </article>
 
@@ -1597,11 +1605,11 @@ button.doc:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>发送前 · 文档走长条,同样可逐条移除</span><i></i></div>
+            <div class="st-l"><span>发送前 · 文档同在一行,「×」位置不变</span><i></i></div>
             <div class="st-b">
-              <div class="docs mod-tray">
-                <span class="doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg><span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.md</span></span><span class="sz">12 KB</span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
-                <span class="doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg><span class="nm"><span class="base">埋点清单-v3</span><span class="ext">.csv</span></span><span class="sz">4 KB</span><button class="del" type="button" aria-label="移除 埋点清单-v3.csv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+              <div class="att mod-tray">
+                <span class="att-d"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
               </div>
             </div>
           </div>
@@ -1624,7 +1632,7 @@ button.doc:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v13"/></svg>
-          <span><b>跟 2 · 用户消息-附件是同一张卡</b> —— 同样 104px、同样 1:1 缩略图、同样的主名省略后缀保留。发送前只多两样:右上角的「×」和上传中压在图上的进度条;按下发送后「×」消失,其余一点不变,所以那一瞬间卡片不会跳形状。<b>「×」只在发送前有</b>:发出去的消息撤不回,那一侧再给删除键等于给一个按了没用的按钮。<b>移除</b> — 点「×」拿掉这一个,不影响其它文件。<b>上传中</b>进度压在缩略图上不另起一行:卡高是常量,多一行文字就得给所有卡都留出那一行,而它只在上传的几秒里用得上;这几秒里发送键不可用。<b>上传失败</b>可单独重试,也可以直接移除,不挡别的文件发送。<b>托盘靠左</b>:已发送那侧贴右是因为它跟用户气泡右对齐,而托盘在满宽的输入框里,内容从左边起。<b>文档同样走长条</b>(见 2 · 用户消息-附件),发送前在行尾挂「×」,位置从图卡的右上角挪到行尾 —— 长条没有"角"可占,行尾才是它的对应位置。<b>没有附件时整块不存在</b>,不留空行。</span>
+          <span><b>跟 2 · 用户消息-附件是同一张卡</b> —— 同样 104px、同样 1:1 缩略图、同样的主名省略后缀保留。发送前只多两样:右上角的「×」和上传中压在图上的进度条;按下发送后「×」消失,其余一点不变,所以那一瞬间卡片不会跳形状。<b>「×」只在发送前有</b>:发出去的消息撤不回,那一侧再给删除键等于给一个按了没用的按钮。<b>移除</b> — 点「×」拿掉这一个,不影响其它文件。<b>上传中</b>进度压在缩略图上不另起一行:卡高是常量,多一行文字就得给所有卡都留出那一行,而它只在上传的几秒里用得上;这几秒里发送键不可用。<b>上传失败</b>可单独重试,也可以直接移除,不挡别的文件发送。<b>托盘靠左</b>:已发送那侧贴右是因为它跟用户气泡右对齐,而托盘在满宽的输入框里,内容从左边起。<b>文档走宽卡</b>(见 2 · 用户消息-附件),跟图卡同高、并排在同一行;「×」仍在右上角,两种卡一个位置。<b>没有附件时整块不存在</b>,不留空行。</span>
         </div>
       </article>
 
