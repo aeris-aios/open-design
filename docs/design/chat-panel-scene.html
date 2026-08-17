@@ -1278,14 +1278,17 @@ button.att-d:hover { border-color: var(--border-strong); }
 
 /* ---- 产物卡片 ---- */
 .arts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-.art { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
+/* 卡上不能有 overflow:hidden —— 它会把 ⋯ 的 tooltip 切成半截。
+   它原本只是为了让缩略图的上两角跟着卡圆角,那让缩略图自己圆自己的角就行。 */
+.art { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
 /* 图占主导,用比例声明而不是写死高度。
    ------------------------------------------------------------
    原来 height:78px 配流动宽度,撞出来约 4:1 的长条 —— 既不是任何
    页面的形状,又和下面的文件名+按钮块几乎等高。而这张卡上唯一要
    判断的就是产物长什么样,文件名和按钮只是附属,不该平分版面。
    16:10 是网页/应用界面的常见比例,卡宽以后再变高度会自己跟上。 */
-.art .thumb { display: block; aspect-ratio: 16/10; height: auto; background: var(--bg-subtle); }
+.art .thumb { display: block; aspect-ratio: 16/10; height: auto; background: var(--bg-subtle);
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; overflow: hidden; }
 .art .b { padding: 7px 9px; }
 /* 卡上只写文件名,不再另起一行中文标题。
    ------------------------------------------------------------
@@ -1357,6 +1360,22 @@ button.att-d:hover { border-color: var(--border-strong); }
 [data-tip]:hover::after, [data-tip]:hover::before,
 [data-tip]:focus-visible::after, [data-tip]:focus-visible::before,
 [data-tip].is-tip::after, [data-tip].is-tip::before { opacity: 1; }
+
+/* 贴边补正。
+   ------------------------------------------------------------
+   气泡默认居中在按钮上方,而按钮常常就贴在一个 overflow 容器的边上:
+   队列限了高(overflow-y:auto —— 一轴非 visible,另一轴也跟着变裁剪区),
+   面板头部贴着面板顶边,产物卡的 ⋯ 贴着滚动区右缘。居中的气泡有一半在
+   容器外,被切成半截,比不出还糟。
+   这三个 modifier 不改气泡样式,只改它相对按钮的锚点;小三角始终留在
+   按钮正中,所以指向不会跟着漂。 */
+[data-tip].mod-tip-s::after { left: 0; translate: 0 0; }              /* 左缘对齐按钮左缘 */
+[data-tip].mod-tip-e::after { left: auto; right: 0; translate: 0 0; } /* 右缘对齐按钮右缘 */
+[data-tip].mod-tip-b::after { bottom: auto; top: calc(100% + 5px); }  /* 翻到按钮下方 */
+[data-tip].mod-tip-b::before {
+  bottom: auto; top: calc(100% + 1px);
+  border-top: 0; border-bottom: 4px solid var(--text-strong); border-top-color: transparent;
+}
 
 /* ---- 反馈行 ---- */
 /* 回合状态:这一轮结束了没有、花了多少。
@@ -1727,8 +1746,8 @@ body { background: var(--bg-subtle); overflow: auto; }
     <p class="scene-cap">执行中<span>Queue 只在这时候存在 · 输入框里还压着两个待发的附件</span></p>
       <div class="panel">
         <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
-          <button type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
-          <button type="button" aria-label="新会话" data-tip="新会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
+          <button class="mod-tip-b" type="button" aria-label="新会话" data-tip="新会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
         <div class="flow">
         <div class="msg-me"><div class="msg-stack">
@@ -1777,8 +1796,8 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="dock">
           <div class="queue">
             <div class="qh"><span>排队中</span><span class="c">2 条</span></div>
-            <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
-            <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
+            <div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button class="mod-tip-e" type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
+            <div class="q"><span class="grip mod-tip-s" role="button" tabindex="0" aria-label="拖动调整顺序" data-tip="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送" data-tip="插队,立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑" data-tip="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button class="mod-tip-e" type="button" aria-label="取消排队" data-tip="从队列移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
           </div>
           <div class="composer">
             <div class="tray"><div class="att mod-tray"><span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 新首页草图.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span><span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">埋点清单-v3</span><span class="ext">.csv</span></span><span class="meta">4 KB</span></span><button class="del" type="button" aria-label="移除 埋点清单-v3.csv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span></div></div>
@@ -1797,8 +1816,8 @@ body { background: var(--bg-subtle); overflow: auto; }
     <p class="scene-cap">同一个面板 · 收尾<span>已滚到底 · Queue 空了整块消失,回合状态与下一步引导接上</span></p>
       <div class="panel">
         <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
-          <button type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
-          <button type="button" aria-label="新会话" data-tip="新会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
+          <button class="mod-tip-b" type="button" aria-label="新会话" data-tip="新会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
         <div class="flow">
         <div class="answered">
@@ -1819,9 +1838,9 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="arts">
           <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">product-list.html</div></div>
-            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
+            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more mod-tip-e" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
           <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">settings.html</div></div>
-            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
+            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more mod-tip-e" type="button" aria-label="更多操作" data-tip="发布 / 导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
         </div>
 
         <div class="say">两页都好了,商品卡已经抽成共享组件,改一处两页都跟着变。</div>
