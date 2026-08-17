@@ -685,20 +685,19 @@ button.att-i:hover { border-color: var(--border-strong); }
 .att-d {
   position: relative; flex: none;
   width: max-content; min-width: 150px; max-width: 240px;
-  display: flex; align-items: center; gap: 9px; padding: 0 11px;
+  display: flex; align-items: center; gap: 9px; padding: 9px 11px;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg); text-align: left;
   transition: border-color var(--duration-faster) var(--ease-out);
 }
 button.att-d:hover { border-color: var(--border-strong); }
-/* 左边那枚图标压在一块圆角灰上 —— 跟图卡的缩略图区是同一个角色:
-   "这一格是这个文件的脸"。图卡那块灰是缩略图,这里放不下缩略图,
-   就放一个文件图标,位置和圆角对得上,两张卡才像一家人。 */
-.att-d .ic {
-  flex: none; display: grid; place-items: center; width: 38px; height: 38px;
-  border-radius: var(--radius-sm); background: var(--bg-muted); color: var(--text-soft);
-}
-.att-d .ic svg { width: 17px; height: 17px; }
+/* 图标就是一枚 15px 的线稿,不压在灰块上。
+   原来那块 38×38 的圆角灰是想跟图卡的缩略图区呼应,但它什么也没说 ——
+   缩略图是内容,这块灰只是个装饰,占的地方比它给的信息多得多。
+   而且它一度是这张卡里最高的元素:.att-d 的纵向内边距当时写成了 0,
+   卡片高度直接等于这块灰的 38px,于是左右有 11px、上下贴边,整张卡失衡。
+   现在图标缩到跟文字一个量级,纵向内边距补成 9px,四边才对得上。 */
+.att-d .fi { flex: none; width: 15px; height: 15px; color: var(--text-soft); }
 .att-d .tx { min-width: 0; display: block; }
 /* 主名一行、后缀单独一行。
    这一版不再拿 flex 挤后缀 —— 换行之后后缀天然占满自己那一行,
@@ -1499,8 +1498,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>文档 · 出不了预览的换一张更宽的卡,不硬塞缩略图</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
-                <button class="att-d" type="button" aria-label="打开 埋点清单-v3.csv"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">埋点清单-v3</span><span class="meta"><span class="k">csv</span> · 4 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 埋点清单-v3.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">埋点清单-v3</span><span class="meta"><span class="k">csv</span> · 4 KB</span></span></button>
               </div>
             </div>
           </div>
@@ -1509,7 +1508,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="att">
                 <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
-                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">跨端适配检查清单-v3</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">跨端适配检查清单-v3</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
                 <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button>
               </div>
             </div>
@@ -1532,8 +1531,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>文件名过长 · 宽卡里主名省略,后缀在下一行永远完整</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿-第三轮评审后</span><span class="meta"><span class="k">md</span> · 18 KB</span></span></button>
-                <button class="att-d" type="button" aria-label="打开 埋点.csv"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">埋点</span><span class="meta"><span class="k">csv</span> · 2 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">商品卡组件规格说明终稿-第三轮评审后</span><span class="meta"><span class="k">md</span> · 18 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 埋点.csv"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">埋点</span><span class="meta"><span class="k">csv</span> · 2 KB</span></span></button>
               </div>
             </div>
           </div>
@@ -1597,7 +1596,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>发送前 · 文档同在一行,「×」位置不变</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-d"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
                 <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
               </div>
             </div>
