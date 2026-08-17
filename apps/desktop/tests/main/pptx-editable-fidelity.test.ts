@@ -29,6 +29,7 @@ const previousGlobals = {
 
 afterEach(() => {
   Object.assign(globalThis, previousGlobals);
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -147,6 +148,7 @@ describe('editable PPTX font fidelity', () => {
     expect(fetcher).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledWith('https://fonts.googleapis.com/css2?family=Fraunces', {
       headers: { 'user-agent': 'Mozilla/5.0' },
+      signal: expect.any(AbortSignal),
     });
     expect(stylesheets).toEqual([
       {
@@ -154,6 +156,29 @@ describe('editable PPTX font fidelity', () => {
         url: 'https://fonts.googleapis.com/css2?family=Fraunces',
       },
     ]);
+  });
+
+  test('stops waiting when a Google Fonts stylesheet request never resolves', async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    const fetcher = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>(() => {
+          requestSignal = init?.signal ?? undefined;
+        }),
+    );
+
+    const pending = fetchGoogleFontStylesheets(
+      ['https://fonts.googleapis.com/css2?family=Fraunces'],
+      fetcher,
+    );
+    const settled = vi.fn();
+    void pending.then(settled);
+
+    await vi.runAllTimersAsync();
+
+    expect(settled).toHaveBeenCalledWith([]);
+    expect(requestSignal?.aborted).toBe(true);
   });
 
   test('exposes @font-face rules from imported stylesheets before export', async () => {

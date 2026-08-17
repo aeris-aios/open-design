@@ -56,21 +56,41 @@ type FontStylesheetFetcher = (
   init?: RequestInit,
 ) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
+const GOOGLE_FONT_STYLESHEET_TIMEOUT_MS = 10_000;
+
 export async function fetchGoogleFontStylesheets(
   urls: string[],
   fetcher: FontStylesheetFetcher = fetch,
 ): Promise<Array<{ cssText: string; url: string }>> {
   const stylesheets: Array<{ cssText: string; url: string }> = [];
   for (const url of urls) {
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       if (new URL(url).hostname !== "fonts.googleapis.com") continue;
       // A generic UA makes Google Fonts return complete TTF faces. Chromium's
       // WOFF2 subsets are less reliable in the vendored PowerPoint converter.
-      const response = await fetcher(url, { headers: { "user-agent": "Mozilla/5.0" } });
-      if (!response.ok) continue;
-      stylesheets.push({ cssText: await response.text(), url });
+      const stylesheet = await Promise.race([
+        (async () => {
+          const response = await fetcher(url, {
+            headers: { "user-agent": "Mozilla/5.0" },
+            signal: controller.signal,
+          });
+          if (!response.ok) return null;
+          return { cssText: await response.text(), url };
+        })(),
+        new Promise<null>((resolve) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            resolve(null);
+          }, GOOGLE_FONT_STYLESHEET_TIMEOUT_MS);
+        }),
+      ]);
+      if (stylesheet) stylesheets.push(stylesheet);
     } catch {
       // The renderer-side fetch remains the fallback when prefetching fails.
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }
   return stylesheets;
