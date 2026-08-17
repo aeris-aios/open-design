@@ -501,6 +501,18 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 
 /* ---- 用户消息 ---- */
 .msg-me { display: flex; justify-content: flex-end; }
+/* 一条消息同时带文字和附件 —— 这是最常见的发送形态。
+   ------------------------------------------------------------
+   附件在上、文字在下,不并排:并排的话附件条会跟气泡抢那 380px 的宽度,
+   两边都变窄;而且附件是"我拿了这些东西来",文字是"我要你拿它们做什么",
+   前者是后者的前提,读的顺序本来就该是先看东西再看要求。
+   两者右边界对齐 —— 它们是同一条消息,不是两条。
+   壳子不设 width:100%:那样两个孩子会各自按自己的百分比算宽度,
+   右边界反而对不上;让壳子收缩到内容宽,再由 .msg-me 整体推到右边。
+   中间 6px:比附件之间的 7px 略紧,让它们读起来是一组而不是两件事。 */
+.msg-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 380px; }
+.msg-stack .att { max-width: 100%; }
+.msg-stack .bub { max-width: 100%; }
 /* ---- 长串兜底 ----
    凡是承载【用户输入或外部数据】的容器,都要能把一串没有空格的东西断开:
    链接、token、路径、base64。中文自己会断,带空格的英文也会断,所以这个
@@ -1746,7 +1758,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l"><span>发送后 · 图只有缩略图,不挂文件名(与 22 同一张卡,只少一个「×」)</span><i></i></div>
+            <div class="st-l mod-def"><span>发送后 · 图只有缩略图,不挂文件名(与 22 同一张卡,只少一个「×」)</span><i></i></div>
             <div class="st-b">
               <div class="att">
                 <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
@@ -1754,6 +1766,18 @@ button.att-d:hover { border-color: var(--border-strong); }
               </div>
             </div>
           </div>
+          <div class="st">
+            <div class="st-l"><span>文字 + 附件 · 最常见的一条,附件在上文字在下</span><i></i></div>
+            <div class="st-b">
+              <div class="msg-me">
+                <div class="msg-stack">
+                  <div class="att"><button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button><button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button><button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">跨端适配检…-v3</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button></div>
+                  <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="st">
             <div class="st-l"><span>失败 · 红框 + 重试</span><i></i></div>
             <div class="st-b">
