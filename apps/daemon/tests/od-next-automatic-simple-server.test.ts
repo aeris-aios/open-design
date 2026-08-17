@@ -422,6 +422,12 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[2]?.argv.slice(0, 2)).toEqual(['exec', 'resume']);
     expect(invocations[1]?.stdin).toContain('native continuation — contract_repair');
     expect(invocations[2]?.stdin).toContain('native continuation — production');
+    expect(invocations[1]?.stdin).toMatch(/^# OD Next native continuation — contract_repair/);
+    expect(invocations[2]?.stdin).toMatch(/^# OD Next native continuation — production/);
+    expect(invocations[1]?.stdin).not.toContain('# User request');
+    expect(invocations[2]?.stdin).not.toContain('# User request');
+    expect(invocations[1]?.stdin).not.toContain('open-design.strategy-state/v2');
+    expect(invocations[2]?.stdin).not.toContain('open-design.strategy-state/v2');
     expect(statuses[0]!.updatedAt).toBeLessThanOrEqual(invocations[1]!.startedAt);
     expect(statuses[1]!.updatedAt).toBeLessThanOrEqual(invocations[2]!.startedAt);
 

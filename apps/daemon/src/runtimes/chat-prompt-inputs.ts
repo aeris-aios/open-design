@@ -7,6 +7,11 @@ import {
   type StableChangedSection,
   type StableSectionHashes,
 } from '../prompts/stable-sections.js';
+import {
+  assertOdNextLegacyTextContributorCoverage,
+  type OdNextExactInputStage,
+  type OdNextLegacyTextContributorId,
+} from './od-next-exact-input.js';
 
 export const MAX_CHAT_IMAGE_BYTES = 1024 * 1024;
 export const UPLOAD_DIR = path.join(os.tmpdir(), 'od-uploads');
@@ -82,6 +87,112 @@ export function composeLiveInstructionPrompt({
     parts.push(override);
   }
   return parts.join('\n\n---\n\n');
+}
+
+export function composeChatAgentTextPayload({
+  formOverride,
+  daemonSystemPrompt,
+  runtimeToolPrompt,
+  researchCommandContract,
+  runContextPrompt,
+  connectedExternalMcpReference,
+  browserUnavailableGuard,
+  titleGenerationDirective,
+  clientSystemPrompt,
+  cwdReference,
+  linkedDirectoryReferences,
+  echoGuard,
+  requestOrStageText,
+  projectAttachmentReferences,
+  commentAttachmentReferences,
+  imageReferences,
+  strategyInputStage = null,
+}: {
+  formOverride: string;
+  daemonSystemPrompt: string;
+  runtimeToolPrompt: string;
+  researchCommandContract: string;
+  runContextPrompt: string;
+  connectedExternalMcpReference: string;
+  browserUnavailableGuard: string;
+  titleGenerationDirective: string;
+  clientSystemPrompt: string;
+  cwdReference: string;
+  linkedDirectoryReferences: string;
+  echoGuard: string;
+  requestOrStageText: string;
+  projectAttachmentReferences: string;
+  commentAttachmentReferences: string;
+  imageReferences: string;
+  strategyInputStage?: OdNextExactInputStage | null;
+}) {
+  const contributors: Record<OdNextLegacyTextContributorId, string> = {
+    form_override: formOverride,
+    daemon_system_prompt: daemonSystemPrompt,
+    runtime_tool_prompt: runtimeToolPrompt,
+    research_command_contract: researchCommandContract,
+    run_context_prompt: runContextPrompt,
+    connected_external_mcp_reference: connectedExternalMcpReference,
+    browser_unavailable_guard: browserUnavailableGuard,
+    title_generation_directive: titleGenerationDirective,
+    client_system_prompt: clientSystemPrompt,
+    cwd_reference: cwdReference,
+    linked_directory_references: linkedDirectoryReferences,
+    echo_guard: echoGuard,
+    request_text: requestOrStageText,
+    project_attachment_references: projectAttachmentReferences,
+    comment_attachment_references: commentAttachmentReferences,
+    image_references: imageReferences,
+  };
+  if (strategyInputStage && strategyInputStage !== 'request') {
+    assertOdNextLegacyTextContributorCoverage(
+      [`${strategyInputStage}_turn`],
+      strategyInputStage,
+    );
+    return {
+      composedPrompt: requestOrStageText,
+      clientInstructionPrompt: '',
+      instructionPrompt: '',
+    };
+  }
+  assertOdNextLegacyTextContributorCoverage(Object.keys(contributors), strategyInputStage);
+
+  const clientInstructionPrompt = [
+    researchCommandContract,
+    runContextPrompt,
+    connectedExternalMcpReference,
+    browserUnavailableGuard,
+    titleGenerationDirective,
+    clientSystemPrompt,
+  ]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter(Boolean)
+    .join('\n\n---\n\n');
+  const instructionPrompt = composeLiveInstructionPrompt({
+    daemonSystemPrompt,
+    runtimeToolPrompt,
+    clientSystemPrompt: clientInstructionPrompt,
+    finalPromptOverride: null,
+  });
+  const composedPrompt = [
+    instructionPrompt
+      ? `# Instructions (read first)\n\n${formOverride}${instructionPrompt}${cwdReference}${linkedDirectoryReferences}${echoGuard}\n\n---\n`
+      : cwdReference
+        ? `# Instructions\n\n${formOverride}${cwdReference}${linkedDirectoryReferences}${echoGuard}\n\n---\n`
+        : linkedDirectoryReferences
+          ? `# Instructions\n\n${formOverride}${linkedDirectoryReferences}${echoGuard}\n\n---\n`
+          : formOverride
+            ? `# Instructions\n\n${formOverride}${echoGuard}\n\n---\n`
+            : '',
+    `# User request\n\n${requestOrStageText}${projectAttachmentReferences}${commentAttachmentReferences}`,
+    imageReferences ? `\n\n${imageReferences}` : '',
+  ].join('');
+
+  return {
+    composedPrompt,
+    clientInstructionPrompt,
+    instructionPrompt,
+  };
 }
 
 export function resolveResearchCommandContract(

@@ -88,6 +88,7 @@ import {
 } from './browser/index.js';
 import {
   UPLOAD_DIR,
+  composeChatAgentTextPayload,
   composeLiveInstructionPrompt,
   formatDesignFilesWorkspaceHint,
   formatProjectAttachmentHint,
@@ -141,6 +142,7 @@ import {
   scanRunEventsForRetrySideEffects,
 } from './runtimes/run-lifecycle-analytics.js';
 export {
+  composeChatAgentTextPayload,
   composeLiveInstructionPrompt,
   formatDesignFilesWorkspaceHint,
   formatProjectAttachmentHint,
@@ -10992,19 +10994,6 @@ export async function startServer({
     // across resumes (protecting the conversation-history cache) while still
     // giving the model the current MCP auth state on every turn.
     const mcpConnectedDirective = renderConnectedExternalMcpDirective(connectedExternalMcp);
-    const clientInstructionParts = includeStableInstructions
-      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, systemPrompt]
-      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt];
-    const clientInstructionPrompt = clientInstructionParts
-      .map((part) => (typeof part === 'string' ? part.trim() : ''))
-      .filter(Boolean)
-      .join('\n\n---\n\n');
-    const instructionPrompt = composeLiveInstructionPrompt({
-      daemonSystemPrompt: includeStableInstructions ? daemonSystemPrompt : '',
-      runtimeToolPrompt: includeStableInstructions ? runtimeToolPrompt : '',
-      clientSystemPrompt: clientInstructionPrompt,
-      finalPromptOverride: null,
-    });
     // Some models (notably claude-opus-4-7 with --include-partial-messages)
     // start their reply by echoing the top of the user message verbatim,
     // so the rendered chat shows a "# Instructions ..." block ahead of the
@@ -11031,21 +11020,28 @@ export async function startServer({
       safeImages,
       amrStagedImages,
     );
-    const composed = [
-      instructionPrompt
-        ? `# Instructions (read first)\n\n${formOverride}${instructionPrompt}${cwdHint}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
-        : cwdHint
-          ? `# Instructions\n\n${formOverride}${cwdHint}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
-          : linkedDirsHint
-            ? `# Instructions\n\n${formOverride}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
-            : formOverride
-              ? `# Instructions\n\n${formOverride}${ECHO_GUARD}\n\n---\n`
-              : '',
-      `# User request\n\n${userRequestPrompt}${attachmentHint}${commentHint}`,
-      promptImagePaths.length
-        ? `\n\n${promptImagePaths.map((p) => `@${p}`).join(' ')}`
-        : '',
-    ].join('');
+    const {
+      composedPrompt: composed,
+      clientInstructionPrompt,
+    } = composeChatAgentTextPayload({
+      formOverride,
+      daemonSystemPrompt: includeStableInstructions ? daemonSystemPrompt : '',
+      runtimeToolPrompt: includeStableInstructions ? runtimeToolPrompt : '',
+      researchCommandContract,
+      runContextPrompt,
+      connectedExternalMcpReference: mcpConnectedDirective,
+      browserUnavailableGuard: browserUsePromptGuard,
+      titleGenerationDirective: titleGenerationPrompt,
+      clientSystemPrompt: includeStableInstructions ? systemPrompt : '',
+      cwdReference: cwdHint,
+      linkedDirectoryReferences: linkedDirsHint,
+      echoGuard: ECHO_GUARD,
+      requestOrStageText: userRequestPrompt,
+      projectAttachmentReferences: attachmentHint,
+      commentAttachmentReferences: commentHint,
+      imageReferences: promptImagePaths.map((p) => `@${p}`).join(' '),
+      strategyInputStage: strategyTaskAtStart?.inputStage ?? null,
+    });
     run.promptTelemetry = buildPromptStackTelemetry({
       composedPrompt: composed,
       sections: [
