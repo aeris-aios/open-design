@@ -1337,7 +1337,15 @@ button.att-d:hover { border-color: var(--border-strong); }
   margin-inline-end: 4px; font-size: var(--t-cap); color: var(--text-muted);
 }
 /* 完成用绿点 —— 绿在这套系统里就是"通过了"。停止用中性灰:
-   它不是出事,只是没跑完,红要留给真的错误。 */
+   它不是出事,只是没跑完,红要留给真的错误。
+   ------------------------------------------------------------
+   停止时状态词【带一个限定语】,分两种写法:
+     还有没跑完的  →「已停止,仍有未完成任务」,上面同时有 20/21 那张卡
+     正好跑完了    →「已停止」,不出卡
+   这一句是两者不重复的关键:卡片说"剩下哪几条、怎么继续",状态行说
+   "这轮到此为止 + 花了多少",而限定语负责告诉你【要不要往上看那张卡】。
+   没有它的话,「已停止」三个字在两种情况下长得一样,人只能自己往上翻。
+   也正因为有它,"停止且无剩余"不需要再单独摆一条通知 —— 这一行就够了。 */
 .fb .fin i { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--brand-text); }
 .fb .fin.mod-stop i { background: var(--text-faint); }
 /* 用等宽数字,不用等宽【字体】。
@@ -2681,10 +2689,10 @@ button.att-d:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>这轮被中断 · 状态词换成「已停止」,绿点转灰</span><i></i></div>
+            <div class="st-l"><span>这轮被中断 · 状态词说清有没有剩余,绿点转灰</span><i></i></div>
             <div class="st-b">
               <div class="fb">
-                <span class="fin mod-stop"><i></i>已停止<span class="cost">4.0s · 311</span></span><span class="sp"></span>
+                <span class="fin mod-stop"><i></i>已停止,仍有未完成任务<span class="cost">4.0s · 311</span></span><span class="sp"></span>
                 <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
                 <button type="button" aria-label="Fork" data-tip="以此新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
                 <span class="tm">14:32</span>
@@ -2713,7 +2721,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg>
-          <span><b>赞 / 踩</b> — 单击切换,互斥;踩后弹窗选原因 + 补充。<b>复制</b> — 复制该条回复全文。<b>Fork</b> — 以此为上下文新开会话。<b>行首是回合状态</b>:已完成 / 已停止,后跟耗时与用量。纯图标按钮 hover 或键盘聚焦时出 Tooltip。</span>
+          <span><b>赞 / 踩</b> — 单击切换,互斥;踩后弹窗选原因 + 补充。<b>复制</b> — 复制该条回复全文。<b>Fork</b> — 以此为上下文新开会话。<b>行首是回合状态</b>:已完成 / 已停止,后跟耗时与用量。停止时状态词说清有没有剩余 —— 有则「已停止,仍有未完成任务」(上面同时有 20 / 21 那张卡),正好跑完则只写「已停止」、不出卡。纯图标按钮 hover 或键盘聚焦时出 Tooltip。</span>
         </div>
       </article>
 
