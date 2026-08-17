@@ -1050,7 +1050,10 @@ button.att-i:hover { border-color: var(--border-strong); }
 /* 只报数字不报后果,人没有行动的理由 —— $3.20 是多是少他不知道。
    这一行讲的是"不充会怎样",不是促销。刻意不写"还能跑 N 轮"之类的
    估算:单轮消耗随任务浮动,给个数反而是承诺了做不到的精确。 */
-.up .h .amt .why { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
+/* 后果说明用 --text-soft(次级文字档),比金额浅一档 ——
+   它是补充说明,不该和"剩余额度 $3.20"抢同一层。
+   耗尽态例外:那条不是补充说明而是硬结论(发不出去了),保持红色。 */
+.up .h .amt .why { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-soft); }
 .up .h .amt.is-out .why { color: var(--red); }
 .up .meter { height: 4px; background: var(--border-soft); }
 .up .meter i { display: block; height: 100%; background: var(--amber); }
