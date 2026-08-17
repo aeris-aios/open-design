@@ -155,6 +155,20 @@ export function isKnownServiceTier(
   );
 }
 
+export function isKnownReasoningEffort(
+  def: RuntimeAgentDef,
+  modelId: string | null | undefined,
+  reasoningEffort: string | null | undefined,
+  scope?: string | null,
+): boolean {
+  if (!reasoningEffort) return false;
+  const modelOptions = findKnownModel(def, modelId, scope)?.reasoningOptions;
+  if (Array.isArray(modelOptions)) {
+    return modelOptions.some((option) => option.id === reasoningEffort);
+  }
+  return Boolean(def.reasoningOptions?.some((option) => option.id === reasoningEffort));
+}
+
 export function resolveModelForServiceTier(
   def: RuntimeAgentDef,
   modelId: string | null | undefined,
