@@ -1534,7 +1534,9 @@ test('[P2] zh-CN home smoke exposes the localized creation type, design system, 
     'title',
     '上传文件、关联设计系统，或描述你想创作的内容',
   );
-  await expect(page.getByTestId('home-hero-template-trigger')).toContainText('幻灯片');
+  // Prototype remains the fresh-Home default in zh-CN; this catalog label is
+  // intentionally shared with English rather than translated to the old deck label.
+  await expect(page.getByTestId('home-hero-template-trigger')).toContainText('UI Mockup');
   await expect(page.getByTestId('home-hero-design-system-trigger')).toContainText('设计体系');
   await expect(page.getByTestId('working-dir-picker')).toContainText('工作目录');
   await expect(page.getByTestId('home-hero-submit')).toHaveAccessibleName('运行');

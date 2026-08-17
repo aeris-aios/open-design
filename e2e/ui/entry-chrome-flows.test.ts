@@ -393,10 +393,10 @@ test('[P1] entry top navigation matches the current home tab structure', async (
   await expect(page.locator('.entry-nav-rail__footer').getByTestId('entry-nav-plugins')).toHaveCount(0);
 
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
-  // Fresh Home now waits for and binds the default Slide deck route. The
+  // Fresh Home now waits for and binds the default Web Prototype route. The
   // binding is intentionally silent (no active-plugin context chip), while
-  // its deck inputs and examples are ready before Send becomes actionable.
-  await expect(page.getByTestId('home-hero-template-trigger')).toContainText(/Slide deck/i);
+  // its prototype inputs and examples are ready before Send becomes actionable.
+  await expect(page.getByTestId('home-hero-template-trigger')).toContainText(/UI Mockup/i);
   await expect(page.getByTestId('home-hero-active-plugin')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-type-pills')).toBeVisible();
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
