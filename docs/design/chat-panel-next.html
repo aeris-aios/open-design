@@ -871,6 +871,8 @@ button.att-d:hover { border-color: var(--border-strong); }
 .fold > summary .ms { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
 .fold > summary .chev { margin-left: auto; display: inline-flex; transition: transform var(--duration-faster) var(--ease-out); }
 .fold > summary .ms + .chev { margin-left: 0; }
+/* 等宽里一个空格占满一格,中文夹数字会被撑得很散;只借它的数字对齐。 */
+.fold > summary .ms.mod-num, .tool .ms.mod-num { font-family: inherit; font-variant-numeric: tabular-nums; }
 .fold[open] > summary .chev { transform: rotate(180deg); }
 .fold .body { padding: 0 11px 10px; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); }
 .fold .body.mod-scroll { max-height: 96px; overflow-y: auto; }
@@ -2499,13 +2501,13 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>完成 · 整体收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务 · 耗时 1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转</div></details>
+              <details class="fold mod-step"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务</span><span class="ms mod-num">1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽出商品卡 · 做设置页 · 接上跳转</div></details>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
-          <span><b>展开收起</b> — 点任务组标题行。手动展开的组不再自动收起。展示当前任务名、第 n/N 步、耗时。</span>
+          <span><b>展开收起</b> — 点任务组标题行。手动展开的组不再自动收起。展示当前任务名、第 n/N 步、耗时。<b>跑完之后整段收成一行</b> —— 过程只在进行中有用:那时人要判断「它在干嘛、还要多久、要不要停」。一旦跑完,该看的是结果(产物、总结、下一步);过程降级成「万一要查」的东西,继续摊在外面就是拿十几行噪音把结果推下屏。<b>耗时留在这一行</b>,不在下面的回合状态行里再写一遍 —— 同一个数字写两遍,第二遍不携带任何信息。</span>
         </div>
       </article>
 
