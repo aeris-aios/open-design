@@ -5260,7 +5260,7 @@ export const hu: Dict = {
   'campaign.deepseekV4Flash.workbenchBadge': 'DeepSeek V4 Pro + V4 Flash korlátlanul, ingyen',
   'campaign.deepseekV4Flash.workbenchBadgeAria': 'DeepSeek V4 Pro és V4 Flash korlátlanul és ingyen — árak megtekintése',
 
-  'experienceSurvey.tag': "A visszajelzésed jobbá teszi az Open Designt",
+  'experienceSurvey.tag': "Várjuk a visszajelzésed — segíts jobbá tenni az Open Designt",
   'experienceSurvey.close': "Bezárás",
   'experienceSurvey.satisfaction': "Összességében mennyire vagy elégedett az Open Designnal?",
   'experienceSurvey.satisfactionLow': "Egyáltalán nem elégedett",

@@ -5260,7 +5260,7 @@ export const ja: Dict = {
   'campaign.deepseekV4Flash.workbenchBadge': 'DeepSeek V4 Pro + V4 Flash 無制限で無料',
   'campaign.deepseekV4Flash.workbenchBadgeAria': 'DeepSeek V4 Pro と V4 Flash が無制限で無料 — 料金ページを見る',
 
-  'experienceSurvey.tag': "あなたのフィードバックが Open Design を良くします",
+  'experienceSurvey.tag': "ご意見をお聞かせください。一緒に Open Design を良くしていきましょう",
   'experienceSurvey.close': "閉じる",
   'experienceSurvey.satisfaction': "全体として、Open Design にどのくらい満足していますか？",
   'experienceSurvey.satisfactionLow': "とても不満",

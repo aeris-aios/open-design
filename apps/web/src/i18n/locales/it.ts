@@ -5260,7 +5260,7 @@ export const it: Dict = {
   'campaign.deepseekV4Flash.workbenchBadge': 'DeepSeek V4 Pro + V4 Flash illimitati e gratis',
   'campaign.deepseekV4Flash.workbenchBadgeAria': 'DeepSeek V4 Pro e V4 Flash illimitati e gratis — vedi i prezzi',
 
-  'experienceSurvey.tag': "Il tuo feedback rende Open Design migliore",
+  'experienceSurvey.tag': "Il tuo parere ci serve: aiutaci a migliorare Open Design",
   'experienceSurvey.close': "Chiudi",
   'experienceSurvey.satisfaction': "Nel complesso, quanto sei soddisfatto di Open Design?",
   'experienceSurvey.satisfactionLow': "Per niente soddisfatto",
