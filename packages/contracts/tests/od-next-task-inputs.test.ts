@@ -34,6 +34,11 @@ describe('OD Next task input facts', () => {
   it('keeps only logical transport references and immutable attachment facts', () => {
     const serialized = serializeOdNextRequestInputFactsV1({
       schema: OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1,
+      attachmentTransport: {
+        scheme: 'task-input',
+        rootEnvironmentVariable: 'OD_TASK_INPUT_DIR',
+        access: 'out_of_band',
+      },
       attachments: [{
         id: 'attachment-001',
         order: 1,
@@ -51,6 +56,7 @@ describe('OD Next task input facts', () => {
       mcp: { serverCount: 1, registration: 'out_of_band' },
     });
     expect(serialized).toContain('task-input:attachments/attachment-001.png');
+    expect(serialized).toContain('OD_TASK_INPUT_DIR');
     expect(serialized).toContain('linked-dir:1');
     expect(serialized).not.toContain('oauth');
     expect(serialized).not.toContain('/private/');

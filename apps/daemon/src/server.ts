@@ -468,7 +468,7 @@ import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
 import {
-  loadOdNextTaskInputSnapshot,
+  createOdNextRunInputProjection,
   OdNextTaskInputSnapshotError,
 } from './strategies/od-next/task-input-snapshot.js';
 import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
@@ -10338,10 +10338,12 @@ export async function startServer({
     let odNextTaskInputSnapshot = null;
     if (run.odNextTaskInputSnapshot) {
       try {
-        odNextTaskInputSnapshot = loadOdNextTaskInputSnapshot(
-          run.odNextTaskInputSnapshot,
-          path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
-        );
+        odNextTaskInputSnapshot = createOdNextRunInputProjection({
+          descriptor: run.odNextTaskInputSnapshot,
+          snapshotsRoot: path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
+          projectionsRoot: path.join(RUNTIME_DATA_DIR, 'od-next-run-inputs'),
+          runId: run.id,
+        });
       } catch (error) {
         return design.runs.fail(
           run,
@@ -10856,7 +10858,9 @@ export async function startServer({
         designSystemsDir: DESIGN_SYSTEMS_DIR,
         linkedDirs,
       }),
-      ...(odNextTaskInputSnapshot ? [odNextTaskInputSnapshot.snapshotDir] : []),
+      ...(odNextTaskInputSnapshot
+        ? [odNextTaskInputSnapshot.projectionAccessRoot]
+        : []),
     ];
     const researchCommandContract = resolveResearchCommandContract(
       research,
@@ -12907,6 +12911,12 @@ export async function startServer({
         ...(opencodeConfigContent
           ? { [isMiMoContent ? 'MIMOCODE_CONFIG_CONTENT' : 'OPENCODE_CONFIG_CONTENT']: opencodeConfigContent }
           : {}),
+        // Daemon-owned resolver for task-input: references. Keep this last so
+        // configured/BYOK/runtime env cannot redirect the Agent from the
+        // verified Run projection back to mutable or canonical bytes.
+        ...(odNextTaskInputSnapshot
+          ? { OD_TASK_INPUT_DIR: odNextTaskInputSnapshot.projectionDir }
+          : {}),
       }, agentLaunch);
       spawnedAgentEnv = env;
       const invocation = createCommandInvocation({
@@ -13843,7 +13853,7 @@ export async function startServer({
           }
         },
         imagePaths: def.supportsImagePaths ? promptImagePaths : [],
-        uploadRoot: odNextTaskInputSnapshot?.snapshotDir ?? UPLOAD_DIR,
+        uploadRoot: odNextTaskInputSnapshot?.projectionDir ?? UPLOAD_DIR,
       });
     } else if (def.streamFormat === 'acp-json-rpc') {
       const acpStageTimeoutMs = resolveAcpStageTimeoutMs(def.inactivityTimeoutMs);
@@ -13853,6 +13863,7 @@ export async function startServer({
         cwd: effectiveCwd,
         model: safeModel,
         imagePaths: def.supportsImagePaths ? promptImagePaths : [],
+        resourcePaths: odNextTaskInputSnapshot?.attachmentPaths ?? [],
         mcpServers,
         envFormat: def.acpMcpEnvFormat ?? 'array',
         executionProfile,

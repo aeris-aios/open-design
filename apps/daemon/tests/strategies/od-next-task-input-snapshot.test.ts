@@ -1,9 +1,23 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildOdNextTaskConfigurationV1,
+  createOdNextRunInputProjection,
   createOdNextTaskInputSnapshot,
   loadOdNextTaskInputSnapshot,
   OdNextTaskInputSnapshotError,
@@ -11,6 +25,14 @@ import {
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const roots: string[] = [];
+
+function makeTreeWritable(target: string): void {
+  if (!existsSync(target)) return;
+  const stat = lstatSync(target);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return;
+  chmodSync(target, 0o700);
+  for (const entry of readdirSync(target)) makeTreeWritable(path.join(target, entry));
+}
 
 function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), 'od-next-input-'));
@@ -31,7 +53,10 @@ function fixture() {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) {
+    makeTreeWritable(root);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 describe('OD Next task-scoped input snapshots', () => {
@@ -60,6 +85,7 @@ describe('OD Next task-scoped input snapshots', () => {
     expect(loaded.requestInputText).toContain('"kind":"file"');
     expect(loaded.requestInputText).toContain('"kind":"image"');
     expect(loaded.requestInputText).toContain('linked-dir:2');
+    expect(loaded.requestInputText).toContain('OD_TASK_INPUT_DIR');
     expect(loaded.requestInputText).not.toContain(f.root);
     expect(loaded.taskConfigText).toContain('"taskType":"prototype"');
     expect(loaded.taskConfigText).toContain('"locale":"zh-CN"');
@@ -106,6 +132,19 @@ describe('OD Next task-scoped input snapshots', () => {
       taskExecutionId: 'odnext_missing',
       projectAttachments: ['missing.txt'],
     })).toThrow(/could not be read and frozen safely/);
+    expect(existsSync(path.join(f.snapshotsRoot, 'odnext_missing'))).toBe(false);
+
+    writeFileSync(path.join(f.projectRoot, 'swap.txt'), 'original');
+    writeFileSync(path.join(f.projectRoot, 'replacement.txt'), 'replacement');
+    expect(() => createOdNextTaskInputSnapshot({
+      ...f,
+      taskExecutionId: 'odnext_open_swap',
+      projectAttachments: ['swap.txt'],
+      beforeOpenSource: (source) => {
+        renameSync(source, `${source}.old`);
+        renameSync(path.join(f.projectRoot, 'replacement.txt'), source);
+      },
+    })).toThrow(/between path validation and open/);
 
     writeFileSync(path.join(f.projectRoot, 'race.txt'), 'before');
     expect(() => createOdNextTaskInputSnapshot({
@@ -130,6 +169,116 @@ describe('OD Next task-scoped input snapshots', () => {
       taskExecutionId: 'odnext_fake_image',
       imagePaths: [fakeImage],
     })).toThrow(/not a supported image type/);
+  });
+
+  it('replaces partial EEXIST initialization and cleans a failed retry', () => {
+    const f = fixture();
+    const partial = path.join(f.snapshotsRoot, 'odnext_partial');
+    mkdirSync(partial, { recursive: true });
+    writeFileSync(path.join(partial, 'partial'), 'stale');
+    writeFileSync(path.join(f.projectRoot, 'brief.txt'), 'brief');
+    const descriptor = createOdNextTaskInputSnapshot({
+      ...f,
+      taskExecutionId: 'odnext_partial',
+      projectAttachments: ['brief.txt'],
+    });
+    expect(existsSync(path.join(descriptor.snapshotDir, 'partial'))).toBe(false);
+    expect(loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot).attachmentPaths)
+      .toHaveLength(1);
+  });
+
+  it('creates per-Run read-only projections without exposing or mutating canonical bytes', () => {
+    const f = fixture();
+    writeFileSync(path.join(f.projectRoot, 'brief.pdf'), '%PDF-1.7\ncanonical pdf');
+    writeFileSync(path.join(f.projectRoot, 'notes.txt'), 'canonical text');
+    const descriptor = createOdNextTaskInputSnapshot({
+      ...f,
+      taskExecutionId: 'odnext_projection',
+      projectAttachments: ['brief.pdf', 'notes.txt'],
+    });
+    const projectionsRoot = path.join(f.root, 'data', 'run-inputs');
+    const first = createOdNextRunInputProjection({
+      descriptor,
+      snapshotsRoot: f.snapshotsRoot,
+      projectionsRoot,
+      runId: 'run-1',
+    });
+    expect(first.attachmentPaths).toHaveLength(2);
+    expect(first.attachmentPaths.every((entry) => !entry.startsWith(descriptor.snapshotDir)))
+      .toBe(true);
+    expect(readFileSync(first.attachmentPaths[0]!, 'utf8')).toContain('canonical pdf');
+    expect(readFileSync(first.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
+    expect(statSync(first.projectionDir).mode & 0o777).toBe(0o555);
+    expect(statSync(first.attachmentPaths[0]!).mode & 0o777).toBe(0o444);
+
+    chmodSync(first.attachmentPaths[1]!, 0o600);
+    writeFileSync(first.attachmentPaths[1]!, 'agent mutation');
+    const canonical = loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot);
+    expect(readFileSync(canonical.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
+
+    const restarted = createOdNextRunInputProjection({
+      descriptor: JSON.parse(JSON.stringify(descriptor)),
+      snapshotsRoot: f.snapshotsRoot,
+      projectionsRoot,
+      runId: 'run-1',
+    });
+    expect(readFileSync(restarted.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
+  });
+
+  it('uses no-follow bounded reads and caps when loading canonical files', () => {
+    const f = fixture();
+    writeFileSync(path.join(f.projectRoot, 'one.txt'), '12345');
+    writeFileSync(path.join(f.projectRoot, 'two.txt'), '67890');
+    const descriptor = createOdNextTaskInputSnapshot({
+      ...f,
+      taskExecutionId: 'odnext_load_guards',
+      projectAttachments: ['one.txt', 'two.txt'],
+    });
+    expect(() => loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot, {
+      fileCapBytes: 4,
+    })).toThrow(/byte cap/);
+    expect(() => loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot, {
+      totalCapBytes: 9,
+    })).toThrow(/byte cap/);
+    expect(() => loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot, {
+      countCap: 1,
+    })).toThrow(/count exceeds/);
+    expect(() => loadOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot, {
+      manifestCapBytes: 8,
+    })).toThrow(/byte cap/);
+
+    const manifestPath = path.join(descriptor.snapshotDir, 'manifest.json');
+    const manifestBytes = readFileSync(manifestPath);
+    expect(() => loadOdNextTaskInputSnapshot(
+      descriptor,
+      f.snapshotsRoot,
+      {},
+      {
+        beforeOpenManifest: (source) => {
+          renameSync(source, `${source}.old`);
+          writeFileSync(source, manifestBytes, { mode: 0o400 });
+        },
+      },
+    )).toThrow(/between path validation and open/);
+
+    // Restore the original inode path before exercising the attachment swap.
+    rmSync(manifestPath);
+    renameSync(`${manifestPath}.old`, manifestPath);
+
+    let swappedFrozen = false;
+    expect(() => loadOdNextTaskInputSnapshot(
+      descriptor,
+      f.snapshotsRoot,
+      {},
+      {
+        beforeOpenFile: (source) => {
+          if (swappedFrozen) return;
+          swappedFrozen = true;
+          renameSync(source, `${source}.old`);
+          writeFileSync(source, '12345', { mode: 0o400 });
+        },
+      },
+    )).toThrow(/between path validation and open/);
   });
 
   it('detects manifest, frozen-byte and fact tampering', () => {

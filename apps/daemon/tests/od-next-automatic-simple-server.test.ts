@@ -68,6 +68,8 @@ type Invocation = {
   stdin: string;
   cwd: string;
   startedAt: number;
+  taskInputDir?: string | null;
+  taskInputFiles?: Array<{ name: string; content: string }>;
 };
 
 const THREAD_ID = '019fffaa-0000-7000-8000-000000000010';
@@ -380,17 +382,22 @@ describe('OD Next automatic production through the real server', () => {
 
   it('runs parsed plan -> serialization repair -> production after each source end and remains exactly-once across restart', async () => {
     const fixture = await createFixture('repair');
-    const sourceAttachment = path.join(
+    const sourcePdfAttachment = path.join(
       process.env.OD_DATA_DIR!,
       'projects',
       fixture.projectId,
-      'brief.txt',
+      'brief.pdf',
     );
-    await mkdir(path.dirname(sourceAttachment), { recursive: true });
-    await writeFile(sourceAttachment, 'immutable brief');
+    const sourceTextAttachment = path.join(
+      path.dirname(sourcePdfAttachment),
+      'notes.txt',
+    );
+    await mkdir(path.dirname(sourcePdfAttachment), { recursive: true });
+    await writeFile(sourcePdfAttachment, '%PDF-1.7\nimmutable brief');
+    await writeFile(sourceTextAttachment, 'immutable notes');
     const body = {
       ...createRunRequest(fixture, 'Build the operator prototype.'),
-      attachments: ['brief.txt'],
+      attachments: ['brief.pdf', 'notes.txt'],
     };
 
     uuidControl.forced.push(fixture.initialRunId);
@@ -406,7 +413,8 @@ describe('OD Next automatic production through the real server', () => {
       },
     });
     expect(uuidControl.forced).toEqual([]);
-    await rm(sourceAttachment);
+    await rm(sourcePdfAttachment);
+    await rm(sourceTextAttachment);
 
     const initialTerminal = await waitForRunTerminal(started!.url, fixture.initialRunId);
     expect(initialTerminal.status, JSON.stringify(initialTerminal)).toBe('succeeded');
@@ -489,7 +497,9 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[0]?.stdin).toContain('open-design.od-next-task-configuration/v1');
     expect(invocations[0]?.stdin).toContain('open-design.od-next-request-input-facts/v1');
     expect(invocations[0]?.stdin).toContain('"taskType":"prototype"');
-    expect(invocations[0]?.stdin).toContain('task-input:attachments/attachment-001.txt');
+    expect(invocations[0]?.stdin).toContain('task-input:attachments/attachment-001.pdf');
+    expect(invocations[0]?.stdin).toContain('task-input:attachments/attachment-002.txt');
+    expect(invocations[0]?.stdin).toContain('OD_TASK_INPUT_DIR');
     expect(invocations[0]?.stdin).toContain('"reference":"workspace:project"');
     expect(invocations[0]?.stdin).not.toContain(process.env.OD_DATA_DIR ?? '__missing_data_root__');
     expect(invocations[0]?.stdin).not.toContain('# User request');
@@ -507,6 +517,14 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[2]?.stdin).not.toContain('open-design.strategy-state/v2');
     expect(statuses[0]!.updatedAt).toBeLessThanOrEqual(invocations[1]!.startedAt);
     expect(statuses[1]!.updatedAt).toBeLessThanOrEqual(invocations[2]!.startedAt);
+    for (const invocation of invocations) {
+      expect(invocation.taskInputDir).toContain('od-next-run-inputs');
+      expect(invocation.taskInputDir).not.toContain('od-next-task-inputs');
+      expect(invocation.taskInputFiles).toEqual([
+        { name: 'attachment-001.pdf', content: '%PDF-1.7\nimmutable brief' },
+        { name: 'attachment-002.txt', content: 'immutable notes' },
+      ]);
+    }
 
     const durableInputSnapshots = await Promise.all(terminal.runs.map(async (mapping) => {
       const state = JSON.parse(await readFile(path.join(
@@ -532,8 +550,8 @@ describe('OD Next automatic production through the real server', () => {
     expect(await readFile(path.join(
       durableInputSnapshots[0]!.snapshotDir,
       'attachments',
-      'attachment-001.txt',
-    ), 'utf8')).toBe('immutable brief');
+      'attachment-001.pdf',
+    ), 'utf8')).toBe('%PDF-1.7\nimmutable brief');
 
     for (const mapping of terminal.runs) {
       await getRun(started!.url, mapping.runId);
@@ -1245,7 +1263,14 @@ function finish() {
   if (finished) return;
   finished = true;
   const startedAt = Date.now();
-  fs.appendFileSync(logPath, JSON.stringify({ argv, stdin, cwd: process.cwd(), startedAt }) + '\\n');
+  const taskInputDir = process.env.OD_TASK_INPUT_DIR || null;
+  const taskInputFiles = taskInputDir && fs.existsSync(path.join(taskInputDir, 'attachments'))
+    ? fs.readdirSync(path.join(taskInputDir, 'attachments')).sort().map((name) => ({
+        name,
+        content: fs.readFileSync(path.join(taskInputDir, 'attachments', name), 'utf8'),
+      }))
+    : [];
+  fs.appendFileSync(logPath, JSON.stringify({ argv, stdin, cwd: process.cwd(), startedAt, taskInputDir, taskInputFiles }) + '\\n');
   if (argv.includes('resume') && (argv.includes('-C') || argv.includes('--add-dir'))) {
     process.stderr.write("error: unexpected argument '-C' found\\n");
     process.exit(2);

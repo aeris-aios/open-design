@@ -257,7 +257,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'excluded',
     source: 'loadOdNextTaskInputSnapshot().requestInputText',
     owner: 'Task 04 immutable attachment snapshot',
-    note: 'Live paths are excluded; logical references and identities describe the frozen files.',
+    note: 'Live paths are excluded; task-input references resolve under the out-of-band OD_TASK_INPUT_DIR Run projection.',
   },
   {
     id: 'comment_attachment_references',
@@ -271,7 +271,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'excluded',
     source: 'loadOdNextTaskInputSnapshot().requestInputText',
     owner: 'Task 04 immutable attachment snapshot',
-    note: 'Live image paths are excluded; frozen identity references are emitted while bytes stay out of band.',
+    note: 'Live image paths are excluded; frozen identity references are emitted while Run-projection resource paths stay out of band.',
   },
   {
     id: 'effective_cwd_capability',
@@ -339,9 +339,9 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
   {
     id: 'project_attachment_bytes',
     classification: 'out_of_band',
-    source: 'project workspace filesystem',
+    source: 'createOdNextRunInputProjection() -> OD_TASK_INPUT_DIR / ACP resource_link',
     owner: 'Task 04 immutable attachment snapshot',
-    note: 'Agent-readable bytes; only immutable identity/reference belongs in Bundle text.',
+    note: 'Canonical bytes are daemon-only; Agent-readable copies live in a per-Run projection and only identity/reference/env-root semantics belong in Bundle text.',
   },
   {
     id: 'transport_wrapper_syntax',
@@ -504,7 +504,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'ChatRequest.attachments -> createOdNextTaskInputSnapshot()',
     owner: 'Task 04 immutable attachment snapshot',
-    note: 'Raw source paths stay transport-only; the Bundle receives logical reference, byte length, media type and digest from the frozen copy.',
+    note: 'Raw and canonical paths stay daemon-only; the Bundle receives logical reference, byte length, media type, digest and the OD_TASK_INPUT_DIR resolver contract.',
   },
   {
     id: 'comment_attachment_selection',
@@ -520,7 +520,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'ChatRequest.imagePaths -> createOdNextTaskInputSnapshot()',
     owner: 'Task 04 immutable attachment snapshot',
-    note: 'Runtime-native image bytes use the frozen path out of band; the Bundle carries their logical reference and immutable identity.',
+    note: 'Runtime-native resources use per-Run projection paths out of band; the Bundle carries only logical reference and immutable identity.',
   },
   {
     id: 'available_skills_catalogue',

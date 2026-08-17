@@ -18,6 +18,7 @@ const SNAPSHOT_SCHEMA = 'open-design.od-next-task-input-snapshot/v1' as const;
 export const DEFAULT_OD_NEXT_ATTACHMENT_FILE_CAP_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_OD_NEXT_ATTACHMENT_TOTAL_CAP_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_OD_NEXT_ATTACHMENT_COUNT_CAP = 32;
+export const DEFAULT_OD_NEXT_INPUT_MANIFEST_CAP_BYTES = 1024 * 1024;
 
 export class OdNextTaskInputSnapshotError extends Error {
   constructor(message: string, readonly code = 'OD_NEXT_INPUT_SNAPSHOT_INVALID') {
@@ -38,7 +39,7 @@ type SnapshotSource = {
   allowedRoot: string;
 };
 
-type SnapshotFile = {
+export type SnapshotFile = {
   id: string;
   relativePath: string;
   kind: 'file' | 'image';
@@ -62,6 +63,29 @@ export interface LoadedOdNextTaskInputSnapshot {
   attachmentPaths: string[];
   imagePaths: string[];
   snapshotDir: string;
+  files: Array<SnapshotFile & { content: Buffer }>;
+}
+
+export interface OdNextRunInputProjection {
+  taskConfigText: string;
+  requestInputText: string;
+  attachmentReferences: string[];
+  attachmentPaths: string[];
+  imagePaths: string[];
+  projectionDir: string;
+  projectionAccessRoot: string;
+}
+
+export interface SnapshotReadLimits {
+  manifestCapBytes?: number;
+  fileCapBytes?: number;
+  totalCapBytes?: number;
+  countCap?: number;
+}
+
+export interface SnapshotReadHooks {
+  beforeOpenManifest?: (manifestPath: string) => void;
+  beforeOpenFile?: (filePath: string) => void;
 }
 
 function sha256(bytes: Buffer | string): string {
@@ -80,6 +104,52 @@ function safeTaskId(value: string): string {
     throw new OdNextTaskInputSnapshotError('OD Next task execution id is not a safe path segment.');
   }
   return value;
+}
+
+function sameIdentity(
+  stat: fs.BigIntStats,
+  opened: fs.BigIntStats,
+): boolean {
+  return stat.dev === opened.dev && stat.ino === opened.ino;
+}
+
+function readFdBounded(
+  fd: number,
+  expectedSize: bigint,
+  maxBytes: number,
+  changedMessage: string,
+): Buffer {
+  if (expectedSize < 0n || expectedSize > BigInt(maxBytes)) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next input exceeds its byte cap.',
+      'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE',
+    );
+  }
+  const expected = Number(expectedSize);
+  const buffer = Buffer.allocUnsafe(expected + 1);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const read = fs.readSync(fd, buffer, offset, buffer.length - offset, null);
+    if (read === 0) break;
+    offset += read;
+  }
+  if (offset !== expected) {
+    throw new OdNextTaskInputSnapshotError(
+      changedMessage,
+      'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+    );
+  }
+  return buffer.subarray(0, expected);
+}
+
+function readOnlyNoFollowFlags(): number {
+  if (typeof fs.constants.O_NOFOLLOW !== 'number') {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next cannot safely open managed input files on this platform.',
+      'OD_NEXT_INPUT_SNAPSHOT_UNSUPPORTED',
+    );
+  }
+  return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW;
 }
 
 function mediaTypeFromBytes(bytes: Buffer): { mediaType: string; extension: string } {
@@ -128,6 +198,7 @@ function mediaTypeFromBytes(bytes: Buffer): { mediaType: string; extension: stri
 function readSourceWithoutFollowingSymlinks(
   source: SnapshotSource,
   maxBytes: number,
+  beforeOpenSource?: (sourcePath: string) => void,
   afterReadSource?: (sourcePath: string) => void,
 ): Buffer {
   const declaredRoot = path.resolve(source.allowedRoot);
@@ -135,7 +206,7 @@ function readSourceWithoutFollowingSymlinks(
   if (!within(declaredRoot, resolved)) {
     throw new OdNextTaskInputSnapshotError('OD Next attachment escapes its allowed root.');
   }
-  const linkStat = fs.lstatSync(resolved);
+  const linkStat = fs.lstatSync(resolved, { bigint: true });
   if (linkStat.isSymbolicLink() || !linkStat.isFile()) {
     throw new OdNextTaskInputSnapshotError('OD Next attachments must be regular non-symlink files.');
   }
@@ -144,18 +215,26 @@ function readSourceWithoutFollowingSymlinks(
   if (!within(root, real)) {
     throw new OdNextTaskInputSnapshotError('OD Next attachment realpath escapes its allowed root.');
   }
-  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-  const fd = fs.openSync(real, fs.constants.O_RDONLY | noFollow);
+  beforeOpenSource?.(resolved);
+  const fd = fs.openSync(resolved, readOnlyNoFollowFlags());
   try {
     const before = fs.fstatSync(fd, { bigint: true });
-    if (!before.isFile()) {
-      throw new OdNextTaskInputSnapshotError('OD Next attachment is not a regular file.');
+    if (!before.isFile() || !sameIdentity(linkStat, before)) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next attachment changed between path validation and open.',
+        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+      );
     }
     if (before.size > BigInt(maxBytes)) {
       throw new OdNextTaskInputSnapshotError('OD Next attachment exceeds the per-file byte cap.', 'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE');
     }
-    const bytes = fs.readFileSync(fd);
-    afterReadSource?.(real);
+    const bytes = readFdBounded(
+      fd,
+      before.size,
+      maxBytes,
+      'OD Next attachment changed while it was being frozen.',
+    );
+    afterReadSource?.(resolved);
     const after = fs.fstatSync(fd, { bigint: true });
     if (
       before.dev !== after.dev
@@ -261,6 +340,7 @@ export function createOdNextTaskInputSnapshot(input: {
   fileCapBytes?: number;
   totalCapBytes?: number;
   countCap?: number;
+  beforeOpenSource?: (sourcePath: string) => void;
   afterReadSource?: (sourcePath: string) => void;
 }): OdNextTaskInputSnapshotDescriptor {
   const taskExecutionId = safeTaskId(input.taskExecutionId);
@@ -281,23 +361,54 @@ export function createOdNextTaskInputSnapshot(input: {
     throw new OdNextTaskInputSnapshotError('OD Next attachment count exceeds the task cap.', 'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE');
   }
   const snapshotsRoot = path.resolve(input.snapshotsRoot);
-  fs.mkdirSync(snapshotsRoot, { recursive: true, mode: 0o700 });
   const snapshotDir = path.join(snapshotsRoot, taskExecutionId);
-  fs.mkdirSync(snapshotDir, { recursive: false, mode: 0o700 });
   const attachmentsDir = path.join(snapshotDir, 'attachments');
-  fs.mkdirSync(attachmentsDir, { mode: 0o700 });
   const fileCap = input.fileCapBytes ?? DEFAULT_OD_NEXT_ATTACHMENT_FILE_CAP_BYTES;
   const totalCap = input.totalCapBytes ?? DEFAULT_OD_NEXT_ATTACHMENT_TOTAL_CAP_BYTES;
   const files: SnapshotFile[] = [];
   const facts: OdNextAttachmentFactV1[] = [];
   let total = 0;
+  let snapshotCleanupAllowed = false;
   try {
+    fs.mkdirSync(snapshotsRoot, { recursive: true, mode: 0o700 });
+    const rootStat = fs.lstatSync(snapshotsRoot);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next snapshot root must be a managed non-symlink directory.',
+      );
+    }
+    try {
+      fs.mkdirSync(snapshotDir, { recursive: false, mode: 0o700 });
+      snapshotCleanupAllowed = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+      const existingStat = fs.lstatSync(snapshotDir);
+      if (existingStat.isSymbolicLink() || !existingStat.isDirectory()) {
+        throw new OdNextTaskInputSnapshotError(
+          'OD Next partial snapshot path must be a non-symlink directory.',
+        );
+      }
+      if (fs.existsSync(path.join(snapshotDir, 'manifest.json'))) {
+        throw new OdNextTaskInputSnapshotError(
+          'OD Next canonical task input snapshot already exists.',
+          'OD_NEXT_INPUT_SNAPSHOT_EXISTS',
+        );
+      }
+      // A task id is single-writer under the assistant/task claim. An entry
+      // here is therefore a partial initialization left before that claim
+      // committed, not a reusable canonical snapshot.
+      fs.rmSync(snapshotDir, { recursive: true, force: true });
+      fs.mkdirSync(snapshotDir, { recursive: false, mode: 0o700 });
+      snapshotCleanupAllowed = true;
+    }
+    fs.mkdirSync(attachmentsDir, { recursive: false, mode: 0o700 });
     sources.forEach((source, index) => {
       let bytes: Buffer;
       try {
         bytes = readSourceWithoutFollowingSymlinks(
           source,
           fileCap,
+          input.beforeOpenSource,
           input.afterReadSource,
         );
       } catch (error) {
@@ -350,6 +461,11 @@ export function createOdNextTaskInputSnapshot(input: {
     const linkedDirectoryCount = Math.max(0, Math.floor(input.linkedDirectoryCount ?? 0));
     const requestInputFacts: OdNextRequestInputFactsV1 = {
       schema: OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1,
+      attachmentTransport: {
+        scheme: 'task-input',
+        rootEnvironmentVariable: 'OD_TASK_INPUT_DIR',
+        access: 'out_of_band',
+      },
       attachments: facts,
       comments: { count: Math.max(0, Math.floor(input.commentCount ?? 0)) },
       workspace: {
@@ -376,39 +492,135 @@ export function createOdNextTaskInputSnapshot(input: {
     fs.writeFileSync(manifestPath, manifestBytes, { flag: 'wx', mode: 0o400 });
     return { taskExecutionId, snapshotDir, manifestSha256: sha256(manifestBytes) };
   } catch (error) {
-    fs.rmSync(snapshotDir, { recursive: true, force: true });
+    if (snapshotCleanupAllowed) {
+      fs.rmSync(snapshotDir, { recursive: true, force: true });
+    }
     throw error;
   }
 }
 
 function parseManifest(bytes: Buffer): SnapshotManifest {
-  const parsed = JSON.parse(bytes.toString('utf8')) as SnapshotManifest;
+  let parsed: SnapshotManifest;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8')) as SnapshotManifest;
+  } catch {
+    throw new OdNextTaskInputSnapshotError('OD Next task input manifest is not valid JSON.');
+  }
   if (
     parsed?.schema !== SNAPSHOT_SCHEMA
     || typeof parsed.taskExecutionId !== 'string'
     || !Array.isArray(parsed.files)
     || parsed.taskConfiguration?.schema !== OD_NEXT_TASK_CONFIGURATION_SCHEMA_V1
     || parsed.requestInputFacts?.schema !== OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1
+    || parsed.requestInputFacts.attachmentTransport?.scheme !== 'task-input'
+    || parsed.requestInputFacts.attachmentTransport?.rootEnvironmentVariable
+      !== 'OD_TASK_INPUT_DIR'
+    || parsed.requestInputFacts.attachmentTransport?.access !== 'out_of_band'
   ) {
     throw new OdNextTaskInputSnapshotError('OD Next task input manifest is invalid.');
   }
   return parsed;
 }
 
+function readManagedSnapshotFile(
+  filePath: string,
+  maxBytes: number,
+  beforeOpen?: (filePath: string) => void,
+): Buffer {
+  const pathStat = fs.lstatSync(filePath, { bigint: true });
+  if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next managed input must be a regular non-symlink file.',
+    );
+  }
+  beforeOpen?.(filePath);
+  const fd = fs.openSync(filePath, readOnlyNoFollowFlags());
+  try {
+    const before = fs.fstatSync(fd, { bigint: true });
+    if (!before.isFile() || !sameIdentity(pathStat, before)) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next managed input changed between path validation and open.',
+        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+      );
+    }
+    const bytes = readFdBounded(
+      fd,
+      before.size,
+      maxBytes,
+      'OD Next managed input changed while it was being verified.',
+    );
+    const after = fs.fstatSync(fd, { bigint: true });
+    if (
+      before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs
+      || before.ctimeNs !== after.ctimeNs
+    ) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next managed input changed while it was being verified.',
+        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+      );
+    }
+    return bytes;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function removeRunProjectionTree(target: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    fs.unlinkSync(target);
+    return;
+  }
+  fs.chmodSync(target, 0o700);
+  for (const entry of fs.readdirSync(target)) {
+    removeRunProjectionTree(path.join(target, entry));
+  }
+  fs.rmdirSync(target);
+}
+
 export function loadOdNextTaskInputSnapshot(
   descriptor: OdNextTaskInputSnapshotDescriptor,
   snapshotsRoot: string,
+  limits: SnapshotReadLimits = {},
+  hooks: SnapshotReadHooks = {},
 ): LoadedOdNextTaskInputSnapshot {
-  const root = fs.realpathSync(path.resolve(snapshotsRoot));
-  const snapshotDir = fs.realpathSync(descriptor.snapshotDir);
+  const rootPath = path.resolve(snapshotsRoot);
+  const rootStat = fs.lstatSync(rootPath);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next snapshot root must be a managed non-symlink directory.',
+    );
+  }
+  const root = fs.realpathSync(rootPath);
+  const descriptorSnapshotDir = path.resolve(descriptor.snapshotDir);
+  if (!within(rootPath, descriptorSnapshotDir)) {
+    throw new OdNextTaskInputSnapshotError('OD Next task input snapshot is outside its managed root.');
+  }
+  const snapshotPathStat = fs.lstatSync(descriptorSnapshotDir);
+  if (snapshotPathStat.isSymbolicLink() || !snapshotPathStat.isDirectory()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input snapshot must be a managed non-symlink directory.',
+    );
+  }
+  const snapshotDir = fs.realpathSync(descriptorSnapshotDir);
   if (!within(root, snapshotDir) || path.basename(snapshotDir) !== safeTaskId(descriptor.taskExecutionId)) {
     throw new OdNextTaskInputSnapshotError('OD Next task input snapshot is outside its managed root.');
   }
   const manifestPath = path.join(snapshotDir, 'manifest.json');
-  if (fs.lstatSync(manifestPath).isSymbolicLink()) {
-    throw new OdNextTaskInputSnapshotError('OD Next task input manifest must not be a symlink.');
-  }
-  const manifestBytes = fs.readFileSync(manifestPath);
+  const manifestBytes = readManagedSnapshotFile(
+    manifestPath,
+    limits.manifestCapBytes ?? DEFAULT_OD_NEXT_INPUT_MANIFEST_CAP_BYTES,
+    hooks.beforeOpenManifest,
+  );
   if (sha256(manifestBytes) !== descriptor.manifestSha256) {
     throw new OdNextTaskInputSnapshotError('OD Next task input manifest digest mismatch.', 'OD_NEXT_INPUT_SNAPSHOT_TAMPERED');
   }
@@ -416,16 +628,61 @@ export function loadOdNextTaskInputSnapshot(
   if (manifest.taskExecutionId !== descriptor.taskExecutionId) {
     throw new OdNextTaskInputSnapshotError('OD Next task input manifest ownership mismatch.');
   }
+  const countCap = limits.countCap ?? DEFAULT_OD_NEXT_ATTACHMENT_COUNT_CAP;
+  const fileCap = limits.fileCapBytes ?? DEFAULT_OD_NEXT_ATTACHMENT_FILE_CAP_BYTES;
+  const totalCap = limits.totalCapBytes ?? DEFAULT_OD_NEXT_ATTACHMENT_TOTAL_CAP_BYTES;
+  if (manifest.files.length > countCap) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input file count exceeds the task cap.',
+      'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE',
+    );
+  }
+  if (manifest.requestInputFacts.attachments.length !== manifest.files.length) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input facts do not match frozen files.',
+      'OD_NEXT_INPUT_SNAPSHOT_TAMPERED',
+    );
+  }
   const pathsById = new Map<string, string>();
+  const contentById = new Map<string, Buffer>();
+  const seenIds = new Set<string>();
+  const seenRelativePaths = new Set<string>();
+  let totalBytes = 0;
+  // Validate every declared count/file/aggregate bound before opening the
+  // first canonical attachment. A malicious manifest cannot make verification
+  // partially read an over-budget set and only fail on its last entry.
   for (const file of manifest.files) {
-    if (!/^attachments\/attachment-[0-9]{3}\.[a-z0-9]+$/.test(file.relativePath)) {
+    if (
+      typeof file.id !== 'string'
+      || typeof file.relativePath !== 'string'
+      || !/^attachments\/attachment-[0-9]{3}\.[a-z0-9]+$/.test(file.relativePath)
+      || (file.kind !== 'file' && file.kind !== 'image')
+      || typeof file.mediaType !== 'string'
+      || !Number.isSafeInteger(file.bytes)
+      || file.bytes < 0
+      || typeof file.sha256 !== 'string'
+      || !/^[a-f0-9]{64}$/.test(file.sha256)
+      || seenIds.has(file.id)
+      || seenRelativePaths.has(file.relativePath)
+    ) {
       throw new OdNextTaskInputSnapshotError('OD Next task input file reference is invalid.');
     }
+    if (file.bytes > fileCap || totalBytes + file.bytes > totalCap) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next task input files exceed the configured byte cap.',
+        'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE',
+      );
+    }
+    totalBytes += file.bytes;
+    seenIds.add(file.id);
+    seenRelativePaths.add(file.relativePath);
+  }
+  for (const file of manifest.files) {
     const absolute = path.resolve(snapshotDir, file.relativePath);
-    if (!within(snapshotDir, absolute) || fs.lstatSync(absolute).isSymbolicLink()) {
+    if (!within(snapshotDir, absolute)) {
       throw new OdNextTaskInputSnapshotError('OD Next task input file escapes its snapshot.');
     }
-    const bytes = fs.readFileSync(absolute);
+    const bytes = readManagedSnapshotFile(absolute, fileCap, hooks.beforeOpenFile);
     const detected = mediaTypeFromBytes(bytes);
     if (
       bytes.length !== file.bytes
@@ -435,10 +692,10 @@ export function loadOdNextTaskInputSnapshot(
       throw new OdNextTaskInputSnapshotError('OD Next task input file identity mismatch.', 'OD_NEXT_INPUT_SNAPSHOT_TAMPERED');
     }
     pathsById.set(file.id, absolute);
+    contentById.set(file.id, bytes);
   }
   if (
-    manifest.requestInputFacts.attachments.length !== manifest.files.length
-    || manifest.requestInputFacts.attachments.some((fact, index) => (
+    manifest.requestInputFacts.attachments.some((fact, index) => (
       fact.id !== manifest.files[index]?.id
       || fact.order !== index + 1
       || fact.reference !== `task-input:${manifest.files[index]?.relativePath}`
@@ -461,7 +718,94 @@ export function loadOdNextTaskInputSnapshot(
     attachmentPaths,
     imagePaths,
     snapshotDir,
+    files: manifest.files.map((file) => ({
+      ...file,
+      content: contentById.get(file.id)!,
+    })),
   };
+}
+
+export function createOdNextRunInputProjection(input: {
+  descriptor: OdNextTaskInputSnapshotDescriptor;
+  snapshotsRoot: string;
+  projectionsRoot: string;
+  runId: string;
+  limits?: SnapshotReadLimits;
+  hooks?: SnapshotReadHooks;
+}): OdNextRunInputProjection {
+  const loaded = loadOdNextTaskInputSnapshot(
+    input.descriptor,
+    input.snapshotsRoot,
+    input.limits,
+    input.hooks,
+  );
+  const taskExecutionId = safeTaskId(input.descriptor.taskExecutionId);
+  const runId = safeTaskId(input.runId);
+  const projectionsRoot = path.resolve(input.projectionsRoot);
+  const taskProjectionRoot = path.join(projectionsRoot, taskExecutionId);
+  const projectionDir = path.join(taskProjectionRoot, runId);
+  let projectionPathVerified = false;
+  try {
+    fs.mkdirSync(projectionsRoot, { recursive: true, mode: 0o700 });
+    const rootStat = fs.lstatSync(projectionsRoot);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next projection root must be a managed non-symlink directory.',
+      );
+    }
+    if (fs.existsSync(taskProjectionRoot)) {
+      const taskRootStat = fs.lstatSync(taskProjectionRoot);
+      if (taskRootStat.isSymbolicLink() || !taskRootStat.isDirectory()) {
+        throw new OdNextTaskInputSnapshotError(
+          'OD Next task projection root must be a non-symlink directory.',
+        );
+      }
+      fs.chmodSync(taskProjectionRoot, 0o700);
+    } else {
+      fs.mkdirSync(taskProjectionRoot, { recursive: false, mode: 0o700 });
+    }
+    projectionPathVerified = true;
+    removeRunProjectionTree(projectionDir);
+    fs.mkdirSync(projectionDir, { recursive: false, mode: 0o700 });
+    const attachmentsDir = path.join(projectionDir, 'attachments');
+    fs.mkdirSync(attachmentsDir, { recursive: false, mode: 0o700 });
+    for (const file of loaded.files) {
+      const destination = path.resolve(projectionDir, file.relativePath);
+      if (!within(projectionDir, destination)) {
+        throw new OdNextTaskInputSnapshotError(
+          'OD Next projected input escapes its managed Run directory.',
+        );
+      }
+      fs.writeFileSync(destination, file.content, { flag: 'wx', mode: 0o444 });
+      fs.chmodSync(destination, 0o444);
+    }
+    fs.chmodSync(attachmentsDir, 0o555);
+    fs.chmodSync(projectionDir, 0o555);
+    fs.chmodSync(taskProjectionRoot, 0o555);
+    const projectedPaths = loaded.files.map((file) => (
+      path.join(projectionDir, file.relativePath)
+    ));
+    return {
+      taskConfigText: loaded.taskConfigText,
+      requestInputText: loaded.requestInputText,
+      attachmentReferences: loaded.attachmentReferences,
+      attachmentPaths: projectedPaths,
+      imagePaths: loaded.files
+        .map((file, index) => ({ file, projectedPath: projectedPaths[index]! }))
+        .filter(({ file }) => file.kind === 'image')
+        .map(({ projectedPath }) => projectedPath),
+      projectionDir,
+      projectionAccessRoot: taskProjectionRoot,
+    };
+  } catch (error) {
+    if (projectionPathVerified) {
+      removeRunProjectionTree(projectionDir);
+      if (fs.existsSync(taskProjectionRoot)) {
+        try { fs.chmodSync(taskProjectionRoot, 0o555); } catch { /* best effort */ }
+      }
+    }
+    throw error;
+  }
 }
 
 export function removeOdNextTaskInputSnapshot(

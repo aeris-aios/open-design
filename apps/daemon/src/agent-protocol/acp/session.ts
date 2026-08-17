@@ -71,6 +71,8 @@ export interface AttachAcpSessionOptions {
   cwd?: string;
   model?: string | null;
   imagePaths?: string[];
+  /** Frozen non-image/image resources delivered as ACP resource_link blocks. */
+  resourcePaths?: string[];
   mcpServers?: AcpMcpServerInput[];
   // Passed through to buildAcpSessionNewParams — see AcpSessionOptions.
   envFormat?: 'array' | 'map';
@@ -131,6 +133,7 @@ export function attachAcpSession({
   cwd,
   model,
   imagePaths = [],
+  resourcePaths = [],
   mcpServers,
   envFormat = 'array',
   send,
@@ -584,7 +587,7 @@ export function attachAcpSession({
       'session/prompt',
       {
         sessionId,
-        prompt: buildPromptBlocks(prompt, imagePaths),
+        prompt: buildPromptBlocks(prompt, [...resourcePaths, ...imagePaths]),
       },
       'session/prompt',
     );

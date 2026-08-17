@@ -45,6 +45,11 @@ export interface OdNextAttachmentFactV1 {
 
 export interface OdNextRequestInputFactsV1 {
   schema: typeof OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1;
+  attachmentTransport: {
+    scheme: 'task-input';
+    rootEnvironmentVariable: 'OD_TASK_INPUT_DIR';
+    access: 'out_of_band';
+  };
   attachments: OdNextAttachmentFactV1[];
   comments: { count: number };
   workspace: {

@@ -210,13 +210,17 @@ test('attachAcpSession keeps legacy session/set_model when no model config optio
   assert.equal(requests.some((entry) => entry.method === 'session/set_config_option'), false);
 });
 
-test('attachAcpSession includes image attachments as ACP resource links', () => {
+test('attachAcpSession includes frozen PDF, text, and image attachments as ACP resource links', () => {
   const child = new FakeAcpChild();
   const writes: string[] = [];
   child.stdin.on('data', (chunk) => writes.push(String(chunk)));
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-acp-image-'));
   const imagePath = path.join(tmpDir, 'screenshot.png');
+  const pdfPath = path.join(tmpDir, 'brief.pdf');
+  const textPath = path.join(tmpDir, 'notes.txt');
   fs.writeFileSync(imagePath, 'png');
+  fs.writeFileSync(pdfPath, '%PDF-1.7\nbrief');
+  fs.writeFileSync(textPath, 'notes');
 
   attachAcpSession({
     child: child as never,
@@ -224,6 +228,7 @@ test('attachAcpSession includes image attachments as ACP resource links', () => 
     cwd: '/tmp/od-project',
     model: null,
     imagePaths: [imagePath],
+    resourcePaths: [pdfPath, textPath, imagePath],
     mcpServers: [],
     send: () => {},
   });
@@ -238,6 +243,8 @@ test('attachAcpSession includes image attachments as ACP resource links', () => 
     sessionId: 'session-1',
     prompt: [
       { type: 'text', text: 'describe this image' },
+      { type: 'resource_link', uri: pdfPath },
+      { type: 'resource_link', uri: textPath },
       { type: 'resource_link', uri: imagePath },
     ],
   });
