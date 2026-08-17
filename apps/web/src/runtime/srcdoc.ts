@@ -3340,12 +3340,13 @@ function injectDeckBridge(
         if (i === target) list[i].classList.add(activeClass);
       }
     }
-    try { window.scrollTo(0, 0); } catch (_) {}
-    var roots = scrollTargets();
-    for (var r=0; r<roots.length; r++) {
-      try { roots[r].scrollLeft = 0; roots[r].scrollTop = 0; } catch (_) {}
-    }
-    if (scrollTarget && !scrollTarget.root) {
+    if (!scrollTarget || scrollTarget.root) {
+      try { window.scrollTo(0, 0); } catch (_) {}
+      var roots = scrollTargets();
+      for (var r=0; r<roots.length; r++) {
+        try { roots[r].scrollLeft = 0; roots[r].scrollTop = 0; } catch (_) {}
+      }
+    } else {
       try { scrollTarget.element.scrollLeft = 0; scrollTarget.element.scrollTop = 0; } catch (_) {}
     }
     updateDeckChrome(target, list.length);

@@ -303,5 +303,23 @@ describe('deck bridge - scroll container fallback', () => {
     expect(windowScrollTo).not.toHaveBeenCalled();
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(lastSlideState(parentPostMessage)).toMatchObject({ active: 1, count: 3 });
+
+    // If the nested scroller ignores a later smooth-scroll request, the bridge
+    // falls back to one visible page. That fallback must reset only the nested
+    // element; touching window/root scroll would jump the surrounding workspace
+    // to the top.
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: () => {},
+    });
+    win.dispatchEvent(new win.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'go', index: 2 },
+    }));
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 450));
+
+    expect(container.scrollTop).toBe(0);
+    expect(win.scrollY).toBe(37);
+    expect(windowScrollTo).not.toHaveBeenCalled();
+    expect(lastSlideState(parentPostMessage)).toMatchObject({ active: 2, count: 3 });
   });
 });
