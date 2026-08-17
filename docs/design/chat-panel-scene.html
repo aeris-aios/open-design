@@ -1613,7 +1613,14 @@ button.att-d:hover { border-color: var(--border-strong); }
    「看这里」。三个状态都去框:形状不随状态变,只有失败那格把图标变红 ——
    颜色留给真需要注意的那一个。 */
 .tool:has(.wifi) { border-color: transparent; background: none; padding: 5px 2px; }
-.tool .wifi { flex: none; width: 14px; height: 14px; color: var(--text-soft); }
+/* 这个图标要的不是更大的盒子,是更满的盒子。
+   ------------------------------------------------------------
+   wifi 的三条弧在 24 的 viewBox 里只占 x 5~19、y 7.75~18,墨迹连一半都不到,
+   把 width 从 14 调到 18 只是把空白一起放大 —— 实测墨迹仍只有 7.2px,而旁边
+   中文有 12.5px,所以糊。把 viewBox 裁到墨迹本身(4 6.5 16 13)之后,同样的
+   17×14 里画的全是线。量的是【看得见的墨】,不是元素的框 ——
+   和失败标记去掉底色圆是同一条。 */
+.tool .wifi { flex: none; width: 17px; height: 14px; stroke-width: 2px; color: var(--text-soft); }
 /* 失败那一行不换图标,只换颜色。
    三态用同一枚 wifi:图标说的是"连接"这件事,它没变;变的是结果,
    而结果已经由红色和文案说清楚了。再换一个打叉的 wifi,等于把同一个
