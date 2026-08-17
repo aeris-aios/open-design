@@ -574,18 +574,23 @@ button.att-i:hover { border-color: var(--border-strong); }
    原先是 104 宽配写死的 78 高,减掉左右边框实际是 102:78 ≈ 17:13,
    既不是 4:3 也不是任何声明过的比例,是撞出来的。 */
 .att-i .ph { display: block; aspect-ratio: 1 / 1; height: auto; }
-/* 文件名:主名省略,后缀永远保留。
-   直接给整串挂 text-overflow:ellipsis 会从尾部截,后缀第一个被吃掉 ——
-   「商品卡组件规格说明.pdf」变成「商品卡组件规格说…」,看不出这是什么文件。
-   所以把主名和后缀拆成两段:主名可收缩、超了打省略号;后缀 flex:none,
-   永不参与截断。 */
-.att-i .nm {
-  display: flex; align-items: baseline;
-  padding: 4px 6px; border-top: 1px solid var(--border-soft); background: var(--bg);
-  font-size: var(--t-cap); color: var(--text-muted);
-}
-.att-i .nm .base { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.att-i .nm .ext { flex: none; white-space: nowrap; }
+/* 图卡上不挂文件名 —— 缩略图本身就是它的名字。
+   ------------------------------------------------------------
+   你认出一张图靠的是看见那一屏的样子,不是读「首页」两个字;
+   而图片的文件名多半是「截屏2026-08-17-15.18.32.png」「IMG_4821.png」
+   这种东西,截进 104px 变成「截屏2026-08-17-1…」,一个字的信息量都没有,
+   却让每张卡永远多背一行的高度。去掉之后卡是个干净的方块,
+   一整行矮 27px —— 这是每条带附件的消息都省下的。
+   真要看名字的时刻是【点开大图】,那时弹层里有地方好好写;aria-label 也留着,
+   读屏照读。
+   ------------------------------------------------------------
+   文档卡反过来必须挂名字:它没有画面,名字是它唯一的身份。
+   所以这不是两条规则,是同一条 —— 【每一项都得有一个能认出它的东西】,
+   图有画面,文档只有名字。
+   ------------------------------------------------------------
+   由此多出一条前提:走图卡的前提是【缩略图真的出得来】。
+   出不来(拿不到 PDF 首页、.sketch 预览、.mov 首帧)就退回文档卡 ——
+   一个既没画面又没名字的灰方块,是这套规则里唯一会出现的死格子。
 /* 失败态只把红给外框和「重试」。文件名是事实、不是状态,
    跟着变红等于把红用在了三个层级上,红就不指向要点的那个东西了。 */
 .att-i.is-fail { border-color: var(--red); }
@@ -1455,11 +1460,11 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l"><span>发送后 · 成功,显示缩略图(与 22 · 待发送附件同一张卡,只少一个「×」)</span><i></i></div>
+            <div class="st-l"><span>发送后 · 图只有缩略图,不挂文件名(与 22 同一张卡,只少一个「×」)</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">设置页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button>
               </div>
             </div>
           </div>
@@ -1473,7 +1478,7 @@ button.att-d:hover { border-color: var(--border-strong); }
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>重试
                     </button>
                   </span>
-                  <span class="nm"><span class="base">规范</span><span class="ext">.pdf</span></span>
+                  
                 </span>
               </div>
             </div>
@@ -1485,7 +1490,7 @@ button.att-d:hover { border-color: var(--border-strong); }
                 <button class="att-i att-ov" type="button" aria-label="预览 首页.png">
                   <span class="ph"><span class="mini"></span></span>
                   <span class="act" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
-                  <span class="nm"><span class="base">首页</span><span class="ext">.png</span></span>
+                  
                 </button>
               </div>
             </div>
@@ -1503,20 +1508,9 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>图 + 文档 · 同一行,同高不同宽</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
                 <button class="att-d" type="button" aria-label="打开 跨端适配检查清单-v3.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">跨端适配检查清单-v3</span><span class="meta"><span class="k">md</span> · 12 KB</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">设置页</span><span class="ext">.png</span></span></button>
-              </div>
-            </div>
-          </div>
-          <div class="st">
-            <div class="st-l"><span>能出预览的几类 · 卡的外形不随类型变(png / pdf / mov / sketch)</span><i></i></div>
-            <div class="st-b">
-              <div class="att">
-                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 跨端适配检查清单.pdf"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">跨端适配检查清单</span><span class="ext">.pdf</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 走查录屏.mov"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 商城首页.sketch"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">商城首页</span><span class="ext">.sketch</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button>
               </div>
             </div>
           </div>
@@ -1524,39 +1518,29 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>多附件 · 永远单行,超出横向滚动</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">设置页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 列表页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">列表页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 详情页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">详情页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 结算页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">结算页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 搜索页.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">搜索页</span><span class="ext">.png</span></span></button>
-                <button class="att-i" type="button" aria-label="预览 我的.png"><span class="ph"><span class="mini"></span></span><span class="nm"><span class="base">我的</span><span class="ext">.png</span></span></button>
+                <button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 列表页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 详情页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 结算页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 搜索页.png"><span class="ph"><span class="mini"></span></span></button>
+                <button class="att-i" type="button" aria-label="预览 我的.png"><span class="ph"><span class="mini"></span></span></button>
               </div>
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>文件名过长 · 主名省略,后缀始终可见</span><i></i></div>
+            <div class="st-l"><span>文件名过长 · 宽卡里主名省略,后缀在下一行永远完整</span><i></i></div>
             <div class="st-b">
               <div class="att">
-                <button class="att-i" type="button" aria-label="预览 商品卡组件规格说明终稿.png">
-                  <span class="ph"><span class="mini"></span></span>
-                  <span class="nm"><span class="base">商品卡组件规格说明终稿</span><span class="ext">.png</span></span>
-                </button>
-                <button class="att-i" type="button" aria-label="预览 跨端适配检查清单-v3.pdf">
-                  <span class="ph"><span class="mini"></span></span>
-                  <span class="nm"><span class="base">跨端适配检查清单-v3</span><span class="ext">.pdf</span></span>
-                </button>
-                <button class="att-i" type="button" aria-label="预览 商城首页.sketch">
-                  <span class="ph"><span class="mini"></span></span>
-                  <span class="nm"><span class="base">商城首页</span><span class="ext">.sketch</span></span>
-                </button>
+                <button class="att-d" type="button" aria-label="打开 商品卡组件规格说明终稿-第三轮评审后.md"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿-第三轮评审后</span><span class="meta"><span class="k">md</span> · 18 KB</span></span></button>
+                <button class="att-d" type="button" aria-label="打开 埋点.csv"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">埋点</span><span class="meta"><span class="k">csv</span> · 2 KB</span></span></button>
               </div>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>文件名</b> — 主名放不下时打省略号,<b>后缀不参与截断、永远可见</b>:整串一起截会先吃掉后缀,人就看不出这是什么文件了。<b>发送前 / 发送后是同一张卡</b> — 待发的附件和已发的用同一套外形:同样 104px、同样 1:1 缩略图、同样的主名省略后缀保留。发送前只多两样 —— 右上角的「×」和上传中压在图上的进度条;按下发送后「×」消失(发出去的消息撤不回,再给删除键等于给一个按了没用的按钮),其余一点不变,所以那一瞬间卡片不会跳形状。<b>上传中</b>进度压在缩略图上而不是另起一行:卡的高度是常量,多一行文字就得给所有卡都留出那一行,而那一行只有上传的那几秒用得上。<b>上传失败</b>可单独重试,也可以直接移除,不挡着其它文件发送。<b>两种模板,按【有没有预览可看】分</b> — png / jpg / sketch / mov(首帧)/ pdf(首页)走<b>方图卡</b>;md / txt / csv / json / log / zip 走<b>宽卡</b>。后面这些没有可看的画面,硬塞进 1:1 的灰方块,那块灰不传达任何东西,而唯一有用的信息 —— 文件名 —— 反而被压在 104px 里截成「跨端适配检查…」;宽卡把宽度还给文件名,主名一行、类型和体积一行。<b>两种卡同高,并排在同一行</b>,不分行 —— 会让列表散架的是"同一行里高度对不齐",不是"存在两种模板";等高就够了,不必牺牲单行(线上那版正是把紧凑行和大卡混排、基线对不上)。高度靠 flex 的 stretch 自动跟住图卡,没有第二个数字要维护:以后图卡尺寸再动,宽卡自己跟上。宽卡<b>宽度贴合内容</b>(150–240px):名字短的不占地方,名字长的多要一点,但不无限长 —— 一张卡吃掉整行的话,后面还有几个文件就看不出来了。<b>后缀单独一行</b>(MD / CSV 大写去点),换行之后它天然完整,连"别参与截断"这条都不用写了;方图卡那边窄,仍用主名省略 + 后缀 flex:none 的老办法。<b>「×」两种卡同一个位置</b> —— 右上角。形状可以不同,"删除在哪儿"不能不同,否则一行里每换一张卡就得重新找。<b>展示</b>文件名、类型图标、缩略图。</span>
+          <span><b>每一项都得有一个能认出它的东西 —— 图有画面,文档只有名字。</b>这是这个组件唯一的那条规则,两种卡都从它推出来。<b>图卡不挂文件名</b>:你认出一张图靠的是看见那一屏的样子,不是读「首页」两个字;而图片文件名多半是「截屏2026-08-17-15.18.32.png」这种东西,截进 104px 变成「截屏2026-08-17-1…」,一个字的信息量都没有,却让每张卡永远多背一行高度 —— 去掉之后一整行矮 27px,那是每条带附件的消息都省下的。真要看名字的时刻是点开大图,弹层里有地方好好写;aria-label 留着,读屏照读。<b>文档卡必须挂名字</b>:它没有画面,名字是它唯一的身份,所以宽卡把宽度都给了名字,主名一行、类型和体积一行。<b>由此多出一条前提:走图卡的前提是缩略图真的出得来。</b>拿不到 PDF 首页、.sketch 预览、.mov 首帧的,一律退回文档卡 —— 一个既没画面又没名字的灰方块,是这套规则里唯一会出现的死格子,必须堵掉。<b>预览</b> — 点缩略图弹层看大图,多附件支持左右键切换。<b>两种卡同高,并排在同一行</b>,不分行:会让列表散架的是"同一行里高度对不齐",不是"存在两种模板"。高度靠 flex 的 stretch 自动跟住图卡,没有第二个数字要维护。宽卡<b>宽度贴合内容</b>(150–240px),不无限长 —— 一张卡吃掉整行的话,后面还有几个文件就看不出来了。<b>横向滚动</b> — 附件再多也只占一行,消息在流水里的高度是常量;滚动条隐藏,行尾裁掉的半张卡就是"还有更多"的暗示。<b>「×」两种卡同一个位置</b> —— 右上角,只在发送前有。<b>展示</b>缩略图(图)/ 文件名 + 类型 + 体积(文档)。</span>
         </div>
       </article>
 
@@ -1594,9 +1578,9 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>发送前 · 输入框内待发,每张右上角可删</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 跨端适配检查清单.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">跨端适配检查清单</span><span class="ext">.pdf</span></span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 跨端适配检查清单.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
               </div>
             </div>
           </div>
@@ -1604,8 +1588,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>发送前 · 上传中,进度压在图上不另占一行</span><i></i></div>
             <div class="st-b">
               <div class="att mod-tray">
-                <span class="att-i is-up"><span class="ph"><span class="mini"></span><span class="bar"><i style="width:62%"></i></span></span><button class="del" type="button" aria-label="取消上传 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">走查录屏</span><span class="ext">.mov</span></span></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
+                <span class="att-i is-up"><span class="ph"><span class="mini"></span><span class="bar"><i style="width:62%"></i></span></span><button class="del" type="button" aria-label="取消上传 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
               </div>
             </div>
           </div>
@@ -1614,7 +1598,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="att mod-tray">
                 <span class="att-d"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></span><span class="tx"><span class="base">商品卡组件规格说明终稿</span><span class="meta"><span class="k">md</span> · 12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
-                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button><span class="nm"><span class="base">首页</span><span class="ext">.png</span></span></span>
+                <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
               </div>
             </div>
           </div>
@@ -1629,7 +1613,7 @@ button.att-d:hover { border-color: var(--border-strong); }
                     </button>
                   </span>
                   <button class="del" type="button" aria-label="移除 规范.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-                  <span class="nm"><span class="base">规范</span><span class="ext">.pdf</span></span>
+                  
                 </span>
               </div>
             </div>
