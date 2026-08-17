@@ -43,10 +43,10 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.ancestors[1]!.attributes).toContainEqual(['id', 'deck-stage']);
   });
 
-  it('rewrites :root / html / body selectors to :host', () => {
+  it('rewrites root selectors to :host and body selectors to the thumbnail canvas', () => {
     const parsed = parseDeckThumbnails(frameworkDeck(1));
     expect(parsed.styleText).toContain(':host { --bg: #fff');
-    expect(parsed.styleText).toContain(':host { background: var(--shell)');
+    expect(parsed.styleText).toContain(':host, .od-thumb-canvas { background: var(--shell)');
     expect(parsed.styleText).not.toMatch(/:root\s*\{/);
     // Compound selectors are left alone.
     expect(parsed.styleText).toContain('.deck-stage {');
@@ -210,6 +210,22 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.designWidth).toBe(1920);
     // Percent sizing is left untouched — it already resolves to the canvas.
     expect(parsed.styleText).toContain('width: 100%');
+  });
+
+  it('does not mistake a slide descendant decoration for the design canvas', () => {
+    const html = `<!doctype html><html><head><style>
+      body { display: flex; width: 200vw; height: 100vh; }
+      .slide { width: 100vw; height: 100vh; flex: none; }
+      .slide .kicker-line { width: 72px; height: 6px; }
+      .slide::before { width: 40px; height: 40px; }
+    </style></head><body>
+      <section class="slide"><span class="kicker-line">A</span></section>
+      <section class="slide">B</section>
+    </body></html>`;
+    const parsed = parseDeckThumbnails(html);
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.designWidth).toBe(1920);
+    expect(parsed.designHeight).toBe(1080);
   });
 
   it('falls back when the deck depends on an external layout stylesheet', () => {

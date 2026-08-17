@@ -35,6 +35,7 @@ describe('deck bridge - scroll container fallback', () => {
       pretendToBeVisual: true,
     });
     const win = dom.window;
+    win.scrollTo = vi.fn() as typeof win.scrollTo;
     const parentPostMessage = vi.fn();
     Object.defineProperty(win, 'parent', {
       configurable: true,
@@ -125,6 +126,7 @@ describe('deck bridge - scroll container fallback', () => {
       pretendToBeVisual: true,
     });
     const win = dom.window;
+    win.scrollTo = vi.fn() as typeof win.scrollTo;
     const parentPostMessage = vi.fn();
     Object.defineProperty(win, 'parent', {
       configurable: true,

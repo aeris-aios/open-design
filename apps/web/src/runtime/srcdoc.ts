@@ -2981,14 +2981,17 @@ function injectDeckBridge(
       return false;
     }
   }
-  function scrollOverflow(el){
+  function scrollOverflow(el, axis){
     if (!el) return 0;
-    return Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0));
+    return axis === 'y'
+      ? Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0))
+      : Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0));
   }
-  function overflowMode(el){
+  function overflowMode(el, axis){
     if (!el || !window.getComputedStyle) return '';
     try {
-      return String(window.getComputedStyle(el).overflowX || '').toLowerCase();
+      var style = window.getComputedStyle(el);
+      return String(axis === 'y' ? style.overflowY : style.overflowX || '').toLowerCase();
     } catch (_) {
       return '';
     }
@@ -3006,14 +3009,14 @@ function injectDeckBridge(
       el === document.body
     );
   }
-  function rootScrollerClipped(){
-    return isClippedOverflowMode(overflowMode(document.documentElement)) ||
-      isClippedOverflowMode(overflowMode(document.body));
+  function rootScrollerClipped(axis){
+    return isClippedOverflowMode(overflowMode(document.documentElement, axis)) ||
+      isClippedOverflowMode(overflowMode(document.body, axis));
   }
-  function scrollLeftOf(el){
+  function scrollOffsetOf(el, axis){
     if (!el) return 0;
     try {
-      return Number(el.scrollLeft) || 0;
+      return Number(axis === 'y' ? el.scrollTop : el.scrollLeft) || 0;
     } catch (_) {
       return 0;
     }
@@ -3030,11 +3033,13 @@ function injectDeckBridge(
     add(document.body);
     return targets;
   }
-  function maxScrollLeft(){
+  function maxScrollOffset(axis){
     var targets = scrollTargets();
-    var value = 0;
+    var value = axis === 'y'
+      ? Number(window.scrollY || window.pageYOffset || 0)
+      : Number(window.scrollX || window.pageXOffset || 0);
     for (var i=0; i<targets.length; i++) {
-      value = Math.max(value, Number(targets[i].scrollLeft || 0));
+      value = Math.max(value, scrollOffsetOf(targets[i], axis));
     }
     return value;
   }
@@ -3045,16 +3050,23 @@ function injectDeckBridge(
     }
     return false;
   }
-  function isScrollDeck(){
+  function scrollDeckAxis(){
     var targets = scrollTargets();
-    for (var i=0; i<targets.length; i++) {
-      var candidate = targets[i];
-      if (scrollOverflow(candidate) <= 1) continue;
-      var mode = overflowMode(candidate);
-      if (isScrollableOverflowMode(mode)) return true;
-      if (isRootScrollContainer(candidate) && !isClippedOverflowMode(mode) && !rootScrollerClipped()) return true;
+    var axes = ['x', 'y'];
+    for (var a=0; a<axes.length; a++) {
+      var axis = axes[a];
+      for (var i=0; i<targets.length; i++) {
+        var candidate = targets[i];
+        if (scrollOverflow(candidate, axis) <= 1) continue;
+        var mode = overflowMode(candidate, axis);
+        if (isScrollableOverflowMode(mode)) return axis;
+        if (isRootScrollContainer(candidate) && !isClippedOverflowMode(mode) && !rootScrollerClipped(axis)) return axis;
+      }
     }
-    return false;
+    return '';
+  }
+  function isScrollDeck(){
+    return !!scrollDeckAxis();
   }
   function findActiveByClass(list){
     for (var i=0; i<list.length; i++) {
@@ -3072,11 +3084,35 @@ function injectDeckBridge(
     }
     return -1;
   }
+  function activeIndexFromScrollRects(list, axis){
+    var best = -1;
+    var distance = Infinity;
+    var firstPosition = null;
+    var hasDistinctPosition = false;
+    for (var i=0; i<list.length; i++) {
+      try {
+        var rect = list[i].getBoundingClientRect();
+        var position = Number(axis === 'y' ? rect.top : rect.left) || 0;
+        if (firstPosition === null) firstPosition = position;
+        else if (Math.abs(position - firstPosition) > 1) hasDistinctPosition = true;
+        var value = Math.abs(position);
+        if (value < distance) { distance = value; best = i; }
+      } catch (_) {}
+    }
+    return hasDistinctPosition ? best : -1;
+  }
+  var forcedScrollPageIndex = -1;
   function activeIndex(list){
     if (!list || !list.length) return 0;
-    if (isScrollDeck()) {
-      var w = Math.max(1, window.innerWidth);
-      return Math.max(0, Math.min(list.length - 1, Math.round(maxScrollLeft() / w)));
+    if (forcedScrollPageIndex >= 0) {
+      return Math.max(0, Math.min(list.length - 1, forcedScrollPageIndex));
+    }
+    var axis = scrollDeckAxis();
+    if (axis) {
+      var byRect = activeIndexFromScrollRects(list, axis);
+      if (byRect >= 0) return byRect;
+      var span = Math.max(1, axis === 'y' ? window.innerHeight : window.innerWidth);
+      return Math.max(0, Math.min(list.length - 1, Math.round(maxScrollOffset(axis) / span)));
     }
     var byDeckStage = activeIndexFromDeckStage(list);
     if (byDeckStage >= 0) return byDeckStage;
@@ -3193,10 +3229,22 @@ function injectDeckBridge(
   function updateDeckChrome(i, count){
     var cur = document.getElementById('deck-cur');
     var total = document.getElementById('deck-total');
+    var simpleCounter = document.getElementById('counter');
+    var simpleCounterParts = simpleCounter ? String(simpleCounter.textContent || '').split('/') : [];
     var prev = document.getElementById('deck-prev');
     var next = document.getElementById('deck-next');
     if (cur) cur.textContent = pad2(i + 1);
     if (total) total.textContent = pad2(count);
+    if (
+      simpleCounter &&
+      simpleCounterParts.length === 2 &&
+      simpleCounterParts[0].trim() !== '' &&
+      simpleCounterParts[1].trim() !== '' &&
+      Number.isFinite(Number(simpleCounterParts[0])) &&
+      Number.isFinite(Number(simpleCounterParts[1]))
+    ) {
+      simpleCounter.textContent = (i + 1) + ' / ' + count;
+    }
     if (prev) prev.toggleAttribute('disabled', i <= 0);
     if (next) next.toggleAttribute('disabled', i >= count - 1);
   }
@@ -3204,6 +3252,7 @@ function injectDeckBridge(
     var list = slides();
     if (!list.length) return false;
     var target = Math.max(0, Math.min(list.length - 1, i));
+    if (forcedScrollPageIndex >= 0) forcedScrollPageIndex = target;
     var activeClass = activeClassName(list);
     var usesInlineDisplay = false;
     var usesInlineVisibility = false;
@@ -3243,19 +3292,75 @@ function injectDeckBridge(
     report();
     return true;
   }
+  function forceScrollDeckPage(list, target){
+    forcedScrollPageIndex = target;
+    var activeClass = activeClassName(list);
+    for (var i=0; i<list.length; i++) {
+      if (!list[i].hasAttribute('data-od-scroll-original-display')) {
+        list[i].setAttribute('data-od-scroll-original-display', list[i].style.display || '');
+      }
+      list[i].style.display = i === target
+        ? (list[i].getAttribute('data-od-scroll-original-display') || '')
+        : 'none';
+      if (list[i].classList) {
+        list[i].classList.remove('active', 'is-active', 'current');
+        if (i === target) list[i].classList.add(activeClass);
+      }
+    }
+    try { window.scrollTo(0, 0); } catch (_) {}
+    var roots = scrollTargets();
+    for (var r=0; r<roots.length; r++) {
+      try { roots[r].scrollLeft = 0; roots[r].scrollTop = 0; } catch (_) {}
+    }
+    updateDeckChrome(target, list.length);
+    report(target);
+  }
   function scrollGo(i){
     var list = slides();
     var next = Math.max(0, Math.min(list.length - 1, i));
-    var left = next * window.innerWidth;
+    var axis = scrollDeckAxis() || 'x';
+    var offset = next * (axis === 'y' ? window.innerHeight : window.innerWidth);
+    var position = axis === 'y'
+      ? { top: offset, behavior: 'smooth' }
+      : { left: offset, behavior: 'smooth' };
+    // Root scrolling is browser-special: setting scrollLeft/scrollTop on body
+    // or documentElement is not reliable when body owns overflow (common in
+    // horizontally paged decks). Drive the viewport as well as both root
+    // elements. This also makes vertically stacked/scrolling deck templates
+    // navigable through the same thumbnail rail.
+    try {
+      list[next].scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'start' });
+    } catch (_) {}
+    try {
+      window.scrollTo(position);
+    } catch (_) {
+      try { window.scrollTo(axis === 'y' ? 0 : offset, axis === 'y' ? offset : 0); } catch (__) {}
+    }
     var targets = scrollTargets();
     for (var t=0; t<targets.length; t++) {
       try {
-        targets[t].scrollTo({ left: left, behavior: 'smooth' });
+        targets[t].scrollTo(position);
       } catch (_) {
-        try { targets[t].scrollLeft = left; } catch (__) {}
+        try {
+          if (axis === 'y') targets[t].scrollTop = offset;
+          else targets[t].scrollLeft = offset;
+        } catch (__) {}
       }
     }
-    setTimeout(report, 380);
+    // A body-owned scroller can visually move while its offset remains absent
+    // from document.scrollingElement (notably in sandboxed iframes). Preserve
+    // the requested index for the host state instead of immediately snapping
+    // the rail back to page one; ordinary scroll events still call report()
+    // without an override and track subsequent manual movement.
+    report(next);
+    setTimeout(function(){
+      if (activeIndex(list) === next) { report(); return; }
+      // Some sandboxed Chromium documents expose a wide/tall root scrollWidth
+      // but ignore every root scrolling API. Fall back to a single-visible-page
+      // presentation so Remix never leaves the main canvas on page one while
+      // the host rail claims another page is active.
+      forceScrollDeckPage(list, next);
+    }, 420);
   }
   function targetFor(action, list){
     var i = activeIndex(list);
@@ -3453,10 +3558,13 @@ function injectDeckBridge(
     }, true);
   }
   var lastCommentTargetSlideIndex = -1;
-  function report(){
+  function report(forcedIndex){
     try {
       var list = slides();
-      var i = activeIndex(list);
+      var measured = activeIndex(list);
+      var i = Number.isFinite(forcedIndex)
+        ? Math.max(0, Math.min(list.length - 1, Math.floor(forcedIndex)))
+        : measured;
       var count = list.length;
       var progressWidth = count ? ((i + 1) / count * 100) + '%' : '0';
       updateDeckChrome(i, count);
