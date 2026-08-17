@@ -1435,7 +1435,10 @@ button.att-d:hover { border-color: var(--border-strong); }
    它是补充说明,不该和"剩余额度 $3.20"抢同一层。
    耗尽态例外:那条不是补充说明而是硬结论(发不出去了),保持红色。 */
 .up .h .amt .why { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-soft); }
-.up .h .amt.is-out .why { color: var(--red); }
+/* 说明句不跟着变红 —— 红只标那个数。
+   额度归零时该看的是「$0.00」,那是事实也是要处理的东西;
+   「现在无法开始新任务」是它的后果,跟着变红就成了两处告警,
+   红一多,眼睛反而不知道该落在哪。灰字加红数,层次才出来。 */
 .up .meter { height: 4px; background: var(--border-soft); }
 .up .meter i { display: block; height: 100%; background: var(--amber); }
 .up .meter i.is-out { background: var(--red); }
