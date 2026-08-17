@@ -308,6 +308,40 @@ const HOME_PLUGINS = [
 ];
 
 const APPLY_RESPONSES: Record<string, unknown> = {
+  'example-web-prototype': {
+    query: 'Build a high-fidelity web prototype for product evaluators.',
+    contextItems: [],
+    inputs: [],
+    assets: [],
+    mcpServers: [],
+    trust: 'bundled',
+    capabilitiesGranted: ['prompt:inject'],
+    capabilitiesRequired: ['prompt:inject'],
+    appliedPlugin: {
+      snapshotId: 'snap-web-prototype',
+      pluginId: 'example-web-prototype',
+      pluginVersion: '0.1.0',
+      manifestSourceDigest: 'c'.repeat(64),
+      inputs: {
+        artifactKind: 'web prototype',
+        fidelity: 'high-fidelity',
+        audience: 'product evaluators',
+        designSystem: 'the active project design system',
+        template: 'the bundled web prototype seed',
+      },
+      resolvedContext: { items: [] },
+      capabilitiesGranted: ['prompt:inject'],
+      capabilitiesRequired: ['prompt:inject'],
+      assetsStaged: [],
+      taskKind: 'new-generation',
+      appliedAt: 0,
+      connectorsRequired: [],
+      connectorsResolved: [],
+      mcpServers: [],
+      status: 'fresh',
+    },
+    projectMetadata: {},
+  },
   'example-live-dashboard': {
     query: 'Build a Notion-style team dashboard with live KPIs.',
     contextItems: [],
@@ -1174,8 +1208,8 @@ test('[P0] empty home composer submits the active placeholder suggestion with te
   };
 
   expect(body.pendingPrompt?.trim()).toBeTruthy();
-  expect(typeof body.pluginId).toBe('string');
-  expect(typeof body.metadata?.kind).toBe('string');
+  expect(body.pluginId).toBe('example-web-prototype');
+  expect(body.metadata?.kind).toBe('prototype');
   await expect(page).toHaveURL(/\/projects\//);
 });
 
