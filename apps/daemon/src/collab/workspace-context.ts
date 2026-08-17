@@ -203,10 +203,23 @@ export function resolveWorkspaceSettingsUrl(
   // workspace another device left active, so every console link pins the id.
   // The low-cardinality source marker lets Vela attribute the resulting
   // Workspace management outcomes without carrying user-entered values.
+  const base = resolveEffectiveVelaConsoleOrigin(env, configuredEnv);
+  const hasRuntimeProfile = Boolean(
+    configuredEnv.OPEN_DESIGN_AMR_PROFILE?.trim() || configuredEnv.VELA_PROFILE?.trim(),
+  );
+  // A workspace payload can carry a console URL minted by the environment that
+  // last served it. After an in-app profile switch that value is stale by
+  // definition: letting it win would send create-team and workspace-settings
+  // actions back to prod while every API request already targets feature-test.
+  // The selected profile's build-injected origin is authoritative whenever a
+  // runtime selection exists; explicit URLs remain the compatibility source for
+  // deployments that do not support profile switching.
+  if (base && hasRuntimeProfile) {
+    return withWorkspaceDeepLink(`${base.replace(/\/$/, '')}/settings`, workspaceId);
+  }
   if (typeof explicit === 'string' && explicit.trim()) {
     return withWorkspaceDeepLink(explicit.trim(), workspaceId);
   }
-  const base = resolveEffectiveVelaConsoleOrigin(env, configuredEnv);
   if (!base) return undefined;
   return withWorkspaceDeepLink(`${base.replace(/\/$/, '')}/settings`, workspaceId);
 }
