@@ -318,7 +318,7 @@
    ------------------------------------------------------------
    来源:飞书文档《…/docx/VtOwd4ON2oYZj0xd6OTceubcnDe》第三节
    「三、OpenDesign 的生成流程」的组件表(21 行),
-   外加评审时补的 2 个(22 待发送附件 / 23 重连),共 23 个。
+   外加评审时补的 3 个(22 待发送附件 / 23 重连 / 24 回答头),共 24 个。
    表里每个组件给了:出现时机 / 默认状态 / 包含的状态 / 支持的操作 /
    展示的信息 —— 本文件把这五列逐一落成可看的样式。
 
@@ -361,6 +361,11 @@
      设计系统的调色板,而是外部品牌的固定值,改不得也不该跟着主题走。
      站点那套 tokens.css 里已经有同名分组(--plat-ios / --plat-wx / --plat-x …),
      产品这套还没有 —— 移植时应该把这一段挪进 tokens/colors.css,不要留在这儿。 */
+  --agent-claude:      #d97757;   /* agent-icons/claude.svg 原色 */
+  --agent-codex-plate: #ffffff;   /* agent-icons/codex.svg 的白底板 */
+  --agent-codex-a:     #b1a7ff;
+  --agent-codex-b:     #7a9dff;
+  --agent-codex-c:     #3941ff;
   --plat-discord:  #5865F2;
   --plat-feishu-a: #00D6B9;
   --plat-feishu-b: #3370FF;
@@ -1591,6 +1596,14 @@ button.att-d:hover { border-color: var(--border-strong); }
    进流水就没有这些事:面板本来就会渲染流水的每一行,多一种行而已。
    代价是滚上去会看不见 —— 可以接受,因为它本来就是短暂的,
    而真正需要你动手的那一态(次数用尽)会停在流水末尾不动。 */
+/* 回答头:这一段是谁答的。
+   ------------------------------------------------------------
+   尺寸照搬 apps/web 的 .role —— 20px 图标 + 8px 间距 + 13px/600。
+   只在【换人】时出现:同一个 agent 连着说不重复报名字,那是复述;
+   用户插一句之后重新出现,因为一轮结束了。 */
+.ahead { display: flex; align-items: center; gap: 8px; font-size: var(--t-body); font-weight: 600; color: var(--text-strong); }
+.ahead .ai { flex: none; width: 20px; height: 20px; }
+
 /* 重连是一条状态,不是一张卡。
    ------------------------------------------------------------
    它随时会自己消失,而且刻意不该抢注意力 —— 重连时人该做的是接着看别的。
@@ -1707,7 +1720,7 @@ body { background: var(--bg-subtle); overflow: auto; }
    构件墙里看不出来。Queue 和输入框钉在底部,不随流水滚走。 */
 .panel {
   display: flex; flex-direction: column;
-  height: 1246px;  /* 四屏里最高的那屏(收尾)所需;谁的日志都不用滚,矮的那屏靠 margin-top:auto 贴底 */
+  height: 1136px;  /* 四屏里最高的那屏(收尾)所需;谁的日志都不用滚,矮的那屏靠 margin-top:auto 贴底 */
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--bg); overflow: hidden;
 }
@@ -1749,6 +1762,8 @@ body { background: var(--bg-subtle); overflow: auto; }
    flex 的 gap 没法单独给某个子项减,所以用负外边距抵掉一截:12 - 4 = 8。
    这一招真实产品自己也在用(.chat-log-tail-spacer 靠 margin-top:-24 抵消 gap)。 */
 .flow > .fb { margin-top: -4px; }   /* 12 - 4 = 8 */
+/* 回答头和它下面第一块是一体的,对齐真实产品 .role 的 margin-bottom: 8 */
+.flow > .ahead + * { margin-top: -4px; }   /* 12 - 4 = 8 */
 /* 连着几条工具调用是一组,组件自己定的间距是 6;放进流水后被 12 的 gap 顶开成 18,
    反而比"两个不相干的块"还松。抵掉 6,回到组件的本意。 */
 .flow > .tool + .tool { margin-top: -6px; }   /* 12 - 6 = 6 */
@@ -1818,6 +1833,8 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
         </div></div>
 
+        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
+
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</div></details>
 
@@ -1886,6 +1903,8 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="att"><button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button><button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button><button class="att-d" type="button" aria-label="打开 跨端适配检…-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">跨端适配检…-v3</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button></div>
           <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
         </div></div>
+
+        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</div></details>
@@ -1960,6 +1979,8 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="flow">
         <div class="msg-me"><div class="bub">把这一屏重做成能跑的原型,再加一个视觉风格一致的设置页</div></div>
 
+        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
+
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">8s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">先把现有这屏的结构和 token 读一遍,别凭截图猜。</div></details>
 
@@ -2014,6 +2035,8 @@ body { background: var(--bg-subtle); overflow: auto; }
         </div>
         <div class="flow">
         <div class="msg-me"><div class="bub">设置页也照着做一版</div></div>
+
+        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">5s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">商品卡这块有两条路,得先问清楚再动手。</div></details>
