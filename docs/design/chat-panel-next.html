@@ -1230,7 +1230,31 @@ button.att-d:hover { border-color: var(--border-strong); }
 [data-tip].is-tip::after, [data-tip].is-tip::before { opacity: 1; }
 
 /* ---- 反馈行 ---- */
+/* 回合状态:这一轮结束了没有、花了多少。
+   ------------------------------------------------------------
+   面板是流式的,不给一个明确的收尾,人分不清"答完了"和"还在想" ——
+   尤其在最后一段文字停下来之后,屏幕上没有任何东西宣布结束。
+   所以这一行的开头放【状态词 + 耗时用量】,末尾才是那几个动作。
+   耗时和用量只有配上状态词才读得懂:单看「12.4s」不知道是什么的 12.4 秒。
+   跟右端的「14:32」不重复 —— 一个是这轮跑了多久,一个是它发生在几点,
+   回头翻记录时要的是后者,判断这次贵不贵要的是前者。
+   异常结束时状态词换成「已停止」,而"剩了哪几步、怎么接着跑"由
+   20 / 21 那张卡说,两边不重复:这一行只负责宣布"这轮到此为止"。 */
 .fb { display: flex; align-items: center; gap: 2px; }
+.fb .sp { flex: 1; }
+.fb .fin {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-inline-end: 4px; font-size: var(--t-cap); color: var(--text-muted);
+}
+/* 完成用绿点 —— 绿在这套系统里就是"通过了"。停止用中性灰:
+   它不是出事,只是没跑完,红要留给真的错误。 */
+.fb .fin i { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--brand-text); }
+.fb .fin.mod-stop i { background: var(--text-faint); }
+/* 用等宽数字,不用等宽【字体】。
+   JiduMonoPro 里没有「·」的字形,整段套 mono 之后那个分隔点会渲染成
+   一个豆腐块 —— 实测就是这样。而这里真正需要的只是"数字不跳",
+   font-variant-numeric: tabular-nums 正好只做这件事,标点仍走正文字体。 */
+.fb .fin .cost { margin-inline-start: 5px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 .fb button {
   display: grid; place-items: center; width: 26px; height: 26px;
   border-radius: var(--radius-sm); color: var(--text-soft);
@@ -2490,9 +2514,10 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>默认 · 图标组 + 时间</span><i></i></div>
+            <div class="st-l mod-def"><span>默认 · 回合状态 + 图标组 + 时间</span><i></i></div>
             <div class="st-b">
               <div class="fb">
+                <span class="fin"><i></i>已完成<span class="cost">12.4s · 3.2k</span></span><span class="sp"></span>
                 <button type="button" aria-label="赞" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
                 <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
                 <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
@@ -2505,6 +2530,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>hover · 出 Tooltip,把图标翻译成一句话</span><i></i></div>
             <div class="st-b" style="padding-top:30px">
               <div class="fb">
+                <span class="fin"><i></i>已完成<span class="cost">12.4s · 3.2k</span></span><span class="sp"></span>
                 <button type="button" aria-label="赞" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
                 <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
                 <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
@@ -2517,9 +2543,21 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>已选 · 图标变填充,再点取消</span><i></i></div>
             <div class="st-b">
               <div class="fb">
+                <span class="fin"><i></i>已完成<span class="cost">12.4s · 3.2k</span></span><span class="sp"></span>
                 <button class="is-on" type="button" aria-label="赞" data-tip="有帮助" aria-pressed="true"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
                 <button type="button" aria-label="踩" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
                 <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <span class="tm">14:32</span>
+              </div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>这轮被中断 · 状态词换成「已停止」,绿点转灰</span><i></i></div>
+            <div class="st-b">
+              <div class="fb">
+                <span class="fin mod-stop"><i></i>已停止<span class="cost">4.0s · 311</span></span><span class="sp"></span>
+                <button type="button" aria-label="复制" data-tip="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <button type="button" aria-label="Fork" data-tip="以此新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
                 <span class="tm">14:32</span>
               </div>
             </div>
@@ -2546,7 +2584,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg>
-          <span><b>赞 / 踩</b> — 单击切换,互斥。<b>复制</b> — 复制该条回复全文。<b>Fork</b> — 以此为上下文新开会话。<b>Tooltip</b> — 四个都是纯图标,hover 或键盘聚焦时出深色 tip 说出它是什么(有帮助 / 没帮助 / 复制回复 / 以此新开会话)。图标是压缩过的词,压得越狠越省地方也越容易解错 —— Fork 那三个圆点没人第一次就读得出是"新开会话"。之前只写了 aria-label,那只有读屏软件听得到,用眼睛的人反而没有。这条规则对面板里所有纯图标按钮生效(Queue 行的立即发送 / 编辑 / 取消排队 / 拖动、气泡上的复制),不只这一组。时间点常驻在图标右侧,不进 tip。</span>
+          <span><b>赞 / 踩</b> — 单击切换,互斥。<b>复制</b> — 复制该条回复全文。<b>Fork</b> — 以此为上下文新开会话。<b>回合状态</b> — 行首是这一轮的收尾:<b>已完成</b>(绿点)或 <b>已停止</b>(灰点),后面跟耗时和用量。面板是流式的,最后一段文字停下来之后屏幕上没有任何东西宣布结束,人分不清"答完了"和"还在想",这一行就是那个句号。耗时用量必须配着状态词读 —— 单看「12.4s」不知道是什么的 12.4 秒。跟右端的「14:32」不重复:一个是这轮跑了多久,一个是它发生在几点。被中断时只把状态词换成「已停止」,<b>不解释为什么、也不列剩下什么</b> —— 那是 20 / 21 那张卡的事,这一行只负责宣布"这轮到此为止"。停止用<b>灰点不用红</b>:它不是出事,只是没跑完,红留给真的错误。<b>Tooltip</b> — 四个都是纯图标,hover 或键盘聚焦时出深色 tip 说出它是什么(有帮助 / 没帮助 / 复制回复 / 以此新开会话)。图标是压缩过的词,压得越狠越省地方也越容易解错 —— Fork 那三个圆点没人第一次就读得出是"新开会话"。之前只写了 aria-label,那只有读屏软件听得到,用眼睛的人反而没有。这条规则对面板里所有纯图标按钮生效(Queue 行的立即发送 / 编辑 / 取消排队 / 拖动、气泡上的复制),不只这一组。时间点常驻在图标右侧,不进 tip。</span>
         </div>
       </article>
 
