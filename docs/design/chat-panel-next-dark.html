@@ -1632,14 +1632,20 @@ button.att-d:hover { border-color: var(--border-strong); }
 }
 .composer .bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
 .composer .bar .sp { flex: 1; }
+/* 底栏这几个(+、模型名)都给最深的一档。
+   ------------------------------------------------------------
+   它们不是"辅助说明",是这一刻你要伸手去够的东西 —— 加附件、看现在用的哪个
+   模型。原来 + 在 soft(3.7:1)、模型名在 muted(6.7:1),比上面的正文还浅,
+   等于把可操作的部分排在了可读内容后面。
+   提到最深之后 hover 不能再靠变深,只留底色(和折叠块标题同一处理)。 */
 .composer .bar button {
   display: grid; place-items: center; width: 28px; height: 28px;
-  border-radius: var(--radius-sm); color: var(--text-soft);
+  border-radius: var(--radius-sm); color: var(--text-strong);
 }
-.composer .bar button:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
+.composer .bar button:hover { background: var(--bg-fill-secondary); }
 .composer .bar button svg { width: 16px; height: 16px; }
 .composer .bar .model {
-  width: auto; padding: 0 8px; font-size: var(--t-cap); color: var(--text-muted);
+  width: auto; padding: 0 8px; font-size: var(--t-cap);
 }
 .composer .bar .send {
   width: 28px; height: 28px; background: var(--text-strong); color: var(--bg);
