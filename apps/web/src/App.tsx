@@ -5315,6 +5315,7 @@ function AppInner() {
       <TooltipLayer />
       <UpdateDialog />
       <AmrArtifactUpgradeGate
+        cloudModelSelected={config.mode === 'daemon' && config.agentId === 'amr'}
         homeVisible={route.kind === 'home' && route.view === 'home'}
         activeProjectId={route.kind === 'project' ? route.projectId : null}
         activeConversationId={

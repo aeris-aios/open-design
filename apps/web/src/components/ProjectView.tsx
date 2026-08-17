@@ -1868,8 +1868,8 @@ export function ProjectView({
   // preflight context; they must never fall through to the Personal wallet.
   const projectRunPreflightContext =
     projectRunBillingContext ?? projectRunWorkspaceContext;
-  const projectRunRequiresWorkspaceScope =
-    config.mode === 'daemon' && config.agentId === 'amr';
+  const cloudModelSelected = config.mode === 'daemon' && config.agentId === 'amr';
+  const projectRunRequiresWorkspaceScope = cloudModelSelected;
   // An Open Design Cloud run needs a wallet, and the ONLY client-side veto is
   // "there is no billing principal at all". Either witness suffices: the
   // caller's own cloud identity, or a project scope that already names an
@@ -8106,11 +8106,7 @@ export function ProjectView({
       commentAttachments: ChatCommentAttachment[],
       meta?: ChatSendMeta,
     ): Promise<ChatSendOutcome> => {
-      if (
-        activeConversationId
-        && config.mode === 'daemon'
-        && config.agentId === 'amr'
-      ) {
+      if (activeConversationId && cloudModelSelected) {
         const decision = await requestAmrArtifactUpgrade({
           projectId: project.id,
           conversationId: activeConversationId,
@@ -8120,7 +8116,7 @@ export function ProjectView({
       }
       void handleSend(prompt, attachments, commentAttachments, meta);
     },
-    [activeConversationId, config.agentId, config.mode, handleSend, project.id],
+    [activeConversationId, cloudModelSelected, handleSend, project.id],
   );
 
   // Cancel every in-flight run for the current conversation (the user's own
