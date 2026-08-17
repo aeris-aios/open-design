@@ -318,7 +318,7 @@
    ------------------------------------------------------------
    来源:飞书文档《…/docx/VtOwd4ON2oYZj0xd6OTceubcnDe》第三节
    「三、OpenDesign 的生成流程」的组件表(21 行),
-   外加评审时补的 3 个(22 待发送附件 / 23 重连 / 24 回答头),共 24 个。
+   外加评审时补的 4 个(22 待发送附件 / 23 重连 / 24 回答头 / 25 选中文字),共 25 个。
    表里每个组件给了:出现时机 / 默认状态 / 包含的状态 / 支持的操作 /
    展示的信息 —— 本文件把这五列逐一落成可看的样式。
 
@@ -1607,6 +1607,71 @@ button.att-d:hover { border-color: var(--border-strong); }
    进流水就没有这些事:面板本来就会渲染流水的每一行,多一种行而已。
    代价是滚上去会看不见 —— 可以接受,因为它本来就是短暂的,
    而真正需要你动手的那一态(次数用尽)会停在流水末尾不动。 */
+/* ---- 输入框 ---- */
+/* 不在文档那 21 行里,但没有它就不成其为一个面板;25 · 选中文字的第三态也要落在
+   这里。只画到"能承接上面那些组件"为止 —— 它自己的状态(聚焦、禁用、拖入文件)
+   不在这份稿的范围内。 */
+.composer { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); }
+.composer .tray { padding: 9px 9px 0; }
+.composer .ta {
+  display: block; padding: 10px 12px 2px;
+  font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-faint);
+}
+.composer .bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
+.composer .bar .sp { flex: 1; }
+.composer .bar button {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: var(--radius-sm); color: var(--text-soft);
+}
+.composer .bar button:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
+.composer .bar button svg { width: 16px; height: 16px; }
+.composer .bar .model {
+  width: auto; padding: 0 8px; font-size: var(--t-cap); color: var(--text-muted);
+}
+.composer .bar .send {
+  width: 28px; height: 28px; background: var(--text-strong); color: var(--bg);
+  border-radius: var(--radius-pill);
+}
+.composer .bar .send:hover { background: var(--text); color: var(--bg); }
+
+/* ---- 选中文字 → 添加到对话 ---- */
+/* 只放一个动作。
+   ------------------------------------------------------------
+   选中一段话之后真正想做的只有一件事:拿它接着说。复制是系统右键已有的,
+   「更多详情」「到侧边提问」都是把一个明确动作稀释成一道选择题 —— 浮条一旦
+   超过一个按钮,人就得先读完再决定,而这条浮条出现的那一刻人手还按在鼠标上。
+   所以它不是"工具栏",就是一颗按钮:形状本身已经说明只有一条路。 */
+/* 定位参照是【选区】不是整段:浮条要对准你选的那几个字,
+   段落居中会在长句里偏出去老远。 */
+.sel { position: relative; background: var(--selected-soft); border-radius: var(--radius-xs); }
+.selbar {
+  position: absolute; left: 50%; translate: -50% 0; bottom: calc(100% + 6px);
+  z-index: 6; white-space: nowrap; box-shadow: var(--shadow-md);
+  border-radius: var(--radius-pill);
+}
+/* 选区贴着面板顶边时翻到下方 —— 和 tooltip 那套边界补正同一个道理:
+   浮层默认朝上,而容器上面就没地方了。 */
+.selbar.mod-below { bottom: auto; top: calc(100% + 6px); }
+
+/* 点完之后:这段话变成输入框里的一条引用,可以再删掉。
+   引用不重排原文,只做两行截断 —— 它是"我指的是这段"的凭据,不是正文。 */
+.composer .quote {
+  position: relative; display: flex; align-items: flex-start; gap: 8px;
+  margin: 9px 9px 0;                          /* 和附件托盘同一套内缩 */
+  padding: 6px 8px 6px 11px;
+  border-radius: var(--radius-sm); background: var(--bg-subtle);
+}
+.composer .quote::before {
+  content: ""; position: absolute; left: 4px; top: 7px; bottom: 7px;
+  width: 2px; border-radius: 1px; background: var(--border-strong);
+}
+.composer .quote .tx {
+  flex: 1; min-width: 0; font-size: var(--t-mini); line-height: var(--lh-body);
+  color: var(--text-muted); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.composer .quote .del { position: static; flex: none; margin-top: 1px; }
+
 /* 回答头:这一段是谁答的。
    ------------------------------------------------------------
    尺寸照搬 apps/web 的 .role —— 20px 图标 + 8px 间距 + 13px/600。
@@ -1727,14 +1792,14 @@ button.att-d:hover { border-color: var(--border-strong); }
 <header class="hd" data-od-id="page-header">
   <span class="mark" aria-hidden="true"><svg viewBox="0 0 82 82" fill="currentColor"><path d="M41 0C76.6 0 82 5.4 82 41S76.6 82 41 82 0 76.6 0 41 5.4 0 41 0Zm-.1 15.7C26.9 15.7 15.6 27 15.6 41v21.9c0 1.9 1.5 3.4 3.4 3.4h21.9c14 0 25.3-11.3 25.3-25.3s-11.3-25.3-25.3-25.3Zm0 5.1c11.2 0 20.2 9.1 20.2 20.2s-9 20.2-20.2 20.2S20.6 52.2 20.6 41s9.1-20.2 20.3-20.2Zm-8.3 10.8c-.6-.3-1.3.4-1 1l7.7 20.3c.3.8 1.6.6 1.6-.3V41h11.8c.9 0 1.1-1.2.3-1.6l-20.4-7.8Z"/></svg></span>
   <span class="tt">OpenDesign 的生成流程 · 组件全集</span>
-  <span class="st">深色预览 · 24 个组件(表内 21 + 表外 3)· 6 阶段 + 边界 · 静态 HTML</span>
+  <span class="st">深色预览 · 25 个组件(表内 21 + 表外 4)· 6 阶段 + 边界 · 静态 HTML</span>
 </header>
 
 <div class="wrap">
 
   <div class="intro" data-od-id="intro">
     <span class="kicker">GENERATION FLOW</span>
-    <h1>生成流程里,会话要长出的 24 个组件</h1>
+    <h1>生成流程里,会话要长出的 25 个组件</h1>
     <p>组件清单与每个组件的「出现时机 / 默认状态 / 包含的状态 / 支持的操作 / 展示的信息」全部取自飞书文档第三节的组件表,不自行增删。配色绑<b>产品面</b>调色板(<code>design-system/tokens/</code>,即 <code>styles.css</code> 那七份),不是站点面的 <code>tokens.css</code> —— 这份稿子的去向是 <code>apps/web</code> 的 chat panel。本文件里不出现一个 hex。写成静态 HTML 而非 JS 模板 —— 改样式时看到哪就能改哪。</p>
   </div>
 
@@ -2074,6 +2139,46 @@ button.att-d:hover { border-color: var(--border-strong); }
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20a7 7 0 0114 0"/></svg>
           <span><b>只在换人时出现</b> —— 同一个 agent 连着说好几段,每段都报一次名字就是复述;用户插一句之后重新出现,因为那是新的一轮。这条规则和 apps/web 的 <code>showRole</code> 一致:身份和上一条不同才画。<b>图标 + 名字都要</b> —— 名字在切了模型之后是唯一能确认"现在是谁在答"的东西,图标则让人扫一眼就看出换过了。<b>不带时间</b>:时间在回合状态行(见 15)里,那里才是一轮结束时要看的地方。</span>
+        </div>
+      </article>
+      <article class="cmp mod-w2" data-od-id="cmp-selection">
+        <div class="cmp-h"><span class="no">25</span><span class="nm">选中文字 · 添加到对话</span><span class="ext-mark">表外</span></div>
+        <div class="cmp-meta">
+          <div><b>出现时机</b> 在回答正文里选中一段文字</div>
+          <div><b>默认状态</b> 浮在选区上方,只有一个动作</div>
+        </div>
+        <div class="cmp-b">
+          <div class="st">
+            <div class="st-l mod-def"><span>默认 · 浮在选区上方,居中于选区</span><i></i></div>
+            <div class="st-b">
+              <div class="say">两页都好了,<mark class="sel">商品卡已经抽成共享组件</mark>,改一处两页都跟着变。<span class="selbar"><button class="btn mod-primary mod-sm" type="button">添加到对话</button></span></div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>选区贴着面板顶边 · 浮条翻到下方</span><i></i></div>
+            <div class="st-b">
+              <div class="say"><mark class="sel">改一处两页都跟着变</mark>,后面再加页也是同一张卡。<span class="selbar mod-below"><button class="btn mod-primary mod-sm" type="button">添加到对话</button></span></div>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>点完之后 · 这段进输入框成为一条引用,可再删掉</span><i></i></div>
+            <div class="st-b">
+              <div class="composer">
+                <div class="quote"><span class="tx">商品卡已经抽成共享组件</span><button class="del" type="button" aria-label="移除引用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+                <div class="ta">这句话展开讲讲…</div>
+                <div class="bar">
+                  <button type="button" aria-label="添加附件" data-tip="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
+                  <button class="model" type="button">Opus 5</button>
+                  <span class="sp"></span>
+                  <button class="send" type="button" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="cmp-ops">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h9M4 12h13M4 17h7"/><path d="M17 20l3-3-3-3"/></svg>
+          <span><b>只放一个动作</b> —— 选中一段话之后真正想做的只有一件事:拿它接着说。复制系统右键已经有了,「更多详情」「到侧边提问」都是把一个明确动作稀释成一道选择题;而这条浮条出现的那一刻,人手还按在鼠标上,读三个选项的成本比动作本身还高。<b>所以它不是工具栏,就是一颗按钮</b>:形状本身已经说明只有一条路。<b>贴边翻转</b> — 选区在面板最上面时浮条翻到下方,和 tooltip 那套边界补正同一个道理。<b>点完不直接发送</b>:引用落进输入框,你还要补一句自己的话 —— 光把原文丢回去不构成一个问题。<b>引用只截两行</b>,它是"我指的是这段"的凭据,不是正文的复读。</span>
         </div>
       </article>
 
