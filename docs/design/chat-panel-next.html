@@ -960,9 +960,13 @@ button.att-i:hover { border-color: var(--border-strong); }
 /* ---- 生图 ---- */
 .imgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .shot { position: relative; aspect-ratio: 3/4; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); background: var(--bg-subtle); }
-.shot .fill { position: absolute; inset: 0; background: var(--text-soft); opacity: 0.4; }
-.shot .fill.mod-a { background: var(--text-strong); opacity: 0.55; }
-.shot .fill.mod-b { background: var(--brand); opacity: 0.35; }
+/* 生图的占位跟附件缩略图共用 .mini —— 全站只有一种占位灰。
+   原来这里另有一套 .fill / .mod-a / .mod-b(深灰 / 绿 / 中灰),两个毛病:
+   ① 那是凭空发明的"四张图不一样"的效果,而占位图的职责只是压住范围,
+      画出差异反而抢注意力(绿色那块尤其像个状态,不像一张图);
+   ② 规则写成了 .shot .fill,缩略图条里的 .th 不在 .shot 下面,
+      于是四个小图标全是空白 —— 只有当初手写了 inline 样式的那一个显形。
+   统一到 .mini 之后这两件事一起消失。 */
 .shot.is-load { background: var(--bg-fill-secondary); animation: shimmer 1.3s var(--ease-out) infinite; }
 @keyframes shimmer { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 /* 失败格不上红框红底,跟旁边的图保持同一副外壳。
@@ -982,7 +986,18 @@ button.att-i:hover { border-color: var(--border-strong); }
 .shot.is-fail .rt svg { width: 11px; height: 11px; }
 .shot.is-fail .rt:hover { color: var(--text-strong); }
 .strip { display: flex; align-items: center; gap: 5px; }
-.strip .th { width: 26px; height: 34px; border-radius: 3px; overflow: hidden; border: 1px solid var(--border); position: relative; }
+/* 收起之后小图仍然是【按钮】。
+   卡片收成一行,只是把"四张图铺开"换成"四张图缩着",能看大图这件事
+   一点没变 —— 规格写的是「点缩略图条中任一张,弹层大图」,收起态是这条
+   规则最常被用到的地方(大部分时候你是回头去翻,那时它早就收起来了)。
+   所以 .th 是 <button> 不是 <span>:有 hover、有键盘焦点、有 tip。
+   26×34 已经小到看不出内容了,tip 是它唯一能自报家门的方式。 */
+.strip .th {
+  width: 26px; height: 34px; border-radius: 3px; overflow: hidden;
+  border: 1px solid var(--border); position: relative; padding: 0;
+  transition: border-color var(--duration-faster) var(--ease-out);
+}
+.strip .th:hover { border-color: var(--text-soft); }
 
 /* ---- 产物卡片 ---- */
 .arts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
@@ -2031,8 +2046,8 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>执行中 · 骨架格逐个被真实图替换</span><i></i></div>
             <div class="st-b">
               <div class="imgs">
-                <span class="shot"><span class="fill mod-a"></span></span>
-                <span class="shot"><span class="fill mod-b"></span></span>
+                <span class="shot"><span class="mini"></span></span>
+                <span class="shot"><span class="mini"></span></span>
                 <span class="shot is-load"></span>
                 <span class="shot is-load"></span>
               </div>
@@ -2045,10 +2060,10 @@ button.att-i:hover { border-color: var(--border-strong); }
                 <span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
                 <span class="nm">生成 4 张</span>
                 <span class="strip">
-                  <span class="th"><span class="fill mod-a" style="position:absolute;inset:0"></span></span>
-                  <span class="th"><span class="fill mod-b" style="position:absolute;inset:0"></span></span>
-                  <span class="th"><span class="fill" style="position:absolute;inset:0;background:var(--text-soft);opacity:.4"></span></span>
-                  <span class="th"><span class="fill mod-a" style="position:absolute;inset:0"></span></span>
+                  <button class="th" type="button" aria-label="查看第 1 张大图" data-tip="查看大图"><span class="mini"></span></button>
+                  <button class="th" type="button" aria-label="查看第 2 张大图" data-tip="查看大图"><span class="mini"></span></button>
+                  <button class="th" type="button" aria-label="查看第 3 张大图" data-tip="查看大图"><span class="mini"></span></button>
+                  <button class="th" type="button" aria-label="查看第 4 张大图" data-tip="查看大图"><span class="mini"></span></button>
                 </span>
               </div>
             </div>
@@ -2057,17 +2072,17 @@ button.att-i:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>部分失败 · 保持展开,失败格留空 + 单独重试</span><i></i></div>
             <div class="st-b">
               <div class="imgs">
-                <span class="shot"><span class="fill mod-a"></span></span>
+                <span class="shot"><span class="mini"></span></span>
                 <span class="shot is-fail"><button class="rt" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>重试</button></span>
-                <span class="shot"><span class="fill mod-b"></span></span>
-                <span class="shot"><span class="fill"></span></span>
+                <span class="shot"><span class="mini"></span></span>
+                <span class="shot"><span class="mini"></span></span>
               </div>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>查看</b> — 点缩略图条中任一张,弹层大图,左右键切换。新卡出现时上一张自动收起。<b>单张失败</b> — 那一格不上红框红底,壳跟旁边的图一模一样:格子是 3:4 的一整块,红铺开面积太大,四格里一格泛红,看到的会是"这排有个红东西"而不是"这一张没出来"。空格 + 中间一个「↻ 重试」已经说完了,红只留给要点的那两个字。</span>
+          <span><b>查看</b> — 点缩略图条中任一张,弹层大图,左右键切换。新卡出现时上一张自动收起。<b>收起后照样点得开</b> — 收成一行只是把四张图缩小,不是把它们变成一张静态图片;缩略图条里每一格仍是按钮,有 hover、有键盘焦点、有 tip。收起态其实是这条规则最常被用到的地方:大部分时候你是回头去翻早先生成的图,那时卡片早就收起来了。<b>占位统一用同一种灰</b>,四格不做深浅区分 —— 占位图的职责只是压住范围,画出差异反而抢注意力。<b>单张失败</b> — 那一格不上红框红底,壳跟旁边的图一模一样:格子是 3:4 的一整块,红铺开面积太大,四格里一格泛红,看到的会是"这排有个红东西"而不是"这一张没出来"。空格 + 中间一个「↻ 重试」已经说完了,红只留给要点的那两个字。</span>
         </div>
       </article>
 
