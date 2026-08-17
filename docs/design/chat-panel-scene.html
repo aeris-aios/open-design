@@ -1734,6 +1734,12 @@ body { background: var(--bg-subtle); overflow: auto; }
 /* flex 列的子项默认可压缩,日志一长就把卡片压扁成一条线。日志块只能被滚动,不能被压。 */
 .flow > * { flex: 0 0 auto; }
 
+/* 回合状态 + 反馈这一行是上一条回答的尾巴,不是新的一块。
+   块间距 24 会把它和正文拆成两件事 —— 真实产品里同类的 .user-actions 只留 4px。
+   flex 的 gap 没法单独给某个子项减,所以用负外边距抵掉一截:24 - 16 = 8。
+   这一招真实产品自己也在用(.chat-log-tail-spacer 靠 margin-top:-24 抵消 gap)。 */
+.flow > .fb { margin-top: -16px; }
+
 /* 底座:Queue + 输入框,钉住不滚 */
 /* 对齐 .composer:padding 10px 16px、gap 8px */
 .dock { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 16px; }
