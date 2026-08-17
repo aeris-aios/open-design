@@ -2,7 +2,10 @@ import type {
   OpenDesignPlanContractV2,
   StrategyRuntimeStateV2,
 } from '@open-design/contracts';
-import { AppliedStrategyBindingV2Schema } from '@open-design/contracts';
+import {
+  AppliedStrategyBindingV2Schema,
+  composeOdNextStrategyContinuationV2,
+} from '@open-design/contracts';
 import type Database from 'better-sqlite3';
 
 import { getSnapshot } from '../../plugins/snapshots.js';
@@ -198,6 +201,13 @@ export function beginStrategyClarification(db: SqliteDb, input: {
       ['od_next_clarification_answer_missing'],
     );
   }
+  const finalText = composeOdNextStrategyContinuationV2({
+    stage: 'clarification',
+    nativeSessionResume: true,
+    taskExecutionId: current.taskExecutionId,
+    taskRunIndex: current.runs.length,
+    answer,
+  });
   const task = compareAndTransitionStrategyTaskExecution(db, {
     taskExecutionId: current.taskExecutionId,
     expectedRevision: current.revision,
@@ -207,7 +217,11 @@ export function beginStrategyClarification(db: SqliteDb, input: {
       outcome: 'running',
       executionMode: null,
     },
-    nextRun: { runId: input.nextRunId, sourceRunId: input.sourceRunId },
+    nextRun: {
+      runId: input.nextRunId,
+      sourceRunId: input.sourceRunId,
+      finalText,
+    },
     ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
   });
   return {
@@ -223,7 +237,7 @@ export function finalizeStrategyPlanningTurn(db: SqliteDb, input: {
   taskExecutionId: string;
   runId: string;
   protocol: OdNextMachineProtocolStream;
-  repairRun?: { runId: string; sourceRunId: string };
+  repairRun?: { runId: string; sourceRunId: string; finalText: string };
   toolUseCount?: number;
   executionPreflight?: OdNextExecutionPreflightInput;
   completionEvidence?: {
@@ -243,7 +257,7 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   taskExecutionId: string;
   runId: string;
   parsed: ReturnType<OdNextMachineProtocolStream['finish']>;
-  repairRun?: { runId: string; sourceRunId: string };
+  repairRun?: { runId: string; sourceRunId: string; finalText: string };
   toolUseCount?: number;
   executionPreflight?: OdNextExecutionPreflightInput;
   completionEvidence?: {
@@ -416,7 +430,7 @@ function tryBeginSerializationRepair(
   db: SqliteDb,
   current: StrategyTaskExecutionRecord,
   input: {
-    repairRun?: { runId: string; sourceRunId: string };
+    repairRun?: { runId: string; sourceRunId: string; finalText: string };
     toolUseCount?: number;
     executionPreflight?: OdNextExecutionPreflightInput;
     updatedAt?: number;

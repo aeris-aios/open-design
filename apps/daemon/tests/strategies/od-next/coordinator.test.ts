@@ -11,12 +11,12 @@ import { closeDatabase, openDatabase } from '../../../src/db.js';
 import { createSnapshot } from '../../../src/plugins/snapshots.js';
 import {
   beginStrategyClarification,
-  finalizeStrategyPlanningTurn,
+  finalizeStrategyPlanningTurn as finalizeStrategyPlanningTurnRaw,
   prepareStrategyRequest,
 } from '../../../src/strategies/od-next/coordinator.js';
 import { OdNextMachineProtocolStream } from '../../../src/strategies/od-next/protocol.js';
 import {
-  beginAutomaticSimpleProduction,
+  beginAutomaticSimpleProduction as beginAutomaticSimpleProductionRaw,
   blockAutomaticContinuation,
   completeAutomaticSimpleProduction,
   projectStrategyTask,
@@ -27,8 +27,58 @@ import {
   createStrategyTaskExecution,
   getStrategyTaskExecution,
 } from '../../../src/strategies/task-store.js';
+import {
+  strategyTaskCreateIdentityFixture,
+  strategyTaskTurnText,
+} from '../strategy-task-test-fixtures.js';
 
 const AGENT_ID = 'codex';
+
+type FinalizeInput = Parameters<typeof finalizeStrategyPlanningTurnRaw>[1];
+type TestFinalizeInput = Omit<FinalizeInput, 'repairRun'> & {
+  repairRun?: Omit<NonNullable<FinalizeInput['repairRun']>, 'finalText'> & {
+    finalText?: string;
+  };
+};
+
+function finalizeStrategyPlanningTurn(
+  db: Database.Database,
+  input: TestFinalizeInput,
+) {
+  const task = getStrategyTaskExecution(db, input.taskExecutionId);
+  if (input.repairRun && !task) throw new Error('test task missing');
+  const repairRun = input.repairRun
+    ? {
+        ...input.repairRun,
+        finalText: input.repairRun.finalText ?? strategyTaskTurnText({
+          taskExecutionId: input.taskExecutionId,
+          inputStage: 'contract_repair',
+          taskRunIndex: task!.runs.length,
+        }),
+      }
+    : undefined;
+  const { repairRun: _repairRun, ...restValue } = input;
+  const rest: Omit<FinalizeInput, 'repairRun'> = restValue;
+  return finalizeStrategyPlanningTurnRaw(db, {
+    ...rest,
+    ...(repairRun ? { repairRun } : {}),
+  });
+}
+
+type BeginProductionInput = Parameters<typeof beginAutomaticSimpleProductionRaw>[1];
+function beginAutomaticSimpleProduction(
+  db: Database.Database,
+  input: Omit<BeginProductionInput, 'finalText'> & { finalText?: string },
+) {
+  return beginAutomaticSimpleProductionRaw(db, {
+    ...input,
+    finalText: input.finalText ?? strategyTaskTurnText({
+      taskExecutionId: input.task.taskExecutionId,
+      inputStage: 'production',
+      taskRunIndex: input.task.runs.length,
+    }),
+  });
+}
 
 function strategyBinding() {
   const assetDigests = [
@@ -205,6 +255,7 @@ describe('OD Next planning coordinator', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-request',
+      ...strategyTaskCreateIdentityFixture(),
       createdAt: 100,
     });
   });
@@ -441,6 +492,7 @@ describe('OD Next planning coordinator', () => {
         snapshotId: snapshot.snapshotId,
         selectedAgentId: AGENT_ID,
         initialRunId: runId,
+        ...strategyTaskCreateIdentityFixture(),
         createdAt: 200 + index * 20,
       });
       prepareStrategyRequest(db, {
@@ -509,6 +561,7 @@ describe('OD Next planning coordinator', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-route-drift',
+      ...strategyTaskCreateIdentityFixture(),
       createdAt: 400,
     });
     prepareStrategyRequest(db, {
@@ -539,6 +592,7 @@ describe('OD Next planning coordinator', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-profile-drift',
+      ...strategyTaskCreateIdentityFixture(),
       createdAt: 405,
     });
     prepareStrategyRequest(db, {
@@ -574,6 +628,7 @@ describe('OD Next planning coordinator', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-repair-tools-request',
+      ...strategyTaskCreateIdentityFixture(),
       createdAt: 410,
     });
     prepareStrategyRequest(db, {
@@ -660,6 +715,7 @@ describe('OD Next planning coordinator', () => {
           snapshotId: snapshot.snapshotId,
           selectedAgentId: AGENT_ID,
           initialRunId: runId,
+          ...strategyTaskCreateIdentityFixture(),
           createdAt: 500 + sequence * 10,
         });
         prepareStrategyRequest(db, {
@@ -732,7 +788,7 @@ describe('OD Next planning coordinator', () => {
       latestRunId: 'run-production',
       activeRunId: 'run-production',
     });
-    expect(production.runs).toEqual([
+    expect(production.runs.map(({ finalText: _finalText, ...run }) => run)).toEqual([
       { runId: 'run-request', inputStage: 'request', taskRunIndex: 0 },
       {
         runId: 'run-production',

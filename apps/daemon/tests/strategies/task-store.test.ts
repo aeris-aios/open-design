@@ -12,15 +12,50 @@ import { createSnapshot, getSnapshot, pruneExpiredSnapshots } from '../../src/pl
 import { reconcileDurableRunTerminals } from '../../src/runtimes/run-terminal-reconciliation.js';
 import {
   StrategyTaskTransitionConflictError,
+  type CompareAndTransitionStrategyTaskInput,
   cancelStrategyTaskExecution,
-  compareAndTransitionStrategyTaskExecution,
+  compareAndTransitionStrategyTaskExecution as compareAndTransitionStrategyTaskExecutionRaw,
   createStrategyTaskExecution,
   getStrategyTaskExecution,
   getStrategyTaskExecutionByRunId,
   migrateStrategyTaskStore,
 } from '../../src/strategies/task-store.js';
+import {
+  strategyTaskCreateIdentityFixture,
+  strategyTaskTurnText,
+} from './strategy-task-test-fixtures.js';
 
 const AGENT_ID = 'codex';
+
+type TestTransitionInput = Omit<CompareAndTransitionStrategyTaskInput, 'nextRun'> & {
+  nextRun?: Omit<NonNullable<CompareAndTransitionStrategyTaskInput['nextRun']>, 'finalText'> & {
+    finalText?: string;
+  };
+};
+
+function compareAndTransitionStrategyTaskExecution(
+  db: Database.Database,
+  input: TestTransitionInput,
+) {
+  const current = getStrategyTaskExecution(db, input.taskExecutionId);
+  if (input.nextRun && !current) throw new Error('test task missing');
+  const nextRun = input.nextRun
+    ? {
+        ...input.nextRun,
+        finalText: input.nextRun.finalText ?? strategyTaskTurnText({
+          taskExecutionId: input.taskExecutionId,
+          inputStage: input.to.inputStage as Exclude<typeof input.to.inputStage, 'request'>,
+          taskRunIndex: current!.runs.length,
+        }),
+      }
+    : undefined;
+  const { nextRun: _nextRun, ...restValue } = input;
+  const rest: Omit<CompareAndTransitionStrategyTaskInput, 'nextRun'> = restValue;
+  return compareAndTransitionStrategyTaskExecutionRaw(db, {
+    ...rest,
+    ...(nextRun ? { nextRun } : {}),
+  });
+}
 
 function strategyBinding() {
   const assetDigests = [
@@ -138,6 +173,7 @@ function createTask(db: Database.Database, snapshot: AppliedPluginSnapshot, runI
     snapshotId: snapshot.snapshotId,
     selectedAgentId: AGENT_ID,
     initialRunId: runId,
+    ...strategyTaskCreateIdentityFixture(),
     createdAt: 100,
   });
 }
@@ -184,6 +220,89 @@ describe('durable strategy task store', () => {
     expect(() => migrateStrategyTaskStore(legacy)).not.toThrow();
     expect(getStrategyTaskExecutionByRunId(legacy, 'legacy-run')).toBeNull();
     legacy.close();
+  });
+
+  it('persists the canonical Unicode Bundle and all frozen input identities exactly', () => {
+    const task = createTask(db, snapshot);
+    expect(task.promptBundle).toMatchObject({
+      kind: 'bundle',
+      schema: 'open-design.od-next-prompt-bundle/v1',
+      text: expect.stringContaining('冻结的用户请求。'),
+      utf8Bytes: Buffer.byteLength(task.promptBundle.text, 'utf8'),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(task.promptBundle.utf8Bytes).toBeGreaterThan(task.promptBundle.text.length);
+    expect(task.runs[0]?.finalText).toEqual(task.promptBundle);
+    expect(task.frozenInputIdentity).toEqual({
+      schema: 'open-design.od-next-frozen-input-identity/v1',
+      snapshotId: snapshot.snapshotId,
+      strategyPackageHash: snapshot.strategy!.packageHash,
+      frozenSkillPackageIdentity: strategyTaskCreateIdentityFixture().frozenSkillPackage.identity,
+      taskInputManifestSha256: 'd'.repeat(64),
+    });
+  });
+
+  it('reopens the exact Bundle and continuation Turn without cold reseeding', () => {
+    const initial = createTask(db, snapshot);
+    const clarificationText = strategyTaskTurnText({
+      taskExecutionId: initial.taskExecutionId,
+      inputStage: 'clarification',
+      taskRunIndex: 1,
+      payload: 'Frozen clarification answer.',
+    });
+    const continued = compareAndTransitionStrategyTaskExecutionRaw(db, {
+      taskExecutionId: initial.taskExecutionId,
+      expectedRevision: initial.revision,
+      to: {
+        route: 'full_plan',
+        inputStage: 'clarification',
+        outcome: 'running',
+        executionMode: null,
+      },
+      nextRun: {
+        runId: 'run-restart-clarification',
+        sourceRunId: initial.latestRunId,
+        finalText: clarificationText,
+      },
+    });
+    const expectedBundle = continued.promptBundle;
+    closeDatabase();
+    db = openDatabase(tempDir, { dataDir: tempDir });
+
+    const reopened = getStrategyTaskExecution(db, initial.taskExecutionId);
+    expect(reopened?.promptBundle).toEqual(expectedBundle);
+    expect(reopened?.runs[0]?.finalText).toEqual(expectedBundle);
+    expect(reopened?.runs[1]?.finalText.text).toBe(clarificationText);
+  });
+
+  it('fails closed on persisted Bundle text, byte count, digest, or frozen owner tampering', () => {
+    const tamperCases = [
+      `UPDATE strategy_task_runs SET final_text = final_text || 'x' WHERE task_execution_id = 'task-1'`,
+      `UPDATE strategy_task_runs SET final_text_utf8_bytes = final_text_utf8_bytes + 1 WHERE task_execution_id = 'task-1'`,
+      `UPDATE strategy_task_executions SET prompt_bundle_sha256 = ? WHERE task_execution_id = 'task-1'`,
+      `UPDATE strategy_task_executions SET frozen_input_identity_json = '{}' WHERE task_execution_id = 'task-1'`,
+    ] as const;
+    for (const [index, sql] of tamperCases.entries()) {
+      const taskId = `task-tamper-${index}`;
+      createStrategyTaskExecution(db, {
+        taskExecutionId: taskId,
+        projectId: 'project-1',
+        conversationId: 'conversation-1',
+        snapshotId: snapshot.snapshotId,
+        selectedAgentId: AGENT_ID,
+        initialRunId: `run-tamper-${index}`,
+        ...strategyTaskCreateIdentityFixture(),
+      });
+      const statement = sql.replaceAll("'task-1'", `'${taskId}'`);
+      if (statement.includes('prompt_bundle_sha256 = ?')) {
+        db.prepare(statement).run('0'.repeat(64));
+      } else {
+        db.exec(statement);
+      }
+      expect(() => getStrategyTaskExecution(db, taskId)).toThrow(
+        /persisted|identity|Bundle|final text/i,
+      );
+    }
   });
 
   it('creates an immutable snapshot/agent identity and supports task and Run lookup', () => {
@@ -240,6 +359,7 @@ describe('durable strategy task store', () => {
       snapshotId: ordinary.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-ordinary',
+      ...strategyTaskCreateIdentityFixture(),
     })).toThrow(/verified OD Next strategy binding/i);
 
     db.prepare(
@@ -256,6 +376,7 @@ describe('durable strategy task store', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-cross-project',
+      ...strategyTaskCreateIdentityFixture(),
     })).toThrow(/Snapshot owner/i);
 
     db.prepare(`
@@ -333,6 +454,7 @@ describe('durable strategy task store', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-direct-next',
+      ...strategyTaskCreateIdentityFixture(),
     });
     expect(() => compareAndTransitionStrategyTaskExecution(db, {
       taskExecutionId: second.taskExecutionId,
@@ -455,7 +577,7 @@ describe('durable strategy task store', () => {
       planContract: expect.objectContaining({ schema: 'open-design.plan-contract/v2' }),
       planContractHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(task.runs).toEqual([
+    expect(task.runs.map(({ finalText: _finalText, ...run }) => run)).toEqual([
       { runId: 'run-request', inputStage: 'request', taskRunIndex: 0 },
       {
         runId: 'run-clarification',
@@ -583,6 +705,7 @@ describe('durable strategy task store', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'run-order-request',
+      ...strategyTaskCreateIdentityFixture(),
     });
     ordered = compareAndTransitionStrategyTaskExecution(db, {
       taskExecutionId: ordered.taskExecutionId,
@@ -647,6 +770,7 @@ describe('durable strategy task store', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: 'already-claimed-run',
+      ...strategyTaskCreateIdentityFixture(),
     });
 
     expect(() => compareAndTransitionStrategyTaskExecution(db, {
@@ -725,7 +849,7 @@ describe('durable strategy task store', () => {
        WHERE task_execution_id = ? AND task_run_index = 1
     `).run(task.taskExecutionId);
     expect(() => getStrategyTaskExecution(db, task.taskExecutionId)).toThrow(
-      /mapping|ordered/i,
+      /mapping|ordered|request Turn/i,
     );
     db.prepare(`
       UPDATE strategy_task_runs SET input_stage = 'clarification'

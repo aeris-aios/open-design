@@ -31,6 +31,7 @@ import {
   createStrategyTaskExecution,
   getStrategyTaskExecution,
 } from '../../../src/strategies/task-store.js';
+import { strategyTaskCreateIdentityFixture } from '../strategy-task-test-fixtures.js';
 
 const AGENT_ID = 'codex';
 const TASK_ID = 'task-complex';
@@ -307,6 +308,7 @@ describe('OD Next complex production enforcement', () => {
       snapshotId: snapshot.snapshotId,
       selectedAgentId: AGENT_ID,
       initialRunId: REQUEST_RUN_ID,
+      ...strategyTaskCreateIdentityFixture(),
       createdAt: 100,
     });
     prepareStrategyRequest(db, {

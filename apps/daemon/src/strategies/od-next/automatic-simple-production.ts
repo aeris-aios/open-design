@@ -88,6 +88,7 @@ export function beginAutomaticSimpleProduction(db: SqliteDb, input: {
   task: StrategyTaskExecutionRecord;
   sourceRunId: string;
   nextRunId: string;
+  finalText: string;
   updatedAt?: number;
 }): StrategyTaskExecutionRecord {
   const current = input.task;
@@ -121,7 +122,11 @@ export function beginAutomaticSimpleProduction(db: SqliteDb, input: {
       outcome: 'running',
       executionMode: 'simple',
     },
-    nextRun: { runId: input.nextRunId, sourceRunId: input.sourceRunId },
+    nextRun: {
+      runId: input.nextRunId,
+      sourceRunId: input.sourceRunId,
+      finalText: input.finalText,
+    },
     ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
   });
 }
@@ -132,6 +137,7 @@ export function beginAutomaticComplexProduction(db: SqliteDb, input: {
   task: StrategyTaskExecutionRecord;
   sourceRunId: string;
   nextRunId: string;
+  finalText: string;
   capabilitySnapshot?: unknown;
   updatedAt?: number;
 }): StrategyTaskExecutionRecord {
@@ -175,7 +181,11 @@ export function beginAutomaticComplexProduction(db: SqliteDb, input: {
       outcome: 'running',
       executionMode: 'complex',
     },
-    nextRun: { runId: input.nextRunId, sourceRunId: input.sourceRunId },
+    nextRun: {
+      runId: input.nextRunId,
+      sourceRunId: input.sourceRunId,
+      finalText: input.finalText,
+    },
     ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
   });
 }
@@ -222,6 +232,7 @@ export function prepareAutomaticSimpleProductionRun<
         task,
         sourceRunId: task.latestRunId,
         nextRunId: run.id,
+        finalText: instruction,
         ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
       });
     },
@@ -309,7 +320,11 @@ export function prepareAutomaticStrategyContinuation<
         : {}),
     }).reasonCodes;
   })();
-  const finalize = (repairRun?: { runId: string; sourceRunId: string }) =>
+  const finalize = (repairRun?: {
+    runId: string;
+    sourceRunId: string;
+    finalText: string;
+  }) =>
     finalizeStrategyPlanningResult(input.db, {
       taskExecutionId: input.task.taskExecutionId,
       runId: input.task.latestRunId,
@@ -381,7 +396,11 @@ export function prepareAutomaticStrategyContinuation<
       beforeClaimCommit: (nextRun) => {
         const accepted = finalize(
           repairCandidate
-            ? { runId: nextRun.id, sourceRunId: input.task.latestRunId }
+            ? {
+                runId: nextRun.id,
+                sourceRunId: input.task.latestRunId,
+                finalText: instruction,
+              }
             : undefined,
         );
         if (repairCandidate) {
@@ -405,6 +424,7 @@ export function prepareAutomaticStrategyContinuation<
               task: accepted.task,
               sourceRunId: input.task.latestRunId,
               nextRunId: nextRun.id,
+              finalText: instruction,
               capabilitySnapshot: input.complexRuntimeEvidence?.capabilitySnapshot,
               ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
             })
@@ -412,6 +432,7 @@ export function prepareAutomaticStrategyContinuation<
               task: accepted.task,
               sourceRunId: input.task.latestRunId,
               nextRunId: nextRun.id,
+              finalText: instruction,
               ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
             });
         result = { ...accepted, task: claimed };

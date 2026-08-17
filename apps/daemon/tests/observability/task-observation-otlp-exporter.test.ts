@@ -28,6 +28,13 @@ import type { StrategyTaskExecutionRecord } from '../../src/strategies/task-stor
 const RUN_ID = 'run-production';
 const TASK_ID = 'task-otlp-fixture';
 const RUN_OBSERVATION_ID = strategyTaskRunObservationId(TASK_ID, RUN_ID);
+const FINAL_TEXT = {
+  kind: 'turn' as const,
+  schema: 'open-design.od-next-request-turn/v1' as const,
+  text: 'production-fixture',
+  utf8Bytes: 'production-fixture'.length,
+  sha256: 'a'.repeat(64),
+};
 
 function task(outcome: StrategyTaskExecutionRecord['outcome'] = 'completed'):
 StrategyTaskExecutionRecord {
@@ -53,8 +60,20 @@ StrategyTaskExecutionRecord {
     latestRunId: RUN_ID,
     activeRunId: outcome === 'running' ? RUN_ID : null,
     terminalRunId: outcome === 'running' ? null : RUN_ID,
-    runs: [{ runId: RUN_ID, inputStage: 'production', taskRunIndex: 0 }],
+    runs: [{ runId: RUN_ID, inputStage: 'production', taskRunIndex: 0, finalText: FINAL_TEXT }],
     frozenSkillPackage: createEmptyFrozenSkillPackage(),
+    promptBundle: {
+      ...FINAL_TEXT,
+      kind: 'bundle',
+      schema: 'open-design.od-next-prompt-bundle/v1',
+    },
+    frozenInputIdentity: {
+      schema: 'open-design.od-next-frozen-input-identity/v1',
+      snapshotId: 'snapshot-fixture',
+      strategyPackageHash: 'sha256:package-fixture',
+      frozenSkillPackageIdentity: createEmptyFrozenSkillPackage().identity,
+      taskInputManifestSha256: 'b'.repeat(64),
+    },
     createdAt: 1_000,
     updatedAt: 5_000,
   };

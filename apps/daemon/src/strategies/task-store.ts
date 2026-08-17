@@ -2,10 +2,14 @@ import { createHash } from 'node:crypto';
 
 import {
   AppliedStrategyBindingV2Schema,
+  OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
+  OD_NEXT_REQUEST_TURN_SCHEMA_V1,
   OD_NEXT_STRATEGY_ID,
   OpenDesignPlanContractV2Schema,
   StrategyRuntimeStateV2Schema,
   StrategyRuntimeTransitionV2Schema,
+  parseOdNextPromptBundleV1,
+  parseOdNextRequestTurnV1,
   type OpenDesignPlanContractV2,
   type StrategyExecutionModeV2,
   type StrategyInputStageV2,
@@ -16,7 +20,6 @@ import type Database from 'better-sqlite3';
 
 import { getSnapshot } from '../plugins/snapshots.js';
 import {
-  createEmptyFrozenSkillPackage,
   getFrozenSkillPackage,
   insertFrozenSkillPackage,
   migrateFrozenSkillPackageStore,
@@ -40,6 +43,25 @@ export interface StrategyTaskRunMapping {
   inputStage: StrategyInputStageV2;
   taskRunIndex: number;
   sourceRunId?: string;
+  finalText: StrategyTaskFinalTextIdentity;
+}
+
+export interface StrategyTaskFinalTextIdentity {
+  kind: 'bundle' | 'turn';
+  schema:
+    | typeof OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
+    | typeof OD_NEXT_REQUEST_TURN_SCHEMA_V1;
+  text: string;
+  utf8Bytes: number;
+  sha256: string;
+}
+
+export interface StrategyTaskFrozenInputIdentity {
+  schema: 'open-design.od-next-frozen-input-identity/v1';
+  snapshotId: string;
+  strategyPackageHash: string;
+  frozenSkillPackageIdentity: string;
+  taskInputManifestSha256: string;
 }
 
 export interface StrategyTaskExecutionRecord {
@@ -67,6 +89,8 @@ export interface StrategyTaskExecutionRecord {
   terminalRunId: string | null;
   runs: StrategyTaskRunMapping[];
   frozenSkillPackage: FrozenSkillPackageV1;
+  promptBundle: StrategyTaskFinalTextIdentity;
+  frozenInputIdentity: StrategyTaskFrozenInputIdentity;
   createdAt: number;
   updatedAt: number;
 }
@@ -78,7 +102,9 @@ export interface CreateStrategyTaskExecutionInput {
   snapshotId: string;
   selectedAgentId: string;
   initialRunId: string;
-  frozenSkillPackage?: FrozenSkillPackageV1;
+  frozenSkillPackage: FrozenSkillPackageV1;
+  promptBundleText: string;
+  taskInputManifestSha256: string;
   createdAt?: number;
 }
 
@@ -96,6 +122,7 @@ export interface CompareAndTransitionStrategyTaskInput {
   nextRun?: {
     runId: string;
     sourceRunId: string;
+    finalText: string;
   };
   planContract?: OpenDesignPlanContractV2;
   updatedAt?: number;
@@ -154,6 +181,11 @@ export function migrateStrategyTaskStore(db: SqliteDb): void {
       ),
       initial_run_id TEXT NOT NULL,
       latest_run_id TEXT NOT NULL,
+      prompt_bundle_schema TEXT,
+      prompt_bundle_text TEXT,
+      prompt_bundle_utf8_bytes INTEGER,
+      prompt_bundle_sha256 TEXT,
+      frozen_input_identity_json TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -172,12 +204,27 @@ export function migrateStrategyTaskStore(db: SqliteDb): void {
       ),
       task_run_index INTEGER NOT NULL CHECK (task_run_index >= 0),
       source_run_id TEXT,
+      final_text_kind TEXT,
+      final_text_schema TEXT,
+      final_text TEXT,
+      final_text_utf8_bytes INTEGER,
+      final_text_sha256 TEXT,
       created_at INTEGER NOT NULL,
       PRIMARY KEY(task_execution_id, task_run_index),
       FOREIGN KEY(task_execution_id) REFERENCES strategy_task_executions(task_execution_id)
         ON DELETE CASCADE
     );
   `);
+  addColumnIfMissing(db, 'strategy_task_executions', 'prompt_bundle_schema TEXT');
+  addColumnIfMissing(db, 'strategy_task_executions', 'prompt_bundle_text TEXT');
+  addColumnIfMissing(db, 'strategy_task_executions', 'prompt_bundle_utf8_bytes INTEGER');
+  addColumnIfMissing(db, 'strategy_task_executions', 'prompt_bundle_sha256 TEXT');
+  addColumnIfMissing(db, 'strategy_task_executions', 'frozen_input_identity_json TEXT');
+  addColumnIfMissing(db, 'strategy_task_runs', 'final_text_kind TEXT');
+  addColumnIfMissing(db, 'strategy_task_runs', 'final_text_schema TEXT');
+  addColumnIfMissing(db, 'strategy_task_runs', 'final_text TEXT');
+  addColumnIfMissing(db, 'strategy_task_runs', 'final_text_utf8_bytes INTEGER');
+  addColumnIfMissing(db, 'strategy_task_runs', 'final_text_sha256 TEXT');
   migrateFrozenSkillPackageStore(db);
 }
 
@@ -191,6 +238,16 @@ export function createStrategyTaskExecution(
   const snapshotId = requireNonEmpty(input.snapshotId, 'snapshotId');
   const selectedAgentId = requireNonEmpty(input.selectedAgentId, 'selectedAgentId');
   const initialRunId = requireNonEmpty(input.initialRunId, 'initialRunId');
+  const frozenSkillPackage = input.frozenSkillPackage;
+  const promptBundle = finalTextIdentity({
+    kind: 'bundle',
+    text: input.promptBundleText,
+  });
+  parseOdNextPromptBundleV1(promptBundle.text);
+  const taskInputManifestSha256 = requireSha256(
+    input.taskInputManifestSha256,
+    'taskInputManifestSha256',
+  );
   const now = normalizeTimestamp(input.createdAt ?? Date.now(), 'createdAt');
 
   const create = db.transaction(() => {
@@ -219,6 +276,14 @@ export function createStrategyTaskExecution(
         'Strategy task Snapshot identity does not match its verified strategy binding.',
       );
     }
+    const verifiedFrozenSkillPackage = insertableFrozenSkillPackage(frozenSkillPackage);
+    const frozenInputIdentity: StrategyTaskFrozenInputIdentity = {
+      schema: 'open-design.od-next-frozen-input-identity/v1',
+      snapshotId,
+      strategyPackageHash: binding.data.packageHash,
+      frozenSkillPackageIdentity: verifiedFrozenSkillPackage.identity,
+      taskInputManifestSha256,
+    };
 
     try {
       db.prepare(`
@@ -229,9 +294,12 @@ export function createStrategyTaskExecution(
           route, input_stage, outcome, execution_mode,
           plan_contract_json, plan_contract_hash,
           clarification_count, plan_contract_repair_attempts,
-          initial_run_id, latest_run_id, created_at, updated_at
+          initial_run_id, latest_run_id,
+          prompt_bundle_schema, prompt_bundle_text,
+          prompt_bundle_utf8_bytes, prompt_bundle_sha256,
+          frozen_input_identity_json, created_at, updated_at
         ) VALUES (?, 1, 0, ?, ?, ?, ?, ?, ?, ?, NULL, 'request', 'running', NULL,
-                  NULL, NULL, 0, 0, ?, ?, ?, ?)
+                  NULL, NULL, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         taskExecutionId,
         projectId,
@@ -243,18 +311,34 @@ export function createStrategyTaskExecution(
         selectedAgentId,
         initialRunId,
         initialRunId,
+        promptBundle.schema,
+        promptBundle.text,
+        promptBundle.utf8Bytes,
+        promptBundle.sha256,
+        JSON.stringify(canonicalJsonValue(frozenInputIdentity)),
         now,
         now,
       );
       db.prepare(`
         INSERT INTO strategy_task_runs (
-          task_execution_id, run_id, input_stage, task_run_index, source_run_id, created_at
-        ) VALUES (?, ?, 'request', 0, NULL, ?)
-      `).run(taskExecutionId, initialRunId, now);
+          task_execution_id, run_id, input_stage, task_run_index, source_run_id,
+          final_text_kind, final_text_schema, final_text,
+          final_text_utf8_bytes, final_text_sha256, created_at
+        ) VALUES (?, ?, 'request', 0, NULL, ?, ?, ?, ?, ?, ?)
+      `).run(
+        taskExecutionId,
+        initialRunId,
+        promptBundle.kind,
+        promptBundle.schema,
+        promptBundle.text,
+        promptBundle.utf8Bytes,
+        promptBundle.sha256,
+        now,
+      );
       insertFrozenSkillPackage(
         db,
         taskExecutionId,
-        input.frozenSkillPackage ?? createEmptyFrozenSkillPackage(),
+        verifiedFrozenSkillPackage,
       );
       // A StrategyTaskExecution is itself a durable Snapshot reference. Keep
       // run_id untouched because one task owns a chain of physical Runs, but
@@ -352,6 +436,14 @@ export function compareAndTransitionStrategyTaskExecution(
     const plan = resolvePlanContract(current, input.planContract, next);
     const nextRunId = input.nextRun?.runId ?? current.latestRunId;
     const nextRunIndex = current.runs.length;
+    const nextRunFinalText = input.nextRun
+      ? continuationFinalTextIdentity({
+          text: input.nextRun.finalText,
+          taskExecutionId: current.taskExecutionId,
+          stage: next.inputStage,
+          taskRunIndex: nextRunIndex,
+        })
+      : null;
     const clarificationCount = current.clarificationCount
       + (next.inputStage === 'clarification' && current.inputStage !== 'clarification' ? 1 : 0);
     const repairAttempts = current.planContractRepairAttempts
@@ -399,14 +491,21 @@ export function compareAndTransitionStrategyTaskExecution(
       try {
         db.prepare(`
           INSERT INTO strategy_task_runs (
-            task_execution_id, run_id, input_stage, task_run_index, source_run_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+            task_execution_id, run_id, input_stage, task_run_index, source_run_id,
+            final_text_kind, final_text_schema, final_text,
+            final_text_utf8_bytes, final_text_sha256, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           current.taskExecutionId,
           requireNonEmpty(input.nextRun.runId, 'nextRun.runId'),
           next.inputStage,
           nextRunIndex,
           requireNonEmpty(input.nextRun.sourceRunId, 'nextRun.sourceRunId'),
+          nextRunFinalText!.kind,
+          nextRunFinalText!.schema,
+          nextRunFinalText!.text,
+          nextRunFinalText!.utf8Bytes,
+          nextRunFinalText!.sha256,
           updatedAt,
         );
       } catch (error) {
@@ -590,6 +689,11 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
   const runs = db.prepare(`
     SELECT run_id AS runId, input_stage AS inputStage,
            task_run_index AS taskRunIndex, source_run_id AS sourceRunId,
+           final_text_kind AS finalTextKind,
+           final_text_schema AS finalTextSchema,
+           final_text AS finalText,
+           final_text_utf8_bytes AS finalTextUtf8Bytes,
+           final_text_sha256 AS finalTextSha256,
            created_at AS createdAt
       FROM strategy_task_runs
      WHERE task_execution_id = ?
@@ -599,6 +703,11 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     inputStage: unknown;
     taskRunIndex: unknown;
     sourceRunId: unknown;
+    finalTextKind: unknown;
+    finalTextSchema: unknown;
+    finalText: unknown;
+    finalTextUtf8Bytes: unknown;
+    finalTextSha256: unknown;
     createdAt: unknown;
   }>;
   const createdAt = requireNonNegativeInteger(row['created_at'], 'created_at');
@@ -623,6 +732,18 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
       );
     }
     previousMappingCreatedAt = mappingCreatedAt;
+    const finalText = parseStoredFinalText({
+      kind: mapping.finalTextKind,
+      schema: mapping.finalTextSchema,
+      text: mapping.finalText,
+      utf8Bytes: mapping.finalTextUtf8Bytes,
+      sha256: mapping.finalTextSha256,
+    });
+    validateMappedFinalText(finalText, {
+      taskExecutionId,
+      inputStage: parseStage(mapping.inputStage),
+      taskRunIndex,
+    });
     return {
       runId: requireStoredString(mapping.runId, 'run_id'),
       inputStage: parseStage(mapping.inputStage),
@@ -630,6 +751,7 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
       ...(mapping.sourceRunId == null
         ? {}
         : { sourceRunId: requireStoredString(mapping.sourceRunId, 'source_run_id') }),
+      finalText,
     };
   });
   const initialRunId = requireStoredString(row['initial_run_id'], 'initial_run_id');
@@ -661,6 +783,27 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     planContractRepairAttempts,
   );
   const frozenSkillPackage = getFrozenSkillPackage(db, taskExecutionId);
+  const promptBundle = parseStoredFinalText({
+    kind: 'bundle',
+    schema: row['prompt_bundle_schema'],
+    text: row['prompt_bundle_text'],
+    utf8Bytes: row['prompt_bundle_utf8_bytes'],
+    sha256: row['prompt_bundle_sha256'],
+  });
+  parseOdNextPromptBundleV1(promptBundle.text);
+  if (!sameFinalTextIdentity(promptBundle, mappings[0]!.finalText)) {
+    throw new InvalidStrategyTaskRecordError(
+      'Initial strategy task Run text must exactly match the persisted Prompt Bundle.',
+    );
+  }
+  const frozenInputIdentity = parseFrozenInputIdentity(
+    row['frozen_input_identity_json'],
+    {
+      snapshotId,
+      strategyPackageHash,
+      frozenSkillPackageIdentity: frozenSkillPackage.identity,
+    },
+  );
   return {
     schemaVersion: TASK_STORE_SCHEMA_VERSION,
     revision: requireNonNegativeInteger(row['revision'], 'revision'),
@@ -686,9 +829,195 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     terminalRunId: TERMINAL_OUTCOMES.has(outcome) ? latestRunId : null,
     runs: mappings,
     frozenSkillPackage,
+    promptBundle,
+    frozenInputIdentity,
     createdAt,
     updatedAt,
   };
+}
+
+function addColumnIfMissing(db: SqliteDb, table: string, definition: string): void {
+  const column = definition.split(/\s+/u)[0];
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as DbRow[];
+  if (!columns.some((entry) => entry['name'] === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
+
+function insertableFrozenSkillPackage(value: FrozenSkillPackageV1): FrozenSkillPackageV1 {
+  if (!value || typeof value !== 'object') {
+    throw new InvalidStrategyTaskRecordError(
+      'Strategy task creation requires a frozen Skill package.',
+    );
+  }
+  return value;
+}
+
+function finalTextIdentity(input: {
+  kind: StrategyTaskFinalTextIdentity['kind'];
+  text: string;
+}): StrategyTaskFinalTextIdentity {
+  if (typeof input.text !== 'string' || !input.text.length) {
+    throw new InvalidStrategyTaskRecordError('Strategy task final text must not be empty.');
+  }
+  const schema = input.kind === 'bundle'
+    ? OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
+    : OD_NEXT_REQUEST_TURN_SCHEMA_V1;
+  return {
+    kind: input.kind,
+    schema,
+    text: input.text,
+    utf8Bytes: Buffer.byteLength(input.text, 'utf8'),
+    sha256: createHash('sha256').update(input.text, 'utf8').digest('hex'),
+  };
+}
+
+function continuationFinalTextIdentity(input: {
+  text: string;
+  taskExecutionId: string;
+  stage: StrategyInputStageV2;
+  taskRunIndex: number;
+}): StrategyTaskFinalTextIdentity {
+  if (input.stage === 'request') {
+    throw new InvalidStrategyTaskTransitionError(
+      'A continuation final text cannot use the request stage.',
+    );
+  }
+  const identity = finalTextIdentity({ kind: 'turn', text: input.text });
+  const parsed = parseOdNextRequestTurnV1(identity.text);
+  if (
+    parsed.taskExecutionId !== input.taskExecutionId
+    || parsed.stage !== input.stage
+    || parsed.taskRunIndex !== input.taskRunIndex
+  ) {
+    throw new InvalidStrategyTaskTransitionError(
+      'Continuation final text identity does not match its task Run mapping.',
+    );
+  }
+  return identity;
+}
+
+function parseStoredFinalText(input: {
+  kind: unknown;
+  schema: unknown;
+  text: unknown;
+  utf8Bytes: unknown;
+  sha256: unknown;
+}): StrategyTaskFinalTextIdentity {
+  if (input.kind !== 'bundle' && input.kind !== 'turn') {
+    throw new InvalidStrategyTaskRecordError(
+      'Mapped OD Next task Run is missing its final text kind.',
+    );
+  }
+  const expectedSchema = input.kind === 'bundle'
+    ? OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
+    : OD_NEXT_REQUEST_TURN_SCHEMA_V1;
+  if (input.schema !== expectedSchema || typeof input.text !== 'string' || !input.text.length) {
+    throw new InvalidStrategyTaskRecordError(
+      'Mapped OD Next task Run is missing its versioned final text.',
+    );
+  }
+  const identity = finalTextIdentity({ kind: input.kind, text: input.text });
+  if (
+    input.utf8Bytes !== identity.utf8Bytes
+    || input.sha256 !== identity.sha256
+  ) {
+    throw new InvalidStrategyTaskRecordError(
+      'Mapped OD Next task Run final text failed UTF-8 bytes or SHA-256 validation.',
+    );
+  }
+  return identity;
+}
+
+function validateMappedFinalText(
+  identity: StrategyTaskFinalTextIdentity,
+  mapping: {
+    taskExecutionId: string;
+    inputStage: StrategyInputStageV2;
+    taskRunIndex: number;
+  },
+): void {
+  if (mapping.taskRunIndex === 0) {
+    if (mapping.inputStage !== 'request' || identity.kind !== 'bundle') {
+      throw new InvalidStrategyTaskRecordError(
+        'Initial strategy task Run must own the persisted Prompt Bundle.',
+      );
+    }
+    parseOdNextPromptBundleV1(identity.text);
+    return;
+  }
+  if (identity.kind !== 'turn' || mapping.inputStage === 'request') {
+    throw new InvalidStrategyTaskRecordError(
+      'Continuation strategy task Run must own a persisted request Turn.',
+    );
+  }
+  const parsed = parseOdNextRequestTurnV1(identity.text);
+  if (
+    parsed.taskExecutionId !== mapping.taskExecutionId
+    || parsed.stage !== mapping.inputStage
+    || parsed.taskRunIndex !== mapping.taskRunIndex
+  ) {
+    throw new InvalidStrategyTaskRecordError(
+      'Persisted request Turn does not match its task Run mapping.',
+    );
+  }
+}
+
+function sameFinalTextIdentity(
+  left: StrategyTaskFinalTextIdentity,
+  right: StrategyTaskFinalTextIdentity,
+): boolean {
+  return left.kind === right.kind
+    && left.schema === right.schema
+    && left.text === right.text
+    && left.utf8Bytes === right.utf8Bytes
+    && left.sha256 === right.sha256;
+}
+
+function parseFrozenInputIdentity(
+  value: unknown,
+  expected: Omit<StrategyTaskFrozenInputIdentity, 'schema' | 'taskInputManifestSha256'>,
+): StrategyTaskFrozenInputIdentity {
+  if (typeof value !== 'string') {
+    throw new InvalidStrategyTaskRecordError(
+      'Mapped OD Next task is missing its frozen input identity.',
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidStrategyTaskRecordError('Frozen input identity contains invalid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new InvalidStrategyTaskRecordError('Frozen input identity is invalid.');
+  }
+  const identity = parsed as Partial<StrategyTaskFrozenInputIdentity>;
+  if (
+    identity.schema !== 'open-design.od-next-frozen-input-identity/v1'
+    || identity.snapshotId !== expected.snapshotId
+    || identity.strategyPackageHash !== expected.strategyPackageHash
+    || identity.frozenSkillPackageIdentity !== expected.frozenSkillPackageIdentity
+  ) {
+    throw new InvalidStrategyTaskRecordError(
+      'Frozen input identity no longer matches the task-owned inputs.',
+    );
+  }
+  return {
+    schema: identity.schema,
+    snapshotId: identity.snapshotId,
+    strategyPackageHash: identity.strategyPackageHash,
+    frozenSkillPackageIdentity: identity.frozenSkillPackageIdentity,
+    taskInputManifestSha256: requireSha256(
+      identity.taskInputManifestSha256,
+      'frozen_input_identity.taskInputManifestSha256',
+    ),
+  };
+}
+
+function requireSha256(value: unknown, field: string): string {
+  if (typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value)) return value;
+  throw new InvalidStrategyTaskRecordError(`${field} must contain a SHA-256 digest.`);
 }
 
 function assertSnapshotOwnership(

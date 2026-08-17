@@ -471,6 +471,7 @@ import { createChatRunService } from './runtimes/runs.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
 import {
   createOdNextRunInputProjection,
+  loadOdNextTaskInputSnapshot,
   OdNextTaskInputSnapshotError,
 } from './strategies/od-next/task-input-snapshot.js';
 import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
@@ -9983,6 +9984,214 @@ export async function startServer({
     };
   };
 
+  const prepareOdNextInitialPromptBundle = async ({
+    meta,
+    frozenSkillPackage,
+    taskInputSnapshot,
+  }) => {
+    const {
+      agentId,
+      message,
+      currentPrompt,
+      priorTranscript,
+      systemPrompt,
+      projectId,
+      conversationId,
+      skillId,
+      skillIds,
+      designSystemId,
+      sessionMode,
+      locale,
+      research,
+      context,
+      titleGeneration,
+      byokMediaDefaults,
+    } = meta;
+    const def = getAgentDef(agentId);
+    if (!def) throw new Error(`unknown agent: ${agentId}`);
+    const project = typeof projectId === 'string' && projectId
+      ? getProject(db, projectId)
+      : null;
+    const projectRoot = typeof projectId === 'string' && projectId
+      ? resolveProjectDir(PROJECTS_DIR, projectId, project?.metadata)
+      : null;
+    const pluginDesignSystemId = meta.appliedPluginSnapshotId
+      ? designSystemIdFromPluginSnapshot(getSnapshot(db, meta.appliedPluginSnapshotId))
+      : null;
+    const scopeSelection = project?.metadata?.intent === 'web-clone'
+      ? { id: null }
+      : resolveEffectiveDesignSystemSelection({
+          requestDesignSystemId: designSystemId,
+          pluginDesignSystemId,
+          projectDesignSystemId: project?.designSystemId,
+          allowAppDefault: false,
+        });
+    const designSystemScope = typeof projectId === 'string' && projectId
+      ? pinRunDesignSystemScope({
+          db,
+          projectId,
+          designSystemId: scopeSelection.id,
+          workspaceScope: meta.workspaceScope,
+        })
+      : null;
+    const runSessionMode = normalizeConversationSessionMode(sessionMode);
+    const userPrompt = resolveOdNextRequestUserPrompt({
+      message,
+      currentPrompt,
+      hasCurrentPrompt: Object.prototype.hasOwnProperty.call(meta, 'currentPrompt'),
+    });
+    const browserUse = buildBrowserUseRunState({
+      requested: isBrowserUseRequested(message, currentPrompt, systemPrompt),
+      agentId: def.id,
+    });
+    const freshIntentSignals = {
+      deck: detectDeckIntentSignal(
+        extractUserAuthoredSignalText(message),
+        extractUserAuthoredSignalText(currentPrompt),
+      ),
+      media: detectMediaIntentSignal(
+        extractUserAuthoredSignalText(message),
+        extractUserAuthoredSignalText(currentPrompt),
+      ),
+      platform: detectPlatformIntentSignal(
+        extractUserAuthoredSignalText(message),
+        extractUserAuthoredSignalText(currentPrompt),
+      ),
+    };
+    const intentSignals = typeof conversationId === 'string' && conversationId
+      ? latchConversationIntentSignals(db, conversationId, freshIntentSignals)
+      : freshIntentSignals;
+    const {
+      prompt: daemonSystemPrompt,
+      odNextStableContextPrompt,
+    } = await composeDaemonSystemPrompt({
+      agentId,
+      projectId,
+      skillId,
+      skillIds,
+      designSystemId,
+      streamFormat: def.streamFormat ?? 'plain',
+      locale,
+      sessionMode: runSessionMode,
+      mediaExecution: meta.mediaExecution,
+      byokMediaDefaults,
+      appliedPluginSnapshotId: meta.appliedPluginSnapshotId ?? null,
+      freeformDeckSignal: intentSignals.deck,
+      mediaHintSignal: intentSignals.media,
+      platformHintSignal: intentSignals.platform,
+      workspaceScope: meta.workspaceScope,
+      designSystemScope,
+      frozenSkillPackage,
+    });
+    const loadedTaskInputs = loadOdNextTaskInputSnapshot(
+      taskInputSnapshot,
+      path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
+    );
+    const runContextPrompt = renderRunContextPrompt(context, project?.metadata);
+    const runtimeToolPrompt = createAgentRuntimeToolPrompt(
+      daemonUrl,
+      projectRoot && projectId ? { token: 'available' } : null,
+    );
+    const researchCommandContract = resolveResearchCommandContract(
+      research,
+      userPrompt,
+    );
+    const formAnswerMatch = FORM_ANSWERS_HEADER_RE.exec(
+      typeof currentPrompt === 'string' ? currentPrompt : '',
+    );
+    const formId = formAnswerMatch
+      ? ((formAnswerMatch[1] || 'form').trim().replace(/[^\w.-]/g, '') || 'form').toLowerCase()
+      : null;
+    const formOverride = formId
+      ? formId === 'discovery' || formId === 'task-type'
+        ? `The <user_prompt> contains submitted answers for the ${formId} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
+        : `The <user_prompt> contains submitted answers for the ${formId} form. Treat them as the active user turn and do not replay the answered form.`
+      : '';
+    const titleGenerationDirective = titleGeneration
+      && typeof titleGeneration === 'object'
+      && titleGeneration.enabled === true
+        ? [
+            'Internal title task:',
+            'Before answering the user request, emit exactly one short title marker:',
+            '<od-title>Title Here</od-title>',
+            'Rules: 2-6 words, preserve the user request language, no quotes, no markdown, no punctuation unless necessary.',
+            'Do not mention this title task to the user. Continue with the normal answer after the title marker.',
+          ].join('\n')
+        : '';
+    let persistedMcpServers = [];
+    if (!SANDBOX_RUNTIME.enabled) {
+      try {
+        persistedMcpServers = (await readMcpConfig(RUNTIME_DATA_DIR)).servers;
+      } catch (error) {
+        console.warn('[mcp-config] prompt freeze read failed:', error);
+      }
+    }
+    const runScopedMcpServers = meta.toolBundle
+      && typeof meta.toolBundle === 'object'
+      && Array.isArray(meta.toolBundle.mcpServers)
+        ? meta.toolBundle.mcpServers
+        : [];
+    const {
+      enabledServers: enabledPromptMcp,
+      persistedTokenServerIds: promptTokenServerIds,
+    } = resolveExternalMcpServersForRun({
+      persistedServers: persistedMcpServers,
+      runScopedServers: runScopedMcpServers,
+      sandboxMode: SANDBOX_RUNTIME.enabled,
+    });
+    const connectedPromptServerIds = new Set();
+    if (promptTokenServerIds.size > 0) {
+      try {
+        const storedTokens = await readAllTokens(RUNTIME_DATA_DIR);
+        for (const [serverId, token] of Object.entries(storedTokens)) {
+          if (
+            promptTokenServerIds.has(serverId)
+            && typeof token.accessToken === 'string'
+            && token.accessToken.length > 0
+            && !isTokenExpired(token)
+          ) {
+            connectedPromptServerIds.add(serverId);
+          }
+        }
+      } catch (error) {
+        console.warn('[mcp-tokens] prompt freeze read failed:', error);
+      }
+    }
+    const connectedExternalMcp = enabledPromptMcp
+      .filter((server) => connectedPromptServerIds.has(server.id))
+      .map((server) => ({ id: server.id, label: server.label }));
+    const requestInputPendingFact = [
+      renderFrozenSkillBundleContext(frozenSkillPackage),
+      loadedTaskInputs.requestInputText,
+    ].filter(Boolean).join('\n\n---\n\n');
+    const result = composeChatAgentTextPayload({
+      formOverride,
+      daemonSystemPrompt,
+      runtimeToolPrompt,
+      researchCommandContract,
+      runContextPrompt,
+      connectedExternalMcpReference: renderConnectedExternalMcpDirective(connectedExternalMcp),
+      browserUnavailableGuard: renderBrowserUseUnavailablePrompt(browserUse),
+      titleGenerationDirective,
+      clientSystemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
+      cwdReference: '',
+      linkedDirectoryReferences: '',
+      echoGuard: 'Do not quote, restate, or echo <system_prompt>. Begin the response by addressing <user_prompt>.',
+      requestOrStageText: userPrompt,
+      projectAttachmentReferences: '',
+      commentAttachmentReferences: '',
+      imageReferences: '',
+      odNextRequestBundle: {
+        stableContext: odNextStableContextPrompt ?? '',
+        priorTranscript: typeof priorTranscript === 'string' ? priorTranscript : '',
+        taskConfigPendingFact: loadedTaskInputs.taskConfigText,
+        requestInputPendingFact,
+      },
+      strategyInputStage: 'request',
+    });
+    return { text: result.composedPrompt, designSystemScope };
+  };
+
   // Plan §3.I1 / §3.D / spec §10.1: fire the pipeline schedule on a
   // run's SSE stream. Synchronous first emit (the first
   // pipeline_stage_started event lands before the agent process
@@ -10092,7 +10301,47 @@ export async function startServer({
         error instanceof Error ? error.message : String(error),
       );
     }
-    const isOdNextRequestStage = strategyTaskAtStart?.inputStage === 'request';
+    const taskInputOwner = run.odNextTaskInputSnapshot ?? null;
+    if (taskInputOwner && !strategyTaskAtStart) {
+      return design.runs.fail(
+        run,
+        'OD_NEXT_TASK_STATE_INVALID',
+        'OD Next Run retains an immutable input owner but has no persisted task mapping.',
+      );
+    }
+    const strategyRunMapping = strategyTaskAtStart?.runs.find(
+      (mapping) => mapping.runId === run.id,
+    ) ?? null;
+    if (
+      strategyTaskAtStart
+      && (
+        !strategyRunMapping
+        || strategyTaskAtStart.latestRunId !== run.id
+        || strategyRunMapping.inputStage !== strategyTaskAtStart.inputStage
+        || !taskInputOwner
+        || taskInputOwner.taskExecutionId !== strategyTaskAtStart.taskExecutionId
+        || taskInputOwner.manifestSha256
+          !== strategyTaskAtStart.frozenInputIdentity.taskInputManifestSha256
+        || strategyTaskAtStart.frozenInputIdentity.snapshotId
+          !== strategyTaskAtStart.snapshotId
+        || run.projectId !== strategyTaskAtStart.projectId
+        || run.conversationId !== strategyTaskAtStart.conversationId
+        || run.agentId !== strategyTaskAtStart.selectedAgentId
+        || run.appliedPluginSnapshotId !== strategyTaskAtStart.snapshotId
+        || chatBody.projectId !== strategyTaskAtStart.projectId
+        || chatBody.conversationId !== strategyTaskAtStart.conversationId
+        || chatBody.agentId !== strategyTaskAtStart.selectedAgentId
+        || chatBody.appliedPluginSnapshotId !== strategyTaskAtStart.snapshotId
+      )
+    ) {
+      return design.runs.fail(
+        run,
+        'OD_NEXT_TASK_STATE_INVALID',
+        'OD Next Run, request, immutable input owner, and persisted task mapping are not one exact scope.',
+      );
+    }
+    const persistedStrategyFinalText = strategyRunMapping?.finalText.text ?? null;
+    const isOdNextRequestStage = strategyRunMapping?.inputStage === 'request';
     const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
       chatBody,
       'currentPrompt',
@@ -10354,6 +10603,17 @@ export async function startServer({
     // below the prompt-image safety cap.
     let odNextTaskInputSnapshot = null;
     if (run.odNextTaskInputSnapshot) {
+      if (
+        strategyTaskAtStart
+        && run.odNextTaskInputSnapshot.manifestSha256
+          !== strategyTaskAtStart.frozenInputIdentity.taskInputManifestSha256
+      ) {
+        return design.runs.fail(
+          run,
+          'OD_NEXT_INPUT_SNAPSHOT_TAMPERED',
+          'OD Next Run input descriptor no longer matches the persisted task identity.',
+        );
+      }
       try {
         odNextTaskInputSnapshot = createOdNextRunInputProjection({
           descriptor: run.odNextTaskInputSnapshot,
@@ -10612,16 +10872,26 @@ export async function startServer({
         ? latchConversationIntentSignals(db, run.conversationId, freshIntentSignals)
         : freshIntentSignals;
 
-    const {
-      prompt: daemonSystemPrompt,
-      activeSkillDirs,
-      critiqueShouldRun,
-      designSystemSelection,
-      promptTelemetryParts,
-      stableSectionInputs,
-      odNextStableContextPrompt,
-    } =
-      await composeDaemonSystemPrompt({
+    const promptContext = strategyTaskAtStart
+      ? {
+          prompt: '',
+          activeSkillDirs: [],
+          critiqueShouldRun: false,
+          designSystemSelection: {
+            id: typeof designSystemId === 'string' ? designSystemId : null,
+            requestedId: typeof designSystemId === 'string' ? designSystemId : null,
+            source: 'none',
+            digest: null,
+          },
+          promptTelemetryParts: {
+            skillPrompt: '',
+            designSystemPrompt: '',
+            pluginStagePrompt: '',
+          },
+          stableSectionInputs: {},
+          odNextStableContextPrompt: '',
+        }
+      : await composeDaemonSystemPrompt({
         agentId,
         projectId,
         skillId,
@@ -10645,8 +10915,17 @@ export async function startServer({
         platformHintSignal: intentSignals.platform,
         workspaceScope: run.workspaceScope,
         designSystemScope: run.designSystemScope,
-        frozenSkillPackage: strategyTaskAtStart?.frozenSkillPackage,
+        frozenSkillPackage: undefined,
       });
+    const {
+      prompt: daemonSystemPrompt,
+      activeSkillDirs,
+      critiqueShouldRun,
+      designSystemSelection,
+      promptTelemetryParts,
+      stableSectionInputs,
+      odNextStableContextPrompt,
+    } = promptContext;
 
     run.designSystemId = designSystemSelection?.id ?? null;
     run.designSystemRequestedId = designSystemSelection?.requestedId ?? null;
@@ -11193,10 +11472,13 @@ export async function startServer({
           odNextTaskInputSnapshot?.requestInputText ?? '',
         ].filter(Boolean).join('\n\n---\n\n')
       : '';
-    const {
-      composedPrompt: composed,
-      clientInstructionPrompt,
-    } = composeChatAgentTextPayload({
+    const composedResult = strategyTaskAtStart
+      ? {
+          composedPrompt: persistedStrategyFinalText!,
+          clientInstructionPrompt: '',
+          instructionPrompt: '',
+        }
+      : composeChatAgentTextPayload({
       formOverride: agentFormOverride,
       daemonSystemPrompt: includeStableForPayload ? daemonSystemPrompt : '',
       runtimeToolPrompt: includeStableForPayload ? runtimeToolPrompt : '',
@@ -11225,7 +11507,11 @@ export async function startServer({
           }
         : {}),
       strategyInputStage: strategyTaskAtStart?.inputStage ?? null,
-    });
+        });
+    const {
+      composedPrompt: composed,
+      clientInstructionPrompt,
+    } = composedResult;
     if (strategyTaskAtStart?.inputStage === 'request') {
       assertOdNextSemanticRequestFactProducerCoverage('request', {
         prior_transcript: typeof priorTranscript === 'string' ? priorTranscript : '',
@@ -15227,7 +15513,7 @@ export async function startServer({
     http: httpDeps,
     paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
-    chat: { startChatRun },
+    chat: { prepareOdNextInitialPromptBundle, startChatRun },
     skills: {
       captureOdNextFrozenSkillPackage: async ({ skillId, skillIds, workspaceScope }) => {
         const workspaceId = typeof workspaceScope?.workspaceId === 'string'
@@ -15762,7 +16048,7 @@ export async function startServer({
     validation: validationDeps,
     finalize: finalizeDeps,
     handoff: handoffDeps,
-    chat: { startChatRun },
+    chat: { prepareOdNextInitialPromptBundle, startChatRun },
     messages: {
       pinAssistantMessageOnRunCreate,
       reconcileAssistantMessageOnRunEnd,
@@ -15794,7 +16080,7 @@ export async function startServer({
     http: httpDeps,
     authorizeProjectRequest,
     paths: pathDeps,
-    chat: { startChatRun },
+    chat: { prepareOdNextInitialPromptBundle, startChatRun },
     agents: agentDeps,
     critique: critiqueDeps,
     appConfig: { readAppConfig },

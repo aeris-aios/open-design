@@ -86,6 +86,7 @@ import {
   createStrategyTaskExecution,
   getStrategyTaskExecution,
   getStrategyTaskExecutionByRunId,
+  InvalidStrategyTaskRecordError,
   type StrategyTaskExecutionRecord,
   StrategyTaskTransitionConflictError,
 } from '../strategies/task-store.js';
@@ -552,6 +553,14 @@ export interface RegisterRunRoutesDeps {
   };
   chat: {
     startChatRun: (meta: RunCreateMeta, run: ChatRun) => Promise<unknown>;
+    prepareOdNextInitialPromptBundle?: (input: {
+      meta: RunCreateMeta;
+      frozenSkillPackage: FrozenSkillPackageV1;
+      taskInputSnapshot: OdNextTaskInputSnapshotDescriptor;
+    }) => Promise<{
+      text: string;
+      designSystemScope?: PinnedRunDesignSystemScope | null;
+    }>;
   };
   skills?: {
     captureOdNextFrozenSkillPackage: (input: {
@@ -975,6 +984,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   const { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR } = ctx.paths;
   const { detectAgents, getAgentDef } = ctx.agents;
   const { startChatRun } = ctx.chat;
+  const prepareOdNextInitialPromptBundle = ctx.chat.prepareOdNextInitialPromptBundle
+    ?? (async () => {
+      throw new Error('OD Next Prompt Bundle preparation service is unavailable.');
+    });
   const {
     connectorService,
     detectSkillPluginCandidateOnRunSuccess,
@@ -997,15 +1010,51 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     claimAssistantMessage: (run, options) =>
       pinAssistantMessageOnRunCreate(db, run, options),
   });
+  const strategyTaskForRun = (run: ChatRun): StrategyTaskExecutionRecord | null => {
+    const task = getStrategyTaskExecutionByRunId(db, run.id);
+    if (!task && run.odNextTaskInputSnapshot) {
+      throw new InvalidStrategyTaskRecordError(
+        'OD Next Run retains an immutable input owner but has no persisted task mapping.',
+      );
+    }
+    if (
+      task
+      && (
+        !run.odNextTaskInputSnapshot
+        || run.odNextTaskInputSnapshot.taskExecutionId !== task.taskExecutionId
+        || run.odNextTaskInputSnapshot.manifestSha256
+          !== task.frozenInputIdentity.taskInputManifestSha256
+        || run.projectId !== task.projectId
+        || run.conversationId !== task.conversationId
+        || run.agentId !== task.selectedAgentId
+        || run.appliedPluginSnapshotId !== task.snapshotId
+      )
+    ) {
+      throw new InvalidStrategyTaskRecordError(
+        'OD Next Run and immutable input owner do not match the persisted task scope.',
+      );
+    }
+    return task;
+  };
   const statusWithStrategyTask = (run: ChatRun): ChatRunStatusResponse => {
     try {
-      const strategyTask = projectStrategyTaskByRunId(db, run.id);
-      if (strategyTask) run.strategyTask = strategyTask;
+      const strategyTask = strategyTaskForRun(run);
+      const projection = strategyTask ? projectStrategyTask(strategyTask, run.id) : null;
+      if (projection) run.strategyTask = projection;
     } catch (error) {
-      if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
+      if (
+        !(error instanceof InvalidFrozenSkillPackageError)
+        && !(error instanceof InvalidStrategyTaskRecordError)
+      ) throw error;
       delete run.strategyTask;
       if (!['succeeded', 'failed', 'canceled'].includes(run.status)) {
-        design.runs.fail(run, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+        design.runs.fail(
+          run,
+          error instanceof InvalidFrozenSkillPackageError
+            ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+            : 'OD_NEXT_TASK_STATE_INVALID',
+          error.message,
+        );
       }
     }
     return design.runs.statusBody(run);
@@ -1606,8 +1655,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     try {
       clarificationResolution = resolveClarificationContinuation(requestBody);
     } catch (error) {
-      if (error instanceof InvalidFrozenSkillPackageError) {
-        return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      if (
+        error instanceof InvalidFrozenSkillPackageError
+        || error instanceof InvalidStrategyTaskRecordError
+      ) {
+        return sendApiError(
+          res,
+          409,
+          error instanceof InvalidFrozenSkillPackageError
+            ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+            : 'OD_NEXT_TASK_STATE_INVALID',
+          error.message,
+        );
       }
       throw error;
     }
@@ -1678,12 +1737,22 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
               : undefined,
           }).find((candidate) => (
             candidate.clientRequestId === requestBody.clientRequestId
-            && Boolean(projectStrategyTaskByRunId(db, candidate.id))
+            && Boolean(strategyTaskForRun(candidate))
           )) ?? null
         : null;
     } catch (error) {
-      if (error instanceof InvalidFrozenSkillPackageError) {
-        return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      if (
+        error instanceof InvalidFrozenSkillPackageError
+        || error instanceof InvalidStrategyTaskRecordError
+      ) {
+        return sendApiError(
+          res,
+          409,
+          error instanceof InvalidFrozenSkillPackageError
+            ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+            : 'OD_NEXT_TASK_STATE_INVALID',
+          error.message,
+        );
       }
       throw error;
     }
@@ -2335,6 +2404,107 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     delete fingerprintMeta.strategyRolloutDecision;
     meta.requestFingerprint = runRequestFingerprint(fingerprintMeta, fingerprintSnapshot);
     let createdTaskInputSnapshot: OdNextTaskInputSnapshotDescriptor | null = null;
+    let preparedPromptBundleText: string | null = null;
+    if (
+      !clarificationContinuation
+      && !idempotentStrategyRetry
+      && strategyRolloutDecision?.effectiveMode === 'active'
+    ) {
+      const taskType = strategyRolloutDecision.taskType;
+      if (!taskType || !meta.agentId) {
+        return sendApiError(
+          res,
+          400,
+          'OD_NEXT_INPUT_SNAPSHOT_INVALID',
+          'OD Next task inputs require a resolved task type and selected agent.',
+        );
+      }
+      // This snapshot is prepared before the SQLite claim so prompt assembly
+      // never runs inside the claim transaction. Use an attempt-unique owner:
+      // a daemon crash can leave an orphaned immutable directory, but a retry
+      // must never collide with that orphan. Concurrent duplicate requests
+      // likewise prepare independently; the losing claim removes its own
+      // provisional snapshot below.
+      const taskExecutionId = `odnext_${randomUUID().replaceAll('-', '')}`;
+      try {
+        const projectRoot = resolveProjectDir(
+          PROJECTS_DIR,
+          meta.projectId!,
+          runProject?.metadata,
+        );
+        const contextValue = requestBody.context
+          && typeof requestBody.context === 'object'
+          && !Array.isArray(requestBody.context)
+            ? requestBody.context as Record<string, unknown>
+            : {};
+        const mcpIds = Array.isArray(contextValue.mcpServerIds)
+          ? contextValue.mcpServerIds.filter((value) => typeof value === 'string')
+          : [];
+        const runToolServers = toolBundle.bundle
+          && typeof toolBundle.bundle === 'object'
+          && Array.isArray((toolBundle.bundle as { mcpServers?: unknown }).mcpServers)
+            ? (toolBundle.bundle as { mcpServers: unknown[] }).mcpServers
+            : [];
+        const taskConfiguration = buildOdNextTaskConfigurationV1({
+          taskType,
+          locale: meta.locale,
+          selectedAgentId: meta.agentId,
+          sessionMode: meta.sessionMode,
+          model: meta.model,
+          reasoning: meta.reasoning,
+          serviceTier: meta.serviceTier,
+          mediaExecution: mediaExecution.policy,
+          route: 'full_plan',
+          mode: 'unresolved',
+        });
+        createdTaskInputSnapshot = createOdNextTaskInputSnapshot({
+          snapshotsRoot: path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
+          taskExecutionId,
+          taskConfiguration,
+          projectRoot,
+          projectAttachments: Array.isArray(requestBody.attachments)
+            ? requestBody.attachments.filter(
+                (value): value is string => typeof value === 'string' && value.length > 0,
+              )
+            : [],
+          uploadRoot: UPLOAD_DIR,
+          imagePaths: Array.isArray(requestBody.imagePaths)
+            ? requestBody.imagePaths.filter(
+                (value): value is string => typeof value === 'string' && value.length > 0,
+              )
+            : [],
+          commentCount: Array.isArray(requestBody.commentAttachments)
+            ? requestBody.commentAttachments.length
+            : 0,
+          linkedDirectoryCount: Array.isArray(runProject?.metadata?.linkedDirs)
+            ? runProject.metadata.linkedDirs.length
+            : 0,
+          mcpServerCount: mcpIds.length + runToolServers.length,
+        });
+        meta.odNextTaskInputSnapshot = createdTaskInputSnapshot;
+        const preparedPrompt = await prepareOdNextInitialPromptBundle({
+          meta,
+          frozenSkillPackage: frozenSkillPackage!,
+          taskInputSnapshot: createdTaskInputSnapshot,
+        });
+        preparedPromptBundleText = preparedPrompt.text;
+        if (Object.prototype.hasOwnProperty.call(preparedPrompt, 'designSystemScope')) {
+          meta.designSystemScope = preparedPrompt.designSystemScope ?? null;
+        }
+      } catch (error) {
+        removeOdNextTaskInputSnapshot(createdTaskInputSnapshot);
+        createdTaskInputSnapshot = null;
+        if (error instanceof OdNextTaskInputSnapshotError) {
+          return sendApiError(res, 400, error.code, error.message);
+        }
+        return sendApiError(
+          res,
+          409,
+          'OD_NEXT_PROMPT_BUNDLE_REJECTED',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     let preparedRun;
     try {
       preparedRun = internalRuns.prepare({
@@ -2342,95 +2512,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ...((runUserSeed || clarificationTask || strategyRolloutDecision?.effectiveMode === 'active')
           ? {
               beforeClaimCommit: (candidate) => {
-                let preclaimedInitialTask: ReturnType<typeof getStrategyTaskExecutionByRunId> = null;
-                try {
-                  preclaimedInitialTask = getStrategyTaskExecutionByRunId(db, candidate.id);
-                } catch (error) {
-                  if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
-                  // Keep the optimistic Run claim intact so the established
-                  // post-claim guard can publish a durable structured failure.
-                  // A missing/tampered Skill package must not create a Task 04
-                  // snapshot or escape through Express as an HTML 500.
-                }
-                const snapshotTaskType = (
-                  fingerprintSnapshot?.strategy?.selectedTaskProfile?.taskType
-                );
-                const taskType = strategyRolloutDecision?.effectiveMode === 'active'
-                  ? strategyRolloutDecision.taskType
-                  : preclaimedInitialTask?.inputStage === 'request'
-                    && (
-                      snapshotTaskType === 'prototype'
-                      || snapshotTaskType === 'ppt'
-                      || snapshotTaskType === 'marketing'
-                      || snapshotTaskType === 'hyperframes'
-                    )
-                    ? snapshotTaskType
-                    : null;
-                if (!clarificationContinuation && taskType) {
-                  if (!candidate.agentId) {
-                    throw new OdNextTaskInputSnapshotError(
-                      'OD Next task inputs require a resolved task type and selected agent.',
-                    );
-                  }
-                  const taskExecutionId = preclaimedInitialTask?.taskExecutionId
-                    ?? `odnext_${createHash('sha256')
-                      .update(candidate.id)
-                      .digest('hex')
-                      .slice(0, 32)}`;
-                  const projectRoot = resolveProjectDir(
-                    PROJECTS_DIR,
-                    candidate.projectId!,
-                    runProject?.metadata,
-                  );
-                  const contextValue = requestBody.context
-                    && typeof requestBody.context === 'object'
-                    && !Array.isArray(requestBody.context)
-                      ? requestBody.context as Record<string, unknown>
-                      : {};
-                  const mcpIds = Array.isArray(contextValue.mcpServerIds)
-                    ? contextValue.mcpServerIds.filter((value) => typeof value === 'string')
-                    : [];
-                  const runToolServers = toolBundle.bundle
-                    && typeof toolBundle.bundle === 'object'
-                    && Array.isArray((toolBundle.bundle as { mcpServers?: unknown }).mcpServers)
-                      ? (toolBundle.bundle as { mcpServers: unknown[] }).mcpServers
-                      : [];
-                  const taskConfiguration = buildOdNextTaskConfigurationV1({
-                    taskType,
-                    locale: meta.locale,
-                    selectedAgentId: candidate.agentId,
-                    sessionMode: meta.sessionMode,
-                    model: meta.model,
-                    reasoning: meta.reasoning,
-                    serviceTier: meta.serviceTier,
-                    mediaExecution: mediaExecution.policy,
-                    route: preclaimedInitialTask?.route ?? 'full_plan',
-                    mode: preclaimedInitialTask?.executionMode ?? 'unresolved',
-                  });
-                  createdTaskInputSnapshot = createOdNextTaskInputSnapshot({
-                    snapshotsRoot: path.join(RUNTIME_DATA_DIR, 'od-next-task-inputs'),
-                    taskExecutionId,
-                    taskConfiguration,
-                    projectRoot,
-                    projectAttachments: Array.isArray(requestBody.attachments)
-                      ? requestBody.attachments.filter(
-                          (value): value is string => typeof value === 'string' && value.length > 0,
-                        )
-                      : [],
-                    uploadRoot: UPLOAD_DIR,
-                    imagePaths: Array.isArray(requestBody.imagePaths)
-                      ? requestBody.imagePaths.filter(
-                          (value): value is string => typeof value === 'string' && value.length > 0,
-                        )
-                      : [],
-                    commentCount: Array.isArray(requestBody.commentAttachments)
-                      ? requestBody.commentAttachments.length
-                      : 0,
-                    linkedDirectoryCount: Array.isArray(runProject?.metadata?.linkedDirs)
-                      ? runProject.metadata.linkedDirs.length
-                      : 0,
-                    mcpServerCount: mcpIds.length + runToolServers.length,
-                  });
+                if (!clarificationContinuation && createdTaskInputSnapshot) {
                   candidate.odNextTaskInputSnapshot = createdTaskInputSnapshot;
                   // `createOrReuse` persisted the optimistic Run before the
                   // claim hook ran. Persist the daemon-owned descriptor now,
@@ -2454,10 +2536,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                   && resolvedSnapshot?.ok
                   && resolvedSnapshot.snapshot.strategy
                 ) {
-                  const taskExecutionId = createdTaskInputSnapshot?.taskExecutionId;
-                  if (!taskExecutionId) {
+                  const initialTaskInputSnapshot = createdTaskInputSnapshot;
+                  const taskExecutionId = initialTaskInputSnapshot?.taskExecutionId;
+                  if (!taskExecutionId || !preparedPromptBundleText || !frozenSkillPackage) {
                     throw new OdNextTaskInputSnapshotError(
-                      'OD Next task input snapshot was not created before claim.',
+                      'OD Next immutable inputs and Prompt Bundle were not prepared before claim.',
                     );
                   }
                   createStrategyTaskExecution(db, {
@@ -2467,7 +2550,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                     snapshotId: resolvedSnapshot.snapshotId,
                     selectedAgentId: candidate.agentId!,
                     initialRunId: candidate.id,
-                    ...(frozenSkillPackage ? { frozenSkillPackage } : {}),
+                    frozenSkillPackage,
+                    promptBundleText: preparedPromptBundleText,
+                    taskInputManifestSha256: initialTaskInputSnapshot.manifestSha256,
                   });
                   const preparedStrategy = prepareStrategyRequest(db, {
                     taskExecutionId,
@@ -2515,6 +2600,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (error instanceof OdNextTaskInputSnapshotError) {
         return sendApiError(res, 400, error.code, error.message);
       }
+      if (error instanceof InvalidStrategyTaskRecordError) {
+        return sendApiError(res, 409, 'OD_NEXT_TASK_STATE_INVALID', error.message);
+      }
       if (clarificationTask) {
         return sendApiError(
           res,
@@ -2546,10 +2634,21 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (preparedRun.kind === 'reused') {
       let strategyTask;
       try {
-        strategyTask = projectStrategyTaskByRunId(db, run.id);
+        const task = strategyTaskForRun(run);
+        strategyTask = task ? projectStrategyTask(task, run.id) : null;
       } catch (error) {
-        if (error instanceof InvalidFrozenSkillPackageError) {
-          return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+        if (
+          error instanceof InvalidFrozenSkillPackageError
+          || error instanceof InvalidStrategyTaskRecordError
+        ) {
+          return sendApiError(
+            res,
+            409,
+            error instanceof InvalidFrozenSkillPackageError
+              ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+              : 'OD_NEXT_TASK_STATE_INVALID',
+            error.message,
+          );
         }
         throw error;
       }
@@ -2610,10 +2709,20 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     let strategyTask;
     try {
-      strategyTask = projectStrategyTaskByRunId(db, run.id);
+      const task = strategyTaskForRun(run);
+      strategyTask = task ? projectStrategyTask(task, run.id) : null;
     } catch (error) {
-      if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
-      design.runs.fail(run, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      if (
+        !(error instanceof InvalidFrozenSkillPackageError)
+        && !(error instanceof InvalidStrategyTaskRecordError)
+      ) throw error;
+      design.runs.fail(
+        run,
+        error instanceof InvalidFrozenSkillPackageError
+          ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+          : 'OD_NEXT_TASK_STATE_INVALID',
+        error.message,
+      );
       return res.status(202).json({
         runId: run.id,
         conversationId: run.conversationId ?? null,
@@ -3600,7 +3709,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const runId = routeParamId(req);
     if (!runId) return sendApiError(res, 400, 'BAD_REQUEST', 'run id missing');
     const requestedRun = design.runs.get(runId);
-    const task = getStrategyTaskExecutionByRunId(db, runId);
+    let task;
+    try {
+      task = getStrategyTaskExecutionByRunId(db, runId);
+    } catch (error) {
+      if (error instanceof InvalidStrategyTaskRecordError) {
+        return sendApiError(res, 409, 'OD_NEXT_TASK_STATE_INVALID', error.message);
+      }
+      if (error instanceof InvalidFrozenSkillPackageError) {
+        return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      }
+      throw error;
+    }
     const resultRunId = task?.terminalRunId ?? task?.latestRunId ?? runId;
     const run = design.runs.get(resultRunId);
     if (!requestedRun || !run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
@@ -3811,7 +3931,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       run,
       { mode: 'write', capability: 'writeFiles' },
     )) return;
-    const task = getStrategyTaskExecutionByRunId(db, runId);
+    let task;
+    try {
+      task = getStrategyTaskExecutionByRunId(db, runId);
+    } catch (error) {
+      if (error instanceof InvalidStrategyTaskRecordError) {
+        return sendApiError(res, 409, 'OD_NEXT_TASK_STATE_INVALID', error.message);
+      }
+      if (error instanceof InvalidFrozenSkillPackageError) {
+        return sendApiError(res, 409, 'OD_NEXT_SKILL_SNAPSHOT_INVALID', error.message);
+      }
+      throw error;
+    }
     const activeRun = task?.activeRunId ? design.runs.get(task.activeRunId) : null;
     let cancelRun = activeRun ?? run;
     let taskForCancel = task;
@@ -3903,7 +4034,25 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (!authorization.ok) return;
       authorizedBoundMutation = authorization.authorizedBoundMutation;
     }
-    const clarificationResolution = resolveClarificationContinuation(requestBody);
+    let clarificationResolution;
+    try {
+      clarificationResolution = resolveClarificationContinuation(requestBody);
+    } catch (error) {
+      if (
+        error instanceof InvalidFrozenSkillPackageError
+        || error instanceof InvalidStrategyTaskRecordError
+      ) {
+        return sendApiError(
+          res,
+          409,
+          error instanceof InvalidFrozenSkillPackageError
+            ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+            : 'OD_NEXT_TASK_STATE_INVALID',
+          error.message,
+        );
+      }
+      throw error;
+    }
     if (clarificationResolution.kind === 'error') {
       return sendApiError(
         res,
@@ -4057,6 +4206,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           : {}),
       });
     } catch (error) {
+      if (error instanceof InvalidStrategyTaskRecordError) {
+        return sendApiError(res, 409, 'OD_NEXT_TASK_STATE_INVALID', error.message);
+      }
       if (clarificationContinuation) {
         return sendApiError(
           res,
@@ -4077,7 +4229,26 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     const run = preparedRun.run;
     if (preparedRun.kind === 'reused') {
-      const strategyTask = projectStrategyTaskByRunId(db, run.id);
+      let strategyTask;
+      try {
+        const task = strategyTaskForRun(run);
+        strategyTask = task ? projectStrategyTask(task, run.id) : null;
+      } catch (error) {
+        if (
+          error instanceof InvalidFrozenSkillPackageError
+          || error instanceof InvalidStrategyTaskRecordError
+        ) {
+          return sendApiError(
+            res,
+            409,
+            error instanceof InvalidFrozenSkillPackageError
+              ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+              : 'OD_NEXT_TASK_STATE_INVALID',
+            error.message,
+          );
+        }
+        throw error;
+      }
       if (strategyTask) run.strategyTask = strategyTask;
       design.runs.stream(run, req, res);
       return;
@@ -4105,7 +4276,27 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         // The locked snapshot remains on the in-memory Run; linking is best-effort.
       }
     }
-    const strategyTask = projectStrategyTaskByRunId(db, run.id);
+    let strategyTask;
+    try {
+      const task = strategyTaskForRun(run);
+      strategyTask = task ? projectStrategyTask(task, run.id) : null;
+    } catch (error) {
+      if (
+        error instanceof InvalidFrozenSkillPackageError
+        || error instanceof InvalidStrategyTaskRecordError
+      ) {
+        design.runs.fail(
+          run,
+          error instanceof InvalidFrozenSkillPackageError
+            ? 'OD_NEXT_SKILL_SNAPSHOT_INVALID'
+            : 'OD_NEXT_TASK_STATE_INVALID',
+          error.message,
+        );
+        design.runs.stream(run, req, res);
+        return;
+      }
+      throw error;
+    }
     if (strategyTask) run.strategyTask = strategyTask;
     design.runs.stream(run, req, res);
     reconcileAssistantMessageOnRunEnd(db, design.runs, run);

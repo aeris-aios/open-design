@@ -40,6 +40,18 @@ const RUNS = [
   },
 ] as const;
 
+function finalText(kind: 'bundle' | 'turn') {
+  return {
+    kind,
+    schema: kind === 'bundle'
+      ? 'open-design.od-next-prompt-bundle/v1' as const
+      : 'open-design.od-next-request-turn/v1' as const,
+    text: `${kind}-fixture`,
+    utf8Bytes: `${kind}-fixture`.length,
+    sha256: 'a'.repeat(64),
+  };
+}
+
 function task(
   outcome: StrategyTaskExecutionRecord['outcome'] = 'completed',
 ): StrategyTaskExecutionRecord {
@@ -65,8 +77,19 @@ function task(
     latestRunId: 'run-production',
     activeRunId: outcome === 'running' ? 'run-production' : null,
     terminalRunId: outcome === 'running' ? null : 'run-production',
-    runs: RUNS.map((run) => ({ ...run })),
+    runs: RUNS.map((run) => ({
+      ...run,
+      finalText: finalText(run.taskRunIndex === 0 ? 'bundle' : 'turn'),
+    })),
     frozenSkillPackage: createEmptyFrozenSkillPackage(),
+    promptBundle: finalText('bundle'),
+    frozenInputIdentity: {
+      schema: 'open-design.od-next-frozen-input-identity/v1',
+      snapshotId: 'snapshot-1',
+      strategyPackageHash: 'sha256:package',
+      frozenSkillPackageIdentity: createEmptyFrozenSkillPackage().identity,
+      taskInputManifestSha256: 'b'.repeat(64),
+    },
     createdAt: 1_000,
     updatedAt: 9_000,
   };

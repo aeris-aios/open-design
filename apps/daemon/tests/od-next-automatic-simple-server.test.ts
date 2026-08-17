@@ -18,6 +18,10 @@ import {
 } from '@open-design/contracts';
 
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
+let pendingAutomaticFixtureIdentity: {
+  initialRunId: string;
+  taskExecutionId: string;
+} | null = null;
 
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:crypto')>();
@@ -36,6 +40,7 @@ import {
   createStrategyTaskExecution,
   getStrategyTaskExecution,
 } from '../src/strategies/task-store.js';
+import { strategyTaskCreateIdentityFixture } from './strategies/strategy-task-test-fixtures.js';
 import { prepareStrategyRequest } from '../src/strategies/od-next/coordinator.js';
 import {
   clearOdNextRolloutStop,
@@ -135,6 +140,7 @@ describe('OD Next automatic production through the real server', () => {
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
     delete process.env.OD_NEXT_STRATEGY_MAX_RUN_DURATION_MS;
     uuidControl.forced.length = 0;
+    pendingAutomaticFixtureIdentity = null;
     await stopServer(started);
     started = null;
     closeDatabase();
@@ -220,11 +226,15 @@ describe('OD Next automatic production through the real server', () => {
     ];
     const active = await postRun(started!.url, activeBody);
     expect(active.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
-    expect(getStrategyTaskExecution(database(), active.taskExecutionId as string)?.frozenSkillPackage)
-      .toMatchObject({
+    const activeTask = getStrategyTaskExecution(database(), active.taskExecutionId as string);
+    expect(activeTask?.frozenSkillPackage).toMatchObject({
         schema: 'open-design.od-next-frozen-skill-package/v1',
         selections: [{ canonicalId: 'frozen-bundle-skill' }],
       });
+    expect(activeTask?.runs[0]?.finalText).toEqual(activeTask?.promptBundle);
+    expect(activeTask?.promptBundle.utf8Bytes).toBe(
+      Buffer.byteLength(activeTask?.promptBundle.text ?? '', 'utf8'),
+    );
     expect((database().prepare(
       'SELECT applied_plugin_snapshot_id AS snapshotId FROM projects WHERE id = ?',
     ).get(fixture.projectId) as { snapshotId: string | null }).snapshotId)
@@ -264,6 +274,7 @@ describe('OD Next automatic production through the real server', () => {
     });
     const activeInvocation = (await readProjectInvocations(fixture.logPath, fixture.projectId))
       .find((invocation) => invocation.stdin.includes('Hold the public rollout run open'));
+    expect(activeInvocation?.stdin).toBe(activeTask?.promptBundle.text);
     expect(activeInvocation?.stdin).toContain('## User-selected Skill — frozen-bundle-skill');
     expect(activeInvocation?.stdin).toContain('# Frozen bundle workflow');
     expect(activeInvocation?.stdin).toContain('.od-skills/frozen-bundle-skill-');
@@ -302,6 +313,89 @@ describe('OD Next automatic production through the real server', () => {
       `${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`,
       { method: 'POST' },
     );
+  });
+
+  it('rejects mapped-row deletion or legacy NULL final text without spawning an ordinary retry', async () => {
+    const fixture = await createPublicRolloutFixture('persisted-task-tamper', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+
+    const deletedBody = publicRunRequest(
+      fixture,
+      'Hold deleted-mapping task open.',
+      'deleted-mapping-request',
+    );
+    const nullBody = publicRunRequest(
+      fixture,
+      'Hold NULL-identity task open.',
+      'null-identity-request',
+    );
+    const deleted = await postRun(started.url, deletedBody);
+    const nulled = await postRun(started.url, nullBody);
+    await waitForInvocationCount(fixture.logPath, fixture.projectId, 2);
+    await Promise.all([
+      waitForRunTerminal(started.url, deleted.runId as string),
+      waitForRunTerminal(started.url, nulled.runId as string),
+    ]);
+    const invocationCount = (await readProjectInvocations(fixture.logPath, fixture.projectId)).length;
+
+    database().prepare(
+      'DELETE FROM strategy_task_runs WHERE task_execution_id = ?',
+    ).run(deleted.taskExecutionId);
+    database().prepare(
+      `UPDATE strategy_task_runs
+          SET final_text = NULL, final_text_utf8_bytes = NULL, final_text_sha256 = NULL
+        WHERE task_execution_id = ?`,
+    ).run(nulled.taskExecutionId);
+
+    for (const body of [deletedBody, nullBody]) {
+      const response = await fetch(`${started.url}/api/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'OD_NEXT_TASK_STATE_INVALID' },
+      });
+    }
+    expect((await readProjectInvocations(fixture.logPath, fixture.projectId)).length)
+      .toBe(invocationCount);
+  });
+
+  it('rejects task-to-Run scope drift without spawning a retry', async () => {
+    const fixture = await createPublicRolloutFixture('persisted-task-scope-drift', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const body = publicRunRequest(
+      fixture,
+      'Hold scope-drift task open.',
+      'scope-drift-request',
+    );
+    const created = await postRun(started.url, body);
+    await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
+    database().prepare(
+      `UPDATE strategy_task_executions
+          SET selected_agent_id = 'opencode'
+        WHERE task_execution_id = ?`,
+    ).run(created.taskExecutionId);
+
+    const response = await fetch(`${started.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'OD_NEXT_TASK_STATE_INVALID' },
+    });
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
   });
 
   it('never overrides explicit plugin, snapshot, or existing project-pin authority', async () => {
@@ -400,7 +494,7 @@ describe('OD Next automatic production through the real server', () => {
       attachments: ['brief.pdf', 'notes.txt'],
     };
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     const created = await postRun(started!.url, body);
     expect(created).toMatchObject({
       runId: fixture.initialRunId,
@@ -488,6 +582,9 @@ describe('OD Next automatic production through the real server', () => {
 
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(invocations).toHaveLength(3);
+    expect(invocations.map((invocation) => invocation.stdin)).toEqual(
+      terminal.runs.map((mapping) => mapping.finalText.text),
+    );
     expect(invocations[0]?.argv).not.toContain('resume');
     expect(invocations[0]?.stdin).toMatch(/^<open_design_prompt_bundle/);
     expect(invocations[0]?.stdin).toContain('<system_prompt>');
@@ -505,6 +602,8 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[0]?.stdin).not.toContain('# User request');
     expect(invocations[1]?.argv.slice(0, 2)).toEqual(['exec', 'resume']);
     expect(invocations[2]?.argv.slice(0, 2)).toEqual(['exec', 'resume']);
+    expect(invocations.slice(1).map((invocation) => invocation.argv.includes(THREAD_ID)))
+      .toEqual([true, true]);
     expect(invocations[1]?.stdin).toContain('native continuation — contract_repair');
     expect(invocations[2]?.stdin).toContain('native continuation — production');
     expect(invocations[1]?.stdin).toMatch(/^<open_design_request_turn/);
@@ -572,27 +671,25 @@ describe('OD Next automatic production through the real server', () => {
     });
   });
 
-  it('completes direct edit in its request Run and an exact retry or restart cannot allocate another Run', async () => {
-    const fixture = await createFixture('direct');
+  it('keeps a completed task exactly-once across an exact retry and daemon restart', async () => {
+    const fixture = await createFixture('repair');
     const body = createRunRequest(fixture, 'Update the existing operator header.');
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     const created = await postRun(started!.url, body);
     expect(created).toMatchObject({
       runId: fixture.initialRunId,
       taskExecutionId: fixture.taskExecutionId,
     });
     const terminal = await waitForTask(fixture.taskExecutionId, 'completed');
-    expect(terminal.runs).toEqual([
-      expect.objectContaining({
-        runId: fixture.initialRunId,
-        inputStage: 'request',
-        taskRunIndex: 0,
-      }),
+    expect(terminal.runs.map((run) => run.inputStage)).toEqual([
+      'request',
+      'contract_repair',
+      'production',
     ]);
-    expect(terminal.route).toBe('direct_edit');
-    expect(terminal.terminalRunId).toBe(fixture.initialRunId);
-    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+    expect(terminal.route).toBe('full_plan');
+    expect(terminal.terminalRunId).toBe(terminal.runs[2]?.runId);
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(3);
 
     const retried = await postRun(started!.url, body);
     expect(retried).toMatchObject({
@@ -601,27 +698,26 @@ describe('OD Next automatic production through the real server', () => {
       taskExecutionId: fixture.taskExecutionId,
       strategyTask: {
         taskExecutionId: fixture.taskExecutionId,
-        inputStage: 'request',
+        inputStage: 'production',
         outcome: 'completed',
         terminal: true,
       },
     });
-    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
-    expect(getStrategyTaskExecution(database(), fixture.taskExecutionId)?.runs).toHaveLength(1);
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(3);
+    expect(getStrategyTaskExecution(database(), fixture.taskExecutionId)?.runs).toHaveLength(3);
 
     await stopServer(started);
     started = await startDaemon();
     expect((await getRun(started.url, fixture.initialRunId)).status).toBe('succeeded');
-    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(3);
     expect(getStrategyTaskExecution(database(), fixture.taskExecutionId)).toMatchObject({
       outcome: 'completed',
-      latestRunId: fixture.initialRunId,
-      terminalRunId: fixture.initialRunId,
+      terminalRunId: terminal.runs[2]?.runId,
     });
   });
 
   it('uses the canonical Web current turn as the implicit research query', async () => {
-    const fixture = await createFixture('direct');
+    const fixture = await createFixture('repair');
     const repeatedQuery = 'REPEATED_CURRENT_QUERY_TOKEN';
     const priorTranscript = [
       '## user',
@@ -638,12 +734,12 @@ describe('OD Next automatic production through the real server', () => {
       research: { enabled: true },
     };
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     await postRun(started!.url, body);
     await waitForTask(fixture.taskExecutionId, 'completed');
 
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
-    expect(invocations).toHaveLength(1);
+    expect(invocations).toHaveLength(3);
     const bundle = parseOdNextPromptBundleV1(invocations[0]!.stdin);
     expect(bundle.userPrompt).toBe(repeatedQuery);
     expect(bundle.context).toContain(priorTranscript);
@@ -660,10 +756,11 @@ describe('OD Next automatic production through the real server', () => {
     expect(researchContract).not.toContain('## assistant');
   });
 
-  it('blocks the durable task before an early agent startup failure publishes its end event', async () => {
-    const fixture = await createFixture('direct', { selectedAgentId: 'missing-agent' });
+  it('blocks the durable task when the selected agent exits before publishing a session', async () => {
+    const fixture = await createFixture('repair');
+    await writeFile(`${fixture.logPath}.fail-start`, '1');
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     const created = await postRun(
       started!.url,
       createRunRequest(fixture, 'Update the existing operator header.'),
@@ -672,7 +769,7 @@ describe('OD Next automatic production through the real server', () => {
 
     expect(terminal).toMatchObject({
       status: 'failed',
-      errorCode: 'AGENT_UNAVAILABLE',
+      errorCode: 'AGENT_EXECUTION_FAILED',
       strategyTask: {
         taskExecutionId: fixture.taskExecutionId,
         outcome: 'blocked',
@@ -686,57 +783,50 @@ describe('OD Next automatic production through the real server', () => {
   });
 
   it('fails a mapped Run before live Skill staging when its frozen package row is missing', async () => {
-    const fixture = await createFixture('direct');
+    const fixture = await createFixture('repair');
+    const body = createRunRequest(fixture, 'Do not fall back to a live Skill.');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, body);
+    await waitForTask(fixture.taskExecutionId, 'completed');
+    const invocationCount = (await readProjectInvocations(fixture.logPath, fixture.projectId)).length;
     database().prepare(
       'DELETE FROM strategy_task_frozen_skill_packages WHERE task_execution_id = ?',
     ).run(fixture.taskExecutionId);
-
-    uuidControl.forced.push(fixture.initialRunId);
-    const created = await postRun(
-      started!.url,
-      createRunRequest(fixture, 'Do not fall back to a live Skill.'),
-    );
-    const terminal = await waitForRunTerminal(started!.url, created.runId as string);
-
-    expect(terminal).toMatchObject({
-      status: 'failed',
-      errorCode: 'OD_NEXT_SKILL_SNAPSHOT_INVALID',
+    const retry = await fetch(`${started!.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
     });
-    await expect(readFile(path.join(
-      process.env.OD_DATA_DIR!,
-      'od-next-task-inputs',
-      fixture.taskExecutionId,
-      'manifest.json',
-    ))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(0);
+    expect(retry.status).toBe(409);
+    await expect(retry.json()).resolves.toMatchObject({
+      error: { code: 'OD_NEXT_SKILL_SNAPSHOT_INVALID' },
+    });
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(invocationCount);
   });
 
   it('fails a mapped Run before live Skill staging when its frozen package is tampered', async () => {
-    const fixture = await createFixture('direct');
+    const fixture = await createFixture('repair');
+    const body = createRunRequest(fixture, 'Do not use a tampered Skill package.');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, body);
+    await waitForTask(fixture.taskExecutionId, 'completed');
+    const invocationCount = (await readProjectInvocations(fixture.logPath, fixture.projectId)).length;
     database().prepare(`
       UPDATE strategy_task_frozen_skill_packages
          SET payload_json = replace(payload_json, '"selections":[]', '"selections":[{}]')
        WHERE task_execution_id = ?
     `).run(fixture.taskExecutionId);
 
-    uuidControl.forced.push(fixture.initialRunId);
-    const created = await postRun(
-      started!.url,
-      createRunRequest(fixture, 'Do not use a tampered Skill package.'),
-    );
-    const terminal = await waitForRunTerminal(started!.url, created.runId as string);
-
-    expect(terminal).toMatchObject({
-      status: 'failed',
-      errorCode: 'OD_NEXT_SKILL_SNAPSHOT_INVALID',
+    const retry = await fetch(`${started!.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
     });
-    await expect(readFile(path.join(
-      process.env.OD_DATA_DIR!,
-      'od-next-task-inputs',
-      fixture.taskExecutionId,
-      'manifest.json',
-    ))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(0);
+    expect(retry.status).toBe(409);
+    await expect(retry.json()).resolves.toMatchObject({
+      error: { code: 'OD_NEXT_SKILL_SNAPSHOT_INVALID' },
+    });
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(invocationCount);
   });
 
   it('fails closed when daemon-owned execution preflight rejects', async () => {
@@ -746,7 +836,7 @@ describe('OD Next automatic production through the real server', () => {
       throw new Error('fixture preflight unavailable');
     });
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     await postRun(started.url, createRunRequest(fixture, 'Build the operator prototype.'));
     const task = await waitForTask(fixture.taskExecutionId, 'blocked');
     const terminal = await waitForRunTerminal(started.url, task.latestRunId);
@@ -776,7 +866,7 @@ describe('OD Next automatic production through the real server', () => {
       return EXECUTION_PREFLIGHT;
     });
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     await postRun(started.url, createRunRequest(fixture, 'Build the operator prototype.'));
     await resolverEntered;
     const awaiting = getStrategyTaskExecution(database(), fixture.taskExecutionId);
@@ -843,7 +933,7 @@ describe('OD Next automatic production through the real server', () => {
       },
     );
 
-    uuidControl.forced.push(fixture.initialRunId);
+    queueFixtureIds(fixture);
     await postRun(started.url, createRunRequest(fixture, 'Build the complex prototype.'));
     const terminal = await waitForTask(fixture.taskExecutionId, 'completed');
     expect(terminal).toMatchObject({
@@ -865,6 +955,50 @@ describe('OD Next automatic production through the real server', () => {
     } = {},
   ) {
     const suffix = `${mode}-${Date.now()}-${++sequence}`;
+    if (mode !== 'direct') {
+      const publicFixture = await createPublicRolloutFixture(`chain-${suffix}`, 'design');
+      started = publicFixture.started;
+      binDir = publicFixture.binDir;
+      clearOdNextRolloutStop(database());
+      process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+      process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+      const template = await createStrategyTemplate();
+      const initialRunId = `019fffab-0000-7000-8000-${sequence
+        .toString(16)
+        .padStart(12, '0')}`;
+      const taskOwnerUuid = `019fffaa-0000-7000-8000-${sequence
+        .toString(16)
+        .padStart(12, '0')}`;
+      const taskExecutionId = `odnext_${taskOwnerUuid.replaceAll('-', '')}`;
+      const { bin, logPath } = await writeStrategyCodex(
+        binDir,
+        mode,
+        planContract(template.snapshotId, template.strategy, mode, capability),
+      );
+      const configResponse = await fetch(`${started.url}/api/app-config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          agentId: 'codex',
+          agentCliEnv: { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
+          telemetry: { metrics: false, content: false, artifactManifest: false },
+          privacyDecisionAt: Date.now(),
+        }),
+      });
+      expect(configResponse.status).toBe(200);
+      expect((await fetch(`${started.url}/api/agents`)).status).toBe(200);
+      return {
+        projectId: publicFixture.projectId,
+        conversationId: publicFixture.conversationId,
+        snapshotId: template.snapshotId,
+        useAutomaticSnapshot: true,
+        initialRunId,
+        taskOwnerUuid,
+        taskExecutionId,
+        logPath,
+        agentId: selectedAgentId,
+      };
+    }
     binDir = await mkdtemp(path.join(os.tmpdir(), `od-next-server-${mode}-`));
     started = await startDaemon();
     const projectId = `od-next-server-${suffix}`;
@@ -875,41 +1009,57 @@ describe('OD Next automatic production through the real server', () => {
         id: projectId,
         name: `OD Next ${mode} server test`,
         metadata: { kind: 'prototype' },
+        conversationMode: mode === 'direct' ? 'chat' : 'design',
         skipDiscoveryBrief: true,
       }),
     });
     expect(projectResponse.status).toBe(200);
-    const projectBody = await projectResponse.json() as { conversationId: string };
+    const projectBody = await projectResponse.json() as {
+      conversationId: string;
+      appliedPluginSnapshotId?: string;
+      project?: {
+        metadata?: { automaticDefaultScenario?: { snapshotId: string } };
+      };
+    };
     const project = { id: projectId, conversationId: projectBody.conversationId };
+    if (mode !== 'direct') {
+      expect(projectBody.project?.metadata?.automaticDefaultScenario).toBeDefined();
+    }
 
-    const snapshot = await createStrategySnapshot(project.id, project.conversationId);
+    const snapshot = mode === 'direct'
+      ? await createStrategySnapshot(project.id, project.conversationId)
+      : await createStrategyTemplate();
+    if (!snapshot?.strategy) throw new Error('OD Next strategy snapshot fixture is missing');
     const initialRunId = `019fffab-0000-7000-8000-${sequence
       .toString(16)
       .padStart(12, '0')}`;
-    const taskExecutionId = `task-${suffix}`;
-    createStrategyTaskExecution(database(), {
-      taskExecutionId,
-      projectId: project.id,
-      conversationId: project.conversationId,
-      snapshotId: snapshot.snapshotId,
-      selectedAgentId,
-      initialRunId,
-    });
-    prepareStrategyRequest(database(), {
-      taskExecutionId,
-      preference: mode === 'direct' ? 'auto' : 'full_plan',
-      directEdit: mode === 'direct'
-        ? DIRECT_ELIGIBLE
-        : {
-            editableBaselineExists: false,
-            localAndUnambiguous: false,
-            canonicalDeliverableStable: false,
-            deliverableSetStable: false,
-            dependenciesBounded: false,
-          },
-      intake: INTAKE_PASSED,
-      ...(mode === 'direct' ? { execution: EXECUTION_PREFLIGHT } : {}),
-    });
+    const taskOwnerUuid = mode === 'direct'
+      ? null
+      : `019fffaa-0000-7000-8000-${sequence.toString(16).padStart(12, '0')}`;
+    const taskExecutionId = taskOwnerUuid
+      ? `odnext_${taskOwnerUuid.replaceAll('-', '')}`
+      : `task-${suffix}`;
+    if (mode === 'direct') {
+      createStrategyTaskExecution(database(), {
+        taskExecutionId,
+        projectId: project.id,
+        conversationId: project.conversationId,
+        snapshotId: snapshot.snapshotId,
+        selectedAgentId,
+        initialRunId,
+        ...strategyTaskCreateIdentityFixture(),
+      });
+      prepareStrategyRequest(database(), {
+        taskExecutionId,
+        preference: 'auto',
+        directEdit: DIRECT_ELIGIBLE,
+        intake: INTAKE_PASSED,
+        execution: EXECUTION_PREFLIGHT,
+      });
+    } else {
+      process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+      process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    }
 
     const { bin, logPath } = await writeStrategyCodex(
       binDir,
@@ -927,11 +1077,15 @@ describe('OD Next automatic production through the real server', () => {
       }),
     });
     expect(configResponse.status).toBe(200);
+    const agentsResponse = await fetch(`${started.url}/api/agents`);
+    expect(agentsResponse.status).toBe(200);
     return {
       projectId: project.id,
       conversationId: project.conversationId,
       snapshotId: snapshot.snapshotId,
+      useAutomaticSnapshot: mode !== 'direct',
       initialRunId,
+      taskOwnerUuid,
       taskExecutionId,
       logPath,
       agentId: selectedAgentId,
@@ -1081,7 +1235,11 @@ async function stopServer(server: StartedServer | null): Promise<void> {
   }
 }
 
-async function createStrategySnapshot(projectId: string, conversationId: string) {
+async function createStrategySnapshot(
+  projectId: string,
+  conversationId: string,
+  linkToProject = true,
+) {
   const source = path.resolve(
     import.meta.dirname,
     '../../../plugins/_official/scenarios/od-next-strategy',
@@ -1095,6 +1253,7 @@ async function createStrategySnapshot(projectId: string, conversationId: string)
   });
   if (!resolved.ok) throw new Error(resolved.errors.join('; '));
   const plugin = resolved.record;
+  upsertInstalledPlugin(database(), plugin);
   const strategy = createBundledStrategyBindingV2({ plugin, taskType: 'prototype' });
   const snapshot = createSnapshot(database(), {
     projectId,
@@ -1120,8 +1279,27 @@ async function createStrategySnapshot(projectId: string, conversationId: string)
     connectorsResolved: [],
     mcpServers: [],
   });
-  linkSnapshotToProject(database(), snapshot.snapshotId, projectId);
+  if (linkToProject) linkSnapshotToProject(database(), snapshot.snapshotId, projectId);
   return snapshot;
+}
+
+async function createStrategyTemplate() {
+  const source = path.resolve(
+    import.meta.dirname,
+    '../../../plugins/_official/scenarios/od-next-strategy',
+  );
+  const resolved = await resolvePluginFolder({
+    folder: source,
+    folderId: 'od-next-strategy',
+    sourceKind: 'bundled',
+    source,
+    trust: 'bundled',
+  });
+  if (!resolved.ok) throw new Error(resolved.errors.join('; '));
+  return {
+    snapshotId: '00000000-0000-4000-8000-000000000000',
+    strategy: createBundledStrategyBindingV2({ plugin: resolved.record, taskType: 'prototype' }),
+  };
 }
 
 function planContract(
@@ -1269,6 +1447,10 @@ const logPath = ${JSON.stringify(logPath)};
 const mode = ${JSON.stringify(mode)};
 if (argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
 if (argv.includes('--help')) { console.log('Usage: codex exec [--sandbox MODE]'); process.exit(0); }
+if (fs.existsSync(logPath + '.fail-start')) {
+  process.stderr.write('fixture: process exited before session start\\n');
+  process.exit(1);
+}
 let stdin = '';
 let finished = false;
 function finish() {
@@ -1304,6 +1486,15 @@ function finish() {
   } else {
     text = ${JSON.stringify(initialRepair)};
   }
+  const snapshotPath = logPath + '.snapshot';
+  const detectedSnapshot = /applied snapshot:[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+    || /"snapshotId"\\s*:\\s*"([a-f0-9-]{36})"/.exec(stdin)?.[1];
+  if (detectedSnapshot) fs.writeFileSync(snapshotPath, detectedSnapshot);
+  const appliedSnapshot = detectedSnapshot
+    || (fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null);
+  if (appliedSnapshot) {
+    text = text.replaceAll(${JSON.stringify(plan.strategy.snapshotId)}, appliedSnapshot);
+  }
   console.log(JSON.stringify({ type: 'thread.started', thread_id: ${JSON.stringify(THREAD_ID)} }));
   console.log(JSON.stringify({ type: 'turn.started' }));
   console.log(JSON.stringify({ type: 'item.completed', item: { id: 'answer', type: 'agent_message', text } }));
@@ -1326,6 +1517,7 @@ function createRunRequest(
     conversationId: string;
     snapshotId: string;
     agentId?: string;
+    useAutomaticSnapshot?: boolean;
   },
   message: string,
 ) {
@@ -1333,13 +1525,29 @@ function createRunRequest(
     projectId: fixture.projectId,
     conversationId: fixture.conversationId,
     agentId: fixture.agentId ?? 'codex',
-    appliedPluginSnapshotId: fixture.snapshotId,
+    ...(fixture.useAutomaticSnapshot
+      ? {}
+      : {
+          appliedPluginSnapshotId: fixture.snapshotId,
+        }),
     userMessageId: `user-${fixture.projectId}`,
     assistantMessageId: `assistant-${fixture.projectId}`,
     clientRequestId: `request-${fixture.projectId}`,
     message,
     currentPrompt: message,
   };
+}
+
+function queueFixtureIds(fixture: {
+  taskOwnerUuid?: string | null;
+  initialRunId: string;
+  taskExecutionId: string;
+}): void {
+  if (fixture.taskOwnerUuid) {
+    pendingAutomaticFixtureIdentity = fixture;
+    return;
+  }
+  uuidControl.forced.push(fixture.initialRunId);
 }
 
 async function postRun(url: string, body: Record<string, unknown>) {
@@ -1351,6 +1559,11 @@ async function postRun(url: string, body: Record<string, unknown>) {
   expect(response.headers.get('content-type')).toContain('application/json');
   const responseBody = await response.json() as Record<string, any>;
   expect(response.status, JSON.stringify(responseBody)).toBe(202);
+  if (pendingAutomaticFixtureIdentity) {
+    pendingAutomaticFixtureIdentity.initialRunId = responseBody.runId as string;
+    pendingAutomaticFixtureIdentity.taskExecutionId = responseBody.taskExecutionId as string;
+    pendingAutomaticFixtureIdentity = null;
+  }
   return responseBody;
 }
 
@@ -1401,4 +1614,17 @@ async function readProjectInvocations(logPath: string, projectId: string): Promi
       invocation.argv[0] === 'exec'
       && invocation.cwd.includes(projectId),
     );
+}
+
+async function waitForInvocationCount(
+  logPath: string,
+  projectId: string,
+  count: number,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await readProjectInvocations(logPath, projectId)).length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`project ${projectId} did not reach ${count} runtime invocations`);
 }

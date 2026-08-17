@@ -43,6 +43,7 @@ import {
   createStrategyTaskExecution,
   getStrategyTaskExecution,
 } from '../src/strategies/task-store.js';
+import { strategyTaskCreateIdentityFixture } from './strategies/strategy-task-test-fixtures.js';
 
 let server: http.Server | null = null;
 let tempDir: string | null = null;
@@ -166,6 +167,11 @@ function seedAwaitingClarificationTask() {
     agentId: 'codex',
     pluginId: 'od-next-strategy',
     appliedPluginSnapshotId: snapshot.snapshotId,
+    odNextTaskInputSnapshot: {
+      taskExecutionId: 'task-strategy-clarification',
+      snapshotDir: path.join(tempDir!, 'strategy-input-fixture'),
+      manifestSha256: 'd'.repeat(64),
+    },
     status: 'succeeded',
   });
   createStrategyTaskExecution(db, {
@@ -175,6 +181,7 @@ function seedAwaitingClarificationTask() {
     snapshotId: snapshot.snapshotId,
     selectedAgentId: 'codex',
     initialRunId: 'run-strategy-request',
+    ...strategyTaskCreateIdentityFixture(),
     createdAt: now,
   });
   prepareStrategyRequest(db, {
@@ -260,6 +267,7 @@ function createRunsServiceStub() {
         requestFingerprint: meta.requestFingerprint,
         workspaceScope: meta.workspaceScope,
         designSystemScope: meta.designSystemScope,
+        odNextTaskInputSnapshot: meta.odNextTaskInputSnapshot ?? null,
         status: 'queued',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -605,7 +613,7 @@ describe('POST /api/runs — workspace mutation gate', () => {
       openDatabase(tempDir!),
       'task-strategy-clarification',
     );
-    expect(task?.runs).toEqual([
+    expect(task?.runs.map(({ finalText: _finalText, ...run }) => run)).toEqual([
       { runId: 'run-strategy-request', inputStage: 'request', taskRunIndex: 0 },
       {
         runId: body.runId,

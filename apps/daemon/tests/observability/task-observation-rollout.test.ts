@@ -22,6 +22,10 @@ import {
   getStrategyTaskExecution,
   migrateStrategyTaskStore,
 } from '../../src/strategies/task-store.js';
+import {
+  strategyTaskCreateIdentityFixture,
+  strategyTaskTurnText,
+} from '../strategies/strategy-task-test-fixtures.js';
 
 const BASE_ENV = {
   OPEN_DESIGN_VELA_TELEMETRY: 'off',
@@ -141,6 +145,7 @@ function seedCompletedTask(db: Database.Database): void {
     snapshotId: snapshot.snapshotId,
     selectedAgentId: 'codex',
     initialRunId: 'run-1',
+    ...strategyTaskCreateIdentityFixture(),
     createdAt: 1_000,
   });
   db.prepare(
@@ -432,7 +437,13 @@ describe('task observation rollout', () => {
         outcome: 'running',
         executionMode: null,
       },
-      nextRun: { runId: 'run-clarification', sourceRunId: 'run-1' },
+      nextRun: {
+        runId: 'run-clarification',
+        sourceRunId: 'run-1',
+        finalText: strategyTaskTurnText({
+          taskExecutionId: 'task-1', inputStage: 'clarification', taskRunIndex: 1,
+        }),
+      },
       updatedAt: 1_100,
     });
     task = compareAndTransitionStrategyTaskExecution(db, {
@@ -455,7 +466,13 @@ describe('task observation rollout', () => {
         outcome: 'running',
         executionMode: 'simple',
       },
-      nextRun: { runId: 'run-repair', sourceRunId: 'run-clarification' },
+      nextRun: {
+        runId: 'run-repair',
+        sourceRunId: 'run-clarification',
+        finalText: strategyTaskTurnText({
+          taskExecutionId: 'task-1', inputStage: 'contract_repair', taskRunIndex: 2,
+        }),
+      },
       updatedAt: 1_200,
     });
     task = compareAndTransitionStrategyTaskExecution(db, {
@@ -467,7 +484,13 @@ describe('task observation rollout', () => {
         outcome: 'running',
         executionMode: 'simple',
       },
-      nextRun: { runId: 'run-production', sourceRunId: 'run-repair' },
+      nextRun: {
+        runId: 'run-production',
+        sourceRunId: 'run-repair',
+        finalText: strategyTaskTurnText({
+          taskExecutionId: 'task-1', inputStage: 'production', taskRunIndex: 3,
+        }),
+      },
       planContract: planContractFixture(task.snapshotId),
       updatedAt: 1_300,
     });
