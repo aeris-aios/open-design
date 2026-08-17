@@ -1203,7 +1203,7 @@ button.att-d:hover { border-color: var(--border-strong); }
    展开时宽,一开一合整块都在跳。
    【内容宽】一句话就说完的状态块 —— 已确认、Thinking、执行计划、生图缩略图行。
    它们没有展开后变宽的问题,拉满只会在右边留一片不表示任何东西的空白。 */
-.fold.mod-step, .fold:has(.term), .card:has(.term) { width: auto; }
+.fold.mod-step, .fold.mod-think, .fold:has(.term), .card:has(.term) { width: auto; }
 .fold:has(.memo-ic) { width: auto; }
 /* 生图那条例外:满宽会把缩略图甩到最右边,和标签之间隔着一片空。 */
 .tool:has(.strip) { width: fit-content; max-width: 100%; }
@@ -2094,7 +2094,7 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l mod-def"><span>生成中 · 绿点呼吸 + Thinking 流光,内容流式追加</span><i></i></div>
             <div class="st-b">
-              <details class="fold" open>
+              <details class="fold mod-think" open>
                 <summary><span class="breath"></span><span class="shimmer">Thinking</span><span class="ms">3s</span></summary>
                 <div class="body mod-scroll">
                   先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。<br>
@@ -2107,7 +2107,7 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>结束 · 自动收起为一行摘要</span><i></i></div>
             <div class="st-b">
-              <details class="fold">
+              <details class="fold mod-think">
                 <summary><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="body">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。</div>
               </details>
@@ -2116,7 +2116,7 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>手动展开 · 此后不再自动收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold" open>
+              <details class="fold mod-think" open>
                 <summary><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
                 <div class="body">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。设置页要和它共用同一套间距与卡片圆角。</div>
               </details>
