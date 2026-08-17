@@ -11,6 +11,19 @@ export interface MediaTaskError {
   message: string;
   status?: number;
   code?: string;
+  /**
+   * Optional hint about what a content-safety policy objected to, forwarded
+   * only when the upstream supplier proved it. Absent means "not proven", not
+   * "not applicable" — a client must then name both the prompt and the
+   * reference images rather than blame one of them.
+   */
+  subject?: 'prompt' | 'input_image' | 'output_image';
+  /**
+   * Whether repeating the identical request could plausibly behave
+   * differently. Undefined means the producer did not say; only an explicit
+   * `false` licenses telling a user that retrying is pointless.
+   */
+  retryable?: boolean;
 }
 
 export interface MediaTaskRow {
