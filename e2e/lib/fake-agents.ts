@@ -8,7 +8,6 @@ export type FakeAgentId =
   | 'copilot'
   | 'cursor-agent'
   | 'deepseek'
-  | 'deepseek-harness'
   | 'gemini'
   | 'opencode'
   | 'qoder'
@@ -32,7 +31,6 @@ const AGENT_BIN_NAMES: Record<FakeAgentId, string> = {
   copilot: 'copilot-e2e.cjs',
   'cursor-agent': 'cursor-agent-e2e.cjs',
   deepseek: 'deepseek-e2e.cjs',
-  'deepseek-harness': 'dsh-e2e.cjs',
   gemini: 'gemini-e2e.cjs',
   opencode: 'opencode-e2e.cjs',
   qoder: 'qodercli-e2e.cjs',
@@ -45,7 +43,6 @@ const AGENT_BIN_ENV_KEYS: Record<FakeAgentId, string> = {
   copilot: 'COPILOT_BIN',
   'cursor-agent': 'CURSOR_AGENT_BIN',
   deepseek: 'DEEPSEEK_BIN',
-  'deepseek-harness': 'DSH_BIN',
   gemini: 'GEMINI_BIN',
   opencode: 'OPENCODE_BIN',
   qoder: 'QODER_BIN',
@@ -59,7 +56,6 @@ export const FAKE_AGENT_RUNTIME_IDS: FakeAgentId[] = [
   'qwen',
   'qoder',
   'copilot',
-  'deepseek-harness',
 ];
 
 export async function createFakeAgentRuntimes(
@@ -93,19 +89,7 @@ export async function createFakeAgentRuntimes(
       await chmod(bin, 0o755);
     }
     const envKey = AGENT_BIN_ENV_KEYS[agentId];
-    const env = { [envKey]: bin } as Record<string, string>;
-    if (agentId === 'deepseek-harness') {
-      const dshHome = path.join(root, 'dsh-home');
-      const profileRoot = path.join(dshHome, 'profiles', 'open-design');
-      await mkdir(profileRoot, { recursive: true });
-      await writeFile(
-        path.join(profileRoot, 'package.json'),
-        JSON.stringify({ name: '@open-design/dsh-runtime', version: '0.1.0' }),
-        'utf8',
-      );
-      env.DSH_HOME = dshHome;
-    }
-    runtimes[agentId] = { agentId, bin, envKey, env };
+    runtimes[agentId] = { agentId, bin, envKey, env: { [envKey]: bin } };
   }
   return runtimes;
 }
@@ -116,126 +100,8 @@ const agentId = ${JSON.stringify(agentId)};
 const args = process.argv.slice(2);
 const { mkdir, writeFile: writeFileFs } = require('node:fs/promises');
 const { join } = require('node:path');
-const { createInterface } = require('node:readline');
 
-async function runDeepSeekHarnessProfile() {
-  if (args.includes('--version')) {
-    process.stdout.write('0.1.0-rc.6\\n');
-    return;
-  }
-  const profileIndex = args.indexOf('--profile');
-  if (profileIndex < 0 || args[profileIndex + 1] !== 'open-design') {
-    throw new Error('fake DeepSeek Harness requires --profile open-design');
-  }
-  const capabilities = {
-    session_resume: true,
-    session_cancel: true,
-    structured_events: true,
-  };
-  const emit = (frame) => process.stdout.write(JSON.stringify({ v: 1, ...frame }) + '\\n');
-  const finish = (code) => setTimeout(() => process.exit(code), 10);
-  if (args.includes('--probe')) {
-    emit({
-      type: 'probe',
-      runtime: 'open-design',
-      protocol_version: 1,
-      plugin_version: 'e2e-1',
-      capabilities,
-    });
-    return;
-  }
-  if (args.includes('--models')) {
-    emit({
-      type: 'models',
-      runtime: 'open-design',
-      models: [{
-        provider: 'deepseek-official',
-        provider_name: 'DeepSeek',
-        id: 'deepseek-chat',
-        name: 'DeepSeek Chat',
-      }],
-    });
-    return;
-  }
-  if (!args.includes('--stdio')) {
-    throw new Error('unsupported fake DeepSeek Harness invocation');
-  }
-
-  emit({
-    type: 'ready',
-    runtime: 'open-design',
-    protocol_version: 1,
-    plugin_version: 'e2e-1',
-    capabilities,
-  });
-  let active = null;
-  const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  input.on('line', (line) => {
-    let command;
-    try {
-      command = JSON.parse(line);
-    } catch {
-      emit({ type: 'protocol_error', code: 'INVALID_COMMAND', message: 'Invalid JSON command.' });
-      finish(2);
-      return;
-    }
-    if (command.type === 'cancel') {
-      if (!active || command.request_id !== active.requestId) return;
-      emit({
-        type: 'result',
-        request_id: active.requestId,
-        status: 'cancelled',
-        session_id: active.sessionId,
-        stop_reason: 'cancelled',
-        resume_rejected: false,
-      });
-      finish(0);
-      return;
-    }
-    if (command.type !== 'execute') return;
-    const sessionId = command.resume_session_id || 'fake-dsh-session';
-    active = { requestId: command.request_id, sessionId };
-    emit({
-      type: 'session',
-      request_id: command.request_id,
-      session_id: sessionId,
-      resumed: Boolean(command.resume_session_id),
-    });
-    if (String(command.prompt).includes('Hold the DeepSeek Harness run open until canceled')) return;
-
-    const runtimeId = 'deepseek-harness';
-    const heading = 'Fake Agent Runtime ' + runtimeId;
-    const html = '<!doctype html><html><body><main><h1>' + heading + '</h1><p>Generated through fake ' + runtimeId + ' runtime.</p></main></body></html>';
-    const artifact = '<artifact identifier="fake-agent-runtime-' + runtimeId + '" type="text/html" title="' + heading + '">' + html + '</artifact>';
-    emit({ type: 'thinking', request_id: command.request_id, content: 'checking' });
-    emit({ type: 'text', request_id: command.request_id, content: artifact });
-    emit({
-      type: 'usage',
-      request_id: command.request_id,
-      provider: 'deepseek-official',
-      model: 'deepseek-chat',
-      input_tokens: 1,
-      output_tokens: 1,
-    });
-    emit({
-      type: 'result',
-      request_id: command.request_id,
-      status: 'completed',
-      session_id: sessionId,
-      output: artifact,
-      stop_reason: 'completed',
-      resume_rejected: false,
-    });
-    finish(0);
-  });
-}
-
-if (agentId === 'deepseek-harness') {
-  void runDeepSeekHarnessProfile().catch((error) => {
-    process.stderr.write((error && error.stack ? error.stack : String(error)) + '\\n');
-    process.exitCode = 1;
-  });
-} else if (args.includes('--version')) {
+if (args.includes('--version')) {
   process.stdout.write(agentId + '-e2e 0.0.0\\n');
   process.exitCode = 0;
 } else if (agentId === 'claude' && args[0] === '-p' && args.includes('--help')) {
