@@ -2443,6 +2443,13 @@ export async function reportRunCompleted(
   if (config.kind === 'vela') {
     const installationId = ctx.installationId?.trim() ?? '';
     if (!installationId) {
+      if (opts.deliveryPurpose === 'object-registration') {
+        return {
+          langfuse_expected: true,
+          langfuse_delivery_status: 'failed',
+          langfuse_drop_reason: 'missing_sink_config',
+        };
+      }
       const fallback = readTelemetrySinkConfig();
       if (!fallback) {
         return {

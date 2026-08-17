@@ -2028,6 +2028,39 @@ describe('reportRunCompleted', () => {
     },
   );
 
+  it('fails object registration closed when the Vela installation identity is missing', async () => {
+    vi.stubEnv(
+      'OPEN_DESIGN_TELEMETRY_RELAY_URL',
+      'https://telemetry.open-design.ai/api/langfuse',
+    );
+    const fetchSpy = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+    const result = await reportRunCompleted(
+      makeCtx({
+        installationId: null,
+        prefs: { metrics: true, content: true, artifactManifest: true },
+      }),
+      {
+        config: {
+          kind: 'vela',
+          apiUrl: 'https://vela.example.test',
+          controlKey: 'ck_secret',
+          timeoutMs: 1_000,
+          retries: 0,
+        },
+        deliveryPurpose: 'object-registration',
+        fetchImpl: fetchSpy as any,
+      },
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'failed',
+      langfuse_drop_reason: 'missing_sink_config',
+    });
+  });
+
   it('does not anonymously overwrite a throttled Vela delivery', async () => {
     vi.stubEnv(
       'OPEN_DESIGN_TELEMETRY_RELAY_URL',
