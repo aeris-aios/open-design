@@ -66,13 +66,20 @@ function isModalOpen(): boolean {
   return document.body.style.overflow === 'hidden';
 }
 
+// Grounded in what users actually complain about in the per-run feedback
+// (~900 "didn't understand the request", ~730 "incomplete output") and in
+// their own words in the free-text box, rather than in product-area names.
+// Order matches EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES — the index is the wire
+// value, so these two lists must be reordered together or never.
 const IMPROVEMENT_KEYS = [
-  'experienceSurvey.improvement.quality',
-  'experienceSurvey.improvement.speed',
-  'experienceSurvey.improvement.export',
-  'experienceSurvey.improvement.collaboration',
-  'experienceSurvey.improvement.models',
-  'experienceSurvey.improvement.stability',
+  'experienceSurvey.improvement.wrongOutput',
+  'experienceSurvey.improvement.falseDone',
+  'experienceSurvey.improvement.hardToUse',
+  'experienceSurvey.improvement.upgradePrompts',
+  'experienceSurvey.improvement.stuck',
+  'experienceSurvey.improvement.slow',
+  'experienceSurvey.improvement.looks',
+  'experienceSurvey.improvement.regression',
 ] as const;
 
 type Step = 'satisfaction' | 'recommendation' | 'improvement' | 'comment' | 'thanks';

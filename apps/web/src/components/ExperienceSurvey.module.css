@@ -2,10 +2,7 @@
    successful export, mounted globally (App.tsx) so navigating project → home
    keeps the same card and the same answers.
 
-   It is a floating functional layer, so it takes the liquid-glass material and
-   vibrancy foregrounds rather than a solid content-card surface — the same
-   treatment the nav rail, toolbars and popovers use. Never a modal: it must
-   not block the export the user just finished. */
+   Never a modal: it must not block the export the user just finished. */
 .card {
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
@@ -17,27 +14,19 @@
   max-width: calc(100vw - 32px);
   overflow: hidden;
   border-radius: var(--radius-lg, 16px);
-  border: 1px solid var(--material-separator, rgba(73, 73, 73, 0.18));
-  background: var(--glass-regular, rgba(250, 250, 250, 0.66));
-  -webkit-backdrop-filter: var(--glass-backdrop, blur(28px) saturate(1.8));
-  backdrop-filter: var(--glass-backdrop, blur(28px) saturate(1.8));
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  border: 1px solid var(--border, #dbdbdb);
+  /* Solid, not the glass material used by the nav rail and toolbars. Those
+     surfaces are always-present chrome that should recede; this one appears
+     once in a user's life and has to be noticed. Translucency let the page
+     behind it show through and the card stopped reading as a foreground
+     object. */
+  background: var(--bg, #fff);
+  color: var(--text, #494949);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
     0 12px 32px rgba(0, 0, 0, 0.1),
     0 32px 64px rgba(0, 0, 0, 0.08);
   pointer-events: auto;
-}
-
-/* Glass thickness: a bright sheen along the top edge, the same cue the rest of
-   the material system uses to keep a frosted pane from reading as flat fill. */
-.card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: var(--glass-edge-highlight, rgba(255, 255, 255, 0.65));
-  pointer-events: none;
 }
 
 @media (max-width: 900px) {
@@ -76,8 +65,9 @@
 }
 
 .tag {
-  font-size: 11px;
+  font-size: var(--font-size-12, 12px);
   font-weight: 600;
+  line-height: 1.35;
   letter-spacing: 0.01em;
   color: var(--brand-text, #0d5400);
 }
@@ -91,7 +81,7 @@
   border: 0;
   border-radius: var(--radius-sm, 6px);
   background: transparent;
-  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
+  color: var(--text-soft, #848484);
   cursor: pointer;
   font: inherit;
   font-size: 15px;
@@ -102,8 +92,8 @@
 }
 
 .close:hover {
-  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text-strong, #202020);
 }
 
 .close:focus-visible {
@@ -117,7 +107,7 @@
   font-weight: 600;
   line-height: 1.45;
   letter-spacing: -0.005em;
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  color: var(--text-strong, #202020);
   text-wrap: balance;
 }
 
@@ -128,7 +118,7 @@
   gap: 2px;
   padding: 3px;
   border-radius: var(--radius-md, 10px);
-  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
 }
 
 .rail.five {
@@ -147,7 +137,7 @@
   border: 0;
   border-radius: var(--radius-sm, 7px);
   background: transparent;
-  color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
+  color: var(--text, #494949);
   font: inherit;
   font-size: var(--font-size-13, 13px);
   font-variant-numeric: tabular-nums;
@@ -164,9 +154,8 @@
 }
 
 .cell:hover {
-  background: var(--bg, #fff);
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: var(--bg-subtle, #ededed);
+  color: var(--text-strong, #202020);
 }
 
 .cell:active {
@@ -196,13 +185,12 @@
      scale's end labels, not content, and at 12 they compete with the question. */
   font-size: 11px;
   letter-spacing: 0.01em;
-  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
+  color: var(--text-soft, #848484);
 }
 
-/* Six short labels in a 380px card. One per row left a lake of dead space on
-   both sides of every label and pushed the card tall enough to crowd the
-   composer; two columns use the width that was already there and halve the
-   height. */
+/* Eight short labels in a 380px card. One per row left a lake of dead space on
+   both sides of every label and made the card tall enough to crowd the
+   composer; two columns use the width that was already there. */
 .options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -214,8 +202,8 @@
   text-align: center;
   border: 0;
   border-radius: var(--radius-md, 9px);
-  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
-  color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text, #494949);
   font: inherit;
   font-size: var(--font-size-12, 12px);
   line-height: 1.35;
@@ -227,9 +215,8 @@
 }
 
 .option:hover {
-  background: var(--bg, #fff);
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: var(--bg-subtle, #ededed);
+  color: var(--text-strong, #202020);
 }
 
 .option:active {
@@ -254,8 +241,8 @@
   padding: 10px 11px;
   border: 1px solid transparent;
   border-radius: var(--radius-md, 9px);
-  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
+  color: var(--text-strong, #202020);
   font: inherit;
   font-size: var(--font-size-12, 12px);
   line-height: 1.55;
@@ -265,7 +252,7 @@
 }
 
 .textarea::placeholder {
-  color: var(--vibrancy-label-quaternary, rgba(73, 73, 73, 0.24));
+  color: var(--text-faint, #bdbdbd);
 }
 
 .textarea:focus {
@@ -284,14 +271,14 @@
 .count {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
+  color: var(--text-soft, #848484);
 }
 
 .skip {
   margin-left: auto;
   border: 0;
   background: transparent;
-  color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
+  color: var(--text-soft, #848484);
   font: inherit;
   font-size: var(--font-size-12, 12px);
   padding: 5px 8px;
@@ -303,8 +290,8 @@
 }
 
 .skip:hover {
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
-  background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
+  color: var(--text-strong, #202020);
+  background: var(--bg-fill-tertiary, rgba(0, 0, 0, 0.03));
 }
 
 .skip:focus-visible {
@@ -350,12 +337,12 @@
   margin: 0;
   font-size: var(--font-size-13, 13px);
   font-weight: 650;
-  color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
+  color: var(--text-strong, #202020);
 }
 
 .thanksBody {
   margin: 0;
   font-size: var(--font-size-12, 12px);
   line-height: 1.5;
-  color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
+  color: var(--text, #494949);
 }

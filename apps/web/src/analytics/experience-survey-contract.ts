@@ -42,10 +42,12 @@ export const EXPERIENCE_SURVEY_QUESTION_TEXT = {
  * comparable across all 19 locales instead of splitting into 19 buckets.
  */
 export const EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES = [
-  'Output quality',
-  'Speed',
-  'Export and handoff',
-  'Collaboration and Workspace',
-  'Models and quota',
-  'Stability',
+  'Not what I asked for',
+  'Claimed done, nothing changed',
+  'Hard to use',
+  'Too many upgrade prompts',
+  'Gets stuck or fails',
+  'Too slow',
+  "Doesn't look good",
+  'Breaks other things',
 ] as const;

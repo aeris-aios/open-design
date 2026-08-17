@@ -54,7 +54,7 @@ describe('experience survey response reporting', () => {
     const t = capture();
     trackExperienceSurveySent(t.track, { satisfaction: 3, improvement: 4 });
 
-    expect(t.props()[`$survey_response_${ids.improvement}`]).toBe('Models and quota');
+    expect(t.props()[`$survey_response_${ids.improvement}`]).toBe('Gets stuck or fails');
   });
 
   it('omits skipped questions instead of sending null', () => {
