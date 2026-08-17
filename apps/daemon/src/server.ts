@@ -859,6 +859,8 @@ import {
 } from './collab/remembered-team-resource-scopes.js';
 import { readVelaControlApiContext } from './integrations/vela.js';
 import {
+  fetchBillingCheckoutUrl,
+  fetchVelaBillingCatalog,
   fetchVelaBillingSummary,
   fetchVelaWorkspaceBillingProjection,
   isVelaWorkspaceAuthorizationError,
@@ -4961,7 +4963,7 @@ export async function startServer({
       readVelaControlApiContext,
       configuredAmrEnv(),
     ),
-    fetch: () => fetchVelaBillingSummary(),
+    fetch: () => fetchVelaBillingSummary({ configuredEnv: configuredAmrEnv() }),
   });
   const workspaceBillingRuntime = createWorkspaceBillingRuntimeCoordinator({
     fetchProjection: async ({ workspaceId }) => {
@@ -4969,7 +4971,9 @@ export async function startServer({
         // The Vela CLI sends only the Bearer credential plus workspace-id
         // candidate. Vela re-derives the member principal server-side, and
         // the runtime validates the returned member id before accepting it.
-        return await fetchVelaWorkspaceBillingProjection(workspaceId);
+        return await fetchVelaWorkspaceBillingProjection(workspaceId, {
+          configuredEnv: configuredAmrEnv(),
+        });
       } catch (error) {
         if (isVelaWorkspaceAuthorizationError(error)) {
           throw new WorkspaceBillingAccessRevokedError();
@@ -5048,6 +5052,13 @@ export async function startServer({
     onWorkspaceSwitched: (workspaceId) => warmWorkspaceDigestFaces(workspaceId),
     fetchBilling: accountBillingSummary.read,
     billingRuntime: workspaceBillingRuntime,
+    fetchBillingCatalog: (workspaceId) => fetchVelaBillingCatalog(workspaceId, {
+      configuredEnv: configuredAmrEnv(),
+    }),
+    startCheckout: (input) => fetchBillingCheckoutUrl({
+      ...input,
+      configuredEnv: configuredAmrEnv(),
+    }),
     // Same directory read the route would have made on its own, wrapped so every
     // workspace type it carries is memoized for the team-share invariant.
     listWorkspaceDirectory,
