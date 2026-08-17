@@ -1150,6 +1150,23 @@ button.att-d:hover { border-color: var(--border-strong); }
   font-family: var(--mono); font-size: var(--t-cap); line-height: 1.65; color: var(--text-muted);
 }
 .term div { white-space: pre-wrap; }
+/* 命令自己占一块,不塞在卡头当标题。
+   ------------------------------------------------------------
+   卡头原来直接写命令,这份稿子里一直拿「npm run build」当例子 —— 14 个
+   字符,正好把问题藏住了。真实的命令动辄一整行路径加七八个参数,挤进
+   卡头只能截断,而那恰恰是最该完整看到的东西:出了问题第一件事就是
+   "它到底执行了什么"。
+   所以卡头改放【一句人话】(这条命令是干嘛的),命令进正文第一块,
+   跟输出块上下排开。长了就在块内滚动,卡片高度不受影响。
+   两块用同一副终端底色,靠开头的 $ 区分输入和输出 —— 那是终端本身的
+   约定,不用另发明标记。 */
+/* 两块同色,靠一条实线分开 —— 原来用的 --border-soft 在这块底色上
+   几乎看不见,命令和输出会糊成一片,而"我输入的"和"它吐出来的"
+   恰恰是这张卡最需要分清的两件事。 */
+.term.mod-cmd { border-top: none; border-bottom: 1px solid var(--border); color: var(--text-strong); }
+.term.mod-cmd + .term { border-top: none; }
+.term.mod-cmd div { padding-inline-start: 13px; text-indent: -13px; }
+.term.mod-cmd div::before { content: "$ "; color: var(--text-faint); }
 .term .ok { color: var(--brand-text); }
 /* 终端正文用正常深色,不整行红 —— 那是代码/日志内容,不是错误状态本身。
    只有行首的 ✗ 标记是红的。 */
@@ -2406,7 +2423,8 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l mod-def"><span>执行中 · 终端实时追加,限高滚动自动贴底</span><i></i></div>
             <div class="st-b">
               <div class="card">
-                <div class="h"><span class="mk is-run"></span><b>npm run build</b></div>
+                <div class="h"><span class="mk is-run"></span><b>构建产物,看能不能跑通</b></div>
+                <div class="term mod-cmd"><div>npm run build</div></div>
                 <div class="term">
                   <div>vite v5.4.2 building for production...</div>
                   <div>transforming (142) src/components/ProductCard.tsx</div>
@@ -2419,16 +2437,28 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>成功 · 收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span><code style="font-family:var(--mono)">npm run build</code></span><span class="ms">8.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-                <div class="term" style="border:none;margin-top:2px"><div class="ok">✓ built in 8.42s · dist/ 已更新</div></div>
+              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>构建产物,看能不能跑通</span><span class="ms">8.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                <div class="term mod-cmd" style="margin-top:2px"><div>npm run build</div></div>
+                <div class="term"><div class="ok">✓ built in 8.42s · dist/ 已更新</div></div>
               </details>
+            </div>
+          </div>
+          <div class="st">
+            <div class="st-l"><span>长命令 · 命令块内滚动,卡头仍是一句人话</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><b>把稿子导成图,肉眼核对一遍</b><span class="n">3.1s</span></div>
+                <div class="term mod-cmd"><div>cd "/Users/chaoxiaoche/Library/Application Support/Open Design/namespaces/release-stable/data/projects/b56e7243-3dce-4b10-b3db-ab23a279fd36" &amp;&amp; "$OD_NODE_BIN" "$OD_BIN" export version/v2/docs/drafts/chat-skeleton.html --project "$OD_PROJECT_ID" --format image --out /tmp/chat-skeleton-check.png</div></div>
+                <div class="term"><div class="ok">✓ wrote /tmp/chat-skeleton-check.png (560607 bytes)</div></div>
+              </div>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>失败 · 展示错误</span><i></i></div>
             <div class="st-b">
               <div class="card" style="border-color:var(--red-border)">
-                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>npm run build</b><span class="fx">失败</span><span class="n">2.1s</span></div>
+                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>构建产物,看能不能跑通</b><span class="fx">失败</span><span class="n">2.1s</span></div>
+                <div class="term mod-cmd"><div>npm run build</div></div>
                 <div class="term"><div class="er">✗ Could not resolve "./ProductCard" from src/pages/List.tsx</div></div>
               </div>
             </div>
@@ -2436,7 +2466,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
-          <span><b>展开收起</b> — 点卡片头部整行。用户手动上滚则停止贴底。展开看终端输出,收起只留标题。</span>
+          <span><b>展开收起</b> — 点卡片头部整行,用户手动上滚则停止贴底。<b>展示</b>卡头一句人话(这条命令是干嘛的)+ 命令块 + 输出块。命令不塞在卡头:真实命令动辄一整行路径加七八个参数,挤进标题只能截断,而出了问题第一件要看的就是"它到底执行了什么"。</span>
         </div>
       </article>
 
