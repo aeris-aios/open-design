@@ -5718,9 +5718,6 @@ export const zhTW: Dict = {
 
   'experienceSurvey.tag': "期待您的回饋，與我們一起完善 Open Design",
   'experienceSurvey.close': "關閉",
-  'experienceSurvey.satisfaction': "整體來說，你對 Open Design 滿意嗎？",
-  'experienceSurvey.satisfactionLow': "很不滿意",
-  'experienceSurvey.satisfactionHigh': "很滿意",
   'experienceSurvey.recommendation': "你有多大可能把 Open Design 推薦給同事或朋友？",
   'experienceSurvey.recommendationLow': "完全不會",
   'experienceSurvey.recommendationHigh': "一定會",
@@ -5733,10 +5730,7 @@ export const zhTW: Dict = {
   'experienceSurvey.improvement.slow': "太慢，等太久",
   'experienceSurvey.improvement.looks': "做出來不好看",
   'experienceSurvey.improvement.regression': "改壞了別的地方",
-  'experienceSurvey.comment': "打這個分數，最主要的一個原因是什麼？",
-  'experienceSurvey.commentPlaceholder': "寫一句就夠，我們會逐條看",
   'experienceSurvey.skip': "略過",
-  'experienceSurvey.submit': "送出",
   'experienceSurvey.thanksTitle': "感謝回饋！",
   'experienceSurvey.thanksBody': "你的回饋會直接同步給團隊。",
 };

@@ -1,20 +1,14 @@
-// Experience survey (CSAT + NPS). Armed by a successful export, rendered
-// globally from App.tsx so it survives the project → home navigation, and
-// retired permanently the moment the user answers or closes it.
+// Experience survey (NPS). Armed by a successful export, rendered globally
+// from App.tsx so it survives the project → home navigation, and retired
+// permanently the moment the user answers or closes it.
 //
-// Question order is deliberate: the two scored questions come first because
-// they are the metrics, and they cost one tap each. The open-ended question is
-// last — it is the most expensive to answer, so putting it earlier would drag
-// completion down for the questions we actually report on.
-//
-// Only the first question is required. Everything after it can be skipped and
-// the response still counts, which is why the submit path reports partial
-// answers rather than waiting for a complete set.
+// Two questions. The score is the metric and costs one tap; the follow-up asks
+// what to fix first and can be skipped. Anything longer was cut deliberately —
+// every extra question is paid for in completion rate on the score itself.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { Variants } from 'motion/react';
-import { Button } from '@open-design/components';
 import { useT } from '../i18n';
 import styles from './ExperienceSurvey.module.css';
 import {
@@ -26,14 +20,10 @@ import {
 
 /** Answer payload handed to the host once the user finishes or skips out. */
 export interface ExperienceSurveyAnswers {
-  /** 1–5. Always present: question one is the only required question. */
-  satisfaction: number;
-  /** 0–10. Absent when the user skipped the recommendation question. */
-  recommendation?: number;
+  /** 0–10. Always present: the score is the only required question. */
+  recommendation: number;
   /** Index into the improvement options, in the order rendered. */
   improvement?: number;
-  /** Free text, trimmed. Absent when blank or skipped. */
-  comment?: string;
 }
 
 interface Props {
@@ -82,9 +72,9 @@ const IMPROVEMENT_KEYS = [
   'experienceSurvey.improvement.regression',
 ] as const;
 
-type Step = 'satisfaction' | 'recommendation' | 'improvement' | 'comment' | 'thanks';
+type Step = 'recommendation' | 'improvement' | 'thanks';
 
-const STEP_ORDER: Step[] = ['satisfaction', 'recommendation', 'improvement', 'comment'];
+const STEP_ORDER: Step[] = ['recommendation', 'improvement'];
 
 /** How long a tapped choice stays lit before the next question replaces it. */
 const PICK_ACK_MS = 180;
@@ -99,10 +89,11 @@ const cardMotion: Variants = {
   exit: { opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.14, ease: EASE_OUT } },
 };
 
+// Enter only. The step has no exit animation on purpose — see the comment at
+// the render site.
 const stepMotion: Variants = {
   hidden: { opacity: 0, y: 6 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.2, ease: EASE_OUT } },
-  exit: { opacity: 0, y: -4, transition: { duration: 0.12, ease: EASE_OUT } },
 };
 
 export function ExperienceSurvey({
@@ -113,9 +104,8 @@ export function ExperienceSurvey({
 }: Props) {
   const t = useT();
   const [visible, setVisible] = useState(false);
-  const [step, setStep] = useState<Step>('satisfaction');
+  const [step, setStep] = useState<Step>('recommendation');
   const [picked, setPicked] = useState<number | null>(null);
-  const [comment, setComment] = useState('');
   const answersRef = useRef<Partial<ExperienceSurveyAnswers>>({});
   const exposedRef = useRef(false);
   const timersRef = useRef<number[]>([]);
@@ -207,7 +197,7 @@ export function ExperienceSurvey({
   const finish = useCallback(() => {
     retireSurvey();
     const answers = answersRef.current;
-    if (typeof answers.satisfaction === 'number') {
+    if (typeof answers.recommendation === 'number') {
       onSubmit?.(answers as ExperienceSurveyAnswers);
     }
     setPicked(null);
@@ -223,20 +213,14 @@ export function ExperienceSurvey({
 
   /** Lights the tapped choice, then advances — the tap needs a receipt. */
   const pick = useCallback(
-    (value: number, apply: (value: number) => void, next: Step) => {
+    (value: number, apply: (value: number) => void, next: Step | 'finish') => {
       if (picked !== null) return;
       setPicked(value);
       apply(value);
-      later(() => goTo(next), PICK_ACK_MS);
+      later(() => (next === 'finish' ? finish() : goTo(next)), PICK_ACK_MS);
     },
-    [goTo, later, picked],
+    [finish, goTo, later, picked],
   );
-
-  const submitComment = useCallback(() => {
-    const trimmed = comment.trim();
-    if (trimmed) answersRef.current.comment = trimmed;
-    finish();
-  }, [comment, finish]);
 
   if (typeof document === 'undefined') return null;
 
@@ -260,38 +244,7 @@ export function ExperienceSurvey({
   const counter = <span className={styles.count}>{stepIndex + 1}/{STEP_ORDER.length}</span>;
 
   let body: JSX.Element;
-  if (step === 'satisfaction') {
-    body = (
-      <>
-        <p className={styles.question}>{t('experienceSurvey.satisfaction')}</p>
-        <div className={`${styles.rail} ${styles.five}`}>
-          {[1, 2, 3, 4, 5].map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`${styles.cell} ${picked === value ? styles.picked : ''}`}
-              onClick={() =>
-                pick(
-                  value,
-                  (v) => {
-                    answersRef.current.satisfaction = v;
-                  },
-                  'recommendation',
-                )
-              }
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-        <div className={styles.bounds}>
-          <span>{t('experienceSurvey.satisfactionLow')}</span>
-          <span>{t('experienceSurvey.satisfactionHigh')}</span>
-        </div>
-        <div className={styles.foot}>{counter}</div>
-      </>
-    );
-  } else if (step === 'recommendation') {
+  if (step === 'recommendation') {
     body = (
       <>
         <p className={styles.question}>{t('experienceSurvey.recommendation')}</p>
@@ -319,12 +272,7 @@ export function ExperienceSurvey({
           <span>{t('experienceSurvey.recommendationLow')}</span>
           <span>{t('experienceSurvey.recommendationHigh')}</span>
         </div>
-        <div className={styles.foot}>
-          {counter}
-          <button type="button" className={styles.skip} onClick={() => goTo('improvement')}>
-            {t('experienceSurvey.skip')}
-          </button>
-        </div>
+        <div className={styles.foot}>{counter}</div>
       </>
     );
   } else if (step === 'improvement') {
@@ -343,7 +291,7 @@ export function ExperienceSurvey({
                   (v) => {
                     answersRef.current.improvement = v;
                   },
-                  'comment',
+                  'finish',
                 )
               }
             >
@@ -353,33 +301,9 @@ export function ExperienceSurvey({
         </div>
         <div className={styles.foot}>
           {counter}
-          <button type="button" className={styles.skip} onClick={() => goTo('comment')}>
-            {t('experienceSurvey.skip')}
-          </button>
-        </div>
-      </>
-    );
-  } else if (step === 'comment') {
-    body = (
-      <>
-        <p className={styles.question}>{t('experienceSurvey.comment')}</p>
-        <textarea
-          className={styles.textarea}
-          value={comment}
-          onChange={(event) => setComment(event.target.value)}
-          placeholder={t('experienceSurvey.commentPlaceholder')}
-        />
-        <div className={styles.foot}>
-          {counter}
           <button type="button" className={styles.skip} onClick={finish}>
             {t('experienceSurvey.skip')}
           </button>
-          {/* Shared primitive rather than a local pill: the hand-rolled one
-              used --accent-strong/--accent-contrast directly, which inverts to
-              mid-grey on near-black in dark mode and failed contrast. */}
-          <Button variant="primary" className={styles.submit} onClick={submitComment}>
-            {t('experienceSurvey.submit')}
-          </Button>
         </div>
       </>
     );
@@ -417,18 +341,21 @@ export function ExperienceSurvey({
           />
           <div className={styles.body}>
             {head}
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={step}
-                variants={stepMotion}
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-              >
-                {body}
-              </motion.div>
-            </AnimatePresence>
+            {/* No AnimatePresence around the step. `mode="wait"` held the
+                outgoing question until its exit finished, so for one beat the
+                card had no question in it at all — it collapsed to the header
+                and sprang back open, which read as a jitter on every answer.
+                Swapping on `key` replaces the content in a single frame, and
+                the card's own layout animation carries the height change. */}
+            <motion.div
+              key={step}
+              variants={stepMotion}
+              initial="hidden"
+              animate="visible"
+              style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+            >
+              {body}
+            </motion.div>
           </div>
         </motion.section>
       ) : null}

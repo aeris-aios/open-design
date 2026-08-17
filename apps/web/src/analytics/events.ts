@@ -1464,18 +1464,13 @@ export function trackExperienceSurveyDismissed(track: Track): void {
 }
 
 /**
- * Reports a finished response. Unanswered optional questions are omitted
- * rather than sent as null, so PostHog's per-question response counts stay
- * honest about how many people actually answered each one.
+ * Reports a finished response. A skipped follow-up is omitted rather than sent
+ * as null, so PostHog's per-question response counts stay honest about how
+ * many people actually answered it.
  */
 export function trackExperienceSurveySent(
   track: Track,
-  answers: {
-    satisfaction: number;
-    recommendation?: number;
-    improvement?: number;
-    comment?: string;
-  },
+  answers: { recommendation: number; improvement?: number },
 ): void {
   const ids = EXPERIENCE_SURVEY_QUESTION_IDS;
   const text = EXPERIENCE_SURVEY_QUESTION_TEXT;
@@ -1487,16 +1482,10 @@ export function trackExperienceSurveySent(
     responses[`$survey_response_${id}`] = response;
   };
 
-  add(ids.satisfaction, text.satisfaction, answers.satisfaction);
-  if (typeof answers.recommendation === 'number') {
-    add(ids.recommendation, text.recommendation, answers.recommendation);
-  }
+  add(ids.recommendation, text.recommendation, answers.recommendation);
   if (typeof answers.improvement === 'number') {
     const choice = EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES[answers.improvement];
     if (choice) add(ids.improvement, text.improvement, choice);
-  }
-  if (answers.comment) {
-    add(ids.comment, text.comment, answers.comment);
   }
 
   send(track, 'survey sent', {

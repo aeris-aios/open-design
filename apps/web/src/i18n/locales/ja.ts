@@ -5262,9 +5262,6 @@ export const ja: Dict = {
 
   'experienceSurvey.tag': "ご意見をお聞かせください。一緒に Open Design を良くしていきましょう",
   'experienceSurvey.close': "閉じる",
-  'experienceSurvey.satisfaction': "全体として、Open Design にどのくらい満足していますか？",
-  'experienceSurvey.satisfactionLow': "とても不満",
-  'experienceSurvey.satisfactionHigh': "とても満足",
   'experienceSurvey.recommendation': "Open Design を同僚や友人にすすめる可能性はどのくらいですか？",
   'experienceSurvey.recommendationLow': "まったくすすめない",
   'experienceSurvey.recommendationHigh': "必ずすすめる",
@@ -5277,10 +5274,7 @@ export const ja: Dict = {
   'experienceSurvey.improvement.slow': "遅すぎる",
   'experienceSurvey.improvement.looks': "見た目がよくない",
   'experienceSurvey.improvement.regression': "他の部分を壊す",
-  'experienceSurvey.comment': "その評価をつけた一番の理由は何ですか？",
-  'experienceSurvey.commentPlaceholder': "一文で十分です。すべて目を通します",
   'experienceSurvey.skip': "スキップ",
-  'experienceSurvey.submit': "送信",
   'experienceSurvey.thanksTitle': "ありがとうございます！",
   'experienceSurvey.thanksBody': "いただいた声はチームに直接届きます。",
 };

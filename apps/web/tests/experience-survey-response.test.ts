@@ -29,22 +29,15 @@ function capture() {
 }
 
 describe('experience survey response reporting', () => {
-  it('sends every answer under its own question id', () => {
+  it('sends both answers under their own question ids', () => {
     const t = capture();
-    trackExperienceSurveySent(t.track, {
-      satisfaction: 4,
-      recommendation: 9,
-      improvement: 0,
-      comment: '导出后几乎不用返工',
-    });
+    trackExperienceSurveySent(t.track, { recommendation: 9, improvement: 0 });
 
     expect(t.event()).toBe('survey sent');
     expect(t.props()).toMatchObject({
       $survey_id: EXPERIENCE_SURVEY_ID,
-      [`$survey_response_${ids.satisfaction}`]: 4,
       [`$survey_response_${ids.recommendation}`]: 9,
       [`$survey_response_${ids.improvement}`]: EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES[0],
-      [`$survey_response_${ids.comment}`]: '导出后几乎不用返工',
     });
   });
 
@@ -52,52 +45,44 @@ describe('experience survey response reporting', () => {
     // The card renders a localized label; sending that would split one answer
     // into nineteen buckets, one per locale.
     const t = capture();
-    trackExperienceSurveySent(t.track, { satisfaction: 3, improvement: 4 });
+    trackExperienceSurveySent(t.track, { recommendation: 3, improvement: 4 });
 
     expect(t.props()[`$survey_response_${ids.improvement}`]).toBe('Gets stuck or fails');
   });
 
-  it('omits skipped questions instead of sending null', () => {
-    // Per-question response counts have to stay honest about how many people
-    // actually answered each question.
+  it('omits a skipped follow-up instead of sending null', () => {
+    // The follow-up's response count has to stay honest about how many people
+    // actually answered it.
     const t = capture();
-    trackExperienceSurveySent(t.track, { satisfaction: 5 });
+    trackExperienceSurveySent(t.track, { recommendation: 8 });
 
     const props = t.props();
-    expect(props[`$survey_response_${ids.satisfaction}`]).toBe(5);
-    expect(props).not.toHaveProperty(`$survey_response_${ids.recommendation}`);
+    expect(props[`$survey_response_${ids.recommendation}`]).toBe(8);
     expect(props).not.toHaveProperty(`$survey_response_${ids.improvement}`);
-    expect(props).not.toHaveProperty(`$survey_response_${ids.comment}`);
     expect(props.$survey_questions).toHaveLength(1);
-  });
-
-  it('drops an empty comment rather than filing a blank answer', () => {
-    const t = capture();
-    trackExperienceSurveySent(t.track, { satisfaction: 2, comment: '' });
-
-    expect(t.props()).not.toHaveProperty(`$survey_response_${ids.comment}`);
   });
 
   it('carries the question text so the event is readable without a join', () => {
     const t = capture();
-    trackExperienceSurveySent(t.track, { satisfaction: 1, recommendation: 0 });
+    trackExperienceSurveySent(t.track, { recommendation: 10 });
 
     expect(t.props().$survey_questions).toEqual([
-      { id: ids.satisfaction, question: expect.stringContaining('satisfied'), response: 1 },
-      { id: ids.recommendation, question: expect.stringContaining('recommend'), response: 0 },
+      { id: ids.recommendation, question: expect.stringContaining('recommend'), response: 10 },
     ]);
   });
 
   it('reports a zero score rather than treating it as unanswered', () => {
-    // 0 on the 0–10 scale is a detractor, the most valuable answer we get.
+    // 0 on the 0–10 scale is a detractor, the most valuable answer we get, and
+    // the one a falsy check would silently drop.
     const t = capture();
-    trackExperienceSurveySent(t.track, { satisfaction: 1, recommendation: 0, improvement: 0 });
+    trackExperienceSurveySent(t.track, { recommendation: 0, improvement: 0 });
 
     const props = t.props();
     expect(props[`$survey_response_${ids.recommendation}`]).toBe(0);
     expect(props[`$survey_response_${ids.improvement}`]).toBe(
       EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES[0],
     );
+    expect(props.$survey_questions).toHaveLength(2);
   });
 
   it('uses the reserved event names PostHog survey analytics reads', () => {

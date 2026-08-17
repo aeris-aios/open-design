@@ -5262,9 +5262,6 @@ export const uk: Dict = {
 
   'experienceSurvey.tag': "Поділіться відгуком — допоможіть покращити Open Design",
   'experienceSurvey.close': "Закрити",
-  'experienceSurvey.satisfaction': "Наскільки ви загалом задоволені Open Design?",
-  'experienceSurvey.satisfactionLow': "Зовсім не задоволений",
-  'experienceSurvey.satisfactionHigh': "Дуже задоволений",
   'experienceSurvey.recommendation': "Наскільки ймовірно, що ви порекомендуєте Open Design колезі або другу?",
   'experienceSurvey.recommendationLow': "Зовсім неймовірно",
   'experienceSurvey.recommendationHigh': "Дуже ймовірно",
@@ -5277,10 +5274,7 @@ export const uk: Dict = {
   'experienceSurvey.improvement.slow': "Надто повільно",
   'experienceSurvey.improvement.looks': "Результат виглядає погано",
   'experienceSurvey.improvement.regression': "Ламає інше",
-  'experienceSurvey.comment': "Яка головна причина вашої оцінки?",
-  'experienceSurvey.commentPlaceholder': "Достатньо одного речення — ми читаємо всі.",
   'experienceSurvey.skip': "Пропустити",
-  'experienceSurvey.submit': "Надіслати",
   'experienceSurvey.thanksTitle': "Дякуємо!",
   'experienceSurvey.thanksBody': "Ваш відгук потрапляє прямо до команди.",
 };

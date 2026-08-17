@@ -5262,9 +5262,6 @@ export const ko: Dict = {
 
   'experienceSurvey.tag': "의견을 들려주세요. 함께 Open Design을 개선해요",
   'experienceSurvey.close': "닫기",
-  'experienceSurvey.satisfaction': "전반적으로 Open Design에 얼마나 만족하시나요?",
-  'experienceSurvey.satisfactionLow': "매우 불만족",
-  'experienceSurvey.satisfactionHigh': "매우 만족",
   'experienceSurvey.recommendation': "Open Design을 동료나 친구에게 추천할 가능성은 얼마나 되나요?",
   'experienceSurvey.recommendationLow': "전혀 없음",
   'experienceSurvey.recommendationHigh': "매우 높음",
@@ -5277,10 +5274,7 @@ export const ko: Dict = {
   'experienceSurvey.improvement.slow': "너무 느림",
   'experienceSurvey.improvement.looks': "결과물이 별로임",
   'experienceSurvey.improvement.regression': "멀쩡한 곳을 망침",
-  'experienceSurvey.comment': "그렇게 평가하신 가장 큰 이유는 무엇인가요?",
-  'experienceSurvey.commentPlaceholder': "한 문장이면 충분합니다. 모두 읽고 있습니다",
   'experienceSurvey.skip': "건너뛰기",
-  'experienceSurvey.submit': "보내기",
   'experienceSurvey.thanksTitle': "감사합니다!",
   'experienceSurvey.thanksBody': "보내주신 의견은 팀에 바로 전달됩니다.",
 };

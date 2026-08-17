@@ -5262,9 +5262,6 @@ export const th: Dict = {
 
   'experienceSurvey.tag': "อยากฟังความคิดเห็นของคุณ — ช่วยกันพัฒนา Open Design",
   'experienceSurvey.close': "ปิด",
-  'experienceSurvey.satisfaction': "โดยรวมแล้ว คุณพอใจกับ Open Design มากแค่ไหน?",
-  'experienceSurvey.satisfactionLow': "ไม่พอใจอย่างมาก",
-  'experienceSurvey.satisfactionHigh': "พอใจมาก",
   'experienceSurvey.recommendation': "คุณมีแนวโน้มจะแนะนำ Open Design ให้เพื่อนร่วมงานหรือเพื่อนมากแค่ไหน?",
   'experienceSurvey.recommendationLow': "ไม่แนะนำเลย",
   'experienceSurvey.recommendationHigh': "แนะนำแน่นอน",
@@ -5277,10 +5274,7 @@ export const th: Dict = {
   'experienceSurvey.improvement.slow': "ช้าเกินไป",
   'experienceSurvey.improvement.looks': "ผลลัพธ์ไม่สวย",
   'experienceSurvey.improvement.regression': "ทำพังส่วนอื่น",
-  'experienceSurvey.comment': "เหตุผลหลักที่ให้คะแนนนี้คืออะไร?",
-  'experienceSurvey.commentPlaceholder': "ประโยคเดียวก็พอ เราอ่านทุกข้อความ",
   'experienceSurvey.skip': "ข้ามไป",
-  'experienceSurvey.submit': "ส่ง",
   'experienceSurvey.thanksTitle': "ขอบคุณ!",
   'experienceSurvey.thanksBody': "ความคิดเห็นของคุณจะส่งตรงถึงทีมงาน",
 };

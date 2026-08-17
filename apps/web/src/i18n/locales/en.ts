@@ -5276,9 +5276,6 @@ export const en: Dict = {
 
   'experienceSurvey.tag': "We'd love your feedback — help improve Open Design",
   'experienceSurvey.close': "Close",
-  'experienceSurvey.satisfaction': "Overall, how satisfied are you with Open Design?",
-  'experienceSurvey.satisfactionLow': "Very unsatisfied",
-  'experienceSurvey.satisfactionHigh': "Very satisfied",
   'experienceSurvey.recommendation': "How likely are you to recommend Open Design to a colleague or friend?",
   'experienceSurvey.recommendationLow': "Not at all likely",
   'experienceSurvey.recommendationHigh': "Extremely likely",
@@ -5291,10 +5288,7 @@ export const en: Dict = {
   'experienceSurvey.improvement.slow': "Too slow",
   'experienceSurvey.improvement.looks': "Doesn't look good",
   'experienceSurvey.improvement.regression': "Breaks other things",
-  'experienceSurvey.comment': "What is the single biggest reason for your rating?",
-  'experienceSurvey.commentPlaceholder': "One sentence is plenty — we read every one",
   'experienceSurvey.skip': "Skip",
-  'experienceSurvey.submit': "Submit",
   'experienceSurvey.thanksTitle': "Thank you!",
   'experienceSurvey.thanksBody': "Your feedback goes straight to the team.",
 };

@@ -5262,9 +5262,6 @@ export const hu: Dict = {
 
   'experienceSurvey.tag': "Várjuk a visszajelzésed — segíts jobbá tenni az Open Designt",
   'experienceSurvey.close': "Bezárás",
-  'experienceSurvey.satisfaction': "Összességében mennyire vagy elégedett az Open Designnal?",
-  'experienceSurvey.satisfactionLow': "Egyáltalán nem elégedett",
-  'experienceSurvey.satisfactionHigh': "Nagyon elégedett",
   'experienceSurvey.recommendation': "Mennyire valószínű, hogy ajánlanád az Open Designt egy kollégának vagy barátnak?",
   'experienceSurvey.recommendationLow': "Egyáltalán nem valószínű",
   'experienceSurvey.recommendationHigh': "Nagyon valószínű",
@@ -5277,10 +5274,7 @@ export const hu: Dict = {
   'experienceSurvey.improvement.slow': "Túl lassú",
   'experienceSurvey.improvement.looks': "Az eredmény nem néz ki jól",
   'experienceSurvey.improvement.regression': "Elront más dolgokat",
-  'experienceSurvey.comment': "Mi a fő oka az értékelésednek?",
-  'experienceSurvey.commentPlaceholder': "Egy mondat is elég — mindet elolvassuk.",
   'experienceSurvey.skip': "Kihagyás",
-  'experienceSurvey.submit': "Küldés",
   'experienceSurvey.thanksTitle': "Köszönjük!",
   'experienceSurvey.thanksBody': "A visszajelzésed közvetlenül a csapathoz kerül.",
 };

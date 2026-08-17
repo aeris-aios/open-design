@@ -5262,9 +5262,6 @@ export const fr: Dict = {
 
   'experienceSurvey.tag': "Votre avis nous intéresse — aidez-nous à améliorer Open Design",
   'experienceSurvey.close': "Fermer",
-  'experienceSurvey.satisfaction': "Dans l'ensemble, êtes-vous satisfait d'Open Design ?",
-  'experienceSurvey.satisfactionLow': "Pas du tout satisfait",
-  'experienceSurvey.satisfactionHigh': "Très satisfait",
   'experienceSurvey.recommendation': "Quelle est la probabilité que vous recommandiez Open Design à un collègue ou un ami ?",
   'experienceSurvey.recommendationLow': "Pas du tout probable",
   'experienceSurvey.recommendationHigh': "Extrêmement probable",
@@ -5277,10 +5274,7 @@ export const fr: Dict = {
   'experienceSurvey.improvement.slow': "Trop lent",
   'experienceSurvey.improvement.looks': "Le rendu n'est pas beau",
   'experienceSurvey.improvement.regression': "Casse autre chose",
-  'experienceSurvey.comment': "Quelle est la principale raison de votre note ?",
-  'experienceSurvey.commentPlaceholder': "Une phrase suffit — nous les lisons toutes.",
   'experienceSurvey.skip': "Passer",
-  'experienceSurvey.submit': "Envoyer",
   'experienceSurvey.thanksTitle': "Merci !",
   'experienceSurvey.thanksBody': "Votre retour va directement à l'équipe.",
 };

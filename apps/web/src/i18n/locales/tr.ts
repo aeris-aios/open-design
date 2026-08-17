@@ -5262,9 +5262,6 @@ export const tr: Dict = {
 
   'experienceSurvey.tag': "Görüşünüzü bekliyoruz — Open Design'ı birlikte geliştirelim",
   'experienceSurvey.close': "Kapat",
-  'experienceSurvey.satisfaction': "Genel olarak Open Design'dan ne kadar memnunsunuz?",
-  'experienceSurvey.satisfactionLow': "Hiç memnun değilim",
-  'experienceSurvey.satisfactionHigh': "Çok memnunum",
   'experienceSurvey.recommendation': "Open Design'ı bir iş arkadaşınıza ya da arkadaşınıza önerme olasılığınız nedir?",
   'experienceSurvey.recommendationLow': "Hiç olası değil",
   'experienceSurvey.recommendationHigh': "Kesinlikle öneririm",
@@ -5277,10 +5274,7 @@ export const tr: Dict = {
   'experienceSurvey.improvement.slow': "Çok yavaş",
   'experienceSurvey.improvement.looks': "Sonuç iyi görünmüyor",
   'experienceSurvey.improvement.regression': "Başka şeyleri bozuyor",
-  'experienceSurvey.comment': "Bu puanı vermenizin en önemli nedeni ne?",
-  'experienceSurvey.commentPlaceholder': "Tek cümle yeterli — hepsini okuyoruz.",
   'experienceSurvey.skip': "Atla",
-  'experienceSurvey.submit': "Gönder",
   'experienceSurvey.thanksTitle': "Teşekkürler!",
   'experienceSurvey.thanksBody': "Geri bildiriminiz doğrudan ekibe ulaşıyor.",
 };

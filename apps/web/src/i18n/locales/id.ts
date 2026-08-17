@@ -5262,9 +5262,6 @@ export const id: Dict = {
 
   'experienceSurvey.tag': "Kami ingin dengar masukan Anda — bantu sempurnakan Open Design",
   'experienceSurvey.close': "Tutup",
-  'experienceSurvey.satisfaction': "Secara keseluruhan, seberapa puas Anda dengan Open Design?",
-  'experienceSurvey.satisfactionLow': "Sangat tidak puas",
-  'experienceSurvey.satisfactionHigh': "Sangat puas",
   'experienceSurvey.recommendation': "Seberapa besar kemungkinan Anda merekomendasikan Open Design ke rekan atau teman?",
   'experienceSurvey.recommendationLow': "Sangat tidak mungkin",
   'experienceSurvey.recommendationHigh': "Sangat mungkin",
@@ -5277,10 +5274,7 @@ export const id: Dict = {
   'experienceSurvey.improvement.slow': "Terlalu lambat",
   'experienceSurvey.improvement.looks': "Hasilnya kurang bagus",
   'experienceSurvey.improvement.regression': "Merusak bagian lain",
-  'experienceSurvey.comment': "Apa satu alasan terbesar di balik penilaian Anda?",
-  'experienceSurvey.commentPlaceholder': "Satu kalimat sudah cukup — kami membaca semuanya.",
   'experienceSurvey.skip': "Lewati",
-  'experienceSurvey.submit': "Kirim",
   'experienceSurvey.thanksTitle': "Terima kasih!",
   'experienceSurvey.thanksBody': "Masukan Anda langsung sampai ke tim.",
 };

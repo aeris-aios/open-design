@@ -5433,9 +5433,6 @@ export interface Dict {
 
   'experienceSurvey.tag': string;
   'experienceSurvey.close': string;
-  'experienceSurvey.satisfaction': string;
-  'experienceSurvey.satisfactionLow': string;
-  'experienceSurvey.satisfactionHigh': string;
   'experienceSurvey.recommendation': string;
   'experienceSurvey.recommendationLow': string;
   'experienceSurvey.recommendationHigh': string;
@@ -5448,10 +5445,7 @@ export interface Dict {
   'experienceSurvey.improvement.slow': string;
   'experienceSurvey.improvement.looks': string;
   'experienceSurvey.improvement.regression': string;
-  'experienceSurvey.comment': string;
-  'experienceSurvey.commentPlaceholder': string;
   'experienceSurvey.skip': string;
-  'experienceSurvey.submit': string;
   'experienceSurvey.thanksTitle': string;
   'experienceSurvey.thanksBody': string;
 }

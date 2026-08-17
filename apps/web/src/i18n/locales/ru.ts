@@ -5262,9 +5262,6 @@ export const ru: Dict = {
 
   'experienceSurvey.tag': "Поделитесь отзывом — помогите улучшить Open Design",
   'experienceSurvey.close': "Закрыть",
-  'experienceSurvey.satisfaction': "Насколько вы в целом довольны Open Design?",
-  'experienceSurvey.satisfactionLow': "Совсем не доволен",
-  'experienceSurvey.satisfactionHigh': "Полностью доволен",
   'experienceSurvey.recommendation': "Насколько вероятно, что вы порекомендуете Open Design коллеге или другу?",
   'experienceSurvey.recommendationLow': "Совсем невероятно",
   'experienceSurvey.recommendationHigh': "Очень вероятно",
@@ -5277,10 +5274,7 @@ export const ru: Dict = {
   'experienceSurvey.improvement.slow': "Слишком медленно",
   'experienceSurvey.improvement.looks': "Результат выглядит плохо",
   'experienceSurvey.improvement.regression': "Ломает другое",
-  'experienceSurvey.comment': "Какая главная причина вашей оценки?",
-  'experienceSurvey.commentPlaceholder': "Хватит одного предложения — мы читаем все.",
   'experienceSurvey.skip': "Пропустить",
-  'experienceSurvey.submit': "Отправить",
   'experienceSurvey.thanksTitle': "Спасибо!",
   'experienceSurvey.thanksBody': "Ваш отзыв попадёт прямо к команде.",
 };
