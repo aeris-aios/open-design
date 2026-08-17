@@ -489,6 +489,11 @@ import {
   getStrategyTaskExecutionByRunId,
   reconcileStrategyTaskRunTerminal,
 } from './strategies/task-store.js';
+import {
+  captureFrozenSkillPackage,
+  materializeFrozenSkillPackage,
+  renderFrozenSkillBundleContext,
+} from './strategies/od-next/frozen-skill-package.js';
 import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
@@ -9011,6 +9016,7 @@ export async function startServer({
     platformHintSignal,
     workspaceScope,
     designSystemScope,
+    frozenSkillPackage,
   }) => {
     const project =
       typeof projectId === 'string' && projectId
@@ -9114,8 +9120,9 @@ export async function startServer({
         );
       }
     }
-    const effectiveSkillId =
-      typeof skillId === 'string' && skillId ? skillId : project?.skillId;
+    const effectiveSkillId = frozenSkillPackage
+      ? null
+      : typeof skillId === 'string' && skillId ? skillId : project?.skillId;
     // Website Clone runs reproduce someone else's site: the fidelity target
     // is the original page. Treating a project/app design system as
     // authoritative would overwrite the cloned site's palette/typography
@@ -9160,7 +9167,9 @@ export async function startServer({
       typeof effectiveSkillId === 'string' && effectiveSkillId
         ? resolveSkillId(effectiveSkillId)
         : null;
-    const adHocSkillIds = Array.isArray(skillIds)
+    const adHocSkillIds = frozenSkillPackage
+      ? []
+      : Array.isArray(skillIds)
       ? skillIds
           .map((s) => (typeof s === 'string' ? s.trim() : ''))
           .filter(Boolean)
@@ -10568,6 +10577,7 @@ export async function startServer({
         platformHintSignal: intentSignals.platform,
         workspaceScope: run.workspaceScope,
         designSystemScope: run.designSystemScope,
+        frozenSkillPackage: strategyTaskAtStart?.frozenSkillPackage,
       });
 
     run.designSystemId = designSystemSelection?.id ?? null;
@@ -10602,7 +10612,12 @@ export async function startServer({
     // daemon and folded into the system prompt directly (see
     // `readDesignSystem`), so an agent never has to open them via the
     // filesystem.
-    if (cwd && activeSkillDirs.length > 0) {
+    if (cwd && strategyTaskAtStart?.frozenSkillPackage) {
+      await materializeFrozenSkillPackage({
+        frozen: strategyTaskAtStart.frozenSkillPackage,
+        cwd,
+      });
+    } else if (cwd && activeSkillDirs.length > 0) {
       for (const skillDir of activeSkillDirs) {
         const result = await stageActiveSkill(
           cwd,
@@ -11092,25 +11107,28 @@ export async function startServer({
         })
       : '';
     const requestInputPendingFact = isOdNextRequestStage
-      ? JSON.stringify({
-          schema: 'open-design.od-next-request-input-pending/v1',
-          userSkillSelection: {
-            state: 'pending_task_03_snapshot',
-            count: [skillId, ...(Array.isArray(skillIds) ? skillIds : [])]
-              .filter((value) => typeof value === 'string' && value.trim()).length,
-          },
-          attachmentSelection: {
-            state: 'pending_task_04_snapshot',
-            projectCount: safeAttachments.length,
-            commentCount: safeCommentAttachments.length,
-            imageCount: promptImagePaths.length,
-          },
-          workspaceSelection: {
-            state: 'pending_task_04_reference',
-            hasProjectWorkspace: Boolean(cwd),
-            linkedDirectoryCount: linkedDirs.length,
-          },
-        })
+      ? [
+          strategyTaskAtStart?.frozenSkillPackage
+            ? renderFrozenSkillBundleContext(strategyTaskAtStart.frozenSkillPackage)
+            : JSON.stringify({
+                schema: 'open-design.od-next-frozen-skill-package/v1',
+                state: 'missing',
+              }),
+          JSON.stringify({
+            schema: 'open-design.od-next-request-input-pending/v1',
+            attachmentSelection: {
+              state: 'pending_task_04_snapshot',
+              projectCount: safeAttachments.length,
+              commentCount: safeCommentAttachments.length,
+              imageCount: promptImagePaths.length,
+            },
+            workspaceSelection: {
+              state: 'pending_task_04_reference',
+              hasProjectWorkspace: Boolean(cwd),
+              linkedDirectoryCount: linkedDirs.length,
+            },
+          }),
+        ].join('\n\n---\n\n')
       : '';
     const {
       composedPrompt: composed,
@@ -15138,6 +15156,22 @@ export async function startServer({
     paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
     chat: { startChatRun },
+    skills: {
+      captureOdNextFrozenSkillPackage: async ({ skillId, skillIds, workspaceScope }) => {
+        const workspaceId = typeof workspaceScope?.workspaceId === 'string'
+          ? workspaceScope.workspaceId.trim()
+          : '';
+        const workspaceMemberId = typeof workspaceScope?.workspaceMemberId === 'string'
+          ? workspaceScope.workspaceMemberId.trim()
+          : '';
+        const catalog = await listAllSkillLikeEntries(
+          workspaceId
+            ? { workspaceId, workspaceMemberId: workspaceMemberId || null }
+            : {},
+        );
+        return captureFrozenSkillPackage({ skillId, skillIds, catalog });
+      },
+    },
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
     plugins: {
       connectorService,

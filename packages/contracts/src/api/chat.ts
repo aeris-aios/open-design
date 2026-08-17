@@ -365,6 +365,8 @@ export interface McpRunCreateRequest {
   message?: string;
   agentId?: string;
   skillId?: string;
+  /** Explicit per-run Skills. CLI --skill a,b and Web @Skill converge here. */
+  skillIds?: string[];
   pluginId?: string;
   model?: string;
   serviceTier?: string;

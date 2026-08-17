@@ -188,6 +188,30 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 }
 
 describe('od run CLI', () => {
+  it('keeps one --skill backward compatible and sends multiple ids canonically', async () => {
+    stub = await startRunStubServer(true);
+    const single = await runCli([
+      'run', 'start', '--project', 'project-1', '--skill', 'frontend-design',
+      '--daemon-url', stub.baseUrl,
+    ]);
+    expect(single.code, single.stderr).toBe(0);
+    expect(JSON.parse(stub.requests[0]!.body)).toMatchObject({
+      skillId: 'frontend-design',
+    });
+    expect(JSON.parse(stub.requests[0]!.body).skillIds).toBeUndefined();
+
+    const multiple = await runCli([
+      'run', 'start', '--project', 'project-1',
+      '--skill', 'frontend-design, imagegen,frontend-design',
+      '--daemon-url', stub.baseUrl,
+    ]);
+    expect(multiple.code, multiple.stderr).toBe(0);
+    expect(JSON.parse(stub.requests[1]!.body)).toMatchObject({
+      skillIds: ['frontend-design', 'imagegen'],
+    });
+    expect(JSON.parse(stub.requests[1]!.body).skillId).toBeUndefined();
+  });
+
   it('continues a resumable run through the normal run creation API', async () => {
     stub = await startRunStubServer(true);
 

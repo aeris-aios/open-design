@@ -7233,7 +7233,7 @@ async function runRun(args) {
     console.log(`Usage:
   od run start --project <projectId> [--conversation <id>] [--message "<text>"]
                [--prompt-file <path|->] [--task-execution <id>]
-               [--plugin <id>] [--inputs <json>] [--grant-caps a,b]
+               [--skill <id>[,<id>]] [--plugin <id>] [--inputs <json>] [--grant-caps a,b]
                [--agent claude|codex|opencode] [--model <id>] [--service-tier <id>]
                [--workspace <id> --workspace-member <id>] [--follow] [--json]
   od run redesign [--path <folder>] [--message "<text>" | --prompt-file <path|->]
@@ -7469,7 +7469,11 @@ Common options:
       const message = await readRunMessageFromFlags(flags);
       if (message) body.message = message;
       if (flags.plugin) body.pluginId = flags.plugin;
-      if (flags.skill) body.skillId = flags.skill;
+      if (flags.skill) {
+        const selectedSkillIds = splitCommaSeparatedIds(flags.skill);
+        if (selectedSkillIds.length === 1) body.skillId = selectedSkillIds[0];
+        if (selectedSkillIds.length > 1) body.skillIds = selectedSkillIds;
+      }
       if (flags['design-system']) body.designSystemId = flags['design-system'];
       if (flags.agent) body.agentId = flags.agent;
       if (flags.model) body.model = flags.model;
@@ -10729,7 +10733,7 @@ function describeAutomationTargetForCli(target) {
   return 'new-project';
 }
 
-function splitAutomationIds(value) {
+function splitCommaSeparatedIds(value) {
   if (typeof value !== 'string' || value.trim().length === 0) return [];
   const seen = new Set();
   const out = [];
@@ -10741,6 +10745,8 @@ function splitAutomationIds(value) {
   }
   return out;
 }
+
+const splitAutomationIds = splitCommaSeparatedIds;
 
 function automationContextFromFlags(flags) {
   const skillIds = splitAutomationIds(flags.skill);

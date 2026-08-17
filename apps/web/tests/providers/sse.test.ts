@@ -61,6 +61,7 @@ describe('streamViaDaemon', () => {
         { id: '3', role: 'user', content: 'post-consent revision' },
       ],
       systemPrompt: '',
+      skillIds: ['frontend-design', 'imagegen'],
       signal: new AbortController().signal,
       handlers,
     });
@@ -71,6 +72,7 @@ describe('streamViaDaemon', () => {
     expect(body.message).toContain('post-consent revision');
     expect(body.currentPrompt).toBe('post-consent revision');
     expect(body.userMessageId).toBe('3');
+    expect(body.skillIds).toEqual(['frontend-design', 'imagegen']);
   });
 
   it('sends the selected Local BYOK provider only to the local run endpoint', async () => {

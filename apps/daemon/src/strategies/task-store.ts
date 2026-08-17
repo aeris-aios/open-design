@@ -15,6 +15,12 @@ import {
 import type Database from 'better-sqlite3';
 
 import { getSnapshot } from '../plugins/snapshots.js';
+import {
+  getFrozenSkillPackage,
+  insertFrozenSkillPackage,
+  migrateFrozenSkillPackageStore,
+  type FrozenSkillPackageV1,
+} from './od-next/frozen-skill-package.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;
@@ -59,6 +65,7 @@ export interface StrategyTaskExecutionRecord {
   activeRunId: string | null;
   terminalRunId: string | null;
   runs: StrategyTaskRunMapping[];
+  frozenSkillPackage?: FrozenSkillPackageV1;
   createdAt: number;
   updatedAt: number;
 }
@@ -70,6 +77,7 @@ export interface CreateStrategyTaskExecutionInput {
   snapshotId: string;
   selectedAgentId: string;
   initialRunId: string;
+  frozenSkillPackage?: FrozenSkillPackageV1;
   createdAt?: number;
 }
 
@@ -169,6 +177,7 @@ export function migrateStrategyTaskStore(db: SqliteDb): void {
         ON DELETE CASCADE
     );
   `);
+  migrateFrozenSkillPackageStore(db);
 }
 
 export function createStrategyTaskExecution(
@@ -241,6 +250,9 @@ export function createStrategyTaskExecution(
           task_execution_id, run_id, input_stage, task_run_index, source_run_id, created_at
         ) VALUES (?, ?, 'request', 0, NULL, ?)
       `).run(taskExecutionId, initialRunId, now);
+      if (input.frozenSkillPackage) {
+        insertFrozenSkillPackage(db, taskExecutionId, input.frozenSkillPackage);
+      }
       // A StrategyTaskExecution is itself a durable Snapshot reference. Keep
       // run_id untouched because one task owns a chain of physical Runs, but
       // clear the unreferenced-row TTL in the same transaction that installs
@@ -645,6 +657,7 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     clarificationCount,
     planContractRepairAttempts,
   );
+  const frozenSkillPackage = getFrozenSkillPackage(db, taskExecutionId);
   return {
     schemaVersion: TASK_STORE_SCHEMA_VERSION,
     revision: requireNonNegativeInteger(row['revision'], 'revision'),
@@ -669,6 +682,7 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     activeRunId: outcome === 'running' ? latestRunId : null,
     terminalRunId: TERMINAL_OUTCOMES.has(outcome) ? latestRunId : null,
     runs: mappings,
+    ...(frozenSkillPackage ? { frozenSkillPackage } : {}),
     createdAt,
     updatedAt,
   };

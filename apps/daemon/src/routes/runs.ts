@@ -93,6 +93,7 @@ import {
   beginStrategyClarification,
   prepareStrategyRequest,
 } from '../strategies/od-next/coordinator.js';
+import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
 import {
   evaluateOdNextRollout,
   odNextTaskTypeForProjectMetadata,
@@ -535,6 +536,13 @@ export interface RegisterRunRoutesDeps {
   };
   chat: {
     startChatRun: (meta: RunCreateMeta, run: ChatRun) => Promise<unknown>;
+  };
+  skills?: {
+    captureOdNextFrozenSkillPackage: (input: {
+      skillId?: unknown;
+      skillIds?: unknown;
+      workspaceScope?: RunWorkspaceScope | null | undefined;
+    }) => Promise<FrozenSkillPackageV1>;
   };
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
@@ -2245,6 +2253,35 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         updateProject(db, meta.projectId, {});
       }
     };
+    let frozenSkillPackage: FrozenSkillPackageV1 | undefined;
+    if (
+      !clarificationContinuation
+      && !idempotentStrategyRetry
+      && strategyRolloutDecision?.effectiveMode === 'active'
+    ) {
+      if (!ctx.skills) {
+        return sendApiError(
+          res,
+          500,
+          'OD_NEXT_SKILL_SNAPSHOT_UNAVAILABLE',
+          'OD Next Skill snapshot service is unavailable',
+        );
+      }
+      try {
+        frozenSkillPackage = await ctx.skills.captureOdNextFrozenSkillPackage({
+          skillId: meta.skillId,
+          skillIds: meta.skillIds,
+          workspaceScope: meta.workspaceScope,
+        });
+      } catch (error) {
+        return sendApiError(
+          res,
+          422,
+          'OD_NEXT_SKILL_SNAPSHOT_REJECTED',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     const fingerprintSnapshot = clarificationTask
       ? getSnapshot(db, clarificationTask.snapshotId)
       : resolvedSnapshot?.ok
@@ -2286,6 +2323,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                     snapshotId: resolvedSnapshot.snapshotId,
                     selectedAgentId: candidate.agentId!,
                     initialRunId: candidate.id,
+                    ...(frozenSkillPackage ? { frozenSkillPackage } : {}),
                   });
                   const preparedStrategy = prepareStrategyRequest(db, {
                     taskExecutionId,

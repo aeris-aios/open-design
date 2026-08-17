@@ -1,6 +1,6 @@
 import type { Server } from 'node:http';
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -194,13 +194,35 @@ describe('OD Next automatic production through the real server', () => {
     });
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
     process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const dataDir = process.env.OD_DATA_DIR;
+    if (!dataDir) throw new Error('OD_DATA_DIR is required');
+    const selectedSkillDir = path.join(dataDir, 'skills', 'frozen-bundle-skill');
+    await mkdir(path.join(selectedSkillDir, 'references'), { recursive: true });
+    await writeFile(path.join(selectedSkillDir, 'SKILL.md'), [
+      '---',
+      'name: frozen-bundle-skill',
+      'description: OD Next frozen bundle fixture',
+      '---',
+      '# Frozen bundle workflow',
+      '',
+      'Use `references/guide.md` during Build.',
+    ].join('\n'));
+    await writeFile(path.join(selectedSkillDir, 'references', 'guide.md'), 'fixture guide\n');
     const activeBody = publicRunRequest(
       fixture,
       'Hold the public rollout run open until canceled.',
       'active-request',
     );
+    (activeBody as typeof activeBody & { skillIds: string[] }).skillIds = [
+      'frozen-bundle-skill',
+    ];
     const active = await postRun(started!.url, activeBody);
     expect(active.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    expect(getStrategyTaskExecution(database(), active.taskExecutionId as string)?.frozenSkillPackage)
+      .toMatchObject({
+        schema: 'open-design.od-next-frozen-skill-package/v1',
+        selections: [{ canonicalId: 'frozen-bundle-skill' }],
+      });
     expect((database().prepare(
       'SELECT applied_plugin_snapshot_id AS snapshotId FROM projects WHERE id = ?',
     ).get(fixture.projectId) as { snapshotId: string | null }).snapshotId)
@@ -238,6 +260,13 @@ describe('OD Next automatic production through the real server', () => {
         terminal: true,
       },
     });
+    const activeInvocation = (await readProjectInvocations(fixture.logPath, fixture.projectId))
+      .find((invocation) => invocation.stdin.includes('Hold the public rollout run open'));
+    expect(activeInvocation?.stdin).toContain('## User-selected Skill — frozen-bundle-skill');
+    expect(activeInvocation?.stdin).toContain('# Frozen bundle workflow');
+    expect(activeInvocation?.stdin).toContain('.od-skills/frozen-bundle-skill-');
+    expect(activeInvocation?.stdin).not.toContain(selectedSkillDir);
+    expect(activeInvocation?.stdin).not.toContain('available_skills');
     expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
       .toBe(1);
   });
