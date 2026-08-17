@@ -2559,6 +2559,7 @@ export function ProjectView({
   // Track which conversation the current messages belong to, so we can
   // correctly gate new-conversation creation even during async loads.
   const messagesConversationIdRef = useRef<string | null>(null);
+  const messagesAuthorityKeyRef = useRef<string | null>(null);
   const creatingConversationRef = useRef(false);
   // Last conversation id this view pushed into the URL. Lets the
   // route -> active-conversation sync tell a genuine external navigation
@@ -2972,13 +2973,15 @@ export function ProjectView({
       setMessagesConversationId(null);
       setFailedMessagesConversationId(null);
       messagesConversationIdRef.current = null;
+      messagesAuthorityKeyRef.current = null;
       setStreaming(false);
       streamingConversationIdRef.current = null;
       setStreamingConversationId(null);
       return;
     }
     const reloadingCurrentConversation =
-      messagesConversationIdRef.current === activeConversationId;
+      messagesConversationIdRef.current === activeConversationId
+      && messagesAuthorityKeyRef.current === projectRunAuthorityKey;
     // Reset the initialized flag so auto-send waits for this authoritative DB
     // read to settle before checking messages.length. A same-conversation
     // authority refresh keeps the prior transcript visible, but invalidates
@@ -2999,8 +3002,9 @@ export function ProjectView({
       savedArtifactRef.current = null;
     }
     const commentsGeneration = previewCommentsGenerationRef.current;
-    if (messagesConversationIdRef.current !== activeConversationId) {
+    if (!reloadingCurrentConversation) {
       messagesConversationIdRef.current = null;
+      messagesAuthorityKeyRef.current = null;
     }
     (async () => {
       try {
@@ -3033,6 +3037,7 @@ export function ProjectView({
         setError(null);
         savedArtifactRef.current = null;
         messagesConversationIdRef.current = activeConversationId;
+        messagesAuthorityKeyRef.current = projectRunAuthorityKey;
         setMessagesConversationId(activeConversationId);
         setFailedMessagesConversationId(null);
       } catch (err) {
@@ -3047,6 +3052,7 @@ export function ProjectView({
         }
         setError(message);
         messagesConversationIdRef.current = null;
+        messagesAuthorityKeyRef.current = null;
         setMessagesConversationId(null);
         setFailedMessagesConversationId(activeConversationId);
       }
@@ -9020,11 +9026,16 @@ export function ProjectView({
       // Eagerly clear messages and update ref so rapid clicks don't create
       // duplicate empty conversations before the effect resolves.
       setMessages([]);
+      commitPreviewComments([]);
+      setAttachedComments([]);
+      setArtifact(null);
+      savedArtifactRef.current = null;
       setStreaming(false);
       streamingConversationIdRef.current = null;
       setStreamingConversationId(null);
       setMessagesConversationId(null);
       messagesConversationIdRef.current = fresh.id;
+      messagesAuthorityKeyRef.current = projectRunAuthorityKey;
       setConversations((curr) => [fresh, ...curr]);
       setActiveConversationId(fresh.id);
       // Push the new conversation id into the URL synchronously so the
@@ -9053,10 +9064,12 @@ export function ProjectView({
   }, [
     project.id,
     activeConversationId,
+    commitPreviewComments,
     messages.length,
     navigate,
     openTabsState.active,
     projectRunWorkspaceContext,
+    projectRunAuthorityKey,
   ]);
 
   const handleSelectConversation = useCallback((id: string) => {
@@ -9072,6 +9085,7 @@ export function ProjectView({
     setFailedMessagesConversationId(null);
     setConversationLoadError(null);
     messagesConversationIdRef.current = null;
+    messagesAuthorityKeyRef.current = null;
     setActiveConversationId(id);
     // Push the new conversation id into the URL synchronously so the
     // route-sync effect at L512 sees a matching `routeConversationId`
@@ -9275,6 +9289,7 @@ export function ProjectView({
         setStreamingConversationId(null);
         setMessagesConversationId(null);
         messagesConversationIdRef.current = null;
+        messagesAuthorityKeyRef.current = null;
         setFailedMessagesConversationId(null);
         setConversations((curr) => [fresh, ...curr.filter((c) => c.id !== fresh.id)]);
         setActiveConversationId(fresh.id);
