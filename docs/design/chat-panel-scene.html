@@ -1686,7 +1686,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 /* 面板本体:上下两段固定,中间流水滚动 —— 这是面板真正的骨架,
    构件墙里看不出来。Queue 和输入框钉在底部,不随流水滚走。 */
 .panel {
-  display: flex; flex-direction: column; height: 860px;
+  height: 1244px;  /* 两屏里较高的那屏(收尾)44 头 + 1102 日志 + 98 dock;谁都不被切,矮的那屏靠 margin-top:auto 贴底 */
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--bg); overflow: hidden;
 }
@@ -1704,12 +1704,20 @@ body { background: var(--bg-subtle); overflow: auto; }
 .panel-hd button svg { width: 15px; height: 15px; }
 
 /* 流水:唯一会滚的区域 */
-.flow { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
-.flow > * + * { margin-top: 12px; }
+/* 间距对齐 apps/web 的 .chat-log:padding 24px 20px、块间 gap 24px。
+   原来写的 14 / 12 是我自己拍的,比真实产品紧了一倍。 */
+.flow { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 20px;
+  display: flex; flex-direction: column; gap: 24px; }
+/* 内容没填满时整段贴底,而不是浮在顶上留一大片空 —— 真实产品
+   .chat-log.is-balanced-transcript 也是拿首个子元素的 auto 上外边距做的。
+   比 justify-content:flex-end 安全:内容溢出时 auto 归零,顶部不会滚不到。 */
+.flow > :first-child { margin-top: auto; }
+/* flex 列的子项默认可压缩,日志一长就把卡片压扁成一条线。日志块只能被滚动,不能被压。 */
+.flow > * { flex: 0 0 auto; }
 
 /* 底座:Queue + 输入框,钉住不滚 */
-.dock { flex: none; padding: 0 14px 14px; }
-.dock .queue { margin-bottom: 8px; }
+/* 对齐 .composer:padding 10px 16px、gap 8px */
+.dock { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 16px; }
 
 /* 输入框。不在文档那 21 行里,但没有它就不成其为一个面板 ——
    这份场景稿把它画出来,只为让上面那些组件有个落脚的地方;
@@ -1813,13 +1821,23 @@ body { background: var(--bg-subtle); overflow: auto; }
       </div>
   </div>
   <div class="scene-col">
-    <p class="scene-cap">同一个面板 · 收尾<span>已滚到底 · Queue 空了整块消失,回合状态与下一步引导接上</span></p>
+    <p class="scene-cap">同一个面板 · 收尾<span>同一段对话跑完 · Queue 空了整块消失,回合状态与下一步引导接上</span></p>
       <div class="panel">
         <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
           <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
           <button class="mod-tip-b" type="button" aria-label="新会话" data-tip="新会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
         <div class="flow">
+        <div class="msg-me"><div class="msg-stack">
+          <div class="att"><button class="att-i" type="button" aria-label="预览 首页.png"><span class="ph"><span class="mini"></span></span></button><button class="att-i" type="button" aria-label="预览 设置页.png"><span class="ph"><span class="mini"></span></span></button><button class="att-d" type="button" aria-label="打开 跨端适配检…-v3.md"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">跨端适配检…-v3</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span></button></div>
+          <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
+        </div></div>
+
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</div></details>
+
+        <div class="say">好,先把列表页搭起来,再拿同一张商品卡去做设置页。</div>
+
         <div class="answered">
           <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
           <div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div>
@@ -1827,6 +1845,9 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
+
+        <details class="fold"><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
 
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
