@@ -830,7 +830,7 @@ button.att-d:hover { border-color: var(--border-strong); }
    中文留最后 2–3 字,拉丁留最后一个单词,-v3 这种版本尾巴算作一个词。 */
 .att-d .nm .base { min-width: 0; overflow: hidden; white-space: nowrap; }
 .att-d .nm .ext { flex: none; white-space: nowrap; }
-.att-d .meta { display: block; margin-top: 1px; font-size: var(--t-cap); color: var(--text-faint); }
+.att-d .meta { display: block; margin-top: 1px; font-size: var(--t-cap); color: var(--text-soft); }
 /* 「×」跟图卡同一个位置:右上角。两张卡形状不同,但"删除在哪儿"必须
    是同一个地方 —— 一行里既有方的又有宽的,如果删除键还各在各处,
    人每换一张卡就得重新找。托盘里给右侧留出 28px,长名字不会钻到它下面。 */
@@ -848,10 +848,14 @@ button.att-d:hover { border-color: var(--border-strong); }
 .fold > summary {
   display: flex; align-items: center; gap: 7px;
   padding: 8px 11px; cursor: pointer; list-style: none;
-  font-size: var(--t-mini); color: var(--text-muted);
+  font-size: var(--t-mini); color: var(--text-strong);
+  border-radius: var(--radius); transition: background var(--duration-faster) var(--ease-out);
 }
 .fold > summary::-webkit-details-marker { display: none; }
-.fold > summary:hover { color: var(--text-strong); }
+/* 静止就已经是最深的一档,hover 没法再靠"变深"回应鼠标 —— 改成加一层底色。
+   反过来做(静止最深、hover 变浅)不行:鼠标移上去反而退后,那是"禁用"的语义,
+   而 hover 要说的是"这个能点"。 */
+.fold > summary:hover { background: var(--bg-fill-tertiary); }
 /* 记忆的书签用深绿,不用灰。
    这一行是整条流水里唯一"东西被存下来了"的信号,而它原来跟旁边一堆
    折叠行长得一模一样(同样的灰、同样的字号),扫过去根本注意不到。
@@ -918,7 +922,7 @@ button.att-d:hover { border-color: var(--border-strong); }
 .card > .h {
   display: flex; align-items: center; gap: 7px; padding: 9px 11px;
   border-bottom: 1px solid var(--border-soft); background: var(--bg-panel);
-  font-size: var(--t-mini); color: var(--text-muted);
+  font-size: var(--t-mini); color: var(--text-strong);
 }
 .card > .h b { color: var(--text-strong); font-weight: 600; }
 /* 数字位用 tabular-nums,不用等宽字体。
@@ -1169,7 +1173,7 @@ button.att-d:hover { border-color: var(--border-strong); }
    都成立(cross-size 不是 auto,flex 的 stretch 就不生效)。 */
 .answered { width: fit-content; max-width: 100%;
   padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); line-height: var(--lh-row); }
-.answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-soft); }
+.answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-muted); }
 .answered .k svg { flex: none; width: 13px; height: 13px; }
 .answered .ab { color: var(--text); }
 .answered b { color: var(--text-strong); font-weight: 600; }
@@ -1456,7 +1460,7 @@ button.att-d:hover { border-color: var(--border-strong); }
    JiduMonoPro 里没有「·」的字形,整段套 mono 之后那个分隔点会渲染成
    一个豆腐块 —— 实测就是这样。而这里真正需要的只是"数字不跳",
    font-variant-numeric: tabular-nums 正好只做这件事,标点仍走正文字体。 */
-.fb .fin .cost { margin-inline-start: 5px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
+.fb .fin .cost { margin-inline-start: 5px; font-variant-numeric: tabular-nums; color: var(--text-soft); }
 .fb button {
   display: grid; place-items: center; width: 26px; height: 26px;
   border-radius: var(--radius-sm); color: var(--text-soft);
