@@ -89,13 +89,6 @@ const cardMotion: Variants = {
   exit: { opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.14, ease: EASE_OUT } },
 };
 
-// Enter only. The step has no exit animation on purpose — see the comment at
-// the render site.
-const stepMotion: Variants = {
-  hidden: { opacity: 0, y: 6 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.2, ease: EASE_OUT } },
-};
-
 export function ExperienceSurvey({
   metricsConsent = false,
   onSubmit,
@@ -337,7 +330,6 @@ export function ExperienceSurvey({
     <AnimatePresence>
       {visible ? (
         <motion.section
-          layout
           className={styles.card}
           role="dialog"
           aria-label={t('experienceSurvey.tag')}
@@ -362,21 +354,18 @@ export function ExperienceSurvey({
             style={floor && step !== 'thanks' ? { minHeight: floor } : undefined}
           >
             {head}
-            {/* No AnimatePresence around the step. `mode="wait"` held the
-                outgoing question until its exit finished, so for one beat the
-                card had no question in it at all — it collapsed to the header
-                and sprang back open, which read as a jitter on every answer.
-                Swapping on `key` replaces the content in a single frame, and
-                the card's own layout animation carries the height change. */}
-            <motion.div
+            {/* The step swaps outright — no crossfade, no height tween. Every
+                animated version of this transition read as the card wobbling,
+                because the card is pinned to a corner and any height change is
+                paid for by the top edge moving. Cutting straight to the next
+                question is the one version that does not draw attention to
+                itself. The card's own entrance and exit still animate. */}
+            <div
               key={step}
-              variants={stepMotion}
-              initial="hidden"
-              animate="visible"
               style={{ display: 'flex', flex: 1, flexDirection: 'column', gap: 12, justifyContent: 'center' }}
             >
               {body}
-            </motion.div>
+            </div>
           </div>
         </motion.section>
       ) : null}
