@@ -2748,7 +2748,10 @@ export function ProjectView({
             : null;
         conversationMaterializationRecoveryRef.current = materializationRecovery;
         setPendingEmptyConversationSeed(null);
-        if (!revalidatingCurrentProject) {
+        const accessRevoked =
+          err instanceof ProjectConversationsHttpError
+          && (err.status === 401 || err.status === 403);
+        if (!revalidatingCurrentProject || accessRevoked) {
           setConversations([]);
           setActiveConversationId(null);
         }

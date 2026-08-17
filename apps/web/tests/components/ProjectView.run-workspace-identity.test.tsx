@@ -54,6 +54,7 @@ import {
   listMessages,
   loadTabs,
   persistTabsToDaemonNow,
+  ProjectConversationsHttpError,
 } from '../../src/state/projects';
 import {
   deletePreviewComment,
@@ -271,6 +272,7 @@ vi.mock('../../src/components/Loading', () => ({
 vi.mock('../../src/components/ChatPane', () => ({
   ChatPane: (props: {
     activeConversationId?: string | null;
+    conversations?: Conversation[];
     loading?: boolean;
     messages?: ChatMessage[];
     messagesConversationId?: string | null;
@@ -1300,6 +1302,56 @@ describe('a Home auto-send observes a project billing scope that settles after m
     await waitFor(() => {
       expect(chatPaneSpy.mock.calls.at(-1)?.[0].messages).toEqual([]);
       expect(chatPaneSpy.mock.calls.at(-1)?.[0].sendDisabled).toBe(true);
+    });
+  });
+
+  it('clears established conversation metadata when revalidation is forbidden', async () => {
+    window.sessionStorage.removeItem(`od:auto-send-first:${PROJECT_ID}`);
+    mockedListConversations.mockReset();
+    mockedListMessages.mockReset();
+    mockedListConversations
+      .mockResolvedValueOnce([{
+        ...conversation(PROJECT_ID),
+        title: 'Workspace A secret title',
+      }])
+      .mockRejectedValueOnce(
+        new ProjectConversationsHttpError(403, 'workspace access forbidden'),
+      );
+    mockedListMessages.mockResolvedValue([]);
+    workspaceScopeMocks.ambientContext = CALLER_CONTEXT;
+    workspaceScopeMocks.projectScope = {
+      loading: false,
+      scope: {
+        kind: 'team',
+        projectId: PROJECT_ID,
+        workspaceId: TEAM_WORKSPACE,
+        visibility: 'team',
+        context: CALLER_CONTEXT as WorkspaceCollabContext & { workspaceType: 'team' },
+      },
+    };
+
+    const stableProject = { ...project(), pendingPrompt: '' };
+    const view = renderProjectView({ project: stableProject });
+    await waitFor(() => {
+      expect(chatPaneSpy.mock.calls.at(-1)?.[0].conversations).toEqual([
+        expect.objectContaining({ title: 'Workspace A secret title' }),
+      ]);
+    });
+
+    workspaceScopeMocks.ambientContext = null;
+    workspaceScopeMocks.projectScope = {
+      loading: false,
+      scope: null,
+      failure: 'forbidden',
+    };
+    await act(async () => {
+      view.rerender(projectViewElement({ project: stableProject }));
+    });
+
+    await waitFor(() => expect(mockedListConversations).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      expect(chatPaneSpy.mock.calls.at(-1)?.[0].conversations).toEqual([]);
+      expect(chatPaneSpy.mock.calls.at(-1)?.[0].activeConversationId).toBeNull();
     });
   });
 
