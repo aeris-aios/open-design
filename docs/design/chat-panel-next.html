@@ -858,7 +858,14 @@ button.att-d:hover { border-color: var(--border-strong); }
   font-size: var(--t-mini); color: var(--text-muted);
 }
 .card > .h b { color: var(--text-strong); font-weight: 600; }
-.card > .h .n { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); }
+/* 数字位用 tabular-nums,不用等宽字体。
+   ------------------------------------------------------------
+   这一格里的内容多半是中文夹数字(「已选 2」「4 步」「旧计划 4 步」),
+   而等宽字体只覆盖拉丁和数字 —— 中文会落回正文字体,一格里两套字形
+   宽度,看着就散。真正需要的只是"数字不跳",tabular-nums 正好只做这件事。
+   分数也一律写成 2/4 不写 2 / 4:等宽下每个空格都占满一个字宽,
+   「2 / 5」会被撑成三段,散得像三个独立的数。 */
+.card > .h .n { margin-left: auto; font-variant-numeric: tabular-nums; font-size: var(--t-cap); }
 /* 卡头右上角直接放动作按钮,不再为它单开一行底栏。
    这张卡的正文已经是一份清单了,底下再挂一条只有一个按钮的横条,
    等于给两行东西撑出三行的高度 —— 而右上角本来就空着(原来放的是
@@ -1446,7 +1453,7 @@ button.att-d:hover { border-color: var(--border-strong); }
    意思说三遍,而那枚打叉的线稿在 14px 上只剩一团糊。 */
 .tool.is-fail .wifi { color: var(--red); }
 /* 第几次 / 共几次:等宽数字,数字跳动时这一行不会跟着抖 */
-.tool .cnt { margin-inline-start: 6px; font-family: var(--mono); font-weight: 600; color: var(--text-strong); }
+.tool .cnt { margin-inline-start: 6px; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-strong); }
 /* 展开箭头:跟 Queue 行的动作按钮同一副尺寸 */
 .tool .ch {
   flex: none; display: grid; place-items: center; width: 22px; height: 22px;
@@ -1798,13 +1805,13 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l mod-def"><span>重连中 · 第几次 / 共几次,可展开看详情</span><i></i></div>
             <div class="st-b">
-              <div class="tool"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">2 / 5</span></span><button class="ch" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div class="tool"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">2/5</span></span><button class="ch" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>最后一次 · 5 / 5,下一格就是失败</span><i></i></div>
             <div class="st-b">
-              <div class="tool"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">5 / 5</span></span><button class="ch" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div class="tool"><svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg><span class="nm">正在重新连接<span class="cnt">5/5</span></span><button class="ch" type="button" aria-label="展开重连详情" data-tip="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg></button></div>
             </div>
           </div>
           <div class="st">
@@ -1816,7 +1823,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10a12 12 0 0114 0"/><path d="M8 14a7 7 0 018 0"/><path d="M12 18h.01"/></svg>
-          <span><b>它在流水里,不是全局横幅</b> —— 断线是"这次会话正在发生的一件事",跟"读了哪个文件"同类,理当排在同一条时间线上,所以跟工具调用共用同一副行壳。做成钉在面板上的常驻条,就得在应用外壳上开一个位置,而外壳是所有页面共用的:一个只跟这次会话有关的状态挂到那里,实现要一路传下去,样式和层级还会跟别的常驻条抢地方。代价是滚上去会看不见 —— 可以接受,它本来就是短暂的,而真正要你动手的那一态(次数用尽)会停在流水末尾不动。<b>第几次 / 共几次是这一行的全部价值</b>:只写「正在重新连接…」的话,它挂五秒和挂五分钟长得一模一样,人没法判断该等还是该动手。<code>2 / 5</code> 说的是"安心等",<code>5 / 5</code> 说的是"这是最后一次,下一格就是失败"。<b>重连中不上色</b>:它还没出事,只是在等,颜色留给真正要你动手的那一态。<b>三态共用同一枚 wifi 图标</b>,失败时只把它染红 —— 图标说的是"连接"这件事,它没变;变的是结果,而结果已经由颜色和文案说清楚了,再换一个打叉的 wifi 等于把同一个意思说三遍,何况那枚线稿在 14px 上只剩一团糊。<b>不滚动倒计时</b>:秒数会把注意力钉在这一行上,而重连时人该做的是接着看别的。<b>展开</b> — 点 ⌄ 看具体断在哪(接口 / 超时 / 服务端),排查时要,平时不占地方。<b>用尽后</b>停止自动重连,换成「重新连接」交回给人 —— 无限重试会让人以为还有救,而它可能已经断了十分钟。<b>恢复后整行消失</b>,不留"已恢复":连上是常态,常态不需要播报。这一条讲的是<b>连接通道</b>;被它打断的那个任务停在哪、怎么接着跑,是 20 · 网络错误 —— 两条各说各的那一半,不重复。</span>
+          <span><b>它在流水里,不是全局横幅</b> —— 断线是"这次会话正在发生的一件事",跟"读了哪个文件"同类,理当排在同一条时间线上,所以跟工具调用共用同一副行壳。做成钉在面板上的常驻条,就得在应用外壳上开一个位置,而外壳是所有页面共用的:一个只跟这次会话有关的状态挂到那里,实现要一路传下去,样式和层级还会跟别的常驻条抢地方。代价是滚上去会看不见 —— 可以接受,它本来就是短暂的,而真正要你动手的那一态(次数用尽)会停在流水末尾不动。<b>第几次 / 共几次是这一行的全部价值</b>:只写「正在重新连接…」的话,它挂五秒和挂五分钟长得一模一样,人没法判断该等还是该动手。<code>2/5</code> 说的是"安心等",<code>5/5</code> 说的是"这是最后一次,下一格就是失败"。<b>重连中不上色</b>:它还没出事,只是在等,颜色留给真正要你动手的那一态。<b>三态共用同一枚 wifi 图标</b>,失败时只把它染红 —— 图标说的是"连接"这件事,它没变;变的是结果,而结果已经由颜色和文案说清楚了,再换一个打叉的 wifi 等于把同一个意思说三遍,何况那枚线稿在 14px 上只剩一团糊。<b>不滚动倒计时</b>:秒数会把注意力钉在这一行上,而重连时人该做的是接着看别的。<b>展开</b> — 点 ⌄ 看具体断在哪(接口 / 超时 / 服务端),排查时要,平时不占地方。<b>用尽后</b>停止自动重连,换成「重新连接」交回给人 —— 无限重试会让人以为还有救,而它可能已经断了十分钟。<b>恢复后整行消失</b>,不留"已恢复":连上是常态,常态不需要播报。这一条讲的是<b>连接通道</b>;被它打断的那个任务停在哪、怎么接着跑,是 20 · 网络错误 —— 两条各说各的那一半,不重复。</span>
         </div>
       </article>
 
@@ -2201,7 +2208,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>执行中 · 随进度逐条打勾</span><i></i></div>
             <div class="st-b">
               <div class="card">
-                <div class="h"><b>执行中</b><span class="n">2 / 4</span></div>
+                <div class="h"><b>执行中</b><span class="n">2/4</span></div>
                 <ol class="steps">
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span></li>
@@ -2215,7 +2222,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>步骤多 · 限高约 5 步,其余滚动(卡片高度不能无界)</span><i></i></div>
             <div class="st-b">
               <div class="card">
-                <div class="h"><b>执行中</b><span class="n">2 / 9</span></div>
+                <div class="h"><b>执行中</b><span class="n">2/9</span></div>
                 <ol class="steps">
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>把商品卡抽成共享组件</span></li>
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
