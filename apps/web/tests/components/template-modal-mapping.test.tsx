@@ -135,6 +135,10 @@ afterEach(() => {
 describe('Community template card → full details modal', () => {
   it('opens the full plugin details modal (Use split action + Share + close), not the lightweight preview', async () => {
     render(<CommunityView />);
+
+    // This mapping fixture contains only a deck plugin, while Community now
+    // intentionally opens on Prototype. Select the fixture's facet explicitly.
+    fireEvent.click(await screen.findByRole('button', { name: 'Slides' }));
     await waitFor(() => {
       expect(document.querySelector('.community-template-card')).not.toBeNull();
     });
