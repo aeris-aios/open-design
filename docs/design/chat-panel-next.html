@@ -1441,6 +1441,32 @@ button.att-i:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
+            <div class="st-l"><span>多选勾上「自己填」· 是在已勾项之外再加一条</span><i></i></div>
+            <div class="st-b">
+              <div class="card">
+                <div class="h"><b>这几页都要跟着改吗</b><span class="n">已选 3</span></div>
+                <div class="q">除了设置页,还有哪几页要一起换成新的商品卡?</div>
+                <div class="opts mod-stack mod-multi">
+                  <button class="opt is-on" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>商品详情页</span></button>
+                  <button class="opt is-on" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>搜索结果页 —— 里面那张卡是列表页的窄版</span></button>
+                  <button class="opt" type="button"><span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>结算页的商品缩略图</span></button>
+                  <div class="opt mod-own is-on is-open">
+                    <span class="box"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
+                    <span class="own">
+                      <span class="own-l">自己填</span>
+                      <textarea class="own-ta" rows="2">还有会员中心里那两张小卡,也是同一张商品卡缩小的</textarea>
+                    </span>
+                  </div>
+                </div>
+                <div class="foot">
+                  <button class="btn mod-ghost mod-sm" type="button">跳过 · 你来判断</button>
+                  <span class="sp"></span>
+                  <button class="btn mod-primary mod-sm" type="button">确认</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="st">
             <div class="st-l"><span>视觉方向 · 看图选择(风格类问题不能用文字选项)</span><i></i></div>
             <div class="st-b">
               <div class="card">
@@ -1479,7 +1505,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」是选项之一。选中它会<b>原地长出输入框</b>,并且底部多出一个发送键 —— 单选本是"点了即发送",但这一项点下去还没有内容可发,不给发送键就走不下去。输入框放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。<b>视觉方向另走看图选择</b>:风格用「Modern minimal」这类抽象词,人只能生成完才知道自己选了什么。按产物类型筛 3–5 个方向、各给预览图,四张用同一份示例内容和同一画幅 —— 比的是风格不是题材;其中一个是 Agent 推荐项,再给一条「帮我决定」的出口。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
+          <span><b>单选</b>(圆钮)— 点选项即发送,底部不出现「确认」。<b>多选</b>(方钮)— 勾几个后点「确认」统一提交。两种模式靠<b>控件形状</b>区分,不靠文字说明:圆和方是跨平台通用约定,人不必先读说明就知道点下去会发生什么。<b>自定义</b> — 「自己填」在两种模式里都是选项之一,但<b>含义不同</b>:单选选它 = 放弃其它选项、只交你写的,所以底部从"跳过"变出"发送"(单选本是点了即发送,而这一项点下去还没有内容可发,不给发送键就走不下去);多选勾它 = <b>在已勾项之外再加一条</b>,「确认」本来就在、不用新增,但计数要 +1。两种模式下都是原地长出输入框,放在选项内部而非卡片外,免得被当成另一个独立输入区。<b>跳过</b> — 交由 Agent 判断。<b>视觉方向另走看图选择</b>:风格用「Modern minimal」这类抽象词,人只能生成完才知道自己选了什么。按产物类型筛 3–5 个方向、各给预览图,四张用同一份示例内容和同一画幅 —— 比的是风格不是题材;其中一个是 Agent 推荐项,再给一条「帮我决定」的出口。选项<b>纵向一行一个</b>:文案长度不可控,横排时长选项会折行、几个选项高矮不齐,而这是要人做决定的地方,最不该费眼。</span>
         </div>
       </article>
 
