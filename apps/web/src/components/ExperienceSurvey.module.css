@@ -113,9 +113,9 @@
 
 .question {
   margin: 0;
-  font-size: 14.5px;
+  font-size: var(--font-size-14, 14px);
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.45;
   letter-spacing: -0.005em;
   color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
   text-wrap: balance;
@@ -149,7 +149,7 @@
   background: transparent;
   color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-13, 13px);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition:
@@ -160,7 +160,7 @@
 
 .rail.eleven .cell {
   height: 30px;
-  font-size: 12px;
+  font-size: var(--font-size-12, 12px);
 }
 
 .cell:hover {
@@ -192,26 +192,33 @@
   justify-content: space-between;
   gap: 12px;
   margin-top: -6px;
-  font-size: 10.5px;
+  /* Below the app's 12px scale floor, which is deliberate: these are the
+     scale's end labels, not content, and at 12 they compete with the question. */
+  font-size: 11px;
   letter-spacing: 0.01em;
   color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
 }
 
+/* Six short labels in a 380px card. One per row left a lake of dead space on
+   both sides of every label and pushed the card tall enough to crowd the
+   composer; two columns use the width that was already there and halve the
+   height. */
 .options {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .option {
-  padding: 9px 11px;
-  text-align: left;
+  padding: 9px 10px;
+  text-align: center;
   border: 0;
   border-radius: var(--radius-md, 9px);
   background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
   color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-size-12, 12px);
+  line-height: 1.35;
   cursor: pointer;
   transition:
     background 160ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -250,7 +257,7 @@
   background: var(--vibrancy-fill-tertiary, rgba(73, 73, 73, 0.08));
   color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-size-12, 12px);
   line-height: 1.55;
   transition:
     background 160ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -286,7 +293,7 @@
   background: transparent;
   color: var(--vibrancy-label-tertiary, rgba(73, 73, 73, 0.4));
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-12, 12px);
   padding: 5px 8px;
   border-radius: var(--radius-sm, 6px);
   cursor: pointer;
@@ -308,7 +315,7 @@
 /* Sizing only — colour, hover and focus come from the shared Button primitive
    so this stays in step with every other primary action in the app. */
 .submit {
-  font-size: 12px;
+  font-size: var(--font-size-12, 12px);
   padding: 6px 14px;
   border-radius: 999px;
 }
@@ -341,14 +348,14 @@
 
 .thanksTitle {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--font-size-13, 13px);
   font-weight: 650;
   color: var(--vibrancy-label, rgba(32, 32, 32, 0.92));
 }
 
 .thanksBody {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-12, 12px);
   line-height: 1.5;
   color: var(--vibrancy-label-secondary, rgba(73, 73, 73, 0.62));
 }
