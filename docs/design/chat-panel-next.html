@@ -1097,7 +1097,14 @@ button.att-d:hover { border-color: var(--border-strong); }
 .answered .ab { color: var(--text); }
 .answered b { color: var(--text-strong); font-weight: 600; }
 .answered .al { margin: 0; padding: 0; list-style: none; }
-.answered .al li { color: var(--text-strong); font-weight: 600; }
+.answered .al li { color: var(--text-strong); }
+/* 每条前面先写问题的重点词,后面才是答案。
+   这条陈述会被后面的内容顶上去,过一会儿回头看时问题早滚没了 ——
+   没有重点词的话,「商品详情页」四个字孤零零挂在那儿,不知道它在回答什么。
+   加上之后每一行都自足:扫一眼就知道"这是在说页面"。
+   词用常规字重的灰,答案才是深色 600 —— 重点词是坐标不是内容,
+   两个都加粗就分不出哪个是你的回答。 */
+.answered .ak { margin-inline-end: 6px; color: var(--text-soft); font-weight: 400; }
 .answered .al li + li { margin-top: 2px; }
 /* 缩略图另起一行,放在文字下面,不跟文字并排。
    并排时它跟一行字的高度对不上 —— 字有基线,方块没有,怎么对都差一点,
@@ -2130,7 +2137,7 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>已回答 · 点「确认」后收成陈述</span><i></i></div>
             <div class="st-b">
-              <div class="answered"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div><div class="ab">设置页<b>沿用列表页的商品卡组件</b></div></div>
+              <div class="answered"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div><div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div></div>
             </div>
           </div>
           <div class="st">
@@ -2139,9 +2146,9 @@ button.att-d:hover { border-color: var(--border-strong); }
               <div class="answered">
                 <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
                 <ul class="al">
-                  <li>商品详情页</li>
-                  <li>搜索结果页</li>
-                  <li>会员中心里那两张小卡,也是同一张商品卡缩小的</li>
+                  <li><span class="ak">页面</span><b>商品详情页</b></li>
+                  <li><span class="ak">页面</span><b>搜索结果页</b></li>
+                  <li><span class="ak">页面</span><b>会员中心里那两张小卡,也是同一张商品卡缩小的</b></li>
                 </ul>
               </div>
             </div>
@@ -2151,7 +2158,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-b">
               <div class="answered">
                 <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
-                <div class="ab">视觉方向<b>编辑杂志</b></div>
+                <div class="ab"><span class="ak">视觉方向</span><b>编辑杂志</b></div>
                 <span class="av"><span class="mini"></span></span>
               </div>
             </div>
