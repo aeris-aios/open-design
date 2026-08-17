@@ -9,7 +9,9 @@ import {
   type StableSectionHashes,
 } from '../prompts/stable-sections.js';
 import {
+  assertOdNextBundleTextContributorCoverage,
   assertOdNextLegacyTextContributorCoverage,
+  type OdNextBundleTextContributorId,
   type OdNextExactInputStage,
   type OdNextLegacyTextContributorId,
 } from './od-next-exact-input.js';
@@ -178,12 +180,28 @@ export function composeChatAgentTextPayload({
       instructionPrompt: '',
     };
   }
-  assertOdNextLegacyTextContributorCoverage(Object.keys(contributors), strategyInputStage);
-
   if (strategyInputStage === 'request') {
     if (!odNextRequestBundle) {
       throw new TypeError('OD Next request stage requires canonical Bundle inputs.');
     }
+    const bundleContributors: Record<OdNextBundleTextContributorId, string> = {
+      form_override: formOverride,
+      daemon_system_prompt: daemonSystemPrompt,
+      runtime_tool_prompt: runtimeToolPrompt,
+      client_system_prompt: clientSystemPrompt,
+      echo_guard: echoGuard,
+      request_text: requestOrStageText,
+      title_generation_directive: titleGenerationDirective,
+      task_config_pending_fact: odNextRequestBundle.taskConfigPendingFact,
+      stable_context_prompt: odNextRequestBundle.stableContext,
+      prior_transcript: odNextRequestBundle.priorTranscript,
+      research_command_contract: researchCommandContract,
+      run_context_prompt: runContextPrompt,
+      connected_external_mcp_reference: connectedExternalMcpReference,
+      browser_unavailable_guard: browserUnavailableGuard,
+      request_input_pending_fact: odNextRequestBundle.requestInputPendingFact,
+    };
+    assertOdNextBundleTextContributorCoverage(Object.keys(bundleContributors));
     const join = (parts: readonly string[]): string => parts
       .map((part) => (typeof part === 'string' ? part.trim() : ''))
       .filter(Boolean)
@@ -219,6 +237,8 @@ export function composeChatAgentTextPayload({
       instructionPrompt: systemPrompt,
     };
   }
+
+  assertOdNextLegacyTextContributorCoverage(Object.keys(contributors), strategyInputStage);
 
   const clientInstructionPrompt = [
     researchCommandContract,

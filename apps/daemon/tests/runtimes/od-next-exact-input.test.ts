@@ -7,9 +7,12 @@ import {
   OD_NEXT_EXACT_INPUT_MAP_V1,
   OD_NEXT_EXACT_INPUT_MAP_VERSION,
   OD_NEXT_EXACT_TEXT_DELIVERY_PATHS_V1,
+  OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
   OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1,
   OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1,
+  type OdNextExactInputEntry,
   type OdNextSemanticRequestFactEntry,
+  assertOdNextBundleTextContributorCoverage,
   assertOdNextExactInputMapV1,
   assertOdNextLegacyTextContributorCoverage,
   assertOdNextSemanticRequestFactProducerCoverage,
@@ -23,14 +26,24 @@ describe('OD Next exact Agent input map v1', () => {
     expect(() => assertOdNextLegacyTextContributorCoverage(
       OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1,
     )).not.toThrow();
+    expect(() => assertOdNextBundleTextContributorCoverage(
+      OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
+    )).not.toThrow();
 
-    const entriesById = new Map(OD_NEXT_EXACT_INPUT_MAP_V1.map((entry) => [entry.id, entry]));
+    const entriesById = new Map<string, OdNextExactInputEntry>(
+      OD_NEXT_EXACT_INPUT_MAP_V1.map((entry) => [entry.id, entry]),
+    );
     expect(entriesById.get('request_text')?.classification).toBe('initial_bundle');
     expect(entriesById.get('contract_repair_turn')).toMatchObject({
       classification: 'stage_turn',
       stage: 'contract_repair',
     });
-    expect(entriesById.get('cwd_reference')?.classification).toBe('transport_reference');
+    expect(entriesById.get('cwd_reference')?.classification).toBe('excluded');
+    expect(entriesById.get('request_text')?.source).toContain('resolveOdNextRequestUserPrompt');
+    expect(entriesById.get('stable_context_prompt')?.textTarget).toBe('context');
+    expect(entriesById.get('prior_transcript')?.textTarget).toBe('context');
+    expect(entriesById.get('task_config_pending_fact')?.textTarget).toBe('task_config');
+    expect(entriesById.get('request_input_pending_fact')?.textTarget).toBe('context');
     expect(entriesById.get('image_binary_input')?.classification).toBe('out_of_band');
     expect(entriesById.get('mcp_server_registrations')?.classification).toBe('out_of_band');
     expect(entriesById.get('mcp_oauth_credentials')?.classification).toBe('out_of_band');
@@ -40,7 +53,7 @@ describe('OD Next exact Agent input map v1', () => {
     const semanticById = new Map<string, OdNextSemanticRequestFactEntry>(
       OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1.map((entry) => [entry.id, entry]),
     );
-    expect(semanticById.get('web_scoped_conversation_transcript')?.textTarget).toBe('context');
+    expect(semanticById.get('prior_transcript')?.source).toContain('buildDaemonPriorTranscript');
     expect(semanticById.get('current_user_turn')?.textTarget).toBe('user_prompt');
     expect(semanticById.get('user_selected_skills')?.owner).toContain('Task 03');
     expect(semanticById.get('strategy_task_type')?.owner).toContain('Task 04');
@@ -64,6 +77,19 @@ describe('OD Next exact Agent input map v1', () => {
       ['production_turn'],
       'production',
     )).not.toThrow();
+    expect(() => assertOdNextBundleTextContributorCoverage([
+      ...OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
+      'invented_bundle_suffix',
+    ])).toThrow(/not registered: invented_bundle_suffix/);
+    expect(() => assertOdNextBundleTextContributorCoverage([
+      ...OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
+      'prior_transcript',
+    ])).toThrow(/duplicated: prior_transcript/);
+    expect(() => assertOdNextBundleTextContributorCoverage(
+      OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1.filter(
+        (id) => id !== 'request_input_pending_fact',
+      ),
+    )).toThrow(/missing: request_input_pending_fact/);
   });
 
   it('keeps wrapper syntax outside canonical text across every production delivery family', () => {
@@ -83,9 +109,12 @@ describe('OD Next exact Agent input map v1', () => {
 
   it('fails when a production semantic producer omits or invents a fact', () => {
     const requestFacts = {
-      web_scoped_conversation_transcript: 'history',
+      prior_transcript: 'history',
       current_user_turn: 'latest',
       headless_message_fallback: null,
+      stable_context_prompt: 'stable context',
+      task_config_pending_fact: '{"state":"pending"}',
+      request_input_pending_fact: '{"state":"pending"}',
       request_execution_configuration: {},
       run_context_selection: null,
       project_attachment_selection: [],
@@ -118,6 +147,11 @@ describe('chat Agent exact-text production choke point', () => {
     expect(resolveOdNextRequestUserPrompt({
       message: 'must not be used',
       currentPrompt: '',
+      hasCurrentPrompt: true,
+    })).toBe('');
+    expect(resolveOdNextRequestUserPrompt({
+      message: 'must not be used',
+      currentPrompt: null,
       hasCurrentPrompt: true,
     })).toBe('');
     expect(resolveOdNextRequestUserPrompt({

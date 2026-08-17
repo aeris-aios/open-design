@@ -10058,6 +10058,11 @@ export async function startServer({
     /** @type {Partial<ChatRequest> & { imagePaths?: string[] }} */
     chatBody = chatBody || {};
     const strategyTaskAtStart = getStrategyTaskExecutionByRunId(db, run.id);
+    const isOdNextRequestStage = strategyTaskAtStart?.inputStage === 'request';
+    const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
+      chatBody,
+      'currentPrompt',
+    );
     const strategyProtocol = strategyTaskAtStart
       ? new OdNextMachineProtocolStream()
       : null;
@@ -10788,7 +10793,13 @@ export async function startServer({
     });
     const researchCommandContract = resolveResearchCommandContract(
       research,
-      message,
+      isOdNextRequestStage
+        ? resolveOdNextRequestUserPrompt({
+            message,
+            currentPrompt,
+            hasCurrentPrompt: hasExplicitCurrentPrompt,
+          })
+        : message,
     );
     // Resume-capable adapters continue their own upstream session so they
     // keep working memory across turns. Decide once per run; reuse for the
@@ -10964,11 +10975,6 @@ export async function startServer({
       invalidationReason: agentResumeCtx.invalidationReason,
     });
     publishNativeSessionRecoveryMetadata();
-    const isOdNextRequestStage = strategyTaskAtStart?.inputStage === 'request';
-    const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
-      chatBody,
-      'currentPrompt',
-    );
     const userRequestPrompt = isOdNextRequestStage
       ? resolveOdNextRequestUserPrompt({
           message,
@@ -11079,6 +11085,33 @@ export async function startServer({
       safeImages,
       amrStagedImages,
     );
+    const taskConfigPendingFact = isOdNextRequestStage
+      ? JSON.stringify({
+          schema: 'open-design.od-next-task-config-pending/v1',
+          state: 'pending_task_04_snapshot',
+        })
+      : '';
+    const requestInputPendingFact = isOdNextRequestStage
+      ? JSON.stringify({
+          schema: 'open-design.od-next-request-input-pending/v1',
+          userSkillSelection: {
+            state: 'pending_task_03_snapshot',
+            count: [skillId, ...(Array.isArray(skillIds) ? skillIds : [])]
+              .filter((value) => typeof value === 'string' && value.trim()).length,
+          },
+          attachmentSelection: {
+            state: 'pending_task_04_snapshot',
+            projectCount: safeAttachments.length,
+            commentCount: safeCommentAttachments.length,
+            imageCount: promptImagePaths.length,
+          },
+          workspaceSelection: {
+            state: 'pending_task_04_reference',
+            hasProjectWorkspace: Boolean(cwd),
+            linkedDirectoryCount: linkedDirs.length,
+          },
+        })
+      : '';
     const {
       composedPrompt: composed,
       clientInstructionPrompt,
@@ -11105,29 +11138,8 @@ export async function startServer({
               stableContext: odNextStableContextPrompt ?? '',
               priorTranscript:
                 typeof priorTranscript === 'string' ? priorTranscript : '',
-              taskConfigPendingFact: JSON.stringify({
-                schema: 'open-design.od-next-task-config-pending/v1',
-                state: 'pending_task_04_snapshot',
-              }),
-              requestInputPendingFact: JSON.stringify({
-                schema: 'open-design.od-next-request-input-pending/v1',
-                userSkillSelection: {
-                  state: 'pending_task_03_snapshot',
-                  count: [skillId, ...(Array.isArray(skillIds) ? skillIds : [])]
-                    .filter((value) => typeof value === 'string' && value.trim()).length,
-                },
-                attachmentSelection: {
-                  state: 'pending_task_04_snapshot',
-                  projectCount: safeAttachments.length,
-                  commentCount: safeCommentAttachments.length,
-                  imageCount: promptImagePaths.length,
-                },
-                workspaceSelection: {
-                  state: 'pending_task_04_reference',
-                  hasProjectWorkspace: Boolean(cwd),
-                  linkedDirectoryCount: linkedDirs.length,
-                },
-              }),
+              taskConfigPendingFact,
+              requestInputPendingFact,
             },
           }
         : {}),
@@ -11135,9 +11147,12 @@ export async function startServer({
     });
     if (strategyTaskAtStart?.inputStage === 'request') {
       assertOdNextSemanticRequestFactProducerCoverage('request', {
-        web_scoped_conversation_transcript: message,
+        prior_transcript: typeof priorTranscript === 'string' ? priorTranscript : '',
         current_user_turn: currentPrompt,
-        headless_message_fallback: currentPrompt == null ? message : null,
+        headless_message_fallback: hasExplicitCurrentPrompt ? null : message,
+        stable_context_prompt: odNextStableContextPrompt ?? '',
+        task_config_pending_fact: taskConfigPendingFact,
+        request_input_pending_fact: requestInputPendingFact,
         request_execution_configuration: {
           sessionMode: runSessionMode,
           locale,

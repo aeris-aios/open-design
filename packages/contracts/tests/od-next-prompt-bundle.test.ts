@@ -114,6 +114,12 @@ describe('OD Next canonical request Turn v1', () => {
       payload: '',
     })).toThrow(/existing continuation stages/);
     expect(() => serializeOdNextRequestTurnV1({
+      taskExecutionId: 'task',
+      stage: 'production',
+      taskRunIndex: 0,
+      payload: '',
+    })).toThrow(/positive safe integer/);
+    expect(() => serializeOdNextRequestTurnV1({
       taskExecutionId: '',
       stage: 'production',
       taskRunIndex: 1,
@@ -127,7 +133,10 @@ describe('OD Next canonical request Turn v1', () => {
     });
     expect(() => parseOdNextRequestTurnV1(
       serialized.replace('task_run_index="1"', 'task_run_index="01"'),
-    )).toThrow(/canonical non-negative integer/);
+    )).toThrow(/canonical positive integer/);
+    expect(() => parseOdNextRequestTurnV1(
+      serialized.replace('task_run_index="1"', 'task_run_index="0"'),
+    )).toThrow(/canonical positive integer/);
     expect(() => parseOdNextRequestTurnV1(serialized + '\n<judge/>')).toThrow(/outside its root/);
   });
 });

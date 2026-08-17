@@ -175,8 +175,8 @@ export function serializeOdNextRequestTurnV1(
   if (!TURN_STAGES.has(input.stage)) {
     throw new TypeError('OD Next request Turn supports only existing continuation stages.');
   }
-  if (!Number.isSafeInteger(input.taskRunIndex) || input.taskRunIndex < 0) {
-    throw new TypeError('taskRunIndex must be a non-negative safe integer.');
+  if (!Number.isSafeInteger(input.taskRunIndex) || input.taskRunIndex <= 0) {
+    throw new TypeError('taskRunIndex must be a positive safe integer.');
   }
   return [
     '<open_design_request_turn schema="' + OD_NEXT_REQUEST_TURN_SCHEMA_V1
@@ -199,8 +199,8 @@ export function parseOdNextRequestTurnV1(source: string): OdNextRequestTurnV1 {
   if (!TURN_STAGES.has(stage as OdNextRequestTurnStageV1)) {
     throw new TypeError('OD Next request Turn supports only existing continuation stages.');
   }
-  if (!/^(?:0|[1-9][0-9]*)$/.test(taskRunIndexText)) {
-    throw new TypeError('taskRunIndex must use canonical non-negative integer syntax.');
+  if (!/^[1-9][0-9]*$/.test(taskRunIndexText)) {
+    throw new TypeError('taskRunIndex must use canonical positive integer syntax.');
   }
   cursor.consume('  <payload>\n    ');
   const payload = cursor.cdata('payload');

@@ -2359,7 +2359,7 @@ describe('streamViaDaemon', () => {
     ]);
   });
 
-  it('sends canonical research query metadata to daemon runs', async () => {
+  it('sends multi-turn research with explicit current and prior transcript framing', async () => {
     const handlers = createDaemonHandlers();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -2372,17 +2372,28 @@ describe('streamViaDaemon', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await streamViaDaemon({
-      agentId: 'mock',
-      history: [{ id: '1', role: 'user', content: 'Search for: EV market' }],
+      agentId: 'codex',
+      history: [
+        { id: '1', role: 'user', content: 'same query' },
+        { id: '2', role: 'assistant', content: 'prior answer same query', agentId: 'codex' },
+        { id: '3', role: 'user', content: 'same query' },
+      ],
       systemPrompt: '',
       signal: new AbortController().signal,
       handlers,
-      research: { enabled: true, query: 'EV market' },
+      research: { enabled: true },
     });
 
     const [, createRunInit] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
     const body = JSON.parse(String(createRunInit.body));
-    expect(body.research).toEqual({ enabled: true, query: 'EV market' });
+    expect(body.message).toBe(
+      '## user\nsame query\n\n## assistant\nprior answer same query\n\n## user\nsame query',
+    );
+    expect(body.currentPrompt).toBe('same query');
+    expect(body.priorTranscript).toBe(
+      '## user\nsame query\n\n## assistant\nprior answer same query',
+    );
+    expect(body.research).toEqual({ enabled: true });
   });
 
   it('preserves detail on agent status events', async () => {

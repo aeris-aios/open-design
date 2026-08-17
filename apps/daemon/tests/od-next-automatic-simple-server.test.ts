@@ -14,6 +14,7 @@ import type {
 import {
   normalizeAgentObservationV1,
   OD_NEXT_PROMPT_STAGE_CONTRACT_V2,
+  parseOdNextPromptBundleV1,
 } from '@open-design/contracts';
 
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
@@ -144,7 +145,21 @@ describe('OD Next automatic production through the real server', () => {
     started = fixture.started;
     binDir = fixture.binDir;
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
-    const body = publicRunRequest(fixture, 'Run the ordinary public fixture.', 'inert-request');
+    const ordinaryFullTranscript = [
+      '## user',
+      'ORDINARY_PRIOR_MARKER',
+      '',
+      '## assistant',
+      'prior answer',
+      '',
+      '## user',
+      'Run the ordinary public fixture.',
+    ].join('\n');
+    const body = {
+      ...publicRunRequest(fixture, ordinaryFullTranscript, 'inert-request'),
+      currentPrompt: 'Run the ordinary public fixture.',
+      research: { enabled: true },
+    };
     const created = await postRun(started!.url, body);
     expect(created.strategyTask).toBeUndefined();
     expect(created.pluginId).toBe('example-web-prototype');
@@ -160,6 +175,13 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations).toHaveLength(1);
     expect(invocations[0]?.stdin).not.toContain('OD Next Strategy V2');
     expect(invocations[0]?.stdin).not.toContain('open-design.strategy-state/v2');
+    const researchStart = invocations[0]!.stdin.indexOf('## Research command contract');
+    const researchEnd = invocations[0]!.stdin.indexOf('# User request', researchStart);
+    expect(researchStart).toBeGreaterThanOrEqual(0);
+    expect(researchEnd).toBeGreaterThan(researchStart);
+    const researchContract = invocations[0]!.stdin.slice(researchStart, researchEnd);
+    expect(researchContract).toContain('ORDINARY_PRIOR_MARKER');
+    expect(researchContract).toContain('Run the ordinary public fixture.');
   });
 
   it('keeps active retry/task pinned while rollback sends a new public request through the ordinary path', async () => {
@@ -504,6 +526,46 @@ describe('OD Next automatic production through the real server', () => {
       latestRunId: fixture.initialRunId,
       terminalRunId: fixture.initialRunId,
     });
+  });
+
+  it('uses the canonical Web current turn as the implicit research query', async () => {
+    const fixture = await createFixture('direct');
+    const repeatedQuery = 'REPEATED_CURRENT_QUERY_TOKEN';
+    const priorTranscript = [
+      '## user',
+      repeatedQuery,
+      '',
+      '## assistant',
+      'PRIOR_ASSISTANT_ONLY_MARKER',
+    ].join('\n');
+    const fullTranscript = `${priorTranscript}\n\n## user\n${repeatedQuery}`;
+    const body = {
+      ...createRunRequest(fixture, fullTranscript),
+      currentPrompt: repeatedQuery,
+      priorTranscript,
+      research: { enabled: true },
+    };
+
+    uuidControl.forced.push(fixture.initialRunId);
+    await postRun(started!.url, body);
+    await waitForTask(fixture.taskExecutionId, 'completed');
+
+    const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
+    expect(invocations).toHaveLength(1);
+    const bundle = parseOdNextPromptBundleV1(invocations[0]!.stdin);
+    expect(bundle.userPrompt).toBe(repeatedQuery);
+    expect(bundle.context).toContain(priorTranscript);
+    const researchStart = bundle.context.indexOf('## Research command contract');
+    expect(researchStart).toBeGreaterThanOrEqual(0);
+    const researchEnd = bundle.context.indexOf('\n\n---\n\n', researchStart);
+    const researchContract = bundle.context.slice(
+      researchStart,
+      researchEnd >= 0 ? researchEnd : undefined,
+    );
+    expect(researchContract).toContain(`Canonical query for this run:\n\n\`\`\`text\n${repeatedQuery}\n\`\`\``);
+    expect(researchContract.match(new RegExp(repeatedQuery, 'g'))).toHaveLength(1);
+    expect(researchContract).not.toContain('PRIOR_ASSISTANT_ONLY_MARKER');
+    expect(researchContract).not.toContain('## assistant');
   });
 
   it('blocks the durable task before an early agent startup failure publishes its end event', async () => {
