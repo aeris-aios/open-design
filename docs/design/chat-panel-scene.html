@@ -1451,9 +1451,13 @@ button.att-d:hover { border-color: var(--border-strong); }
 .fb .sp { flex: 1; }
 .fb .fin {
   display: inline-flex; align-items: center; gap: 5px;
-  margin-inline-end: 4px; font-size: var(--t-cap); color: var(--text-muted);
+  margin-inline-end: 4px; font-size: var(--t-cap); color: var(--brand-text);
 }
-/* 完成用绿点 —— 绿在这套系统里就是"通过了"。停止用中性灰:
+/* 停止不跟着变绿:绿是"跑通了",而停止只是没跑完 —— 中性灰,红留给真的错误。
+   这也正是这行只有一个词该染色的原因:颜色只标要注意的那一个。 */
+.fb .fin.mod-stop { color: var(--text-muted); }
+/* 完成整句用绿(点 + 字) —— 绿在这套系统里就是"通过了",和 .mk.is-ok 同一个
+   --brand-text,一屏里"绿=成"只此一解。停止用中性灰:
    它不是出事,只是没跑完,红要留给真的错误。
    ------------------------------------------------------------
    停止时状态词【带一个限定语】,分两种写法:
