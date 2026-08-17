@@ -207,7 +207,7 @@ describe('deck bridge - scroll container fallback', () => {
     expect(lastSlideState(parentPostMessage)).toMatchObject({ active: 2, count: 3 });
   });
 
-  it('drives a nested vertical slide scroller without moving the outer document', async () => {
+  it('uses vertical slide geometry when a nested scroller also has horizontal overflow', async () => {
     const bodyHtml = `
       <style>
         html, body { overflow: hidden; }
@@ -243,7 +243,10 @@ describe('deck bridge - scroll container fallback', () => {
     Object.defineProperty(container, 'clientHeight', { configurable: true, value: 800 });
     Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 2400 });
     Object.defineProperty(container, 'clientWidth', { configurable: true, value: 1200 });
-    Object.defineProperty(container, 'scrollWidth', { configurable: true, value: 1200 });
+    // A classic scrollbar or slightly over-wide child can make overflow-x
+    // compute to auto with a small real overflow. Slide geometry, not the
+    // first overflowing axis, must still identify this as a vertical deck.
+    Object.defineProperty(container, 'scrollWidth', { configurable: true, value: 1210 });
     let containerScrollTop = 0;
     Object.defineProperty(container, 'scrollTop', {
       configurable: true,

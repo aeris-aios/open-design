@@ -258,6 +258,21 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.designHeight).toBe(1200);
   });
 
+  it('reads the design size from the shared slide-frame marker', () => {
+    const html = `<!doctype html><html><head><style>
+      .slide-frame { width: 1280px; height: 720px; }
+    </style></head><body><main class="deck">
+      <section class="slide-frame" data-screen-label="01 Cover">A</section>
+      <section class="slide-frame" data-screen-label="02 Detail">B</section>
+    </main></body></html>`;
+
+    const parsed = parseDeckThumbnails(html);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.designWidth).toBe(1280);
+    expect(parsed.designHeight).toBe(720);
+  });
+
   it('falls back when the deck depends on an external layout stylesheet', () => {
     const html = frameworkDeck(1).replace(
       '</head>',

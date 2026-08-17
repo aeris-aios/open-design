@@ -3057,8 +3057,27 @@ function injectDeckBridge(
     }
     return value;
   }
+  function deckAxisOrder(list){
+    var minX = Infinity;
+    var maxX = -Infinity;
+    var minY = Infinity;
+    var maxY = -Infinity;
+    for (var i=0; list && i<list.length; i++) {
+      try {
+        var rect = list[i].getBoundingClientRect();
+        var x = Number(rect.left);
+        var y = Number(rect.top);
+        if (Number.isFinite(x)) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); }
+        if (Number.isFinite(y)) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+      } catch (_) {}
+    }
+    var xSpan = Number.isFinite(minX) && Number.isFinite(maxX) ? maxX - minX : 0;
+    var ySpan = Number.isFinite(minY) && Number.isFinite(maxY) ? maxY - minY : 0;
+    if (ySpan > 1 && ySpan > xSpan) return ['y', 'x'];
+    return ['x', 'y'];
+  }
   function scrollDeckTarget(list){
-    var axes = ['x', 'y'];
+    var axes = deckAxisOrder(list);
     var nested = nestedScrollTargets(list);
     for (var n=0; n<nested.length; n++) {
       for (var a=0; a<axes.length; a++) {
