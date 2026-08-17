@@ -10313,22 +10313,37 @@ export async function startServer({
     let existingProjectFiles = [];
     let existingProjectFolders = [];
     if (typeof projectId === 'string' && projectId) {
+      let chatMeta = null;
       try {
         const chatProject = getProject(db, projectId);
-        const chatMeta = chatProject?.metadata;
+        chatMeta = chatProject?.metadata ?? null;
         // ensureProject/resolveProjectDir now resolve external baseDir folders
         // internally (and assertSandboxProjectRootAvailable rejects imported
         // folders with no managed copy in sandbox mode), so we pass chatMeta
         // through instead of branching on baseDir here.
         assertSandboxProjectRootAvailable(chatMeta);
         cwd = await ensureProject(PROJECTS_DIR, projectId, chatMeta);
-        existingProjectFiles = await listFiles(PROJECTS_DIR, projectId, { metadata: chatMeta });
-        existingProjectFolders = await listProjectFolders(PROJECTS_DIR, projectId, { metadata: chatMeta });
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
           return design.runs.fail(run, 'BAD_REQUEST', err.message);
         }
         cwd = null;
+      }
+      if (cwd) {
+        try {
+          existingProjectFiles = await listFiles(PROJECTS_DIR, projectId, { metadata: chatMeta });
+        } catch {
+          // Inventory is advisory prompt context. A concurrent project-tree
+          // mutation must not erase the authoritative cwd/session identity.
+          existingProjectFiles = [];
+        }
+        try {
+          existingProjectFolders = await listProjectFolders(PROJECTS_DIR, projectId, { metadata: chatMeta });
+        } catch {
+          // Keep cwd stable even when a directory disappears mid-enumeration.
+          existingProjectFolders = [];
+        }
+      } else {
         existingProjectFiles = [];
         existingProjectFolders = [];
       }
