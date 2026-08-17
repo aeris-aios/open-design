@@ -923,7 +923,13 @@ button.att-i:hover { border-color: var(--border-strong); }
 /* ---- 产物卡片 ---- */
 .arts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .art { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
-.art .thumb { display: block; height: 78px; background: var(--bg-subtle); }
+/* 图占主导,用比例声明而不是写死高度。
+   ------------------------------------------------------------
+   原来 height:78px 配流动宽度,撞出来约 4:1 的长条 —— 既不是任何
+   页面的形状,又和下面的文件名+按钮块几乎等高。而这张卡上唯一要
+   判断的就是产物长什么样,文件名和按钮只是附属,不该平分版面。
+   16:10 是网页/应用界面的常见比例,卡宽以后再变高度会自己跟上。 */
+.art .thumb { display: block; aspect-ratio: 16 / 10; height: auto; background: var(--bg-subtle); }
 .art .b { padding: 7px 9px; }
 .art .nm { font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .art .kd { margin-top: 1px; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
