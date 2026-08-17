@@ -702,6 +702,12 @@ describe('OD Next automatic production through the real server', () => {
       status: 'failed',
       errorCode: 'OD_NEXT_SKILL_SNAPSHOT_INVALID',
     });
+    await expect(readFile(path.join(
+      process.env.OD_DATA_DIR!,
+      'od-next-task-inputs',
+      fixture.taskExecutionId,
+      'manifest.json',
+    ))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(0);
   });
 
@@ -724,6 +730,12 @@ describe('OD Next automatic production through the real server', () => {
       status: 'failed',
       errorCode: 'OD_NEXT_SKILL_SNAPSHOT_INVALID',
     });
+    await expect(readFile(path.join(
+      process.env.OD_DATA_DIR!,
+      'od-next-task-inputs',
+      fixture.taskExecutionId,
+      'manifest.json',
+    ))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(0);
   });
 
@@ -1336,6 +1348,7 @@ async function postRun(url: string, body: Record<string, unknown>) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+  expect(response.headers.get('content-type')).toContain('application/json');
   const responseBody = await response.json() as Record<string, any>;
   expect(response.status, JSON.stringify(responseBody)).toBe(202);
   return responseBody;

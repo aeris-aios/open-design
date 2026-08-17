@@ -2342,7 +2342,16 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ...((runUserSeed || clarificationTask || strategyRolloutDecision?.effectiveMode === 'active')
           ? {
               beforeClaimCommit: (candidate) => {
-                const preclaimedInitialTask = getStrategyTaskExecutionByRunId(db, candidate.id);
+                let preclaimedInitialTask: ReturnType<typeof getStrategyTaskExecutionByRunId> = null;
+                try {
+                  preclaimedInitialTask = getStrategyTaskExecutionByRunId(db, candidate.id);
+                } catch (error) {
+                  if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
+                  // Keep the optimistic Run claim intact so the established
+                  // post-claim guard can publish a durable structured failure.
+                  // A missing/tampered Skill package must not create a Task 04
+                  // snapshot or escape through Express as an HTML 500.
+                }
                 const snapshotTaskType = (
                   fingerprintSnapshot?.strategy?.selectedTaskProfile?.taskType
                 );
