@@ -17,7 +17,12 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
-import { executionProfileFromStreamFormat, PLUGIN_SHARE_ACTION_PLUGIN_IDS } from '@open-design/contracts';
+import {
+  composeOdNextStrategyCorePromptV2,
+  composeOdNextStrategyStableRequestContextV2,
+  executionProfileFromStreamFormat,
+  PLUGIN_SHARE_ACTION_PLUGIN_IDS,
+} from '@open-design/contracts';
 import { isTodoWriteToolName, stopReasonIsTruncation, todoItemsFromTodoWriteInput } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
@@ -101,6 +106,7 @@ import {
   resolveResearchCommandContract,
   resolveSafeProjectAttachments,
   resolveSafePromptImagePaths,
+  resolveOdNextRequestUserPrompt,
   selectPromptImagePaths,
 } from './runtimes/chat-prompt-inputs.js';
 import {
@@ -9849,9 +9855,8 @@ export async function startServer({
       // do NOT carry this flip into a PR against main.
       promptCoreVariant: process.env.OD_PROMPT_CORE === 'classic' ? undefined : 'slim',
     };
-    const systemPromptInputs = odNextStrategyRecipe
+    const odNextStableRequestContext = odNextStrategyRecipe
       ? {
-          odNextStrategyRecipe,
           agentId,
           streamFormat,
           executionProfile: executionProfileFromStreamFormat(streamFormat),
@@ -9875,6 +9880,12 @@ export async function startServer({
           userInstructions,
           projectInstructions,
         }
+      : null;
+    const systemPromptInputs = odNextStrategyRecipe
+      ? {
+          odNextStrategyRecipe,
+          ...odNextStableRequestContext,
+        }
       : defaultSystemPromptInputs;
     if (odNextStrategyRecipe) {
       assertOdNextSemanticRequestFactProducerCoverage('daemon_system_prompt', {
@@ -9894,7 +9905,9 @@ export async function startServer({
         user_and_project_instructions: { userInstructions, projectInstructions },
       });
     }
-    const prompt = composeSystemPrompt(systemPromptInputs);
+    const prompt = odNextStrategyRecipe
+      ? composeOdNextStrategyCorePromptV2(odNextStrategyRecipe)
+      : composeSystemPrompt(systemPromptInputs);
     // The chat handler also needs to know where the active skill lives
     // on disk so it can stage a per-project copy of its side files
     // before spawning the agent. Returning that here avoids a second
@@ -9903,6 +9916,9 @@ export async function startServer({
     // orchestrator gate so prompt and orchestrator stay in lockstep.
     return {
       prompt,
+      odNextStableContextPrompt: odNextStableRequestContext
+        ? composeOdNextStrategyStableRequestContextV2(odNextStableRequestContext)
+        : '',
       activeSkillDir,
       activeSkillDirs: odNextStrategyRecipe ? [] : activeSkillDirs,
       critiqueShouldRun: odNextStrategyRecipe ? false : critiqueShouldRun,
@@ -10053,6 +10069,7 @@ export async function startServer({
       agentId,
       message,
       currentPrompt,
+      priorTranscript,
       systemPrompt,
       imagePaths = [],
       projectId,
@@ -10520,6 +10537,7 @@ export async function startServer({
       designSystemSelection,
       promptTelemetryParts,
       stableSectionInputs,
+      odNextStableContextPrompt,
     } =
       await composeDaemonSystemPrompt({
         agentId,
@@ -10946,15 +10964,26 @@ export async function startServer({
       invalidationReason: agentResumeCtx.invalidationReason,
     });
     publishNativeSessionRecoveryMetadata();
-    const userRequestPrompt = composeChatUserRequestForAgent(
-      message,
-      currentPrompt,
-      // Only trim to the latest turn when we are actually resuming an
-      // existing session. A create turn still sends the full transcript so
-      // a brand-new session (incl. first turn after another agent)
-      // is seeded with prior context.
-      { skipTranscript: agentResumeCtx.isResuming },
+    const isOdNextRequestStage = strategyTaskAtStart?.inputStage === 'request';
+    const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
+      chatBody,
+      'currentPrompt',
     );
+    const userRequestPrompt = isOdNextRequestStage
+      ? resolveOdNextRequestUserPrompt({
+          message,
+          currentPrompt,
+          hasCurrentPrompt: hasExplicitCurrentPrompt,
+        })
+      : composeChatUserRequestForAgent(
+          message,
+          currentPrompt,
+          // Only trim to the latest turn when we are actually resuming an
+          // existing session. A create turn still sends the full transcript so
+          // a brand-new session (incl. first turn after another agent)
+          // is seeded with prior context.
+          { skipTranscript: agentResumeCtx.isResuming },
+        );
     // The stable instruction slice (daemon prompt + tool contract + system
     // prompt = design system / skills / memory) is identical across turns of
     // a conversation in the common case. A resumed Claude session already
@@ -10963,7 +10992,9 @@ export async function startServer({
     // turns and changed-hash turns send the full block (byte-identical to the
     // previous behavior); non-resume agents have isResuming === false and so
     // always send the full block.
-    const stableInstructionFingerprint = [daemonSystemPrompt, runtimeToolPrompt, systemPrompt]
+    const stableInstructionFingerprint = (strategyTaskAtStart
+      ? [daemonSystemPrompt, odNextStableContextPrompt, runtimeToolPrompt, systemPrompt]
+      : [daemonSystemPrompt, runtimeToolPrompt, systemPrompt])
       .map((part) => (typeof part === 'string' ? part.trim() : ''))
       .join('\n\n---\n\n');
     const currentStableHash = hashStableInstructions(stableInstructionFingerprint);
@@ -11034,6 +11065,15 @@ export async function startServer({
         : formIdForOverride !== null
           ? FORM_ANSWERED_GENERIC_OVERRIDE
           : '';
+    const agentFormOverride = isOdNextRequestStage && formIdForOverride
+      ? formIdForOverride === 'discovery' || formIdForOverride === 'task-type'
+        ? `The <user_prompt> contains submitted answers for the ${formIdForOverride} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
+        : `The <user_prompt> contains submitted answers for the ${formIdForOverride} form. Treat them as the active user turn and do not replay the answered form.`
+      : formOverride;
+    const agentEchoGuard = isOdNextRequestStage
+      ? 'Do not quote, restate, or echo <system_prompt>. Begin the response by addressing <user_prompt>.'
+      : ECHO_GUARD;
+    const includeStableForPayload = isOdNextRequestStage || includeStableInstructions;
     const promptImagePaths = selectPromptImagePaths(
       def.id,
       safeImages,
@@ -11043,22 +11083,54 @@ export async function startServer({
       composedPrompt: composed,
       clientInstructionPrompt,
     } = composeChatAgentTextPayload({
-      formOverride,
-      daemonSystemPrompt: includeStableInstructions ? daemonSystemPrompt : '',
-      runtimeToolPrompt: includeStableInstructions ? runtimeToolPrompt : '',
+      formOverride: agentFormOverride,
+      daemonSystemPrompt: includeStableForPayload ? daemonSystemPrompt : '',
+      runtimeToolPrompt: includeStableForPayload ? runtimeToolPrompt : '',
       researchCommandContract,
       runContextPrompt,
       connectedExternalMcpReference: mcpConnectedDirective,
       browserUnavailableGuard: browserUsePromptGuard,
       titleGenerationDirective: titleGenerationPrompt,
-      clientSystemPrompt: includeStableInstructions ? systemPrompt : '',
+      clientSystemPrompt: includeStableForPayload ? systemPrompt : '',
       cwdReference: cwdHint,
       linkedDirectoryReferences: linkedDirsHint,
-      echoGuard: ECHO_GUARD,
+      echoGuard: agentEchoGuard,
       requestOrStageText: userRequestPrompt,
       projectAttachmentReferences: attachmentHint,
       commentAttachmentReferences: commentHint,
       imageReferences: promptImagePaths.map((p) => `@${p}`).join(' '),
+      ...(isOdNextRequestStage
+        ? {
+            odNextRequestBundle: {
+              stableContext: odNextStableContextPrompt ?? '',
+              priorTranscript:
+                typeof priorTranscript === 'string' ? priorTranscript : '',
+              taskConfigPendingFact: JSON.stringify({
+                schema: 'open-design.od-next-task-config-pending/v1',
+                state: 'pending_task_04_snapshot',
+              }),
+              requestInputPendingFact: JSON.stringify({
+                schema: 'open-design.od-next-request-input-pending/v1',
+                userSkillSelection: {
+                  state: 'pending_task_03_snapshot',
+                  count: [skillId, ...(Array.isArray(skillIds) ? skillIds : [])]
+                    .filter((value) => typeof value === 'string' && value.trim()).length,
+                },
+                attachmentSelection: {
+                  state: 'pending_task_04_snapshot',
+                  projectCount: safeAttachments.length,
+                  commentCount: safeCommentAttachments.length,
+                  imageCount: promptImagePaths.length,
+                },
+                workspaceSelection: {
+                  state: 'pending_task_04_reference',
+                  hasProjectWorkspace: Boolean(cwd),
+                  linkedDirectoryCount: linkedDirs.length,
+                },
+              }),
+            },
+          }
+        : {}),
       strategyInputStage: strategyTaskAtStart?.inputStage ?? null,
     });
     if (strategyTaskAtStart?.inputStage === 'request') {
@@ -11086,7 +11158,7 @@ export async function startServer({
     run.promptTelemetry = buildPromptStackTelemetry({
       composedPrompt: composed,
       sections: [
-        { kind: 'formOverride', content: formOverride },
+        { kind: 'formOverride', content: agentFormOverride },
         // Phase 1 explicitly needs redactedContent for these aggregate prompts:
         // they are the quickest way to inspect the system context sent to the
         // model when diagnosing Langfuse traces.

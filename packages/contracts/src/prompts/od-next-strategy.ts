@@ -11,6 +11,7 @@ import {
   type StrategyTaskTypeV2,
 } from '../plugins/strategy-v2.js';
 import type { ChatSessionMode } from '../api/chat.js';
+import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
@@ -75,16 +76,22 @@ export type OdNextStrategyContinuationV2 =
   | {
       stage: 'clarification';
       nativeSessionResume: true;
+      taskExecutionId: string;
+      taskRunIndex: number;
       answer: string;
     }
   | {
       stage: 'contract_repair';
       nativeSessionResume: true;
+      taskExecutionId: string;
+      taskRunIndex: number;
       serializationIssue: string;
     }
   | {
       stage: 'production';
       nativeSessionResume: true;
+      taskExecutionId: string;
+      taskRunIndex: number;
       planContractHash: string;
     };
 
@@ -339,7 +346,7 @@ function planningTemplate(
   };
 }
 
-function renderStableRequestContextV2(
+export function composeOdNextStrategyStableRequestContextV2(
   context: OdNextStrategyStableRequestContextV2,
 ): string {
   const blocks: string[] = [];
@@ -580,7 +587,7 @@ export function composeOdNextStrategyRequestPromptV2(
     executionSection,
     `## Versioned recipe identity\n\n- recipe: \`${input.recipe}\`\n- strategy: \`${input.strategyId}@${requireText(input.strategyVersion, 'strategyVersion')}\`\n- applied snapshot: \`${snapshotId}\`\n- strategy package: \`${input.packageHash}\`\n- selected Task Skill digest: \`${input.taskProfileDigest}\`\n- stable prompt identity: \`${identity}\``,
     DISCOVERY_AND_PLANNING_SECTION,
-    renderStableRequestContextV2(context),
+    composeOdNextStrategyStableRequestContextV2(context),
     `## OD Next core strategy\n\n${coreStrategy}`,
     `## OD Next general orchestration\n\n${generalOrchestration}`,
     `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`,
@@ -588,6 +595,13 @@ export function composeOdNextStrategyRequestPromptV2(
     renderMachineOutputSection(input, context),
   ].filter((section) => section.length > 0);
   return sections.join('\n\n---\n\n');
+}
+
+/** Compose the verified recipe without stable request context for Bundle system_prompt. */
+export function composeOdNextStrategyCorePromptV2(
+  input: OdNextStrategyRequestRecipeV2,
+): string {
+  return composeOdNextStrategyRequestPromptV2(input, {});
 }
 
 /**
@@ -601,13 +615,20 @@ export function composeOdNextStrategyContinuationV2(
   if (input.nativeSessionResume !== true) {
     throw new TypeError('OD Next continuation requires a native session resume.');
   }
+  let payload: string;
   if (input.stage === 'clarification') {
-    return `# OD Next native continuation — clarification\n\nMerge the user's answer below into the existing Full Plan context. Preserve the locked route, ask no second question round, rerun only affected resolution and Preflight work, and emit the updated V2 machine structures.\n\n## Clarification answer\n\n${requireText(input.answer, 'answer')}`;
+    payload = `# OD Next native continuation — clarification\n\nMerge the user's answer below into the existing Full Plan context. Preserve the locked route, ask no second question round, rerun only affected resolution and Preflight work, and emit the updated V2 machine structures.\n\n## Clarification answer\n\n${requireText(input.answer, 'answer')}`;
+  } else if (input.stage === 'contract_repair') {
+    payload = `# OD Next native continuation — contract_repair\n\nThe semantic plan in this native session is frozen. Make one serialization-only attempt that addresses the issue below. Use no tools, do not re-plan, and preserve the locked route, execution mode, Design Spec, steps, and Build Packages.\n\n## Serialization issue\n\n${requireText(input.serializationIssue, 'serializationIssue')}`;
+  } else {
+    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question.`;
   }
-  if (input.stage === 'contract_repair') {
-    return `# OD Next native continuation — contract_repair\n\nThe semantic plan in this native session is frozen. Make one serialization-only attempt that addresses the issue below. Use no tools, do not re-plan, and preserve the locked route, execution mode, Design Spec, steps, and Build Packages.\n\n## Serialization issue\n\n${requireText(input.serializationIssue, 'serializationIssue')}`;
-  }
-  return `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question.`;
+  return serializeOdNextRequestTurnV1({
+    taskExecutionId: input.taskExecutionId,
+    stage: input.stage,
+    taskRunIndex: input.taskRunIndex,
+    payload,
+  });
 }
 
 export function isOdNextIncrementalStageV2(

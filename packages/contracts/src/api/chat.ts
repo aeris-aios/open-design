@@ -86,6 +86,12 @@ export interface ChatRequest {
   taskExecutionId?: string;
   /** The latest user turn only, used for per-turn telemetry content. */
   currentPrompt?: string;
+  /**
+   * Canonically framed conversation context before currentPrompt. OD Next uses
+   * this explicit field instead of trying to subtract the latest turn from
+   * message; ordinary runs continue to consume message unchanged.
+   */
+  priorTranscript?: string;
   systemPrompt?: string;
   projectId?: string | null;
   conversationId?: string | null;

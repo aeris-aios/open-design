@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  composeOdNextStrategyCorePromptV2,
   composeOdNextStrategyContinuationV2,
   composeOdNextStrategyRequestPromptV2,
+  composeOdNextStrategyStableRequestContextV2,
   odNextPromptCacheIdentityV2,
   type OdNextStrategyRequestRecipeV2,
 } from '../src/prompts/od-next-strategy.js';
@@ -267,6 +269,21 @@ describe('OD Next V2 prompt recipe', () => {
     })).toBe(direct);
   });
 
+  it('keeps the legacy recipe API compatible while exposing core and stable context separately', () => {
+    const context = {
+      memoryBody: 'Remember the operator audience.',
+      userInstructions: 'Use terse labels.',
+    };
+    const combined = composeOdNextStrategyRequestPromptV2(recipe, context);
+    const core = composeOdNextStrategyCorePromptV2(recipe);
+    const stableContext = composeOdNextStrategyStableRequestContextV2(context);
+    expect(combined).toContain(stableContext);
+    expect(combined.match(/Remember the operator audience\./g)).toHaveLength(1);
+    expect(core).not.toContain('Remember the operator audience.');
+    expect(stableContext).not.toContain(recipe.coreStrategy);
+    expect(composeOdNextStrategyRequestPromptV2(recipe)).toBe(core);
+  });
+
   it('changes cache identity for either package or selected profile content', () => {
     const baseline = odNextPromptCacheIdentityV2(recipe);
     expect(odNextPromptCacheIdentityV2({ ...recipe, packageHash: B })).not.toBe(baseline);
@@ -277,22 +294,31 @@ describe('OD Next V2 prompt recipe', () => {
     const clarification = composeOdNextStrategyContinuationV2({
       stage: 'clarification',
       nativeSessionResume: true,
+      taskExecutionId: 'task-1',
+      taskRunIndex: 1,
       answer: 'Keep the audience focused on operators.',
     });
     const contractRepair = composeOdNextStrategyContinuationV2({
       stage: 'contract_repair',
       nativeSessionResume: true,
+      taskExecutionId: 'task-1',
+      taskRunIndex: 1,
       serializationIssue: 'fullPlan.steps[0].outputs is missing.',
     });
     const production = composeOdNextStrategyContinuationV2({
       stage: 'production',
       nativeSessionResume: true,
+      taskExecutionId: 'task-1',
+      taskRunIndex: 1,
       planContractHash: A,
     });
 
     expect(clarification).toContain('Clarification answer');
     expect(contractRepair).toContain('serialization-only');
     expect(production).toContain(`planContractHash=${A}`);
+    expect(production).toMatch(/^<open_design_request_turn/);
+    expect(production).toContain('task_execution_id="task-1"');
+    expect(production).toContain('stage="production" task_run_index="1"');
     expect(production).not.toContain(recipe.coreStrategy);
     expect(production).not.toContain(recipe.generalOrchestration);
     expect(production).not.toContain(recipe.taskSkill);

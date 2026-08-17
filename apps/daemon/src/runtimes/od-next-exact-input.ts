@@ -1,3 +1,5 @@
+import { parseOdNextPromptBundleV1 } from '@open-design/contracts';
+
 export const OD_NEXT_EXACT_INPUT_MAP_VERSION =
   'open-design.od-next-exact-input-map/v1' as const;
 
@@ -630,16 +632,12 @@ export function assertOdNextLegacyTextContributorCoverage(
  * it must satisfy. Leading/trailing whitespace and a second root are rejected.
  */
 export function assertSingleOdNextPromptBundleRoot(exactText: string): void {
-  const opening = '<open_design_prompt_bundle';
-  const closing = '</open_design_prompt_bundle>';
-  const openingTag = exactText.match(/^<open_design_prompt_bundle(?:\s+[^<>]*?)?>/)?.[0] ?? null;
-  if (!openingTag || !exactText.endsWith(closing)) {
-    throw new Error('OD Next initial exact text must be one open_design_prompt_bundle root with no outer bytes');
-  }
-  if (exactText.indexOf(opening, openingTag.length) !== -1) {
-    throw new Error('OD Next initial exact text must not contain a second open_design_prompt_bundle root');
-  }
-  if (exactText.indexOf(closing) !== exactText.length - closing.length) {
-    throw new Error('OD Next initial exact text must end at its only open_design_prompt_bundle closing tag');
+  try {
+    parseOdNextPromptBundleV1(exactText);
+  } catch (error) {
+    throw new Error(
+      'OD Next initial exact text must be one canonical open_design_prompt_bundle root with no outer bytes',
+      { cause: error },
+    );
   }
 }

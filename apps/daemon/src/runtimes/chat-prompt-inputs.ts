@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { serializeOdNextPromptBundleV1 } from '@open-design/contracts';
 import { renderResearchCommandContract } from '../prompts/research-contract.js';
 import {
   describeChangedStableSections,
@@ -89,6 +90,21 @@ export function composeLiveInstructionPrompt({
   return parts.join('\n\n---\n\n');
 }
 
+export function resolveOdNextRequestUserPrompt({
+  message,
+  currentPrompt,
+  hasCurrentPrompt,
+}: {
+  message: unknown;
+  currentPrompt: unknown;
+  hasCurrentPrompt: boolean;
+}): string {
+  if (hasCurrentPrompt) {
+    return typeof currentPrompt === 'string' ? currentPrompt : '';
+  }
+  return typeof message === 'string' ? message : '';
+}
+
 export function composeChatAgentTextPayload({
   formOverride,
   daemonSystemPrompt,
@@ -106,6 +122,7 @@ export function composeChatAgentTextPayload({
   projectAttachmentReferences,
   commentAttachmentReferences,
   imageReferences,
+  odNextRequestBundle,
   strategyInputStage = null,
 }: {
   formOverride: string;
@@ -124,6 +141,12 @@ export function composeChatAgentTextPayload({
   projectAttachmentReferences: string;
   commentAttachmentReferences: string;
   imageReferences: string;
+  odNextRequestBundle?: {
+    stableContext: string;
+    priorTranscript: string;
+    taskConfigPendingFact: string;
+    requestInputPendingFact: string;
+  } | undefined;
   strategyInputStage?: OdNextExactInputStage | null;
 }) {
   const contributors: Record<OdNextLegacyTextContributorId, string> = {
@@ -156,6 +179,46 @@ export function composeChatAgentTextPayload({
     };
   }
   assertOdNextLegacyTextContributorCoverage(Object.keys(contributors), strategyInputStage);
+
+  if (strategyInputStage === 'request') {
+    if (!odNextRequestBundle) {
+      throw new TypeError('OD Next request stage requires canonical Bundle inputs.');
+    }
+    const join = (parts: readonly string[]): string => parts
+      .map((part) => (typeof part === 'string' ? part.trim() : ''))
+      .filter(Boolean)
+      .join('\n\n---\n\n');
+    const systemPrompt = join([
+      formOverride,
+      daemonSystemPrompt,
+      runtimeToolPrompt,
+      clientSystemPrompt,
+      echoGuard,
+    ]);
+    const taskConfig = join([
+      titleGenerationDirective,
+      odNextRequestBundle.taskConfigPendingFact,
+    ]);
+    const context = join([
+      odNextRequestBundle.stableContext,
+      odNextRequestBundle.priorTranscript,
+      researchCommandContract,
+      runContextPrompt,
+      connectedExternalMcpReference,
+      browserUnavailableGuard,
+      odNextRequestBundle.requestInputPendingFact,
+    ]);
+    return {
+      composedPrompt: serializeOdNextPromptBundleV1({
+        systemPrompt,
+        userPrompt: requestOrStageText,
+        taskConfig,
+        context,
+      }),
+      clientInstructionPrompt: '',
+      instructionPrompt: systemPrompt,
+    };
+  }
 
   const clientInstructionPrompt = [
     researchCommandContract,

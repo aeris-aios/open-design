@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildDaemonTranscript,
+  buildDaemonPriorTranscript,
   DAEMON_RUN_FINISHED_EVENT,
   latestUserPromptFromHistory,
   reattachDaemonRun,
@@ -540,6 +541,18 @@ describe('streamViaDaemon', () => {
         { id: '3', role: 'user', content: 'current turn' },
       ]),
     ).toBe('current turn');
+  });
+
+  it('frames prior transcript separately without subtracting the latest user text', () => {
+    const history = [
+      { id: '1', role: 'user' as const, content: 'same text' },
+      { id: '2', role: 'assistant' as const, content: 'answer same text', agentId: 'codex' },
+      { id: '3', role: 'user' as const, content: 'same text' },
+    ];
+    expect(buildDaemonPriorTranscript(history, 'codex')).toBe(
+      '## user\nsame text\n\n## assistant\nanswer same text',
+    );
+    expect(latestUserPromptFromHistory(history)).toBe('same text');
   });
 
   it('truncates oversized prior messages before composing daemon context', () => {

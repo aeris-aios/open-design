@@ -1191,6 +1191,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const instruction = composeOdNextStrategyContinuationV2({
       stage: 'clarification',
       nativeSessionResume: true,
+      taskExecutionId: task.taskExecutionId,
+      taskRunIndex,
       answer,
     });
     meta.taskExecutionId = task.taskExecutionId;

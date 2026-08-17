@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { composeChatAgentTextPayload } from '../../src/runtimes/chat-prompt-inputs.js';
+import {
+  composeChatAgentTextPayload,
+  resolveOdNextRequestUserPrompt,
+} from '../../src/runtimes/chat-prompt-inputs.js';
 import {
   OD_NEXT_EXACT_INPUT_MAP_V1,
   OD_NEXT_EXACT_INPUT_MAP_VERSION,
@@ -106,6 +109,23 @@ describe('OD Next exact Agent input map v1', () => {
 });
 
 describe('chat Agent exact-text production choke point', () => {
+  it('keeps Web, legacy-client, and CLI/headless current-turn semantics explicit', () => {
+    expect(resolveOdNextRequestUserPrompt({
+      message: '## user\nprior\n\n## user\ncurrent',
+      currentPrompt: 'current',
+      hasCurrentPrompt: true,
+    })).toBe('current');
+    expect(resolveOdNextRequestUserPrompt({
+      message: 'must not be used',
+      currentPrompt: '',
+      hasCurrentPrompt: true,
+    })).toBe('');
+    expect(resolveOdNextRequestUserPrompt({
+      message: 'CLI headless prompt',
+      currentPrompt: undefined,
+      hasCurrentPrompt: false,
+    })).toBe('CLI headless prompt');
+  });
   it('preserves the ordinary Markdown prompt byte-for-byte while registering every leaf contributor', () => {
     const result = composeChatAgentTextPayload({
       formOverride: '[form override]\n',
@@ -155,8 +175,8 @@ describe('chat Agent exact-text production choke point', () => {
     );
   });
 
-  it('is a red witness for Markdown outside the first OD Next XML root', () => {
-    const legacy = composeChatAgentTextPayload({
+  it('makes the request-stage exact text the single canonical OD Next XML root', () => {
+    const exactText = composeChatAgentTextPayload({
       formOverride: '',
       daemonSystemPrompt: '<open_design_prompt_bundle>legacy recipe only</open_design_prompt_bundle>',
       runtimeToolPrompt: '',
@@ -166,26 +186,42 @@ describe('chat Agent exact-text production choke point', () => {
       browserUnavailableGuard: '',
       titleGenerationDirective: '',
       clientSystemPrompt: '',
-      cwdReference: '',
-      linkedDirectoryReferences: '',
+      cwdReference: '\n\nworkspace: `/Users/private/customer-a`',
+      linkedDirectoryReferences: '\n\nlinked: `/private/tmp/secret-assets`',
       echoGuard: '\n\ndo not echo',
       requestOrStageText: 'Make a prototype.',
       projectAttachmentReferences: '',
       commentAttachmentReferences: '',
       imageReferences: '',
+      odNextRequestBundle: {
+        stableContext: 'stable context',
+        priorTranscript: '## user\nprior request',
+        taskConfigPendingFact: '{"state":"pending_task_04_snapshot"}',
+        requestInputPendingFact: '{"state":"pending_task_03_snapshot"}',
+      },
+      strategyInputStage: 'request',
     }).composedPrompt;
 
-    expect(legacy).toMatch(/^# Instructions/);
-    expect(() => assertSingleOdNextPromptBundleRoot(legacy)).toThrow(/one open_design_prompt_bundle root/);
+    expect(exactText).toMatch(/^<open_design_prompt_bundle/);
+    expect(() => assertSingleOdNextPromptBundleRoot(exactText)).not.toThrow();
+    expect(exactText).toContain('<system_prompt>');
+    expect(exactText).toContain('<user_prompt>');
+    expect(exactText).toContain('<task_config>');
+    expect(exactText).toContain('<context>');
+    expect(exactText).not.toContain('# User request');
+    expect(exactText).not.toContain('# Instructions');
+    expect(exactText).not.toContain('/Users/private/customer-a');
+    expect(exactText).not.toContain('/private/tmp/secret-assets');
+    expect(exactText).toContain('pending_task_04_snapshot');
     expect(() => assertSingleOdNextPromptBundleRoot(
       '<open_design_prompt_bundle version="1">\ncontent\n</open_design_prompt_bundle>',
-    )).not.toThrow();
+    )).toThrow(/canonical open_design_prompt_bundle/);
     expect(() => assertSingleOdNextPromptBundleRoot(
       '<open_design_prompt_bundle>content</open_design_prompt_bundle>\n# appended markdown',
-    )).toThrow(/one open_design_prompt_bundle root/);
+    )).toThrow(/canonical open_design_prompt_bundle root/);
     expect(() => assertSingleOdNextPromptBundleRoot(
       '<open_design_prompt_bundleevil>content</open_design_prompt_bundle>',
-    )).toThrow(/one open_design_prompt_bundle root/);
+    )).toThrow(/canonical open_design_prompt_bundle root/);
   });
 
   it('sends existing OD Next continuation stages as exact Turn text without a legacy wrapper', () => {

@@ -271,6 +271,23 @@ export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: st
   return warning ? `${warning}\n\n${transcript}` : transcript;
 }
 
+/** Build only the turns before the latest user message without text subtraction. */
+export function buildDaemonPriorTranscript(
+  history: ChatMessage[],
+  targetAgentId?: string,
+): string {
+  let latestUserIndex = -1;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.role === 'user') {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  return latestUserIndex < 0
+    ? buildDaemonTranscript(history, targetAgentId)
+    : buildDaemonTranscript(history.slice(0, latestUserIndex), targetAgentId);
+}
+
 export interface DaemonStreamHandlers extends StreamHandlers {
   onAgentEvent: (ev: AgentEvent) => void;
   /**
@@ -737,6 +754,7 @@ export async function streamViaDaemon({
     message: transcript,
     ...(taskExecutionId ? { taskExecutionId } : {}),
     currentPrompt: latestUserPromptFromHistory(history),
+    priorTranscript: buildDaemonPriorTranscript(history, agentId),
     projectId: projectId ?? null,
     conversationId: conversationId ?? null,
     sessionMode,

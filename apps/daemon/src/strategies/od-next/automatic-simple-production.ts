@@ -210,6 +210,8 @@ export function prepareAutomaticSimpleProductionRun<
   const instruction = composeOdNextStrategyContinuationV2({
     stage: 'production',
     nativeSessionResume: true,
+    taskExecutionId: task.taskExecutionId,
+    taskRunIndex: task.runs.length,
     planContractHash: task.planContractHash,
   });
   let claimed: StrategyTaskExecutionRecord | null = null;
@@ -358,16 +360,20 @@ export function prepareAutomaticStrategyContinuation<
 
   const stage = repairCandidate ? 'contract_repair' : 'production';
   const instruction = repairCandidate
-    ? composeOdNextStrategyContinuationV2({
-        stage: 'contract_repair',
-        nativeSessionResume: true,
-        serializationIssue: [...new Set(input.parsed.issues.map((issue) => issue.code))].join(', '),
-      })
-    : composeOdNextStrategyContinuationV2({
-        stage: 'production',
-        nativeSessionResume: true,
-        planContractHash: strategyPlanContractHash(input.parsed.planContract!),
-      });
+      ? composeOdNextStrategyContinuationV2({
+          stage: 'contract_repair',
+          nativeSessionResume: true,
+          taskExecutionId: input.task.taskExecutionId,
+          taskRunIndex: input.task.runs.length,
+          serializationIssue: [...new Set(input.parsed.issues.map((issue) => issue.code))].join(', '),
+        })
+      : composeOdNextStrategyContinuationV2({
+          stage: 'production',
+          nativeSessionResume: true,
+          taskExecutionId: input.task.taskExecutionId,
+          taskRunIndex: input.task.runs.length,
+          planContractHash: strategyPlanContractHash(input.parsed.planContract!),
+        });
   let result: OdNextCoordinatorResult | null = null;
   try {
     const prepared = input.service.prepare({
