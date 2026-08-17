@@ -909,8 +909,11 @@ button.att-d:hover { border-color: var(--border-strong); }
 @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
 
 /* ---- 纯文案(开始执行 / 总结) ---- */
-.say { font-size: var(--t-body); line-height: var(--lh-body); color: var(--text); }
-.say b { color: var(--text-strong); font-weight: 600; }
+/* 这是 agent 真正说给你听的那几句(开场白、总结),是这一屏你专程来读的东西 ——
+   它没有 hover 态,不用留一档给鼠标,直接给最深的一档。
+   .say b 因此不再靠颜色加重(已经同色),改成只用字重。 */
+.say { font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-strong); }
+.say b { font-weight: 600; }
 .say .caret {
   display: inline-block; width: 2px; height: 1em; margin-left: 2px;
   vertical-align: -0.15em; background: var(--text-strong); animation: blink 1s steps(2) infinite;
