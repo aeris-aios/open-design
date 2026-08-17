@@ -5709,7 +5709,7 @@ export const zhCN: Dict = {
   'campaign.deepseekV4Flash.workbenchBadge': 'DeepSeek V4 Pro + V4 Flash 无限免费用',
   'campaign.deepseekV4Flash.workbenchBadgeAria': 'DeepSeek V4 Pro 与 V4 Flash 无限免费用，查看官网 Pricing',
 
-  'experienceSurvey.tag': "一起把 Open Design 做得更好",
+  'experienceSurvey.tag': "你的反馈会让 Open Design 更好",
   'experienceSurvey.close': "关闭",
   'experienceSurvey.satisfaction': "总体来说，你对 Open Design 满意吗？",
   'experienceSurvey.satisfactionLow': "很不满意",

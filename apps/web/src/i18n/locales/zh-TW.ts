@@ -5716,7 +5716,7 @@ export const zhTW: Dict = {
   'campaign.deepseekV4Flash.workbenchBadge': 'DeepSeek V4 Pro + V4 Flash 無限免費用',
   'campaign.deepseekV4Flash.workbenchBadgeAria': 'DeepSeek V4 Pro 與 V4 Flash 無限免費用，查看官網 Pricing',
 
-  'experienceSurvey.tag': "一起把 Open Design 做得更好",
+  'experienceSurvey.tag': "你的回饋會讓 Open Design 更好",
   'experienceSurvey.close': "關閉",
   'experienceSurvey.satisfaction': "整體來說，你對 Open Design 滿意嗎？",
   'experienceSurvey.satisfactionLow': "很不滿意",

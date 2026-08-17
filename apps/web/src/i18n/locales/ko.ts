@@ -5260,7 +5260,7 @@ export const ko: Dict = {
   'campaign.deepseekV4Flash.workbenchBadge': 'DeepSeek V4 Pro + V4 Flash 무제한 무료',
   'campaign.deepseekV4Flash.workbenchBadgeAria': 'DeepSeek V4 Pro 및 V4 Flash 무제한 무료 — 요금제 보기',
 
-  'experienceSurvey.tag': "함께 Open Design을 더 좋게",
+  'experienceSurvey.tag': "여러분의 피드백이 Open Design을 더 좋게 만듭니다",
   'experienceSurvey.close': "닫기",
   'experienceSurvey.satisfaction': "전반적으로 Open Design에 얼마나 만족하시나요?",
   'experienceSurvey.satisfactionLow': "매우 불만족",

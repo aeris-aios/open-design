@@ -255,10 +255,13 @@
   color: var(--text-faint, #bdbdbd);
 }
 
+/* Keep the inset fill on focus. Switching it to --bg made the field the same
+   white as the card behind it, so the input dissolved into the panel and only
+   a floating green outline was left. The ring carries the focus cue instead. */
 .textarea:focus {
   outline: none;
-  background: var(--bg, #fff);
   border-color: var(--brand-weak, #d0ffb5);
+  box-shadow: 0 0 0 3px var(--brand-soft, #ebffde);
 }
 
 .foot {
