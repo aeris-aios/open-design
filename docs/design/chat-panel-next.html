@@ -990,7 +990,10 @@ button.att-d:hover { border-color: var(--border-strong); }
   border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
   background: color-mix(in srgb, var(--brand-soft) 88%, var(--bg-panel));
 }
-.vpv { position: relative; display: block; aspect-ratio: 4/3; background: var(--bg-subtle); border-bottom: 1px solid var(--border-soft); overflow: hidden; }
+/* 预览图 1:1 —— 跟附件缩略图同一个比例,面板里只有一种预览画幅。
+   四张要比的是风格不是题材,画幅统一才比得出来;方形也让两列排布
+   在 380px 的消息宽度下高度可控。 */
+.vpv { position: relative; display: block; aspect-ratio: 1/1; background: var(--bg-subtle); border-bottom: 1px solid var(--border-soft); overflow: hidden; }
 
 /* 选中标记:光靠一圈边框,四张图并排时不够跳 —— 边框只在卡的外沿,
    眼睛落在图上时看不到。所以在图内角上放一个明确的勾选圈。
