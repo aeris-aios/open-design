@@ -24,6 +24,7 @@ import {
   workspaceProjectHeaders,
   workspaceResourceUrl,
 } from '../collab/workspace-identity';
+import { sourceHasLegacyDeckScreenSlides } from './deck-slide-structure';
 
 // Re-exported so app components can gate desktop-only export paths without
 // importing the host package directly.
@@ -1031,13 +1032,14 @@ export function sourceLooksLikeExportableDeck(source: string | null | undefined)
 
 /**
  * Viewer navigation needs stronger evidence than export. `data-screen-label`
- * is shared with ordinary prototype annotations, so a lone occurrence may be
- * exportable as a slide but must not turn the live preview into deck mode.
+ * is shared with ordinary prototype annotations, so only explicit deck
+ * structure or a numbered sibling collection of legacy slide sections may
+ * turn the live preview into deck mode.
  */
 export function sourceLooksLikeNavigableDeck(source: string | null | undefined): boolean {
   if (!source) return false;
   if (sourceLooksLikeStructuredDeck(source)) return true;
-  return (source.match(/\bdata-screen-label\s*=/gi)?.length ?? 0) > 1;
+  return sourceHasLegacyDeckScreenSlides(source);
 }
 
 // Decides how a current-slide / whole-deck / page image capture should run.

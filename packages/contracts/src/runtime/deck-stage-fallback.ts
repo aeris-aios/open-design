@@ -29,6 +29,22 @@ const DECK_SLIDE_CONTAINERS = [
 export const DECK_SLIDE_SELECTOR = DECK_SLIDE_MARKERS.join(', ');
 export const DECK_EXPLICIT_SLIDE_SELECTOR = DECK_EXPLICIT_SLIDE_MARKERS.join(', ');
 export const DECK_SCREEN_SLIDE_SELECTOR = '[data-screen-label]';
+export const DECK_LEGACY_SCREEN_SLIDE_SELECTOR = 'section[data-screen-label]';
+export const DECK_LEGACY_SCREEN_LABEL_RE_SOURCE = '^\\s*(\\d{1,3})(?:\\s|[.)\\u00b7:_-]|$)';
+
+/**
+ * Bare `data-screen-label` is also used by prototype annotations. Legacy decks
+ * without an explicit stage are distinguishable because each page is a
+ * numbered section (`01 Cover`, `02 Agenda`, ...). Callers must additionally
+ * require at least two of these sections to share one direct parent.
+ */
+export function legacyDeckScreenNumber(label: string | null | undefined): number | null {
+  if (!label) return null;
+  const match = new RegExp(DECK_LEGACY_SCREEN_LABEL_RE_SOURCE, 'i').exec(label);
+  if (!match) return null;
+  const number = Number(match[1]);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
 
 /**
  * Prefer direct children of known deck containers before using generic marker

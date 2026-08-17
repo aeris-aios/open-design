@@ -16,7 +16,8 @@
  */
 import {
   DECK_EXPLICIT_SLIDE_SELECTOR,
-  DECK_SCREEN_SLIDE_SELECTOR,
+  DECK_LEGACY_SCREEN_LABEL_RE_SOURCE,
+  DECK_LEGACY_SCREEN_SLIDE_SELECTOR,
   DECK_SLIDE_SELECTOR,
   DECK_STRUCTURED_SLIDE_SELECTOR,
   injectDeckStageFallback,
@@ -2897,6 +2898,32 @@ function injectDeckBridge(
     }
     return direct.length ? direct : nested;
   }
+  function legacyScreenSlides(){
+    var candidates = document.querySelectorAll(${JSON.stringify(DECK_LEGACY_SCREEN_SLIDE_SELECTOR)});
+    var labelRe = new RegExp(${JSON.stringify(DECK_LEGACY_SCREEN_LABEL_RE_SOURCE)}, 'i');
+    var groups = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var match = labelRe.exec(candidates[i].getAttribute('data-screen-label') || '');
+      if (!match || !candidates[i].parentNode) continue;
+      var group = null;
+      for (var j = 0; j < groups.length; j++) {
+        if (groups[j].parent === candidates[i].parentNode) { group = groups[j]; break; }
+      }
+      if (!group) {
+        group = { parent: candidates[i].parentNode, slides: [], numbers: {} };
+        groups.push(group);
+      }
+      group.slides.push(candidates[i]);
+      group.numbers[String(Number(match[1]))] = true;
+    }
+    var best = [];
+    for (var k = 0; k < groups.length; k++) {
+      if (Object.keys(groups[k].numbers).length > 1 && groups[k].slides.length > best.length) {
+        best = groups[k].slides;
+      }
+    }
+    return best;
+  }
   function slides(){
     // An explicit deck-stage owns its descendants, so unrelated annotated
     // screens elsewhere in the document cannot leak into its count. Otherwise
@@ -2908,8 +2935,7 @@ function injectDeckBridge(
     if (structured.length) return structured;
     var explicit = document.querySelectorAll(${JSON.stringify(DECK_EXPLICIT_SLIDE_SELECTOR)});
     if (explicit.length) return explicit;
-    var screenLabeled = document.querySelectorAll(${JSON.stringify(DECK_SCREEN_SLIDE_SELECTOR)});
-    return screenLabeled.length > 1 ? screenLabeled : [];
+    return legacyScreenSlides();
   }
   function deckStageForSlides(list){
     var stage = document.querySelector('deck-stage');

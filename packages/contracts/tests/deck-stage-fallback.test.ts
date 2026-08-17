@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DECK_EXPLICIT_SLIDE_SELECTOR,
+  DECK_LEGACY_SCREEN_LABEL_RE_SOURCE,
+  DECK_LEGACY_SCREEN_SLIDE_SELECTOR,
   DECK_SCREEN_SLIDE_SELECTOR,
   DECK_SLIDE_SELECTOR,
   DECK_STRUCTURED_SLIDE_SELECTOR,
   htmlUsesDeckStageElement,
   injectDeckStageFallback,
+  legacyDeckScreenNumber,
 } from '../src/runtime/deck-stage-fallback.js';
 
 describe('deck-stage fallback runtime injection', () => {
@@ -14,12 +17,22 @@ describe('deck-stage fallback runtime injection', () => {
     expect(DECK_SLIDE_SELECTOR).toBe('.slide, [data-screen-label], .deck-slide, .ppt-slide');
     expect(DECK_EXPLICIT_SLIDE_SELECTOR).toBe('.slide, .deck-slide, .ppt-slide');
     expect(DECK_SCREEN_SLIDE_SELECTOR).toBe('[data-screen-label]');
+    expect(DECK_LEGACY_SCREEN_SLIDE_SELECTOR).toBe('section[data-screen-label]');
+    expect(new RegExp(DECK_LEGACY_SCREEN_LABEL_RE_SOURCE).test('01 Cover')).toBe(true);
     for (const container of ['deck-stage', '.deck', '.deck-stage', '.deck-shell', '#deck']) {
       for (const marker of ['.slide', '[data-screen-label]', '.deck-slide', '.ppt-slide']) {
         expect(DECK_STRUCTURED_SLIDE_SELECTOR).toContain(`${container} > ${marker}`);
       }
     }
     expect(DECK_STRUCTURED_SLIDE_SELECTOR).not.toContain('body >');
+  });
+
+  it('recognizes numbered legacy slide labels without accepting prototype labels', () => {
+    expect(legacyDeckScreenNumber('01 Cover')).toBe(1);
+    expect(legacyDeckScreenNumber('2. Agenda')).toBe(2);
+    expect(legacyDeckScreenNumber('00 Draft')).toBeNull();
+    expect(legacyDeckScreenNumber('Hero title')).toBeNull();
+    expect(legacyDeckScreenNumber('CTA')).toBeNull();
   });
 
   it('does nothing for ordinary HTML without a deck-stage element', () => {

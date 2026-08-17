@@ -139,17 +139,34 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.slides[1]).toContain('02 Agenda');
   });
 
-  it('does not treat a lone prototype annotation as a deck slide', () => {
+  it('does not treat ordinary prototype annotations as deck slides', () => {
     const html = `<!doctype html><html><head><style>
       h1 { color: tomato; }
     </style></head><body><main>
       <h1 data-screen-label="Hero title">Prototype headline</h1>
+      <button data-screen-label="CTA">Buy now</button>
     </main></body></html>`;
 
     const parsed = parseDeckThumbnails(html);
 
     expect(parsed.renderable).toBe(false);
     expect(parsed.reason).toBe('no-slides');
+  });
+
+  it('requires containerless legacy slides to be numbered direct siblings', () => {
+    const separated = `<!doctype html><html><head><style>
+      section { width: 1920px; height: 1080px; }
+    </style></head><body><main>
+      <section data-screen-label="01 Cover">A</section>
+      <div><section data-screen-label="02 Agenda">B</section></div>
+    </main></body></html>`;
+    expect(parseDeckThumbnails(separated).reason).toBe('no-slides');
+
+    const siblings = separated.replace(
+      '<div><section data-screen-label="02 Agenda">B</section></div>',
+      '<section data-screen-label="02 Agenda">B</section>',
+    );
+    expect(parseDeckThumbnails(siblings).slides).toHaveLength(2);
   });
 
   it('rewrites viewport units in CSS to canvas px (renderable, faithful)', () => {

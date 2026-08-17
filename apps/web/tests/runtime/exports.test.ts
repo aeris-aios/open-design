@@ -130,10 +130,18 @@ describe('sourceLooksLikeExportableDeck (#4604 horizontal deck export)', () => {
 });
 
 describe('sourceLooksLikeNavigableDeck', () => {
-  it('does not turn a lone prototype annotation into deck chrome', () => {
+  it('does not turn ordinary prototype annotations into deck chrome', () => {
     expect(
       sourceLooksLikeNavigableDeck('<h1 data-screen-label="Hero title">Prototype</h1>'),
     ).toBe(false);
+    expect(sourceLooksLikeNavigableDeck(
+      '<main><h1 data-screen-label="Hero">Prototype</h1>' +
+      '<button data-screen-label="CTA">Buy</button></main>',
+    )).toBe(false);
+    expect(sourceLooksLikeNavigableDeck(
+      '<main><section data-screen-label="01 Hero">One</section>' +
+      '<div><section data-screen-label="02 CTA">Two</section></div></main>',
+    )).toBe(false);
   });
 
   it('keeps explicit and multi-screen persisted decks navigable', () => {
@@ -141,8 +149,8 @@ describe('sourceLooksLikeNavigableDeck', () => {
       '<deck-stage><section data-screen-label="Cover">A</section></deck-stage>',
     )).toBe(true);
     expect(sourceLooksLikeNavigableDeck(
-      '<main><section data-screen-label="Cover">A</section>' +
-      '<section data-screen-label="Agenda">B</section></main>',
+      '<main><section data-screen-label="01 Cover">A</section>' +
+      '<section data-screen-label="02 Agenda">B</section></main>',
     )).toBe(true);
   });
 });

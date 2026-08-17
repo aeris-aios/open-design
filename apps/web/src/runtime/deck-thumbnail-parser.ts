@@ -21,10 +21,10 @@ import DOMPurify from 'dompurify';
 
 import {
   DECK_EXPLICIT_SLIDE_SELECTOR,
-  DECK_SCREEN_SLIDE_SELECTOR,
   DECK_SLIDE_SELECTOR,
   DECK_STRUCTURED_SLIDE_SELECTOR,
 } from '@open-design/contracts/runtime/deck-stage-fallback';
+import { collectLegacyDeckScreenSlides } from './deck-slide-structure';
 
 export type DeckThumbnailFallbackReason =
   | 'no-dom-parser'
@@ -211,8 +211,7 @@ function collectSlideElements(doc: Document): Element[] {
   if (structured.length > 0) return structured;
   const explicit = Array.from(doc.querySelectorAll(DECK_EXPLICIT_SLIDE_SELECTOR));
   if (explicit.length > 0) return explicit;
-  const screenLabeled = Array.from(doc.querySelectorAll(DECK_SCREEN_SLIDE_SELECTOR));
-  return screenLabeled.length > 1 ? screenLabeled : [];
+  return collectLegacyDeckScreenSlides(doc);
 }
 
 // Walk from the slide's parent up to (but excluding) <body>/<html>, so
