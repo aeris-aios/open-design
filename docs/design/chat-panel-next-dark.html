@@ -936,6 +936,13 @@ button.att-d:hover { border-color: var(--border-strong); }
    问答卡那边保留底栏,是因为那里有两个按钮(跳过 / 确认)且要分列两端;
    这里只有一个动作,没有分列的必要。 */
 .card > .h .hd-act { margin-inline-start: auto; }
+/* 带问题的卡走固定宽,不跟着内容缩,也不拉满。
+   ------------------------------------------------------------
+   跟着内容缩:选项一长一短,卡宽就一次一个样,而这是同一个"要你拿主意"的框;
+   拉满整栏:它就和下面的执行记录一样宽,看不出这是需要停下来回答的东西。
+   380 = 用户消息气泡的 max-width。对话里有形状的就这两样 —— 你说的话和
+   它问你的话,同宽、一左一右,来回一目了然。 */
+.card:has(> .q) { width: 380px; max-width: 100%; }
 .card > .q { padding: 10px 11px 8px; font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-strong); }
 .card > .opts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 11px 10px; }
 
