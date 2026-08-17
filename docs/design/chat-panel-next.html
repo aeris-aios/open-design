@@ -922,8 +922,21 @@ button.att-i:hover { border-color: var(--border-strong); }
 .shot .fill.mod-b { background: var(--brand); opacity: 0.35; }
 .shot.is-load { background: var(--bg-fill-secondary); animation: shimmer 1.3s var(--ease-out) infinite; }
 @keyframes shimmer { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
-.shot.is-fail { border-color: var(--red); background: var(--red-bg); display: grid; place-items: center; }
-.shot.is-fail .rt { font-size: var(--t-cap); font-weight: 600; color: var(--red); }
+/* 失败格不上红框红底,跟旁边的图保持同一副外壳。
+   ------------------------------------------------------------
+   这里的格子是 3:4 的一整块,红框加红底铺开就是一大片红 ——
+   四格里有一格整个泛红,眼睛先看到的是"这排里有个红东西",
+   而不是"这一张没出来"。附件卡的红框能留(那是小卡上的一条 1px 线),
+   这里不能,面积差着量级。
+   信号交给内容本身:旁边三格都填着图,这一格是空的,中间还摆着
+   「↻ 重试」—— 空 + 一个动作按钮,已经说完了"这张没成功、你可以再来一次"。
+   红只留给「重试」两个字,那是要点的那一个点。 */
+.shot.is-fail { display: grid; place-items: center; }
+.shot.is-fail .rt {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: var(--t-cap); font-weight: 600; color: var(--red);
+}
+.shot.is-fail .rt svg { width: 11px; height: 11px; }
 .shot.is-fail .rt:hover { color: var(--text-strong); }
 .strip { display: flex; align-items: center; gap: 5px; }
 .strip .th { width: 26px; height: 34px; border-radius: 3px; overflow: hidden; border: 1px solid var(--border); position: relative; }
@@ -1926,11 +1939,11 @@ button.att-i:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>部分失败 · 保持展开,失败格标红可单独重试</span><i></i></div>
+            <div class="st-l"><span>部分失败 · 保持展开,失败格留空 + 单独重试</span><i></i></div>
             <div class="st-b">
               <div class="imgs">
                 <span class="shot"><span class="fill mod-a"></span></span>
-                <span class="shot is-fail"><button class="rt" type="button">重试</button></span>
+                <span class="shot is-fail"><button class="rt" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>重试</button></span>
                 <span class="shot"><span class="fill mod-b"></span></span>
                 <span class="shot"><span class="fill"></span></span>
               </div>
@@ -1939,7 +1952,7 @@ button.att-i:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span><b>查看</b> — 点缩略图条中任一张,弹层大图,左右键切换。新卡出现时上一张自动收起。</span>
+          <span><b>查看</b> — 点缩略图条中任一张,弹层大图,左右键切换。新卡出现时上一张自动收起。<b>单张失败</b> — 那一格不上红框红底,壳跟旁边的图一模一样:格子是 3:4 的一整块,红铺开面积太大,四格里一格泛红,看到的会是"这排有个红东西"而不是"这一张没出来"。空格 + 中间一个「↻ 重试」已经说完了,红只留给要点的那两个字。</span>
         </div>
       </article>
 
