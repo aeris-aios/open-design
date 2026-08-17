@@ -2013,15 +2013,20 @@ button.att-i:hover { border-color: var(--border-strong); }
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>已发送 · 上一任务结束后自动出队</span><i></i></div>
+            <div class="st-l"><span>出队 · 变成一条普通消息,队列少一条</span><i></i></div>
             <div class="st-b">
-              <div class="queue"><div class="qh"><span>已发送</span></div><div class="q"><span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span></div></div>
+              <div class="msg-me"><div class="bub">设置页也加上深色模式开关</div></div>
+              <div class="queue" style="margin-top:10px">
+                <div class="qh"><span>排队中</span><span class="c">2 条</span></div>
+                <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">1</span><span class="tx">商品卡换成两列</span><span class="qops"><button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
+                <div class="q"><span class="grip" role="button" tabindex="0" aria-label="拖动调整顺序"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span><span class="ix">2</span><span class="tx">结算页那张商品缩略图也一起换掉</span><span class="qops"><button type="button" aria-label="立即发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button><button type="button" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button><button type="button" aria-label="取消排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3.5 6h17"/><path d="M8.5 6V4.2A1.2 1.2 0 019.7 3h4.6a1.2 1.2 0 011.2 1.2V6"/><path d="M18.5 6l-.8 13.4a1.7 1.7 0 01-1.7 1.6H8a1.7 1.7 0 01-1.7-1.6L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/></svg></button></span></div>
+              </div>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18M3 12h18M3 18h12"/></svg>
-          <span><b>移动顺序</b> — 拖左侧手柄。<b>不用向上箭头</b>:在聊天界面里向上箭头本身就是「发送」的通用约定,放在真的发送键旁边表示"上移"必然被读岔;而且"上移一位"也表达不了任意调序。<b>立即发送</b> — 上箭头,把这条提到队首直接发。用 ↑ 而不是纸飞机:它是聊天界面里发送的通用约定;当初不敢用是因为 ↑ 被"上移"占着,现在上移交给了左侧拖拽手柄,这个位置就腾出来了。<b>编辑</b> — 内容回退到输入框。<b>取消排队</b> — 点垃圾桶移除。手柄在左、动作在右,一眼分得清"排序"和"操作"。<b>消息最多两行</b>,第三行起截断 —— 这段是用户自己写的话,长度不可控;压成一行会把话截在半截,人就认不出要取消/调序的是哪条,而认出它正是这个列表的全部意义。再长就截,列表才不会被一条长消息撑开。展示排队消息内容与队列位置。</span>
+          <span><b>移动顺序</b> — 拖左侧手柄。<b>不用向上箭头</b>:在聊天界面里向上箭头本身就是「发送」的通用约定,放在真的发送键旁边表示"上移"必然被读岔;而且"上移一位"也表达不了任意调序。<b>立即发送</b> — 上箭头,把这条提到队首直接发。用 ↑ 而不是纸飞机:它是聊天界面里发送的通用约定;当初不敢用是因为 ↑ 被"上移"占着,现在上移交给了左侧拖拽手柄,这个位置就腾出来了。<b>编辑</b> — 内容回退到输入框。<b>取消排队</b> — 点垃圾桶移除。手柄在左、动作在右,一眼分得清"排序"和"操作"。<b>消息最多两行</b>,第三行起截断 —— 这段是用户自己写的话,长度不可控;压成一行会把话截在半截,人就认不出要取消/调序的是哪条,而认出它正是这个列表的全部意义。再长就截,列表才不会被一条长消息撑开。<b>出队</b> — 上一任务结束后自动发出,那条<b>离开队列、变成流水里一条普通的用户消息气泡</b>,队列相应少一条。队列里不保留"已发送"的行 —— 队列装的是还没发出去的东西,发完还留着会让人以为它还排着。展示排队消息内容与队列位置。</span>
         </div>
       </article>
 
