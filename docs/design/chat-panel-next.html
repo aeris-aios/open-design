@@ -1006,9 +1006,12 @@ button.att-i:hover { border-color: var(--border-strong); }
   display: flex; align-items: center; gap: 6px;
   padding: 6px 10px; background: var(--bg-subtle);
   border-bottom: 1px solid var(--border-soft);
-  font-size: var(--t-cap); font-weight: 600; color: var(--amber);
+  /* 用正常文字色,不上橙。「排队中」是中性的状态标签,不是警告 ——
+     --amber 在这套系统里是提醒色,用在这儿等于把"有几条排着"说成"出事了"。
+     「已发送」同理去掉绿:两个块靠标签文字本身就分得开,不需要拿颜色区分
+     两个词。颜色留给真的需要注意的地方。 */
+  font-size: var(--t-cap); font-weight: 600; color: var(--text-strong);
 }
-.queue .qh.mod-sent { color: var(--brand-text); }
 .queue .qh .c { margin-inline-start: auto; font-family: var(--mono); font-weight: 400; color: var(--text-muted); }
 /* 22px 的按钮盒对 18px 的首行,上移 2px 才与第一行同心 */
 .qops { display: flex; gap: 1px; margin-top: -2px; }
@@ -2012,7 +2015,7 @@ button.att-i:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>已发送 · 上一任务结束后自动出队</span><i></i></div>
             <div class="st-b">
-              <div class="queue"><div class="qh mod-sent"><span>已发送</span></div><div class="q"><span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span></div></div>
+              <div class="queue"><div class="qh"><span>已发送</span></div><div class="q"><span class="ix">1</span><span class="tx">设置页也加上深色模式开关</span></div></div>
             </div>
           </div>
         </div>
