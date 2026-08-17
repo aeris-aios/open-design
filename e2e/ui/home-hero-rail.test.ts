@@ -9,6 +9,7 @@ import {
   routeSuccessfulRuns,
   successfulRunEventBody,
   suppressWhatsNew,
+  trackRunRequests,
 } from '@/playwright/mock-factory';
 import { CAMPAIGN_DISMISSAL_STORAGE } from '@/playwright/campaign-dismissals';
 import { ensureRailOpen } from '@/playwright/rail';
@@ -1436,6 +1437,55 @@ test('[P2] home template picker offers no clear control and dismisses on Escape 
   await expect(page.getByTestId('home-hero-template-menu')).toHaveCount(0);
 });
 
+test('[P1] home project creation failure preserves the draft and remains retryable', async ({ page }) => {
+  const projectCreateCount = await routeProjectCreates(page, { failFirstCreate: true });
+  await page.route('**/api/projects/*/conversations', async (route) => {
+    const projectId = decodeURIComponent(
+      new URL(route.request().url()).pathname.split('/').at(-2) ?? '',
+    );
+    await route.fulfill({
+      json: {
+        conversations: [{
+          id: `conv-${projectId}`,
+          projectId,
+          title: null,
+          sessionMode: 'design',
+          messageCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }],
+      },
+    });
+  });
+  await page.route('**/api/projects/*/conversations/*/messages', async (route) => {
+    await route.fulfill({ json: { messages: [] } });
+  });
+  await routeRunsAccepted(page);
+  const runRequests = trackRunRequests(page);
+  await gotoEntryHome(page);
+
+  const prompt = 'Create a launch page for a robotics studio.';
+  const input = page.getByTestId('home-hero-input');
+  const submit = page.getByTestId('home-hero-submit');
+  await input.fill(prompt);
+  await submit.click();
+
+  await expect.poll(projectCreateCount).toBe(1);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('entry-view-home')).toHaveAttribute('data-active', 'true');
+  await expect(input).toHaveText(prompt);
+  await expect(submit).toBeEnabled();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'Failed to start the run. Try again.' }),
+  ).toBeVisible();
+  await runRequests.expectNone({ message: 'a rejected project create must not start a run' });
+
+  await submit.click();
+  await expect.poll(projectCreateCount).toBe(2);
+  await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+  await runRequests.expectCount(1, { message: 'the successful retry must start exactly one run' });
+});
+
 test('[P2] zh-CN home smoke exposes the localized creation type, design system, working directory, and run entries', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('open-design:locale', 'zh-CN');
@@ -1972,7 +2022,7 @@ async function routeRunsAccepted(page: Page) {
   });
 }
 
-async function routeProjectCreates(page: Page) {
+async function routeProjectCreates(page: Page, options: { failFirstCreate?: boolean } = {}) {
   let createCount = 0;
   await page.route('**/api/projects', async (route) => {
     const request = route.request();
@@ -1982,6 +2032,19 @@ async function routeProjectCreates(page: Page) {
     }
     if (request.method() === 'POST') {
       createCount += 1;
+      if (options.failFirstCreate && createCount === 1) {
+        await route.fulfill({
+          status: 500,
+          json: {
+            error: {
+              message: 'Project creation is temporarily unavailable. Try again.',
+              retryable: false,
+              requestId: 'req-home-create-retry',
+            },
+          },
+        });
+        return;
+      }
       const body = request.postDataJSON() as {
         id?: string;
         name?: string;
@@ -2008,6 +2071,7 @@ async function routeProjectCreates(page: Page) {
     }
     await route.continue();
   });
+  return () => createCount;
 }
 
 async function routeHomeDesignSystems(page: Page, options: { includeBrandKit?: boolean } = {}) {

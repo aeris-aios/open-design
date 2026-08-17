@@ -5151,6 +5151,8 @@ function AppInner() {
   } else {
     appMain = (
       <EntryView
+        projectCreateError={projectCreateError}
+        onProjectCreateErrorConsumed={() => setProjectCreateError(null)}
         skills={enabledSkills}
         designTemplates={enabledDesignTemplates}
         designSystems={enabledDS}

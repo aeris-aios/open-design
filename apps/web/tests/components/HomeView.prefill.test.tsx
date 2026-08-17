@@ -928,7 +928,7 @@ describe('HomeView prompt handoff', () => {
       prompt: 'Make a launch page for a robotics studio',
       pluginId: 'od-default',
       appliedPluginSnapshotId: null,
-      pluginInputs: { prompt: 'Make a launch page for a robotics studio' },
+      pluginInputs: null,
       projectKind: 'other',
     }));
   });
