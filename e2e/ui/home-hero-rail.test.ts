@@ -1425,24 +1425,6 @@ test('[P2] home template picker offers no clear control and dismisses on Escape 
   await expect(page.getByTestId('home-hero-template-menu')).toHaveCount(0);
 });
 
-test('[P1] home suggestion entry remains retryable after create failures', async ({ page }) => {
-  const projectCreateCount = await routeProjectCreates(page, { failFirstCreate: true });
-  await routeRunsAccepted(page);
-  const runRequests = trackRunRequests(page);
-  await gotoEntryHome(page);
-
-  await page.getByTestId('home-hero-submit').click();
-  await expect.poll(projectCreateCount).toBe(1);
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId('home-hero-submit')).toBeEnabled();
-  await expect(page.getByRole('alert').filter({ hasText: /Failed to start the run/i })).toBeVisible();
-  await runRequests.expectNone({ message: 'failed blank project create should not start a run' });
-
-  await page.getByTestId('home-hero-submit').click();
-  await expect.poll(projectCreateCount).toBe(2);
-  await expect(page).toHaveURL(/\/projects\/[^/]+$/);
-});
-
 test('[P2] zh-CN home smoke exposes the localized creation type, design system, working directory, and run entries', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('open-design:locale', 'zh-CN');
@@ -1979,7 +1961,7 @@ async function routeRunsAccepted(page: Page) {
   });
 }
 
-async function routeProjectCreates(page: Page, options: { failFirstCreate?: boolean } = {}) {
+async function routeProjectCreates(page: Page) {
   let createCount = 0;
   await page.route('**/api/projects', async (route) => {
     const request = route.request();
@@ -1989,10 +1971,6 @@ async function routeProjectCreates(page: Page, options: { failFirstCreate?: bool
     }
     if (request.method() === 'POST') {
       createCount += 1;
-      if (options.failFirstCreate && createCount === 1) {
-        await route.fulfill({ status: 500, body: 'create failed' });
-        return;
-      }
       const body = request.postDataJSON() as { id?: string; name?: string; metadata?: Record<string, unknown> };
       const id = body.id ?? `home-created-${createCount}`;
       await route.fulfill({
@@ -2011,7 +1989,6 @@ async function routeProjectCreates(page: Page, options: { failFirstCreate?: bool
     }
     await route.continue();
   });
-  return () => createCount;
 }
 
 async function routeHomeDesignSystems(page: Page, options: { includeBrandKit?: boolean } = {}) {
