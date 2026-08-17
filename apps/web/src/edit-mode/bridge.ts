@@ -1084,15 +1084,19 @@ export function buildManualEditBridge(enabled: boolean): string {
       var nextUrl = new URL(href, baseUrl);
       if (nextUrl.origin !== baseUrl.origin) return null;
       var fileRoot = null;
+      var projectMarker = '/api/projects/';
+      var projectIndex = baseUrl.pathname.indexOf(projectMarker);
+      if (projectIndex < 0) return null;
+      var projectIdStart = projectIndex + projectMarker.length;
+      var routeMarkerStart = baseUrl.pathname.indexOf('/', projectIdStart);
+      if (routeMarkerStart < 0 || routeMarkerStart === projectIdStart) return null;
       var rawMarker = '/raw/';
-      var rawIndex = baseUrl.pathname.lastIndexOf(rawMarker);
-      if (rawIndex >= 0) {
-        fileRoot = baseUrl.pathname.slice(0, rawIndex + rawMarker.length);
+      if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + rawMarker.length) === rawMarker) {
+        fileRoot = baseUrl.pathname.slice(0, routeMarkerStart + rawMarker.length);
       } else {
         var previewMarker = '/preview/';
-        var previewIndex = baseUrl.pathname.lastIndexOf(previewMarker);
-        if (previewIndex < 0) return null;
-        var scopeStart = previewIndex + previewMarker.length;
+        if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + previewMarker.length) !== previewMarker) return null;
+        var scopeStart = routeMarkerStart + previewMarker.length;
         var scopeEnd = baseUrl.pathname.indexOf('/', scopeStart);
         if (scopeEnd < 0 || scopeEnd === scopeStart) return null;
         fileRoot = baseUrl.pathname.slice(0, scopeEnd + 1);

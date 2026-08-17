@@ -773,7 +773,10 @@ import {
   workspaceResourceContext,
   workspaceResourceContextFromRequest,
 } from './collab/workspace-resource-mutation.js';
-import { createAuthorizeProjectRequest } from './collab/project-request-authority.js';
+import {
+  createAuthorizeProjectRequest,
+  resolveBoundProjectWorkspaceReadAuthority,
+} from './collab/project-request-authority.js';
 import { withLastKnownWorkspaceContext } from './collab/workspace-context.js';
 import {
   createWorkspaceTypeRegistry,
@@ -7329,30 +7332,10 @@ export async function startServer({
         ok: false as const,
         items: [],
       }));
-      if (!directory.ok) {
-        return {
-          ok: false,
-          status: 503,
-          code: 'WORKSPACE_AUTHORITY_UNAVAILABLE',
-          message: 'workspace membership authority is temporarily unavailable',
-          retryable: true,
-        };
-      }
-      const item = directory.items.find(
-        (candidate) => candidate.workspaceId === binding.workspaceId,
+      return resolveBoundProjectWorkspaceReadAuthority(
+        binding.workspaceId,
+        directory,
       );
-      if (!item) {
-        return {
-          ok: false,
-          status: 403,
-          code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
-          message: 'workspace project access is not allowed',
-        };
-      }
-      return {
-        ok: true,
-        context: workspaceContextFromDirectoryItem(item),
-      };
     }
 
     return {

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAuthorizeProjectRequest } from '../../src/collab/project-request-authority.js';
+import {
+  createAuthorizeProjectRequest,
+  resolveBoundProjectWorkspaceReadAuthority,
+} from '../../src/collab/project-request-authority.js';
 import { verifyWorkspaceRequestContext } from '../../src/collab/request-workspace-context.js';
 import { createCachedWorkspaceDirectoryFetcher } from '../../src/collab/vela-workspace-context.js';
 
@@ -57,6 +60,22 @@ function context(overrides: Record<string, unknown> = {}) {
 }
 
 describe('createAuthorizeProjectRequest', () => {
+  it('preserves the expired-session sign-in signal for derived bound-project reads', () => {
+    const result = resolveBoundProjectWorkspaceReadAuthority('workspace-a', {
+      ok: false,
+      items: [],
+      reason: 'unauthorized',
+      status: 401,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 401,
+      code: 'AMR_AUTH_REQUIRED',
+    });
+    expect(result).not.toHaveProperty('retryable');
+  });
+
   it('derives a bound project read from persisted server authority when the request is headerless', async () => {
     const row = {
       workspaceId: 'workspace-a',

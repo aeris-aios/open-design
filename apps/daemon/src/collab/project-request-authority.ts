@@ -4,9 +4,52 @@ import {
   enforceVerifiedWorkspaceResourceRead,
   type ResolveWorkspaceResourceReadAuthority,
   type VerifyWorkspaceRequestAuthority,
+  type WorkspaceRequestAuthorityResult,
   type WorkspaceResourceAccessInput,
   type WorkspaceResourceMutationCapability,
 } from './workspace-resource-mutation.js';
+import {
+  workspaceContextFromDirectoryItem,
+  type WorkspaceDirectoryFetchResult,
+} from './vela-workspace-context.js';
+
+export function resolveBoundProjectWorkspaceReadAuthority(
+  workspaceId: string,
+  directory: WorkspaceDirectoryFetchResult,
+): WorkspaceRequestAuthorityResult {
+  if (!directory.ok) {
+    if (directory.reason === 'unauthorized') {
+      return {
+        ok: false,
+        status: 401,
+        code: 'AMR_AUTH_REQUIRED',
+        message: 'AMR authorization expired. Sign in again to continue.',
+      };
+    }
+    return {
+      ok: false,
+      status: 503,
+      code: 'WORKSPACE_AUTHORITY_UNAVAILABLE',
+      message: 'workspace membership authority is temporarily unavailable',
+      retryable: true,
+    };
+  }
+  const item = directory.items.find(
+    (candidate) => candidate.workspaceId === workspaceId,
+  );
+  if (!item) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
+      message: 'workspace project access is not allowed',
+    };
+  }
+  return {
+    ok: true,
+    context: workspaceContextFromDirectoryItem(item),
+  };
+}
 
 export type AuthorizeProjectRequestOptions =
   | {
