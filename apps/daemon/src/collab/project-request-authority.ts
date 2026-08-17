@@ -16,6 +16,7 @@ import {
 export function resolveBoundProjectWorkspaceReadAuthority(
   workspaceId: string,
   directory: WorkspaceDirectoryFetchResult,
+  configuredEnv: Record<string, string> = {},
 ): WorkspaceRequestAuthorityResult {
   if (!directory.ok) {
     if (directory.reason === 'unauthorized') {
@@ -47,7 +48,7 @@ export function resolveBoundProjectWorkspaceReadAuthority(
   }
   return {
     ok: true,
-    context: workspaceContextFromDirectoryItem(item),
+    context: workspaceContextFromDirectoryItem(item, configuredEnv),
   };
 }
 
