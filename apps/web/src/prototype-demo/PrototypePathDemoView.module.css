@@ -1,0 +1,969 @@
+/* Prototype-path review demo. Colours come from the app's token set
+   (styles/tokens.css) so the demo tracks light/dark without its own palette. */
+
+.view {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 24px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--text);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-large);
+  border: 1px solid var(--amber-border, var(--border));
+  background: var(--amber-bg);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* --- step rail ---------------------------------------------------------- */
+
+.stepRail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stepItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-large);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.step_current {
+  border-color: var(--border-selected);
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+}
+
+.step_todo {
+  opacity: 0.62;
+}
+
+.stepBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: var(--radius-circular);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-fill-secondary);
+  color: var(--text-muted);
+}
+
+.step_current .stepBadge {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.step_done .stepBadge {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.stepLabels {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stepLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.stepCaption {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- shared panel chrome ------------------------------------------------ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border-radius: var(--radius-xlarge);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.panelHead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.panelHint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 70ch;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: var(--radius-large);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.textarea:focus-visible {
+  outline: none;
+  border-color: var(--border-selected);
+}
+
+.presetRow,
+.chipRow,
+.addRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.chipActive,
+.chipActive:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.optionGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.optionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.panelFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 2px;
+}
+
+.footActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footNote {
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.primaryButton,
+.ghostButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-large);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.primaryButton {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.primaryButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ghostButton {
+  background: var(--bg-panel);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.ghostButton:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+.ghostButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: none;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+/* --- step 2: screen map ------------------------------------------------- */
+
+.mappingState {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 0;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.spin {
+  animation: prototypeDemoSpin 0.9s linear infinite;
+}
+
+@keyframes prototypeDemoSpin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+}
+
+.mapGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.mapCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-large);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.mapCardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mapIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: var(--radius-circular);
+  background: var(--bg-fill-secondary);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.mapNameInput {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-medium);
+  padding: 3px 6px;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.mapNameInput:hover {
+  border-color: var(--border);
+}
+
+.mapNameInput:focus-visible {
+  outline: none;
+  border-color: var(--border-selected);
+  background: var(--bg);
+}
+
+.mapPurpose {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.mapLinks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mapLinks li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
+.mapNoLinks {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* --- step 3: preview + iterate ------------------------------------------ */
+
+.previewPanel {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 290px;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .previewPanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.screenList,
+.iteratePane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--radius-xlarge);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.screenListHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.progressPill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-fill-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.screenRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-large);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.screenRow:hover {
+  background: var(--bg-subtle);
+}
+
+.screenRowActive,
+.screenRowActive:hover {
+  background: var(--bg-panel);
+  border-color: var(--border-selected);
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.screenRowName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: var(--radius-circular);
+  background: var(--text-faint);
+}
+
+.status_ready { background: var(--green); }
+.status_generating { background: var(--blue); }
+.status_stale { background: var(--amber); }
+.status_queued { background: var(--text-faint); }
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-xlarge);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.stageBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stageTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.stageMeta {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-soft);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.stageCanvas {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  border-radius: var(--radius-large);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+}
+
+.deviceFrame {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  overflow: hidden;
+  border-radius: var(--radius-large);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+}
+
+.deviceFrame[data-platform='mobile'] {
+  max-width: 300px;
+  border-radius: 26px;
+  border-width: 6px;
+}
+
+.screenPending {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+  text-align: center;
+  padding: 16px;
+}
+
+.iterateScope {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-large);
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.iterationLog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.iterationEntry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border-radius: var(--radius-large);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+}
+
+.iterationScreen {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.iterationRequest {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-strong);
+}
+
+.iterationReply {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --- mocked screen skeletons -------------------------------------------- */
+
+.mockScreen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.mockScreenBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Fidelity paint. Layout is identical either way — only the fill changes, so
+   flipping fidelity in step 1 is visible here without redrawing anything. */
+.toneWire {
+  background: transparent !important;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-soft);
+}
+
+.toneHigh {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+}
+
+.mockAppbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 8px 10px;
+  border-radius: var(--radius-medium);
+}
+
+.mockAppbarTitle {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mockAppbarDots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.mockAppbarDots i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-circular);
+  background: currentColor;
+  opacity: 0.4;
+}
+
+.mockHero {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  padding: 16px 12px;
+  border-radius: var(--radius-medium);
+}
+
+.mockHeroTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mockHeroSub {
+  height: 6px;
+  width: 55%;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.25;
+}
+
+.mockSearch {
+  height: 24px;
+  flex: none;
+  border-radius: 999px;
+}
+
+.mockStatRow {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.mockStat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+  border-radius: var(--radius-medium);
+}
+
+.mockStatValue {
+  height: 10px;
+  width: 52%;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.mockStatLabel {
+  height: 5px;
+  width: 76%;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.22;
+}
+
+.mockList,
+.mockTimeline,
+.mockForm {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+}
+
+.mockListRow,
+.mockTimelineStep {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: var(--radius-medium);
+}
+
+.mockAvatar {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: var(--radius-circular);
+  background: currentColor;
+  opacity: 0.3;
+}
+
+.mockDot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--radius-circular);
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.mockLines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mockLines i,
+.mockText i {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.24;
+}
+
+.mockText {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-soft);
+}
+
+.mockGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mockCard {
+  height: 58px;
+  border-radius: var(--radius-medium);
+}
+
+.mockTable {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border-radius: var(--radius-medium);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mockTableHead,
+.mockTableRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mockTableHead i,
+.mockTableRow i {
+  display: block;
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.2;
+}
+
+.mockTableHead i {
+  opacity: 0.45;
+  height: 6px;
+}
+
+.mockChart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 88px;
+  flex: none;
+  padding: 9px;
+  border-radius: var(--radius-medium);
+}
+
+.mockChart span {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+.mockField {
+  height: 28px;
+  border-radius: var(--radius-medium);
+}
+
+.mockCta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 30px;
+  border-radius: var(--radius-medium);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mockCtaHigh {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.mockTabbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  flex: none;
+  margin-top: auto;
+  padding: 9px;
+  border-radius: var(--radius-medium);
+}
+
+.mockTabbar span {
+  width: 18px;
+  height: 5px;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.24;
+}
+
+.mockTabActive {
+  opacity: 0.6 !important;
+}
+
+/* Hotspots sit on top of the skeleton so the flow is readable at a glance,
+   not only discoverable by clicking around. */
+.hotspotLayer {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.hotspot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--blue-border);
+  background: var(--blue-bg);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.hotspot:hover {
+  border-color: var(--blue);
+}
