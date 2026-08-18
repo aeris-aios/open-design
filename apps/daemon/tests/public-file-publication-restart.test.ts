@@ -135,6 +135,103 @@ async function startDaemon(
 }
 
 describe('public file publication restart lifecycle', () => {
+  it('redacts a new snapshot when publication persistence fails', async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), 'od-public-persist-fail-'));
+    tempDirs.push(projectDir);
+    await writeFile(path.join(projectDir, 'index.html'), '<h1>Public</h1>');
+    process.env.OD_RESOURCE_HUB_URL = 'https://hub.example.test';
+    vela.runResourceCommand.mockImplementation(async (args: string[]) =>
+      args[0] === 'snapshot'
+        ? JSON.stringify({
+            slug: 'unpersisted-slug',
+            name: 'index.html',
+            kind: 'project',
+            versionId: 'version-1',
+            createdAt: new Date(1).toISOString(),
+          })
+        : JSON.stringify({ version: 1 }),
+    );
+    const publicationStore: PublicFilePublicationStore = {
+      get: () => null,
+      set: () => {
+        throw new Error('sqlite disk full');
+      },
+      delete: () => {},
+    };
+    const daemon = await startDaemon(projectDir, publicationStore);
+
+    const publish = await daemon.request('POST');
+
+    expect(publish).toEqual({
+      status: 502,
+      body: { error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE' },
+    });
+    expect(vela.runResourceCommand.mock.calls.map(([args]) => args[0])).toEqual([
+      'push',
+      'snapshot',
+      'snapshot-redact',
+    ]);
+    expect(vela.runResourceCommand).toHaveBeenLastCalledWith(
+      [
+        'snapshot-redact',
+        expect.stringMatching(/^project-file-/u),
+        'unpersisted-slug',
+        '--json',
+      ],
+      'team-1',
+    );
+  });
+
+  it('returns the public URL and recovery command when compensation fails', async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), 'od-public-recovery-'));
+    tempDirs.push(projectDir);
+    await writeFile(path.join(projectDir, 'index.html'), '<h1>Public</h1>');
+    process.env.OD_RESOURCE_HUB_URL = 'https://hub.example.test';
+    vela.runResourceCommand.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'snapshot') {
+        return JSON.stringify({
+          slug: 'manual-revoke-slug',
+          name: 'index.html',
+          kind: 'project',
+          versionId: 'version-1',
+          createdAt: new Date(1).toISOString(),
+        });
+      }
+      if (args[0] === 'snapshot-redact') {
+        throw new Error('resource hub unavailable');
+      }
+      return JSON.stringify({ version: 1 });
+    });
+    const publicationStore: PublicFilePublicationStore = {
+      get: () => null,
+      set: () => {
+        throw new Error('sqlite disk full');
+      },
+      delete: () => {},
+    };
+    const daemon = await startDaemon(projectDir, publicationStore);
+
+    const publish = await daemon.request('POST');
+
+    expect(publish.status).toBe(502);
+    expect(publish.body).toMatchObject({
+      error: {
+        code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
+        data: {
+          url: 'https://hub.example.test/api/v1/public/snapshots/manual-revoke-slug/files/index.html',
+          slug: 'manual-revoke-slug',
+          fileName: 'index.html',
+        },
+      },
+    });
+    expect((publish.body.error as { message: string }).message).toContain(
+      'od project revoke-public-link',
+    );
+    expect((publish.body.error as { message: string }).message).toContain(
+      'https://hub.example.test/api/v1/public/snapshots/manual-revoke-slug/files/index.html',
+    );
+  });
+
   it('restores and revokes a published link after the daemon restarts', async () => {
     const projectDir = await mkdtemp(path.join(tmpdir(), 'od-public-restart-'));
     tempDirs.push(projectDir);

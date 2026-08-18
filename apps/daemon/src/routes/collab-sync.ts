@@ -1266,10 +1266,39 @@ export function registerCollabSyncRoutes(
         slug: snapshot.slug,
         fileName: filePath,
       };
-      publicFilePublicationStore.set(
-        publicFilePublicationScope(projectId, filePath, principal),
-        publication,
-      );
+      try {
+        publicFilePublicationStore.set(
+          publicFilePublicationScope(projectId, filePath, principal),
+          publication,
+        );
+      } catch (persistenceError) {
+        try {
+          await runVelaResourceCommand([
+            'snapshot-redact',
+            resourceId,
+            snapshot.slug,
+            '--json',
+          ], principal.teamId);
+        } catch (redactionError) {
+          console.warn(
+            '[od] failed to persist public project file publication; snapshot compensation also failed:',
+            { persistenceError, redactionError },
+          );
+          return res.status(502).json({
+            error: {
+              code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
+              message:
+                `The public link remains active at ${publication.url}. `
+                + 'Run od project revoke-public-link with this project, file path, and URL.',
+              data: {
+                projectId,
+                ...publication,
+              },
+            },
+          });
+        }
+        throw persistenceError;
+      }
       return res.json(publication);
     } catch (error) {
       console.warn('[od] failed to publish public project file:', error);
