@@ -1126,6 +1126,33 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     expect(context?.planId).toBeNull();
   });
 
+  it('routes current and exact reads through the injected directory authority broker', async () => {
+    const fetchWorkspaceDirectory = vi.fn(async () => ({
+      ok: true as const,
+      items: [B_DIRECTORY_ITEM],
+    }));
+    const directFetch = vi.fn(async () => {
+      throw new Error('direct directory fetch must stay behind the broker');
+    }) as unknown as typeof fetch;
+    const provider = createVelaWorkspaceContextProvider({
+      fetch: directFetch,
+      fetchWorkspaceDirectory,
+      readSession: () => SESSION,
+      getActiveWorkspaceId: () => B_DIRECTORY_ITEM.workspaceId,
+    });
+
+    await expect(provider.current({})).resolves.toMatchObject({
+      workspaceId: B_DIRECTORY_ITEM.workspaceId,
+    });
+    await expect(provider.resolveExact?.({
+      workspaceId: B_DIRECTORY_ITEM.workspaceId,
+    })).resolves.toMatchObject({
+      workspaceId: B_DIRECTORY_ITEM.workspaceId,
+    });
+    expect(fetchWorkspaceDirectory).toHaveBeenCalledTimes(2);
+    expect(directFetch).not.toHaveBeenCalled();
+  });
+
   it('does not bootstrap when the directory returns 401', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(401, { error: 'unauthenticated' })) as unknown as typeof fetch;
     const provider = createVelaWorkspaceContextProvider({ fetch: fetchImpl, readSession: () => SESSION });

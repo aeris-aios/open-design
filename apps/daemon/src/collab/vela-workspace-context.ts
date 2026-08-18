@@ -77,6 +77,8 @@ const PROVIDER_MODES = new Set<WorkspaceProviderMode>(['platform_credits', 'pers
 interface VelaWorkspaceContextOptions {
   /** Injectable for tests. */
   fetch?: typeof fetch;
+  /** Reuse the daemon's account-scoped directory authority broker. */
+  fetchWorkspaceDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   /** Injectable for tests; defaults to reading ~/.amr/config.json + env. */
   readSession?: typeof readVelaControlApiContext;
   /** Settings-backed AMR environment used by the daemon's agent launcher. */
@@ -230,9 +232,19 @@ export function createVelaWorkspaceContextProvider(
   const fetchImpl = options.fetch ?? fetch;
   const readSession = options.readSession ?? readVelaControlApiContext;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  type VelaSession = NonNullable<ReturnType<typeof readVelaControlApiContext>>;
   const configuredEnv = () => typeof options.configuredEnv === 'function'
     ? options.configuredEnv()
     : (options.configuredEnv ?? {});
+  const readWorkspaceDirectory = (
+    session: VelaSession,
+    selectedEnv: Record<string, string>,
+  ) => options.fetchWorkspaceDirectory?.() ?? fetchVelaWorkspaceDirectory({
+    fetch: fetchImpl,
+    readSession: () => session,
+    configuredEnv: selectedEnv,
+    timeoutMs,
+  });
 
   /** Pick the best default membership out of an already-fetched directory list. */
   function selectDefaultCandidate(
@@ -269,12 +281,7 @@ export function createVelaWorkspaceContextProvider(
     const session = readSession(process.env, selectedEnv);
     if (!session || !session.controlKey || !session.apiUrl) return null;
     try {
-      const directory = await fetchVelaWorkspaceDirectory({
-        fetch: fetchImpl,
-        readSession: () => session,
-        configuredEnv: selectedEnv,
-        timeoutMs,
-      });
+      const directory = await readWorkspaceDirectory(session, selectedEnv);
       // A failed directory read confirms nothing. In particular, never evict
       // the local pin on a timeout, auth outage, or non-2xx response.
       if (!directory.ok) return null;
@@ -323,12 +330,7 @@ export function createVelaWorkspaceContextProvider(
     const workspaceId = req.workspaceId.trim();
     if (!session || !session.controlKey || !session.apiUrl || !workspaceId) return null;
     try {
-      const directory = await fetchVelaWorkspaceDirectory({
-        fetch: fetchImpl,
-        readSession: () => session,
-        configuredEnv: selectedEnv,
-        timeoutMs,
-      });
+      const directory = await readWorkspaceDirectory(session, selectedEnv);
       if (!directory.ok) return null;
       const item = directory.items.find(
         (entry) =>
@@ -906,7 +908,11 @@ export function createWorkspaceContextProviderFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   options: Pick<
     VelaWorkspaceContextOptions,
-    'configuredEnv' | 'getActiveWorkspaceId' | 'setLocalSelection' | 'clearLocalSelection'
+    | 'configuredEnv'
+    | 'fetchWorkspaceDirectory'
+    | 'getActiveWorkspaceId'
+    | 'setLocalSelection'
+    | 'clearLocalSelection'
   > = {},
 ): WorkspaceContextProvider {
   if (env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() === 'vela') {

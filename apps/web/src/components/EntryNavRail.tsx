@@ -469,8 +469,8 @@ export type WorkspaceInviteTarget =
  * Direct invites and billing recovery are separate capabilities. A Personal
  * Free owner (or a full Team owner) can still enter Vela's upgrade/seat flow
  * without direct invite capability, but an admin never acquires billing power
- * from role alone. Unknown seat state fails closed until the context refresh
- * supplies an authoritative answer.
+ * from role alone. Unknown capacity remains usable for a member with explicit
+ * invite permission; the invite API is still the authority if the plan is full.
  */
 export function canAccessWorkspaceInviteFlow(
   context: WorkspaceCollabContext | null | undefined,
@@ -494,7 +494,7 @@ export function canAccessWorkspaceInviteFlow(
   if (context.workspaceType === 'personal') return canInviteMembers;
 
   const isSeatFull = workspaceSeatFull(context);
-  if (isSeatFull === undefined) return false;
+  if (isSeatFull === undefined) return canInviteMembers;
   if (!isSeatFull) return canInviteMembers;
   return context.role === 'owner' && canManageBilling;
 }
@@ -502,17 +502,29 @@ export function canAccessWorkspaceInviteFlow(
 function workspaceSeatFull(
   context: WorkspaceCollabContext,
 ): boolean | undefined {
+  // Directory-derived contexts use 0/0 because the removed account-global
+  // context projection no longer supplies seat accounting. That pair means
+  // unknown, not a proven zero-seat plan. Explicit invite permission may still
+  // open the form; the invite API remains the capacity authority.
+  if (
+    context.seatSummary?.seatLimit === 0
+    && context.seatSummary.usedSeats === 0
+  ) {
+    return undefined;
+  }
   const availableSeats = context.seatSummary?.availableSeats;
   if (availableSeats !== undefined) return availableSeats <= 0;
   return context.seatSummary?.isSeatFull;
 }
 
 /**
- * Chooses the first safe invite surface. The local form is only valid when a
- * team is positively known to have direct invite capability and capacity.
- * Personal, Free-plan, and full-seat owner states go to Vela, whose dashboard
- * owns the authoritative upgrade/seat/invite decision. Missing routing or seat
- * data fails closed.
+ * Chooses the first safe invite surface. The local form requires direct invite
+ * capability and no proof that the team is already full; unknown capacity is
+ * resolved by the invite API when the form is submitted.
+ * Personal, Free-plan, and proven full-seat owner states go to Vela, whose
+ * dashboard owns the authoritative upgrade/seat/invite decision. Unknown seat
+ * data stays on the local permission-gated flow and lets the invite API return
+ * an authoritative capacity result.
  */
 export function resolveWorkspaceInviteTarget(
   context: WorkspaceCollabContext | null | undefined,
@@ -525,7 +537,7 @@ export function resolveWorkspaceInviteTarget(
   if (
     context.workspaceType === 'team' &&
     !needsTeamUpgrade &&
-    workspaceSeatFull(context) === false &&
+    workspaceSeatFull(context) !== true &&
     context.permissions.canInviteMembers === true
   ) {
     return { kind: 'local' };

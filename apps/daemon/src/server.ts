@@ -3436,6 +3436,7 @@ export async function startServer({
   const workspaceContext = withLastKnownWorkspaceContext(
     createWorkspaceContextProviderFromEnv(process.env, {
       configuredEnv: configuredAmrEnv,
+      fetchWorkspaceDirectory,
       getActiveWorkspaceId: () => activeWorkspace.get(),
       setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
       // Only called after the membership directory CONFIRMS the pinned
