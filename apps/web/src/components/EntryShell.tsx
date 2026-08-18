@@ -1500,9 +1500,13 @@ export function EntryShell({
       ...(payload.pluginId && !payload.pluginSelectionProvenance
         ? { pluginId: payload.pluginId }
         : {}),
-      ...(payload.pluginSource ? { pluginSource: payload.pluginSource } : {}),
-      ...(payload.pluginType ? { pluginType: payload.pluginType } : {}),
-      ...(payload.appliedPluginSnapshotId
+      ...(payload.pluginSource && !payload.pluginSelectionProvenance
+        ? { pluginSource: payload.pluginSource }
+        : {}),
+      ...(payload.pluginType && !payload.pluginSelectionProvenance
+        ? { pluginType: payload.pluginType }
+        : {}),
+      ...(payload.appliedPluginSnapshotId && !payload.pluginSelectionProvenance
         ? { appliedPluginSnapshotId: payload.appliedPluginSnapshotId }
         : {}),
       ...(payload.pluginInputs ? { pluginInputs: payload.pluginInputs } : {}),

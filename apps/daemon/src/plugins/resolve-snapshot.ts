@@ -27,6 +27,8 @@ import type {
   ApplyResult,
   InstalledPluginRecord,
   PluginConnectorBinding,
+  ProjectScenarioBindingProvenance,
+  ProjectScenarioTaskProfile,
 } from '@open-design/contracts';
 import {
   applyPlugin,
@@ -55,6 +57,7 @@ import {
   type SelectableStrategyTaskTypeV2,
 } from './strategy-package.js';
 import { InvalidBundledStrategyActivationV2Error } from './strategy-provenance.js';
+import { writeProjectScenarioBinding } from './scenario-binding.js';
 
 type SqliteDb = Database.Database;
 
@@ -92,6 +95,15 @@ export interface ResolveSnapshotInput {
     taskType: SelectableStrategyTaskTypeV2;
     /** Trusted record resolved directly from the hidden bundled resource. */
     plugin: InstalledPluginRecord;
+  } | undefined;
+  /**
+   * Daemon-owned provenance to stamp when this call changes the durable
+   * project pin. Omit for fallback reuse; explicit request fields default to
+   * `explicit_user`.
+   */
+  projectBinding?: {
+    provenance: ProjectScenarioBindingProvenance;
+    taskProfile?: ProjectScenarioTaskProfile | null;
   } | undefined;
 }
 
@@ -164,6 +176,11 @@ function pickPluginFields(body: Record<string, unknown> | null | undefined) {
 
 export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnapshotResult {
   const fields = pickPluginFields(input.body);
+  const requestNamedBinding = Boolean(fields.pluginId || fields.snapshotId);
+  const projectBinding = input.internalStrategyActivation
+    ? null
+    : input.projectBinding
+      ?? (requestNamedBinding ? { provenance: 'explicit_user' as const } : null);
   // If the caller didn't name a plugin / snapshot in the body but a
   // snapshot is already pinned to the project (set by a prior project /
   // conversation create that ran the plugin), reuse it. This is what
@@ -235,6 +252,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
       input,
       snapshot,
       created: false,
+      projectBinding,
     });
   }
 
@@ -382,6 +400,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     snapshot: persisted,
     applyResult: { ...result, appliedPlugin: persisted },
     created: true,
+    projectBinding,
   });
 }
 
@@ -390,6 +409,7 @@ function finalizeOk(args: {
   snapshot: AppliedPluginSnapshot;
   applyResult?: ApplyResult;
   created: boolean;
+  projectBinding: ResolveSnapshotInput['projectBinding'] | null;
 }): ResolveSnapshotOk {
   // Pin the snapshot to whichever surfaces the caller already knows.
   // Order matters: link to project (always) before conversation/run so
@@ -402,6 +422,17 @@ function finalizeOk(args: {
   const runScopedStrategy = Boolean(args.input.internalStrategyActivation);
   if (args.input.projectId && !runScopedStrategy) {
     linkSnapshotToProject(db, snap.snapshotId, args.input.projectId);
+    if (args.projectBinding) {
+      writeProjectScenarioBinding(db, {
+        projectId: args.input.projectId,
+        snapshotId: snap.snapshotId,
+        pluginId: snap.pluginId,
+        provenance: args.projectBinding.provenance,
+        ...(args.projectBinding.taskProfile
+          ? { taskProfile: args.projectBinding.taskProfile }
+          : {}),
+      });
+    }
   }
   if (args.input.conversationId && !runScopedStrategy) {
     linkSnapshotToConversation(db, snap.snapshotId, args.input.conversationId);

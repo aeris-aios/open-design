@@ -2696,11 +2696,18 @@ export function HomeView({
       // route through the default design router; in Ask mode they stay plain
       // chat conversations with no hidden router plugin.
       const resolvedSkillId = submittedActive ? null : activeSkill?.id ?? null;
+      const submittedChip = submittedActive?.chipId
+        ? findChip(submittedActive.chipId)
+        : null;
+      const productAutomaticScenario = submittedChip?.action.kind === 'apply-scenario'
+        && submittedChip.action.automaticDefault === true
+        && submittedActive?.explicitPick !== true;
       const routedPluginId =
         sessionMode === 'design'
           ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
           : submittedActive?.record.id ?? null;
-      const pluginSelectionProvenance = sessionMode === 'design' && !submittedActive
+      const pluginSelectionProvenance = sessionMode === 'design'
+        && (!submittedActive || productAutomaticScenario)
         ? 'automatic-default' as const
         : null;
       // The example-prompt override is a one-shot marker. Decide whether to

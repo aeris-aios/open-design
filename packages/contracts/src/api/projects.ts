@@ -32,6 +32,34 @@ export type ProjectPlatform =
 
 export type AudioKind = 'music' | 'speech' | 'sfx';
 
+export type ProjectScenarioBindingProvenance =
+  | 'automatic_default'
+  | 'explicit_user'
+  | 'legacy_unknown';
+
+export type ProjectScenarioTaskProfile =
+  | 'prototype'
+  | 'ppt'
+  | 'marketing'
+  | 'hyperframes';
+
+/**
+ * Daemon-owned identity for the scenario currently pinned to a project.
+ *
+ * The snapshot and plugin ids are deliberately stored together: provenance
+ * is authoritative only while both still match the live project pin. Old
+ * rows that pre-date this contract are migrated to `legacy_unknown` and never
+ * acquire automatic-routing authority by inference.
+ */
+export interface ProjectScenarioBinding {
+  schemaVersion: 1;
+  provenance: ProjectScenarioBindingProvenance;
+  pluginId: string;
+  snapshotId: string;
+  taskProfile?: ProjectScenarioTaskProfile;
+  boundAt: number;
+}
+
 export type ProjectDisplayStatus =
   | 'not_started'
   | 'queued'
@@ -127,7 +155,14 @@ export interface ProjectMetadata {
   // `other`. `webgl-experience` and `worker-visualizer`: the powered-preview
   // GPU / off-main-thread scenario cards — analytics-only discriminators for the
   // powered-artifact chips.
-  intent?: 'live-artifact' | 'web-clone' | 'document' | 'webgl-experience' | 'worker-visualizer';
+  intent?:
+    | 'live-artifact'
+    | 'web-clone'
+    | 'document'
+    | 'webgl-experience'
+    | 'worker-visualizer'
+    | 'marketing'
+    | 'hyperframes';
   fidelity?: 'wireframe' | 'high-fidelity';
   speakerNotes?: boolean;
   slideCount?: string;
@@ -218,13 +253,8 @@ export interface ProjectMetadata {
    * identity is still loading; it is never Workspace ownership or authority.
    */
   localCatalogScopes?: ProjectResourceCatalogScopes;
-  /**
-   * Daemon-stamped identity of the scenario snapshot selected only by the
-   * product's hidden Design-mode default router. Rollout may treat it as
-   * automatic only while the persisted project pin still matches this exact
-   * identity; explicit create/run selections remain user authority.
-   */
-  automaticDefaultScenario?: { pluginId: string; snapshotId: string };
+  /** Daemon-owned, exact provenance for the scenario currently pinned here. */
+  scenarioBinding?: ProjectScenarioBinding;
   // Stored on design-system projects so the review overview can remember
   // which generated sections were accepted or sent back for another pass.
   designSystemReview?: Record<string, DesignSystemReviewEntry>;
@@ -376,6 +406,16 @@ export interface ProjectsResponse {
 
 export interface ProjectResponse {
   project: Project;
+}
+
+export interface RestoreProjectAutomaticScenarioRequest {
+  /** Compare-and-swap guard for the project pin the caller inspected. */
+  expectedCurrentSnapshotId: string | null;
+}
+
+export interface RestoreProjectAutomaticScenarioResponse extends ProjectResponse {
+  scenarioBinding: ProjectScenarioBinding;
+  changed: boolean;
 }
 
 export type ProjectDesignTokenSuggestionProp =

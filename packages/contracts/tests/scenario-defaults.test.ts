@@ -11,6 +11,8 @@ import {
   defaultScenarioPluginIdForKind,
   defaultScenarioPluginIdForProjectMetadata,
   defaultScenarioPluginIdForTaskKind,
+  defaultScenarioTaskProfileForProjectMetadata,
+  hasCurrentAutomaticScenarioBinding,
 } from '../src/plugins/scenario-defaults.js';
 
 describe('defaultScenarioPluginIdForKind', () => {
@@ -46,6 +48,85 @@ describe('defaultScenarioPluginIdForKind', () => {
     expect(defaultScenarioPluginIdForProjectMetadata({ kind: 'prototype' }))
       .toBe('example-web-prototype');
     expect(defaultScenarioPluginIdForProjectMetadata(undefined)).toBeNull();
+  });
+
+  it('keeps Marketing and HyperFrames explicit while ordinary media stays generic', () => {
+    expect(defaultScenarioPluginIdForProjectMetadata({
+      kind: 'prototype',
+      intent: 'marketing',
+    })).toBe('example-web-prototype');
+    expect(defaultScenarioPluginIdForProjectMetadata({
+      kind: 'video',
+      intent: 'hyperframes',
+    })).toBe('example-hyperframes');
+    expect(defaultScenarioPluginIdForProjectMetadata({ kind: 'image' }))
+      .toBe('od-media-generation');
+    expect(defaultScenarioPluginIdForProjectMetadata({ kind: 'video' }))
+      .toBe('od-media-generation');
+  });
+
+  it('limits automatic OD Next profiles to the four approved routes', () => {
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'prototype' },
+      'example-web-prototype',
+    )).toBe('prototype');
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'deck' },
+      'example-simple-deck',
+    )).toBe('ppt');
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'prototype', intent: 'marketing' },
+      'example-web-prototype',
+    )).toBe('marketing');
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'video', intent: 'hyperframes' },
+      'example-hyperframes',
+    )).toBe('hyperframes');
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'image' },
+      'od-media-generation',
+    )).toBeNull();
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'video' },
+      'od-media-generation',
+    )).toBeNull();
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'audio' },
+      'od-media-generation',
+    )).toBeNull();
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'other' },
+      'od-new-generation',
+    )).toBeNull();
+  });
+
+  it('detects stale or tampered automatic bindings for the restore surface', () => {
+    const metadata = {
+      kind: 'prototype' as const,
+      scenarioBinding: {
+        schemaVersion: 1 as const,
+        provenance: 'automatic_default' as const,
+        pluginId: 'example-web-prototype',
+        snapshotId: 'snapshot-1',
+        taskProfile: 'prototype' as const,
+        boundAt: 1,
+      },
+    };
+    expect(hasCurrentAutomaticScenarioBinding({
+      metadata,
+      appliedPluginSnapshotId: 'snapshot-1',
+    })).toBe(true);
+    expect(hasCurrentAutomaticScenarioBinding({
+      metadata,
+      appliedPluginSnapshotId: 'snapshot-2',
+    })).toBe(false);
+    expect(hasCurrentAutomaticScenarioBinding({
+      metadata: {
+        ...metadata,
+        scenarioBinding: { ...metadata.scenarioBinding, pluginId: 'od-media-generation' },
+      },
+      appliedPluginSnapshotId: 'snapshot-1',
+    })).toBe(false);
   });
 
   it('exposes the hidden free-form Home fallback plugin separately from kind defaults', () => {

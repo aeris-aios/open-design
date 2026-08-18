@@ -24,6 +24,7 @@ import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media/tasks.js';
 import { migrateLibrary } from './library-store.js';
 import { migratePlugins } from './plugins/persistence.js';
+import { migrateProjectScenarioBindings } from './plugins/scenario-binding.js';
 import { migrateOdNextRolloutStore } from './strategies/od-next/rollout.js';
 import { migrateStrategyTaskStore } from './strategies/task-store.js';
 
@@ -559,6 +560,7 @@ function migrate(db: SqliteDb): void {
   migrateMediaTasks(db);
   migrateLibrary(db);
   migratePlugins(db);
+  migrateProjectScenarioBindings(db);
   migrateStrategyTaskStore(db);
   migrateOdNextRolloutStore(db);
   migrateCollabSyncSnapshots(db);

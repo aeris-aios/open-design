@@ -1,5 +1,5 @@
-// Capsule type row — the pill replacement for the fanned type carousel
-// (per product: all 12 creation types use capsules). ONE line exactly as wide as the
+// Capsule type row — the pill replacement for the fanned type carousel.
+// All public creation types use capsules. ONE line exactly as wide as the
 // composer card below it, EVERY gap identical (8px): the pills that fit
 // render inline, then the pinned Image pill, then the All button, and the
 // rest fold into the 全部 popover. Fit is computed against an invisible
@@ -11,9 +11,9 @@ import type { HomeHeroChip } from './chips';
 import { Icon } from '../Icon';
 import { useT } from '../../i18n';
 
-// Hard cap, matching the product spec ("12 个") — the create catalog is 12
-// today, so this only guards against future catalog growth widening the row.
-const MAX_PILLS = 12;
+// Marketing is distinct from ordinary Image generation, so it gets its own
+// public type and the catalog contains 13 entries.
+const MAX_PILLS = 13;
 
 // Pills pinned just BEFORE the All trigger (per product: Image stays visible
 // in the row, never folded into the popover). Pinned pills sit outside the

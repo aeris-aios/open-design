@@ -341,6 +341,8 @@ const BRAND_BOOLEAN_FLAGS = new Set([
 ]);
 const AGENT_STRING_FLAGS = new Set(['daemon-url']);
 const AGENT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const STRATEGY_STRING_FLAGS = new Set(['daemon-url', 'expected-revision']);
+const STRATEGY_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 // Hoisted because `runAutomation` is reachable through the top-of-file
 // SUBCOMMAND_MAP dispatch, which runs during module evaluation —
 // any `const` declared further down would still be in TDZ when
@@ -390,6 +392,7 @@ const SUBCOMMAND_MAP = {
   brand: runBrand,
   brands: runBrand,
   project: runProject,
+  strategy: runStrategy,
   workspace: runWorkspace,
   automation: runAutomation,
   automations: runAutomation,
@@ -418,6 +421,97 @@ const SUBCOMMAND_MAP = {
   library: runLibrary,
   figma: runFigma,
 };
+
+function printStrategyHelp() {
+  console.log(`Usage:
+  od strategy rollout status [--json] [--daemon-url <url>]
+  od strategy rollout reset [--expected-revision <n>] [--json] [--daemon-url <url>]
+
+Inspect or reset the OD Next safety latch for this daemon instance. Reset is
+compare-and-swap protected; when --expected-revision is omitted the CLI first
+reads status and submits that exact revision.
+
+Options:
+  --expected-revision <n>  Reset only the status revision you inspected.
+  --json                   Emit the daemon response as JSON.
+  --daemon-url <url>       Override the Open Design daemon HTTP base.`);
+}
+
+function printStrategyRolloutStatus(status) {
+  console.log(`Strategy\t${status.strategyId}`);
+  console.log(`Scope\t${status.scope}`);
+  console.log(`Requested mode\t${status.requestedMode}`);
+  console.log(`Effective mode\t${status.effectiveMode}`);
+  console.log(`Latch\t${status.latch?.mode ?? 'none'}`);
+  if (status.latch?.reasonCode) console.log(`Reason\t${status.latch.reasonCode}`);
+  console.log(`Revision\t${status.revision}`);
+  if (status.lastEvent) {
+    console.log(`Last event\t${status.lastEvent.action}:${status.lastEvent.reasonCode}`);
+  }
+}
+
+async function runStrategy(args) {
+  if (
+    args.length === 0
+    || args[0] === 'help'
+    || args.includes('--help')
+    || args.includes('-h')
+  ) {
+    printStrategyHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const [area, action = 'status', ...rest] = args;
+  if (area !== 'rollout' || (action !== 'status' && action !== 'reset')) {
+    printStrategyHelp();
+    process.exit(2);
+  }
+  const flags = parseFlags(rest, {
+    string: STRATEGY_STRING_FLAGS,
+    boolean: STRATEGY_BOOLEAN_FLAGS,
+  });
+  const base = (await cliDaemonUrl(flags)).replace(/\/$/, '');
+  const readStatus = async () => {
+    let response;
+    try {
+      response = await fetch(`${base}/api/strategies/od-next/rollout`);
+    } catch (error) {
+      surfaceFetchError(error, base);
+      process.exit(3);
+    }
+    if (!response.ok) return structuredHttpFailure(response);
+    return response.json();
+  };
+  if (action === 'status') {
+    const payload = await readStatus();
+    if (flags.json) return process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    printStrategyRolloutStatus(payload.status);
+    return;
+  }
+
+  const inspected = await readStatus();
+  const expectedRevision = flags['expected-revision'] == null
+    ? inspected.status.revision
+    : Number(flags['expected-revision']);
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    console.error('--expected-revision must be a non-negative integer');
+    process.exit(2);
+  }
+  let response;
+  try {
+    response = await fetch(`${base}/api/strategies/od-next/rollout/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision }),
+    });
+  } catch (error) {
+    surfaceFetchError(error, base);
+    process.exit(3);
+  }
+  if (!response.ok) return structuredHttpFailure(response);
+  const payload = await response.json();
+  if (flags.json) return process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  printStrategyRolloutStatus(payload.status);
+}
 
 function printAgentHelp() {
   console.log(`Usage: od agent setup deepseek-harness [options]
@@ -6762,6 +6856,9 @@ async function runProject(args) {
                     [--design-system <id>] [--json]
   od project list                         List projects.
   od project info <id>                    Print one project.
+  od project restore-automatic-scenario <id> [--json]
+                                          Restore the daemon-selected default
+                                          scenario with a snapshot CAS guard.
   od project delete <id>                  Delete a project.
   od project editors                      List locally-installed editors that
                                           can open a project (hand-off targets).
@@ -6860,6 +6957,30 @@ Common options:
       if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
       const data = await resp.json();
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      return;
+    }
+    case 'restore-automatic-scenario': {
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!id) {
+        console.error('Usage: od project restore-automatic-scenario <id> [--json]');
+        process.exit(2);
+      }
+      const infoResponse = await fetch(`${base}/api/projects/${encodeURIComponent(id)}`, {
+        headers: workspaceHeaders,
+      });
+      if (!infoResponse.ok) return structuredHttpFailure(infoResponse, 'project-not-found');
+      const info = await infoResponse.json();
+      const data = await postJsonToDaemon(
+        base,
+        `/api/projects/${encodeURIComponent(id)}/scenario/restore-automatic`,
+        { expectedCurrentSnapshotId: info.project?.appliedPluginSnapshotId ?? null },
+        workspaceHeaders,
+      );
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(
+        `[project] automatic scenario ${data.changed ? 'restored' : 'already active'} `
+        + `${data.scenarioBinding?.pluginId ?? '-'}@${data.scenarioBinding?.snapshotId ?? '-'}`,
+      );
       return;
     }
     case 'create': {

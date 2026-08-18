@@ -21,7 +21,11 @@
 // surface-specific seed. Media kinds keep od-media-generation, which
 // dispatches through the media contract instead of emitting HTML.
 
-import type { ProjectKind, ProjectMetadata } from '../api/projects.js';
+import type {
+  ProjectKind,
+  ProjectMetadata,
+  ProjectScenarioTaskProfile,
+} from '../api/projects.js';
 import type { AppliedPluginSnapshot } from './apply.js';
 
 export type TaskKind = AppliedPluginSnapshot['taskKind'];
@@ -45,6 +49,7 @@ export type DefaultScenarioPluginId =
   | 'od-code-migration'
   | 'od-tune-collab'
   | 'example-live-artifact'
+  | 'example-hyperframes'
   | 'example-simple-deck'
   | 'example-web-clone'
   | 'example-web-prototype';
@@ -88,7 +93,59 @@ export function defaultScenarioPluginIdForProjectMetadata(
 ): DefaultScenarioPluginId | null {
   if (metadata?.intent === 'live-artifact') return 'example-live-artifact';
   if (metadata?.intent === 'web-clone') return 'example-web-clone';
+  if (metadata?.intent === 'hyperframes') return 'example-hyperframes';
+  if (metadata?.intent === 'marketing') return 'example-web-prototype';
   return defaultScenarioPluginIdForKind(metadata?.kind);
+}
+
+/**
+ * Return the only OD Next profile an exact daemon-owned automatic binding may
+ * carry. Broad kinds such as `image` and `video` deliberately resolve to no
+ * profile unless the product metadata names an approved route.
+ */
+export function defaultScenarioTaskProfileForProjectMetadata(
+  metadata: Pick<ProjectMetadata, 'kind' | 'intent'> | null | undefined,
+  pluginId: string,
+): ProjectScenarioTaskProfile | null {
+  if (metadata?.intent === 'marketing') {
+    return metadata.kind === 'prototype' && pluginId === 'example-web-prototype'
+      ? 'marketing'
+      : null;
+  }
+  if (metadata?.intent === 'hyperframes') {
+    return metadata.kind === 'video' && pluginId === 'example-hyperframes'
+      ? 'hyperframes'
+      : null;
+  }
+  if (metadata?.intent != null) return null;
+  if (metadata?.kind === 'prototype' && pluginId === 'example-web-prototype') {
+    return 'prototype';
+  }
+  if (metadata?.kind === 'deck' && pluginId === 'example-simple-deck') {
+    return 'ppt';
+  }
+  return null;
+}
+
+/**
+ * Pure read-model check used by UI surfaces. Daemon authority additionally
+ * verifies that the referenced snapshot row belongs to this project and
+ * carries the recorded plugin id.
+ */
+export function hasCurrentAutomaticScenarioBinding(input: {
+  metadata: ProjectMetadata | null | undefined;
+  appliedPluginSnapshotId: string | null | undefined;
+}): boolean {
+  const binding = input.metadata?.scenarioBinding;
+  const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(input.metadata);
+  return binding?.schemaVersion === 1
+    && binding.provenance === 'automatic_default'
+    && binding.snapshotId === input.appliedPluginSnapshotId
+    && binding.pluginId === defaultPluginId
+    && (binding.taskProfile ?? null) === defaultScenarioTaskProfileForProjectMetadata(
+      input.metadata,
+      binding.pluginId,
+    );
 }
 
 export function defaultScenarioPluginIdForTaskKind(

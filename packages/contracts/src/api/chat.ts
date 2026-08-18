@@ -29,6 +29,7 @@ import type {
   TrackingRunTerminalTrigger,
 } from '../analytics/events.js';
 import type { StrategyTaskProjectionV2 } from '../plugins/strategy-v2.js';
+import type { OdNextRolloutDecision } from './strategy-rollout.js';
 
 // The daemon's run-failure taxonomy, re-exported under product-facing names so
 // the run-status/error surface can carry the specific cause the daemon already
@@ -650,6 +651,8 @@ export interface ChatRunStatusResponse {
   designSystemDigest?: string | null;
   appliedPluginSnapshotId?: string | null;
   pluginId?: string | null;
+  /** Immutable OD Next routing decision captured for this logical Run. */
+  strategyRolloutDecision?: OdNextRolloutDecision | null;
   status: ChatRunStatus;
   createdAt: number;
   updatedAt: number;

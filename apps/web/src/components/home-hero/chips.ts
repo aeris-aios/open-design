@@ -46,6 +46,8 @@ export type ChipAction =
       kind: 'apply-scenario';
       pluginId: ChipScenarioPluginId;
       projectKind: ProjectKind;
+      /** Product-owned default route; the daemon resolves and stamps it. */
+      automaticDefault?: boolean;
       inputs?: Record<string, unknown>;
       projectMetadata?: ProjectMetadata;
     }
@@ -120,6 +122,7 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
       kind: 'apply-scenario',
       pluginId: 'example-web-prototype',
       projectKind: 'prototype',
+      automaticDefault: true,
     },
   },
   {
@@ -159,6 +162,7 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
       kind: 'apply-scenario',
       pluginId: 'example-web-prototype',
       projectKind: 'prototype',
+      automaticDefault: true,
       projectMetadata: {
         kind: 'prototype',
         fidelity: 'wireframe',
@@ -178,6 +182,7 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
       kind: 'apply-scenario',
       pluginId: 'example-web-prototype',
       projectKind: 'prototype',
+      automaticDefault: true,
       projectMetadata: {
         kind: 'prototype',
         platform: 'auto',
@@ -205,6 +210,25 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
       kind: 'apply-scenario',
       pluginId: 'example-simple-deck',
       projectKind: 'deck',
+      automaticDefault: true,
+    },
+  },
+  {
+    id: 'marketing',
+    label: 'Marketing',
+    icon: 'globe',
+    group: 'create',
+    description: 'Campaigns & landing pages',
+    hint: 'Create a campaign-ready marketing surface with a clear message and conversion path.',
+    action: {
+      kind: 'apply-scenario',
+      pluginId: 'example-web-prototype',
+      projectKind: 'prototype',
+      automaticDefault: true,
+      projectMetadata: {
+        kind: 'prototype',
+        intent: 'marketing',
+      },
     },
   },
   {
@@ -247,7 +271,17 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
     // specialisation of Video). It surfaces in PluginsHomeSection's
     // primary category list, so the rail picks it up too rather than
     // hiding the specialised bucket behind the generic Video chip.
-    action: { kind: 'apply-scenario', pluginId: 'example-hyperframes', projectKind: 'video' },
+    action: {
+      kind: 'apply-scenario',
+      pluginId: 'example-hyperframes',
+      projectKind: 'video',
+      automaticDefault: true,
+      projectMetadata: {
+        kind: 'video',
+        intent: 'hyperframes',
+        videoModel: 'hyperframes-html',
+      },
+    },
   },
   {
     id: 'webgl',
@@ -395,6 +429,7 @@ export const CREATE_RAIL_ORDER = [
   'deck',
   'wireframe',
   'mobile',
+  'marketing',
   'document',
   'hyperframes',
   'webgl',

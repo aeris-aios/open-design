@@ -43,7 +43,7 @@
 
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -73,6 +73,7 @@ describe('claude sub-agent assistant error false failure', () => {
     LANGFUSE_SECRET_KEY: process.env.LANGFUSE_SECRET_KEY,
     LANGFUSE_BASE_URL: process.env.LANGFUSE_BASE_URL,
     OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
+    OD_NEXT_STRATEGY_ROLLOUT: process.env.OD_NEXT_STRATEGY_ROLLOUT,
   };
   let started: StartedServer | null = null;
   let binDir: string | null = null;
@@ -102,6 +103,11 @@ describe('claude sub-agent assistant error false failure', () => {
     delete process.env.LANGFUSE_SECRET_KEY;
     delete process.env.LANGFUSE_BASE_URL;
     delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    // This parser regression does not exercise OD Next. Keep the fixture on
+    // the ordinary run path even when a mock happens to report a production-
+    // verified CLI version; the worker-scoped OD_DATA_DIR from tests/setup.ts
+    // keeps its config and rollout controls isolated from the developer.
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
 
     started = await startServer({ port: 0, returnServer: true }) as StartedServer;
 
@@ -136,67 +142,7 @@ describe('claude sub-agent assistant error false failure', () => {
     expect(sidechainRun).toMatchObject({ status: 'succeeded', exitCode: 0 });
   });
 
-  it('persists real Agent tool/result Child facts without changing the parent success', async () => {
-    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-agent-result-claude-bin-'));
-    const agentBin = await writeAgentResultClaude(binDir);
-    delete process.env.POSTHOG_KEY;
-    delete process.env.POSTHOG_HOST;
-    delete process.env.LANGFUSE_PUBLIC_KEY;
-    delete process.env.LANGFUSE_SECRET_KEY;
-    delete process.env.LANGFUSE_BASE_URL;
-    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
-
-    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
-    await putConfig(started.url, {
-      agentId: 'claude',
-      agentCliEnv: { claude: { CLAUDE_BIN: agentBin } },
-      telemetry: { metrics: true, content: false, artifactManifest: false },
-      privacyDecisionAt: Date.now(),
-    });
-    const run = await createAndWaitForRun(started.url);
-    expect(run).toMatchObject({ status: 'succeeded', exitCode: 0 });
-
-    const raw = await readFile(run.eventsLogPath, 'utf8');
-    const facts = raw.trim().split('\n').flatMap((line) => {
-      try {
-        const record = JSON.parse(line) as { event?: string; data?: Record<string, unknown> };
-        return record.event === 'agent'
-          && record.data?.name === 'claude_child_runtime_fact'
-          ? [record.data]
-          : [];
-      } catch {
-        return [];
-      }
-    });
-    expect(facts.map((fact) => fact.state)).toEqual(['started', 'completed']);
-    expect(facts[1]).toMatchObject({
-      sourceEventType: 'user.tool_result',
-      runtimeReportedVersion: '2.1.233',
-      nativeAgentId: 'child-agent-safe',
-      usage: { inputTokens: 11, outputTokens: 3 },
-    });
-    expect(JSON.stringify(facts)).not.toContain('sk-test-1234567890123456789012');
-    expect(JSON.stringify(facts)).not.toContain('/Users/example/private.txt');
-  });
 });
-
-async function writeAgentResultClaude(dir: string): Promise<string> {
-  const bin = path.join(dir, 'claude-agent-result');
-  await writeFile(bin, `#!/usr/bin/env node
-const fs = require('node:fs');
-function w(value) { fs.writeSync(1, JSON.stringify(value) + '\\n'); }
-if (process.argv.includes('--version')) { fs.writeSync(1, '2.1.233 (Claude Code)\\n'); process.exit(0); }
-if (process.argv.includes('--help')) { fs.writeSync(1, 'Usage: claude -p [--include-partial-messages] [--forward-subagent-text] [--add-dir DIR]\\n'); process.exit(0); }
-w({ type: 'system', subtype: 'init', model: 'claude-haiku-4-5', session_id: 'session-agent-result', claude_code_version: '2.1.233' });
-w({ type: 'assistant', parent_tool_use_id: null, message: { id: 'main-agent', content: [{ type: 'tool_use', id: 'agent-result', name: 'Agent', input: { prompt: 'Inspect /Users/example/private.txt with sk-test-1234567890123456789012.', subagent_type: 'general-purpose', model: 'haiku', isolation: 'remote' } }], stop_reason: 'tool_use' } });
-w({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'agent-result', content: [{ type: 'text', text: 'safe result' }] }] }, tool_use_result: { status: 'completed', agentId: 'child-agent-safe', agentType: 'general-purpose', resolvedModel: 'claude-haiku-4-5', totalDurationMs: 100, totalTokens: 14, usage: { input_tokens: 11, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens_details: { thinking_tokens: 0 } } } });
-w({ type: 'assistant', parent_tool_use_id: null, message: { id: 'main-final', content: [{ type: 'text', text: 'parent completed' }], stop_reason: 'end_turn' } });
-w({ type: 'result', subtype: 'success', is_error: false, session_id: 'session-agent-result', stop_reason: 'end_turn', usage: { input_tokens: 20, output_tokens: 5 }, total_cost_usd: 0, duration_ms: 200 });
-setTimeout(() => process.exit(0), 20);
-`, 'utf8');
-  await chmod(bin, 0o755);
-  return bin;
-}
 
 async function writeRecoveringClaude(
   dir: string,

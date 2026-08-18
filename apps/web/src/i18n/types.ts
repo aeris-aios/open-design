@@ -628,6 +628,18 @@ export interface Dict {
   'settings.privacyDataDeletion': string;
   'settings.privacyDataDeletionHint': string;
   'settings.about': string;
+  'settings.odNextRolloutTitle': string;
+  'settings.odNextRolloutHint': string;
+  'settings.odNextRolloutScope': string;
+  'settings.odNextRolloutRequested': string;
+  'settings.odNextRolloutEffective': string;
+  'settings.odNextRolloutLatch': string;
+  'settings.odNextRolloutRefresh': string;
+  'settings.odNextRolloutReset': string;
+  'settings.odNextRolloutResetConfirm': string;
+  'settings.odNextRolloutResetting': string;
+  'settings.odNextRolloutLoadFailed': string;
+  'settings.odNextRolloutResetFailed': string;
   'settings.aboutHint': string;
   'settings.appVersion': string;
   'settings.appChannel': string;
@@ -1363,6 +1375,7 @@ export interface Dict {
   'homeHero.chip.webClone': string;
   'homeHero.chip.liveArtifact': string;
   'homeHero.chip.deck': string;
+  'homeHero.chip.marketing': string;
   'homeHero.chip.image': string;
   'homeHero.chip.video': string;
   'homeHero.chip.hyperframes': string;
@@ -1387,6 +1400,7 @@ export interface Dict {
   'homeHero.chip.wireframeDesc': string;
   'homeHero.chip.mobileDesc': string;
   'homeHero.chip.deckDesc': string;
+  'homeHero.chip.marketingDesc': string;
   'homeHero.chip.documentDesc': string;
   'homeHero.chip.imageDesc': string;
   'homeHero.chip.videoDesc': string;
@@ -1403,6 +1417,7 @@ export interface Dict {
   'homeHero.chip.wireframeNext': string;
   'homeHero.chip.mobileNext': string;
   'homeHero.chip.deckNext': string;
+  'homeHero.chip.marketingNext': string;
   'homeHero.chip.documentNext': string;
   'homeHero.chip.imageNext': string;
   'homeHero.chip.videoNext': string;
@@ -2819,6 +2834,10 @@ export interface Dict {
 
   // Project view / chat pane / composer
   'project.backToProjects': string;
+  'project.restoreAutomaticScenario': string;
+  'project.restoreAutomaticScenarioConfirm': string;
+  'project.restoreAutomaticScenarioBusy': string;
+  'project.restoreAutomaticScenarioFailed': string;
   'project.brandReadyTitle': string;
   'project.brandReadyTitleGeneric': string;
   'project.brandReadyCta': string;

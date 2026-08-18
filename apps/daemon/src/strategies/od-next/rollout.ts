@@ -1,9 +1,20 @@
 import { createHash } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
+import type {
+  OdNextRolloutDecision,
+  OdNextRolloutClearReasonCode,
+  OdNextRolloutControlReasonCode,
+  OdNextRolloutMode,
+  OdNextRolloutStopReasonCode,
+  OdNextRolloutTaskType,
+} from '@open-design/contracts';
 
-export type OdNextRolloutMode = 'off' | 'observe' | 'active';
-export type OdNextRolloutTaskType = 'prototype' | 'ppt' | 'marketing' | 'hyperframes';
+export type {
+  OdNextRolloutDecision,
+  OdNextRolloutMode,
+  OdNextRolloutTaskType,
+} from '@open-design/contracts';
 
 export interface OdNextRolloutPolicy {
   requestedMode: OdNextRolloutMode;
@@ -15,16 +26,6 @@ export interface OdNextRolloutPolicy {
   eligibleAgents: readonly string[];
   productionActiveApproved: boolean;
   localSyntheticCanary: boolean;
-}
-
-export interface OdNextRolloutDecision {
-  requestedMode: OdNextRolloutMode;
-  effectiveMode: OdNextRolloutMode;
-  taskType: OdNextRolloutTaskType | null;
-  assignmentBucket: number;
-  eligible: boolean;
-  syntheticCanary: boolean;
-  reasonCodes: string[];
 }
 
 const DEFAULT_TASK_TYPES: readonly OdNextRolloutTaskType[] = [
@@ -73,16 +74,16 @@ export function readOdNextRolloutPolicy(
   };
 }
 
-export function odNextTaskTypeForProjectMetadata(
-  metadata: { kind?: unknown; videoModel?: unknown } | null | undefined,
+export function odNextTaskTypeForProjectScenarioBinding(
+  binding: { provenance?: unknown; taskProfile?: unknown } | null | undefined,
 ): OdNextRolloutTaskType | null {
-  if (metadata?.kind === 'prototype') return 'prototype';
-  if (metadata?.kind === 'deck') return 'ppt';
-  if (metadata?.kind === 'image') return 'marketing';
-  if (metadata?.kind === 'video' && metadata.videoModel === 'hyperframes-html') {
-    return 'hyperframes';
-  }
-  return null;
+  if (binding?.provenance !== 'automatic_default') return null;
+  return binding.taskProfile === 'prototype'
+    || binding.taskProfile === 'ppt'
+    || binding.taskProfile === 'marketing'
+    || binding.taskProfile === 'hyperframes'
+    ? binding.taskProfile
+    : null;
 }
 
 export function stableOdNextAssignmentBucket(identity: string, salt: string): number {
@@ -100,6 +101,7 @@ export function evaluateOdNextRollout(input: {
   runtimeCapabilityVerified?: boolean;
   runtimeCapabilityReason?: string | null;
   stoppedMode?: Exclude<OdNextRolloutMode, 'active'> | null;
+  routeApplicability?: 'eligible' | 'explicit_user' | 'not_applicable';
 }): OdNextRolloutDecision {
   const { policy } = input;
   const assignmentBucket = stableOdNextAssignmentBucket(
@@ -107,17 +109,24 @@ export function evaluateOdNextRollout(input: {
     policy.assignmentSalt,
   );
   const reasons: string[] = [];
+  const routeApplicability = input.routeApplicability ?? 'eligible';
+  if (routeApplicability === 'explicit_user') {
+    reasons.push('od_next_rollout_explicit_user_authority');
+  } else if (routeApplicability === 'not_applicable') {
+    reasons.push('od_next_rollout_not_applicable');
+  }
+  const evaluateEligibility = routeApplicability === 'eligible';
   if (policy.requestedMode === 'off') reasons.push('od_next_rollout_off');
   if (!policy.contentEnabled) reasons.push('od_next_rollout_content_disabled');
   if (!policy.behaviorEnabled) reasons.push('od_next_rollout_behavior_disabled');
-  if (!input.taskType || !policy.eligibleTaskTypes.includes(input.taskType)) {
+  if (evaluateEligibility && (!input.taskType || !policy.eligibleTaskTypes.includes(input.taskType))) {
     reasons.push('od_next_rollout_task_bucket_ineligible');
   }
-  if (!input.agentId || !policy.eligibleAgents.includes(input.agentId)) {
+  if (evaluateEligibility && (!input.agentId || !policy.eligibleAgents.includes(input.agentId))) {
     reasons.push('od_next_rollout_agent_ineligible');
   }
-  if (input.sourceKind !== 'bundled') reasons.push('od_next_rollout_bundled_identity_required');
-  if (assignmentBucket >= policy.assignmentPercent * 100) {
+  if (evaluateEligibility && input.sourceKind !== 'bundled') reasons.push('od_next_rollout_bundled_identity_required');
+  if (evaluateEligibility && assignmentBucket >= policy.assignmentPercent * 100) {
     reasons.push('od_next_rollout_assignment_excluded');
   }
   // This is an explicit, local-only escape hatch used to prove the public
@@ -126,21 +135,23 @@ export function evaluateOdNextRollout(input: {
   const syntheticCanary = Boolean(
     policy.localSyntheticCanary && process.env.NODE_ENV !== 'production',
   );
-  if (!input.agentVersion && !syntheticCanary) {
+  if (evaluateEligibility && !input.agentVersion && !syntheticCanary) {
     reasons.push('od_next_rollout_runtime_version_unverified');
   }
-  if (!input.runtimeCapabilityVerified && !syntheticCanary) {
+  if (evaluateEligibility && !input.runtimeCapabilityVerified && !syntheticCanary) {
     reasons.push('od_next_rollout_x1_capability_fixture_unverified');
     if (input.runtimeCapabilityReason) reasons.push(`od_next_rollout_capability_${input.runtimeCapabilityReason}`);
   }
-  if (!policy.productionActiveApproved && !syntheticCanary) {
+  if (evaluateEligibility && !policy.productionActiveApproved && !syntheticCanary) {
     reasons.push('od_next_rollout_x2_active_unapproved');
   }
-  if (input.stoppedMode) reasons.push('od_next_rollout_stop_latched');
+  if (evaluateEligibility && input.stoppedMode) reasons.push('od_next_rollout_stop_latched');
 
   const requestedActive = policy.requestedMode === 'active';
-  const eligible = requestedActive && reasons.length === 0;
-  const effectiveMode: OdNextRolloutMode = policy.requestedMode === 'off'
+  const eligible = evaluateEligibility && requestedActive && reasons.length === 0;
+  const effectiveMode: OdNextRolloutMode = !evaluateEligibility
+    ? 'off'
+    : policy.requestedMode === 'off'
     || !policy.contentEnabled
     || !policy.behaviorEnabled
     ? 'off'
@@ -149,6 +160,12 @@ export function evaluateOdNextRollout(input: {
       ? 'active'
       : 'observe');
   return {
+    schemaVersion: 1,
+    decisionClass: routeApplicability === 'explicit_user'
+      ? 'explicit_user'
+      : routeApplicability === 'not_applicable'
+        ? 'not_applicable'
+        : effectiveMode,
     requestedMode: policy.requestedMode,
     effectiveMode,
     taskType: input.taskType,
@@ -156,53 +173,255 @@ export function evaluateOdNextRollout(input: {
     eligible,
     syntheticCanary,
     reasonCodes: [...new Set(reasons)],
+    primaryReasonCode: reasons[0] ?? 'od_next_rollout_eligible',
   };
 }
 
 export function migrateOdNextRolloutStore(db: Database.Database): void {
+  const existing = db.prepare(`PRAGMA table_info(strategy_rollout_controls)`).all() as Array<{
+    name: string;
+  }>;
+  if (existing.length > 0 && !existing.some((column) => column.name === 'revision')) {
+    db.transaction(() => {
+      db.exec(`ALTER TABLE strategy_rollout_controls RENAME TO strategy_rollout_controls_legacy`);
+      createOdNextRolloutControlTable(db);
+      db.exec(`
+        INSERT INTO strategy_rollout_controls (
+          strategy_id, mode, reason_code, latched_at, updated_at, revision,
+          last_event, last_event_reason_code
+        )
+        SELECT strategy_id, mode, reason_code, updated_at, updated_at, 1,
+               'latched', reason_code
+          FROM strategy_rollout_controls_legacy;
+        DROP TABLE strategy_rollout_controls_legacy;
+      `);
+    })();
+    return;
+  }
+  createOdNextRolloutControlTable(db);
+}
+
+function createOdNextRolloutControlTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS strategy_rollout_controls (
       strategy_id TEXT PRIMARY KEY,
-      mode TEXT NOT NULL CHECK (mode IN ('off', 'observe')),
-      reason_code TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      mode TEXT CHECK (mode IN ('off', 'observe')),
+      reason_code TEXT CHECK (reason_code IN (
+        'machine_contract_leak',
+        'default_critique_skipped',
+        'native_resume_failed',
+        'route_mode_drift',
+        'complex_child_unverified',
+        'threshold_exceeded',
+        'quality_regression'
+      )),
+      latched_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      revision INTEGER NOT NULL,
+      last_event TEXT NOT NULL CHECK (last_event IN ('latched', 'cleared')),
+      last_event_reason_code TEXT NOT NULL CHECK (last_event_reason_code IN (
+        'machine_contract_leak',
+        'default_critique_skipped',
+        'native_resume_failed',
+        'route_mode_drift',
+        'complex_child_unverified',
+        'threshold_exceeded',
+        'quality_regression',
+        'operator_reset',
+        'internal_test_reset'
+      )),
+      CHECK (
+        (mode IS NULL AND reason_code IS NULL AND latched_at IS NULL)
+        OR (mode IS NOT NULL AND reason_code IS NOT NULL AND latched_at IS NOT NULL)
+      )
     );
   `);
 }
 
+interface OdNextRolloutControlRow {
+  mode: 'off' | 'observe' | null;
+  reasonCode: OdNextRolloutStopReasonCode | null;
+  latchedAt: number | null;
+  updatedAt: number;
+  revision: number;
+  lastEvent: 'latched' | 'cleared';
+  lastEventReasonCode: OdNextRolloutControlReasonCode;
+}
+
+function readOdNextRolloutControlRow(
+  db: Database.Database,
+): OdNextRolloutControlRow | null {
+  return db.prepare(`
+    SELECT mode,
+           reason_code AS reasonCode,
+           latched_at AS latchedAt,
+           updated_at AS updatedAt,
+           revision,
+           last_event AS lastEvent,
+           last_event_reason_code AS lastEventReasonCode
+      FROM strategy_rollout_controls WHERE strategy_id = 'od-next-strategy'
+  `).get() as OdNextRolloutControlRow | undefined ?? null;
+}
+
 export function readOdNextRolloutStop(
   db: Database.Database,
-): { mode: 'off' | 'observe'; reasonCode: string } | null {
-  const row = db.prepare(`
-    SELECT mode, reason_code AS reasonCode
-      FROM strategy_rollout_controls WHERE strategy_id = 'od-next-strategy'
-  `).get() as { mode: 'off' | 'observe'; reasonCode: string } | undefined;
-  return row ?? null;
+): { mode: 'off' | 'observe'; reasonCode: OdNextRolloutStopReasonCode } | null {
+  const row = readOdNextRolloutControlRow(db);
+  return row?.mode && row.reasonCode
+    ? { mode: row.mode, reasonCode: row.reasonCode }
+    : null;
 }
 
 export function latchOdNextRolloutStop(
   db: Database.Database,
-  input: { mode: 'off' | 'observe'; reasonCode: string; updatedAt?: number },
+  input: {
+    mode: 'off' | 'observe';
+    reasonCode: OdNextRolloutStopReasonCode;
+    updatedAt?: number;
+  },
 ): void {
+  const updatedAt = input.updatedAt ?? Date.now();
   db.prepare(`
-    INSERT INTO strategy_rollout_controls (strategy_id, mode, reason_code, updated_at)
-    VALUES ('od-next-strategy', ?, ?, ?)
+    INSERT INTO strategy_rollout_controls (
+      strategy_id, mode, reason_code, latched_at, updated_at, revision,
+      last_event, last_event_reason_code
+    )
+    VALUES ('od-next-strategy', ?, ?, ?, ?, 1, 'latched', ?)
     ON CONFLICT(strategy_id) DO UPDATE SET
-      mode = CASE WHEN excluded.mode = 'off' THEN 'off' ELSE strategy_rollout_controls.mode END,
+      mode = CASE
+        WHEN strategy_rollout_controls.mode = 'off' THEN 'off'
+        ELSE excluded.mode
+      END,
       reason_code = CASE
         WHEN strategy_rollout_controls.mode = 'off' AND excluded.mode = 'observe'
           THEN strategy_rollout_controls.reason_code
         ELSE excluded.reason_code
       END,
-      updated_at = excluded.updated_at
-  `).run(input.mode, input.reasonCode, input.updatedAt ?? Date.now());
+      latched_at = CASE
+        WHEN strategy_rollout_controls.mode = 'off' AND excluded.mode = 'observe'
+          THEN strategy_rollout_controls.latched_at
+        ELSE excluded.latched_at
+      END,
+      updated_at = excluded.updated_at,
+      revision = strategy_rollout_controls.revision + 1,
+      last_event = 'latched',
+      last_event_reason_code = CASE
+        WHEN strategy_rollout_controls.mode = 'off' AND excluded.mode = 'observe'
+          THEN strategy_rollout_controls.reason_code
+        ELSE excluded.last_event_reason_code
+      END
+  `).run(
+    input.mode,
+    input.reasonCode,
+    updatedAt,
+    updatedAt,
+    input.reasonCode,
+  );
 }
 
 export function clearOdNextRolloutStop(db: Database.Database): void {
-  db.prepare(`DELETE FROM strategy_rollout_controls WHERE strategy_id = 'od-next-strategy'`).run();
+  const row = readOdNextRolloutControlRow(db);
+  if (!row || !row.mode) return;
+  resetOdNextRolloutStop(db, {
+    expectedRevision: row.revision,
+    reasonCode: 'internal_test_reset',
+  });
 }
 
-export function stopModeForOdNextSignal(signal: string): 'off' | 'observe' | null {
+export function resetOdNextRolloutStop(
+  db: Database.Database,
+  input: {
+    expectedRevision: number;
+    reasonCode: OdNextRolloutClearReasonCode;
+    updatedAt?: number;
+  },
+): { ok: true; changed: boolean } | { ok: false; currentRevision: number } {
+  const row = readOdNextRolloutControlRow(db);
+  if (!row) {
+    return input.expectedRevision === 0
+      ? { ok: true, changed: false }
+      : { ok: false, currentRevision: 0 };
+  }
+  if (row.revision !== input.expectedRevision) {
+    return { ok: false, currentRevision: row.revision };
+  }
+  if (!row.mode) return { ok: true, changed: false };
+  const updatedAt = input.updatedAt ?? Date.now();
+  const result = db.prepare(`
+    UPDATE strategy_rollout_controls
+       SET mode = NULL,
+           reason_code = NULL,
+           latched_at = NULL,
+           updated_at = ?,
+           revision = revision + 1,
+           last_event = 'cleared',
+           last_event_reason_code = ?
+     WHERE strategy_id = 'od-next-strategy'
+       AND revision = ?
+       AND mode IS NOT NULL
+  `).run(updatedAt, input.reasonCode, input.expectedRevision);
+  return result.changes === 1
+    ? { ok: true, changed: true }
+    : {
+        ok: false,
+        currentRevision: readOdNextRolloutControlRow(db)?.revision ?? 0,
+      };
+}
+
+export function readOdNextRolloutControlStatus(
+  db: Database.Database,
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  strategyId: 'od-next-strategy';
+  scope: 'daemon_instance';
+  requestedMode: OdNextRolloutMode;
+  effectiveMode: OdNextRolloutMode;
+  latch: null | {
+    mode: 'off' | 'observe';
+    reasonCode: OdNextRolloutStopReasonCode;
+    latchedAt: number;
+  };
+  revision: number;
+  updatedAt: number | null;
+  lastEvent: null | {
+    action: 'latched' | 'cleared';
+    reasonCode: OdNextRolloutControlReasonCode;
+    at: number;
+  };
+  resetAllowed: boolean;
+} {
+  const policy = readOdNextRolloutPolicy(env);
+  const row = readOdNextRolloutControlRow(db);
+  const latch = row?.mode && row.reasonCode && row.latchedAt != null
+    ? { mode: row.mode, reasonCode: row.reasonCode, latchedAt: row.latchedAt }
+    : null;
+  const effectiveMode: OdNextRolloutMode = policy.requestedMode === 'off'
+    || !policy.contentEnabled
+    || !policy.behaviorEnabled
+    ? 'off'
+    : latch?.mode ?? policy.requestedMode;
+  return {
+    strategyId: 'od-next-strategy',
+    scope: 'daemon_instance',
+    requestedMode: policy.requestedMode,
+    effectiveMode,
+    latch,
+    revision: row?.revision ?? 0,
+    updatedAt: row?.updatedAt ?? null,
+    lastEvent: row
+      ? {
+          action: row.lastEvent,
+          reasonCode: row.lastEventReasonCode,
+          at: row.updatedAt,
+        }
+      : null,
+    resetAllowed: Boolean(latch),
+  };
+}
+
+export function stopModeForOdNextSignal(
+  signal: string,
+): 'off' | 'observe' | null {
   if (signal === 'machine_contract_leak' || signal === 'default_critique_skipped') return 'off';
   if (
     signal === 'native_resume_failed'

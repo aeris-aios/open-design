@@ -459,7 +459,12 @@ import {
   createOdNextNativeBuildPackageBindings,
   nativeBuildPackageBindingMap,
 } from './strategies/od-next/native-build-package.js';
-import { resolveDaemonOwnedOdNextComplexRuntimeEvidence } from './strategies/od-next/complex-runtime-evidence.js';
+import {
+  resolveAutomaticContinuationEvidence,
+  rolloutStopSignalForBlockedContinuation,
+  type OdNextComplexProductionResolver,
+  type OdNextExecutionPreflightResolver,
+} from './strategies/od-next/automatic-continuation-service.js';
 import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
@@ -485,21 +490,18 @@ import {
 import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
 import {
   daemonOwnedOdNextPlanningCatalog,
-  resolveDaemonOwnedOdNextExecutionPreflight,
-  type OdNextExecutionPreflightInput,
 } from './strategies/od-next/resolver.js';
 import {
   blockAutomaticContinuation,
   prepareAutomaticStrategyContinuation,
   projectStrategyTask,
 } from './strategies/od-next/automatic-simple-production.js';
-import type { OdNextComplexRuntimeEvidence } from './strategies/od-next/complex-production.js';
 import {
-  latchOdNextRolloutStop,
   odNextRolloutSignalForRun,
   readOdNextRolloutPolicy,
   stopModeForOdNextSignal,
 } from './strategies/od-next/rollout.js';
+import { latchOdNextRolloutStopOperationally } from './strategies/od-next/rollout-control-telemetry.js';
 import {
   getStrategyTaskExecutionByRunId,
   reconcileStrategyTaskRunTerminal,
@@ -809,6 +811,7 @@ import { EmptyTranscriptError, synthesizeHandoffPrompt } from './design/index.js
 import { TranscriptExportLockedError } from './transcript-export.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerRunRoutes } from './routes/runs.js';
+import { registerStrategyRolloutRoutes } from './routes/strategy-rollout.js';
 import { registerTerminalRoutes } from './routes/terminal.js';
 import { createTerminalService } from './terminals.js';
 import { registerSocialShareRoutes } from './routes/social-share.js';
@@ -2725,25 +2728,13 @@ export interface StartServerOptions {
   runtime?: DaemonRuntimeContext | null;
   staticDir?: string;
   /** Daemon-owned host capability facts. HTTP/model output cannot populate it. */
-  odNextExecutionPreflightResolver?: ((input: {
-    taskExecutionId: string;
-    runId: string;
-    agentId: string;
-    productionRoutes: readonly string[];
-    plan: import('@open-design/contracts').OpenDesignPlanContractV2;
-  }) => OdNextExecutionPreflightInput | undefined | Promise<OdNextExecutionPreflightInput | undefined>) | null;
+  odNextExecutionPreflightResolver?: OdNextExecutionPreflightResolver | null;
   /**
    * Daemon-owned, runtime-neutral capability/Child facts for complex OD Next
    * Production. Runtime adapters normalize their native events before this
    * boundary; HTTP bodies, assistant prose, and raw stdout are never inputs.
    */
-  odNextComplexProductionResolver?: ((input: {
-    phase: 'eligibility' | 'completion';
-    taskExecutionId: string;
-    runId: string;
-    agentId: string;
-    plan: import('@open-design/contracts').OpenDesignPlanContractV2;
-  }) => OdNextComplexRuntimeEvidence | undefined | Promise<OdNextComplexRuntimeEvidence | undefined>) | null;
+  odNextComplexProductionResolver?: OdNextComplexProductionResolver | null;
 }
 
 export interface StartServerResult {
@@ -7275,6 +7266,22 @@ export async function startServer({
     writeAppConfig,
   });
   const { analyticsService } = telemetry;
+  registerStrategyRolloutRoutes(app, {
+    db,
+    analytics: analyticsService,
+    getAppVersion: () => telemetry.getCachedAppVersion()?.version ?? '0.0.0',
+    requireLocalDaemonRequest,
+  });
+  const latchOdNextRolloutForRun = (run, mode, reasonCode) => {
+    latchOdNextRolloutStopOperationally({
+      db,
+      analytics: analyticsService,
+      analyticsContext: run.analyticsContext,
+      appVersion: telemetry.getCachedAppVersion()?.version ?? '0.0.0',
+      mode,
+      reasonCode,
+    });
+  };
   workspaceAnalyticsService = analyticsService;
   console.info(
     '[telemetry] effective run sink',
@@ -11980,7 +11987,7 @@ export async function startServer({
           })
         : null;
       if (thresholdSignal) {
-        latchOdNextRolloutStop(db, { mode: 'observe', reasonCode: thresholdSignal });
+        latchOdNextRolloutForRun(run, 'observe', thresholdSignal);
         design.runs.emit(run, 'diagnostic', {
           type: 'od_next_rollout_stop',
           mode: 'observe',
@@ -14644,10 +14651,7 @@ export async function startServer({
         if (strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request') {
           const blocked = blockAutomaticContinuation(db, { runId: run.id });
           if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
-          latchOdNextRolloutStop(db, {
-            mode: 'observe',
-            reasonCode: 'native_resume_failed',
-          });
+          latchOdNextRolloutForRun(run, 'observe', 'native_resume_failed');
           send('error', createSseErrorPayload(
             'AGENT_SESSION_RESUME_FAILED',
             'The locked OD Next native session is unavailable; the task was blocked without cold re-seeding.',
@@ -15236,81 +15240,22 @@ export async function startServer({
           let executionPreflight;
           let complexRuntimeEvidence;
           try {
-            executionPreflight = plan && odNextExecutionPreflightResolver
-              ? await odNextExecutionPreflightResolver({
-                  taskExecutionId: strategyTaskAtStart.taskExecutionId,
-                  runId: run.id,
-                  agentId: strategyTaskAtStart.selectedAgentId,
-                  productionRoutes: plan.runManifest.productionRoutes,
-                  plan,
-                })
-              : plan
-                && strategyTaskAtStart.strategyId === 'od-next-strategy'
-                && readOdNextRolloutPolicy().localSyntheticCanary
-                && process.env.NODE_ENV !== 'production'
-                ? {
-                    productionRoutes: plan.runManifest.productionRoutes.map((id) => ({ id, available: true })),
-                    dependencies: [],
-                    inputs: [],
-                    renderers: [],
-                    exporters: [],
-                    templates: [],
-                    outputKinds: plan.taskProfile.requiredDeliverables.map((item) => ({
-                      id: item.kind,
-                      supported: true,
-                    })),
-                  }
-                : plan && strategyTaskAtStart.strategyId === 'od-next-strategy'
-                  ? resolveDaemonOwnedOdNextExecutionPreflight(plan)
-                  : undefined;
             const lockedPlan = plan ?? strategyTaskAtStart.planContract;
-            if (lockedPlan?.fullPlan.executionMode === 'complex') {
-              const phase = strategyProtocolResult.runtimeState?.outcome === 'completed'
+            const evidence = await resolveAutomaticContinuationEvidence({
+              plan: lockedPlan,
+              phase: strategyProtocolResult.runtimeState?.outcome === 'completed'
                 ? 'completion'
-                : 'eligibility';
-              if (odNextComplexProductionResolver) {
-                complexRuntimeEvidence = await odNextComplexProductionResolver({
-                  phase,
-                  taskExecutionId: strategyTaskAtStart.taskExecutionId,
-                  runId: run.id,
-                  agentId: strategyTaskAtStart.selectedAgentId,
-                  plan: lockedPlan,
-                });
-              } else {
-                const mapping = strategyTaskAtStart.runs.find((candidate) => (
-                  candidate.runId === run.id
-                ));
-                const versions = getDetectedRuntimeVersions(
-                  strategyTaskAtStart.selectedAgentId,
-                );
-                if (mapping) {
-                  complexRuntimeEvidence = resolveDaemonOwnedOdNextComplexRuntimeEvidence({
-                    phase,
-                    taskExecutionId: strategyTaskAtStart.taskExecutionId,
-                    runId: run.id,
-                    taskRunIndex: mapping.taskRunIndex,
-                    stage: mapping.inputStage,
-                    agentId: strategyTaskAtStart.selectedAgentId,
-                    agentCliVersion:
-                      run.preflightAgentCliVersion
-                      ?? versions?.agentCliVersion,
-                    ...(versions?.runtimeCompanionName
-                      ? { runtimeCompanionName: versions.runtimeCompanionName }
-                      : {}),
-                    ...(versions?.runtimeCompanionVersion
-                      ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
-                      : {}),
-                    plan: lockedPlan,
-                    run: {
-                      status: run.status,
-                      createdAt: run.createdAt,
-                      updatedAt: Date.now(),
-                      events: run.events,
-                    },
-                  });
-                }
-              }
-            }
+                : 'eligibility',
+              task: strategyTaskAtStart,
+              run,
+              localSyntheticCanary: readOdNextRolloutPolicy().localSyntheticCanary
+                && process.env.NODE_ENV !== 'production',
+              executionPreflightResolver: odNextExecutionPreflightResolver,
+              complexProductionResolver: odNextComplexProductionResolver,
+              getRuntimeVersions: getDetectedRuntimeVersions,
+            });
+            executionPreflight = evidence.executionPreflight;
+            complexRuntimeEvidence = evidence.complexRuntimeEvidence;
           } catch (error) {
             if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
             send('error', createSseErrorPayload(
@@ -15394,18 +15339,12 @@ export async function startServer({
           }
           run.strategyTask = projectStrategyTask(transition.result.task, run.id);
           if (transition.result.action === 'blocked') {
-            const signal = transition.result.reasonCodes.some((code) => (
-              code.includes('route_mismatch') || code.includes('execution_mode_mismatch')
-            ))
-              ? 'route_mode_drift'
-              : transition.result.reasonCodes.some((code) => code.includes('protocol'))
-                ? 'machine_contract_leak'
-                : transition.result.reasonCodes.some((code) => code.includes('child'))
-                  ? 'complex_child_unverified'
-                  : null;
+            const signal = rolloutStopSignalForBlockedContinuation(
+              transition.result.reasonCodes,
+            );
             const stopMode = signal ? stopModeForOdNextSignal(signal) : null;
             if (signal && stopMode) {
-              latchOdNextRolloutStop(db, { mode: stopMode, reasonCode: signal });
+              latchOdNextRolloutForRun(run, stopMode, signal);
             }
           }
           if (transition.start && transition.prepared?.kind === 'ready') {

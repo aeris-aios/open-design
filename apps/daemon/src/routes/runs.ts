@@ -105,14 +105,17 @@ import {
 } from '../strategies/od-next/task-input-snapshot.js';
 import {
   evaluateOdNextRollout,
-  odNextTaskTypeForProjectMetadata,
+  odNextTaskTypeForProjectScenarioBinding,
   readOdNextRolloutPolicy,
   readOdNextRolloutStop,
   type OdNextRolloutDecision,
 } from '../strategies/od-next/rollout.js';
+import { odNextRolloutAnalyticsProperties } from '../strategies/od-next/rollout-analytics.js';
 import {
   buildConnectorProbe,
+  automaticScenarioTaskProfile,
   getInstalledPlugin,
+  readVerifiedProjectScenarioBinding,
   resolvePluginFolder,
   resolvePluginSnapshot,
 } from '../plugins/index.js';
@@ -343,6 +346,7 @@ interface ChatRun {
   assistantMessageId: string | null;
   clientRequestId?: string | null;
   requestFingerprint?: string | null;
+  strategyRolloutDecision?: OdNextRolloutDecision | null;
   agentId: string | null;
   workspaceScope?: RunWorkspaceScope | null;
   designSystemScope?: PinnedRunDesignSystemScope | null;
@@ -431,6 +435,7 @@ interface RunCreateMeta extends InternalRunCreateInput, JsonRecord {
   assistantMessageId?: string;
   clientRequestId?: string;
   requestFingerprint?: string;
+  strategyRolloutDecision?: OdNextRolloutDecision;
   agentId?: string;
   pluginId?: string;
   appliedPluginSnapshotId?: string;
@@ -789,6 +794,8 @@ const SCENARIO_PROJECT_INTENTS: readonly NonNullable<ContractProjectMetadata['in
   'live-artifact',
   'web-clone',
   'document',
+  'marketing',
+  'hyperframes',
 ];
 
 function toScenarioProjectIntent(value: unknown): ContractProjectMetadata['intent'] | undefined {
@@ -1794,6 +1801,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       }
     } else if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
       let runResolveBody: JsonRecord = requestBody;
+      let synthesizedAutomaticDefault = false;
       const rolloutProject = toProjectRecord(getProject(db, requestBody.projectId));
       const snapshotConversationId =
         typeof requestBody.conversationId === 'string' && requestBody.conversationId
@@ -1807,25 +1815,33 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       const suppliedPluginWasNamed = typeof requestBody.pluginId === 'string'
         && requestBody.pluginId.trim().length > 0;
       const projectHasExplicitPin = Boolean(rolloutProject?.appliedPluginSnapshotId);
-      const automaticDefaultScenario = rolloutProject?.metadata?.automaticDefaultScenario;
+      const verifiedScenarioBinding = rolloutProject
+        ? readVerifiedProjectScenarioBinding(db, {
+            projectId: rolloutProject.id,
+            appliedPluginSnapshotId: rolloutProject.appliedPluginSnapshotId,
+            metadata: rolloutProject.metadata as ContractProjectMetadata,
+          })
+        : null;
       const projectPinIsAutomaticDefault = Boolean(
         projectHasExplicitPin
-        && automaticDefaultScenario
-        && automaticDefaultScenario.pluginId === defaultPluginId
-        && automaticDefaultScenario.snapshotId === rolloutProject?.appliedPluginSnapshotId,
-      );
-      const suppliedSnapshotIsAutomaticDefault = Boolean(
-        suppliedSnapshotWasNamed
-        && projectPinIsAutomaticDefault
-        && requestBody.appliedPluginSnapshotId === automaticDefaultScenario?.snapshotId,
+        && verifiedScenarioBinding?.provenance === 'automatic_default'
+        && verifiedScenarioBinding.pluginId === defaultPluginId,
       );
       const explicitUserPlugin = Boolean(
-        (suppliedSnapshotWasNamed && !suppliedSnapshotIsAutomaticDefault)
+        suppliedSnapshotWasNamed
         || suppliedPluginWasNamed
         || (projectHasExplicitPin && !projectPinIsAutomaticDefault),
       );
       const rolloutPolicy = readOdNextRolloutPolicy();
-      const rolloutMayObserve = !explicitUserPlugin
+      const rolloutTaskType = odNextTaskTypeForProjectScenarioBinding(
+        verifiedScenarioBinding,
+      );
+      const routeApplicability = explicitUserPlugin
+        ? 'explicit_user' as const
+        : rolloutTaskType
+          ? 'eligible' as const
+          : 'not_applicable' as const;
+      const rolloutMayObserve = routeApplicability === 'eligible'
         && rolloutPolicy.requestedMode !== 'off'
         && rolloutPolicy.contentEnabled
         && rolloutPolicy.behaviorEnabled;
@@ -1842,11 +1858,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           })
         : null;
       const rolloutPlugin = rolloutResolved?.ok ? rolloutResolved.record : null;
-      if (!explicitUserPlugin && rolloutPlugin) {
-        let versions = null;
+      let rolloutVersions: Awaited<ReturnType<typeof ensureDetectedRuntimeVersions>> | null = null;
+      let rolloutCapability: ReturnType<typeof resolveBundledOdNextRuntimeCapability> | null = null;
+      if (routeApplicability === 'eligible' && rolloutPlugin) {
         if (effectiveAgentId) {
           const appCfg = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
-          versions = await ensureDetectedRuntimeVersions(
+          rolloutVersions = await ensureDetectedRuntimeVersions(
             effectiveAgentId,
             agentCliEnvForAgent(
               (appCfg as { agentCliEnv?: AgentCliEnv }).agentCliEnv,
@@ -1854,49 +1871,51 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             ),
           );
         }
-        const capability = effectiveAgentId
+        rolloutCapability = effectiveAgentId
           ? resolveBundledOdNextRuntimeCapability({
               agentId: effectiveAgentId,
-              ...(versions?.agentCliVersion
-                ? { agentCliVersion: versions.agentCliVersion }
+              ...(rolloutVersions?.agentCliVersion
+                ? { agentCliVersion: rolloutVersions.agentCliVersion }
                 : {}),
-              ...(versions?.runtimeCompanionName
-                ? { runtimeCompanionName: versions.runtimeCompanionName }
+              ...(rolloutVersions?.runtimeCompanionName
+                ? { runtimeCompanionName: rolloutVersions.runtimeCompanionName }
                 : {}),
-              ...(versions?.runtimeCompanionVersion
-                ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
+              ...(rolloutVersions?.runtimeCompanionVersion
+                ? { runtimeCompanionVersion: rolloutVersions.runtimeCompanionVersion }
                 : {}),
             })
           : null;
-        const runtimeCapabilityVerified = Boolean(
-          capability?.reason === 'capability_resolved'
-          && capability.snapshot?.nativeSessionContinuation.support === 'verified',
-        );
-        strategyRolloutDecision = evaluateOdNextRollout({
-          policy: rolloutPolicy,
-          assignmentIdentity: `${requestBody.projectId}:${snapshotConversationId ?? ''}`,
-          taskType: odNextTaskTypeForProjectMetadata(rolloutProject?.metadata),
-          agentId: effectiveAgentId,
-          agentVersion: versions?.agentCliVersion ?? null,
-          sourceKind: rolloutPlugin.sourceKind,
-          runtimeCapabilityVerified,
-          runtimeCapabilityReason: capability?.reason ?? 'runtime_out_of_scope',
-          stoppedMode: readOdNextRolloutStop(db)?.mode ?? null,
-        });
-        if (strategyRolloutDecision.effectiveMode === 'active') {
-          rolloutCapabilitySnapshot = capability?.snapshot ?? null;
-        }
-        console.info('[od-next-rollout]', {
-          requestedMode: strategyRolloutDecision.requestedMode,
-          effectiveMode: strategyRolloutDecision.effectiveMode,
-          taskType: strategyRolloutDecision.taskType,
-          agentId: effectiveAgentId,
-          agentVersion: versions?.agentCliVersion ?? null,
-          sourceKind: rolloutPlugin.sourceKind,
-          assignmentBucket: strategyRolloutDecision.assignmentBucket,
-          reasonCodes: strategyRolloutDecision.reasonCodes,
-        });
       }
+      const runtimeCapabilityVerified = Boolean(
+        rolloutCapability?.reason === 'capability_resolved'
+        && rolloutCapability.snapshot?.nativeSessionContinuation.support === 'verified',
+      );
+      strategyRolloutDecision = evaluateOdNextRollout({
+        policy: rolloutPolicy,
+        assignmentIdentity: `${requestBody.projectId}:${snapshotConversationId ?? ''}`,
+        taskType: rolloutTaskType,
+        agentId: effectiveAgentId,
+        agentVersion: rolloutVersions?.agentCliVersion ?? null,
+        sourceKind: rolloutPlugin?.sourceKind ?? null,
+        runtimeCapabilityVerified,
+        runtimeCapabilityReason: rolloutCapability?.reason ?? 'runtime_out_of_scope',
+        stoppedMode: readOdNextRolloutStop(db)?.mode ?? null,
+        routeApplicability,
+      });
+      if (strategyRolloutDecision.effectiveMode === 'active') {
+        rolloutCapabilitySnapshot = rolloutCapability?.snapshot ?? null;
+      }
+      console.info('[od-next-rollout]', {
+        decisionClass: strategyRolloutDecision.decisionClass,
+        requestedMode: strategyRolloutDecision.requestedMode,
+        effectiveMode: strategyRolloutDecision.effectiveMode,
+        taskType: strategyRolloutDecision.taskType,
+        agentId: effectiveAgentId,
+        agentVersion: rolloutVersions?.agentCliVersion ?? null,
+        sourceKind: rolloutPlugin?.sourceKind ?? null,
+        assignmentClass: strategyRolloutDecision.eligible ? 'included' : 'not_included',
+        primaryReasonCode: strategyRolloutDecision.primaryReasonCode,
+      });
       if (!explicitUserPlugin) {
         const projectRow = rolloutProject;
         const hasPin =
@@ -1912,6 +1931,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           const fallbackPluginId = defaultPluginId;
           if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
             runResolveBody = { ...requestBody, pluginId: fallbackPluginId };
+            synthesizedAutomaticDefault = true;
           }
         }
       }
@@ -1960,6 +1980,20 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         registry: registryView,
         connectorProbe: buildConnectorProbe(connectorService),
         requireSnapshotProjectMatch: true,
+        ...(!activatingStrategy && !explicitUserPlugin
+          && (projectPinIsAutomaticDefault || synthesizedAutomaticDefault)
+          && defaultPluginId
+          ? {
+              projectBinding: {
+                provenance: 'automatic_default' as const,
+                taskProfile: verifiedScenarioBinding?.taskProfile
+                  ?? automaticScenarioTaskProfile({
+                    metadata: rolloutProject?.metadata as ContractProjectMetadata,
+                    pluginId: defaultPluginId,
+                  }),
+              },
+            }
+          : {}),
         ...(activatingStrategy && strategyRolloutDecision?.taskType
           ? {
               internalStrategyActivation: {
@@ -1989,9 +2023,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       // Always overwrite the untrusted HTTP field, including for an unbound
       // project. The absence of a persisted binding is itself authoritative.
       workspaceScope: preparedWorkspaceScope,
-      ...(strategyRolloutDecision?.effectiveMode === 'active'
-        ? { strategyRolloutDecision }
-        : {}),
+      ...(strategyRolloutDecision ? { strategyRolloutDecision } : {}),
     };
     if (resolvedSnapshot?.ok) {
       meta.appliedPluginSnapshotId = resolvedSnapshot.snapshotId;
@@ -3039,6 +3071,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         page_name: isDesignSystemRun ? 'design_system_project' : 'chat_panel',
         area: isDesignSystemRun ? 'design_system_generation' : 'chat_composer',
         ...configureGlobals,
+        ...odNextRolloutAnalyticsProperties(strategyRolloutDecision),
         runtime_type: runtimeTypeForRunAnalytics({
           derived: configureGlobals.runtime_type,
           hint: analyticsHints.runtimeType,

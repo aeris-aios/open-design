@@ -21,6 +21,9 @@ import {
   type ProjectFileVersionPromptSource,
   type ProjectFileVersionSource,
   type ProjectFileVersionWarning,
+  type ProjectMetadata,
+  type RestoreProjectAutomaticScenarioRequest,
+  type RestoreProjectAutomaticScenarioResponse,
   type ProjectSyncState,
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
@@ -53,6 +56,8 @@ import {
   buildConnectorProbe,
   getInstalledPlugin,
   listInstalledPlugins,
+  automaticScenarioTaskProfile,
+  readVerifiedProjectScenarioBinding,
   resolvePluginSnapshot,
   type ResolveSnapshotError,
   type ResolveSnapshotOk,
@@ -63,6 +68,7 @@ import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
 import {
   ensureTeamProjectCommentConversations,
+  getFirstProjectConversation,
   SYNC_KEEPS_UPDATED_AT,
 } from '../../db.js';
 import {
@@ -3608,7 +3614,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const clientMetadata = metadata && typeof metadata === 'object'
         ? Object.fromEntries(
             Object.entries(metadata).filter(([key]) => (
-              key !== 'localCatalogScopes' && key !== 'automaticDefaultScenario'
+              key !== 'localCatalogScopes' && key !== 'scenarioBinding'
             )),
           )
         : null;
@@ -3771,6 +3777,17 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
                   : undefined,
               connectorProbe: buildConnectorProbe(connectorService),
               ...(pluginForSnapshot ? { plugin: pluginForSnapshot } : {}),
+              ...(automaticDefaultRouting && defaultScenarioPluginId
+                ? {
+                    projectBinding: {
+                      provenance: 'automatic_default' as const,
+                      taskProfile: automaticScenarioTaskProfile({
+                        metadata: projectMetadata as ProjectMetadata | null,
+                        pluginId: defaultScenarioPluginId,
+                      }),
+                    },
+                  }
+                : {}),
             });
             if (resolved && !resolved.ok) {
               if (!explicitPlugin) {
@@ -3783,17 +3800,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
               }
             } else {
               pluginResolutionState.snapshot = resolved;
-              if (resolved && automaticDefaultRouting && defaultScenarioPluginId) {
-                createdProject = updateProject(db, id, {
-                  metadata: {
-                    ...(projectMetadata ?? {}),
-                    automaticDefaultScenario: {
-                      pluginId: defaultScenarioPluginId,
-                      snapshotId: resolved.snapshotId,
-                    },
-                  },
-                }) ?? createdProject;
-              }
+              if (resolved) createdProject = getProject(db, id) ?? createdProject;
             }
           }
           return createdProject;
@@ -3870,6 +3877,151 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       res.json(body);
     } catch (err: any) {
       sendApiError(res, 400, 'BAD_REQUEST', String(err));
+    }
+  });
+
+  app.post('/api/projects/:id/scenario/restore-automatic', async (req, res) => {
+    const project = getProject(db, req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+    }
+    if (!await enforceWorkspaceProjectMutation(
+      req,
+      res,
+      sendApiError,
+      getWorkspaceProject,
+      getWorkspaceProjectByProjectId,
+      db,
+      project.id,
+      'rename',
+    )) return;
+
+    const request = req.body as Partial<RestoreProjectAutomaticScenarioRequest> | null;
+    if (!request || !Object.prototype.hasOwnProperty.call(request, 'expectedCurrentSnapshotId')) {
+      return sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'expectedCurrentSnapshotId is required',
+      );
+    }
+    if (
+      request.expectedCurrentSnapshotId !== null
+      && typeof request.expectedCurrentSnapshotId !== 'string'
+    ) {
+      return sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'expectedCurrentSnapshotId must be a string or null',
+      );
+    }
+    const currentSnapshotId = project.appliedPluginSnapshotId ?? null;
+    if (request.expectedCurrentSnapshotId !== currentSnapshotId) {
+      return sendApiError(
+        res,
+        409,
+        'PROJECT_SCENARIO_CONFLICT',
+        'project scenario changed; refresh before restoring the automatic scenario',
+      );
+    }
+
+    const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(project.metadata);
+    if (!defaultPluginId || !getInstalledPlugin(db, defaultPluginId)) {
+      return sendApiError(
+        res,
+        409,
+        'DEFAULT_SCENARIO_UNAVAILABLE',
+        'no installed automatic scenario is available for this project',
+      );
+    }
+    const taskProfile = automaticScenarioTaskProfile({
+      metadata: project.metadata,
+      pluginId: defaultPluginId,
+    });
+    const currentBinding = readVerifiedProjectScenarioBinding(db, {
+      projectId: project.id,
+      appliedPluginSnapshotId: currentSnapshotId,
+      metadata: project.metadata,
+    });
+    if (
+      currentBinding?.provenance === 'automatic_default'
+      && currentBinding.snapshotId === currentSnapshotId
+      && currentBinding.pluginId === defaultPluginId
+      && (currentBinding.taskProfile ?? null) === taskProfile
+    ) {
+      const body: RestoreProjectAutomaticScenarioResponse = {
+        project,
+        scenarioBinding: currentBinding,
+        changed: false,
+      };
+      return res.json(body);
+    }
+
+    const workspaceProject = getWorkspaceProjectByProjectId(db, project.id);
+    const registry = await ctx.pluginScope?.loadRegistry({
+      workspaceId: workspaceProject?.workspaceId == null
+        ? null
+        : String(workspaceProject.workspaceId),
+      workspaceMemberId: typeof workspaceProject?.createdByWorkspaceMemberId === 'string'
+        ? workspaceProject.createdByWorkspaceMemberId
+        : null,
+    });
+    if (!registry) {
+      return sendApiError(res, 503, 'PLUGIN_REGISTRY_UNAVAILABLE', 'plugin registry unavailable');
+    }
+    const conversationId = getFirstProjectConversation(db, project.id)?.id ?? null;
+    const restore = db.transaction(():
+      | { ok: true; resolved: ResolveSnapshotOk; project: NonNullable<ReturnType<typeof getProject>> }
+      | { ok: false; failure: ResolveSnapshotError | null } => {
+      const resolved = resolvePluginSnapshot({
+        db,
+        body: { pluginId: defaultPluginId },
+        projectId: project.id,
+        conversationId,
+        registry,
+        connectorProbe: buildConnectorProbe(connectorService),
+        projectBinding: {
+          provenance: 'automatic_default',
+          taskProfile,
+        },
+      });
+      if (!resolved || !resolved.ok) {
+        return { ok: false, failure: resolved && !resolved.ok ? resolved : null };
+      }
+      const updated = getProject(db, project.id);
+      if (!updated?.metadata?.scenarioBinding) {
+        throw new Error('automatic scenario binding was not persisted');
+      }
+      return { ok: true, resolved, project: updated };
+    });
+    try {
+      const outcome = restore();
+      if (!outcome.ok) {
+        if (outcome.failure) {
+          return res.status(outcome.failure.status).json(outcome.failure.body);
+        }
+        return sendApiError(
+          res,
+          409,
+          'DEFAULT_SCENARIO_RESTORE_FAILED',
+          'automatic scenario restoration failed',
+        );
+      }
+      const body: RestoreProjectAutomaticScenarioResponse = {
+        project: outcome.project,
+        scenarioBinding: outcome.project.metadata!.scenarioBinding!,
+        changed: outcome.resolved.snapshotId !== currentSnapshotId,
+      };
+      return res.json(body);
+    } catch (error) {
+      console.warn('[projects] automatic scenario restore failed', error);
+      return sendApiError(
+        res,
+        409,
+        'DEFAULT_SCENARIO_RESTORE_FAILED',
+        'automatic scenario restoration failed; the existing project pin was preserved',
+      );
     }
   });
 
@@ -4378,15 +4530,15 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           );
         }
         if (
-          'automaticDefaultScenario' in patch.metadata
-          && JSON.stringify(patch.metadata.automaticDefaultScenario)
-            !== JSON.stringify(existingMeta?.automaticDefaultScenario)
+          'scenarioBinding' in patch.metadata
+          && JSON.stringify(patch.metadata.scenarioBinding)
+            !== JSON.stringify(existingMeta?.scenarioBinding)
         ) {
           return sendApiError(
             res,
             400,
             'BAD_REQUEST',
-            'automaticDefaultScenario is daemon-owned',
+            'scenarioBinding is daemon-owned',
           );
         }
         if ('fromTrustedPicker' in patch.metadata
@@ -4470,10 +4622,10 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             localCatalogScopes: existingMeta.localCatalogScopes,
           };
         }
-        if (existingMeta?.automaticDefaultScenario) {
+        if (existingMeta?.scenarioBinding) {
           patch.metadata = {
             ...patch.metadata,
-            automaticDefaultScenario: existingMeta.automaticDefaultScenario,
+            scenarioBinding: existingMeta.scenarioBinding,
           };
         }
       }

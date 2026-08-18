@@ -196,13 +196,273 @@ describe('OD Next automatic production through the real server', () => {
     expect(researchContract).toContain('Run the ordinary public fixture.');
   });
 
+  it('routes the four approved automatic profiles while ordinary Image remains media-only', async () => {
+    const fixture = await createPublicRolloutFixture('approved-profiles', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+
+    const approved = [
+      {
+        ...(await createProjectForScenario(started.url, 'approved-prototype', {
+          kind: 'prototype',
+        })),
+        taskProfile: 'prototype',
+        pluginId: 'example-web-prototype',
+      },
+      {
+        ...(await createProjectForScenario(started.url, 'approved-ppt', { kind: 'deck' })),
+        taskProfile: 'ppt',
+        pluginId: 'example-simple-deck',
+      },
+      {
+        ...(await createProjectForScenario(started.url, 'approved-marketing', {
+          kind: 'prototype',
+          intent: 'marketing',
+        })),
+        taskProfile: 'marketing',
+        pluginId: 'example-web-prototype',
+      },
+      {
+        ...(await createProjectForScenario(started.url, 'approved-hyperframes', {
+          kind: 'video',
+          intent: 'hyperframes',
+          videoModel: 'hyperframes-html',
+        })),
+        taskProfile: 'hyperframes',
+        pluginId: 'example-hyperframes',
+      },
+    ];
+    for (const candidate of approved) {
+      expect(candidate.metadata?.scenarioBinding).toMatchObject({
+        provenance: 'automatic_default',
+        pluginId: candidate.pluginId,
+        taskProfile: candidate.taskProfile,
+      });
+    }
+
+    const sameSnapshotExplicit = await postRun(started.url, {
+      ...publicRunRequest(
+        fixture,
+        'Use the exact snapshot through ordinary routing.',
+        'same-snapshot-explicit',
+      ),
+      appliedPluginSnapshotId: fixture.appliedPluginSnapshotId,
+    });
+    expect(sameSnapshotExplicit.strategyTask).toBeUndefined();
+    expect(sameSnapshotExplicit.pluginId).toBe('example-web-prototype');
+    expect(await readDurableRunState(sameSnapshotExplicit.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        schemaVersion: 1,
+        decisionClass: 'explicit_user',
+        primaryReasonCode: 'od_next_rollout_explicit_user_authority',
+      },
+    });
+    await waitForRunTerminal(started.url, sameSnapshotExplicit.runId as string);
+    const explicitMetadata = JSON.parse((database().prepare(
+      'SELECT metadata_json AS metadataJson FROM projects WHERE id = ?',
+    ).get(fixture.projectId) as { metadataJson: string }).metadataJson) as {
+      scenarioBinding?: { provenance?: string; snapshotId?: string };
+    };
+    expect(explicitMetadata.scenarioBinding).toMatchObject({
+      provenance: 'explicit_user',
+      snapshotId: fixture.appliedPluginSnapshotId,
+    });
+
+    for (const candidate of approved) {
+      const run = await postRun(started.url, publicRunRequest(
+        candidate,
+        'Hold the public rollout run open until canceled.',
+        `approved-${candidate.taskProfile}`,
+      ));
+      expect(run.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+      expect(await readDurableRunState(run.runId as string)).toMatchObject({
+        strategyRolloutDecision: {
+          schemaVersion: 1,
+          decisionClass: 'active',
+          taskType: candidate.taskProfile,
+          primaryReasonCode: 'od_next_rollout_eligible',
+        },
+      });
+      expect(getStrategyTaskExecution(database(), run.taskExecutionId as string)?.taskExecutionId)
+        .toBe(run.taskExecutionId);
+      await fetch(`${started.url}/api/runs/${encodeURIComponent(run.runId as string)}/cancel`, {
+        method: 'POST',
+      });
+      await waitForRunTerminal(started.url, run.runId as string);
+    }
+
+    for (const candidate of approved) {
+      const explicitRun = await postRun(started.url, {
+        ...publicRunRequest(
+          candidate,
+          'Use the explicitly named scenario through ordinary routing.',
+          `explicit-${candidate.taskProfile}`,
+        ),
+        pluginId: candidate.pluginId,
+      });
+      expect(explicitRun.strategyTask).toBeUndefined();
+      expect(explicitRun.pluginId).toBe(candidate.pluginId);
+      expect(await readDurableRunState(explicitRun.runId as string)).toMatchObject({
+        strategyRolloutDecision: {
+          schemaVersion: 1,
+          decisionClass: 'explicit_user',
+          primaryReasonCode: 'od_next_rollout_explicit_user_authority',
+        },
+      });
+      await waitForRunTerminal(started.url, explicitRun.runId as string);
+    }
+
+    const image = await createProjectForScenario(
+      started.url,
+      'ordinary-image-default',
+      { kind: 'image' },
+      {
+        pluginInputs: {
+          mediaKind: 'image',
+          subject: 'a polished product concept',
+          style: 'cinematic, high-quality, on-brand',
+          aspect: '16:9',
+        },
+      },
+    );
+    expect(image.metadata?.scenarioBinding).toMatchObject({
+      provenance: 'automatic_default',
+      pluginId: 'od-media-generation',
+    });
+    expect(image.metadata?.scenarioBinding).not.toHaveProperty('taskProfile');
+    const imageRun = await postRun(started.url, publicRunRequest(
+      image,
+      'Create an ordinary image.',
+      'ordinary-image-default',
+    ));
+    expect(imageRun.strategyTask).toBeUndefined();
+    expect(imageRun.pluginId).toBe('od-media-generation');
+    expect(await readDurableRunState(imageRun.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        schemaVersion: 1,
+        decisionClass: 'not_applicable',
+        taskType: null,
+      },
+    });
+    const imageStatus = await fetch(
+      `${started.url}/api/runs/${encodeURIComponent(imageRun.runId as string)}`,
+    );
+    expect(imageStatus.status).toBe(200);
+    expect(await imageStatus.json()).toMatchObject({
+      strategyRolloutDecision: {
+        schemaVersion: 1,
+        decisionClass: 'not_applicable',
+        taskType: null,
+      },
+    });
+    await waitForRunTerminal(started.url, imageRun.runId as string);
+
+    const explicitImage = await createProjectForScenario(
+      started.url,
+      'ordinary-image-explicit',
+      { kind: 'image' },
+      {
+        pluginId: 'od-media-generation',
+        pluginInputs: {
+          mediaKind: 'image',
+          subject: 'a polished product concept',
+          style: 'cinematic, high-quality, on-brand',
+          aspect: '16:9',
+        },
+      },
+    );
+    expect(explicitImage.metadata?.scenarioBinding).toMatchObject({
+      provenance: 'explicit_user',
+      pluginId: 'od-media-generation',
+    });
+    expect(explicitImage.metadata?.scenarioBinding).not.toHaveProperty('taskProfile');
+    const explicitImageRun = await postRun(started.url, publicRunRequest(
+      explicitImage,
+      'Create an ordinary image.',
+      'ordinary-image-explicit',
+    ));
+    expect(explicitImageRun.strategyTask).toBeUndefined();
+    expect(explicitImageRun.pluginId).toBe('od-media-generation');
+    expect(await readDurableRunState(explicitImageRun.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        schemaVersion: 1,
+        decisionClass: 'explicit_user',
+        taskType: null,
+      },
+    });
+    await waitForRunTerminal(started.url, explicitImageRun.runId as string);
+  });
+
+  it('exposes the instance stop latch through the shared API and CLI CAS reset', async () => {
+    const fixture = await createPublicRolloutFixture('rollout-control', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    latchOdNextRolloutStop(database(), {
+      mode: 'off',
+      reasonCode: 'route_mode_drift',
+    });
+
+    const beforeResult = await runOdCli([
+      'strategy', 'rollout', 'status', '--daemon-url', started.url, '--json',
+    ]);
+    expect(beforeResult.stderr).toBe('');
+    const before = JSON.parse(beforeResult.stdout) as {
+      status: { scope: string; revision: number; latch: { mode: string; reasonCode: string } | null };
+    };
+    expect(before.status).toMatchObject({
+      scope: 'daemon_instance',
+      latch: { mode: 'off', reasonCode: 'route_mode_drift' },
+    });
+
+    const resetResult = await runOdCli([
+      'strategy', 'rollout', 'reset', '--daemon-url', started.url, '--json',
+    ]);
+    expect(resetResult.stderr).toBe('');
+    const reset = JSON.parse(resetResult.stdout) as {
+      status: {
+        revision: number;
+        latch: null;
+        lastEvent: { action: string; reasonCode: string } | null;
+      };
+    };
+    expect(reset.status.revision).toBe(before.status.revision + 1);
+    expect(reset.status.latch).toBeNull();
+    expect(reset.status.lastEvent).toMatchObject({
+      action: 'cleared',
+      reasonCode: 'operator_reset',
+    });
+
+    const staleReset = await fetch(`${started.url}/api/strategies/od-next/rollout/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: before.status.revision }),
+    });
+    expect(staleReset.status).toBe(409);
+    await expect(staleReset.json()).resolves.toMatchObject({
+      error: { code: 'ROLLOUT_REVISION_CONFLICT' },
+      status: { revision: reset.status.revision },
+    });
+  });
+
   it('keeps active retry/task pinned while rollback sends a new public request through the ordinary path', async () => {
     const fixture = await createPublicRolloutFixture('rollback', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
-    expect(fixture.projectMetadata?.automaticDefaultScenario).toEqual({
+    clearOdNextRolloutStop(database());
+    const strategyTaskCountAtStart = (
+      database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as {
+        count: number;
+      }
+    ).count;
+    expect(fixture.projectMetadata?.scenarioBinding).toMatchObject({
+      schemaVersion: 1,
+      provenance: 'automatic_default',
       pluginId: 'example-web-prototype',
       snapshotId: fixture.appliedPluginSnapshotId,
+      taskProfile: 'prototype',
     });
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
     process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
@@ -285,7 +545,7 @@ describe('OD Next automatic production through the real server', () => {
     expect(activeInvocation?.stdin).not.toContain(selectedSkillDir);
     expect(activeInvocation?.stdin).not.toContain('available_skills');
     expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
-      .toBe(1);
+      .toBe(strategyTaskCountAtStart + 1);
   });
 
   it('gives Web and CLI the same Bundle identity for the same canonical Skill set', async () => {
@@ -488,7 +748,11 @@ describe('OD Next automatic production through the real server', () => {
     );
     started = fixture.started;
     binDir = fixture.binDir;
-    expect(fixture.projectMetadata?.automaticDefaultScenario).toBeUndefined();
+    clearOdNextRolloutStop(database());
+    expect(fixture.projectMetadata?.scenarioBinding).toMatchObject({
+      provenance: 'explicit_user',
+      pluginId: 'example-web-prototype',
+    });
     const strategyTaskCountAtStart = (
       database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }
     ).count;
@@ -554,6 +818,47 @@ describe('OD Next automatic production through the real server', () => {
     });
     expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
       .toBe(strategyTaskCountAtStart);
+
+    const restoredResult = await runOdCli([
+      'project', 'restore-automatic-scenario', fixture.projectId,
+      '--daemon-url', started.url,
+      '--json',
+    ]);
+    expect(restoredResult.stderr).toBe('');
+    const restored = JSON.parse(restoredResult.stdout) as {
+      changed: boolean;
+      scenarioBinding: { provenance: string; pluginId: string; snapshotId: string };
+    };
+    expect(restored).toMatchObject({
+      changed: true,
+      scenarioBinding: {
+        provenance: 'automatic_default',
+        pluginId: 'example-web-prototype',
+      },
+    });
+    expect(restored.scenarioBinding.snapshotId).not.toBe(fixture.appliedPluginSnapshotId);
+
+    const retriedResult = await runOdCli([
+      'project', 'restore-automatic-scenario', fixture.projectId,
+      '--daemon-url', started.url,
+      '--json',
+    ]);
+    expect(retriedResult.stderr).toBe('');
+    expect(JSON.parse(retriedResult.stdout)).toMatchObject({
+      changed: false,
+      scenarioBinding: { snapshotId: restored.scenarioBinding.snapshotId },
+    });
+
+    const automatic = await postRun(started.url, publicRunRequest(
+      fixture,
+      'Hold the public rollout run open until canceled.',
+      'restored-automatic',
+    ));
+    expect(automatic.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    await fetch(`${started.url}/api/runs/${encodeURIComponent(automatic.runId as string)}/cancel`, {
+      method: 'POST',
+    });
+    await waitForRunTerminal(started.url, automatic.runId as string);
   });
 
   it('runs parsed plan -> serialization repair -> production after each source end and remains exactly-once across restart', async () => {
@@ -1213,12 +1518,15 @@ describe('OD Next automatic production through the real server', () => {
       conversationId: string;
       appliedPluginSnapshotId?: string;
       project?: {
-        metadata?: { automaticDefaultScenario?: { snapshotId: string } };
+        metadata?: { scenarioBinding?: { snapshotId: string } };
       };
     };
     const project = { id: projectId, conversationId: projectBody.conversationId };
     if (mode !== 'direct') {
-      expect(projectBody.project?.metadata?.automaticDefaultScenario).toBeDefined();
+      expect(projectBody.project?.metadata?.scenarioBinding).toMatchObject({
+        provenance: 'automatic_default',
+        taskProfile: 'prototype',
+      });
     }
 
     const snapshot = mode === 'direct'
@@ -1315,7 +1623,7 @@ async function createPublicRolloutFixture(
   const { conversationId, appliedPluginSnapshotId, project } = await projectResponse.json() as {
     conversationId: string;
     appliedPluginSnapshotId?: string;
-    project?: { metadata?: { automaticDefaultScenario?: { pluginId: string; snapshotId: string } } };
+    project?: { metadata?: { scenarioBinding?: { pluginId: string; snapshotId: string } } };
   };
   const configResponse = await fetch(`${started.url}/api/app-config`, {
     method: 'PUT',
@@ -1338,6 +1646,49 @@ async function createPublicRolloutFixture(
     appliedPluginSnapshotId,
     projectMetadata: project?.metadata,
     logPath,
+  };
+}
+
+async function createProjectForScenario(
+  url: string,
+  label: string,
+  metadata: Record<string, unknown>,
+  plugin?: {
+    pluginId?: string;
+    pluginInputs: Record<string, unknown>;
+  },
+) {
+  const projectId = `od-next-public-${label}-${Date.now()}`;
+  const response = await fetch(`${url}/api/projects`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: projectId,
+      name: `OD Next public ${label}`,
+      metadata,
+      ...plugin,
+      conversationMode: 'design',
+      skipDiscoveryBrief: true,
+    }),
+  });
+  const body = await response.json() as {
+    conversationId: string;
+    project?: {
+      metadata?: {
+        scenarioBinding?: {
+          provenance: string;
+          pluginId: string;
+          snapshotId: string;
+          taskProfile?: string;
+        };
+      };
+    };
+  };
+  expect(response.status, JSON.stringify(body)).toBe(200);
+  return {
+    projectId,
+    conversationId: body.conversationId,
+    metadata: body.project?.metadata,
   };
 }
 
@@ -1408,6 +1759,15 @@ function database() {
   const dataDir = process.env.OD_DATA_DIR;
   if (!dataDir) throw new Error('OD_DATA_DIR is required');
   return openDatabase(process.cwd(), { dataDir });
+}
+
+async function readDurableRunState(runId: string): Promise<Record<string, unknown>> {
+  const dataDir = process.env.OD_DATA_DIR;
+  if (!dataDir) throw new Error('OD_DATA_DIR is required');
+  return JSON.parse(await readFile(
+    path.join(dataDir, 'runs', runId, 'state.json'),
+    'utf8',
+  )) as Record<string, unknown>;
 }
 
 async function startDaemon(

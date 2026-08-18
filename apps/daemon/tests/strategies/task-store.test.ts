@@ -1083,6 +1083,21 @@ describe('durable strategy task store', () => {
         activeRunId: null,
         terminalRunId: `run-${physicalStatus}`,
       });
+
+      const repeated = await reconcileDurableRunTerminals({
+        analytics: { capture: vi.fn() },
+        appVersion: '0.18.2',
+        db,
+        reportLangfuse: vi.fn(),
+        runsLogDir: path.join(tempDir, 'runs'),
+      });
+      expect(repeated).toMatchObject({ interrupted: 0, strategyTasksReconciled: 0 });
+      expect(getStrategyTaskExecution(db, task.taskExecutionId)).toMatchObject({
+        outcome: expectedOutcome,
+        activeRunId: null,
+        terminalRunId: `run-${physicalStatus}`,
+      });
+      expect(fs.readdirSync(path.join(tempDir, 'runs'))).toEqual([`run-${physicalStatus}`]);
     },
   );
 });

@@ -100,6 +100,7 @@ export * from './registry.js';
 export * from './scaffold.js';
 export * from './gc.js';
 export * from './resolve-snapshot.js';
+export * from './scenario-binding.js';
 export * from './snapshots.js';
 export * from './strategy-stage-policy.js';
 export * from './strategy-package.js';

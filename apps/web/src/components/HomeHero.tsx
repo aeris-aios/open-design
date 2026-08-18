@@ -1270,7 +1270,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         <PixelScanLogo className="home-hero__logo home-hero__logo--tiles" />
       </span>
 
-      {/* Capsule type row: the 12 create-scenario types as pill chips above
+      {/* Capsule type row: the create-scenario types as pill chips above
           the composer (per product — replaces the fanned card carousel); the
           selected pill carries the accent tint, click switches. */}
       <TypePillRow
@@ -3739,6 +3739,7 @@ function homeHeroChipDescription(chipId: string, t: ReturnType<typeof useT>): st
     case 'wireframe': return t('homeHero.chip.wireframeDesc');
     case 'mobile': return t('homeHero.chip.mobileDesc');
     case 'deck': return t('homeHero.chip.deckDesc');
+    case 'marketing': return t('homeHero.chip.marketingDesc');
     case 'document': return t('homeHero.chip.documentDesc');
     case 'image': return t('homeHero.chip.imageDesc');
     case 'video': return t('homeHero.chip.videoDesc');
@@ -3780,6 +3781,7 @@ function homeHeroChipTitle(chip: HomeHeroChip, t: ReturnType<typeof useT>): stri
     case 'wireframe': return t('homeHero.chip.wireframeNext');
     case 'mobile': return t('homeHero.chip.mobileNext');
     case 'deck': return t('homeHero.chip.deckNext');
+    case 'marketing': return t('homeHero.chip.marketingNext');
     case 'document': return t('homeHero.chip.documentNext');
     case 'image': return t('homeHero.chip.imageNext');
     case 'video': return t('homeHero.chip.videoNext');
