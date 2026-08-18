@@ -270,8 +270,10 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toContain('## Active skill — hyperframes');
     expect(prompt).toContain('**Pre-flight (do this before any other tool):**');
     expect(prompt).toContain('`references/html-in-canvas.md`');
+    expect(prompt).toContain('`"$OD_NODE_BIN" "$OD_BIN" media scaffold`');
     expect(prompt).toContain('media generate --surface video --model hyperframes-html --composition-dir <rel>');
-    expect(prompt).toContain('Do not run `npx hyperframes render` yourself');
+    expect(prompt).toContain('Do not run HyperFrames `render` yourself');
+    expect(prompt).not.toContain('npx hyperframes');
     expect(prompt).not.toContain('intentionally rejected for this model');
     expect(prompt).not.toContain('AGENT_RENDERED');
     expect(prompt).not.toContain('rendered by you directly via npx');
@@ -279,8 +281,10 @@ describe('composeSystemPrompt', () => {
 
   it('keeps both hyperframes skill copies aligned with the daemon render handoff', () => {
     for (const markdown of [hyperframesSkillMarkdown, officialHyperframesSkillMarkdown]) {
+      expect(markdown).toContain('"$OD_NODE_BIN" "$OD_BIN" media scaffold');
       expect(markdown).toContain('media generate --surface video --model hyperframes-html --composition-dir <rel>');
-      expect(markdown).toContain('Do not run `npx hyperframes render`');
+      expect(markdown).toContain('Do not run HyperFrames `render`');
+      expect(markdown).not.toContain('npx hyperframes');
       expect(markdown).not.toContain('AGENT_RENDERED');
       expect(markdown).not.toContain('rendered by you directly via npx');
       expect(markdown).not.toContain('dispatcher path returns a 400');

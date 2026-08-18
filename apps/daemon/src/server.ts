@@ -512,6 +512,7 @@ import { loadCraftSections, resolveCraftRequirements } from './craft.js';
 import { skillCwdAliasSegment, stageActiveSkill } from './cwd-aliases.js';
 import { buildDesktopArtifactExportInput, buildDesktopPdfExportInput } from './pdf-export.js';
 import { generateMedia } from './media/index.js';
+import { resolveHyperFramesCliPath } from './media/hyperframes-runtime.js';
 import { listElevenLabsVoiceOptions } from './integrations/elevenlabs-voices.js';
 import { searchResearch, ResearchError } from './research/index.js';
 import { openBrowser } from './browser/index.js';
@@ -1671,6 +1672,7 @@ export function createAgentRuntimeToolPrompt(
     '',
     `- Daemon URL: \`${daemonUrl}\` (also available as \`OD_DAEMON_URL\`).`,
     '- `OD_NODE_BIN` is the absolute path to the Node-compatible runtime that started the daemon; packaged desktop installs provide this even when the user has no system `node` on PATH.',
+    '- `OD_HYPERFRAMES_BIN` is the absolute path to Open Design\'s pinned HyperFrames CLI. Run lightweight commands through `OD_NODE_BIN`; use `"$OD_NODE_BIN" "$OD_BIN" media scaffold` for composition setup and never use a user-level `npx` cache.',
     '- `OD_BIN` is the absolute path to the Open Design CLI script. On POSIX shells run wrappers with `"$OD_NODE_BIN" "$OD_BIN" tools ...`; do not call bare `od`, which may resolve to the system octal-dump command on Unix-like systems.',
     '- On PowerShell use `& $env:OD_NODE_BIN $env:OD_BIN tools ...`; on cmd.exe use `"%OD_NODE_BIN%" "%OD_BIN%" tools ...`.',
     tokenLine,
@@ -1680,16 +1682,19 @@ export function createAgentRuntimeToolPrompt(
 
 export function createOpenDesignToolEnv({
   daemonUrl,
+  hyperFramesBin = resolveHyperFramesCliPath(),
   projectDir,
   projectId,
 }: {
   daemonUrl: string;
+  hyperFramesBin?: string;
   projectDir?: string | null;
   projectId?: string | null;
 }): NodeJS.ProcessEnv {
   return {
     OD_BIN,
     OD_DATA_DIR: RUNTIME_DATA_DIR,
+    OD_HYPERFRAMES_BIN: hyperFramesBin,
     OD_NODE_BIN,
     OD_DAEMON_URL: daemonUrl,
     ...(typeof projectId === 'string' && projectId && projectDir

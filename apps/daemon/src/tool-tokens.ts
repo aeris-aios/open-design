@@ -18,6 +18,7 @@ export function resolveChatToolTokenTtlMs(inactivityTimeoutMs: number): number {
 // Capability key for the parameterized media wait route. Token grants cannot
 // enumerate a task id that is created after the grant is minted.
 export const MEDIA_TASK_WAIT_TOOL_ENDPOINT = '/api/media/tasks/:id/wait';
+export const HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT = '/api/tools/media/hyperframes/scaffold';
 export const PROJECT_EXPORT_TOOL_ENDPOINT = '/api/projects/:id/export/:format';
 
 export const CHAT_TOOL_ENDPOINTS = [
@@ -31,6 +32,7 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/design-systems/resolve-intent',
   '/api/tools/design-systems/validate-adherence',
   '/api/tools/media/generate',
+  HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   PROJECT_EXPORT_TOOL_ENDPOINT,
   '/api/tools/library/search',
@@ -48,6 +50,7 @@ export const CHAT_TOOL_OPERATIONS = [
   'design-systems:resolve-intent',
   'design-systems:validate-adherence',
   'media:generate',
+  'media:scaffold',
   'project:export',
   'library:search',
   'library:apply',

@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import type { Express } from 'express';
 import type {
+  HyperFramesScaffoldRequest,
+  HyperFramesScaffoldResponse,
   MediaExecutionPolicy,
   MediaGenerationResultProps,
 } from '@open-design/contracts';
@@ -23,9 +25,11 @@ import {
 } from '../integrations/aihubmix.js';
 import { isSandboxModeEnabled } from '../sandbox-mode.js';
 import {
+  HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   type ToolTokenGrant,
 } from '../tool-tokens.js';
+import { scaffoldHyperFramesComposition } from '../media/hyperframes-scaffold.js';
 import {
   authorizePersistedAutomationWorkspaceScope,
   normalizePersistedAutomationWorkspaceScope,
@@ -111,6 +115,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
   const { orbitService } = ctx.orbit;
   const { openBrowser, openNativeFolderDialog } = ctx.nativeDialogs;
   const { findTeamWorkspaceIdForProject, getProject } = ctx.projectStore;
+  const { resolveProjectDir } = ctx.projectFiles;
   const { insertConversation, upsertMessage } = ctx.conversations;
   const { searchResearch, ResearchError } = ctx.research;
   const getResolvedPort = () => resolvedPortRef.current;
@@ -359,6 +364,27 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       }
       throw err;
     }
+  };
+
+  const handleHyperFramesScaffold = async (
+    req: any,
+    res: any,
+    projectId: string,
+  ) => {
+    const project = getProject(db, projectId);
+    if (!project) {
+      return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+    }
+    const body = (req.body ?? {}) as Partial<HyperFramesScaffoldRequest>;
+    if (typeof body.compositionDir !== 'string' || !body.compositionDir.trim()) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'compositionDir is required');
+    }
+    const projectDir = resolveProjectDir(PROJECTS_DIR, project.id, project.metadata);
+    const result: HyperFramesScaffoldResponse = await scaffoldHyperFramesComposition({
+      projectDir,
+      compositionDir: body.compositionDir,
+    });
+    return res.status(201).json(result);
   };
 
   const captureMediaGenerationResult = (input: {
@@ -733,6 +759,54 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       res
         .status(500)
         .json({ error: String(err && err.message ? err.message : err) });
+    }
+  });
+
+  app.post('/api/projects/:id/media/hyperframes/scaffold', async (req, res) => {
+    if (!isLocalSameOrigin(req, getResolvedPort())) {
+      return res.status(403).json({
+        error: 'cross-origin request rejected: HyperFrames scaffolding is restricted to the local UI / CLI',
+      });
+    }
+    try {
+      const project = getProject(db, req.params.id);
+      if (!project) {
+        return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+      }
+      if (!await ctx.authorizeProjectRequest(
+        req,
+        res,
+        project.id,
+        { mode: 'write', capability: 'writeFiles' },
+      )) return;
+      await handleHyperFramesScaffold(req, res, project.id);
+    } catch (err: any) {
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      const code = err?.code;
+      const body: any = { error: String(err && err.message ? err.message : err) };
+      if (code) body.code = code;
+      res.status(status).json(body);
+    }
+  });
+
+  app.post(HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT, async (req, res) => {
+    const grant = authorizeToolRequest(req, res, 'media:scaffold', {
+      endpoint: HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
+    });
+    if (!grant) return;
+    try {
+      if (!await ctx.authorizeProjectToolRequest(
+        res,
+        grant.projectId,
+        { mode: 'write', capability: 'writeFiles' },
+      )) return;
+      await handleHyperFramesScaffold(req, res, grant.projectId);
+    } catch (err: any) {
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      const code = err?.code;
+      const body: any = { error: String(err && err.message ? err.message : err) };
+      if (code) body.code = code;
+      res.status(status).json(body);
     }
   });
 
