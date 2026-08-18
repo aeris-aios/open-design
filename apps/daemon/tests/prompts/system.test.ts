@@ -432,6 +432,26 @@ describe('composeSystemPrompt', () => {
       );
     });
 
+    // The provider-error branch has to reach the prompt the DAEMON composes,
+    // not just the copy in packages/contracts. Reclassifying a provider verdict
+    // as an outage hides the actionable code and message from the user.
+    it('preserves structured provider errors in both prompts', () => {
+      for (const metadata of [
+        { kind: 'image', imageModel: 'vela/gpt-image-2' },
+        { kind: 'prototype' },
+      ]) {
+        const prompt = composeSystemPrompt({
+          agentId: 'amr',
+          locale: 'zh-CN',
+          metadata: metadata as any,
+        });
+        expect(prompt).toContain('错误代码：{code}');
+        expect(prompt).toContain(
+          'without reclassifying either one from wording or HTTP status',
+        );
+      }
+    });
+
     it('prioritizes question forms over native tool calls when clarifying', () => {
       const prompt = composeSystemPrompt({ agentId: 'amr' });
       expect(prompt).toContain('## Structured clarification on any turn');

@@ -965,7 +965,7 @@ export const de: Dict = {
   'homeHero.chip.image': 'Bild',
   'homeHero.chip.video': 'Video',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'WebGL-Erlebnis',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shader, 3D & generative GPU-Visuals',
   'homeHero.chip.worker': 'Worker-Visualizer',
   'homeHero.chip.workerDesc': 'Off-Thread-Sims, Partikel & Datenvisualisierung',

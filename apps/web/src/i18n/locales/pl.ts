@@ -965,7 +965,7 @@ export const pl: Dict = {
   'homeHero.chip.image': 'Obraz',
   'homeHero.chip.video': 'Wideo',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'Doświadczenie WebGL',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shadery, 3D i generatywne wizualizacje GPU',
   'homeHero.chip.worker': 'Wizualizator Worker',
   'homeHero.chip.workerDesc': 'Symulacje poza wątkiem, cząstki i wizualizacja danych',

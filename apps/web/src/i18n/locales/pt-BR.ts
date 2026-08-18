@@ -965,7 +965,7 @@ export const ptBR: Dict = {
   'homeHero.chip.image': 'Imagem',
   'homeHero.chip.video': 'Vídeo',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'Experiência WebGL',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shaders, 3D e visuais GPU generativos',
   'homeHero.chip.worker': 'Visualizador Worker',
   'homeHero.chip.workerDesc': 'Sims fora da thread, partículas e data viz',

@@ -965,7 +965,7 @@ export const esES: Dict = {
   'homeHero.chip.image': 'Imagen',
   'homeHero.chip.video': 'Vídeo',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'Experiencia WebGL',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shaders, 3D y visuales GPU generativos',
   'homeHero.chip.worker': 'Visualizador Worker',
   'homeHero.chip.workerDesc': 'Sims fuera de hilo, partículas y data viz',

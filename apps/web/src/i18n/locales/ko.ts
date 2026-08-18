@@ -965,7 +965,7 @@ export const ko: Dict = {
   'homeHero.chip.image': '이미지',
   'homeHero.chip.video': '동영상',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'WebGL 경험',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': '셰이더, 3D, 제너러티브 GPU 비주얼',
   'homeHero.chip.worker': 'Worker 시각화',
   'homeHero.chip.workerDesc': '오프스레드 시뮬레이션, 파티클, 데이터 시각화',

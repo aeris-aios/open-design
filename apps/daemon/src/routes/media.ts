@@ -8,6 +8,7 @@ import type { AnalyticsContext } from '../analytics.js';
 import { defaultMediaExecutionPolicy, mediaPolicyDenial } from '../media/policy.js';
 import { formatMediaTaskDiagnostic } from '../media/diagnostics.js';
 import { findMediaModel } from '../media/models.js';
+import type { MediaTaskError } from '../media/tasks.js';
 import type { ImageGenerationRequestSummary } from '../media/image-generation-retry.js';
 import type { RouteDeps } from '../server-context.js';
 import type {
@@ -94,6 +95,32 @@ export function resolveLegacyMediaRouteGrant(input: {
   }
 
   return { ok: true, grant: input.grant };
+}
+
+
+/**
+ * Build the persisted failure record for a media task.
+ *
+ * A media failure is the only thing the client has left to explain itself
+ * with, so anything the producer proved must survive into the snapshot: the
+ * stable `code` the web client keys its copy on, the optional `subject`
+ * naming what a safety policy objected to, and `retryable` so the UI can stop
+ * inviting a retry that cannot succeed. Absent fields stay absent rather than
+ * being defaulted — `retryable: false` invented here would tell a user a
+ * transient outage is permanent.
+ */
+function mediaTaskErrorFromFailure(err: any): MediaTaskError {
+  const subject = err?.subject;
+  const retryable = err?.retryable;
+  return {
+    message: String(err && err.message ? err.message : err),
+    status: typeof err?.status === 'number' ? err.status : 400,
+    code: err?.code,
+    ...(subject === 'prompt' || subject === 'input_image' || subject === 'output_image'
+      ? { subject }
+      : {}),
+    ...(typeof retryable === 'boolean' ? { retryable } : {}),
+  };
 }
 
 export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) {
@@ -295,11 +322,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         })
         .catch((err: any) => {
           task.status = 'failed';
-          task.error = {
-            message: String(err && err.message ? err.message : err),
-            status: typeof err?.status === 'number' ? err.status : 400,
-            code: err?.code,
-          };
+          task.error = mediaTaskErrorFromFailure(err);
           task.endedAt = Date.now();
           persistMediaTask(task);
           if (analyticsContext && providerRequestSummary) {
@@ -335,11 +358,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     } catch (err: any) {
       if (task) {
         task.status = 'failed';
-        task.error = {
-          message: String(err && err.message ? err.message : err),
-          status: typeof err?.status === 'number' ? err.status : 400,
-          code: err?.code,
-        };
+        task.error = mediaTaskErrorFromFailure(err);
         task.endedAt = Date.now();
         persistMediaTask(task);
         notifyTaskWaiters(task);

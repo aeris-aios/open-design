@@ -965,7 +965,7 @@ export const tr: Dict = {
   'homeHero.chip.image': 'Görsel',
   'homeHero.chip.video': 'Video',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'WebGL Deneyimi',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shaderlar, 3D ve üretken GPU görselleri',
   'homeHero.chip.worker': 'Worker Görselleştirici',
   'homeHero.chip.workerDesc': 'İş parçacığı dışı simülasyonlar, parçacıklar ve veri görselleştirme',

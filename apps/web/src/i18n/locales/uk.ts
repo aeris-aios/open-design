@@ -965,7 +965,7 @@ export const uk: Dict = {
   'homeHero.chip.image': 'Зображення',
   'homeHero.chip.video': 'Відео',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'WebGL-досвід',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Шейдери, 3D і генеративна GPU-графіка',
   'homeHero.chip.worker': 'Worker-візуалізатор',
   'homeHero.chip.workerDesc': 'Симуляції поза потоком, частинки та візуалізація даних',

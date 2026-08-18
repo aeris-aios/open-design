@@ -965,7 +965,7 @@ export const ja: Dict = {
   'homeHero.chip.image': '画像',
   'homeHero.chip.video': '動画',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'WebGL 体験',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'シェーダー・3D・ジェネラティブ GPU ビジュアル',
   'homeHero.chip.worker': 'Worker ビジュアライザー',
   'homeHero.chip.workerDesc': 'メインスレッド外のシミュレーション・パーティクル・データ可視化',

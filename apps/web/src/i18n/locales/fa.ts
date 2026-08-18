@@ -965,7 +965,7 @@ export const fa: Dict = {
   'homeHero.chip.image': 'تصویر',
   'homeHero.chip.video': 'ویدیو',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'تجربه WebGL',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'شیدرها، سه‌بعدی و بصری‌های مولد GPU',
   'homeHero.chip.worker': 'ویژوالایزر Worker',
   'homeHero.chip.workerDesc': 'شبیه‌سازی خارج از رشته، ذرات و مصورسازی داده',

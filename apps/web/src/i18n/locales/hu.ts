@@ -965,7 +965,7 @@ export const hu: Dict = {
   'homeHero.chip.image': 'Kép',
   'homeHero.chip.video': 'Videó',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'WebGL élmény',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shaderek, 3D és generatív GPU vizuálok',
   'homeHero.chip.worker': 'Worker vizualizáló',
   'homeHero.chip.workerDesc': 'Szálon kívüli szimulációk, részecskék és adatvizualizáció',

@@ -965,7 +965,7 @@ export const id: Dict = {
   'homeHero.chip.image': 'Gambar',
   'homeHero.chip.video': 'Video',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'Pengalaman WebGL',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'Shader, 3D & visual GPU generatif',
   'homeHero.chip.worker': 'Visualizer Worker',
   'homeHero.chip.workerDesc': 'Simulasi off-thread, partikel & visualisasi data',

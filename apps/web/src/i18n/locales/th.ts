@@ -965,7 +965,7 @@ export const th: Dict = {
   'homeHero.chip.image': 'รูปภาพ',
   'homeHero.chip.video': 'วิดีโอ',
   'homeHero.chip.hyperframes': 'HyperFrames',
-  'homeHero.chip.webgl': 'ประสบการณ์ WebGL',
+  'homeHero.chip.webgl': 'WebGL',
   'homeHero.chip.webglDesc': 'เชดเดอร์ 3D และภาพ GPU เชิงกำเนิด',
   'homeHero.chip.worker': 'ตัววิชวลไลซ์ Worker',
   'homeHero.chip.workerDesc': 'ซิมนอกเธรด อนุภาค และการแสดงผลข้อมูล',
