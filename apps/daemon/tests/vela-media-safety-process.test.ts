@@ -65,6 +65,29 @@ afterEach(() => {
 });
 
 describe('a real vela process that refuses and exits non-zero', () => {
+	it('preserves an arbitrary provider code and safe message across the process boundary', async () => {
+		const providerTask = JSON.stringify({
+			task_id: 'mit_process_test',
+			status: 'failed',
+			model: 'seedream-5.0-pro',
+			error: {
+				code: 'sensitive_words_detected',
+				message: 'sensitive_words_detected',
+			},
+		});
+		const bin = writeFakeVela(
+			`#!/bin/sh\ncat <<'JSON'\n${providerTask}\nJSON\nexit 1\n`,
+		);
+
+		const thrown = await renderVelaImage(imageInput(), (args, options) =>
+			runVelaCommand(args, { ...options, env: { ...process.env, VELA_BIN: bin } }),
+		).catch((error: unknown) => error);
+
+		expect(thrown).toBeInstanceOf(VelaMediaError);
+		expect((thrown as VelaMediaError).code).toBe('sensitive_words_detected');
+		expect((thrown as VelaMediaError).message).toContain('sensitive_words_detected');
+	});
+
   it('still yields the structured verdict, subject and all', async () => {
     // stdout carries the task; stderr carries the human line; exit is 1 --
     // exactly the real CLI's shape.

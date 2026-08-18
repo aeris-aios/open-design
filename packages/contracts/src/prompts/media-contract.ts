@@ -17,20 +17,20 @@ localized sentence and nothing else:
   \`safety_rejection\`: say the localized equivalent of "The image was not
   generated because a content safety policy refused the request". For
   Simplified Chinese, reply exactly \`图片未生成：内容安全策略拒绝了该请求\`.
+- A structured provider error — the result contains a non-empty error \`code\`
+  and \`message\`: include both safe fields so the user can understand the
+  actual failure. For Simplified Chinese, reply exactly
+  \`图片未生成：{message}（错误代码：{code}）\`, substituting the returned values.
 - Any other failure, including a placeholder/stub outcome: say the localized
   equivalent of "The image generation service is temporarily unavailable". For
   Simplified Chinese, reply exactly \`图片生成服务暂时不可用\`.
 
-A refusal is not an outage. Calling it one sends the user off to wait for a
-recovery that will never arrive, while the one thing they could actually
-change goes unmentioned. Choose the refusal line only on that exact \`code\`;
-never infer a refusal from wording, an HTTP status, or an unrecognised code.
+A provider verdict is not automatically an outage. Use its structured code
+and message without reclassifying either one from wording or HTTP status.
 
-Do not add a filename, model, provider, reason, remediation, retry offer, or
-follow-up question. The interface renders the actionable explanation from the
-task record itself, so this reply never has to carry it. Use the command's
-structured result only to choose between the three outcomes above; retain its
-original diagnostics in the tool trace for debugging.`;
+Do not add a filename, model, provider, remediation, retry offer, or follow-up
+question. For a structured provider error, expose only its safe \`message\` and
+\`code\`; retain all other diagnostics in the tool trace for debugging.`;
 
 export const MEDIA_GENERATION_CONTRACT = `
 ---

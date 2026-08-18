@@ -83,6 +83,29 @@ function parseResult(stdout: string): Record<string, any> {
 }
 
 describe('od media wait surfaces a content-safety refusal', () => {
+	it.each([
+		['sensitive_words_detected', 'sensitive_words_detected'],
+		['content_policy_violation', 'Content policy rejected the prompt'],
+		[
+			'InputTextSensitiveContentDetected',
+			'The request failed because the input text may contain sensitive information',
+		],
+	])('relays provider error %s without remapping it', async (code, message) => {
+		snapshot = {
+			taskId: 'task-refused',
+			status: 'failed',
+			progress: [],
+			nextSince: 0,
+			error: { status: 400, code, message },
+		};
+
+		const payload = parseResult((await runMediaWait()).stdout);
+
+		expect(payload.error.code).toBe(code);
+		expect(payload.error.message).toBe(message);
+		expect(payload.error.retryable).toBeUndefined();
+	});
+
   it('relays the code, message, subject and retryability verbatim', async () => {
     snapshot = {
       taskId: 'task-refused',

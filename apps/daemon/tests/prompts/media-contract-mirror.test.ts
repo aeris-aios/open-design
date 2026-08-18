@@ -47,5 +47,7 @@ describe('MEDIA_USER_REPLY_CONTRACT mirrors', () => {
     expect(daemonBody).toContain('图片未生成：内容安全策略拒绝了该请求');
     expect(daemonBody).toContain('图片生成服务暂时不可用');
     expect(daemonBody).toContain('safety_rejection');
+		expect(daemonBody).toContain('错误代码：{code}');
+		expect(daemonBody).toContain('structured provider error');
   });
 });

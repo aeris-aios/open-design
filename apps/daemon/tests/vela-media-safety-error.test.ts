@@ -50,6 +50,25 @@ describe('velaCommandStdout', () => {
 });
 
 describe('velaMediaErrorFromFailure', () => {
+	it.each([
+		['sensitive_words_detected', 'sensitive_words_detected'],
+		['content_policy_violation', 'Content policy rejected the prompt'],
+		[
+			'InputTextSensitiveContentDetected',
+			'The request failed because the input text may contain sensitive information',
+		],
+	])('preserves provider error %s and its message', (code, message) => {
+		const decoded = velaMediaErrorFromFailure(
+			failedCommand(velaTaskJson({ code, message })),
+			'image gen',
+		);
+
+		expect(decoded).toBeInstanceOf(VelaMediaError);
+		expect(decoded?.code).toBe(code);
+		expect(decoded?.message).toContain(message);
+		expect(decoded?.retryable).toBeUndefined();
+	});
+
   it('rebuilds a safety rejection with its subject and retryability', () => {
     const decoded = velaMediaErrorFromFailure(
       failedCommand(

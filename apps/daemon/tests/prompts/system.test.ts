@@ -432,11 +432,10 @@ describe('composeSystemPrompt', () => {
       );
     });
 
-    // The refusal branch has to reach the prompt the DAEMON composes, not just
-    // the copy in packages/contracts. A content-safety refusal described as an
-    // outage sends the user off to wait for a recovery that never comes, while
-    // the one thing they could change goes unmentioned.
-    it('gives a content-safety refusal its own sentence in both prompts', () => {
+    // The provider-error branch has to reach the prompt the DAEMON composes,
+    // not just the copy in packages/contracts. Reclassifying a provider verdict
+    // as an outage hides the actionable code and message from the user.
+    it('preserves structured provider errors in both prompts', () => {
       for (const metadata of [
         { kind: 'image', imageModel: 'vela/gpt-image-2' },
         { kind: 'prototype' },
@@ -446,12 +445,10 @@ describe('composeSystemPrompt', () => {
           locale: 'zh-CN',
           metadata: metadata as any,
         });
-        expect(prompt).toContain('safety_rejection');
-        expect(prompt).toContain('reply exactly `图片未生成：内容安全策略拒绝了该请求`');
-        // The generic outage line must survive for every other failure.
-        expect(prompt).toContain('reply exactly `图片生成服务暂时不可用`');
-        // And the refusal must be keyed on the exact code, never guessed.
-        expect(prompt).toContain('never infer a refusal from wording');
+        expect(prompt).toContain('错误代码：{code}');
+        expect(prompt).toContain(
+          'without reclassifying either one from wording or HTTP status',
+        );
       }
     });
 
