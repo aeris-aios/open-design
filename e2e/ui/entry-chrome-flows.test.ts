@@ -1083,7 +1083,7 @@ test('[P1] rail destinations navigate and Home keeps its composer execution pill
   await expect(page.getByTestId('inline-model-switcher-popover')).toHaveCount(0);
 });
 
-test('[P0] @critical home composer routes free-form prompts through the default prototype scenario', async ({ page }) => {
+test('[P0] @critical home composer delegates the default prototype scenario to daemon authority', async ({ page }) => {
   await gotoEntryHome(page);
 
   await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
@@ -1108,7 +1108,7 @@ test('[P0] @critical home composer routes free-form prompts through the default 
   expect(body.name).toBe('Web Prototype');
   expect(body.pendingPrompt).toBe(prompt);
   expect(body.conversationMode).toBe('design');
-  expect(body.pluginId).toBe('example-web-prototype');
+  expect(body.pluginId).toBeUndefined();
   expect(body.pluginInputs).toMatchObject({ artifactKind: 'web prototype' });
   expect(body.metadata?.kind).toBe('prototype');
 });
