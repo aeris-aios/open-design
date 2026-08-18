@@ -104,8 +104,9 @@ async function writeHyperframesRuntimeFixture(options: {
     await link(process.execPath, bundledNodePath);
   } catch {
     await copyFile(process.execPath, bundledNodePath);
+    // A successful hard link may share a CI-owned inode that the test user cannot chmod.
+    await chmod(bundledNodePath, 0o755);
   }
-  await chmod(bundledNodePath, 0o755);
 }
 
 async function writePnpmLinkedPackage(standaloneRoot: string, packageName: string): Promise<string> {
