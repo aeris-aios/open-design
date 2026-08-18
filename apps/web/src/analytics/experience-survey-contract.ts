@@ -47,3 +47,13 @@ export const EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES = [
   "Doesn't look good",
   'Breaks other things',
 ] as const;
+
+/**
+ * The escape hatch at the end of the choices. PostHog models this as the
+ * question's open choice: when a respondent picks it, the response recorded is
+ * the text they typed, not the word "Other". This constant is only what we
+ * report when they pick it and type nothing — "none of these fit" is itself an
+ * answer worth keeping, and dropping it would silently turn those people into
+ * non-responders.
+ */
+export const EXPERIENCE_SURVEY_IMPROVEMENT_OTHER = 'Other';
