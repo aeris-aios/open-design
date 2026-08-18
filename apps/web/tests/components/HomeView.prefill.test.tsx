@@ -575,7 +575,7 @@ describe('HomeView prompt handoff', () => {
     });
 
     await waitFor(() => expect(submit.disabled).toBe(false));
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
   });
 
   it('keeps creation types actionable while an expired plugin cache refreshes after a project round trip', async () => {
