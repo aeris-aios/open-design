@@ -1365,6 +1365,150 @@ test('[P0] inbound shared-project transfer shows syncing instead of a false empt
   ]));
 });
 
+test('[P0] Team first open mounts ProjectView before background materialization and stays fail-closed', async ({
+  page,
+}) => {
+  await wireWorkspaceMocks(page, TEAM_MEMBER, [TEAM_MEMBER]);
+  const remoteProject = teamProject(
+    'ui-progressive-first-open',
+    'Progressive launch artifact',
+    'ui-remote-owner',
+  );
+  const placeholder = {
+    ...LOCAL_TEAM_DRAFT,
+    id: remoteProject.projectId,
+    name: remoteProject.name,
+  };
+  let bootstrapAccepted = false;
+  let materialized = false;
+  let bootstrapAttempts = 0;
+  let legacyPullAttempts = 0;
+  let statusAttempts = 0;
+  let releaseBackgroundPull!: () => void;
+  const backgroundPullGate = new Promise<void>((resolve) => {
+    releaseBackgroundPull = resolve;
+  });
+
+  await page.route('**/api/workspace/projects/team', async (route) => {
+    await route.fulfill({ json: { projects: [remoteProject] } });
+  });
+  await page.route(`**/api/workspaces/${TEAM_MEMBER.workspaceId}/projects**`, async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        projects: bootstrapAccepted
+          ? [scopedProjectSummary(placeholder, TEAM_MEMBER, 'team')]
+          : [],
+      },
+    });
+  });
+  await page.route(`**/api/projects/${remoteProject.projectId}/**`, async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname.endsWith('/collab/bootstrap') && request.method() === 'PUT') {
+      bootstrapAttempts += 1;
+      bootstrapAccepted = true;
+      await route.fulfill({
+        status: 202,
+        json: { ok: true, awaitingFirstMaterialization: true },
+      });
+      return;
+    }
+    if (pathname.endsWith('/workspace-scope') && request.method() === 'GET') {
+      await route.fulfill({
+        json: {
+          scope: {
+            kind: 'team',
+            projectId: remoteProject.projectId,
+            workspaceId: TEAM_MEMBER.workspaceId,
+            visibility: 'team',
+            context: TEAM_MEMBER,
+          },
+        },
+      });
+      return;
+    }
+    if (pathname.endsWith('/collab/status') && request.method() === 'GET') {
+      statusAttempts += 1;
+      await route.fulfill({
+        json: {
+          publishedVersion: 7,
+          materializedVersion: materialized ? 7 : null,
+          awaitingFirstMaterialization: !materialized,
+          syncState: 'synced',
+          ownerMemberId: remoteProject.ownerMemberId,
+          ownerDisplayName: 'Remote Owner',
+          contentTransferState: {
+            status: materialized ? 'idle' : 'downloading',
+            generation: 1,
+            expectedVersion: 7,
+          },
+        },
+      });
+      return;
+    }
+    if (pathname.endsWith('/collab/pull') && request.method() === 'POST') {
+      legacyPullAttempts += 1;
+      await backgroundPullGate;
+      await route.fulfill({ json: { ok: true, materializedVersion: 7 } });
+      return;
+    }
+    if (pathname.endsWith('/files') && request.method() === 'GET') {
+      await route.fulfill({
+        json: {
+          files: materialized
+            ? [{ name: 'index.html', path: 'index.html', type: 'file', size: 76 }]
+            : [],
+        },
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.route(`**/api/projects/${remoteProject.projectId}`, async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    if (!bootstrapAccepted) {
+      await route.fulfill({ status: 404, json: { error: 'PROJECT_NOT_FOUND' } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        project: {
+          ...placeholder,
+          workspaceId: TEAM_MEMBER.workspaceId,
+        },
+      },
+    });
+  });
+
+  await gotoHome(page);
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-nav-all-projects').click();
+  await visibleProjectCard(page, remoteProject.projectId)
+    .locator('.recent-projects__card-main')
+    .click();
+
+  await expect.poll(() => bootstrapAttempts).toBe(1);
+  await expect(page).toHaveURL(new RegExp(`/projects/${remoteProject.projectId}$`));
+  await expect(page.getByTestId('file-workspace')).toBeVisible({ timeout: T.long });
+  await expect(page.getByTestId('design-files-tab')).toBeVisible();
+  await expect(page.getByTestId('design-files-syncing')).toBeVisible();
+  await expect(page.getByTestId('design-files-empty')).toHaveCount(0);
+  await expect(page.getByText('New sketch', { exact: true })).toHaveCount(0);
+  await expect.poll(() => legacyPullAttempts).toBe(1);
+
+  materialized = true;
+  releaseBackgroundPull();
+  await expect(page.getByTestId('design-files-syncing')).toHaveCount(0, { timeout: T.long });
+  await expect.poll(() => statusAttempts).toBeGreaterThan(1);
+});
+
 test('[P0] successful first-open materialization opens one read-only local mirror with the catalog title', async ({
   page,
 }) => {

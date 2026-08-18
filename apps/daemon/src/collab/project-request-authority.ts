@@ -209,6 +209,8 @@ export function createAuthorizeProjectRequest(deps: {
    * shape because it lives on project metadata for restart-safe recovery.
    */
   isProjectRevoked?: (db: unknown, projectId: string) => boolean;
+  /** A bound first-open placeholder may be read but is never content authority. */
+  isProjectUnmaterializedPlaceholder?: (db: unknown, projectId: string) => boolean;
   sendApiError: (
     res: Response,
     status: number,
@@ -222,6 +224,7 @@ export function createAuthorizeProjectRequest(deps: {
     getWorkspaceProject,
     getWorkspaceProjectByProjectId,
     isProjectRevoked,
+    isProjectUnmaterializedPlaceholder,
     sendApiError,
   } = deps;
   return async (req, res, projectId, options) => {
@@ -238,7 +241,7 @@ export function createAuthorizeProjectRequest(deps: {
       );
       return false;
     }
-    return enforceLocalProjectDataPlaneRequest({
+    const allowed = await enforceLocalProjectDataPlaneRequest({
       req,
       projectId,
       options,
@@ -249,5 +252,20 @@ export function createAuthorizeProjectRequest(deps: {
         ? sendApiError(res, status, code, message)
         : sendApiError(res, status, code, message, details),
     });
+    if (!allowed) return false;
+    if (
+      options.mode !== 'read'
+      && options.capability !== 'comment'
+      && isProjectUnmaterializedPlaceholder?.(db, projectId)
+    ) {
+      sendApiError(
+        res,
+        409,
+        'PROJECT_MATERIALIZATION_PENDING',
+        'project content is still materializing',
+      );
+      return false;
+    }
+    return true;
   };
 }

@@ -4588,6 +4588,8 @@ export async function startServer({
         });
       },
       materializeTeamMirror: (input, scope) => materializePulledTeamMirror(db, input, scope),
+      materializeTeamPlaceholder: (input, scope) =>
+        materializePulledTeamMirror(db, input, scope, undefined, { placeholder: true }),
       materializeAuthorizedTeamMirror: (input, scope, receipt) =>
         materializePulledTeamMirror(db, input, scope, receipt),
     },
@@ -7391,6 +7393,8 @@ export async function startServer({
     getWorkspaceProjectByProjectId,
     isProjectRevoked: (_db, projectId) =>
       revokedTeamProjectMirrors.has(projectId),
+    isProjectUnmaterializedPlaceholder: (_db, projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     sendApiError,
   });
   const authorizeProjectToolRequest = async (
