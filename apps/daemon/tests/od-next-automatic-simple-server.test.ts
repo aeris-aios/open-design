@@ -196,6 +196,113 @@ describe('OD Next automatic production through the real server', () => {
     expect(researchContract).toContain('Run the ordinary public fixture.');
   });
 
+  it('falls back invisibly to the ordinary default when automatic Skill freezing fails before claim', async () => {
+    const fixture = await createPublicRolloutFixture('prestart-skill-fallback', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    const sharedProject = await createProjectForScenario(
+      started.url,
+      'prestart-shared-strategy-snapshot',
+      { kind: 'prototype' },
+    );
+    const sharedStrategySnapshot = await createStrategySnapshot(
+      sharedProject.projectId,
+      sharedProject.conversationId,
+    );
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const strategySnapshotCountAtStart = (database().prepare(`
+      SELECT COUNT(*) AS count FROM applied_plugin_snapshots
+       WHERE plugin_id = 'od-next-strategy'
+    `).get() as { count: number }).count;
+
+    const created = await postRun(started.url, {
+      ...publicRunRequest(
+        fixture,
+        'Complete this request through the ordinary default.',
+        'prestart-skill-fallback-request',
+      ),
+      skillIds: ['missing-automatic-skill'],
+    });
+
+    expect(created.strategyTask).toBeUndefined();
+    expect(created.taskExecutionId).toBeUndefined();
+    expect(created.pluginId).toBe('example-web-prototype');
+    await waitForRunTerminal(started.url, created.runId as string);
+    expect((database().prepare(
+      'SELECT COUNT(*) AS count FROM strategy_task_executions',
+    ).get() as { count: number }).count).toBe(0);
+    expect((database().prepare(`
+      SELECT COUNT(*) AS count FROM applied_plugin_snapshots
+       WHERE plugin_id = 'od-next-strategy'
+    `).get() as { count: number }).count).toBe(strategySnapshotCountAtStart);
+    expect((database().prepare(
+      'SELECT COUNT(*) AS count FROM applied_plugin_snapshots WHERE id = ?',
+    ).get(sharedStrategySnapshot.snapshotId) as { count: number }).count).toBe(1);
+    expect(await readDurableRunState(created.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        decisionClass: 'observe',
+        effectiveMode: 'observe',
+        primaryReasonCode: 'od_next_rollout_prestart_preparation_failed',
+      },
+    });
+    const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.stdin).toContain('Complete this request through the ordinary default.');
+    expect(invocations[0]?.stdin).not.toContain('OD Next Strategy V2');
+    expect(invocations[0]?.stdin).not.toContain('open-design.strategy-state/v2');
+  });
+
+  it('rolls back automatic task preparation and reclaims once through the ordinary default', async () => {
+    const fixture = await createPublicRolloutFixture('preclaim-task-fallback', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const strategySnapshotCountAtStart = (database().prepare(`
+      SELECT COUNT(*) AS count FROM applied_plugin_snapshots
+       WHERE plugin_id = 'od-next-strategy'
+    `).get() as { count: number }).count;
+    database().exec(`
+      CREATE TRIGGER reject_automatic_strategy_task
+      BEFORE INSERT ON strategy_task_executions
+      BEGIN
+        SELECT RAISE(ABORT, 'fixture automatic task preparation rejected');
+      END
+    `);
+
+    try {
+      const created = await postRun(
+        started.url,
+        publicRunRequest(
+          fixture,
+          'Run once after the automatic pre-claim rollback.',
+          'preclaim-task-fallback-request',
+        ),
+      );
+
+      expect(created.strategyTask).toBeUndefined();
+      expect(created.taskExecutionId).toBeUndefined();
+      expect(created.pluginId).toBe('example-web-prototype');
+      await waitForRunTerminal(started.url, created.runId as string);
+      expect((database().prepare(
+        'SELECT COUNT(*) AS count FROM strategy_task_executions',
+      ).get() as { count: number }).count).toBe(0);
+      expect((database().prepare(`
+        SELECT COUNT(*) AS count FROM applied_plugin_snapshots
+         WHERE plugin_id = 'od-next-strategy'
+      `).get() as { count: number }).count).toBe(strategySnapshotCountAtStart);
+      const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0]?.stdin).toContain('Run once after the automatic pre-claim rollback.');
+      expect(invocations[0]?.stdin).not.toContain('OD Next Strategy V2');
+    } finally {
+      database().exec('DROP TRIGGER IF EXISTS reject_automatic_strategy_task');
+    }
+  });
+
   it('routes the four approved automatic profiles while ordinary Image remains media-only', async () => {
     const fixture = await createPublicRolloutFixture('approved-profiles', 'design');
     started = fixture.started;
@@ -396,8 +503,8 @@ describe('OD Next automatic production through the real server', () => {
     await waitForRunTerminal(started.url, explicitImageRun.runId as string);
   });
 
-  it('binds unresolved runtime facts only for the explicit local synthetic canary', async () => {
-    const agentCliVersion = 'codex-cli 99.0.0-local-canary';
+  it('binds adapter-family capability facts for an unrecognized new CLI version', async () => {
+    const agentCliVersion = 'codex-cli 99.0.0-forward-compatible';
     const fixture = await createPublicRolloutFixture(
       'synthetic-planning-facts',
       'design',
@@ -408,15 +515,19 @@ describe('OD Next automatic production through the real server', () => {
     binDir = fixture.binDir;
     clearOdNextRolloutStop(database());
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
-    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
 
-    const unresolvedCapability = resolveBundledOdNextRuntimeCapability({
+    const resolvedCapability = resolveBundledOdNextRuntimeCapability({
       agentId: 'codex',
       agentCliVersion,
     });
-    expect(unresolvedCapability).toMatchObject({
-      reason: 'fixture_manifest_missing',
-      snapshot: { nativeSessionContinuation: { support: 'unknown' } },
+    expect(resolvedCapability).toMatchObject({
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion,
+        recordedAgentCliVersion: 'codex-cli 0.147.0',
+        nativeSessionContinuation: { support: 'verified' },
+        nativeSubagents: { support: 'verified' },
+      },
     });
 
     const created = await postRun(
@@ -424,13 +535,13 @@ describe('OD Next automatic production through the real server', () => {
       publicRunRequest(
         fixture,
         'Hold the public rollout run open until canceled.',
-        'synthetic-planning-facts-request',
+        'forward-compatible-planning-facts-request',
       ),
     );
     expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
     const task = getStrategyTaskExecution(database(), created.taskExecutionId as string);
     expect(task?.promptBundle.text).toContain(
-      unresolvedCapability.snapshot!.snapshotHash.slice('sha256:'.length),
+      resolvedCapability.snapshot!.snapshotHash.slice('sha256:'.length),
     );
 
     const canceled = await fetch(
@@ -1384,8 +1495,15 @@ describe('OD Next automatic production through the real server', () => {
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
   });
 
-  it('runs a synthetic verified complex package chain and requires normalized Child evidence', async () => {
-    const capability = complexCapabilitySnapshot();
+  it('runs a verified complex package chain and requires normalized Child evidence', async () => {
+    const capabilityResult = resolveBundledOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion: 'codex-cli 0.147.0',
+      capturedAt: 100,
+    });
+    expect(capabilityResult.reason).toBe('capability_resolved');
+    if (!capabilityResult.snapshot) throw new Error('expected verified Codex capability');
+    const capability = capabilityResult.snapshot;
     const fixture = await createFixture('complex', { capability });
     await stopServer(started);
     started = await startDaemon(

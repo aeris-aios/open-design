@@ -993,5 +993,9 @@ export function createJsonEventStreamHandler(
     flushPendingArtifactText(state, onEvent);
   }
 
-  return { feed, flush };
+  function childEvidenceCoverage(streamComplete: boolean) {
+    return openCodeChildEvidence?.coverage(streamComplete);
+  }
+
+  return { feed, flush, childEvidenceCoverage };
 }

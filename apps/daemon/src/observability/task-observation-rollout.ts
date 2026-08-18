@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
 
+import {
+  ChildEvidenceCoverageV1Schema,
+  NormalizedAgentObservationV1Schema,
+  type ChildEvidenceCoverageV1,
+  type OdNextRolloutDecision,
+} from '@open-design/contracts';
 import type Database from 'better-sqlite3';
 
 import type { TelemetryPrefs } from '../app-config.js';
@@ -101,6 +107,7 @@ interface TaskRunLike {
   clientType?: 'desktop' | 'web' | 'unknown';
   langfuseCompletedAt?: number;
   telemetryDelivery?: RunTelemetryDeliveryStateV1;
+  strategyRolloutDecision?: OdNextRolloutDecision | null;
 }
 
 type PersistedDeliveryStatus =
@@ -399,6 +406,46 @@ function deliveryAction(delivery: RunTelemetryDeliveryStateV1): TaskObservationR
   return 'failed';
 }
 
+function childEvidenceCoverageFromEvents(
+  events: readonly unknown[],
+  knownChildCount: number,
+): ChildEvidenceCoverageV1 {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const record = events[index];
+    if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
+    const data = (record as { data?: unknown }).data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+    const diagnostic = data as { type?: unknown; name?: unknown; coverage?: unknown };
+    if (diagnostic.type !== 'diagnostic' || diagnostic.name !== 'child_evidence_coverage_v1') {
+      continue;
+    }
+    const parsed = ChildEvidenceCoverageV1Schema.safeParse(diagnostic.coverage);
+    if (!parsed.success) break;
+    if (parsed.data.knownChildCount !== knownChildCount) {
+      return {
+        availability: 'partial',
+        source: parsed.data.source,
+        knownChildCount,
+        explicitZero: false,
+        limitations: [...new Set([
+          ...parsed.data.limitations,
+          'child_evidence_count_mismatch',
+        ])],
+        diagnosticCounts: parsed.data.diagnosticCounts,
+      };
+    }
+    return parsed.data;
+  }
+  return {
+    availability: 'unavailable',
+    source: 'runtime',
+    knownChildCount,
+    explicitZero: false,
+    limitations: ['child_evidence_collection_summary_unavailable'],
+    diagnosticCounts: [],
+  };
+}
+
 async function taskAggregate(
   task: StrategyTaskExecutionRecord,
   options: CreateTaskObservationRolloutServiceOptions,
@@ -463,7 +510,7 @@ async function taskAggregate(
         })
       : undefined;
     const modelId = run.resolvedModelId ?? run.model ?? undefined;
-    const taskRunObservation = buildStructuredMainRunObservationV1({
+    const taskRunObservationBase = buildStructuredMainRunObservationV1({
       taskExecutionId: task.taskExecutionId,
       runId: run.id,
       taskRunIndex: mapping.taskRunIndex,
@@ -497,7 +544,7 @@ async function taskAggregate(
       taskExecutionId: task.taskExecutionId,
       runId: run.id,
       taskRunIndex: mapping.taskRunIndex,
-      taskRunObservationId: taskRunObservation.identity.observationId,
+      taskRunObservationId: taskRunObservationBase.identity.observationId,
       stage: mapping.inputStage,
       ...(run.preflightAgentCliVersion || detectedVersions?.agentCliVersion
         ? {
@@ -515,7 +562,7 @@ async function taskAggregate(
       taskExecutionId: task.taskExecutionId,
       runId: run.id,
       taskRunIndex: mapping.taskRunIndex,
-      taskRunObservationId: taskRunObservation.identity.observationId,
+      taskRunObservationId: taskRunObservationBase.identity.observationId,
       stage: mapping.inputStage,
       includeChildTools: true,
       mainToolObservationIds: new Set(
@@ -531,9 +578,21 @@ async function taskAggregate(
         ? { runtimeCompanionVersion: detectedVersions.runtimeCompanionVersion }
         : {}),
     });
+    const knownChildCount = new Set(childObservations
+      .filter((observation) => observation.kind === 'child_agent')
+      .map((observation) => observation.identity.observationId)).size;
+    const taskRunObservation = NormalizedAgentObservationV1Schema.parse({
+      ...taskRunObservationBase,
+      childEvidenceCoverage: childEvidenceCoverageFromEvents(run.events, knownChildCount),
+    });
     return [taskRunObservation, ...mainToolObservations, ...childObservations];
   }));
-  return aggregateStrategyTaskObservations({ task, observations: observationGroups.flat() });
+  const strategyRolloutDecision = options.getRun(task.initialRunId)?.strategyRolloutDecision;
+  return aggregateStrategyTaskObservations({
+    task,
+    observations: observationGroups.flat(),
+    ...(strategyRolloutDecision ? { strategyRolloutDecision } : {}),
+  });
 }
 
 function nonNetworkResult(reason: string): RunTelemetryDeliveryResult {

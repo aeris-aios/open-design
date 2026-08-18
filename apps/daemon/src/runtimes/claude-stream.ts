@@ -693,7 +693,11 @@ export function createClaudeStreamHandler(
     childEvidence?.finishOpenChildren(reason);
   }
 
-  return { feed, flush, finishOpenChildEvidence };
+  function childEvidenceCoverage() {
+    return childEvidence?.coverage();
+  }
+
+  return { feed, flush, finishOpenChildEvidence, childEvidenceCoverage };
 }
 
 function stringifyToolResult(content: unknown): string {

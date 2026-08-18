@@ -3,7 +3,6 @@ import type {
   StrategyInputStageV2,
 } from '@open-design/contracts';
 
-import type { DetectedRuntimeVersions } from '../../runtimes/detection.js';
 import type { OdNextComplexRuntimeEvidence } from './complex-production.js';
 import { resolveDaemonOwnedOdNextComplexRuntimeEvidence } from './complex-runtime-evidence.js';
 import {
@@ -25,6 +24,7 @@ export type OdNextComplexProductionResolver = (input: {
   runId: string;
   agentId: string;
   plan: OpenDesignPlanContractV2;
+  runtimeCapabilitySnapshot?: unknown;
 }) => OdNextComplexRuntimeEvidence | undefined | Promise<OdNextComplexRuntimeEvidence | undefined>;
 
 interface AutomaticContinuationTask {
@@ -59,7 +59,7 @@ export async function resolveAutomaticContinuationEvidence(input: {
   localSyntheticCanary: boolean;
   executionPreflightResolver?: OdNextExecutionPreflightResolver | null;
   complexProductionResolver?: OdNextComplexProductionResolver | null;
-  getRuntimeVersions: (agentId: string) => DetectedRuntimeVersions | null | undefined;
+  runtimeCapabilitySnapshot?: unknown;
 }): Promise<{
   executionPreflight?: OdNextExecutionPreflightInput;
   complexRuntimeEvidence?: OdNextComplexRuntimeEvidence;
@@ -101,13 +101,11 @@ export async function resolveAutomaticContinuationEvidence(input: {
         runId: input.run.id,
         agentId: input.task.selectedAgentId,
         plan,
+        runtimeCapabilitySnapshot: input.runtimeCapabilitySnapshot,
       });
     } else {
       const mapping = input.task.runs.find((candidate) => candidate.runId === input.run.id);
-      const versions = input.getRuntimeVersions(input.task.selectedAgentId);
       if (mapping) {
-        const agentCliVersion = input.run.preflightAgentCliVersion
-          ?? versions?.agentCliVersion;
         complexRuntimeEvidence = resolveDaemonOwnedOdNextComplexRuntimeEvidence({
           phase: input.phase,
           taskExecutionId: input.task.taskExecutionId,
@@ -115,13 +113,7 @@ export async function resolveAutomaticContinuationEvidence(input: {
           taskRunIndex: mapping.taskRunIndex,
           stage: mapping.inputStage,
           agentId: input.task.selectedAgentId,
-          ...(agentCliVersion ? { agentCliVersion } : {}),
-          ...(versions?.runtimeCompanionName
-            ? { runtimeCompanionName: versions.runtimeCompanionName }
-            : {}),
-          ...(versions?.runtimeCompanionVersion
-            ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
-            : {}),
+          capabilitySnapshot: input.runtimeCapabilitySnapshot,
           plan,
           run: {
             status: input.run.status,

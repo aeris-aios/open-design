@@ -1098,10 +1098,8 @@ export async function collectCodexChildEvidence(
     depth: 0,
   });
 
-  if (pending.length === 0) {
-    limitations.add(parentTurn.childActivities.length === 0
-      ? 'codex_child_activity_not_observed'
-      : 'codex_child_activity_unresolved');
+  if (pending.length === 0 && parentTurn.childActivities.length > 0) {
+    limitations.add('codex_child_activity_unresolved');
   }
   const observations = pending
     .sort((left, right) => left.atMs - right.atMs || left.sequence - right.sequence)
@@ -1124,9 +1122,7 @@ export async function collectCodexChildEvidence(
   if (hasIncompleteChild) limitations.add('codex_child_terminal_not_observed');
 
   return {
-    availability: observations.length === 0
-      ? 'unavailable'
-      : limitations.size > 0 || diagnostics.size > 0
+    availability: limitations.size > 0 || diagnostics.size > 0
         ? 'partial'
         : 'complete',
     source: 'codex_rollout',

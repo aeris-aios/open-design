@@ -181,6 +181,18 @@ function aggregate(): StrategyTaskObservationAggregateV1 {
   const childId = 'child-fixture';
   return aggregateStrategyTaskObservations({
     task: task(),
+    strategyRolloutDecision: {
+      schemaVersion: 1,
+      decisionClass: 'active',
+      requestedMode: 'active',
+      effectiveMode: 'active',
+      taskType: 'prototype',
+      assignmentBucket: 1,
+      eligible: true,
+      syntheticCanary: false,
+      reasonCodes: [],
+      primaryReasonCode: 'od_next_rollout_eligible',
+    },
     observations: [
       observation({
         id: RUN_OBSERVATION_ID,

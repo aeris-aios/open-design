@@ -15,6 +15,7 @@ import {
 } from '../langfuse-trace.js';
 import {
   buildLegacyTaskObservationPayload,
+  canonicalTaskObservationTraceTags,
   prepareLegacyTaskObservationExport,
   safeTaskObservationAgentId,
   safeTaskObservationBuildPackageId,
@@ -200,13 +201,8 @@ function taskTraceAttributes(
     ['langfuse.version', context?.appVersion ?? aggregate.root.strategyVersion],
     ['langfuse.release', context?.appVersion],
     ['langfuse.trace.tags', [
-      'od-next-strategy-v2',
-      aggregate.root.route,
-      aggregate.root.executionMode,
-      ...(context
-        ? [`environment:${context.environment}`, `rollout:${context.tag}`]
-        : []),
-    ].filter((value): value is string => typeof value === 'string')],
+      ...canonicalTaskObservationTraceTags(aggregate, context),
+    ]],
     ['deployment.environment.name', context?.environment],
     ['langfuse.trace.metadata.rollout_tag', context?.tag],
     ['langfuse.trace.metadata.task_execution_id', aggregate.root.taskExecutionId],
@@ -232,6 +228,16 @@ function taskTraceAttributes(
       jsonString(aggregate.root.runtimeCompanionVersions)],
     ['langfuse.trace.metadata.runtime_adapter_versions',
       jsonString(aggregate.root.runtimeAdapterVersions)],
+    ['langfuse.trace.metadata.strategy_rollout_requested_mode',
+      aggregate.root.rolloutAdmission?.requestedMode],
+    ['langfuse.trace.metadata.strategy_rollout_effective_mode',
+      aggregate.root.rolloutAdmission?.effectiveMode],
+    ['langfuse.trace.metadata.strategy_rollout_primary_reason_code',
+      aggregate.root.rolloutAdmission?.primaryReasonCode],
+    ['langfuse.trace.metadata.strategy_rollout_compatibility_basis',
+      aggregate.root.rolloutAdmission?.compatibilityBasis],
+    ['langfuse.trace.metadata.strategy_rollout_admission_stage',
+      aggregate.root.rolloutAdmission?.admissionStage],
     ['langfuse.trace.metadata.coverage', jsonString(aggregate.coverage)],
     ['langfuse.trace.metadata.stage_totals', jsonString(aggregate.stageTotals)],
     ['langfuse.trace.metadata.limitations', jsonString(limitations)],
@@ -463,6 +469,10 @@ function buildObservationSpan(
         ['langfuse.observation.metadata.usage_limitations', jsonString(usageLimitations)],
         ['langfuse.observation.metadata.timing_availability', observation.timing.availability],
         ['langfuse.observation.metadata.timing_mapping', timing.mapping],
+        ['langfuse.observation.metadata.child_evidence_coverage',
+          observation.childEvidenceCoverage
+            ? jsonString(observation.childEvidenceCoverage)
+            : undefined],
         ['langfuse.observation.metadata.limitations', jsonString(limitations)],
         ['langfuse.observation.metadata.agent_cli_version', runtimeVersions.agentCliVersion],
         ['langfuse.observation.metadata.runtime_companion_version',
@@ -629,12 +639,15 @@ export function legacyAndOtlpTaskMappingsMatch(
   if (!trace || trace.body.id !== aggregate.root.observationId) return false;
   const rootLimitations = safeTaskObservationLimitationCodes(aggregate.limitations);
   const legacyTraceMetadata = trace.body.metadata as Record<string, unknown> | undefined;
+  const expectedTags = canonicalTaskObservationTraceTags(aggregate, context);
   if (
     trace.body.name !== 'open-design-strategy-task' ||
     trace.body.sessionId !== aggregate.root.conversationId ||
     trace.body.userId !== (context?.installationId ?? undefined) ||
     trace.body.release !== context?.appVersion ||
     trace.body.version !== (context?.appVersion ?? aggregate.root.strategyVersion) ||
+    trace.body.environment !== context?.environment ||
+    JSON.stringify(trace.body.tags) !== JSON.stringify(expectedTags) ||
     !recordMatches(legacyTraceMetadata, {
       schema: aggregate.schema,
       taskExecutionId: aggregate.root.taskExecutionId,
@@ -657,6 +670,7 @@ export function legacyAndOtlpTaskMappingsMatch(
       agentCliVersions: aggregate.root.agentCliVersions,
       runtimeCompanionVersions: aggregate.root.runtimeCompanionVersions,
       runtimeAdapterVersions: aggregate.root.runtimeAdapterVersions,
+      rolloutAdmission: aggregate.root.rolloutAdmission,
       coverage: aggregate.coverage,
       stageTotals: aggregate.stageTotals,
       limitations: rootLimitations,
@@ -792,6 +806,7 @@ export function legacyAndOtlpTaskMappingsMatch(
         turnAccountingDisposition: observation.turnAccounting?.disposition,
         turnAccountingOwnerObservationId: observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
+        childEvidenceCoverage: observation.childEvidenceCoverage,
         ...quality.metadata,
         limitations,
         ...runtimeVersions,
@@ -851,6 +866,10 @@ export function legacyAndOtlpTaskMappingsMatch(
       ) ||
       attributeValue(otlp, 'langfuse.observation.metadata.timing_availability') !==
         observation.timing.availability ||
+      attributeValue(otlp, 'langfuse.observation.metadata.child_evidence_coverage') !==
+        (observation.childEvidenceCoverage
+          ? jsonString(observation.childEvidenceCoverage)
+          : undefined) ||
       attributeValue(otlp, 'langfuse.observation.metadata.timing_mapping') !==
         otlpTiming.mapping ||
       attributeValue(otlp, 'langfuse.observation.metadata.limitations') !==

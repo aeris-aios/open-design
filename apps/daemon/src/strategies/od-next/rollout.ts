@@ -135,9 +135,9 @@ export function evaluateOdNextRollout(input: {
   const syntheticCanary = Boolean(
     policy.localSyntheticCanary && process.env.NODE_ENV !== 'production',
   );
-  if (evaluateEligibility && !input.agentVersion && !syntheticCanary) {
-    reasons.push('od_next_rollout_runtime_version_unverified');
-  }
+  // agentVersion is retained as diagnostic rollout evidence only. Runtime
+  // invocability is established by preflight and capability admission is
+  // keyed by runtime path + agent id + adapter/schema, not a version pin.
   if (evaluateEligibility && !input.runtimeCapabilityVerified && !syntheticCanary) {
     reasons.push('od_next_rollout_x1_capability_fixture_unverified');
     if (input.runtimeCapabilityReason) reasons.push(`od_next_rollout_capability_${input.runtimeCapabilityReason}`);

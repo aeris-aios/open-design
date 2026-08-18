@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
   NormalizedAgentObservationV1Schema,
+  type ChildEvidenceCoverageV1,
   type NormalizedAgentObservationV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
@@ -53,6 +54,7 @@ export interface OpenCodeChildRuntimeFact extends Omit<OpenCodeTaskTerminalCandi
 
 export interface OpenCodeRootTaskEvidenceCollector {
   observe(value: unknown): void;
+  coverage(streamComplete: boolean): ChildEvidenceCoverageV1;
 }
 
 function isRecord(value: unknown): value is RecordValue {
@@ -99,7 +101,8 @@ function terminalStateFromTaskTool(state: RecordValue): OpenCodeTaskTerminalCand
 /**
  * Observe only terminal native Task parts from the root OpenCode JSON stream.
  *
- * OpenCode 1.18.18 filters child-session events out of `run --format json`.
+ * The verified OpenCode adapter family filters child-session events out of
+ * `run --format json`.
  * The terminal root Task part nevertheless carries a child `sessionId`, a
  * `parentSessionId`, and the root tool call id. The raw Prompt is reduced to a
  * hash and byte count synchronously and is never retained in a fact.
@@ -112,6 +115,8 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
 }): OpenCodeRootTaskEvidenceCollector {
   const now = input.now ?? Date.now;
   const emitted = new Set<string>();
+  const knownChildIds = new Set<string>();
+  const knownTaskToolCallIds = new Set<string>();
   let rootSessionId = input.rootSessionId;
 
   function observe(value: unknown): void {
@@ -125,7 +130,6 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
       rootSessionId = value.sessionID;
       return;
     }
-    if (input.cliVersion !== OPENCODE_CHILD_EVIDENCE_CLI_VERSION) return;
     if (value.type !== 'tool_use' || !rootSessionId) return;
     if (value.sessionID !== rootSessionId || !isRecord(value.part)) return;
     const part = value.part;
@@ -133,16 +137,18 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
     const toolCallId = nonEmptyString(part.callID);
     const state = isRecord(part.state) ? part.state : undefined;
     if (!toolCallId || !state) return;
+    const metadata = isRecord(state.metadata) ? state.metadata : undefined;
+    const metadataParentSessionId = nonEmptyString(metadata?.parentSessionId);
+    const childSessionId = nonEmptyString(metadata?.sessionId);
+    if (metadataParentSessionId !== rootSessionId || !childSessionId) return;
+    knownChildIds.add(childSessionId);
+    knownTaskToolCallIds.add(toolCallId);
     const terminal = terminalStateFromTaskTool(state);
     if (!terminal || emitted.has(toolCallId)) return;
-    const metadata = isRecord(state.metadata) ? state.metadata : undefined;
     // A foreground Task promoted to background and an explicitly background
     // Task both return a completed root tool part while the Child is still
     // running. The native metadata is the only reliable discriminator here.
     if (metadata?.background === true) return;
-    const metadataParentSessionId = nonEmptyString(metadata?.parentSessionId);
-    const childSessionId = nonEmptyString(metadata?.sessionId);
-    if (metadataParentSessionId !== rootSessionId || !childSessionId) return;
 
     const time = isRecord(state.time) ? state.time : undefined;
     const model = isRecord(metadata?.model) ? metadata.model : undefined;
@@ -184,7 +190,44 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
     }
   }
 
-  return { observe };
+  function coverage(streamComplete: boolean): ChildEvidenceCoverageV1 {
+    const knownChildCount = knownChildIds.size;
+    const missingTerminalCount = [...knownTaskToolCallIds]
+      .filter((toolCallId) => !emitted.has(toolCallId)).length;
+    if (streamComplete && rootSessionId && missingTerminalCount === 0) {
+      return {
+        availability: 'complete',
+        source: 'opencode_json_event_stream',
+        knownChildCount,
+        explicitZero: knownChildCount === 0,
+        limitations: [],
+        diagnosticCounts: [],
+      };
+    }
+    const limitation = !rootSessionId
+      ? 'opencode_root_session_unavailable'
+      : missingTerminalCount > 0
+        ? 'opencode_child_terminal_unobserved'
+        : 'opencode_child_stream_incomplete';
+    const diagnosticCode = !rootSessionId
+      ? 'root_session_unavailable'
+      : missingTerminalCount > 0
+        ? 'child_terminal_unobserved'
+        : 'stream_incomplete';
+    return {
+      availability: knownChildCount > 0 ? 'partial' : 'unavailable',
+      source: 'opencode_json_event_stream',
+      knownChildCount,
+      explicitZero: false,
+      limitations: [limitation],
+      diagnosticCounts: [{
+        code: diagnosticCode,
+        count: diagnosticCode === 'child_terminal_unobserved' ? missingTerminalCount : 1,
+      }],
+    };
+  }
+
+  return { observe, coverage };
 }
 
 function addUsageValue(
@@ -237,7 +280,7 @@ export function verifyOpenCodeChildExport(input: {
   candidate: OpenCodeTaskTerminalCandidate;
   sanitizedExport: unknown;
 }): OpenCodeChildRuntimeFact[] {
-  if (input.candidate.cliVersion !== OPENCODE_CHILD_EVIDENCE_CLI_VERSION) return [];
+  if (input.candidate.adapterVersion !== OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION) return [];
   if (!isRecord(input.sanitizedExport) || !isRecord(input.sanitizedExport.info)) return [];
   const info = input.sanitizedExport.info;
   if (
@@ -281,7 +324,7 @@ export async function collectOpenCodeChildRuntimeFacts(input: {
   candidate: OpenCodeTaskTerminalCandidate;
   loadSanitizedExport: (childSessionId: string) => Promise<unknown>;
 }): Promise<OpenCodeChildRuntimeFact[]> {
-  if (input.candidate.cliVersion !== OPENCODE_CHILD_EVIDENCE_CLI_VERSION) return [];
+  if (input.candidate.adapterVersion !== OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION) return [];
   try {
     const sanitizedExport = await input.loadSanitizedExport(input.candidate.childSessionId);
     return verifyOpenCodeChildExport({
@@ -435,8 +478,8 @@ export function adaptOpenCodeChildRuntimeFactV1(
   input: AdaptOpenCodeChildFactInput,
 ): NormalizedAgentObservationV1 {
   const fact = input.fact;
-  if (fact.cliVersion !== OPENCODE_CHILD_EVIDENCE_CLI_VERSION) {
-    throw new TypeError(`Unsupported OpenCode child evidence version: ${fact.cliVersion}`);
+  if (fact.adapterVersion !== OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION) {
+    throw new TypeError(`Unsupported OpenCode child evidence adapter: ${fact.adapterVersion}`);
   }
   const promptObserved = fact.promptHash !== undefined && fact.promptBytes !== undefined;
   const timingEvidence = fact.startedAtMs === undefined

@@ -479,6 +479,38 @@ describe('buildTracePayload', () => {
     expect(write.parentObservationId).toBe('run-1-agent');
   });
 
+  it('records adapter-based admission and silent pre-start fallback metadata', () => {
+    const activeTrace = (buildTracePayload(makeCtx({
+      strategyRolloutDecision: {
+        requestedMode: 'active',
+        effectiveMode: 'active',
+        primaryReasonCode: 'od_next_rollout_eligible',
+        reasonCodes: [],
+      },
+    }))[0] as any).body;
+    expect(activeTrace.metadata).toMatchObject({
+      strategy_rollout_requested_mode: 'active',
+      strategy_rollout_effective_mode: 'active',
+      strategy_rollout_compatibility_basis: 'runtime_adapter_family_fixture_evidence',
+      strategy_rollout_admission_stage: 'activation_admission',
+    });
+
+    const fallbackTrace = (buildTracePayload(makeCtx({
+      strategyRolloutDecision: {
+        requestedMode: 'active',
+        effectiveMode: 'observe',
+        primaryReasonCode: 'od_next_rollout_prestart_preparation_failed',
+        reasonCodes: ['od_next_rollout_prestart_preparation_failed'],
+      },
+    }))[0] as any).body;
+    expect(fallbackTrace.metadata).toMatchObject({
+      strategy_rollout_effective_mode: 'observe',
+      strategy_rollout_primary_reason_code: 'od_next_rollout_prestart_preparation_failed',
+      strategy_rollout_compatibility_basis: 'not_evaluated',
+      strategy_rollout_fallback_stage: 'activation_preparation',
+    });
+  });
+
   it('omits prompt + output when content gate is off', () => {
     const batch = buildTracePayload(makeCtx());
     const trace = (batch[0] as any).body;

@@ -199,14 +199,16 @@ describe('OD Next runtime capability contracts', () => {
     })).toThrow(/missing required case tool/i);
   });
 
-  it('rejects a verified snapshot whose source is not sanitized fixture replay', () => {
+  it('keeps recorded fixture versions as provenance while current versions stay optional diagnostics', () => {
     expect(() => OdNextRuntimeCapabilitySnapshotV1Schema.parse({
       schema: 'open-design.od-next-runtime-capability-snapshot/v1',
       runtimePath: 'codex',
       agentId: 'codex',
       agentCliVersion: 'synthetic-cli/1',
+      recordedAgentCliVersion: 'recorded-cli/1',
       runtimeAdapterVersion: 'adapter/v1',
       fixtureVersion: 'contract/v1',
+      fixtureHash: `sha256:${'a'.repeat(64)}`,
       nativeSessionContinuation: {
         support: 'verified',
         evidenceLevel: 'L0',
@@ -221,12 +223,14 @@ describe('OD Next runtime capability contracts', () => {
       snapshotHash: `sha256:${'b'.repeat(64)}`,
     })).toThrow(/sanitized real fixture replay/i);
 
-    expect(() => OdNextRuntimeCapabilitySnapshotV1Schema.parse({
+    const versionlessSnapshot = OdNextRuntimeCapabilitySnapshotV1Schema.parse({
       schema: 'open-design.od-next-runtime-capability-snapshot/v1',
       runtimePath: 'codex',
       agentId: 'codex',
+      recordedAgentCliVersion: 'recorded-cli/1',
       runtimeAdapterVersion: 'adapter/v1',
       fixtureVersion: 'contract/v1',
+      fixtureHash: `sha256:${'b'.repeat(64)}`,
       nativeSessionContinuation: {
         support: 'verified',
         evidenceLevel: 'L0',
@@ -239,7 +243,32 @@ describe('OD Next runtime capability contracts', () => {
       },
       capturedAt: 1,
       snapshotHash: `sha256:${'c'.repeat(64)}`,
-    })).toThrow(/exact Agent CLI version|exact Fixture hash/i);
+    });
+    expect(versionlessSnapshot).toMatchObject({
+      recordedAgentCliVersion: 'recorded-cli/1',
+    });
+    expect(versionlessSnapshot).not.toHaveProperty('agentCliVersion');
+
+    expect(() => OdNextRuntimeCapabilitySnapshotV1Schema.parse({
+      schema: 'open-design.od-next-runtime-capability-snapshot/v1',
+      runtimePath: 'codex',
+      agentId: 'codex',
+      runtimeAdapterVersion: 'adapter/v1',
+      fixtureVersion: 'contract/v1',
+      fixtureHash: `sha256:${'b'.repeat(64)}`,
+      nativeSessionContinuation: {
+        support: 'verified',
+        evidenceLevel: 'L0',
+        source: 'sanitized_fixture_replay',
+      },
+      nativeSubagents: {
+        support: 'unknown',
+        evidenceLevel: 'L0',
+        source: 'unverified',
+      },
+      capturedAt: 1,
+      snapshotHash: `sha256:${'c'.repeat(64)}`,
+    })).toThrow(/exact recorded Agent CLI version/i);
   });
 
   it('does not let runtime advertising downgrade unknown support to unsupported', () => {
@@ -247,7 +276,7 @@ describe('OD Next runtime capability contracts', () => {
       schema: 'open-design.od-next-runtime-capability-snapshot/v1',
       runtimePath: 'codex',
       agentId: 'codex',
-      agentCliVersion: 'synthetic-cli/1',
+      recordedAgentCliVersion: 'recorded-cli/1',
       runtimeAdapterVersion: 'adapter/v1',
       fixtureVersion: 'contract/v1',
       fixtureHash: `sha256:${'d'.repeat(64)}`,
@@ -269,6 +298,7 @@ describe('OD Next runtime capability contracts', () => {
       schema: 'open-design.od-next-runtime-capability-snapshot/v1',
       runtimePath: 'codex',
       agentId: 'codex',
+      recordedAgentCliVersion: 'recorded-cli/1',
       runtimeAdapterVersion: 'adapter/v1',
       fixtureVersion: 'contract/v1',
       nativeSessionContinuation: {
@@ -283,7 +313,7 @@ describe('OD Next runtime capability contracts', () => {
       },
       capturedAt: 1,
       snapshotHash: `sha256:${'f'.repeat(64)}`,
-    })).toThrow(/exact Agent CLI version|exact Fixture hash/i);
+    })).toThrow(/exact Fixture hash/i);
   });
 });
 

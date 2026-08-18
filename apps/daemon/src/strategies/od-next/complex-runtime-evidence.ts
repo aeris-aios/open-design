@@ -1,11 +1,14 @@
-import type { OpenDesignPlanContractV2, StrategyInputStageV2 } from '@open-design/contracts';
+import {
+  OdNextRuntimeCapabilitySnapshotV1Schema,
+  type OpenDesignPlanContractV2,
+  type StrategyInputStageV2,
+} from '@open-design/contracts';
 
 import { buildStructuredMainRunObservationV1 } from '../../observability/main-run-observation.js';
 import { adaptRuntimeChildObservationsV1 } from '../../observability/runtime-child-observations.js';
 import { strategyTaskRunObservationId } from '../../observability/task-observation-aggregation.js';
 import {
-  OD_NEXT_RUNTIME_PATH_DESCRIPTORS,
-  resolveBundledOdNextRuntimeCapability,
+  hashOdNextRuntimeCapabilitySnapshotV1,
 } from '../../runtimes/od-next-capability-gate.js';
 import type { OdNextComplexRuntimeEvidence } from './complex-production.js';
 
@@ -16,9 +19,7 @@ interface ComplexRunEvidenceInput {
   taskRunIndex: number;
   stage: StrategyInputStageV2;
   agentId: string;
-  agentCliVersion?: string;
-  runtimeCompanionName?: string;
-  runtimeCompanionVersion?: string;
+  capabilitySnapshot: unknown;
   plan: OpenDesignPlanContractV2;
   run: {
     status: string;
@@ -28,45 +29,42 @@ interface ComplexRunEvidenceInput {
   };
 }
 
-/** Build complex evidence only from exact capability provenance and durable facts. */
+/** Build complex evidence only from the admission-frozen capability snapshot. */
 export function resolveDaemonOwnedOdNextComplexRuntimeEvidence(
   input: ComplexRunEvidenceInput,
 ): OdNextComplexRuntimeEvidence | undefined {
-  const capability = resolveBundledOdNextRuntimeCapability({
-    agentId: input.agentId,
-    ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
-    ...(input.runtimeCompanionName
-      ? { runtimeCompanionName: input.runtimeCompanionName }
-      : {}),
-    ...(input.runtimeCompanionVersion
-      ? { runtimeCompanionVersion: input.runtimeCompanionVersion }
-      : {}),
-  });
-  if (!capability.snapshot) return undefined;
+  const parsed = OdNextRuntimeCapabilitySnapshotV1Schema.safeParse(
+    input.capabilitySnapshot,
+  );
+  if (!parsed.success || parsed.data.agentId !== input.agentId) return undefined;
+  const { snapshotHash, ...withoutHash } = parsed.data;
+  if (hashOdNextRuntimeCapabilitySnapshotV1(withoutHash) !== snapshotHash) {
+    return undefined;
+  }
+  const capabilitySnapshot = parsed.data;
   if (input.phase === 'eligibility') {
-    return { capabilitySnapshot: capability.snapshot };
+    return { capabilitySnapshot };
   }
   const taskRunObservationId = strategyTaskRunObservationId(
     input.taskExecutionId,
     input.runId,
   );
-  const runtimeAdapterVersion = OD_NEXT_RUNTIME_PATH_DESCRIPTORS.find((item) => (
-    item.agentId === input.agentId
-  ))?.runtimeAdapterVersion;
   const rootInput = {
     taskExecutionId: input.taskExecutionId,
     runId: input.runId,
     taskRunIndex: input.taskRunIndex,
     stage: input.stage,
     startedAtMs: input.run.createdAt,
-    ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
-    ...(input.runtimeCompanionName
-      ? { runtimeCompanionName: input.runtimeCompanionName }
+    ...(capabilitySnapshot.agentCliVersion
+      ? { agentCliVersion: capabilitySnapshot.agentCliVersion }
       : {}),
-    ...(input.runtimeCompanionVersion
-      ? { runtimeCompanionVersion: input.runtimeCompanionVersion }
+    ...(capabilitySnapshot.runtimeCompanionName
+      ? { runtimeCompanionName: capabilitySnapshot.runtimeCompanionName }
       : {}),
-    ...(runtimeAdapterVersion ? { runtimeAdapterVersion } : {}),
+    ...(capabilitySnapshot.runtimeCompanionVersion
+      ? { runtimeCompanionVersion: capabilitySnapshot.runtimeCompanionVersion }
+      : {}),
+    runtimeAdapterVersion: capabilitySnapshot.runtimeAdapterVersion,
   };
   const running = buildStructuredMainRunObservationV1({
     ...rootInput,
@@ -79,9 +77,11 @@ export function resolveDaemonOwnedOdNextComplexRuntimeEvidence(
     taskRunIndex: input.taskRunIndex,
     taskRunObservationId,
     stage: input.stage,
-    ...(input.agentCliVersion ? { agentCliVersion: input.agentCliVersion } : {}),
-    ...(input.runtimeCompanionVersion
-      ? { runtimeCompanionVersion: input.runtimeCompanionVersion }
+    ...(capabilitySnapshot.agentCliVersion
+      ? { agentCliVersion: capabilitySnapshot.agentCliVersion }
+      : {}),
+    ...(capabilitySnapshot.runtimeCompanionVersion
+      ? { runtimeCompanionVersion: capabilitySnapshot.runtimeCompanionVersion }
       : {}),
   });
   const completed = buildStructuredMainRunObservationV1({
@@ -90,7 +90,7 @@ export function resolveDaemonOwnedOdNextComplexRuntimeEvidence(
     endedAtMs: input.run.updatedAt,
   });
   return {
-    capabilitySnapshot: capability.snapshot,
+    capabilitySnapshot,
     observations: [running, ...children, completed],
     taskRunObservationId,
   };

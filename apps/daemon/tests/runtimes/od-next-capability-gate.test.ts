@@ -20,6 +20,7 @@ import {
   VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST,
   evaluateOdNextExecutionEligibility,
   hashRuntimeCapabilityFixtureManifestV1,
+  resolveBundledOdNextRuntimeCapability,
   resolveOdNextRuntimeCapability,
 } from '../../src/runtimes/od-next-capability-gate.js';
 import { getAgentDef } from '../../src/runtimes/registry.js';
@@ -94,12 +95,12 @@ function syntheticEntry(
   return {
     runtimePath: manifest.runtimePath,
     agentId: manifest.agentId,
-    agentCliVersion: manifest.agentCliVersion ?? 'test-cli/1.2.3',
+    recordedAgentCliVersion: manifest.agentCliVersion ?? 'test-cli/1.2.3',
     runtimeAdapterVersion: manifest.runtimeAdapterVersion,
     ...(manifest.runtimeCompanionName
       ? {
-          runtimeCompanionName: manifest.runtimeCompanionName,
-          runtimeCompanionVersion: manifest.runtimeCompanionVersion,
+          recordedRuntimeCompanionName: manifest.runtimeCompanionName,
+          recordedRuntimeCompanionVersion: manifest.runtimeCompanionVersion,
         }
       : {}),
     fixtureVersion: manifest.fixtureVersion,
@@ -164,7 +165,7 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('resolves Claude 2.1.233 only after replaying the digest-bound seven-path seed', () => {
+  it('uses the Claude 2.1.233 replay as provenance without pinning admission to that version', () => {
     const seed = JSON.parse(readFileSync(
       join(fixtureDir, 'claude-2.1.233.sanitized-real-seed.json'),
       'utf8',
@@ -198,17 +199,24 @@ describe('OD Next runtime capability gate', () => {
       reason: 'capability_resolved',
       snapshot: {
         agentCliVersion: '2.1.233 (Claude Code)',
+        recordedAgentCliVersion: '2.1.233 (Claude Code)',
         nativeSessionContinuation: { support: 'verified' },
         nativeSubagents: { support: 'verified', evidenceLevel: 'L2' },
       },
     });
     expect(resolveOdNextRuntimeCapability({
       agentId: 'claude',
-      agentCliVersion: '2.1.234 (Claude Code)',
+      agentCliVersion: '2.2.0-alpha.1 (Claude Code)',
       fixtureVersion: CLAUDE_2_1_233_BEST_EFFORT_MANIFEST.fixtureVersion,
       fixtureManifest: CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
       capturedAt: 1,
-    }).reason).not.toBe('capability_resolved');
+    })).toMatchObject({
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: '2.2.0-alpha.1 (Claude Code)',
+        recordedAgentCliVersion: '2.1.233 (Claude Code)',
+      },
+    });
   });
 
   it('accepts the Vela seven-path replay as best-effort evidence without promoting the unpublished build', () => {
@@ -243,7 +251,7 @@ describe('OD Next runtime capability gate', () => {
     });
   });
 
-  it('resolves Codex 0.147.0 only from the exact best-effort replay tuple', () => {
+  it('admits prerelease and unknown Codex versions through the reviewed adapter contract', () => {
     const seed = JSON.parse(readFileSync(
       join(fixtureDir, 'codex-0.147.0.sanitized-real-seed.json'),
       'utf8',
@@ -265,6 +273,7 @@ describe('OD Next runtime capability gate', () => {
       reason: 'capability_resolved',
       snapshot: {
         agentCliVersion: 'codex-cli 0.147.0',
+        recordedAgentCliVersion: 'codex-cli 0.147.0',
         nativeSessionContinuation: { support: 'verified', source: 'sanitized_fixture_replay' },
         nativeSubagents: {
           support: 'verified',
@@ -273,16 +282,70 @@ describe('OD Next runtime capability gate', () => {
         },
       },
     });
-    expect(resolveOdNextRuntimeCapability({
+    const prerelease = resolveOdNextRuntimeCapability({
       agentId: 'codex',
-      agentCliVersion: 'codex-cli 0.147.1',
+      agentCliVersion: 'codex-cli 0.148.0-alpha.9',
       fixtureVersion: CODEX_0_147_0_BEST_EFFORT_MANIFEST.fixtureVersion,
       fixtureManifest: CODEX_0_147_0_BEST_EFFORT_MANIFEST,
       capturedAt: 1,
-    }).reason).not.toBe('capability_resolved');
+    });
+    const unknownVersion = resolveOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion: null,
+      fixtureVersion: CODEX_0_147_0_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+      capturedAt: 1,
+    });
+    expect(prerelease).toMatchObject({
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: 'codex-cli 0.148.0-alpha.9',
+        recordedAgentCliVersion: 'codex-cli 0.147.0',
+      },
+    });
+    expect(unknownVersion).toMatchObject({
+      reason: 'capability_resolved',
+      snapshot: { recordedAgentCliVersion: 'codex-cli 0.147.0' },
+    });
+    expect(unknownVersion.snapshot).not.toHaveProperty('agentCliVersion');
+    expect(prerelease.snapshot?.snapshotHash).not.toBe(unknownVersion.snapshot?.snapshotHash);
+    expect(resolveBundledOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion: 'codex-cli 0.148.0-alpha.9',
+      capturedAt: 1,
+    })).toMatchObject({
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: 'codex-cli 0.148.0-alpha.9',
+        recordedAgentCliVersion: 'codex-cli 0.147.0',
+      },
+    });
   });
 
-  it('resolves OpenCode 1.18.18 from Open Design best-effort replay and rejects version drift', () => {
+  it('silently rejects only an explicitly confirmed incompatible CLI release', () => {
+    const denied = resolveOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion: 'codex-cli 0.149.3-broken-adapter',
+      fixtureVersion: CODEX_0_147_0_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+      incompatibleVersions: [{
+        agentId: 'codex',
+        agentCliVersion: 'codex-cli 0.149.3-broken-adapter',
+      }],
+      capturedAt: 1,
+    });
+    expect(denied).toMatchObject({
+      tupleMatched: false,
+      reason: 'runtime_version_denied',
+      snapshot: {
+        agentCliVersion: 'codex-cli 0.149.3-broken-adapter',
+        nativeSessionContinuation: { support: 'unknown' },
+        nativeSubagents: { support: 'unknown' },
+      },
+    });
+  });
+
+  it('resolves native OpenCode from adapter evidence while retaining current version diagnostics', () => {
     const seed = JSON.parse(readFileSync(
       join(fixtureDir, 'opencode-1.18.18.sanitized-real-seed.json'),
       'utf8',
@@ -304,6 +367,7 @@ describe('OD Next runtime capability gate', () => {
       reason: 'capability_resolved',
       snapshot: {
         agentCliVersion: '1.18.18',
+        recordedAgentCliVersion: '1.18.18',
         nativeSessionContinuation: { support: 'verified', source: 'sanitized_fixture_replay' },
         nativeSubagents: {
           support: 'verified',
@@ -318,10 +382,16 @@ describe('OD Next runtime capability gate', () => {
       fixtureVersion: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST.fixtureVersion,
       fixtureManifest: OPENCODE_1_18_18_BEST_EFFORT_MANIFEST,
       capturedAt: 1,
-    }).reason).not.toBe('capability_resolved');
+    })).toMatchObject({
+      reason: 'capability_resolved',
+      snapshot: {
+        agentCliVersion: '1.18.19',
+        recordedAgentCliVersion: '1.18.18',
+      },
+    });
   });
 
-  it('matches only an exact tuple while refusing synthetic fixtures as verification', () => {
+  it('matches the adapter/schema contract while refusing synthetic fixtures as verification', () => {
     const manifest = syntheticManifest(readFixture('codex.contract.json'));
     const entry = syntheticEntry(manifest);
     const exact = resolveOdNextRuntimeCapability({
@@ -347,7 +417,6 @@ describe('OD Next runtime capability gate', () => {
     });
 
     for (const changed of [
-      { agentCliVersion: 'test-cli/1.2.4' },
       { fixtureVersion: 'od-next-runtime-contract/v2' },
       {
         fixtureManifest: {
@@ -367,18 +436,45 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('fails closed when any required version identity is absent', () => {
+  it('does not resolve a registry entry without verified native subagent lifecycle', () => {
+    const reviewed = OD_NEXT_RUNTIME_CAPABILITY_REGISTRY.find(
+      (entry) => entry.agentId === 'codex',
+    )!;
+    const incomplete: RuntimeCapabilityRegistryEntryV1 = {
+      ...reviewed,
+      evidence: {
+        ...reviewed.evidence,
+        nativeSubagents: { support: 'advertised', evidenceLevel: 'L1' },
+      },
+    };
+    expect(resolveOdNextRuntimeCapability({
+      agentId: 'codex',
+      fixtureVersion: CODEX_0_147_0_BEST_EFFORT_MANIFEST.fixtureVersion,
+      fixtureManifest: CODEX_0_147_0_BEST_EFFORT_MANIFEST,
+      registry: [incomplete],
+      capturedAt: 1,
+    })).toMatchObject({
+      tupleMatched: true,
+      reason: 'capability_tuple_unverified',
+      snapshot: {
+        nativeSessionContinuation: { support: 'unknown' },
+        nativeSubagents: { support: 'unknown' },
+      },
+    });
+  });
+
+  it('treats current versions as optional diagnostics while still requiring a fixture manifest', () => {
     const manifest = syntheticManifest(readFixture('vela-opencode.contract.json'));
     expect(resolveOdNextRuntimeCapability({
       ...resolutionInput(manifest),
       fixtureManifest: manifest,
       agentCliVersion: null,
-    }).reason).toBe('agent_cli_version_missing');
+    }).reason).toBe('synthetic_fixture_not_accepted');
     expect(resolveOdNextRuntimeCapability({
       ...resolutionInput(manifest),
       fixtureManifest: manifest,
       runtimeCompanionVersion: null,
-    }).reason).toBe('runtime_companion_version_missing');
+    }).reason).toBe('synthetic_fixture_not_accepted');
     expect(resolveOdNextRuntimeCapability({
       ...resolutionInput(manifest),
       fixtureManifest: undefined,
@@ -428,7 +524,7 @@ describe('OD Next runtime capability gate', () => {
     });
   });
 
-  it('applies support and L0-L3 policy independently for simple and complex', () => {
+  it('requires continuation and structured native child lifecycle for every OD Next mode', () => {
     for (const support of ['unsupported', 'unknown', 'advertised'] as const) {
       expect(evaluateOdNextExecutionEligibility({
         nativeSessionContinuation: { support },
@@ -445,8 +541,8 @@ describe('OD Next runtime capability gate', () => {
         nativeSubagents: { support, evidenceLevel: 'L1' as const },
       };
       expect(evaluateOdNextExecutionEligibility(capabilities, 'simple')).toEqual({
-        eligible: true,
-        reason: 'eligible',
+        eligible: false,
+        reason: 'native_subagents_not_verified',
       });
       expect(evaluateOdNextExecutionEligibility(capabilities, 'complex')).toEqual({
         eligible: false,

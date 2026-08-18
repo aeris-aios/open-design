@@ -97,7 +97,7 @@ describe('OD Next controlled rollout', () => {
     );
   });
 
-  it('requires exact runtime evidence and keeps the local synthetic escape hatch explicit', () => {
+  it('requires complete capability evidence without using CLI version as an admission pin', () => {
     const base = {
       assignmentIdentity: 'project:conversation',
       taskType: 'prototype' as const,
@@ -112,6 +112,15 @@ describe('OD Next controlled rollout', () => {
       effectiveMode: 'observe',
       eligible: false,
       reasonCodes: expect.arrayContaining(['od_next_rollout_x1_capability_fixture_unverified']),
+    });
+    expect(evaluateOdNextRollout({
+      ...base,
+      policy: readOdNextRolloutPolicy({ OD_NEXT_STRATEGY_ROLLOUT: 'active' }),
+      agentVersion: null,
+      runtimeCapabilityVerified: true,
+    })).toMatchObject({
+      effectiveMode: 'active',
+      eligible: true,
     });
     expect(evaluateOdNextRollout({
       ...base,

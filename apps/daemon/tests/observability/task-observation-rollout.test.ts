@@ -536,7 +536,9 @@ describe('task observation rollout', () => {
       id: 'strategy-task:task-1',
       environment: 'synthetic-test',
       tags: [
-        'od-next-v2',
+        'od-next-strategy-v2',
+        'route:direct_edit',
+        'execution-mode:simple',
         'environment:synthetic-test',
         'rollout:od-next-task-v1',
       ],

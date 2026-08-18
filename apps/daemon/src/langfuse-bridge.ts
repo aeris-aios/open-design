@@ -17,7 +17,7 @@ import {
   type TrackingRunCancelOrigin,
   type TrackingRunTerminalTrigger,
 } from '@open-design/contracts/analytics';
-import type { SafeRunQualityV1 } from '@open-design/contracts';
+import type { OdNextRolloutDecision, SafeRunQualityV1 } from '@open-design/contracts';
 
 import { agentCliEnvForAgent, readAppConfig, type TelemetryPrefs } from './app-config.js';
 import type { AppVersionInfo } from './app-version.js';
@@ -121,6 +121,7 @@ export interface DaemonRunRecord {
   retryFinalResult?: string;
   retrySuppressedReason?: string;
   retryOriginalFailure?: RunFailureClassification;
+  strategyRolloutDecision?: OdNextRolloutDecision | null;
 }
 
 export interface BuildSafeRunQualityProjectionFromDaemonOpts {
@@ -1271,6 +1272,9 @@ export async function reportRunCompletedFromDaemon(
       projectId: run.projectId ?? '',
       conversationId: run.conversationId ?? '',
       ...(run.agentId ? { agentId: run.agentId } : {}),
+      ...(run.strategyRolloutDecision
+        ? { strategyRolloutDecision: run.strategyRolloutDecision }
+        : {}),
       run: {
         runId: run.id,
         status,

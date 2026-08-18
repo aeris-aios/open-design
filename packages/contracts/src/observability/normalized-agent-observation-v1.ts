@@ -41,6 +41,47 @@ export type ObservationFactAvailabilityV1 = z.infer<
   typeof ObservationFactAvailabilityV1Schema
 >;
 
+export const ChildEvidenceCoverageV1Schema = z.object({
+  availability: ObservationFactAvailabilityV1Schema,
+  source: nonEmptyStringSchema,
+  knownChildCount: nonNegativeIntegerSchema,
+  explicitZero: z.boolean(),
+  limitations: limitationListSchema,
+  diagnosticCounts: z.array(z.object({
+    code: nonEmptyStringSchema,
+    count: z.number().int().positive(),
+  }).strict()).max(64),
+}).strict().superRefine((coverage, context) => {
+  if (coverage.explicitZero && (
+    coverage.availability !== 'complete' || coverage.knownChildCount !== 0
+  )) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['explicitZero'],
+      message: 'Explicit zero child evidence requires complete coverage with zero known children.',
+    });
+  }
+  if (
+    coverage.availability === 'complete' &&
+    coverage.knownChildCount === 0 &&
+    !coverage.explicitZero
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['explicitZero'],
+      message: 'Complete zero-child coverage must be explicitly observed.',
+    });
+  }
+  if (coverage.availability !== 'complete' && coverage.limitations.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['limitations'],
+      message: `${coverage.availability} child evidence requires a limitation.`,
+    });
+  }
+});
+export type ChildEvidenceCoverageV1 = z.infer<typeof ChildEvidenceCoverageV1Schema>;
+
 export const ObservationIdentityV1Schema = z.object({
   observationId: nonEmptyStringSchema,
   taskExecutionId: nonEmptyStringSchema,
@@ -584,11 +625,19 @@ export const NormalizedAgentObservationV1Schema = z.object({
   prompt: NormalizedPromptEvidenceV1Schema,
   usage: NormalizedUsageEvidenceV1Schema,
   timing: NormalizedTimingEvidenceV1Schema,
+  childEvidenceCoverage: ChildEvidenceCoverageV1Schema.optional(),
   turnAccounting: ObservationTurnAccountingV1Schema.optional(),
   quality: SafeRunQualityV1Schema.optional(),
   limitations: limitationListSchema,
   attributes: z.record(z.unknown()).optional(),
 }).passthrough().superRefine((observation, context) => {
+  if (observation.childEvidenceCoverage && observation.kind !== 'task_run') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['childEvidenceCoverage'],
+      message: 'Child evidence coverage belongs only on physical task Run observations.',
+    });
+  }
   if (
     observation.kind !== 'task_run' &&
     observation.identity.parentObservationId === undefined

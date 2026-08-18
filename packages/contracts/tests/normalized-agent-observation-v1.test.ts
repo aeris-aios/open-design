@@ -507,4 +507,32 @@ describe('NormalizedAgentObservationV1', () => {
       },
     }))).toThrow(/complete usage requires/i);
   });
+
+  it('requires explicit evidence before complete zero-child coverage', () => {
+    expect(() => NormalizedAgentObservationV1Schema.parse(baseObservation({
+      childEvidenceCoverage: {
+        availability: 'complete',
+        source: 'codex_rollout',
+        knownChildCount: 0,
+        explicitZero: false,
+        limitations: [],
+        diagnosticCounts: [],
+      },
+    }))).toThrow(/must be explicitly observed/i);
+
+    expect(NormalizedAgentObservationV1Schema.parse(baseObservation({
+      childEvidenceCoverage: {
+        availability: 'complete',
+        source: 'codex_rollout',
+        knownChildCount: 0,
+        explicitZero: true,
+        limitations: [],
+        diagnosticCounts: [],
+      },
+    })).childEvidenceCoverage).toMatchObject({
+      availability: 'complete',
+      explicitZero: true,
+      knownChildCount: 0,
+    });
+  });
 });

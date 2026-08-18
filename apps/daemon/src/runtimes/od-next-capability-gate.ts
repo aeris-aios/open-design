@@ -24,7 +24,7 @@ export interface OdNextRuntimePathDescriptor {
 
 /**
  * Initial rollout descriptors only. Capability support remains registry-driven:
- * describing a path here does not make any CLI version eligible.
+ * describing a path here does not make its adapter/schema contract eligible.
  */
 export const OD_NEXT_RUNTIME_PATH_DESCRIPTORS = [
   {
@@ -177,8 +177,14 @@ export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
   ].map((manifest) => RuntimeCapabilityRegistryEntryV1Schema.parse({
     runtimePath: manifest.runtimePath,
     agentId: manifest.agentId,
-    agentCliVersion: manifest.agentCliVersion!,
+    recordedAgentCliVersion: manifest.agentCliVersion!,
     runtimeAdapterVersion: manifest.runtimeAdapterVersion,
+    ...(manifest.runtimeCompanionName
+      ? { recordedRuntimeCompanionName: manifest.runtimeCompanionName }
+      : {}),
+    ...(manifest.runtimeCompanionVersion
+      ? { recordedRuntimeCompanionVersion: manifest.runtimeCompanionVersion }
+      : {}),
     fixtureVersion: manifest.fixtureVersion,
     fixtureHash: hashRuntimeCapabilityFixtureManifestV1(manifest),
     evidence: {
@@ -192,8 +198,7 @@ export const OD_NEXT_RUNTIME_CAPABILITY_REGISTRY:
 
 export type OdNextCapabilityResolutionReason =
   | 'runtime_out_of_scope'
-  | 'agent_cli_version_missing'
-  | 'runtime_companion_version_missing'
+  | 'runtime_version_denied'
   | 'fixture_manifest_missing'
   | 'fixture_manifest_invalid'
   | 'fixture_tuple_mismatch'
@@ -211,8 +216,22 @@ export interface ResolveOdNextRuntimeCapabilityInput {
   fixtureVersion: string;
   fixtureManifest?: unknown;
   registry?: readonly RuntimeCapabilityRegistryEntryV1[];
+  incompatibleVersions?: readonly {
+    agentId: string;
+    agentCliVersion: string;
+  }[];
   capturedAt?: number;
 }
+
+/**
+ * Confirmed adapter-breaking releases only. Keep this list narrow and empty
+ * unless a concrete incompatibility has been reproduced; unknown versions are
+ * forward-compatible by default.
+ */
+const OD_NEXT_RUNTIME_INCOMPATIBLE_VERSIONS: readonly {
+  agentId: string;
+  agentCliVersion: string;
+}[] = [];
 
 export interface OdNextRuntimeCapabilityResolution {
   includedInInitialRollout: boolean;
@@ -277,6 +296,9 @@ function snapshotHashInput(
     runtimeAdapterVersion: snapshot.runtimeAdapterVersion,
     runtimeCompanionName: snapshot.runtimeCompanionName ?? null,
     runtimeCompanionVersion: snapshot.runtimeCompanionVersion ?? null,
+    recordedAgentCliVersion: snapshot.recordedAgentCliVersion ?? null,
+    recordedRuntimeCompanionName: snapshot.recordedRuntimeCompanionName ?? null,
+    recordedRuntimeCompanionVersion: snapshot.recordedRuntimeCompanionVersion ?? null,
     fixtureVersion: snapshot.fixtureVersion,
     fixtureHash: snapshot.fixtureHash ?? null,
     nativeSessionContinuation: snapshot.nativeSessionContinuation,
@@ -284,7 +306,7 @@ function snapshotHashInput(
   };
 }
 
-/** capturedAt is deliberately excluded so identical evidence has one hash. */
+/** capturedAt is excluded; actual diagnostics and recorded provenance remain auditable. */
 export function hashOdNextRuntimeCapabilitySnapshotV1(
   snapshot: Omit<OdNextRuntimeCapabilitySnapshotV1, 'snapshotHash'>,
 ): string {
@@ -302,6 +324,9 @@ function buildSnapshot(input: {
   agentCliVersion?: string | undefined;
   runtimeCompanionName?: string | undefined;
   runtimeCompanionVersion?: string | undefined;
+  recordedAgentCliVersion?: string | undefined;
+  recordedRuntimeCompanionName?: string | undefined;
+  recordedRuntimeCompanionVersion?: string | undefined;
   fixtureVersion: string;
   fixtureHash?: string | undefined;
   continuationSupport: CapabilitySupportV2;
@@ -322,6 +347,15 @@ function buildSnapshot(input: {
       : {}),
     ...(input.runtimeCompanionVersion
       ? { runtimeCompanionVersion: input.runtimeCompanionVersion }
+      : {}),
+    ...(input.recordedAgentCliVersion
+      ? { recordedAgentCliVersion: input.recordedAgentCliVersion }
+      : {}),
+    ...(input.recordedRuntimeCompanionName
+      ? { recordedRuntimeCompanionName: input.recordedRuntimeCompanionName }
+      : {}),
+    ...(input.recordedRuntimeCompanionVersion
+      ? { recordedRuntimeCompanionVersion: input.recordedRuntimeCompanionVersion }
       : {}),
     fixtureVersion: input.fixtureVersion,
     ...(input.fixtureHash ? { fixtureHash: input.fixtureHash } : {}),
@@ -378,42 +412,49 @@ function unknownResolution(input: {
   };
 }
 
-function manifestMatchesTuple(
+function manifestMatchesCapabilityContract(
   manifest: RuntimeCapabilityFixtureManifestV1,
   input: {
     descriptor: OdNextRuntimePathDescriptor;
-    agentCliVersion: string;
-    runtimeCompanionName?: string | undefined;
-    runtimeCompanionVersion?: string | undefined;
     fixtureVersion: string;
   },
 ): boolean {
   return manifest.runtimePath === input.descriptor.runtimePath &&
     manifest.agentId === input.descriptor.agentId &&
-    manifest.agentCliVersion === input.agentCliVersion &&
     manifest.runtimeAdapterVersion === input.descriptor.runtimeAdapterVersion &&
     manifest.fixtureVersion === input.fixtureVersion &&
-    (manifest.runtimeCompanionName ?? undefined) === input.runtimeCompanionName &&
-    (manifest.runtimeCompanionVersion ?? undefined) === input.runtimeCompanionVersion;
+    (manifest.runtimeCompanionName ?? undefined) ===
+      input.descriptor.requiredRuntimeCompanionName;
 }
 
-function entryMatchesTuple(
+function entryMatchesCapabilityContract(
   entry: RuntimeCapabilityRegistryEntryV1,
   input: {
     descriptor: OdNextRuntimePathDescriptor;
-    agentCliVersion: string;
-    runtimeCompanionName?: string | undefined;
-    runtimeCompanionVersion?: string | undefined;
     fixtureVersion: string;
+    manifest: RuntimeCapabilityFixtureManifestV1;
   },
 ): boolean {
   return entry.runtimePath === input.descriptor.runtimePath &&
     entry.agentId === input.descriptor.agentId &&
-    entry.agentCliVersion === input.agentCliVersion &&
     entry.runtimeAdapterVersion === input.descriptor.runtimeAdapterVersion &&
     entry.fixtureVersion === input.fixtureVersion &&
-    (entry.runtimeCompanionName ?? undefined) === input.runtimeCompanionName &&
-    (entry.runtimeCompanionVersion ?? undefined) === input.runtimeCompanionVersion;
+    entry.recordedAgentCliVersion === input.manifest.agentCliVersion &&
+    (entry.recordedRuntimeCompanionName ?? undefined) ===
+      (input.manifest.runtimeCompanionName ?? undefined) &&
+    (entry.recordedRuntimeCompanionVersion ?? undefined) ===
+      (input.manifest.runtimeCompanionVersion ?? undefined);
+}
+
+function hasCompleteOdNextCapability(
+  evidence: RuntimeCapabilityRegistryEntryV1['evidence'],
+): boolean {
+  return evidence.nativeSessionContinuation.support === 'verified' &&
+    evidence.nativeSubagents.support === 'verified' &&
+    (
+      evidence.nativeSubagents.evidenceLevel === 'L2' ||
+      evidence.nativeSubagents.evidenceLevel === 'L3'
+    );
 }
 
 export function resolveOdNextRuntimeCapability(
@@ -441,17 +482,11 @@ export function resolveOdNextRuntimeCapability(
     fixtureVersion: input.fixtureVersion,
     capturedAt,
   };
-  if (!agentCliVersion) {
-    return unknownResolution({ ...base, reason: 'agent_cli_version_missing' });
-  }
-  if (
-    descriptor.requiredRuntimeCompanionName &&
-    (
-      runtimeCompanionName !== descriptor.requiredRuntimeCompanionName ||
-      !runtimeCompanionVersion
-    )
-  ) {
-    return unknownResolution({ ...base, reason: 'runtime_companion_version_missing' });
+  if ((input.incompatibleVersions ?? OD_NEXT_RUNTIME_INCOMPATIBLE_VERSIONS).some(
+    (entry) => entry.agentId === descriptor.agentId
+      && entry.agentCliVersion === agentCliVersion,
+  )) {
+    return unknownResolution({ ...base, reason: 'runtime_version_denied' });
   }
   if (input.fixtureManifest === undefined) {
     return unknownResolution({ ...base, reason: 'fixture_manifest_missing' });
@@ -471,14 +506,11 @@ export function resolveOdNextRuntimeCapability(
       reason: 'x1_runtime_fixture_missing',
     });
   }
-  const tupleInput = {
+  const contractInput = {
     descriptor,
-    agentCliVersion,
-    runtimeCompanionName,
-    runtimeCompanionVersion,
     fixtureVersion: input.fixtureVersion,
   };
-  if (!manifestMatchesTuple(manifest, tupleInput)) {
+  if (!manifestMatchesCapabilityContract(manifest, contractInput)) {
     return unknownResolution({ ...base, fixtureHash, reason: 'fixture_tuple_mismatch' });
   }
 
@@ -487,7 +519,10 @@ export function resolveOdNextRuntimeCapability(
       const parsed = RuntimeCapabilityRegistryEntryV1Schema.safeParse(candidate);
       return parsed.success ? [parsed.data] : [];
     });
-  const entry = registry.find((candidate) => entryMatchesTuple(candidate, tupleInput));
+  const entry = registry.find((candidate) => entryMatchesCapabilityContract(candidate, {
+    ...contractInput,
+    manifest,
+  }));
   if (!entry) {
     return unknownResolution({
       ...base,
@@ -537,6 +572,16 @@ export function resolveOdNextRuntimeCapability(
       subagentEvidenceLevel: entry.evidence.nativeSubagents.evidenceLevel,
     });
   }
+  if (!hasCompleteOdNextCapability(entry.evidence)) {
+    return unknownResolution({
+      ...base,
+      fixtureHash,
+      tupleMatched: true,
+      reason: 'capability_tuple_unverified',
+      continuationEvidenceLevel: entry.evidence.nativeSessionContinuation.evidenceLevel,
+      subagentEvidenceLevel: entry.evidence.nativeSubagents.evidenceLevel,
+    });
+  }
 
   const snapshotSource: RuntimeCapabilitySnapshotSourceV1 =
     'sanitized_fixture_replay';
@@ -547,6 +592,9 @@ export function resolveOdNextRuntimeCapability(
     snapshot: buildSnapshot({
       ...base,
       fixtureHash,
+      recordedAgentCliVersion: entry.recordedAgentCliVersion,
+      recordedRuntimeCompanionName: entry.recordedRuntimeCompanionName,
+      recordedRuntimeCompanionVersion: entry.recordedRuntimeCompanionVersion,
       continuationSupport: entry.evidence.nativeSessionContinuation.support,
       continuationEvidenceLevel:
         entry.evidence.nativeSessionContinuation.evidenceLevel,
@@ -564,13 +612,14 @@ export function resolveBundledOdNextRuntimeCapability(input: {
   runtimeCompanionVersion?: string | null;
   capturedAt?: number;
 }): OdNextRuntimeCapabilityResolution {
+  const descriptor = descriptorForAgent(input.agentId);
   const fixture = OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS.find((candidate) => (
-    candidate.agentId === input.agentId
-    && candidate.agentCliVersion === (input.agentCliVersion?.trim() || undefined)
-    && (candidate.runtimeCompanionName ?? undefined)
-      === (input.runtimeCompanionName?.trim() || undefined)
-    && (candidate.runtimeCompanionVersion ?? undefined)
-      === (input.runtimeCompanionVersion?.trim() || undefined)
+    descriptor !== null
+    && candidate.agentId === descriptor.agentId
+    && candidate.runtimePath === descriptor.runtimePath
+    && candidate.runtimeAdapterVersion === descriptor.runtimeAdapterVersion
+    && (candidate.runtimeCompanionName ?? undefined) ===
+      descriptor.requiredRuntimeCompanionName
   ));
   return resolveOdNextRuntimeCapability({
     ...input,
@@ -591,7 +640,9 @@ export type OdNextExecutionEligibilityReason =
 /**
  * Pure policy boundary used after a runtime has passed initial-path selection.
  * Fixture provenance is enforced by the resolver; this function only applies
- * the simple/complex capability rules to the resolved snapshot.
+ * the complete OD Next capability rules to the resolved snapshot. Both modes
+ * rely on native child lifecycle even when the current task is classified as
+ * simple, because the strategy may escalate after planning.
  */
 export function evaluateOdNextExecutionEligibility(
   capabilities: {
@@ -601,13 +652,10 @@ export function evaluateOdNextExecutionEligibility(
       evidenceLevel: RuntimeObservationEvidenceLevelV1;
     };
   },
-  executionMode: OdNextExecutionMode,
+  _executionMode: OdNextExecutionMode,
 ): { eligible: boolean; reason: OdNextExecutionEligibilityReason } {
   if (capabilities.nativeSessionContinuation.support !== 'verified') {
     return { eligible: false, reason: 'native_continuation_not_verified' };
-  }
-  if (executionMode === 'simple') {
-    return { eligible: true, reason: 'eligible' };
   }
   if (capabilities.nativeSubagents.support !== 'verified') {
     return { eligible: false, reason: 'native_subagents_not_verified' };

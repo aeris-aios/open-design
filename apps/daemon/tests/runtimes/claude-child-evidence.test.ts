@@ -33,7 +33,9 @@ const fixturePath = path.join(
 );
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as Fixture;
 
-function replay(caseId: string, opts?: { finish?: 'canceled' | 'timeout' | 'stream_incomplete' }) {
+function replay(caseId: string, opts?: {
+  finish?: 'complete' | 'canceled' | 'timeout' | 'stream_incomplete';
+}) {
   const mainEvents: Array<Record<string, unknown>> = [];
   const facts: ClaudeChildRuntimeFact[] = [];
   let now = 1000;
@@ -52,7 +54,7 @@ function replay(caseId: string, opts?: { finish?: 'canceled' | 'timeout' | 'stre
   }
   handler.flush();
   if (opts?.finish) handler.finishOpenChildEvidence(opts.finish);
-  return { mainEvents, facts };
+  return { mainEvents, facts, coverage: handler.childEvidenceCoverage() };
 }
 
 function root(status: 'running' | 'completed') {
@@ -82,7 +84,7 @@ function adapt(fact: ClaudeChildRuntimeFact) {
 
 function collect(
   frames: unknown[],
-  finish?: 'canceled' | 'timeout' | 'stream_incomplete',
+  finish?: 'complete' | 'canceled' | 'timeout' | 'stream_incomplete',
 ): ClaudeChildRuntimeFact[] {
   const facts: ClaudeChildRuntimeFact[] = [];
   let now = 2000;
@@ -798,6 +800,48 @@ describe('Claude native Child evidence side channel', () => {
     expect(graph.issues).toContainEqual({
       code: 'child_terminal_missing',
       observationId: 'claude-child:run-1:task-incomplete',
+    });
+  });
+
+  it('summarizes explicit zero, complete terminal children, and incomplete collection truthfully', () => {
+    const empty = createClaudeChildEvidenceCollector({});
+    expect(empty.coverage()).toMatchObject({
+      availability: 'unavailable',
+      explicitZero: false,
+      limitations: ['child_collection_not_finalized'],
+    });
+    empty.finishOpenChildren('stream_incomplete');
+    expect(empty.coverage()).toMatchObject({
+      availability: 'unavailable',
+      explicitZero: false,
+      limitations: ['child_collection_stream_incomplete'],
+    });
+
+    const confirmedEmpty = createClaudeChildEvidenceCollector({});
+    confirmedEmpty.finishOpenChildren('complete');
+    expect(confirmedEmpty.coverage()).toEqual({
+      availability: 'complete',
+      source: 'claude_stream_json',
+      knownChildCount: 0,
+      explicitZero: true,
+      limitations: [],
+      diagnosticCounts: [],
+    });
+
+    expect(replay('child_success', { finish: 'complete' }).coverage).toMatchObject({
+      availability: 'complete',
+      knownChildCount: 1,
+      explicitZero: false,
+    });
+    expect(replay('incomplete_child', { finish: 'stream_incomplete' }).coverage).toMatchObject({
+      availability: 'partial',
+      knownChildCount: 1,
+      explicitZero: false,
+      limitations: ['child_collection_stream_incomplete', 'child_stream_incomplete'],
+      diagnosticCounts: [
+        { code: 'child_collection_stream_incomplete', count: 1 },
+        { code: 'child_stream_incomplete', count: 1 },
+      ],
     });
   });
 

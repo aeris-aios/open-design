@@ -290,22 +290,23 @@ export type RuntimeCapabilityEvidenceV1 = z.infer<
 export const RuntimeCapabilityRegistryEntryV1Schema = z.object({
   runtimePath: runtimePathSchema,
   agentId: nonEmptyStringSchema,
-  agentCliVersion: nonEmptyStringSchema,
+  /** Exact CLI version that produced the reviewed fixture; not an admission pin. */
+  recordedAgentCliVersion: nonEmptyStringSchema,
   runtimeAdapterVersion: nonEmptyStringSchema,
-  runtimeCompanionName: nonEmptyStringSchema.optional(),
-  runtimeCompanionVersion: nonEmptyStringSchema.optional(),
+  recordedRuntimeCompanionName: nonEmptyStringSchema.optional(),
+  recordedRuntimeCompanionVersion: nonEmptyStringSchema.optional(),
   fixtureVersion: nonEmptyStringSchema,
   fixtureHash: sha256Schema,
   evidence: RuntimeCapabilityEvidenceV1Schema,
 }).strict().superRefine((entry, context) => {
   if (
-    entry.runtimeCompanionVersion !== undefined &&
-    entry.runtimeCompanionName === undefined
+    entry.recordedRuntimeCompanionVersion !== undefined &&
+    entry.recordedRuntimeCompanionName === undefined
   ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['runtimeCompanionName'],
-      message: 'A runtime companion version requires its companion name.',
+      path: ['recordedRuntimeCompanionName'],
+      message: 'A recorded runtime companion version requires its companion name.',
     });
   }
 });
@@ -333,10 +334,15 @@ export const OdNextRuntimeCapabilitySnapshotV1Schema = z.object({
   schema: z.literal(OD_NEXT_RUNTIME_CAPABILITY_SNAPSHOT_V1_SCHEMA),
   runtimePath: runtimePathSchema,
   agentId: nonEmptyStringSchema,
+  /** Current probe output. Optional diagnostic metadata, never an admission pin. */
   agentCliVersion: nonEmptyStringSchema.optional(),
   runtimeAdapterVersion: nonEmptyStringSchema,
   runtimeCompanionName: nonEmptyStringSchema.optional(),
   runtimeCompanionVersion: nonEmptyStringSchema.optional(),
+  /** Exact versions captured by the fixture that backs the capability assertion. */
+  recordedAgentCliVersion: nonEmptyStringSchema.optional(),
+  recordedRuntimeCompanionName: nonEmptyStringSchema.optional(),
+  recordedRuntimeCompanionVersion: nonEmptyStringSchema.optional(),
   fixtureVersion: nonEmptyStringSchema,
   fixtureHash: sha256Schema.optional(),
   nativeSessionContinuation: snapshotCapabilitySchema,
@@ -348,11 +354,11 @@ export const OdNextRuntimeCapabilitySnapshotV1Schema = z.object({
     snapshot.nativeSessionContinuation.support,
     snapshot.nativeSubagents.support,
   ].some((support) => support === 'verified' || support === 'unsupported');
-  if (hasFixtureBackedAssertion && !snapshot.agentCliVersion) {
+  if (hasFixtureBackedAssertion && !snapshot.recordedAgentCliVersion) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['agentCliVersion'],
-      message: 'Verified or unsupported capability snapshots require an exact Agent CLI version.',
+      path: ['recordedAgentCliVersion'],
+      message: 'Verified or unsupported capability snapshots require the exact recorded Agent CLI version.',
     });
   }
   if (hasFixtureBackedAssertion && !snapshot.fixtureHash) {
@@ -360,6 +366,16 @@ export const OdNextRuntimeCapabilitySnapshotV1Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['fixtureHash'],
       message: 'Verified or unsupported capability snapshots require the exact Fixture hash.',
+    });
+  }
+  if (
+    snapshot.recordedRuntimeCompanionVersion !== undefined &&
+    snapshot.recordedRuntimeCompanionName === undefined
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['recordedRuntimeCompanionName'],
+      message: 'A recorded runtime companion version requires its companion name.',
     });
   }
   for (const [key, capability] of [

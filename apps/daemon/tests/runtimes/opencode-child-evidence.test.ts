@@ -249,15 +249,16 @@ describe('native OpenCode child evidence', () => {
       parentSessionId: 'ses_unrelated',
     };
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
-    createOpenCodeRootTaskEvidenceCollector({
+    const collector = createOpenCodeRootTaskEvidenceCollector({
       rootSessionId: data.rootSessionId,
       cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
-    }).observe(frame);
+    });
+    collector.observe(frame);
     expect(candidates).toEqual([]);
   });
 
-  it('learns a create-turn root id from step_start and rejects version drift', () => {
+  it('learns a create-turn root id and keeps the verified adapter across CLI version drift', () => {
     const data = fixture();
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
     const collector = createOpenCodeRootTaskEvidenceCollector({
@@ -269,16 +270,46 @@ describe('native OpenCode child evidence', () => {
 
     const drifted: OpenCodeTaskTerminalCandidate[] = [];
     const driftedCollector = createOpenCodeRootTaskEvidenceCollector({
-      cliVersion: '1.18.4',
+      cliVersion: '1.19.0-beta.2',
       onCandidate: (candidate) => drifted.push(candidate),
     });
     for (const frame of data.frames) driftedCollector.observe(frame);
-    expect(drifted).toEqual([]);
-    const [candidate] = collectCandidate();
+    expect(drifted).toHaveLength(1);
+    expect(drifted[0]).toMatchObject({
+      adapterVersion: OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
+      cliVersion: '1.19.0-beta.2',
+    });
     expect(verifyOpenCodeChildExport({
-      candidate: { ...candidate!, cliVersion: '1.18.4' },
+      candidate: drifted[0]!,
       sanitizedExport: data.sanitizedChildExport,
-    })).toEqual([]);
+    })).toHaveLength(2);
+  });
+
+  it('reports complete explicit-zero coverage only after a complete identified stream', () => {
+    const data = fixture();
+    const empty = createOpenCodeRootTaskEvidenceCollector({
+      cliVersion: 'future-version-without-semver',
+      onCandidate: () => {},
+    });
+    empty.observe(data.frames[0]);
+    expect(empty.coverage(true)).toEqual({
+      availability: 'complete',
+      source: 'opencode_json_event_stream',
+      knownChildCount: 0,
+      explicitZero: true,
+      limitations: [],
+      diagnosticCounts: [],
+    });
+
+    const incomplete = createOpenCodeRootTaskEvidenceCollector({
+      cliVersion: '',
+      onCandidate: () => {},
+    });
+    expect(incomplete.coverage(false)).toMatchObject({
+      availability: 'unavailable',
+      explicitZero: false,
+      limitations: ['opencode_root_session_unavailable'],
+    });
   });
 
   it.each([
@@ -295,12 +326,20 @@ describe('native OpenCode child evidence', () => {
       background: true,
     };
     const candidates: OpenCodeTaskTerminalCandidate[] = [];
-    createOpenCodeRootTaskEvidenceCollector({
+    const collector = createOpenCodeRootTaskEvidenceCollector({
       rootSessionId: data.rootSessionId,
       cliVersion: '1.18.18',
       onCandidate: (candidate) => candidates.push(candidate),
-    }).observe(frame);
+    });
+    collector.observe(frame);
     expect(candidates).toEqual([]);
+    expect(collector.coverage(true)).toMatchObject({
+      availability: 'partial',
+      knownChildCount: 1,
+      explicitZero: false,
+      limitations: ['opencode_child_terminal_unobserved'],
+      diagnosticCounts: [{ code: 'child_terminal_unobserved', count: 1 }],
+    });
   });
 
   it.each([

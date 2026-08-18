@@ -23,6 +23,9 @@ import {
   prepareAutomaticStrategyContinuation,
 } from '../../../src/strategies/od-next/automatic-simple-production.js';
 import {
+  resolveAutomaticContinuationEvidence,
+} from '../../../src/strategies/od-next/automatic-continuation-service.js';
+import {
   evaluateOdNextComplexChildEvidence,
   evaluateOdNextComplexEligibility,
 } from '../../../src/strategies/od-next/complex-production.js';
@@ -107,6 +110,7 @@ function capabilitySnapshot(
     runtimePath: 'codex',
     agentId: AGENT_ID,
     agentCliVersion: 'synthetic-cli-simulating-fixture/1',
+    recordedAgentCliVersion: 'synthetic-cli-recorded-fixture/1',
     runtimeAdapterVersion: 'synthetic-adapter/1',
     fixtureVersion: 'synthetic-gate/v1',
     fixtureHash: `sha256:${'d'.repeat(64)}`,
@@ -359,7 +363,32 @@ describe('OD Next complex production enforcement', () => {
     }
   });
 
-  it('derives opaque bindings and resolves completion from durable Claude native Agent facts', () => {
+  it('ignores later runtime-version drift when resolving automatic complex eligibility', async () => {
+    const frozenCapability = capabilitySnapshot({
+      agentCliVersion: 'codex-cli 0.148.0-alpha.9',
+      recordedAgentCliVersion: 'codex-cli 0.147.0',
+    });
+    const evidence = await resolveAutomaticContinuationEvidence({
+      plan: planContract(snapshot, frozenCapability),
+      phase: 'eligibility',
+      task: getStrategyTaskExecution(db, TASK_ID)!,
+      run: {
+        id: REQUEST_RUN_ID,
+        status: 'succeeded',
+        createdAt: 100,
+        events: [],
+        preflightAgentCliVersion: 'codex-cli 9.9.9-later-probe',
+      },
+      localSyntheticCanary: false,
+      runtimeCapabilitySnapshot: frozenCapability,
+    });
+
+    expect(evidence.complexRuntimeEvidence?.capabilitySnapshot).toEqual(
+      frozenCapability,
+    );
+  });
+
+  it('keeps complex continuation on the admission-frozen capability snapshot', () => {
     const capability = resolveBundledOdNextRuntimeCapability({
       agentId: 'claude',
       agentCliVersion: '2.1.233 (Claude Code)',
@@ -438,7 +467,7 @@ describe('OD Next complex production enforcement', () => {
       taskRunIndex: 1,
       stage: 'production',
       agentId: 'claude',
-      agentCliVersion: '2.1.233 (Claude Code)',
+      capabilitySnapshot: capability,
       plan,
       run: {
         status: 'succeeded',
@@ -451,6 +480,12 @@ describe('OD Next complex production enforcement', () => {
     if (!evidence?.observations || !evidence.taskRunObservationId) {
       throw new Error('expected daemon-owned complex completion evidence');
     }
+    expect(evidence.capabilitySnapshot).toEqual(capability);
+    expect(evidence.capabilitySnapshot).toMatchObject({
+      agentCliVersion: '2.1.233 (Claude Code)',
+      recordedAgentCliVersion: '2.1.233 (Claude Code)',
+      snapshotHash: capability.snapshotHash,
+    });
     expect(evidence?.observations?.filter((item: any) => (
       item.kind === 'child_agent' && item.status === 'completed'
     )).map((item: any) => item.attributes.buildPackageId)).toEqual(['shell', 'flow']);

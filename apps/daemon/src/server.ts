@@ -9132,6 +9132,8 @@ export async function startServer({
     designSystemScope,
     frozenSkillPackage,
     odNextSyntheticCanary = false,
+    odNextAutomaticAdmission = false,
+    runtimeCapabilitySnapshot,
   }) => {
     const project =
       typeof projectId === 'string' && projectId
@@ -9868,6 +9870,8 @@ export async function startServer({
       streamFormat,
       atomPromptsEnabled: bundledAtomPromptsEnabled,
       syntheticCanary: odNextSyntheticCanary,
+      automaticAdmission: odNextAutomaticAdmission,
+      runtimeCapabilitySnapshot,
       getRuntimeVersions: () => ensureDetectedRuntimeVersions(
         agentId,
         agentCliEnvForAgent(appConfigForPrompt?.agentCliEnv, agentId),
@@ -13904,6 +13908,17 @@ export async function startServer({
       plaintextStdoutBuffer.length = 0;
       return true;
     };
+    const publishRuntimeChildEvidenceCoverage = (coverage) => {
+      if (!strategyTaskAtStart || !coverage) return;
+      sendAgentEvent({
+        type: 'diagnostic',
+        name: 'child_evidence_coverage_v1',
+        coverage,
+      });
+      if (coverage.availability !== 'complete') {
+        latchOdNextRolloutForRun(run, 'observe', 'complex_child_unverified');
+      }
+    };
 
     if (def.streamFormat === 'claude-stream-json') {
       const claude = createClaudeStreamHandler((ev) => {
@@ -14036,7 +14051,7 @@ export async function startServer({
           : {}),
       });
       child.stdout.on('data', (chunk) => claude.feed(chunk));
-      child.on('close', () => {
+      child.on('close', (code, signal) => {
         claude.flush();
         claude.finishOpenChildEvidence(
           run.cancelRequested
@@ -14044,8 +14059,11 @@ export async function startServer({
             : run.terminalTrigger === 'first_output_deadline'
               || run.terminalTrigger === 'inactivity_watchdog'
               ? 'timeout'
-              : 'stream_incomplete',
+              : code === 0 && signal === null && !agentStreamError
+                ? 'complete'
+                : 'stream_incomplete',
         );
+        publishRuntimeChildEvidenceCoverage(claude.childEvidenceCoverage());
       });
     } else if (def.streamFormat === 'qoder-stream-json') {
       trackingSubstantiveOutput = true;
@@ -14313,7 +14331,12 @@ export async function startServer({
           : {},
       );
       child.stdout.on('data', (chunk) => handler.feed(chunk));
-      child.on('close', () => handler.flush());
+      child.on('close', (code, signal) => {
+        handler.flush();
+        publishRuntimeChildEvidenceCoverage(handler.childEvidenceCoverage(
+          code === 0 && signal === null && !run.cancelRequested && !agentStreamError,
+        ));
+      });
     } else if (def.id === 'antigravity') {
       // Buffer stdout until close so the auth-prompt guard can suppress
       // the OAuth URL before forwarding it to the client as assistant
@@ -14458,8 +14481,39 @@ export async function startServer({
                 observation,
               });
             }
+            const knownChildCount = new Set(childEvidence.observations
+              .filter((observation) => observation.kind === 'child_agent')
+              .map((observation) => observation.identity.observationId)).size;
+            sendAgentEvent({
+              type: 'diagnostic',
+              name: 'child_evidence_coverage_v1',
+              coverage: {
+                availability: childEvidence.availability,
+                source: childEvidence.source,
+                knownChildCount,
+                explicitZero: childEvidence.availability === 'complete' && knownChildCount === 0,
+                limitations: childEvidence.limitations,
+                diagnosticCounts: childEvidence.diagnostics,
+              },
+            });
+            if (childEvidence.availability !== 'complete') {
+              latchOdNextRolloutForRun(run, 'observe', 'complex_child_unverified');
+            }
           } catch (error) {
             console.warn('[observability] Codex child evidence unavailable', String(error));
+            sendAgentEvent({
+              type: 'diagnostic',
+              name: 'child_evidence_coverage_v1',
+              coverage: {
+                availability: 'unavailable',
+                source: 'codex_rollout',
+                knownChildCount: 0,
+                explicitZero: false,
+                limitations: ['codex_child_evidence_collection_failed'],
+                diagnosticCounts: [{ code: 'collector_exception', count: 1 }],
+              },
+            });
+            latchOdNextRolloutForRun(run, 'observe', 'complex_child_unverified');
           }
         }
       }
@@ -15083,7 +15137,7 @@ export async function startServer({
                 && process.env.NODE_ENV !== 'production',
               executionPreflightResolver: odNextExecutionPreflightResolver,
               complexProductionResolver: odNextComplexProductionResolver,
-              getRuntimeVersions: getDetectedRuntimeVersions,
+              runtimeCapabilitySnapshot: chatBody.runtimeCapabilitySnapshot,
             });
             executionPreflight = evidence.executionPreflight;
             complexRuntimeEvidence = evidence.complexRuntimeEvidence;

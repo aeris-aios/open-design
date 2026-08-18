@@ -148,6 +148,7 @@ function observation(input: {
   prompt?: Record<string, unknown>;
   turnAccounting?: NormalizedAgentObservationV1['turnAccounting'];
   quality?: NormalizedAgentObservationV1['quality'];
+  childEvidenceCoverage?: NormalizedAgentObservationV1['childEvidenceCoverage'];
   attributes?: Record<string, unknown>;
   limitations?: string[];
 }): NormalizedAgentObservationV1 {
@@ -176,6 +177,7 @@ function observation(input: {
     },
     ...(input.turnAccounting ? { turnAccounting: input.turnAccounting } : {}),
     ...(input.quality ? { quality: input.quality } : {}),
+    ...(input.childEvidenceCoverage ? { childEvidenceCoverage: input.childEvidenceCoverage } : {}),
     ...(input.attributes ? { attributes: input.attributes } : {}),
     limitations: input.limitations ?? [],
   });
@@ -196,6 +198,14 @@ function runObservation(
       agentCliVersion: 'opencode 1.18.18',
       runtimeAdapterVersion: 'od-opencode-json-events/v1',
     },
+    childEvidenceCoverage: {
+      availability: 'complete',
+      source: 'fixture',
+      knownChildCount: 0,
+      explicitZero: true,
+      limitations: [],
+      diagnosticCounts: [],
+    },
     ...overrides,
   });
 }
@@ -204,7 +214,18 @@ function fourStageFacts(): NormalizedAgentObservationV1[] {
   const productionRunId = strategyTaskRunObservationId('task-1', 'run-production');
   const childId = 'child:task-1:run-production:child-1';
   return [
-    ...RUNS.map((run) => runObservation(run)),
+    ...RUNS.map((run) => runObservation(run, run.runId === 'run-production'
+      ? {
+          childEvidenceCoverage: {
+            availability: 'complete',
+            source: 'fixture',
+            knownChildCount: 1,
+            explicitZero: false,
+            limitations: [],
+            diagnosticCounts: [],
+          },
+        }
+      : {})),
     observation({
       id: childId,
       runId: 'run-production',
@@ -372,6 +393,11 @@ describe('strategy task observation aggregation', () => {
     expect(aggregate.coverage.children).toEqual({
       availability: 'unavailable',
       knownObservationCount: 0,
+      expectedRunCount: 4,
+      completeRunCount: 3,
+      partialRunCount: 0,
+      unavailableRunCount: 1,
+      explicitZeroRunCount: 3,
     });
     const missing = aggregate.observations.find(
       (fact) => fact.identity.runId === 'run-contract-repair',
@@ -573,6 +599,18 @@ describe('strategy task observation aggregation', () => {
     const aggregate = aggregateStrategyTaskObservations({
       task: task(),
       observations: RUNS.map((run) => runObservation(run)),
+      strategyRolloutDecision: {
+        schemaVersion: 1,
+        decisionClass: 'active',
+        requestedMode: 'active',
+        effectiveMode: 'active',
+        taskType: 'prototype',
+        assignmentBucket: 1,
+        eligible: true,
+        syntheticCanary: false,
+        reasonCodes: [],
+        primaryReasonCode: 'od_next_rollout_eligible',
+      },
     });
     const trace = eventBodies(buildLegacyTaskObservationPayload(aggregate, {
       environment: 'production',
@@ -596,6 +634,13 @@ describe('strategy task observation aggregation', () => {
         appChannel: 'beta',
         packaged: true,
         clientType: 'desktop',
+        rolloutAdmission: {
+          requestedMode: 'active',
+          effectiveMode: 'active',
+          primaryReasonCode: 'od_next_rollout_eligible',
+          compatibilityBasis: 'runtime_adapter_family_fixture_evidence',
+          admissionStage: 'activation_admission',
+        },
       },
     });
   });

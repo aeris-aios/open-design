@@ -37,6 +37,8 @@ type FetchedRuntimeModels = {
 };
 
 export interface DetectedRuntimeVersions {
+  /** The configured executable successfully spawned, independent of version parsing. */
+  invocable: true;
   agentCliVersion?: string;
   runtimeCompanionName?: string;
   runtimeCompanionVersion?: string;
@@ -66,9 +68,9 @@ export function getDetectedRuntimeVersions(
  *
  * OD Next uses this at its capability boundary. The cache remains the normal
  * fast path; after a daemon restart, the selected CLI is probed once through
- * the same bounded detection path used by the agent picker. A failed or
- * unknown probe stays null so callers can fail closed without affecting
- * ordinary Run execution.
+ * the same bounded detection path used by the agent picker. A successfully
+ * spawned probe remains non-null even when version output is
+ * unavailable; only a non-invocable runtime stays null.
  */
 export async function ensureDetectedRuntimeVersions(
   agentId: string | null | undefined,
@@ -291,9 +293,10 @@ async function probeRuntimeVersionsOnly(
     probeVersionAtPath(def, context.launchPath, context.probeEnv),
     probeAmrOpenCodeVersion(def, context.probeEnv),
   ]);
-  if (outcome.kind !== 'spawned' || !outcome.version) return null;
+  if (outcome.kind !== 'spawned') return null;
   const versions: DetectedRuntimeVersions = {
-    agentCliVersion: outcome.version,
+    invocable: true,
+    ...(outcome.version ? { agentCliVersion: outcome.version } : {}),
     ...(amrOpenCodeVersion
       ? {
           runtimeCompanionName: 'opencode',
@@ -440,6 +443,7 @@ async function probe(
   }
   const authDiagnostic = auth ? buildAuthDiagnostic(def, auth) : null;
   const runtimeVersions: DetectedRuntimeVersions = {
+    invocable: true,
     ...(outcome.version ? { agentCliVersion: outcome.version } : {}),
     ...(amrOpenCodeVersion
       ? {

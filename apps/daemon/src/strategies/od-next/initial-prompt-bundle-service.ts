@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import {
+  OdNextRuntimeCapabilitySnapshotV1Schema,
   executionProfileFromStreamFormat,
   type OdNextStrategyRequestRecipeV2,
 } from '@open-design/contracts';
@@ -43,7 +44,11 @@ import type {
 } from '../../runtimes/project-amr-trace-env.js';
 import type { RuntimeAgentDef } from '../../runtimes/types.js';
 import type { DetectedRuntimeVersions } from '../../runtimes/detection.js';
-import { resolveBundledOdNextRuntimeCapability } from '../../runtimes/od-next-capability-gate.js';
+import {
+  evaluateOdNextExecutionEligibility,
+  hashOdNextRuntimeCapabilitySnapshotV1,
+  resolveBundledOdNextRuntimeCapability,
+} from '../../runtimes/od-next-capability-gate.js';
 import {
   renderFrozenSkillBundleContext,
   type FrozenSkillPackageV1,
@@ -88,7 +93,11 @@ export interface OdNextInitialPromptMeta {
   appliedPluginSnapshotId?: unknown;
   workspaceScope?: RunWorkspaceScope | null;
   toolBundle?: unknown;
-  strategyRolloutDecision?: { syntheticCanary?: boolean } | null;
+  strategyRolloutDecision?: {
+    syntheticCanary?: boolean;
+    effectiveMode?: 'off' | 'observe' | 'active';
+  } | null;
+  runtimeCapabilitySnapshot?: unknown;
 }
 
 interface DaemonSystemPromptResult {
@@ -147,6 +156,8 @@ export async function resolveOdNextPromptRecipeForRun(input: {
   streamFormat: string;
   atomPromptsEnabled: boolean;
   syntheticCanary: boolean;
+  automaticAdmission: boolean;
+  runtimeCapabilitySnapshot?: unknown;
   getRuntimeVersions: () => Promise<DetectedRuntimeVersions | null>;
 }): Promise<OdNextStrategyRequestRecipeV2 | null> {
   const snapshotId = stringValue(input.appliedPluginSnapshotId);
@@ -166,35 +177,68 @@ export async function resolveOdNextPromptRecipeForRun(input: {
   });
   if (!resolvedRecipe) return null;
 
-  const versions = await input.getRuntimeVersions();
-  const capability = resolveBundledOdNextRuntimeCapability({
-    agentId: input.agentId,
-    ...(versions?.agentCliVersion
-      ? { agentCliVersion: versions.agentCliVersion }
-      : {}),
-    ...(versions?.runtimeCompanionName
-      ? { runtimeCompanionName: versions.runtimeCompanionName }
-      : {}),
-    ...(versions?.runtimeCompanionVersion
-      ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
-      : {}),
-  });
   if (input.syntheticCanary && process.env.NODE_ENV === 'production') {
     throw new Error('OD Next synthetic runtime planning facts are local-only.');
   }
-  if (
-    !capability.snapshot
-    || (capability.reason !== 'capability_resolved' && !input.syntheticCanary)
-  ) {
+  let capabilitySnapshot;
+  if (input.runtimeCapabilitySnapshot !== undefined) {
+    const parsed = OdNextRuntimeCapabilitySnapshotV1Schema.safeParse(
+      input.runtimeCapabilitySnapshot,
+    );
+    if (!parsed.success) {
+      throw new Error('OD Next runtime planning facts unavailable: frozen_snapshot_invalid');
+    }
+    if (parsed.data.agentId !== input.agentId) {
+      throw new Error('OD Next runtime planning facts unavailable: frozen_snapshot_runtime_mismatch');
+    }
+    const { snapshotHash, ...withoutHash } = parsed.data;
+    if (hashOdNextRuntimeCapabilitySnapshotV1(withoutHash) !== snapshotHash) {
+      throw new Error('OD Next runtime planning facts unavailable: frozen_snapshot_hash_mismatch');
+    }
+    capabilitySnapshot = parsed.data;
+  } else {
+    if (input.automaticAdmission) {
+      throw new Error('OD Next runtime planning facts unavailable: frozen_snapshot_missing');
+    }
+    // Compatibility fallback for explicitly selected/test strategy paths. The
+    // automatic active path must consume the snapshot frozen at admission.
+    const versions = await input.getRuntimeVersions();
+    if (!versions?.invocable) {
+      throw new Error('OD Next runtime planning facts unavailable: runtime_not_invocable');
+    }
+    const capability = resolveBundledOdNextRuntimeCapability({
+      agentId: input.agentId,
+      ...(versions.agentCliVersion
+        ? { agentCliVersion: versions.agentCliVersion }
+        : {}),
+      ...(versions.runtimeCompanionName
+        ? { runtimeCompanionName: versions.runtimeCompanionName }
+        : {}),
+      ...(versions.runtimeCompanionVersion
+        ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
+        : {}),
+    });
+    if (
+      !capability.snapshot
+      || (capability.reason !== 'capability_resolved' && !input.syntheticCanary)
+    ) {
+      throw new Error(
+        `OD Next runtime planning facts unavailable: ${capability.reason}`,
+      );
+    }
+    capabilitySnapshot = capability.snapshot;
+  }
+  const eligibility = evaluateOdNextExecutionEligibility(capabilitySnapshot, 'complex');
+  if (!eligibility.eligible && !input.syntheticCanary) {
     throw new Error(
-      `OD Next runtime planning facts unavailable: ${capability.reason}`,
+      `OD Next runtime planning facts unavailable: ${eligibility.reason}`,
     );
   }
   const catalog = daemonOwnedOdNextPlanningCatalog(resolvedRecipe.taskType);
   return {
     ...resolvedRecipe,
     planningFacts: {
-      capabilitySnapshotHash: capability.snapshot.snapshotHash.replace(/^sha256:/, ''),
+      capabilitySnapshotHash: capabilitySnapshot.snapshotHash.replace(/^sha256:/, ''),
       inputRefs: ['request'],
       productionRoutes: catalog.productionRoutes,
       outputKinds: catalog.outputKinds,
@@ -314,6 +358,9 @@ export function createOdNextInitialPromptBundleService(
       frozenSkillPackage,
       odNextSyntheticCanary:
         meta.strategyRolloutDecision?.syntheticCanary === true,
+      odNextAutomaticAdmission:
+        meta.strategyRolloutDecision?.effectiveMode === 'active',
+      runtimeCapabilitySnapshot: meta.runtimeCapabilitySnapshot,
     });
     const loadedTaskInputs = loadOdNextTaskInputSnapshot(
       taskInputSnapshot,

@@ -213,8 +213,24 @@ function record(input: {
         missingRunIds: [],
       },
       children: input.childStatus
-        ? { availability: 'complete', knownObservationCount: 1 }
-        : { availability: 'unavailable', knownObservationCount: 0 },
+        ? {
+            availability: 'complete',
+            knownObservationCount: 1,
+            expectedRunCount: taskRuns.length,
+            completeRunCount: taskRuns.length,
+            partialRunCount: 0,
+            unavailableRunCount: 0,
+            explicitZeroRunCount: 0,
+          }
+        : {
+            availability: 'unavailable',
+            knownObservationCount: 0,
+            expectedRunCount: taskRuns.length,
+            completeRunCount: 0,
+            partialRunCount: 0,
+            unavailableRunCount: taskRuns.length,
+            explicitZeroRunCount: 0,
+          },
       prompt: {
         complete: taskRuns.length,
         partial: Number(Boolean(input.model)) + Number(Boolean(input.childStatus)),

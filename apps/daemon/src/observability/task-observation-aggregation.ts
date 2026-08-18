@@ -9,6 +9,7 @@ import {
   type NormalizedAgentObservationStatusV1,
   type NormalizedAgentObservationV1,
   type ObservationUsageValuesV1,
+  type OdNextRolloutDecision,
   type PromptBoundaryEvidenceV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
@@ -54,6 +55,11 @@ export interface TaskObservationCoverageV1 {
   children: {
     availability: 'complete' | 'partial' | 'unavailable';
     knownObservationCount: number;
+    expectedRunCount: number;
+    completeRunCount: number;
+    partialRunCount: number;
+    unavailableRunCount: number;
+    explicitZeroRunCount: number;
   };
   prompt: ObservationAvailabilityCountsV1;
   usage: ObservationAvailabilityCountsV1;
@@ -97,6 +103,13 @@ export interface StrategyTaskObservationRootV1 {
   agentCliVersions: string[];
   runtimeCompanionVersions: string[];
   runtimeAdapterVersions: string[];
+  rolloutAdmission?: {
+    requestedMode: OdNextRolloutDecision['requestedMode'];
+    effectiveMode: OdNextRolloutDecision['effectiveMode'];
+    primaryReasonCode: string;
+    compatibilityBasis: 'local_synthetic_canary' | 'runtime_adapter_family_fixture_evidence';
+    admissionStage: 'activation_admission';
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -171,6 +184,20 @@ export interface TaskObservationExportContextV1 {
   appChannel?: string;
   packaged?: boolean;
   clientType?: 'desktop' | 'web' | 'unknown';
+}
+
+export function canonicalTaskObservationTraceTags(
+  aggregate: StrategyTaskObservationAggregateV1,
+  context?: TaskObservationExportContextV1,
+): string[] {
+  return [
+    'od-next-strategy-v2',
+    `route:${aggregate.root.route}`,
+    `execution-mode:${aggregate.root.executionMode}`,
+    ...(context
+      ? [`environment:${context.environment}`, `rollout:${context.tag}`]
+      : []),
+  ];
 }
 
 export class InvalidTaskObservationAggregateError extends Error {
@@ -477,16 +504,40 @@ function usageSummary(
 }
 
 function childCoverage(
+  taskRuns: readonly NormalizedAgentObservationV1[],
   children: readonly NormalizedAgentObservationV1[],
 ): TaskObservationCoverageV1['children'] {
-  if (children.length === 0) {
-    return { availability: 'unavailable', knownObservationCount: 0 };
-  }
+  const coverages = taskRuns.map((run) => run.childEvidenceCoverage ?? {
+    availability: 'unavailable' as const,
+    source: 'runtime',
+    knownChildCount: 0,
+    explicitZero: false,
+    limitations: ['child_evidence_collection_summary_unavailable'],
+    diagnosticCounts: [],
+  });
+  const completeRunCount = coverages.filter((coverage) => coverage.availability === 'complete').length;
+  const partialRunCount = coverages.filter((coverage) => coverage.availability === 'partial').length;
+  const unavailableRunCount = coverages.filter(
+    (coverage) => coverage.availability === 'unavailable',
+  ).length;
+  const declaredChildCount = coverages.reduce(
+    (total, coverage) => total + coverage.knownChildCount,
+    0,
+  );
   return {
-    availability: children.every((child) => TERMINAL_OBSERVATION_STATUSES.has(child.status))
-      ? 'complete'
-      : 'partial',
+    availability: unavailableRunCount > 0
+      ? 'unavailable'
+      : partialRunCount > 0 || declaredChildCount !== children.length || children.some(
+        (child) => !TERMINAL_OBSERVATION_STATUSES.has(child.status),
+      )
+        ? 'partial'
+        : 'complete',
     knownObservationCount: children.length,
+    expectedRunCount: taskRuns.length,
+    completeRunCount,
+    partialRunCount,
+    unavailableRunCount,
+    explicitZeroRunCount: coverages.filter((coverage) => coverage.explicitZero).length,
   };
 }
 
@@ -508,6 +559,13 @@ function aggregateLimitations(args: {
       (observation) => observation.turnAccounting?.disposition === 'exclude_inherited',
     ) ? ['inherited_turn_copies_excluded_from_usage'] : []),
     ...(args.observations.flatMap((observation) => observation.limitations)),
+    ...(args.observations.flatMap(
+      (observation) => observation.childEvidenceCoverage?.limitations ?? [],
+    )),
+    ...(args.observations.flatMap(
+      (observation) => observation.childEvidenceCoverage?.diagnosticCounts
+        .map((diagnostic) => diagnostic.code) ?? [],
+    )),
   ])].sort(compareCodeUnits);
 }
 
@@ -515,6 +573,7 @@ export function aggregateStrategyTaskObservations(input: {
   task: StrategyTaskExecutionRecord;
   observations: readonly unknown[];
   taskType?: string;
+  strategyRolloutDecision?: OdNextRolloutDecision | null;
 }): StrategyTaskObservationAggregateV1 {
   ensureTaskMapping(input.task);
   const parsed = input.observations.map((observation) => (
@@ -549,7 +608,7 @@ export function aggregateStrategyTaskObservations(input: {
   validateParentGraph(input.task, observations);
   const sorted = sortObservations(observations);
   const childObservations = sorted.filter((observation) => observation.kind === 'child_agent');
-  const children = childCoverage(childObservations);
+  const children = childCoverage(taskRuns, childObservations);
   const coverage: TaskObservationCoverageV1 = {
     runs: {
       availability: missingRunIds.length === 0 ? 'complete' : 'partial',
@@ -614,6 +673,19 @@ export function aggregateStrategyTaskObservations(input: {
         'runtimeCompanionVersion',
       ),
       runtimeAdapterVersions: distinctRuntimeVersions(sorted, 'runtimeAdapterVersion'),
+      ...(input.strategyRolloutDecision
+        ? {
+            rolloutAdmission: {
+              requestedMode: input.strategyRolloutDecision.requestedMode,
+              effectiveMode: input.strategyRolloutDecision.effectiveMode,
+              primaryReasonCode: input.strategyRolloutDecision.primaryReasonCode,
+              compatibilityBasis: input.strategyRolloutDecision.syntheticCanary
+                ? 'local_synthetic_canary' as const
+                : 'runtime_adapter_family_fixture_evidence' as const,
+              admissionStage: 'activation_admission' as const,
+            },
+          }
+        : {}),
       createdAt: input.task.createdAt,
       updatedAt: input.task.updatedAt,
     },
@@ -884,14 +956,10 @@ export function buildLegacyTaskObservationPayload(
     release: context?.appVersion,
     version: context?.appVersion ?? aggregate.root.strategyVersion,
     timestamp: new Date(aggregate.root.createdAt).toISOString(),
+    tags: canonicalTaskObservationTraceTags(aggregate, context),
     ...(context
       ? {
           environment: context.environment,
-          tags: [
-            'od-next-v2',
-            `environment:${context.environment}`,
-            `rollout:${context.tag}`,
-          ],
         }
       : {}),
     metadata: {
@@ -916,6 +984,7 @@ export function buildLegacyTaskObservationPayload(
       agentCliVersions: aggregate.root.agentCliVersions,
       runtimeCompanionVersions: aggregate.root.runtimeCompanionVersions,
       runtimeAdapterVersions: aggregate.root.runtimeAdapterVersions,
+      rolloutAdmission: aggregate.root.rolloutAdmission,
       ...(context
         ? {
             environment: context.environment,
@@ -982,6 +1051,7 @@ export function buildLegacyTaskObservationPayload(
         turnAccountingOwnerObservationId:
           observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
+        childEvidenceCoverage: observation.childEvidenceCoverage,
         ...safeTaskObservationRuntimeVersions(observation),
         ...quality.metadata,
         limitations: safeTaskObservationLimitationCodes(observation.limitations),

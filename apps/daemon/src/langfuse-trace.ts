@@ -359,6 +359,13 @@ export interface ReportContext {
   runtime?: RuntimeInfo;
   /** Redacted section-level prompt diagnostics captured before agent spawn. */
   promptTelemetry?: PromptStackTelemetry;
+  strategyRolloutDecision?: {
+    requestedMode: string;
+    effectiveMode: string;
+    primaryReasonCode: string;
+    syntheticCanary?: boolean;
+    reasonCodes?: readonly string[];
+  };
   extraTags?: string[];
 }
 
@@ -1835,6 +1842,21 @@ export function buildTracePayload(
   const generationInput = promptStack
     ? structuredPromptStackInput(promptStack)
     : inputText;
+  const rolloutReasonCodes = ctx.strategyRolloutDecision?.reasonCodes ?? [];
+  const rolloutCompatibilityBasis = !ctx.strategyRolloutDecision
+    ? undefined
+    : ctx.strategyRolloutDecision.syntheticCanary
+      ? 'local_synthetic_canary'
+      : ctx.strategyRolloutDecision.effectiveMode === 'active'
+        ? 'runtime_adapter_family_fixture_evidence'
+        : rolloutReasonCodes.some((reason) => reason.includes('capability'))
+          || ctx.strategyRolloutDecision.primaryReasonCode.includes('capability')
+          ? 'capability_unverified'
+          : 'not_evaluated';
+  const rolloutFallbackStage = ctx.strategyRolloutDecision?.primaryReasonCode
+    === 'od_next_rollout_prestart_preparation_failed'
+    ? 'activation_preparation'
+    : undefined;
 
   // Trace metadata is the queryable + exportable fact-sheet for each turn.
   // Anything we want to slice on for evals or dataset construction lives
@@ -1893,6 +1915,14 @@ export function buildTracePayload(
     os: ctx.runtime?.os,
     osRelease: ctx.runtime?.osRelease,
     arch: ctx.runtime?.arch,
+    strategy_rollout_requested_mode: ctx.strategyRolloutDecision?.requestedMode,
+    strategy_rollout_effective_mode: ctx.strategyRolloutDecision?.effectiveMode,
+    strategy_rollout_primary_reason_code: ctx.strategyRolloutDecision?.primaryReasonCode,
+    strategy_rollout_compatibility_basis: rolloutCompatibilityBasis,
+    strategy_rollout_admission_stage: ctx.strategyRolloutDecision
+      ? 'activation_admission'
+      : undefined,
+    strategy_rollout_fallback_stage: rolloutFallbackStage,
     clientType: ctx.runtime?.clientType,
     agentCliVersion: ctx.runtime?.agentCliVersion,
     runtimeCompanionName: ctx.runtime?.runtimeCompanionName,

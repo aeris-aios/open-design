@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
   NormalizedAgentObservationV1Schema,
+  type ChildEvidenceCoverageV1,
   type NormalizedAgentObservationV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
@@ -102,6 +103,7 @@ export interface ClaudeChildToolRuntimeFact {
 }
 
 export type ClaudeOpenChildTerminationReason =
+  | 'complete'
   | 'canceled'
   | 'timeout'
   | 'stream_incomplete';
@@ -109,6 +111,7 @@ export type ClaudeOpenChildTerminationReason =
 export interface ClaudeChildEvidenceCollector {
   observe(value: unknown): void;
   finishOpenChildren(reason: ClaudeOpenChildTerminationReason): void;
+  coverage(): ChildEvidenceCoverageV1;
 }
 
 interface NativeChildToolRegistration {
@@ -281,6 +284,7 @@ export function createClaudeChildEvidenceCollector(input: {
   let runtimeSessionId: string | undefined;
   let runtimeReportedVersion: string | undefined;
   let runtimeSessionConflicted = false;
+  let collectionTermination: ClaudeOpenChildTerminationReason | null = null;
 
   function emit(fact: ClaudeChildRuntimeFact): void {
     // This is a side channel. A telemetry/observer callback must never consume
@@ -789,14 +793,16 @@ export function createClaudeChildEvidenceCollector(input: {
   }
 
   function finishOpenChildren(reason: ClaudeOpenChildTerminationReason): void {
+    collectionTermination = reason;
+    const openChildReason = reason === 'complete' ? 'stream_incomplete' : reason;
     for (const registration of nativeTools.values()) {
       if (registration.terminal || registration.poisoned) continue;
       terminalChildTool({
         childId: registration.childId,
         rawToolCallId: registration.rawToolCallId,
-        state: reason === 'canceled' ? 'canceled' : 'failed',
+        state: openChildReason === 'canceled' ? 'canceled' : 'failed',
         sourceEventType: 'host_process_close',
-        terminationReason: reason,
+        terminationReason: openChildReason,
       });
     }
     for (const [childId, lifecycle] of lifecycles) {
@@ -804,14 +810,53 @@ export function createClaudeChildEvidenceCollector(input: {
       if (lifecycle.terminal || registration?.poisoned) continue;
       terminal({
         childId,
-        state: reason === 'canceled' ? 'canceled' : 'failed',
+        state: openChildReason === 'canceled' ? 'canceled' : 'failed',
         sourceEventType: 'host_process_close',
-        terminationReason: reason,
+        terminationReason: openChildReason,
       });
     }
   }
 
-  return { observe, finishOpenChildren };
+  function coverage(): ChildEvidenceCoverageV1 {
+    const childIds = new Set([...nativeTasks.keys(), ...lifecycles.keys()]);
+    const diagnosticCounts = new Map<string, number>();
+    const addDiagnostic = (code: string) => {
+      diagnosticCounts.set(code, (diagnosticCounts.get(code) ?? 0) + 1);
+    };
+    if (collectionTermination === null) {
+      addDiagnostic('child_collection_not_finalized');
+    } else if (collectionTermination !== 'complete') {
+      addDiagnostic(`child_collection_${collectionTermination}`);
+    }
+    if (runtimeSessionConflicted) addDiagnostic('runtime_session_conflicted');
+    for (const childId of childIds) {
+      const registration = nativeTasks.get(childId);
+      const lifecycle = lifecycles.get(childId);
+      if (registration?.poisoned) addDiagnostic('child_lifecycle_conflicted');
+      if (!lifecycle) {
+        addDiagnostic('child_start_unobserved');
+      } else if (!lifecycle.terminal) {
+        addDiagnostic('child_terminal_unobserved');
+      } else if (lifecycle.terminal.terminationReason === 'stream_incomplete') {
+        addDiagnostic('child_stream_incomplete');
+      }
+    }
+    const knownChildCount = childIds.size;
+    const diagnostics = [...diagnosticCounts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([code, count]) => ({ code, count }));
+    const complete = diagnostics.length === 0;
+    return {
+      availability: complete ? 'complete' : knownChildCount > 0 ? 'partial' : 'unavailable',
+      source: 'claude_stream_json',
+      knownChildCount,
+      explicitZero: complete && knownChildCount === 0,
+      limitations: complete ? [] : diagnostics.map(({ code }) => code),
+      diagnosticCounts: diagnostics,
+    };
+  }
+
+  return { observe, finishOpenChildren, coverage };
 }
 
 export interface AdaptClaudeChildFactInput {

@@ -544,6 +544,13 @@ describe('collectCodexChildEvidence', () => {
     ];
     const parentPath = await writeRollout(home, PARENT, parentRecords);
 
+    await expect(collectCodexChildEvidence(collectInput(home))).resolves.toMatchObject({
+      availability: 'complete',
+      observations: [],
+      limitations: [],
+      diagnostics: [],
+    });
+
     await expect(collectCodexChildEvidence(collectInput(home, { codexHome: undefined })))
       .resolves.toMatchObject({
         availability: 'unavailable',
