@@ -743,7 +743,9 @@ import { TranscriptExportLockedError } from './transcript-export.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerTerminalRoutes } from './routes/terminal.js';
+import { registerBrowserSessionRoutes } from './routes/browser-sessions.js';
 import { createTerminalService } from './terminals.js';
+import { createBrowserSessionService } from './browser-sessions.js';
 import { registerSocialShareRoutes } from './routes/social-share.js';
 import { registerOpenDesignPublicMetadataRoutes } from './routes/open-design-public-metadata.js';
 import { registerWhatsNewRoutes } from './routes/whats-new.js';
@@ -7126,6 +7128,7 @@ export async function startServer({
   // Interactive Terminal sessions (node-pty). In-memory, process-local, and
   // killed on daemon shutdown — see shutdownDaemonRuns below.
   const terminalService = createTerminalService();
+  const browserSessionService = createBrowserSessionService();
 
   // Tracks runs whose finalized assistant message has already been forwarded
   // to Langfuse so repeated message updates only emit one final trace per run.
@@ -7963,6 +7966,13 @@ export async function startServer({
     projectStore: projectStoreDeps,
     projectFiles: projectFileDeps,
     terminals: terminalService,
+    authorizeProjectRequest,
+  });
+  registerBrowserSessionRoutes(app, {
+    db,
+    http: httpDeps,
+    projectStore: projectStoreDeps,
+    browserSessions: browserSessionService,
     authorizeProjectRequest,
   });
   registerImportRoutes(app, {
@@ -13201,6 +13211,19 @@ export async function startServer({
             agentStderrTail,
           ].join('\n');
           clearInactivityWatchdog();
+          // A parsed terminal Claude result has stronger provenance than text
+          // sniffing across the combined stdout/stderr tail. In particular,
+          // Claude can log `apiKeySource: none` alongside an upstream
+          // `Prompt is too long` result; letting the broad auth diagnostic see
+          // that tail first sends users to /login instead of reducing context.
+          // Only accept the stable code emitted by claude-stream for this
+          // terminal result shape; other Claude errors keep the existing
+          // diagnostic/service fallback behavior.
+          const structuredCode =
+            (ev as any).terminal === true &&
+            (ev as any).code === 'AGENT_PROMPT_TOO_LARGE'
+              ? 'AGENT_PROMPT_TOO_LARGE'
+              : null;
           // Claude surfaces a connection drop / reset as an in-stream `error`
           // frame (assistant `error:"unknown"` + the raw SDK string), which
           // would otherwise reach the UI verbatim as a non-retryable
@@ -13208,25 +13231,33 @@ export async function startServer({
           // child-exit so this path emits the specific class
           // (AGENT_CONNECTION_DROPPED) — retryable, with copy the web can
           // localize and triage can count by code.
-          const diagnostic = diagnoseClaudeCliFailure({
-            agentId: def.id,
-            exitCode: 1,
-            stderrTail: agentStderrTail,
-            stdoutTail: failureText,
-            env: spawnedAgentEnv,
-            resolvedBin: agentLaunch.selectedPath,
-          });
-          const serviceCode = classifyAgentServiceFailure(failureText);
-          agentStreamError = diagnostic?.message
-            ?? rewriteKnownAgentStreamError(agentId, message, failureText);
+          const diagnostic = structuredCode
+            ? null
+            : diagnoseClaudeCliFailure({
+                agentId: def.id,
+                exitCode: 1,
+                stderrTail: agentStderrTail,
+                stdoutTail: failureText,
+                env: spawnedAgentEnv,
+                resolvedBin: agentLaunch.selectedPath,
+              });
+          const serviceCode = structuredCode
+            ? null
+            : classifyAgentServiceFailure(failureText);
+          agentStreamError = structuredCode
+            ? message
+            : diagnostic?.message
+              ?? rewriteKnownAgentStreamError(agentId, message, failureText);
           agentStreamErrorObservedBeforeCancellation = true;
           run.runtimeFailureObservedBeforeCancellation = true;
           send('error', createSseErrorPayload(
-            diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
+            structuredCode ?? diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
             agentStreamError,
             {
-              retryable: diagnostic?.retryable
-                ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
+              retryable: structuredCode
+                ? false
+                : diagnostic?.retryable
+                  ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
               ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
             },
           ));
@@ -15006,6 +15037,7 @@ export async function startServer({
       daemonShuttingDown = true;
       await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
       await terminalService.shutdownActive();
+      await browserSessionService.shutdownActive();
       await design.analytics.shutdown();
     };
     let server;
