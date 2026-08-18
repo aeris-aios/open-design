@@ -164,6 +164,8 @@ export function reportPreviewIframeMessage(
       visible_element_count: boundedNumber(message.visible_element_count),
       viewport_width: boundedNumber(message.viewport_width),
       viewport_height: boundedNumber(message.viewport_height),
+      blank_observation_count: boundedNumber(message.blank_observation_count),
+      sample_interval_ms: boundedNumber(message.sample_interval_ms),
     });
     return true;
   }

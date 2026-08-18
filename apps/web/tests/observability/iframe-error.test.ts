@@ -72,6 +72,8 @@ describe('preview iframe observability', () => {
       visible_element_count: 0,
       viewport_width: 1440,
       viewport_height: 900,
+      blank_observation_count: 2,
+      sample_interval_ms: 1_500,
     }, { surface: 'artifact_preview', renderMode: 'srcdoc' });
 
     expect(reportSafetyEvent).toHaveBeenNthCalledWith(1, 'client_preview_resource_error', expect.objectContaining({
@@ -82,6 +84,8 @@ describe('preview iframe observability', () => {
       reason: 'no_visible_paint_after_timeout',
       visible_element_count: 0,
       viewport_width: 1440,
+      blank_observation_count: 2,
+      sample_interval_ms: 1_500,
     }));
   });
 
