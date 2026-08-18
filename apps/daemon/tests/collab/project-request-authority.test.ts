@@ -57,6 +57,44 @@ function context(overrides: Record<string, unknown> = {}) {
 }
 
 describe('createAuthorizeProjectRequest', () => {
+  it('keeps a first-open placeholder readable/commentable but blocks content writes', async () => {
+    const row = {
+      workspaceId: 'workspace-a',
+      visibility: 'team',
+      resourceState: 'active',
+      // Deliberately model a stale/legacy creator-bound placeholder. Current
+      // materialization keeps this null, but the stamp must independently
+      // fail closed even if a bad binding would otherwise grant writes.
+      createdByWorkspaceMemberId: 'member-a',
+    };
+    const sendApiError = vi.fn();
+    const authorize = createAuthorizeProjectRequest({
+      db: {},
+      getWorkspaceProject: () => row,
+      getWorkspaceProjectByProjectId: () => row,
+      isProjectUnmaterializedPlaceholder: () => true,
+      sendApiError,
+    });
+    const req = request({ workspaceId: 'workspace-a', memberId: 'member-a' });
+
+    await expect(authorize(req, response(), 'project-a', { mode: 'read' }))
+      .resolves.toBe(true);
+    await expect(authorize(req, response(), 'project-a', {
+      mode: 'write',
+      capability: 'comment',
+    })).resolves.toBe(true);
+    await expect(authorize(req, response(), 'project-a', {
+      mode: 'write',
+      capability: 'writeFiles',
+    })).resolves.toBe(false);
+    expect(sendApiError).toHaveBeenLastCalledWith(
+      expect.anything(),
+      409,
+      'PROJECT_MATERIALIZATION_PENDING',
+      expect.any(String),
+    );
+  });
+
   it('serves a headerless bound-project read from local binding without remote authority', async () => {
     const row = {
       workspaceId: 'workspace-a',
