@@ -2523,6 +2523,44 @@
 }
 .home-hero__plugin-presets::-webkit-scrollbar { display: none; }
 
+/* Keep the Examples rail's final geometry reserved while the Workspace-scoped
+   plugin catalogue resolves. These placeholders are deliberately static: the
+   real cards already own their entrance animation, and animating the loading
+   shell would recreate the startup twitch this state is meant to prevent. */
+.home-hero__plugin-presets-loading {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  overflow: hidden;
+  padding: 1px 2px 8px;
+}
+.home-hero__plugin-preset-loading {
+  flex: 0 0 248px;
+  min-width: 0;
+  min-height: 180px;
+  display: grid;
+  grid-template-rows: 150px minmax(0, auto);
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+}
+.home-hero__plugin-preset-loading-preview {
+  display: block;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+.home-hero__plugin-preset-loading-title {
+  display: block;
+  width: 46%;
+  height: 10px;
+  margin: 1px 10px 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-faint) 18%, var(--bg-subtle));
+}
+
 /* Each preset is wrapped in a positioning cell so the "Open as project"
    overlay can sit over the thumbnail without nesting a button inside the
    card button. The flex sizing lives on the cell; the card button fills it. */
@@ -2892,6 +2930,11 @@
   .home-hero__plugin-preset-cell {
     flex-basis: 224px;
   }
+  .home-hero__plugin-preset-loading {
+    flex-basis: 224px;
+    min-height: 170px;
+    grid-template-rows: 136px minmax(0, auto);
+  }
   .home-hero__plugin-preset {
     min-height: 170px;
     grid-template-rows: 136px minmax(0, auto);
@@ -2943,6 +2986,11 @@
   }
   .home-hero__plugin-preset-cell {
     flex-basis: 208px;
+  }
+  .home-hero__plugin-preset-loading {
+    flex-basis: 208px;
+    min-height: 160px;
+    grid-template-rows: 126px minmax(0, auto);
   }
   .home-hero__plugin-preset {
     min-height: 160px;
