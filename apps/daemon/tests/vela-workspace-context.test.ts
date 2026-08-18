@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,7 @@ import {
   velaWorkspaceDirectoryIdentityForSession,
   workspaceContextFromDirectoryItem,
 } from '../src/collab/vela-workspace-context.js';
+import { createActiveWorkspaceSelectionStore } from '../src/collab/active-workspace-selection.js';
 import {
   clearVelaAuthorizationState,
   readVelaControlApiContext,
@@ -1039,7 +1040,11 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     const provider = createVelaWorkspaceContextProvider({
       fetch: fetchImpl,
       readSession: () => SESSION,
-      setLocalSelection: (id) => { selected.push(id); },
+      replaceLocalSelection: (expected, id) => {
+        expect(expected).toBeNull();
+        selected.push(id);
+        return id;
+      },
     });
     const context = await provider.current({});
     expect(selected).toEqual(['ws-personal-1']);
@@ -1063,8 +1068,10 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
       fetch: fetchImpl,
       readSession: () => SESSION,
       getActiveWorkspaceId: () => localSelection,
-      setLocalSelection: (workspaceId) => {
+      replaceLocalSelection: (expectedWorkspaceId, workspaceId) => {
+        if (localSelection !== expectedWorkspaceId) return localSelection;
         localSelection = workspaceId;
+        return localSelection;
       },
     });
 
@@ -1215,29 +1222,37 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
       },
     ],
   };
+  const CONCURRENT_WORKSPACE = {
+    workspaceId: 'ws-team-2',
+    workspaceName: 'Other team',
+    workspaceType: 'team',
+    workspaceMemberId: 'wm-2',
+    role: 'member',
+    memberStatus: 'active',
+    lifecycleState: 'active',
+  } satisfies WorkspaceDirectoryItem;
+  const DIRECTORY_WITH_CONCURRENT_WORKSPACE = {
+    items: [...DIRECTORY_WITHOUT_TEAM.items, CONCURRENT_WORKSPACE],
+  };
 
-  /** A stateful local-pin double: `clearLocalSelection`/`setLocalSelection`
-   *  mutate the SAME backing value `getActiveWorkspaceId` reads, exactly like
-   *  the real `ActiveWorkspaceSelectionStore` — so a clear takes effect for
-   *  the very same `current()` call's fallback pick, not just the next one. */
+  /** A stateful local-pin double whose conditional replacement mutates the
+   *  SAME backing value `getActiveWorkspaceId` reads, exactly like the real
+   *  `ActiveWorkspaceSelectionStore`. */
   function statefulPin(initial: string | undefined) {
     let value = initial;
     const setCalls: string[] = [];
-    const clearCalls: string[] = [];
+    const replaceCalls: Array<[string | null, string]> = [];
     return {
       getActiveWorkspaceId: () => value,
-      setLocalSelection: (id: string) => {
+      replaceLocalSelection: (expectedWorkspaceId: string | null, id: string) => {
+        if ((value ?? null) !== expectedWorkspaceId) return value ?? null;
         value = id;
         setCalls.push(id);
-      },
-      clearLocalSelection: (workspaceId: string) => {
-        if (value !== workspaceId) return false;
-        value = undefined;
-        clearCalls.push(workspaceId);
-        return true;
+        replaceCalls.push([expectedWorkspaceId, id]);
+        return value;
       },
       setCalls,
-      clearCalls,
+      replaceCalls,
     };
   }
 
@@ -1251,7 +1266,7 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
     return fetchImpl;
   }
 
-  it('RED→GREEN: clears the pin and falls back to personal when the workspace vanished from the directory', async () => {
+  it('RED→GREEN: replaces the pin with personal when the workspace vanished from the directory', async () => {
     const pin = statefulPin('ws-team-1');
     const fetchImpl = scriptedFetch({
       directory: () => jsonResponse(200, DIRECTORY_WITHOUT_TEAM),
@@ -1260,8 +1275,7 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
       fetch: fetchImpl,
       readSession: () => SESSION,
       getActiveWorkspaceId: pin.getActiveWorkspaceId,
-      setLocalSelection: pin.setLocalSelection,
-      clearLocalSelection: pin.clearLocalSelection,
+      replaceLocalSelection: pin.replaceLocalSelection,
     });
 
     const context = await provider.current({});
@@ -1272,12 +1286,12 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
     expect(context).not.toBeNull();
     expect(context?.workspaceId).toBe('ws-personal-1');
     expect(context?.workspaceType).toBe('personal');
-    expect(pin.clearCalls.length).toBe(1);
+    expect(pin.replaceCalls).toEqual([['ws-team-1', 'ws-personal-1']]);
     expect(pin.setCalls).toEqual(['ws-personal-1']);
     expect(pin.getActiveWorkspaceId()).toBe('ws-personal-1');
   });
 
-  it('RED→GREEN: clears the pin when the membership is listed but no longer active', async () => {
+  it('RED→GREEN: replaces the pin when the membership is listed but no longer active', async () => {
     const pin = statefulPin('ws-team-1');
     const fetchImpl = scriptedFetch({
       directory: () => jsonResponse(200, DIRECTORY_TEAM_MEMBER_REMOVED),
@@ -1286,41 +1300,95 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
       fetch: fetchImpl,
       readSession: () => SESSION,
       getActiveWorkspaceId: pin.getActiveWorkspaceId,
-      setLocalSelection: pin.setLocalSelection,
-      clearLocalSelection: pin.clearLocalSelection,
+      replaceLocalSelection: pin.replaceLocalSelection,
     });
 
     const context = await provider.current({});
 
     expect(context?.workspaceId).toBe('ws-personal-1');
-    expect(pin.clearCalls.length).toBe(1);
+    expect(pin.replaceCalls).toEqual([['ws-team-1', 'ws-personal-1']]);
     expect(pin.setCalls).toEqual(['ws-personal-1']);
   });
 
-  it('does not overwrite a concurrent local selection during stale-pin recovery', async () => {
+  it('preserves a concurrent selection that wins before stale replacement starts', async () => {
     let pin = 'ws-team-1';
-    const setLocalSelection = vi.fn((workspaceId: string) => {
-      pin = workspaceId;
+    const replaceLocalSelection = vi.fn(() => {
+      pin = CONCURRENT_WORKSPACE.workspaceId;
+      return pin;
     });
     const provider = createVelaWorkspaceContextProvider({
       fetch: scriptedFetch({
-        directory: () => jsonResponse(200, DIRECTORY_WITHOUT_TEAM),
+        directory: () => jsonResponse(200, DIRECTORY_WITH_CONCURRENT_WORKSPACE),
       }),
       readSession: () => SESSION,
       getActiveWorkspaceId: () => pin,
-      setLocalSelection,
-      clearLocalSelection: (workspaceId) => {
-        expect(workspaceId).toBe('ws-team-1');
-        pin = 'ws-personal-1';
-        return false;
-      },
+      replaceLocalSelection,
     });
 
     const context = await provider.current({});
 
-    expect(context?.workspaceId).toBe('ws-personal-1');
-    expect(pin).toBe('ws-personal-1');
-    expect(setLocalSelection).not.toHaveBeenCalled();
+    expect(context?.workspaceId).toBe(CONCURRENT_WORKSPACE.workspaceId);
+    expect(pin).toBe(CONCURRENT_WORKSPACE.workspaceId);
+    expect(replaceLocalSelection).toHaveBeenCalledWith(
+      'ws-team-1',
+      'ws-personal-1',
+    );
+  });
+
+  it('keeps a user switch queued while stale recovery persists its fallback', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'od-stale-workspace-recovery-'));
+    tempDirs.push(root);
+    const activeWorkspace = createActiveWorkspaceSelectionStore(root);
+    await activeWorkspace.set('ws-team-1');
+
+    let releaseRename!: () => void;
+    const renameGate = new Promise<void>((resolve) => {
+      releaseRename = resolve;
+    });
+    let renameStarted!: () => void;
+    const renameWasStarted = new Promise<void>((resolve) => {
+      renameStarted = resolve;
+    });
+    const originalRename = fs.promises.rename.bind(fs.promises);
+    let pauseNextRename = true;
+    const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementation(
+      async (oldPath, newPath) => {
+        if (pauseNextRename) {
+          pauseNextRename = false;
+          renameStarted();
+          await renameGate;
+        }
+        return originalRename(oldPath, newPath);
+      },
+    );
+
+    const provider = createVelaWorkspaceContextProvider({
+      fetch: scriptedFetch({
+        directory: () => jsonResponse(200, DIRECTORY_WITH_CONCURRENT_WORKSPACE),
+      }),
+      readSession: () => SESSION,
+      getActiveWorkspaceId: () => activeWorkspace.get(),
+      replaceLocalSelection: (expectedWorkspaceId, workspaceId) =>
+        activeWorkspace.replaceIf(expectedWorkspaceId, workspaceId),
+    });
+
+    try {
+      const recovering = provider.current({});
+      await renameWasStarted;
+      const userSwitch = activeWorkspace.set(CONCURRENT_WORKSPACE.workspaceId);
+      releaseRename();
+
+      const [context] = await Promise.all([recovering, userSwitch]);
+
+      expect(context?.workspaceId).toBe(CONCURRENT_WORKSPACE.workspaceId);
+      expect(activeWorkspace.get()).toBe(CONCURRENT_WORKSPACE.workspaceId);
+      expect(createActiveWorkspaceSelectionStore(root).get()).toBe(
+        CONCURRENT_WORKSPACE.workspaceId,
+      );
+    } finally {
+      releaseRename();
+      renameSpy.mockRestore();
+    }
   });
 
   it('does NOT clear the pin when the directory request fails (network error) — preserve on B outage', async () => {
@@ -1337,8 +1405,7 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
       fetch: fetchImpl,
       readSession: () => SESSION,
       getActiveWorkspaceId: pin.getActiveWorkspaceId,
-      setLocalSelection: pin.setLocalSelection,
-      clearLocalSelection: pin.clearLocalSelection,
+      replaceLocalSelection: pin.replaceLocalSelection,
     });
 
     const context = await provider.current({});
@@ -1348,7 +1415,7 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
     // untouched so the NEXT successful poll can still recover the real
     // workspace instead of having already been evicted to a fallback.
     expect(context).toBeNull();
-    expect(pin.clearCalls.length).toBe(0);
+    expect(pin.replaceCalls.length).toBe(0);
     expect(pin.setCalls.length).toBe(0);
     expect(pin.getActiveWorkspaceId()).toBe('ws-team-1');
   });
@@ -1362,14 +1429,13 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
       fetch: fetchImpl,
       readSession: () => SESSION,
       getActiveWorkspaceId: pin.getActiveWorkspaceId,
-      setLocalSelection: pin.setLocalSelection,
-      clearLocalSelection: pin.clearLocalSelection,
+      replaceLocalSelection: pin.replaceLocalSelection,
     });
 
     const context = await provider.current({});
 
     expect(context).toBeNull();
-    expect(pin.clearCalls.length).toBe(0);
+    expect(pin.replaceCalls.length).toBe(0);
     expect(pin.setCalls.length).toBe(0);
     expect(pin.getActiveWorkspaceId()).toBe('ws-team-1');
   });

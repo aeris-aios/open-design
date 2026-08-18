@@ -244,6 +244,22 @@ describe('active workspace selection generation', () => {
     expect(store.snapshot()).toEqual(beforeClear);
   });
 
+  it('does not replace a newer selection with a stale recovery fallback', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
+    roots.push(root);
+    const store = createActiveWorkspaceSelectionStore(root);
+    await store.set('workspace-a');
+    const inspected = store.get();
+    await store.set('workspace-b');
+    const beforeReplace = store.snapshot();
+
+    await expect(store.replaceIf(inspected!, 'workspace-fallback')).resolves.toBe(
+      'workspace-b',
+    );
+
+    expect(store.snapshot()).toEqual(beforeReplace);
+  });
+
   it('increments generation when the selection is cleared', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
     roots.push(root);

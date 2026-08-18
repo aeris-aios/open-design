@@ -89,21 +89,15 @@ interface VelaWorkspaceContextOptions {
    */
   getActiveWorkspaceId?: () => string | null | undefined;
   /**
-   * Persist this client's LOCAL selection when it does not have one yet. The
-   * initial selection comes only from the authenticated membership directory;
-   * subsequent user switches replace it through the local active-workspace
-   * route. This never reads or writes B's account-level Active Workspace.
+   * Persist a directory-derived bootstrap or recovery choice only while the
+   * inspected LOCAL selection is still current. Returns the selection that
+   * wins against user switches already queued during persistence. This never
+   * reads or writes B's account-level Active Workspace.
    */
-  setLocalSelection?: (workspaceId: string) => void | Promise<void>;
-  /**
-   * Purge a CONFIRMED-stale local pin: the membership directory was
-   * successfully read and no longer lists this workspace as an active
-   * membership (removed member, or the workspace itself is gone). Never
-   * called on a merely unreachable B. Returns false when another request has
-   * already replaced the inspected value, so recovery must preserve that new
-   * selection instead of choosing a fallback over it.
-   */
-  clearLocalSelection?: (workspaceId: string) => boolean | Promise<boolean>;
+  replaceLocalSelection?: (
+    expectedWorkspaceId: string | null,
+    workspaceId: string,
+  ) => string | null | Promise<string | null>;
   timeoutMs?: number;
 }
 
@@ -307,27 +301,28 @@ export function createVelaWorkspaceContextProvider(
         // An exact request must not mutate or fall back from the caller's
         // workspace. Only a confirmed-stale daemon-local pin is recoverable.
         if (explicitSelection) return null;
-        const cleared = await options.clearLocalSelection?.(localSelection);
-        if (cleared === false) {
-          const concurrentSelection = options.getActiveWorkspaceId?.()?.trim();
-          const concurrent = directory.items.find(
-            (entry) =>
-              entry.workspaceId === concurrentSelection
-              && entry.memberStatus === 'active'
-              && entry.lifecycleState !== 'deleted',
-          );
-          return concurrent
-            ? withUserIdentity(
-                workspaceContextFromDirectoryItem(concurrent, selectedEnv),
-                session,
-              )
-            : null;
-        }
       }
 
       const fallback = pickDefaultWorkspace(directory);
       if (!fallback) return null;
-      await options.setLocalSelection?.(fallback.workspaceId);
+      const winningSelection = await options.replaceLocalSelection?.(
+        localSelection ?? null,
+        fallback.workspaceId,
+      );
+      if (winningSelection !== undefined && winningSelection !== fallback.workspaceId) {
+        const concurrent = directory.items.find(
+          (entry) =>
+            entry.workspaceId === winningSelection
+            && entry.memberStatus === 'active'
+            && entry.lifecycleState !== 'deleted',
+        );
+        return concurrent
+          ? withUserIdentity(
+              workspaceContextFromDirectoryItem(concurrent, selectedEnv),
+              session,
+            )
+          : null;
+      }
       return withUserIdentity(
         workspaceContextFromDirectoryItem(fallback, selectedEnv),
         session,
@@ -928,8 +923,7 @@ export function createWorkspaceContextProviderFromEnv(
     | 'configuredEnv'
     | 'fetchWorkspaceDirectory'
     | 'getActiveWorkspaceId'
-    | 'setLocalSelection'
-    | 'clearLocalSelection'
+    | 'replaceLocalSelection'
   > = {},
 ): WorkspaceContextProvider {
   if (env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() === 'vela') {

@@ -3438,11 +3438,10 @@ export async function startServer({
       configuredEnv: configuredAmrEnv,
       fetchWorkspaceDirectory,
       getActiveWorkspaceId: () => activeWorkspace.get(),
-      setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
-      // Only called after the membership directory CONFIRMS the pinned
-      // workspace is gone (removed member / deleted workspace) — never on a
-      // mere B outage. See resolvePinnedWorkspace in vela-workspace-context.ts.
-      clearLocalSelection: (workspaceId: string) => activeWorkspace.clearIf(workspaceId),
+      // The expected value keeps a directory-derived bootstrap/recovery write
+      // from overwriting a newer user switch queued by another tab.
+      replaceLocalSelection: (expectedWorkspaceId, workspaceId) =>
+        activeWorkspace.replaceIf(expectedWorkspaceId, workspaceId),
     }),
   );
   const workspaceExactContextCache = createWorkspaceExactContextCache({

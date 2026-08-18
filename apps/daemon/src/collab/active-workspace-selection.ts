@@ -12,6 +12,10 @@ export interface ActiveWorkspaceSelectionStore {
   set(workspaceId: string): Promise<void>;
   clear(): Promise<void>;
   clearIf(workspaceId: string): Promise<boolean>;
+  replaceIf(
+    expectedWorkspaceId: string | null,
+    workspaceId: string,
+  ): Promise<string | null>;
   subscribe(listener: (workspaceId: string | null) => void): () => void;
 }
 
@@ -91,6 +95,28 @@ export function createActiveWorkspaceSelectionStore(
     return result;
   };
 
+  const persist = async (workspaceId: string) => {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await fs.promises.writeFile(
+        tempPath,
+        JSON.stringify({ workspaceId }, null, 2),
+        'utf8',
+      );
+      await fs.promises.rename(tempPath, filePath);
+    } catch (error) {
+      await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const commit = (workspaceId: string) => {
+    cached = workspaceId;
+    generation += 1;
+    notify(workspaceId);
+  };
+
   return {
     get: read,
     snapshot() {
@@ -100,22 +126,8 @@ export function createActiveWorkspaceSelectionStore(
       const next = workspaceId.trim();
       if (!next) throw new Error('workspaceId is required');
       await enqueueMutation(async () => {
-        await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-        const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-        try {
-          await fs.promises.writeFile(
-            tempPath,
-            JSON.stringify({ workspaceId: next }, null, 2),
-            'utf8',
-          );
-          await fs.promises.rename(tempPath, filePath);
-        } catch (error) {
-          await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
-          throw error;
-        }
-        cached = next;
-        generation += 1;
-        notify(next);
+        await persist(next);
+        commit(next);
       });
     },
     async clear() {
@@ -137,6 +149,23 @@ export function createActiveWorkspaceSelectionStore(
         notify(null);
         return true;
       });
+    },
+    async replaceIf(expectedWorkspaceId: string | null, workspaceId: string) {
+      const expected = expectedWorkspaceId?.trim() || null;
+      const next = workspaceId.trim();
+      if (!next) throw new Error('workspaceId is required');
+      await enqueueMutation(async () => {
+        if (read() !== expected) return;
+        await persist(next);
+        commit(next);
+      });
+
+      // A user switch can queue while the conditional write is in flight.
+      // Drain mutations that were already queued when this write settled, then
+      // report the selection that actually won instead of the temporary value.
+      const queuedThroughCommit = mutationTail;
+      await queuedThroughCommit;
+      return read();
     },
     subscribe(listener) {
       listeners.add(listener);

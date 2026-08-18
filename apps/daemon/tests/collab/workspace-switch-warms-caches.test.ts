@@ -314,8 +314,11 @@ describe('PUT /api/workspace/active keeps exact enrichment tab-local', () => {
       fetch: fetchImpl,
       readSession: () => session as never,
       getActiveWorkspaceId: () => activeWorkspace.get(),
-      setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
-      clearLocalSelection: (workspaceId: string) => activeWorkspace.clearIf(workspaceId),
+      replaceLocalSelection: async (expectedWorkspaceId, workspaceId) => {
+        if (activeWorkspace.get() !== expectedWorkspaceId) return activeWorkspace.get();
+        await activeWorkspace.set(workspaceId);
+        return activeWorkspace.get();
+      },
     });
 
     // The production cached fetcher: the route's read is served from cache for
