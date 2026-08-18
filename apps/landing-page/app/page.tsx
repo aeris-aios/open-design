@@ -288,7 +288,7 @@ const FALLING_ICONS = [
   { src: '/agent-icons/kimi.svg', alt: 'Kimi' },
   { src: '/agent-icons/kiro.svg', alt: 'Kiro' },
   { src: '/agent-icons/qwen.svg', alt: 'Qwen' },
-  { src: '/agent-icons/grok-build.svg', alt: 'Grok' },
+  { src: '/agent-icons/grok-build.png', alt: 'Grok' },
   { src: '/agent-icons/deepseek.svg', alt: 'DeepSeek' },
   { src: '/agent-icons/qoder.svg', alt: 'Qoder' },
   { src: '/agent-icons/amr.svg', alt: 'AMR' },

@@ -98,6 +98,18 @@ describe('AgentIcon', () => {
     expect(markup).not.toContain('<img src="/agent-icons/cursor-agent.svg"');
   });
 
+  it('uses the supplied Grok Build mark everywhere through the shared themed icon mapping', () => {
+    const grokPng = readFileSync(
+      new URL('../../public/agent-icons/grok-build.png', import.meta.url),
+    );
+    const markup = renderToStaticMarkup(<AgentIcon id="grok-build" size={32} />);
+
+    expect(grokPng.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(markup).toContain('class="agent-icon agent-icon-mono"');
+    expect(markup).toContain('mask-image:url(&quot;/agent-icons/grok-build.png&quot;)');
+    expect(markup).not.toContain('/agent-icons/grok-build.svg');
+  });
+
   it('falls back to an initial-letter pill for unknown agents', () => {
     const markup = renderToStaticMarkup(<AgentIcon id="unknown-agent" size={24} />);
 

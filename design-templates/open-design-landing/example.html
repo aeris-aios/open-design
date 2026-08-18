@@ -1674,11 +1674,12 @@ section.tight { padding: 90px 0; }
   align-items: center;
 }
 .amr-band-logo {
-  /* <img>-loaded SVGs can't inherit page color; they paint in their own
-     default ink (near-black). Opacity softens the row. */
+  /* Brand assets paint in their own near-black ink. Opacity softens the row;
+     contain preserves wide marks such as Grok Build without distortion. */
   width: 26px;
   height: 26px;
   display: block;
+  object-fit: contain;
   opacity: 0.74;
   transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -2795,7 +2796,7 @@ footer {
         <li><img class='amr-band-logo' src='./assets/agents/qwen.svg' alt='Qwen' title='Qwen' width='26' height='26' loading='lazy' /></li>
         <li><img class='amr-band-logo' src='./assets/agents/minimax.svg' alt='MiniMax' title='MiniMax' width='26' height='26' loading='lazy' /></li>
         <li><img class='amr-band-logo' src='./assets/agents/xiaomi.svg' alt='Xiaomi MiMo' title='Xiaomi MiMo' width='26' height='26' loading='lazy' /></li>
-        <li><img class='amr-band-logo' src='./assets/agents/xai.svg' alt='xAI' title='xAI' width='26' height='26' loading='lazy' /></li>
+        <li><img class='amr-band-logo' src='./assets/agents/grok-build.png' alt='xAI' title='xAI' width='26' height='26' loading='lazy' /></li>
         <li class='amr-band-more' aria-label='and more'>&hellip;</li>
       </ul>
       <div class='amr-band-actions'>

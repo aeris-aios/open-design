@@ -133,7 +133,7 @@ export interface PricingModel {
 export const PREMIUM_MODELS: readonly PricingModel[] = [
   { name: 'Claude-Fable-5', icon: '/agents/anthropic.svg' },
   { name: 'GPT-5.6 (Sol/Terra/Luna)', icon: '/agents/openai.svg' },
-  { name: 'Grok-4.5', icon: '/agents/xai.svg', trial: true },
+  { name: 'Grok-4.5', icon: '/agent-icons/grok-build.png', trial: true },
 ] as const;
 
 /**

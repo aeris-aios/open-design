@@ -25,7 +25,7 @@ const ICON_EXT: Record<string, 'svg' | 'png'> = {
   reasonix: 'svg',
   mimo: 'svg',
   hermes: 'svg',
-  'grok-build': 'svg',
+  'grok-build': 'png',
   kimi: 'svg',
   pi: 'svg',
   kiro: 'svg',
@@ -37,14 +37,12 @@ const ICON_EXT: Record<string, 'svg' | 'png'> = {
   devin: 'png',
 };
 
-// SVG marks that are single-color silhouettes (no baked brand colors).
+// Single-color silhouettes (SVG or PNG, with no baked brand colors).
 // Rendered as a CSS-masked `<span>` so `background-color: currentColor`
 // can paint them in whatever text color the surrounding theme resolves
 // to — light text under dark theme, dark text under light theme. The
-// SVG file itself uses an explicit dark fill (`#1c1b1a`, baked) instead
-// of `currentColor`, so if anything outside this component ever loads
-// the asset through `<img>` it still renders as a legible dark mark
-// rather than collapsing to the SVG document's default black-on-…-black.
+// bundled source still contains dark artwork, so direct `<img>` consumers
+// retain a legible light-theme fallback.
 const MONO_ICONS = new Set([
   'cursor-agent',
   'opencode',
@@ -58,8 +56,8 @@ export function AgentIcon({ id, size = 36, className }: Props) {
   const cls = 'agent-icon' + (className ? ' ' + className : '');
   const ext = ICON_EXT[id];
   if (ext) {
-    if (ext === 'svg' && MONO_ICONS.has(id)) {
-      const src = `/agent-icons/${id}.svg`;
+    if (MONO_ICONS.has(id)) {
+      const src = `/agent-icons/${id}.${ext}`;
       const style: CSSProperties = {
         width: size,
         height: size,

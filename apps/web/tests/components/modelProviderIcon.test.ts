@@ -7,7 +7,7 @@ describe('modelProviderIconSrc', () => {
     expect(modelProviderIconSrc('anthropic/claude-sonnet-4-5')).toBe('/agent-icons/claude.svg');
     expect(modelProviderIconSrc('openai/gpt-5')).toBe('/model-icons/openai.svg');
     expect(modelProviderIconSrc('google/gemini-2.5-pro')).toBe('/model-icons/google-gemini.svg');
-    expect(modelProviderIconSrc('xai/grok-4')).toBe('/model-icons/x.svg');
+    expect(modelProviderIconSrc('xai/grok-4')).toBe('/agent-icons/grok-build.png');
     expect(modelProviderIconSrc('deepseek/deepseek-chat')).toBe('/agent-icons/deepseek.svg');
     expect(modelProviderIconSrc('qwen/qwen3-max')).toBe('/agent-icons/qwen.svg');
     expect(modelProviderIconSrc('openrouter/anthropic/claude-sonnet-4-5')).toBe(
@@ -21,7 +21,7 @@ describe('modelProviderIconSrc', () => {
     expect(modelProviderIconSrc('claude/claude-opus-4-5')).toBe('/agent-icons/claude.svg');
     expect(modelProviderIconSrc('gpt/gpt-4.1')).toBe('/model-icons/openai.svg');
     expect(modelProviderIconSrc('gemini/gemini-2.5-flash')).toBe('/model-icons/google-gemini.svg');
-    expect(modelProviderIconSrc('grok/grok-4')).toBe('/model-icons/x.svg');
+    expect(modelProviderIconSrc('grok/grok-4')).toBe('/agent-icons/grok-build.png');
   });
 
   it('returns null for ids with no provider prefix', () => {

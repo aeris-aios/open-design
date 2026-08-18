@@ -27,7 +27,7 @@ export function modelProviderIconSrc(
   if (vendor.includes('google') || vendor.includes('gemini'))
     return '/model-icons/google-gemini.svg';
   if (vendor.includes('xai') || vendor.includes('grok'))
-    return '/model-icons/x.svg';
+    return '/agent-icons/grok-build.png';
   if (vendor.includes('deepseek')) return '/agent-icons/deepseek.svg';
   if (vendor.includes('glm') || vendor.includes('zhipu'))
     return '/agent-icons/glm.svg';

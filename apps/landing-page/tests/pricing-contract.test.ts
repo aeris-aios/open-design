@@ -258,6 +258,13 @@ describe("pricing contract", () => {
     );
   });
 
+  it("uses the shared Grok Build brand mark for the xAI premium model", () => {
+    assert.equal(
+      PREMIUM_MODELS.find((model) => model.name === "Grok-4.5")?.icon,
+      "/agent-icons/grok-build.png",
+    );
+  });
+
   it("publishes the four static Team tiers shown by Vela pricing", () => {
     assert.deepEqual(
       PRICING_SNAPSHOT.teamTiers.map((tier) => ({
