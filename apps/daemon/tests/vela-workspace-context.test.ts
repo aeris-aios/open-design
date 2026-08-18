@@ -903,6 +903,27 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
 });
 
 describe('createVelaWorkspaceContextProvider', () => {
+  it('adds the signed-in user name and profile image to the workspace identity', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch;
+    const provider = createVelaWorkspaceContextProvider({
+      fetch: fetchImpl,
+      readSession: () => ({
+        ...SESSION,
+        user: {
+          id: 'auth-user-1',
+          email: 'elian@example.com',
+          name: 'Elian Zhang',
+          image: 'https://example.com/elian.png',
+        },
+      }),
+    });
+
+    await expect(provider.current({})).resolves.toMatchObject({
+      displayName: 'Elian Zhang',
+      avatarUrl: 'https://example.com/elian.png',
+    });
+  });
+
   it('fetches B with the vela session bearer token and maps the result', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch;
     const provider = createVelaWorkspaceContextProvider({
@@ -922,6 +943,28 @@ describe('createVelaWorkspaceContextProvider', () => {
     const provider = createVelaWorkspaceContextProvider({ fetch: fetchImpl, readSession: () => null });
     expect(await provider.current({})).toBeNull();
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+
+  it('reads the current configured AMR environment on every workspace request', async () => {
+    let profile = 'prod';
+    const readSession = vi.fn((
+      _env?: NodeJS.ProcessEnv,
+      _configuredEnv?: Record<string, string>,
+    ) => SESSION as ReturnType<typeof readVelaControlApiContext>);
+    const provider = createVelaWorkspaceContextProvider({
+      fetch: (async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch,
+      configuredEnv: () => ({ OPEN_DESIGN_AMR_PROFILE: profile }),
+      readSession,
+    });
+
+    await provider.current({});
+    profile = 'test';
+    await provider.current({});
+
+    expect(readSession.mock.calls.map((call) => call[1])).toEqual([
+      { OPEN_DESIGN_AMR_PROFILE: 'prod' },
+      { OPEN_DESIGN_AMR_PROFILE: 'test' },
+    ]);
   });
 
   it('degrades to null on a 401 (signed out) or a network error', async () => {

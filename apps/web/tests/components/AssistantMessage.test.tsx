@@ -277,7 +277,7 @@ describe('AssistantMessage feedback gate', () => {
     expect(onForkFromMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('reaches Contribute (share to Open Design) through the More -> Share cascade', () => {
+  it('reaches Contribute (share to OpenDesign) through the More -> Share cascade', () => {
     const onShare = vi.fn();
 
     render(
@@ -1333,8 +1333,9 @@ describe('AssistantMessage recovered produced files', () => {
     expect(produced?.textContent).toContain('browser-war-deck-outline.md');
     const download = produced?.querySelector('a[download]');
     expect(download).toBeTruthy();
-    expect(download?.getAttribute('href')).toContain('workspaceId=workspace-a');
-    expect(download?.getAttribute('href')).toContain('workspaceMemberId=member-a');
+    expect(download?.getAttribute('href')).toBe(
+      '/api/projects/proj-1/raw/browser-war-deck-outline.md',
+    );
     expect(screen.queryByTestId('file-ops-summary')).toBeNull();
   });
 
