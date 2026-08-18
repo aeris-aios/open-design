@@ -2083,15 +2083,19 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div>
         </div>
 
-        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
-
-        <!-- 「已记住 N 条偏好」不放在这一屏:执行中整屏讲的是 agent 正在做什么,
-             记住偏好不是这一轮的一个步骤,夹在计划和第 1 步中间会被读成流程的一环。
-             它是这一轮攒下来的东西,放在「跑完」那一屏和结论一起给。 -->
-
-        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+        <!-- 跑完的当场并进这一行,外面不摊已完成的步骤(见组件 7 的「跑一步、收一步」)。
+             「已记住 N 条偏好」也不放这一屏:记住偏好不是这一轮的一个步骤,夹在中间
+             会被读成流程的一环 —— 它放在「跑完」那一屏和结论一起给。 -->
+        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 2 个</span><span class="ms">24.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body mod-stack">
+            <p class="think">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span><span class="ms">6.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body">提取样式 · 参数化价格与标签 · 两页各替换一处</div></details>
+          </div></details>
 
         <details class="fold" open>
           <summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="ms mod-num">第 3/4 步</span></summary>
