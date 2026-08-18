@@ -318,7 +318,7 @@
    ------------------------------------------------------------
    来源:飞书文档《…/docx/VtOwd4ON2oYZj0xd6OTceubcnDe》第三节
    「三、OpenDesign 的生成流程」的组件表(21 行),
-   外加评审时补的 4 个(22 待发送附件 / 23 重连 / 24 回答头 / 25 选中文字),共 25 个。
+   外加评审时补的 3 个(21 待发送附件 / 22 重连 / 23 选中文字),共 25 个。
    表里每个组件给了:出现时机 / 默认状态 / 包含的状态 / 支持的操作 /
    展示的信息 —— 本文件把这五列逐一落成可看的样式。
 
@@ -575,6 +575,7 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
   flex: none; display: grid; place-items: center;
   height: calc(var(--t-body) * var(--lh-body) + 18px);
 }
+/* 消息旁的操作按钮跟着气泡的行高走,
    不自己定尺寸。原来用的是 .btn.mod-sm,图标只有 11px。 */
 .msg-act button {
   display: grid; place-items: center; width: 30px; height: 30px;
@@ -899,6 +900,9 @@ button.att-d:hover { border-color: var(--border-strong); }
      · 有耗时  → .ms 吃空白靠右,.ms + .chev 把箭头的 auto 清掉,紧跟其后
      · 没耗时  → .chev 自己吃空白靠右
    这样不用给每条 summary 补一个空的耗时占位。 */
+/* 耗时【全文件一种写法】:0.4s / 18.2s / 1m 12s —— 不到一分只写秒,过了一分
+   写 Nm Ns,一律等宽拉丁。原来总耗时写「1 分 12 秒」,和它上下那一列 18.2s、
+   6.4s 不是同一副字、也不是同一套单位,同一列里两种记法,扫下来对不齐也读不成组。 */
 .fold > summary .ms { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
 .fold > summary .chev { margin-left: auto; display: inline-flex; transition: transform var(--duration-faster) var(--ease-out); }
 .fold > summary .ms + .chev { margin-left: 0; }
@@ -915,22 +919,32 @@ button.att-d:hover { border-color: var(--border-strong); }
    所以里面一律脱框,层级只靠【缩进】和状态点的列对齐来表达。
    例外只有终端输出:那是代码,得有底色才读得出是"机器打出来的",但它也只留底
    色,不要边框。 */
-/* Thinking 不是模块,是两样东西。
+/* Thinking 是两样东西。
    ------------------------------------------------------------
-   ① 进行中的一行:发出去之后、第一个字落地之前,面板空着,这一行是唯一能说明
-      "它没死"的东西。内容一落地它就让位。
-   ② 事后的一段纯文字:收进「已完成 N 个任务」里,和动作行交替 —— 文字说
-      "为什么这么做",动作行说"于是做了什么"。
-   都不需要框,也不需要展开收起:它本来就是几句话,套个可折叠模块等于给一句话
-   建了个房子。过程里本来就该有纯文字,不是所有东西都得装进模块。 */
-/* 不挂耗时。这一行只活到第一个字落地为止,给一个马上要消失的状态配一个跳动的
+   ① 进行中:一行「Thinking」,底下是正在吐的那段推理。
+      推理是真有内容的 —— 发出去之后、第一个字落地之前,这几秒里除了它没有
+      别的可看,而它恰好回答"它在琢磨什么、方向对不对";这时候拦着不给看,
+      面板就只剩一个转圈的点。所以【底下摊开】,并且【能收起来】:
+      不想看推理的人点一下就把它折走,正文照旧从下面出来。
+      —— 但不套框。它是这一轮流水的第一段,和后面的步骤、已完成同一列往下读;
+      单给它画一圈边,等于把开场白做成一张卡。走 .fold.mod-flat,和「已完成」
+      「正在跑的这一步」是同一副骨架,只是标题那一格在动。
+   ② 事后:收进「已完成」里的几段纯文字,和动作行交替 —— 文字说"为什么这么做",
+      动作行说"于是做了什么"。那几段【不再套折叠】:已经被外面那层收过一次了,
+      再包一层就是折叠套折叠,点两下才看得到一句话。
+   不挂耗时:这一行只活到第一个字落地为止,给一个马上要消失的状态配一个跳动的
    秒数,只会把注意力钉在一个从此不再相关的数字上;总耗时最后在回合状态行里有。
    —— 和重连横幅不做滚动倒计时是同一条。 */
-.thinking-live { display: flex; align-items: center; gap: 7px; font-size: var(--t-mini); color: var(--text-muted); }
+/* 呼吸点比 .mk 那枚 15px 的状态点小(7px),所以标题文字比别的分段标题往里
+   缩一点 —— 这一行出现时面板里只有它,没有别的标题跟它排队对齐。 */
 /* 它是正文,不是注解 —— 给最深的一档。旁边那些行(执行计划、每个步骤)都是
    --text-strong,这段话反倒更浅的话,就成了"标签比它标注的内容还重"。
    和 .say 同一条:没有 hover 态的可读内容,不用留一档给鼠标。 */
 .think { margin: 0; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-strong); overflow-wrap: anywhere; }
+/* 话里提到的文件名走等宽,和它下面动作行里的文件名是同一副字 —— 一段话说
+   "引用了 tokens.css",紧接着的动作行就是 tokens.css,两处长得一样才连得上。
+   不加底色:这是句子里的一个词,不是可点的标记。 */
+.think code { font-family: var(--mono); font-size: var(--t-cap); color: var(--text-strong); }
 
 /* 展开后不画分隔线,靠留白分层。
    ------------------------------------------------------------
@@ -956,6 +970,88 @@ button.att-d:hover { border-color: var(--border-strong); }
   background: var(--bg-subtle); border-radius: var(--radius-sm);
 }
 .fold .body.mod-stack .body.mod-stack > .term { padding-inline-start: 9px; }
+/* 命令块和输出块必须贴成一块。
+   在卡里它们靠卡的边框和 overflow 收在一起,进了折叠块各自带外边距,中间就裂出
+   一条 6px 的缝 —— 一裂开,"我输入的"和"它吐出来的"看着像两件不相干的事,而这
+   两块的全部意义就是上下对照。贴合之后仍靠 .mod-cmd 那条实线分开,圆角只给外侧。 */
+.fold .body.mod-stack .term.mod-cmd { margin-bottom: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.fold .body.mod-stack .term.mod-cmd + .term { margin-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+
+/* 「已完成」不装进卡里 —— 它不是一个模块,是这一轮流水折起来的一段。
+   ------------------------------------------------------------
+   里面装的全是已经发生过的事:一句为什么这么做、一份计划、几个跑完的步骤。
+   外面再套一圈边框,等于宣布"这是一件独立的东西",于是每条记录都得先穿过
+   一层框才读得到;而且收起时它只是一行,展开却突然长出一张卡,开合之间
+   整段流水的节奏是断的。
+   撤掉外框之后:标题行自己就是分段的标记,下面的条目一律左对齐往下列 ——
+   调工具的带状态点/图标,纯文字就直接是一段话,层级只靠缩进和状态点的
+   列对齐说。折叠一点没少:标题行照常收起展开,每个步骤也还是各自能开合。 */
+.fold.mod-flat { border: 0; background: none; border-radius: 0; }
+/* 分段标题【不带状态图标】。
+   ------------------------------------------------------------
+   「已完成」「进行中」这几个字本身就是状态,前面再放一枚绿勾或者一个转圈,
+   是把同一件事用两种编码各说一遍 —— 图标什么也没多说。
+   而状态点这套记号是有分工的:它标的是【一条记录成没成】(这次读取成了、
+   这次构建挂了),一摞行靠这一列勾和叉扫下来就知道哪儿出了事。
+   给分段标题也发一枚,这一列里就混进了两种含义不同的记号,那一列不再是
+   "逐条结果",而"哪一条出事了"也就不再一眼可见。
+   撤掉之后正好和参考里一致:标题文字顶到最左,底下每条记录的图标各自成列,
+   缩进天然差出一格 —— 层级不用图标说,位置已经说了。 */
+/* 标题行的文字要退到和正文同一条左边缘,但 hover 的底色贴着字会发闷。
+   内边距照给、再用等量负外边距把整行拉回边缘:对齐和手感各拿各的。 */
+.fold.mod-flat > summary { margin-inline: -7px; padding: 6px 7px; border-radius: var(--radius-sm); }
+/* 耗时和箭头挨着文字放,不推到最右。
+   ------------------------------------------------------------
+   上面那条「箭头一律靠右」是给【有框的】折叠块写的:卡有右边缘,靠右是靠在
+   一条看得见的线上,一摞卡的箭头因此连成一列。
+   外框撤掉之后右边什么都没有了。再把箭头推过去,它贴的是一条不存在的边 ——
+   「已完成」四个字后面拖出一大片空白,读完标题还得横向扫过去才拿得到耗时,
+   而这两样本来就是一句话:完成了,花了多久,点这里展开。
+   所以在 mod-flat 里一律收回来:图标 · 文字 · 耗时 · 箭头,一行读完就是一行。
+   里面的步骤行、工具行跟着同一条 —— 半数靠左半数靠右,整块会散。 */
+.fold.mod-flat summary .ms,
+.fold.mod-flat summary .chev { margin-left: 0; }
+/* 工具行的 .nm 默认 flex:1 会把耗时顶到行尾,同样收成只占文字宽。
+   带改动量的那种早就是这个行为(.dst 接走了 auto),这里补上没有改动量的。 */
+.fold.mod-flat .tool .nm { flex: 0 1 auto; }
+.fold.mod-flat > .body.mod-stack { padding: 0 0 2px; }
+/* 展开后补一条发丝线。和上面「一行字的 body 不画线」不冲突:那边线是噪音,
+   这边外框已经撤掉、底下又是一摞行,标题总得有个东西说明"这些归我"。
+   线从 0 起,和标题文字、下面每条记录的左边缘对齐。 */
+.fold.mod-flat[open] > summary + .body.mod-stack { border-top: var(--stroke-thin) solid var(--border); padding-top: 6px; }
+/* 纯文字直接落在左边缘 —— 它是正文,不该比动作行更靠里。 */
+.fold.mod-flat > .body.mod-stack > .think { padding: 6px 0; }
+/* 动作行:同一套负外边距,状态点和标题行的状态点连成一列。 */
+.fold.mod-flat > .body.mod-stack > .fold { margin-inline: -7px; }
+.fold.mod-flat > .body.mod-stack > .fold > summary { padding: 5px 7px; border-radius: var(--radius-sm); }
+/* 步骤这一层【不挂失败标】。
+   失败的是整轮任务(由「任务失败」那张卡报),或者是具体的某一次调用(工具行
+   自己带红标);步骤夹在中间,它只是被打断,没有属于自己的失败态。
+   —— 所以这里没有 .fold > summary .fx 这条规则,不是漏了。 */
+/* 第一层的终端块:上面那行工具行靠 -7px 负外边距把内容顶到 22px,终端块没有
+   那份负外边距,所以左边直接给 22,右边收 11 —— 和第二层的终端块对齐规则一致。 */
+.fold.mod-flat > .body.mod-stack > .term { margin-inline: 22px 11px; }
+/* 三个状态里只有「失败」染色。
+   标题那一格现在是整块记录唯一报结局的地方,收起来时也只剩它 —— 出没出事
+   必须在这一个词上看得出来。进行中 / 已完成不染:它们是常态,颜色留给例外。 */
+.fold.mod-flat > summary .st-fail { color: var(--red); }
+/* 折叠头本身就是一个步骤时(正在跑的那一步),它下面的工具行是这个步骤的子项,
+   缩进一格(状态点 15 + 间距 7 = 22)—— 和「已完成」里步骤下面的工具行落在同一个
+   位置。同一个步骤在"正在跑"和"跑完了"两种状态下,它的工具行不该换个地方站。 */
+.fold.mod-flat > .body.mod-stack > .tool { margin-inline: -7px; padding: 5px 7px 5px 29px; }
+/* 一行字的展开内容跟到标题文字下面(7 + 状态点 15 + 间距 7),而不是退回图标列 ——
+   没有外框之后,"谁属于谁"只剩缩进这一个说法。 */
+.fold.mod-flat > .body.mod-stack > .fold > .body:not(.mod-stack) { padding: 2px 7px 6px 29px; }
+/* 第二层缩进量不变(状态点 15 + 间距 7 = 22),只是把上面那 7px 的负外边距补回来。 */
+.fold.mod-flat .body.mod-stack .body.mod-stack > * ,
+.fold.mod-flat .body.mod-stack .body.mod-stack > .fold > summary { padding-inline-start: 29px; }
+/* 折叠行的缩进由它的 summary 承担,盒子本身不再吃一份 —— 否则 29 + 29,
+   一条可折叠的命令行会比它旁边那几条工具行深一格,读起来像多了一层。 */
+.fold.mod-flat .body.mod-stack .body.mod-stack > .fold { padding-inline: 0; }
+/* 终端块同样把 7px 的负外边距补回来:左边跟着它上面那行命令,右边收回卡内。
+   只改左右两边 —— 上下留给前面那条"命令块和输出块贴成一块"的规则,
+   写成 margin 简写会把它设的 0 顶掉,两块又裂开。 */
+.fold.mod-flat .body.mod-stack .term { margin-inline: 29px 18px; }
 
 
 /* 「跑动中」的动效不能只压在一颗点上 —— 7px 的呼吸点动了也几乎看不见,
@@ -991,7 +1087,9 @@ button.att-d:hover { border-color: var(--border-strong); }
    .say b 因此不再靠颜色加重(已经同色),改成只用字重。 */
 .say { font-size: var(--t-body); line-height: var(--lh-body); color: var(--text-strong); }
 .say b { font-weight: 600; }
-.say .caret {
+/* 推理段和正文用同一支光标 —— 都是"字还在往外吐"这件事,不必两种写法。 */
+.say .caret,
+.think .caret {
   display: inline-block; width: 2px; height: 1em; margin-left: 2px;
   vertical-align: -0.15em; background: var(--text-strong); animation: blink 1s steps(2) infinite;
 }
@@ -1239,6 +1337,13 @@ button.att-d:hover { border-color: var(--border-strong); }
    之前这里是个裸勾:没有底色,和未完成那几步的数字视觉重量差不多,
    扫一眼分不出哪些做完了 —— 而"做完没做完"正是这个列表要回答的事。
    .mk 是 15px 的圆,首行文字是 18px(12×1.5),下移 1.5px 才与第一行同心。 */
+/* 序号那一格三种记号,各标一种状态:
+     做完了  → 绿勾
+     正在做  → 转圈(不是序号)
+     还没开始 → 序号
+   正在做的那一条给序号是说不通的:序号是"排在第几",它跟没开始的那几条长得
+   一模一样,于是"现在在哪"只能靠加粗去认 —— 加粗是强调,不是状态。
+   换成转圈之后,这一列自己就是进度条:上面一串勾、中间一个在转、下面一串数字。 */
 .steps li .mk { margin-top: 1.5px; }
 .steps li.is-done { color: var(--text-muted); }
 .steps li.is-now { color: var(--text-strong); font-weight: 600; }
@@ -1297,6 +1402,21 @@ button.att-d:hover { border-color: var(--border-strong); }
 .answered .av { display: block; margin-top: 5px; width: 57px; aspect-ratio: 1/1; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); }
 
 /* ---- 工具调用行 ---- */
+/* 工具行只有【跑完了】才落下来 —— 没有"执行中"这个状态。
+   ------------------------------------------------------------
+   这一行是一条记录:动了哪个文件、结果如何(耗时 / 改动量 / 失败原因)。
+   调用还没回来的时候,这三样一个都拿不到,摆出去只能是一行光有名字的占位,
+   几秒后再当场变形。一次任务几十次调用,就是几十次"冒出来 — 变形",底下的
+   内容跟着往下挪几十回,想读的东西一直在动。
+   "它正在干活"这件事由上面那一行(正在跑的那一步)的转圈说,一处就够;
+   同一件事让每一行都各说一遍,反而看不出到底卡在哪儿。
+   —— 所以工具行上没有"正在跑"这个样子:它前面那枚图标标的是【哪类调用】
+   (读 / 写 / 跑命令 / 生图),状态点 .mk 只留在【步骤】那一层。
+   ------------------------------------------------------------
+   生图是唯一一种"还没跑完就该落行"的调用:它出一张落一张,已经到的几张就在
+   这一行下面看着 —— 那不是等着变形的占位,是正在长出来的结果。它右边写计数
+   (2/4)而不是耗时,进度由计数和下面那排格子自己说,不需要再转一个圈。
+   判断口诀:【下面有没有东西在长】,有就能提前落行。 */
 .tool {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 11px; border: 1px solid var(--border); border-radius: var(--radius);
@@ -1318,6 +1438,67 @@ button.att-d:hover { border-color: var(--border-strong); }
 .tool .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool .nm code { font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong); }
 .tool .ms { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
+
+/* 工具行前面那枚图标标【是哪类调用】,不标成没成。
+   ------------------------------------------------------------
+   一摞行里,"这一行是干什么的"比"这一行成没成"更值得占那 15px:
+   成功是默认 —— 一整列绿勾等于把"一切正常"重复十几遍,信息量是零;
+   而读文件 / 写文件 / 跑命令 / 生图是四件不同的事,没有图标就得逐字读动词
+   才知道这一段到底在干嘛。图标一分,扫一眼就看得出这一步的形状:
+   读了两个、写了两个,还是跑了一条命令。
+   出事的那几行照样一眼可见:图标转红,后面跟着红的「失败」二字 ——
+   颜色只标要注意的那一个,这条没破。
+   状态点 .mk 留在【步骤】那一层:一步成没成才是需要逐条核对的事,
+   而步骤只有一种形状,那 15px 拿来标状态才划算。 */
+.tool .ti { flex: none; width: 15px; height: 15px; color: var(--text-soft); }
+/* 计划里的序号占图标那一格 —— 计划的每一条还没跑,没有"哪类调用"可标,
+   序号才是它此刻唯一的身份。宽度对齐 .ti,一摞行的左缘不会因为换了内容而错开。 */
+.tool .pk { flex: none; width: 15px; text-align: center; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
+.tool.is-fail .ti { color: var(--red); }
+/* 非主产物的文件:文件名【就是】打开它的入口,不另立卡片。
+   ------------------------------------------------------------
+   主产物(那两张能预览/发布/导出的大卡)是这一轮交出去的东西;
+   顺手生成的 csv、md、组件文件、配套插图都不是 —— 给它们各来一张大卡,
+   一轮下来十几张卡,真正的交付物反而被埋了。
+   但"不是主产物"不等于"拿不到":生图那一行给缩略图(图的身份是它的像素,
+   文件名说明不了什么),写文件这一行给文件名 —— 文件的身份就是它的名字和
+   路径,一个 csv 的缩略图是四条灰线,什么也没说。两者是同一条规则的两面:
+   【把这类东西的身份物做成可点的】,点开就是它。
+   用真的 <button> 而不是给 <code> 挂个 hover:这是个能点的东西,
+   键盘要够得着,focus 环也得有。 */
+.tool .fn { font: inherit; color: inherit; border-radius: var(--radius-sm); }
+.tool .fn code { font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong);
+  text-underline-offset: 2px; transition: text-decoration-color var(--duration-faster) var(--ease-out); }
+.tool .fn:hover code { text-decoration: underline; text-decoration-color: var(--text-soft); }
+.tool.is-fail .fn code { color: var(--text); }
+/* 跑命令这一行本身就是可折叠的:输出是它吐出来的,不是它旁边的另一块。
+   ------------------------------------------------------------
+   终端块动辄几十行,摊在流水里会把它上下的记录顶得老远,而多数时候你只想
+   知道"这条命令跑通了没有" —— 那一行标题已经答了(成 / 失败 + 耗时)。
+   所以收起来是默认,想看原文再点开;出事的那次例外,默认开着,因为报错原文
+   正是这时候唯一要读的东西。
+   顺带把「失败」从按钮改成标记:展开这一行【就是】查看原因,不必再摆一个
+   按钮做同一件事 —— 而且按钮嵌在 summary 里,点它会连带把折叠也切了。 */
+.fold > summary .ti { flex: none; width: 15px; height: 15px; color: var(--text-soft); }
+.fold.is-fail > summary .ti { color: var(--red); }
+.fold > summary .why { flex: none; font-size: var(--t-cap); font-weight: 600; color: var(--red); }
+.fold > summary .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 改动量紧跟在文件名后面,不甩到行尾。
+   ------------------------------------------------------------
+   「+182 -0」回答的是"这个文件被动了多少",它属于文件名,不属于这一行 ——
+   甩到最右边,眼睛得在文件名和数字之间来回跳,一摞行读下来全是横向扫视。
+   所以 .nm 在有改动量时收成 flex:0 1 auto(只占文字宽),由 .dst 接过那份
+   auto 外边距去顶住右侧的耗时。 */
+.tool:has(.dst) .nm { flex: 0 1 auto; }
+.tool .dst { flex: none; margin-inline-end: auto; font-family: var(--mono); font-size: var(--t-cap); font-variant-numeric: tabular-nums; color: var(--text-soft); }
+.tool .dst i { font-style: normal; }
+.tool .dst i + i { margin-inline-start: 5px; }
+/* 改动量不染红绿。
+   这份稿子里绿=这步成了、红=这步出事了,而「-14」只是删了 14 行,
+   不是出事;给它上红色,一摞成功的写入行里会平白冒出一串红,真正的
+   失败标记反而淹掉。数字保持中性灰,颜色留给状态本身。 */
+
 /* 红只标错误本身,不染内容。
    原来整行(读取什么、耗时)全是红,"读取 规范.pdf"是这一步在做的事,
    不是错误;耗时更只是数据。一整行红反而让真正的错误标记淹没在里面。
@@ -1452,26 +1633,21 @@ button.att-d:hover { border-color: var(--border-strong); }
   font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 卡面只留「预览」,发布 / 导出收进「⋯」。
+/* 三个动作全摆在卡面上:预览 / 发布 / 导出。
    ------------------------------------------------------------
-   ① 卡上唯一高频的动作是先看看它长什么样,发布和导出是看完之后才发生
-      的事,而且一个产物一辈子只会做一次;把三个按钮平铺,等于让最常点的
-      那个跟两个几乎不点的抢位置。
-   ② 更要紧的是【卡面不再随文件类型变形】:发布只有 HTML 有,平铺时
-      HTML 卡三个按钮、md 卡两个,同一排产物长短不一 —— 这跟附件那边
-      "卡的外形不随类型变"是同一条规则。收进「⋯」之后卡面永远一样,
-      差别只在菜单里少一条。
-   ③ 文档把三个都列在「支持的操作」里,这里没有删掉任何一个,只是把
-      两个不常用的挪进二级。 */
+   这是这一轮的【交付物】—— 跑完之后你要对它做的事就这三件,收进「⋯」
+   等于让人先点一下才知道自己能干什么。产物卡本来就是整段流水里唯一
+   "拿得走"的东西,把动作藏起来是把最后一步的门槛又抬高一格。
+   权重按频次分,不并列:预览实心(先看看它长什么样)、发布描边、
+   导出幽灵 —— 一组里只有一个实心,眼睛知道默认该点哪个。
+   代价说清楚:发布只有 HTML 有,所以 md / csv 这类产物卡是两个按钮,
+   同一排会短一截。原来收进「⋯」正是为了让卡面永远一样长 —— 现在选了
+   另一头:宁可长短不齐,也不让人为了知道能做什么先点一次。 */
 .art .ops { display: flex; align-items: center; gap: 5px; padding: 0 9px 9px; }
-.art .ops .sp { flex: 1; }
-.art .ops .more {
-  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
-  border-radius: var(--radius-sm); color: var(--text-soft);
-  transition: background-color var(--duration-faster) var(--ease-out), color var(--duration-faster) var(--ease-out);
-}
-.art .ops .more svg { width: 14px; height: 14px; }
-.art .ops .more:hover { background: var(--bg-fill-secondary); color: var(--text-strong); }
+/* 三个按钮在 205px 的卡里靠 4px 间距和更紧的内边距站得下;
+   窄到放不下时让「导出」换行,不缩字号、不截断标签。 */
+.art .ops { flex-wrap: wrap; gap: 4px; }
+.art .ops .btn { padding-inline: 9px; }
 
 /* ---- Tooltip:纯图标按钮唯一的名字 ----
    面板里所有只有图标、没有文字的按钮(赞/踩/复制/Fork、Queue 行的
@@ -1522,6 +1698,12 @@ button.att-d:hover { border-color: var(--border-strong); }
 .queue .q:first-child [data-tip]::after { bottom: auto; top: calc(100% + 6px); }
 
 
+/* ---- 中断状态行 ---- */
+/* 「停下来了」只是一句话,不是一个模块 —— 详见组件全集 20 / 21。
+   剩余步骤是复述(上面正在跑的那一段就写着),而「怎么接着跑」已经有三个入口:
+   dock 上的重连、报错卡的「从失败处重试」、手动暂停自己那个「继续」。 */
+.stopline { font-size: var(--t-mini); color: var(--text-muted); }
+
 /* ---- 反馈行 ---- */
 /* 回合状态:这一轮结束了没有、花了多少。
    ------------------------------------------------------------
@@ -1546,13 +1728,9 @@ button.att-d:hover { border-color: var(--border-strong); }
    --brand-text,一屏里"绿=成"只此一解。停止用中性灰:
    它不是出事,只是没跑完,红要留给真的错误。
    ------------------------------------------------------------
-   停止时状态词【带一个限定语】,分两种写法:
-     还有没跑完的  →「已停止,仍有未完成任务」,上面同时有 20/21 那张卡
-     正好跑完了    →「已停止」,不出卡
-   这一句是两者不重复的关键:卡片说"剩下哪几条、怎么继续",状态行说
-   "这轮到此为止 + 花了多少",而限定语负责告诉你【要不要往上看那张卡】。
-   没有它的话,「已停止」三个字在两种情况下长得一样,人只能自己往上翻。
-   也正因为有它,"停止且无剩余"不需要再单独摆一条通知 —— 这一行就够了。 */
+   停止时状态词写【是谁停的】:「已手动停止」。
+   不写「仍有未完成任务」那种限定语 —— 剩没剩、剩几步,上面那段执行记录
+   本来就写着,这一行只负责宣布"这轮到此为止"。 */
 .fb .fin i { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--brand-text); }
 .fb .fin.mod-stop i { background: var(--text-faint); }
 .fb button {
@@ -1815,13 +1993,6 @@ button.att-d:hover { border-color: var(--border-strong); }
   font-variant-numeric: tabular-nums; opacity: .6;
 }
 
-/* 回答头:这一段是谁答的。
-   ------------------------------------------------------------
-   尺寸照搬 apps/web 的 .role —— 20px 图标 + 8px 间距 + 13px/600。
-   只在【换人】时出现:同一个 agent 连着说不重复报名字,那是复述;
-   用户插一句之后重新出现,因为一轮结束了。 */
-.ahead { display: flex; align-items: center; gap: 8px; font-size: var(--t-body); font-weight: 600; color: var(--text-strong); }
-.ahead .ai { flex: none; width: 20px; height: 20px; }
 
 /* 重连是一条状态,不是一张卡。
    ------------------------------------------------------------
@@ -2001,8 +2172,6 @@ body { background: var(--bg-subtle); overflow: auto; }
    flex 的 gap 没法单独给某个子项减,所以用负外边距抵掉一截:12 - 4 = 8。
    这一招真实产品自己也在用(.chat-log-tail-spacer 靠 margin-top:-24 抵消 gap)。 */
 .flow > .fb { margin-top: -4px; }   /* 12 - 4 = 8 */
-/* 回答头和它下面第一块是一体的,对齐真实产品 .role 的 margin-bottom: 8 */
-.flow > .ahead + * { margin-top: -4px; }   /* 12 - 4 = 8 */
 /* 连着几条工具调用是一组,组件自己定的间距是 6;放进流水后被 12 的 gap 顶开成 18,
    反而比"两个不相干的块"还松。抵掉 6,回到组件的本意。 */
 .flow > .tool + .tool { margin-top: -6px; }   /* 12 - 6 = 6 */
@@ -2032,7 +2201,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 <body>
 <div class="scene">
   <div class="scene-col">
-    <p class="scene-cap">刚发出<span>第一个字还没落地 · 这一行是唯一"它没死"的证据</span></p>
+    <p class="scene-cap">刚发出<span>正文还没落地 · 先把推理摊开,不想看点一下收走</span></p>
       <div class="panel">
         <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
           <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
@@ -2044,9 +2213,12 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
         </div></div>
 
-        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
-
-        <div class="thinking-live"><span class="breath"></span><span class="shimmer">Thinking</span></div>
+        <details class="fold mod-flat" open data-od-id="thinking-live">
+          <summary><span class="breath"></span><span class="shimmer">Thinking</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body mod-stack">
+            <p class="think">两张图的栅格看着是同一套 —— 先量一下列宽和沟槽,对得上就只复刻一次列表页,商品卡抽出来给设置页共用;对不上再分开做。规格那份 md 里写了断点,得先读完再定<span class="caret"></span></p>
+          </div>
+        </details>
 
         </div>
         <div class="dock">
@@ -2077,8 +2249,6 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
         </div></div>
 
-        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
-
         <div class="say">好,先把列表页搭起来,再拿同一张商品卡去做设置页。</div>
 
         <div class="answered">
@@ -2086,37 +2256,63 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div>
         </div>
 
-        <!-- 跑完的当场并进这一行,外面不摊已完成的步骤(见组件 7 的「跑一步、收一步」)。
-             「已记住 N 条偏好」也不放这一屏:记住偏好不是这一轮的一个步骤,夹在中间
-             会被读成流程的一环 —— 它放在「跑完」那一屏和结论一起给。 -->
-        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 2 个</span><span class="ms">24.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <!-- 这一轮的执行过程【只有这一块】,状态就三个:进行中 / 已完成 / 运行失败。
+             ------------------------------------------------------------
+             原来外面摊两块:一条收起的「已完成」,加一块摊开的「正在跑的这一步」。
+             那等于把同一份记录按时间劈成两半各放一处 —— 人要先判断"这两块是
+             一回事还是两回事",而且每跑完一步,那一步就要从下面那块搬到上面那块,
+             整段跟着跳一次。
+             并成一块之后:标题那一格永远是【一个状态词 + 一个时间】,三种状态同一副
+             写法 —— 进行中 · 31s(秒数在走)→ 已完成 · 1m 12s(停住)→ 运行失败 · 4.0s。
+             不写「第 3/4 步」:总步数一开始就未必算得准,中途还会变,而它在这儿也
+             不指导任何决定;想知道跑到哪了,展开就是按顺序排好的每一步。
+             里面按顺序躺着每一步,跑完的收着、正在跑的开着 —— 跑完一步只是里面
+             某一行换个状态点,外面那一格只有秒数在动。
+             「已记住 N 条偏好」不放这一屏:记住偏好不是这一轮的一个步骤,夹在
+             中间会被读成流程的一环 —— 它放在「跑完」那一屏和结论一起给。 -->
+        <details class="fold mod-flat" open>
+          <summary><span>进行中</span><span class="ms">31s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body mod-stack">
             <p class="think">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</p>
+            <!-- 展开必须给到【最下层的记录】,不能是一行用点隔开的名字。
+                 「读取截图 · 建栅格 · 落 12 张商品卡」这种是目录不是过程:它把
+                 四条真记录(读了哪个文件、写了哪个文件、各改了多少行)压成三个
+                 约等于标题的词,点开等于白点 —— 收起来省的应该是版面,不是信息。
+                 计划那一条同理:它的内容本来就是四个步骤,那就列四行,序号占图标
+                 那一格;挤成一行点号既读不出顺序,也看不出有几步。 -->
             <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-              <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
+              <div class="body mod-stack"><div class="tool"><span class="pk">1</span><span class="nm">复刻商品列表页</span></div><div class="tool"><span class="pk">2</span><span class="nm">抽出商品卡为共享组件</span></div><div class="tool"><span class="pk">3</span><span class="nm">按同一套间距做设置页</span></div><div class="tool"><span class="pk">4</span><span class="nm">接上两页之间的跳转</span></div></div></details>
             <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-              <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+              <div class="body mod-stack"><div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 首页.png"><code>首页.png</code></button></span><span class="ms">0.4s</span></div><div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 tokens.css"><code>tokens.css</code></button></span><span class="ms">0.3s</span></div><div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+182</i><i>-0</i></span></div><div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-list.css"><code>product-list.css</code></button></span><span class="dst"><i>+96</i><i>-0</i></span></div></div></details>
             <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span><span class="ms">6.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-              <div class="body">提取样式 · 参数化价格与标签 · 两页各替换一处</div></details>
-          </div></details>
-
-        <details class="fold" open>
-          <summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="ms mod-num">第 3/4 步</span></summary>
-          <div class="body">
-            <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
-            <div class="tool"><span class="mk is-run"></span><span class="nm">写 <code>settings.css</code></span><span class="ms"></span></div>
+              <div class="body mod-stack"><div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-card.html"><code>product-card.html</code></button></span><span class="dst"><i>+64</i><i>-0</i></span></div><div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+6</i><i>-58</i></span></div></div></details>
+            <!-- 正在跑的这一步就是这个列表里的一行,只是它默认开着、带转圈。
+                 它不挂耗时:这一步还没跑完,没有总耗时;整段跑了多久由上面那一格报。 -->
+            <details class="fold" open><summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+            <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 设置页.png"><code>设置页.png</code></button></span><span class="ms">0.4s</span></div>
+            <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 settings.html"><code>settings.html</code></button></span><span class="dst"><i>+140</i><i>-0</i></span></div>
+            <!-- 正在跑的那一次调用【不占一行】。工具行是一条记录:动了哪个文件、
+                 结果如何(耗时 / 改动量)。调用还没回来时这三样一个都没有,摆出去
+                 就是一行只有名字的占位,几秒后再当场变形;每来一次调用抖一次,
+                 底下的内容跟着往下挪。"它在干活"由上面那一行的转圈说,一处就够。 -->
+            <!-- 生图也是这一步干的事,不另起一张卡摆在外面 —— 执行过程只有一块,
+                 任何一张浮在外面的卡都会让人先去判断"它属不属于当前这一步"。
+                 ------------------------------------------------------------
+                 这一行【可以】带转圈,是「工具行没有执行中」那条唯一的例外:普通
+                 调用在跑的时候什么都拿不到,摆出去是个几秒后要变形的占位;生图
+                 不一样 —— 出一张就落一张,已经到的两张就在下面看着,它不是占位,
+                 是正在长出来的结果。所以计数写 2/4,不写空耗时。 -->
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.6" cy="10" r="1.4"/><path d="M21 15.5L16 10.5 7.5 19"/></svg><span class="nm">生成配套插图</span><span class="ms mod-num">2/4</span></div>
+                <div class="imgs">
+                  <span class="shot"><span class="mini"></span></span>
+                  <span class="shot"><span class="mini"></span></span>
+                  <span class="shot is-load"></span>
+                  <span class="shot is-load"></span>
+                </div>
+              </div></details>
           </div>
         </details>
-
-        <div class="card">
-          <div class="h"><span class="mk is-run"></span><b>生成配套插图</b></div>
-          <div class="imgs">
-            <span class="shot"><span class="mini"></span></span>
-            <span class="shot"><span class="mini"></span></span>
-            <span class="shot is-load"></span>
-            <span class="shot is-load"></span>
-          </div>
-        </div>
 
         </div>
         <div class="dock">
@@ -2151,8 +2347,6 @@ body { background: var(--bg-subtle); overflow: auto; }
           <div class="bub">照这两张图把商品列表页复刻出来,规格按 md 里写的走</div>
         </div></div>
 
-        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
-
         <div class="answered">
           <div class="k">已确认</div>
           <div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div>
@@ -2161,28 +2355,60 @@ body { background: var(--bg-subtle); overflow: auto; }
         <details class="fold"><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
 
-        <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 4 个任务</span><span class="ms mod-num">1 分 12 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+        <details class="fold mod-flat"><summary><span>已完成</span><span class="ms">1m 12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <!-- 展开之后要能回答两件事:【做了什么】和【为什么这么做】。
+               动作行只答得了前一件 —— 一摞"读取 X / 写入 Y"读完,人知道文件被动过,
+               不知道它为什么被动。所以纯文字夹在动作之间:每段话领着它下面那一步,
+               说清这一步的判断,再由动作行给出这个判断落到了哪几个文件上。
+               读写一律写到文件名和改动量:agent 改了什么是这一段里最该被核对的东西,
+               「写了 2 个文件」核对不了,「settings.html +140 -0」才核对得了。 -->
           <div class="body mod-stack">
             <p class="think">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</p>
             <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-              <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
+              <div class="body mod-stack"><div class="tool"><span class="pk">1</span><span class="nm">复刻商品列表页</span></div><div class="tool"><span class="pk">2</span><span class="nm">抽出商品卡为共享组件</span></div><div class="tool"><span class="pk">3</span><span class="nm">按同一套间距做设置页</span></div><div class="tool"><span class="pk">4</span><span class="nm">接上两页之间的跳转</span></div></div></details>
             <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-              <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 首页.png"><code>首页.png</code></button></span><span class="ms">0.4s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 tokens.css"><code>tokens.css</code></button></span><span class="ms">0.3s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+182</i><i>-0</i></span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-list.css"><code>product-list.css</code></button></span><span class="dst"><i>+96</i><i>-0</i></span></div>
+              </div></details>
+            <p class="think">截图里是 4 列、24px 沟槽,和 <code>tokens.css</code> 里已有的那套栅格对得上,所以没另开一套间距,直接引用了现成的变量。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span><span class="ms">6.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-card.html"><code>product-card.html</code></button></span><span class="dst"><i>+64</i><i>-0</i></span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+6</i><i>-58</i></span></div>
+              </div></details>
+            <p class="think">价格和标签抽成了参数,两页各自只留一处引用 —— 之后改卡片样式,改一个文件就够。</p>
             <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>按同一套间距做设置页</span><span class="ms">9.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
               <div class="body mod-stack">
-                <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
-                <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.css</code></span><span class="ms">2.1s</span></div>
-                <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">接上两页之间的跳转</span><span class="ms">0.9s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 设置页.png"><code>设置页.png</code></button></span><span class="ms">0.4s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 settings.html"><code>settings.html</code></button></span><span class="dst"><i>+140</i><i>-0</i></span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-card.html"><code>product-card.html</code></button></span><span class="dst"><i>+3</i><i>-1</i></span></div>
+                <!-- 生图不是这一轮的主产物 —— 主产物是下面那两张大卡(可预览、可发布)。
+                     插图是做设置页顺手生的配套素材,属于"它怎么做的",所以并回这一步的
+                     记录里,和读文件、写文件、跑命令排在一起。缩略图留在行内:它是这次
+                     调用吐出来的东西,跟命令行下面那块终端输出是同一个位置关系。 -->
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.6" cy="10" r="1.4"/><path d="M21 15.5L16 10.5 7.5 19"/></svg><span class="nm">生成配套插图 · 4 张</span><span class="strip"><button class="th" type="button" aria-label="查看第 1 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 2 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 3 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 4 张大图" data-tip="查看大图"><span class="mini"></span></button></span><span class="ms">2.6s</span></div>
+              </div></details>
+            <p class="think">设置页里的卡比列表页窄一档,给商品卡补了个 <code>compact</code> 变体,没有复制第二份样式。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>接上两页之间的跳转</span><span class="ms">4.1s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+4</i><i>-2</i></span></div>
+                <details class="fold"><summary><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 17l5-5-5-5"/><path d="M12.5 19H20"/></svg><span class="nm">跑一遍,看两页能不能通</span><span class="ms">2.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                  <div class="body mod-stack">
+                    <div class="term mod-cmd"><div>npm run build</div></div>
+                    <div class="term"><div class="ok">✓ built in 2.14s (2 pages)</div></div>
+                  </div></details>
               </div></details>
           </div></details>
 
-        <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">生成 4 张</span><span class="strip"><button class="th" type="button" aria-label="查看第 1 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 2 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 3 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 4 张大图" data-tip="查看大图"><span class="mini"></span></button></span></div>
 
         <div class="arts">
           <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">product-list.html</div></div>
-            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more mod-tip-e" type="button" aria-label="发布/导出" data-tip="发布/导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
+            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><button class="btn mod-secondary mod-sm" type="button">发布</button><button class="btn mod-ghost mod-sm" type="button">导出</button></div></div>
           <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">settings.html</div></div>
-            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><span class="sp"></span><button class="more mod-tip-e" type="button" aria-label="发布/导出" data-tip="发布/导出"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>
+            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><button class="btn mod-secondary mod-sm" type="button">发布</button><button class="btn mod-ghost mod-sm" type="button">导出</button></div></div>
         </div>
 
         <div class="say">两页都好了,<mark class="sel">商品卡已经抽成共享组件<span class="selbar"><button type="button">添加到对话</button></span></mark>,改一处两页都跟着变。</div>
@@ -2228,19 +2454,35 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="flow">
         <div class="msg-me"><div class="bub">把这一屏重做成能跑的原型,再加一个视觉风格一致的设置页</div></div>
 
-        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
-
         <div class="say">先读一遍现有的结构和 token,再动手。</div>
 
-        <div class="tool"><span class="mk is-run"></span><span class="nm">读取 <code>首页.png</code></span><span class="ms"></span></div>
-              <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">读取 <code>tokens.css</code></span><span class="ms">0.3s</span></div>
-              <div class="tool is-fail"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><span class="nm">读取 <code>规范.pdf</code></span><button class="why" type="button">失败</button><span class="ms">1.2s</span></div>
-
-        <div class="card" style="border-color:var(--red-border)">
-                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>构建产物,看能不能跑通</b><span class="fx">失败</span><span class="n">2.1s</span></div>
-                <div class="term mod-cmd"><div>npm run build</div></div>
-                <div class="term"><div class="er">✗ Could not resolve "./ProductCard" from src/pages/List.tsx</div></div>
-              </div>
+        <!-- 执行过程只有这一块,状态就三个:进行中 / 已完成 / 运行失败 —— 这一屏是第三个。
+             ------------------------------------------------------------
+             「运行失败」挂在【这一块】上,不挂在里面那个步骤上:失败的是这一轮任务,
+             步骤只是在跑到一半时被打断的,它既没跑完也没自己出错,停在"进行中"
+             就是它最后的真实状态。红色也因此只出现在该出现的三处:出事的那两次
+             调用、终端里的 ✗、以及底下那张「任务失败」卡。
+             ------------------------------------------------------------
+             失败【默认收起】,进行中【默认展开】—— 两种状态要的东西不一样:
+             还在跑的时候,记录是唯一能看的进展,不摊开面板就是空的;
+             一旦挂了,底下那张「任务失败」卡已经用人话说清了哪儿断的、能做什么,
+             这时候把四条工具行和一段终端原文摊在它上面,只会把要点推下去。
+             原文没丢,想深挖点开就是 —— 收起来省的是版面,不是信息。 -->
+        <details class="fold mod-flat">
+          <summary><span class="st-fail">运行失败</span><span class="ms">4.0s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body mod-stack">
+            <details class="fold" open><summary><span class="mk is-run"></span><span>按现有结构重做这一屏</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 首页.png"><code>首页.png</code></button></span><span class="ms">0.4s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 tokens.css"><code>tokens.css</code></button></span><span class="ms">0.3s</span></div>
+                <div class="tool is-fail"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 规范.pdf"><code>规范.pdf</code></button></span><button class="why" type="button">失败</button><span class="ms">1.2s</span></div>
+                <details class="fold is-fail" open><summary><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 17l5-5-5-5"/><path d="M12.5 19H20"/></svg><span class="nm">构建产物,看能不能跑通</span><span class="why">失败</span><span class="ms">2.1s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                  <div class="body mod-stack">
+                    <div class="term mod-cmd"><div>npm run build</div></div>
+                    <div class="term"><div class="er">✗ Could not resolve "./ProductCard" from src/pages/List.tsx</div></div>
+                  </div></details>
+              </div></details>
+          </div></details>
 
         <div class="errb">
                 <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>任务失败</div>
@@ -2278,8 +2520,6 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="flow">
         <div class="msg-me"><div class="bub">设置页也照着做一版</div></div>
 
-        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
-
         <div class="card">
                 <div class="h"><b>还需要确认一件事</b></div>
                 <div class="q">设置页要不要沿用列表页的商品卡组件?</div>
@@ -2295,19 +2535,14 @@ body { background: var(--bg-subtle); overflow: auto; }
                 </div>
               </div>
 
-        <div class="card">
-                <div class="h"><b>剩余 2 步</b><button class="btn mod-primary mod-sm hd-act" type="button">继续</button></div>
-                <ol class="steps">
-                  <li><span class="k">3</span><span>按同一套间距做设置页</span></li>
-                  <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
-                </ol>
-              </div>
+        <!-- 停下来就一句话:不摊剩余步骤,不挂动作,不带图标。 -->
+        <div class="stopline" data-od-id="paused-line">已手动暂停任务</div>
 
         <!-- 回合状态跟在这一轮的内容【后面】,和「跑完」那屏的「已完成」同一个位置。
              放在中断卡前面会被读成上面那张意图澄清的结尾 —— .fb 靠 -4px 上贴,
              贴的是它上面那块。 -->
         <div class="fb">
-                <span class="fin mod-stop"><i></i>已停止,仍有未完成任务</span>
+                <span class="fin mod-stop"><i></i>已手动停止</span>
                 <button type="button" aria-label="复制" data-tip="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
                 <button type="button" aria-label="新开会话" data-tip="新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
                 <span class="sp"></span><span class="tm">14:32</span>
@@ -2344,8 +2579,6 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="flow">
         <div class="msg-me"><div class="bub mod-clamp">把这一屏重做成能跑的原型,再加一个视觉风格一致的设置页,两页共用同一套间距和圆角。列表页的商品卡要能复用到设置页里那两处小卡上,间距按 8 的倍数走,圆角统一 12px。另外结算页那张缩略图也一起换掉,价格行的字号调大一档 —— 现在两页放一起看着不像一套。跨端那边先不用管,等这两页定了再说。</div></div>
               <div class="msg-more"><button type="button">展开</button></div>
-
-        <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
         <div class="card">
                 <div class="h"><b>先定个视觉方向</b></div>
@@ -2419,7 +2652,7 @@ body { background: var(--bg-subtle); overflow: auto; }
                 <ol class="steps">
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页结构与栅格</span></li>
                   <li class="is-done"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span></li>
-                  <li class="is-now"><span class="k">3</span><span>按同一套间距做设置页</span></li>
+                  <li class="is-now"><span class="mk is-run"></span><span>按同一套间距做设置页</span></li>
                   <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
                 </ol>
               </div>
@@ -2434,6 +2667,106 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="dock">
           <div class="composer">
             
+            <div class="ta">随心输入…</div>
+            <div class="bar">
+              <button type="button" aria-label="添加附件" data-tip="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
+                  <button class="ds" type="button" aria-label="设计系统" data-tip="设计系统"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3.2a8.8 8.8 0 100 17.6c.9 0 1.6-.73 1.6-1.6 0-.42-.16-.79-.42-1.07a1.6 1.6 0 011.18-2.68h1.84a4.6 4.6 0 004.6-4.6c0-4.26-3.94-7.65-8.8-7.65z"/><circle cx="7.3" cy="11.4" r="1.15" fill="currentColor" stroke="none"/><circle cx="10.6" cy="7.9" r="1.15" fill="currentColor" stroke="none"/><circle cx="15" cy="8.4" r="1.15" fill="currentColor" stroke="none"/></svg></button>
+              <span class="sp"></span>
+              <button class="model" type="button">Opus 5</button>
+              <button class="send" type="button" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+  </div>
+  <div class="scene-col">
+    <p class="scene-cap">已完成 · 展开<span>点开只摊一级 · 二三级还收着 · 结论、产物、尾部照旧在下面</span></p>
+      <div class="panel">
+        <div class="panel-hd"><span>商城原型</span><span class="sp"></span>
+          <button class="mod-tip-b" type="button" aria-label="历史会话" data-tip="历史会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg></button>
+          <button class="mod-tip-b" type="button" aria-label="新会话" data-tip="新会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
+        <div class="flow">
+        <div class="msg-me"><div class="bub">照这两张图把商品列表页复刻出来</div></div>
+
+        <!-- 就是上一屏那一行「已完成」被点开的样子。
+             ------------------------------------------------------------
+             点开【只摊一级】:计划、四个步骤各占一行,步与步之间夹着当时那段话。
+             二级三级(每一步下面动过哪些文件、终端输出)仍旧收着,要看哪一步
+             再点哪一步 —— 一次把三层全摊开,等于用几十行把你要找的那一行埋掉,
+             跟不收起是一个下场。
+             展开的只是【过程】。结论、产物、反馈行、下一步引导照旧在下面,
+             它们不属于过程,任何时候都不折。 -->
+        <details class="fold mod-flat" open><summary><span>已完成</span><span class="ms">1m 12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+          <div class="body mod-stack">
+            <p class="think">两张图是同一套栅格,先复刻列表页,再拿它的商品卡去拼设置页。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack"><div class="tool"><span class="pk">1</span><span class="nm">复刻商品列表页</span></div><div class="tool"><span class="pk">2</span><span class="nm">抽出商品卡为共享组件</span></div><div class="tool"><span class="pk">3</span><span class="nm">按同一套间距做设置页</span></div><div class="tool"><span class="pk">4</span><span class="nm">接上两页之间的跳转</span></div></div></details>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 首页.png"><code>首页.png</code></button></span><span class="ms">0.4s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 tokens.css"><code>tokens.css</code></button></span><span class="ms">0.3s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+182</i><i>-0</i></span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-list.css"><code>product-list.css</code></button></span><span class="dst"><i>+96</i><i>-0</i></span></div>
+              </div></details>
+            <p class="think">截图是 4 列、24px 沟槽,和 <code>tokens.css</code> 里现成的栅格对得上,没另开一套。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span><span class="ms">6.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 product-card.html"><code>product-card.html</code></button></span><span class="dst"><i>+64</i><i>-0</i></span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+6</i><i>-58</i></span></div>
+              </div></details>
+            <p class="think">价格和标签抽成参数,两页各留一处引用,之后改样式只改一个文件。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>按同一套间距做设置页</span><span class="ms">9.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 12s3.6-6.4 10-6.4S22 12 22 12s-3.6 6.4-10 6.4S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg><span class="nm">读取 <button class="fn" type="button" aria-label="打开 设置页.png"><code>设置页.png</code></button></span><span class="ms">0.4s</span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">新建 <button class="fn" type="button" aria-label="打开 settings.html"><code>settings.html</code></button></span><span class="dst"><i>+140</i><i>-0</i></span></div>
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-card.html"><code>product-card.html</code></button></span><span class="dst"><i>+3</i><i>-1</i></span></div>
+                <!-- 生图不是这一轮的主产物 —— 主产物是下面那两张大卡(可预览、可发布)。
+                     插图是做设置页顺手生的配套素材,属于"它怎么做的",所以并回这一步的
+                     记录里,和读文件、写文件、跑命令排在一起。缩略图留在行内:它是这次
+                     调用吐出来的东西,跟命令行下面那块终端输出是同一个位置关系。 -->
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.6" cy="10" r="1.4"/><path d="M21 15.5L16 10.5 7.5 19"/></svg><span class="nm">生成配套插图 · 4 张</span><span class="strip"><button class="th" type="button" aria-label="查看第 1 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 2 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 3 张大图" data-tip="查看大图"><span class="mini"></span></button><button class="th" type="button" aria-label="查看第 4 张大图" data-tip="查看大图"><span class="mini"></span></button></span><span class="ms">2.6s</span></div>
+              </div></details>
+            <p class="think">设置页的卡窄一档,给商品卡补了个紧凑变体,没有复制第二份样式。</p>
+            <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>接上两页之间的跳转</span><span class="ms">4.1s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+              <div class="body mod-stack">
+                <div class="tool"><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 3a2.83 2.83 0 014 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="nm">改写 <button class="fn" type="button" aria-label="打开 product-list.html"><code>product-list.html</code></button></span><span class="dst"><i>+4</i><i>-2</i></span></div>
+                <details class="fold"><summary><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 17l5-5-5-5"/><path d="M12.5 19H20"/></svg><span class="nm">跑一遍,看两页能不能通</span><span class="ms">2.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                  <div class="body mod-stack">
+                    <div class="term mod-cmd"><div>npm run build</div></div>
+                    <div class="term"><div class="ok">✓ built in 2.14s (2 pages)</div></div>
+                  </div></details>
+              </div></details>
+          </div></details>
+
+        <!-- 以下四块永远在过程外面:它们是这一轮的交付物和收尾,不是"它怎么做的"。
+             把它们也折进去,等于把成果藏在一次点击后面。 -->
+        <div class="arts">
+          <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">product-list.html</div></div>
+            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><button class="btn mod-secondary mod-sm" type="button">发布</button><button class="btn mod-ghost mod-sm" type="button">导出</button></div></div>
+          <div class="art"><span class="thumb"><span class="mini"></span></span><div class="b"><div class="kd">settings.html</div></div>
+            <div class="ops"><button class="btn mod-primary mod-sm" type="button">预览</button><button class="btn mod-secondary mod-sm" type="button">发布</button><button class="btn mod-ghost mod-sm" type="button">导出</button></div></div>
+        </div>
+
+        <div class="say">两页都好了,商品卡已经抽成共享组件,改一处两页都跟着变。</div>
+
+        <div class="fb">
+          <span class="fin"><i></i>已完成</span>
+          <button type="button" aria-label="有帮助" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
+          <button type="button" aria-label="没帮助" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
+          <button type="button" aria-label="复制" data-tip="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+          <button type="button" aria-label="新开会话" data-tip="新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
+          <span class="sp"></span><span class="tm">14:32</span>
+        </div>
+
+        <div class="nexts">
+          <button type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5l7 7-7 7"/></svg>把商品卡换成两列布局</button>
+          <button type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5l7 7-7 7"/></svg>给列表页补搜索与筛选条</button>
+        </div>
+
+        </div>
+        <div class="dock">
+          <div class="composer">
             <div class="ta">随心输入…</div>
             <div class="bar">
               <button type="button" aria-label="添加附件" data-tip="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></button>
