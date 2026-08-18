@@ -947,8 +947,15 @@ button.att-d:hover { border-color: var(--border-strong); }
    都成立(cross-size 不是 auto,flex 的 stretch 就不生效)。 */
 .answered { width: fit-content; max-width: 100%;
   padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); font-size: var(--t-mini); line-height: var(--lh-row); }
-.answered .k { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--text-muted); }
-.answered .k svg { flex: none; width: 13px; height: 13px; }
+/* 「已确认」用绿 —— 绿在这套系统里只有一个意思:这件事定了。
+   之前它是灰的,和「执行计划」「读了 3 个文件」那些过程行同一档颜色,
+   回看时一眼扫过去分不出哪条是【你做的决定】、哪条只是 agent 干过的活。
+   决定是这一屏里最该被认出来的东西,它值这一点颜色。
+   不加勾:绿色本身已经说完了"这件事定了",再挂一枚绿勾是同一句话说两遍。
+   而且旁边的执行计划、工具行、已完成任务全带 .mk.is-ok 那枚绿勾,
+   「已确认」再挂一枚,就混进那一列勾里去了 —— 恰恰丢掉了要它显眼的初衷。
+   一个不带勾的绿词在一屏绿勾里反而更跳。 */
+.answered .k { margin-bottom: 3px; color: var(--brand-text); }
 .answered .ab { color: var(--text); }
 /* 只用颜色分层,不再叠字重。答案是 --text-strong、旁边的关键词 .ak 是 --text-soft,
    两档颜色已经把"这是答案"和"这是问的哪件事"分开了;再加一档字重是同一件事
@@ -2327,14 +2334,14 @@ button.att-d:hover { border-color: var(--border-strong); }
           <div class="st">
             <div class="st-l"><span>已回答 · 点「确认」后收成陈述</span><i></i></div>
             <div class="st-b">
-              <div class="answered"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div><div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div></div>
+              <div class="answered"><div class="k">已确认</div><div class="ab"><span class="ak">商品卡</span><b>沿用列表页那张,抽成两页共享的组件</b></div></div>
             </div>
           </div>
           <div class="st">
             <div class="st-l"><span>已回答 · 多选,勾了几条就列几条</span><i></i></div>
             <div class="st-b">
               <div class="answered">
-                <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
+                <div class="k">已确认</div>
                 <ul class="al">
                   <li><span class="ak">页面</span><b>商品详情页</b></li>
                   <li><span class="ak">页面</span><b>搜索结果页</b></li>
@@ -2347,7 +2354,7 @@ button.att-d:hover { border-color: var(--border-strong); }
             <div class="st-l"><span>已回答 · 视觉方向,带上你选的那张图</span><i></i></div>
             <div class="st-b">
               <div class="answered">
-                <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>已确认</div>
+                <div class="k">已确认</div>
                 <div class="ab"><span class="ak">视觉方向</span><b>编辑杂志</b></div>
                 <span class="av"><span class="mini"></span></span>
               </div>
