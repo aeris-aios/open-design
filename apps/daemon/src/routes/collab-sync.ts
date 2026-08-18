@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import {
+  PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
   workspaceContextHasWorkspaceIdentity,
+  type PublicFileManualRevokeRequiredResponse,
+  type PublicProjectFilePublication,
   type ProjectContentTransferState,
   type ProjectMetadata,
   type ProjectSyncIntentEvent,
@@ -1261,7 +1264,7 @@ export function registerCollabSyncRoutes(
       if (!snapshot) {
         return res.status(502).json({ error: 'PUBLIC_SNAPSHOT_UNAVAILABLE' });
       }
-      const publication = {
+      const publication: PublicProjectFilePublication = {
         url: publicSnapshotFileUrl(baseUrl, snapshot.slug, filePath),
         slug: snapshot.slug,
         fileName: filePath,
@@ -1284,9 +1287,9 @@ export function registerCollabSyncRoutes(
             '[od] failed to persist public project file publication; snapshot compensation also failed:',
             { persistenceError, redactionError },
           );
-          return res.status(502).json({
+          const recoveryResponse = {
             error: {
-              code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
+              code: PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
               message:
                 `The public link remains active at ${publication.url}. `
                 + 'Run od project revoke-public-link with this project, file path, and URL.',
@@ -1295,7 +1298,8 @@ export function registerCollabSyncRoutes(
                 ...publication,
               },
             },
-          });
+          } satisfies PublicFileManualRevokeRequiredResponse;
+          return res.status(502).json(recoveryResponse);
         }
         throw persistenceError;
       }

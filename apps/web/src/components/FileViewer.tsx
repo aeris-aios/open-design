@@ -84,6 +84,7 @@ import {
 } from '../collab/useWorkspaceContext';
 import {
   canPublishPublicFile,
+  publicFileManualRevokePublication,
   publicFilePublishFailureKey,
   type PublicFilePublishFailureKey,
 } from '../collab/public-file-publish';
@@ -6615,6 +6616,7 @@ function ReactComponentViewer({
       setPublishedFileSlug(response.slug);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
+      const recoveryPublication = publicFileManualRevokePublication(error);
       firePublishResult({
         action: 'publish',
         result: 'failed',
@@ -6622,8 +6624,15 @@ function ReactComponentViewer({
         publish_duration_ms: Math.round(performance.now() - publishStarted),
       });
       if (publicFileRequestSeqRef.current === requestSeq) {
-        setPublishLinkFeedback('failed');
-        setPublishFailureKey(publicFilePublishFailureKey(error));
+        if (recoveryPublication) {
+          setPublishedFileUrl(recoveryPublication.url);
+          setPublishedFileSlug(recoveryPublication.slug);
+          setPublishLinkFeedback(null);
+          setPublishFailureKey(null);
+        } else {
+          setPublishLinkFeedback('failed');
+          setPublishFailureKey(publicFilePublishFailureKey(error));
+        }
       }
     } finally {
       if (publicFileRequestSeqRef.current === requestSeq) setPublishingPublicFile(false);
@@ -8043,6 +8052,7 @@ function HtmlViewer({
       setPublishedFileSlug(response.slug);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
+      const recoveryPublication = publicFileManualRevokePublication(error);
       firePublishResult({
         action: 'publish',
         result: 'failed',
@@ -8050,8 +8060,15 @@ function HtmlViewer({
         publish_duration_ms: Math.round(performance.now() - publishStarted),
       });
       if (publicFileRequestSeqRef.current === requestSeq) {
-        setPublishLinkFeedback('failed');
-        setPublishFailureKey(publicFilePublishFailureKey(error));
+        if (recoveryPublication) {
+          setPublishedFileUrl(recoveryPublication.url);
+          setPublishedFileSlug(recoveryPublication.slug);
+          setPublishLinkFeedback(null);
+          setPublishFailureKey(null);
+        } else {
+          setPublishLinkFeedback('failed');
+          setPublishFailureKey(publicFilePublishFailureKey(error));
+        }
       }
     } finally {
       if (publicFileRequestSeqRef.current === requestSeq) setPublishingPublicFile(false);
