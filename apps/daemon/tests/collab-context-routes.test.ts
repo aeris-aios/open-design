@@ -453,6 +453,7 @@ describe('collab context routes', () => {
         get: () => 'ws-a',
         set: setActive,
         clear: async () => {},
+        clearIf: async () => true,
       },
       fetchWorkspaceDirectory: async () => ({
         ok: true,
@@ -524,6 +525,62 @@ describe('collab context routes', () => {
     expect(directory).toEqual({
       status: 200,
       body: { items: directoryItems, activeWorkspaceId: 'ws-a' },
+    });
+  });
+
+  it('does not let stale directory cleanup erase a concurrent workspace switch', async () => {
+    let pinned: string | null = 'ws-a';
+    let markClearStarted!: () => void;
+    let resumeClear!: () => void;
+    const clearStarted = new Promise<void>((resolve) => {
+      markClearStarted = resolve;
+    });
+    const clearMayFinish = new Promise<void>((resolve) => {
+      resumeClear = resolve;
+    });
+    const directoryItems = [{
+      workspaceId: 'ws-b',
+      workspaceName: 'Workspace B',
+      workspaceType: 'team' as const,
+      workspaceMemberId: 'wm-b',
+      role: 'owner' as const,
+      memberStatus: 'active' as const,
+      lifecycleState: 'active' as const,
+    }];
+    const api = await startContextServer({
+      activeWorkspace: {
+        get: () => pinned,
+        set: async (workspaceId) => {
+          pinned = workspaceId;
+        },
+        clear: async () => {
+          pinned = null;
+        },
+        clearIf: async (workspaceId) => {
+          markClearStarted();
+          await clearMayFinish;
+          if (pinned !== workspaceId) return false;
+          pinned = null;
+          return true;
+        },
+      },
+      fetchWorkspaceDirectory: async () => ({ ok: true, items: directoryItems }),
+    });
+
+    const staleDirectoryPromise = api.req('/api/workspace/directory');
+    await clearStarted;
+    const switched = await api.req('/api/workspace/active', {
+      method: 'PUT',
+      body: { workspaceId: 'ws-b', workspaceMemberId: 'wm-b' },
+    });
+    resumeClear();
+    const staleDirectory = await staleDirectoryPromise;
+
+    expect(switched.status).toBe(200);
+    expect(pinned).toBe('ws-b');
+    expect(staleDirectory).toEqual({
+      status: 200,
+      body: { items: directoryItems, activeWorkspaceId: 'ws-b' },
     });
   });
 });

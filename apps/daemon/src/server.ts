@@ -3442,7 +3442,7 @@ export async function startServer({
       // Only called after the membership directory CONFIRMS the pinned
       // workspace is gone (removed member / deleted workspace) — never on a
       // mere B outage. See resolvePinnedWorkspace in vela-workspace-context.ts.
-      clearLocalSelection: () => activeWorkspace.clear(),
+      clearLocalSelection: (workspaceId: string) => activeWorkspace.clearIf(workspaceId),
     }),
   );
   const workspaceExactContextCache = createWorkspaceExactContextCache({

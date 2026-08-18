@@ -181,6 +181,7 @@ export interface RegisterCollabContextRoutesDeps {
     get(): string | null;
     set(workspaceId: string): Promise<void>;
     clear(): Promise<void>;
+    clearIf(workspaceId: string): Promise<boolean>;
   };
   /**
    * Announce that one tab selected `workspaceId`, after a fresh membership
@@ -556,19 +557,22 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       configuredEnv: configuredEnv(),
     });
     const savedWorkspaceId = deps.activeWorkspace?.get()?.trim() || null;
-    const savedWorkspaceIsVisible = Boolean(
-      savedWorkspaceId
+    const workspaceIsVisible = (workspaceId: string | null) => Boolean(
+      workspaceId
       && items.some(
         (item) =>
-          item.workspaceId === savedWorkspaceId
+          item.workspaceId === workspaceId
           && item.memberStatus === 'active'
           && item.lifecycleState !== 'deleted',
       ),
     );
+    const savedWorkspaceIsVisible = workspaceIsVisible(savedWorkspaceId);
     if (savedWorkspaceId && !savedWorkspaceIsVisible) {
-      await deps.activeWorkspace?.clear().catch(() => undefined);
+      await deps.activeWorkspace?.clearIf(savedWorkspaceId).catch(() => false);
     }
-    let activeWorkspaceId = savedWorkspaceIsVisible ? savedWorkspaceId : null;
+    const currentWorkspaceId = deps.activeWorkspace?.get()?.trim() || null;
+    const currentWorkspaceIsVisible = workspaceIsVisible(currentWorkspaceId);
+    let activeWorkspaceId = currentWorkspaceIsVisible ? currentWorkspaceId : null;
     if (claimed.ok) activeWorkspaceId = claimed.context.workspaceId;
     const body: WorkspaceDirectoryResponse = { items, activeWorkspaceId };
     res.json(body);

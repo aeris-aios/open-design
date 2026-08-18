@@ -89,6 +89,11 @@ async function startSwitchServer(options: {
     clear: async () => {
       pinned = null;
     },
+    clearIf: async (workspaceId: string) => {
+      if (pinned !== workspaceId) return false;
+      pinned = null;
+      return true;
+    },
   };
 
   const app = express();
@@ -267,6 +272,11 @@ describe('PUT /api/workspace/active keeps exact enrichment tab-local', () => {
       clear: async () => {
         pinned = null;
       },
+      clearIf: async (workspaceId: string) => {
+        if (pinned !== workspaceId) return false;
+        pinned = null;
+        return true;
+      },
     };
 
     const jsonResponse = (status: number, body: unknown): Response =>
@@ -305,7 +315,7 @@ describe('PUT /api/workspace/active keeps exact enrichment tab-local', () => {
       readSession: () => session as never,
       getActiveWorkspaceId: () => activeWorkspace.get(),
       setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
-      clearLocalSelection: () => activeWorkspace.clear(),
+      clearLocalSelection: (workspaceId: string) => activeWorkspace.clearIf(workspaceId),
     });
 
     // The production cached fetcher: the route's read is served from cache for

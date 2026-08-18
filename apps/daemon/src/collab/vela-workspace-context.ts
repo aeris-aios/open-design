@@ -99,9 +99,11 @@ interface VelaWorkspaceContextOptions {
    * Purge a CONFIRMED-stale local pin: the membership directory was
    * successfully read and no longer lists this workspace as an active
    * membership (removed member, or the workspace itself is gone). Never
-   * called on a merely unreachable B.
+   * called on a merely unreachable B. Returns false when another request has
+   * already replaced the inspected value, so recovery must preserve that new
+   * selection instead of choosing a fallback over it.
    */
-  clearLocalSelection?: () => void | Promise<void>;
+  clearLocalSelection?: (workspaceId: string) => boolean | Promise<boolean>;
   timeoutMs?: number;
 }
 
@@ -305,7 +307,22 @@ export function createVelaWorkspaceContextProvider(
         // An exact request must not mutate or fall back from the caller's
         // workspace. Only a confirmed-stale daemon-local pin is recoverable.
         if (explicitSelection) return null;
-        await options.clearLocalSelection?.();
+        const cleared = await options.clearLocalSelection?.(localSelection);
+        if (cleared === false) {
+          const concurrentSelection = options.getActiveWorkspaceId?.()?.trim();
+          const concurrent = directory.items.find(
+            (entry) =>
+              entry.workspaceId === concurrentSelection
+              && entry.memberStatus === 'active'
+              && entry.lifecycleState !== 'deleted',
+          );
+          return concurrent
+            ? withUserIdentity(
+                workspaceContextFromDirectoryItem(concurrent, selectedEnv),
+                session,
+              )
+            : null;
+        }
       }
 
       const fallback = pickDefaultWorkspace(directory);

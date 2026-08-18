@@ -1223,16 +1223,18 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
   function statefulPin(initial: string | undefined) {
     let value = initial;
     const setCalls: string[] = [];
-    const clearCalls: number[] = [];
+    const clearCalls: string[] = [];
     return {
       getActiveWorkspaceId: () => value,
       setLocalSelection: (id: string) => {
         value = id;
         setCalls.push(id);
       },
-      clearLocalSelection: () => {
+      clearLocalSelection: (workspaceId: string) => {
+        if (value !== workspaceId) return false;
         value = undefined;
-        clearCalls.push(1);
+        clearCalls.push(workspaceId);
+        return true;
       },
       setCalls,
       clearCalls,
@@ -1293,6 +1295,32 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
     expect(context?.workspaceId).toBe('ws-personal-1');
     expect(pin.clearCalls.length).toBe(1);
     expect(pin.setCalls).toEqual(['ws-personal-1']);
+  });
+
+  it('does not overwrite a concurrent local selection during stale-pin recovery', async () => {
+    let pin = 'ws-team-1';
+    const setLocalSelection = vi.fn((workspaceId: string) => {
+      pin = workspaceId;
+    });
+    const provider = createVelaWorkspaceContextProvider({
+      fetch: scriptedFetch({
+        directory: () => jsonResponse(200, DIRECTORY_WITHOUT_TEAM),
+      }),
+      readSession: () => SESSION,
+      getActiveWorkspaceId: () => pin,
+      setLocalSelection,
+      clearLocalSelection: (workspaceId) => {
+        expect(workspaceId).toBe('ws-team-1');
+        pin = 'ws-personal-1';
+        return false;
+      },
+    });
+
+    const context = await provider.current({});
+
+    expect(context?.workspaceId).toBe('ws-personal-1');
+    expect(pin).toBe('ws-personal-1');
+    expect(setLocalSelection).not.toHaveBeenCalled();
   });
 
   it('does NOT clear the pin when the directory request fails (network error) — preserve on B outage', async () => {

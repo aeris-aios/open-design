@@ -11,6 +11,7 @@ export interface ActiveWorkspaceSelectionStore {
   snapshot(): { workspaceId: string | null; generation: number };
   set(workspaceId: string): Promise<void>;
   clear(): Promise<void>;
+  clearIf(workspaceId: string): Promise<boolean>;
   subscribe(listener: (workspaceId: string | null) => void): () => void;
 }
 
@@ -54,6 +55,7 @@ export function createActiveWorkspaceSelectionStore(
   const filePath = path.join(dataDir, 'workspace-selection.json');
   let cached: string | null | undefined;
   let generation = 0;
+  let mutationTail = Promise.resolve();
   const listeners = new Set<(workspaceId: string | null) => void>();
 
   const read = (): string | null => {
@@ -80,6 +82,15 @@ export function createActiveWorkspaceSelectionStore(
     }
   };
 
+  const enqueueMutation = <T>(mutation: () => Promise<T>): Promise<T> => {
+    const result = mutationTail.then(mutation);
+    mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
   return {
     get: read,
     snapshot() {
@@ -88,28 +99,44 @@ export function createActiveWorkspaceSelectionStore(
     async set(workspaceId: string) {
       const next = workspaceId.trim();
       if (!next) throw new Error('workspaceId is required');
-      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-      const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-      try {
-        await fs.promises.writeFile(
-          tempPath,
-          JSON.stringify({ workspaceId: next }, null, 2),
-          'utf8',
-        );
-        await fs.promises.rename(tempPath, filePath);
-      } catch (error) {
-        await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
-        throw error;
-      }
-      cached = next;
-      generation += 1;
-      notify(next);
+      await enqueueMutation(async () => {
+        await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+        const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+          await fs.promises.writeFile(
+            tempPath,
+            JSON.stringify({ workspaceId: next }, null, 2),
+            'utf8',
+          );
+          await fs.promises.rename(tempPath, filePath);
+        } catch (error) {
+          await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+          throw error;
+        }
+        cached = next;
+        generation += 1;
+        notify(next);
+      });
     },
     async clear() {
-      await fs.promises.rm(filePath, { force: true });
-      cached = null;
-      generation += 1;
-      notify(null);
+      await enqueueMutation(async () => {
+        await fs.promises.rm(filePath, { force: true });
+        cached = null;
+        generation += 1;
+        notify(null);
+      });
+    },
+    async clearIf(workspaceId: string) {
+      const expected = workspaceId.trim();
+      if (!expected) return false;
+      return enqueueMutation(async () => {
+        if (read() !== expected) return false;
+        await fs.promises.rm(filePath, { force: true });
+        cached = null;
+        generation += 1;
+        notify(null);
+        return true;
+      });
     },
     subscribe(listener) {
       listeners.add(listener);

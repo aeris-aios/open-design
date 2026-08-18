@@ -76,8 +76,10 @@ function createClient(fetchImpl: typeof fetch, pinned: string) {
     setLocalSelection: (id) => {
       pin = id;
     },
-    clearLocalSelection: () => {
+    clearLocalSelection: (workspaceId) => {
+      if (pin !== workspaceId) return false;
       pin = null;
+      return true;
     },
   });
   return {

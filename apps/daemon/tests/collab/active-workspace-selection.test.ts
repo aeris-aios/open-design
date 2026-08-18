@@ -229,6 +229,21 @@ describe('active workspace selection generation', () => {
     });
   });
 
+  it('does not clear a newer selection with a stale compare-and-clear', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
+    roots.push(root);
+    const store = createActiveWorkspaceSelectionStore(root);
+    await store.set('workspace-a');
+    const inspected = store.get();
+    await store.set('workspace-b');
+    const beforeClear = store.snapshot();
+
+    await expect(store.clearIf(inspected!)).resolves.toBe(false);
+
+    expect(store.get()).toBe('workspace-b');
+    expect(store.snapshot()).toEqual(beforeClear);
+  });
+
   it('increments generation when the selection is cleared', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
     roots.push(root);
