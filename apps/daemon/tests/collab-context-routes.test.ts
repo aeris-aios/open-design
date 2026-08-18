@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
   buildWorkspacePermissions,
   buildWorkspaceSeatSummary,
@@ -16,8 +19,10 @@ import {
   resolveWorkspaceSettingsUrl,
 } from '../src/collab/workspace-context.js';
 import { createWorkspaceBillingRuntimeCoordinator } from '../src/collab/workspace-billing-runtime.js';
+import { createActiveWorkspaceSelectionStore } from '../src/collab/active-workspace-selection.js';
 
 let server: http.Server | null = null;
+const roots: string[] = [];
 
 afterEach(async () => {
   if (server) {
@@ -25,6 +30,7 @@ afterEach(async () => {
     server = null;
     await new Promise<void>((resolve) => toClose.close(() => resolve()));
   }
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 /** The minimal payload a dev/demo run PUTs — only enum + identity fields. */
@@ -445,6 +451,52 @@ describe('collab context routes', () => {
     });
     expect(setActive).toHaveBeenCalledOnce();
     expect(setActive).toHaveBeenCalledWith('ws-b');
+  });
+
+  it('keeps the previous directory default when selection persistence fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-route-'));
+    roots.push(root);
+    const activeWorkspace = createActiveWorkspaceSelectionStore(root);
+    await activeWorkspace.set('ws-a');
+    await rm(root, { recursive: true });
+    await writeFile(root, 'not a directory', 'utf8');
+    const directoryItems = [
+      {
+        workspaceId: 'ws-a',
+        workspaceName: 'Workspace A',
+        workspaceType: 'team' as const,
+        workspaceMemberId: 'wm-a',
+        role: 'member' as const,
+        memberStatus: 'active' as const,
+        lifecycleState: 'active' as const,
+      },
+      {
+        workspaceId: 'ws-b',
+        workspaceName: 'Workspace B',
+        workspaceType: 'team' as const,
+        workspaceMemberId: 'wm-b',
+        role: 'owner' as const,
+        memberStatus: 'active' as const,
+        lifecycleState: 'active' as const,
+      },
+    ];
+    const api = await startContextServer({
+      activeWorkspace,
+      fetchWorkspaceDirectory: async () => ({ ok: true, items: directoryItems }),
+    });
+
+    const failedSwitch = await api.req('/api/workspace/active', {
+      method: 'PUT',
+      body: { workspaceId: 'ws-b', workspaceMemberId: 'wm-b' },
+    });
+    const directory = await api.req('/api/workspace/directory');
+
+    expect(failedSwitch.status).toBe(500);
+    expect(activeWorkspace.get()).toBe('ws-a');
+    expect(directory).toEqual({
+      status: 200,
+      body: { items: directoryItems, activeWorkspaceId: 'ws-a' },
+    });
   });
 });
 

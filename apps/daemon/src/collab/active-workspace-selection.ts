@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 interface ActiveWorkspaceSelectionFile {
@@ -87,20 +88,27 @@ export function createActiveWorkspaceSelectionStore(
     async set(workspaceId: string) {
       const next = workspaceId.trim();
       if (!next) throw new Error('workspaceId is required');
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+      try {
+        await fs.promises.writeFile(
+          tempPath,
+          JSON.stringify({ workspaceId: next }, null, 2),
+          'utf8',
+        );
+        await fs.promises.rename(tempPath, filePath);
+      } catch (error) {
+        await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+        throw error;
+      }
       cached = next;
       generation += 1;
-      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.promises.writeFile(
-        filePath,
-        JSON.stringify({ workspaceId: next }, null, 2),
-        'utf8',
-      );
       notify(next);
     },
     async clear() {
+      await fs.promises.rm(filePath, { force: true });
       cached = null;
       generation += 1;
-      await fs.promises.rm(filePath, { force: true });
       notify(null);
     },
     subscribe(listener) {

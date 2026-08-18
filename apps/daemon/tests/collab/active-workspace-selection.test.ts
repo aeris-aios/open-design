@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -192,6 +192,25 @@ describe('active workspace selection generation', () => {
     await store.set('workspace-3');
 
     expect(selections).toEqual(['workspace-1', 'workspace-2', null]);
+  });
+
+  it('keeps the previous selection when persistence fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
+    roots.push(root);
+    const store = createActiveWorkspaceSelectionStore(root);
+    const selections: Array<string | null> = [];
+    store.subscribe((workspaceId) => selections.push(workspaceId));
+    await store.set('workspace-1');
+    const captured = store.snapshot();
+    selections.length = 0;
+
+    await rm(root, { recursive: true });
+    await writeFile(root, 'not a directory', 'utf8');
+
+    await expect(store.set('workspace-2')).rejects.toThrow();
+    expect(store.get()).toBe('workspace-1');
+    expect(store.snapshot()).toEqual(captured);
+    expect(selections).toEqual([]);
   });
 
   it('detects away-and-back changes even when the final workspace id matches', async () => {
