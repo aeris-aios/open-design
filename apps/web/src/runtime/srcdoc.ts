@@ -536,14 +536,49 @@ export function canActivateSrcDocTransport(state: SrcDocActivationInputs): boole
 
 function injectSrcdocTransportActivationBridge(doc: string, generation: string): string {
   const encodedGeneration = JSON.stringify(generation);
+  const markerGeneration = generation
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
   const script = `<script data-od-srcdoc-transport-activation>(function(){
   var generation = ${encodedGeneration};
+  var bodyComplete = false;
+  function containsCompletionMarker(node){
+    if (!node || node.nodeType !== 1) return false;
+    if (node.tagName === 'TEMPLATE' && node.getAttribute('data-od-srcdoc-transport-body-complete') === generation) return true;
+    var candidates = node.querySelectorAll ? node.querySelectorAll('template[data-od-srcdoc-transport-body-complete]') : [];
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (candidates[i].getAttribute('data-od-srcdoc-transport-body-complete') === generation) return true;
+    }
+    return false;
+  }
+  var completionObserver = typeof MutationObserver === 'function' ? new MutationObserver(function(records){
+    if (bodyComplete) return;
+    for (var i = 0; i < records.length; i += 1) {
+      var added = records[i].addedNodes || [];
+      for (var j = 0; j < added.length; j += 1) {
+        if (!containsCompletionMarker(added[j])) continue;
+        bodyComplete = true;
+        completionObserver.disconnect();
+        return;
+      }
+    }
+  }) : null;
+  if (completionObserver && document.documentElement) {
+    completionObserver.observe(document.documentElement, { childList: true, subtree: true });
+  }
   function announceReady(probeId){
     if (!generation) return;
     try {
       if (window.parent && window.parent !== window) {
         var message = { type: 'od:srcdoc-transport-activated', generation: generation };
         if (typeof probeId === 'string' && probeId) message.probeId = probeId;
+        message.bodyComplete = bodyComplete;
+        message.documentReadyState = document.readyState;
+        message.bodyPresent = !!document.body;
+        message.bodyChildCount = document.body ? document.body.children.length : 0;
+        message.documentElementChildCount = document.documentElement ? document.documentElement.children.length : 0;
         window.parent.postMessage(message, '*');
       }
     } catch (_) { /* sandboxed parent */ }
@@ -567,7 +602,13 @@ function injectSrcdocTransportActivationBridge(doc: string, generation: string):
   // missing-ACK recovery indistinguishable from a genuinely aborted
   // `about:srcdoc` navigation. Placing the bridge first also runs it before an
   // authored meta CSP can disable later inline scripts.
-  return injectAfterHeadOpen(doc, script);
+  // The generation-specific inert tail marker distinguishes a fully parsed artifact from the
+  // half-document Chromium can leave behind after aborting about:srcdoc. The
+  // head bridge latches its insertion permanently, so later authored DOM
+  // replacement cannot erase the parser witness. A template is inert and
+  // remains compatible with authored CSPs.
+  const bodyCompleteMarker = `<template data-od-srcdoc-transport-body-complete="${markerGeneration}"></template>`;
+  return injectBeforeBodyEnd(injectAfterHeadOpen(doc, script), bodyCompleteMarker);
 }
 
 function injectSnapshotBridge(doc: string): string {

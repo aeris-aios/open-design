@@ -421,7 +421,97 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.fontLinks).toContain('https://fonts.googleapis.com/css2?family=Inter');
   });
 
-  it('drops a slide-nested <style> element from the sanitized slide body', () => {
+  it('lifts an approved font @import into the host so thumbnail typography matches', () => {
+    const fontHref = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,700&display=swap';
+    const deck = [
+      '<!doctype html><html><head><style>',
+      `  @import url('${fontHref}');`,
+      '  .deck-stage { width: 1920px; height: 1080px; }',
+      '</style></head><body>',
+      '  <div class="deck-stage" id="deck-stage"><section class="slide active"><h1>Title</h1></section></div>',
+      '</body></html>',
+    ].join('\n');
+
+    const parsed = parseDeckThumbnails(deck, '/api/projects/p1/raw/');
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.fontLinks).toContain(fontHref);
+    expect(parsed.styleText).not.toContain('@import');
+  });
+
+  it.each([
+    ['quoted content', `.deck-stage::after { content: "@import url('https://fonts.googleapis.com/css2?family=Fake');"; }`],
+    ['a quoted custom property', `.deck-stage { --example: "@import url('https://fonts.googleapis.com/css2?family=Fake');"; }`],
+  ])('does not treat @import text inside %s as a stylesheet import', (_case, declaration) => {
+    const deck = frameworkDeck(1).replace(
+      '.deck-stage { width: 1920px; height: 1080px; background: var(--bg); }',
+      `${declaration}\n.deck-stage { width: 1920px; height: 1080px; background: var(--bg); }`,
+    );
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.fontLinks).toEqual([]);
+    expect(parsed.styleText).toContain('@import url');
+    expect(parsed.styleText).toContain('.deck-stage { width: 1920px');
+  });
+
+  it('lifts a top-level import with a directly quoted URL', () => {
+    const fontHref = 'https://fonts.googleapis.com/css2?family=Inter';
+    const deck = frameworkDeck(1).replace('<style>', `<style>@import "${fontHref}";`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.fontLinks).toContain(fontHref);
+    expect(parsed.styleText).not.toContain('@import');
+  });
+
+  it.each([
+    ['a malformed import', '@import url("https://fonts.googleapis.com/css2?family=Inter";'],
+    ['a non-font import', '@import url("https://cdn.example.com/layout.css");'],
+  ])('falls back for %s', (_case, importRule) => {
+    const deck = frameworkDeck(1).replace('<style>', `<style>${importRule}`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
+  });
+
+  it.each([
+    ['print media', '@import url("https://fonts.googleapis.com/css2?family=Inter") print;'],
+    [
+      'a true supports condition',
+      '@import url("https://fonts.googleapis.com/css2?family=Inter") supports(display: grid);',
+    ],
+    [
+      'a false supports condition',
+      '@import url("https://fonts.googleapis.com/css2?family=Inter") supports(display: unknown-value);',
+    ],
+    ['a named layer', '@import url("https://fonts.googleapis.com/css2?family=Inter") layer(deck-fonts);'],
+  ])('falls back rather than changing the semantics of %s', (_case, importRule) => {
+    const deck = frameworkDeck(1).replace('<style>', `<style>${importRule}`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
+  });
+
+  it('falls back for an import after a normal rule', () => {
+    const deck = frameworkDeck(1).replace(
+      '</style>',
+      '@import url("https://fonts.googleapis.com/css2?family=Inter");</style>',
+    );
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
+  });
+
+  it('falls back when a slide-nested style imports unapproved CSS', () => {
     const deck = [
       '<!doctype html><html><head><style>.deck-stage { width: 1920px; height: 1080px; }</style></head><body>',
       '  <div class="deck-stage" id="deck-stage">',
@@ -433,18 +523,11 @@ describe('parseDeckThumbnails', () => {
       '</body></html>',
     ].join('\n');
     const parsed = parseDeckThumbnails(deck, '/api/projects/p1/raw/');
-    expect(parsed.renderable).toBe(true);
-    const slide = parsed.slides[0] ?? '';
-    // DOMPurify removes the <style> element from the slide body markup.
-    expect(slide).not.toMatch(/<style/i);
-    expect(slide).not.toContain('evil.example');
-    expect(slide).toContain('Title');
-    // Note the deferred gap: parseDeckThumbnails harvests every <style> in the
-    // document into styleText independently of this DOMPurify pass, so the
-    // nested rule's CSS (including its @import) still lands in styleText. CSS
-    // @import stripping is intentionally left to the CSS-tokenizer follow-up,
-    // so this stays unchanged from main and is asserted here, not silently
-    // assumed closed.
-    expect(parsed.styleText).toContain('evil.example');
+    // Every style block contributes to the shadow stylesheet, including one
+    // nested inside a slide before the markup sanitizer removes that element.
+    // An unapproved import therefore makes static rendering unsafe/incomplete
+    // and must use the isolated iframe fallback.
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
   });
 });
