@@ -10269,10 +10269,33 @@ function HtmlViewer({
     probeId: string;
     recoverOnFailure: boolean;
   } | null>(null);
+  const srcDocTransportTimeoutsRef = useRef<Set<number>>(new Set());
   const srcDocParsingGraceRef = useRef<{
     generation: string;
     deadline: number;
   } | null>(null);
+  const clearSrcDocTransportTimeouts = useCallback(() => {
+    for (const timeout of srcDocTransportTimeoutsRef.current) {
+      window.clearTimeout(timeout);
+    }
+    srcDocTransportTimeoutsRef.current.clear();
+  }, []);
+  const scheduleSrcDocTransportTimeout = useCallback((callback: () => void, delay: number) => {
+    const timeout = window.setTimeout(() => {
+      srcDocTransportTimeoutsRef.current.delete(timeout);
+      callback();
+    }, delay);
+    srcDocTransportTimeoutsRef.current.add(timeout);
+  }, []);
+  const cancelPendingSrcDocTransport = useCallback(() => {
+    clearSrcDocTransportTimeouts();
+    pendingSrcDocTransportProbeRef.current = null;
+    srcDocParsingGraceRef.current = null;
+  }, [clearSrcDocTransportTimeouts]);
+  useEffect(() => {
+    if (!workspaceActive || mode !== 'preview') cancelPendingSrcDocTransport();
+    return cancelPendingSrcDocTransport;
+  }, [cancelPendingSrcDocTransport, mode, srcDocTransportGeneration, workspaceActive]);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
     if (!workspaceActive) return;
     const win = target?.contentWindow;
@@ -10390,6 +10413,7 @@ function HtmlViewer({
     if (srcDocRecoveryAttemptedGenerationRef.current === generation) return;
     srcDocRecoveryAttemptedGenerationRef.current = generation;
     const ready = readySrcDocTransportRef.current;
+    cancelPendingSrcDocTransport();
     reportPreviewTransportRecovery({
       surface: 'artifact_preview',
       renderMode: 'srcdoc',
@@ -10406,15 +10430,13 @@ function HtmlViewer({
       viewportHeight: frame?.clientHeight,
       timeoutMs: signal === 'probe_timeout' ? SRC_DOC_READY_PROBE_TIMEOUT_MS : undefined,
     });
-    pendingSrcDocTransportProbeRef.current = null;
-    srcDocParsingGraceRef.current = null;
     verifiedSrcDocTransportRef.current = null;
     readySrcDocTransportRef.current = null;
     activatedSrcDocTransportHtmlRef.current = null;
     setSrcDocShellReady(false);
     setSrcDocRecoveryGeneration(generation);
     setSrcDocTransportResetKey((key) => key + 1);
-  }, [file.kind, file.name, handoffArtifactKind, projectId]);
+  }, [cancelPendingSrcDocTransport, file.kind, file.name, handoffArtifactKind, projectId]);
   const probeSrcDocTransport = useCallback((
     generation: string,
     recoverOnFailure: boolean,
@@ -10436,6 +10458,7 @@ function HtmlViewer({
     // Recovery probes can be shared by the timer and onLoad paths. A passive
     // prewarm probe may target the lazy shell, so the real srcDoc must replace it.
     if (pendingRecoveryProbeMatches) return;
+    clearSrcDocTransportTimeouts();
     srcDocTransportProbeSequenceRef.current += 1;
     const probeId = `${generation}:probe-${srcDocTransportProbeSequenceRef.current}`;
     pendingSrcDocTransportProbeRef.current = {
@@ -10455,7 +10478,7 @@ function HtmlViewer({
       generation,
       probeId,
     }, '*');
-    window.setTimeout(() => {
+    scheduleSrcDocTransportTimeout(() => {
       const pending = pendingSrcDocTransportProbeRef.current;
       if (
         !pending
@@ -10470,7 +10493,11 @@ function HtmlViewer({
         recoverUnacknowledgedSrcDocTransport(generation, 'probe_timeout');
       }
     }, SRC_DOC_READY_PROBE_TIMEOUT_MS);
-  }, [recoverUnacknowledgedSrcDocTransport]);
+  }, [
+    clearSrcDocTransportTimeouts,
+    recoverUnacknowledgedSrcDocTransport,
+    scheduleSrcDocTransportTimeout,
+  ]);
   // Sticky once the srcDoc iframe has materialized the real artifact for the
   // first time (i.e. the first entry into Mark/Edit/Comment/Inspect). Until
   // then the srcDoc iframe stays on the lazy shell — so passive preview never
@@ -10552,6 +10579,7 @@ function HtmlViewer({
         && pending.probeId === data.probeId
         && data.bodyComplete === true
       ) {
+        clearSrcDocTransportTimeouts();
         pendingSrcDocTransportProbeRef.current = null;
         srcDocParsingGraceRef.current = null;
         verifiedSrcDocTransportRef.current = { frame, generation: data.generation };
@@ -10569,6 +10597,7 @@ function HtmlViewer({
           // so keep challenging this generation without remounting and risk
           // running earlier authored side effects twice. A bounded grace
           // period still recovers Chromium's permanently-aborted half-document.
+          clearSrcDocTransportTimeouts();
           pendingSrcDocTransportProbeRef.current = null;
           const now = Date.now();
           const currentGrace = srcDocParsingGraceRef.current;
@@ -10591,7 +10620,7 @@ function HtmlViewer({
             });
             return;
           }
-          window.setTimeout(() => {
+          scheduleSrcDocTransportTimeout(() => {
             if (expectedSrcDocTransportGenerationRef.current !== data.generation) return;
             const verified = verifiedSrcDocTransportRef.current;
             if (verified?.frame === frame && verified.generation === data.generation) return;
@@ -10628,9 +10657,11 @@ function HtmlViewer({
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [
+    clearSrcDocTransportTimeouts,
     probeSrcDocTransport,
     recoverUnacknowledgedSrcDocTransport,
     replayPreviewBridgeModes,
+    scheduleSrcDocTransportTimeout,
     workspaceActive,
   ]);
   // React can commit a fresh `srcdoc` attribute while Chromium aborts the
