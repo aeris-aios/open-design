@@ -94,10 +94,40 @@ export function emitWorkspaceEventToScope(
   return true;
 }
 
+/**
+ * Deliver an account-level dirty signal through every already-authorized local
+ * Workspace stream. The payload deliberately contains no Workspace id/content,
+ * so this broad local nudge reveals no cross-workspace data; each browser then
+ * re-reads the account directory through the daemon's current credential.
+ */
+export function emitWorkspaceEventToAllScopes(
+  sinksByWorkspace: WorkspaceEventSinksByWorkspace,
+  payload: Extract<
+    WorkspaceInvalidationSsePayload,
+    { type: 'workspace-directory-changed' }
+  >,
+): boolean {
+  let emitted = false;
+  for (const [workspaceId, sinks] of Array.from(sinksByWorkspace)) {
+    for (const sink of Array.from(sinks)) {
+      try {
+        sink(payload);
+        emitted = true;
+      } catch {
+        sinks.delete(sink);
+      }
+    }
+    if (sinks.size === 0) sinksByWorkspace.delete(workspaceId);
+  }
+  return emitted;
+}
+
 export interface RegisterCollabContextRoutesDeps {
   workspaceContext: WorkspaceContextProvider;
-  /** Optional settled verifier for the pure context GET. Mutations and SSE
-   * subscriptions retain their fresh directory verification below. */
+  /** Current settings-backed AMR environment for synthesized contexts. */
+  configuredEnv?: () => Record<string, string>;
+  /** Optional settled verifier for exact-scoped display GETs. Mutations and
+   * SSE subscriptions retain their fresh directory verification below. */
   verifyWorkspaceReadAuthority?: (
     req: Request,
   ) => Promise<VerifiedWorkspaceRequestContextResult>;
@@ -186,6 +216,8 @@ export interface RegisterCollabContextRoutesDeps {
     send: (event: string, data: unknown, id?: string | number | null) => boolean;
   };
   workspaceEventSinks?: WorkspaceEventSinksByWorkspace;
+  /** Keep one upstream Vela carrier while this local Workspace SSE is open. */
+  retainWorkspaceEventInterest?: (workspaceId: string) => () => void;
   /** Best-effort PostHog group update; never affects the route response. */
   observeWorkspace?: (
     req: Request,
@@ -281,7 +313,10 @@ function parseInviteCreateItems(
  */
 export function registerCollabContextRoutes(app: Express, deps: RegisterCollabContextRoutesDeps): void {
   const { workspaceContext } = deps;
-  const consumeInvite = deps.consumeInvite ?? ((nonce: string) => consumeInviteContinuation(nonce));
+  const configuredEnv = () => deps.configuredEnv?.() ?? {};
+  const consumeInvite = deps.consumeInvite ?? ((nonce: string) => consumeInviteContinuation(nonce, {
+    configuredEnv: configuredEnv(),
+  }));
   const createInvite =
     deps.createInvite ?? ((input: CreateWorkspaceInviteInput) => createWorkspaceInvite(input));
   const fetchBilling = deps.fetchBilling ?? (() => fetchVelaBillingSummary());
@@ -374,6 +409,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     const verified = await verifyWorkspaceRequestContext({
       req,
       fetchWorkspaceDirectory,
+      configuredEnv: configuredEnv(),
       requireTeam: true,
     });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);
@@ -408,6 +444,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       : await verifyWorkspaceRequestContext({
           req,
           fetchWorkspaceDirectory,
+          configuredEnv: configuredEnv(),
         });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);
     const enriched = await workspaceContext.resolveExact?.({
@@ -448,6 +485,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       const verified = await verifyWorkspaceRequestContext({
         req: scopedRequest,
         fetchWorkspaceDirectory,
+        configuredEnv: configuredEnv(),
       });
       if (!verified.ok) {
         sendWorkspaceVerificationFailure(res, verified);
@@ -468,6 +506,8 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
         workspaceEventSinks.set(workspaceId, workspaceSinks);
       }
       workspaceSinks.add(sink);
+      const releaseWorkspaceEventInterest =
+        deps.retainWorkspaceEventInterest?.(workspaceId) ?? (() => undefined);
       // Handshake so the client treats the stream as live and resets its
       // reconnect backoff immediately (mirrors the project stream's `ready`).
       sse.send('ready', { at: Date.now() });
@@ -476,6 +516,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
         if (workspaceSinks?.size === 0) {
           workspaceEventSinks.delete(workspaceId);
         }
+        releaseWorkspaceEventInterest();
       };
       res.on('close', cleanup);
       res.on('finish', cleanup);
@@ -506,6 +547,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     const claimed = await verifyWorkspaceRequestContext({
       req,
       fetchWorkspaceDirectory: async () => directory,
+      configuredEnv: configuredEnv(),
     });
     const activeWorkspaceId = claimed.ok ? claimed.context.workspaceId : null;
     const body: WorkspaceDirectoryResponse = { items, activeWorkspaceId };
@@ -585,7 +627,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     ) {
       return res.status(404).json({ error: 'workspace_no_longer_available' });
     }
-    const resolved = context ?? workspaceContextFromDirectoryItem(selected);
+    const resolved = context ?? workspaceContextFromDirectoryItem(selected, configuredEnv());
     // Warm this exact workspace's cold caches before responding, but never
     // await them — a slow upstream must not delay the tab-local selection.
     deps.onWorkspaceSwitched?.(workspaceId);
@@ -602,16 +644,25 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
   // their exact-scope last-good catalog instead of treating the outage as an
   // authoritative removal of every project.
   app.get('/api/workspace/projects/team', async (req, res) => {
-    const verified = await verifyWorkspaceRequestContext({
-      req,
-      fetchWorkspaceDirectory,
-      requireTeam: true,
-    });
+    const verified = deps.verifyWorkspaceReadAuthority
+      ? await deps.verifyWorkspaceReadAuthority(req)
+      : await verifyWorkspaceRequestContext({
+          req,
+          fetchWorkspaceDirectory,
+          configuredEnv: configuredEnv(),
+          requireTeam: true,
+        });
     if (!verified.ok) {
       return res.status(verified.status).json({
         error: verified.code,
         message: verified.message,
         ...(verified.retryable ? { retryable: true } : {}),
+      });
+    }
+    if (verified.context.workspaceType !== 'team') {
+      return res.status(403).json({
+        error: 'WORKSPACE_ACCESS_DENIED',
+        message: 'the requested workspace is not available to this member',
       });
     }
     let projects: TeamProject[];
@@ -636,12 +687,23 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
   // represented as an authoritative empty roster: clients retain last-good
   // display metadata until a successful response says members really left.
   app.get('/api/workspace/members', async (req, res) => {
-    const verified = await verifyWorkspaceRequestContext({
-      req,
-      fetchWorkspaceDirectory,
-      requireTeam: true,
-    });
+    const verified = deps.verifyWorkspaceReadAuthority
+      ? await deps.verifyWorkspaceReadAuthority(req)
+      : await verifyWorkspaceRequestContext({
+          req,
+          fetchWorkspaceDirectory,
+          configuredEnv: configuredEnv(),
+          requireTeam: true,
+        });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);
+    if (verified.context.workspaceType !== 'team') {
+      return sendWorkspaceVerificationFailure(res, {
+        ok: false,
+        status: 403,
+        code: 'WORKSPACE_ACCESS_DENIED',
+        message: 'the requested workspace is not available to this member',
+      });
+    }
     try {
       const members = await listMembers(verified.context);
       const body: CollabCloudMembersResponse = { members };
@@ -919,6 +981,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     const verified = await verifyWorkspaceRequestContext({
       req,
       fetchWorkspaceDirectory,
+      configuredEnv: configuredEnv(),
       requireTeam: true,
     });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);
@@ -934,6 +997,7 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     const verified = await verifyWorkspaceRequestContext({
       req,
       fetchWorkspaceDirectory,
+      configuredEnv: configuredEnv(),
       requireTeam: true,
     });
     if (!verified.ok) return sendWorkspaceVerificationFailure(res, verified);

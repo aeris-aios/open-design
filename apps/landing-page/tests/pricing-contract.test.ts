@@ -18,12 +18,17 @@ import {
 } from "../app/_lib/pricing-team-content.ts";
 import { PREMIUM_MODELS } from "../app/_lib/pricing-content.ts";
 import { LANDING_LOCALES } from "../app/i18n.ts";
+import { DEEPSEEK_V4_PRO_CAMPAIGN } from "../app/_lib/deepseek-v4-pro-campaign.ts";
 
 const CONTRACT_PATH = new URL("../public/pricing/plans.json", import.meta.url);
 const HEADERS_PATH = new URL("../public/_headers", import.meta.url);
 const PRICING_MD_PATH = new URL("../public/pricing.md", import.meta.url);
 const PRICING_PAGE_PATH = new URL(
   "../app/pages/pricing/index.astro",
+  import.meta.url,
+);
+const CAMPAIGN_PATH = new URL(
+  "../app/_lib/pricing-campaign-content.ts",
   import.meta.url,
 );
 const TEAM_CONTENT_PATH = new URL(
@@ -86,35 +91,48 @@ describe("pricing contract", () => {
 
   it("renders the final DeepSeek campaign promise on personal and team pricing", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
+    const campaign = await readFile(CAMPAIGN_PATH, "utf8");
 
-    assert.match(page, /DeepSeek V4 Flash 无限使用/);
-    assert.match(page, /badge: '无限使用'/);
-    assert.match(page, /windowLabel: '活动倒计时'/);
-    assert.match(page, /windowValue: '7天 00:00:00'/);
+    assert.match(campaign, /DeepSeek V4 Pro 与 V4 Flash · 两周免费用/);
+    assert.match(campaign, /badge: '无限使用'/);
+    assert.match(campaign, /windowLabel: '活动倒计时'/);
+    assert.match(campaign, /dayUnit: '天'/);
     assert.match(page, /data-pricing-campaign-countdown/);
     assert.doesNotMatch(page, /距开始/);
-    assert.match(page, /FREE all week/);
-    assert.match(page, /body: '8月6日—8月13日，一周免费用'/);
-    assert.match(page, /body: 'FREE all week, Aug 6—Aug 13'/);
-    assert.doesNotMatch(page, /body: ['\"][^'\"]*20:00/);
-    assert.match(page, /paidBenefitNote: '8月6日—8月13日 · 一周免费用'/);
-    assert.match(page, /teamBenefitNote: '8月6日—8月13日 · 一周免费用'/);
-    assert.match(page, /DEEPSEEK_V4_FLASH_CAMPAIGN\.startAt/);
-    assert.match(page, /DEEPSEEK_V4_FLASH_CAMPAIGN\.endAtExclusive/);
+    assert.match(campaign, /FREE for two weeks/);
+    assert.match(campaign, /body: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
+    assert.match(campaign, /body: 'DeepSeek V4 Pro and V4 Flash · FREE for two weeks'/);
+    assert.match(campaign, /body: 'DeepSeek V4 Pro 與 V4 Flash · 兩週免費用'/);
+    for (const locale of ['en', 'zh', 'zh-tw', 'ja', 'ko', 'de', 'fr', 'ru', 'es', 'pt-br', 'it', 'tr']) {
+      const key = locale.includes('-') ? `'${locale}'` : locale;
+      const start = campaign.indexOf(`  ${key}: {`);
+      const end = campaign.indexOf('\n  },', start);
+      const block = start >= 0 && end >= 0 ? campaign.slice(start, end) : undefined;
+      assert.ok(block, `missing campaign copy for ${locale}`);
+      assert.match(block, /DeepSeek V4 Pro/);
+      assert.match(block, /DeepSeek V4 Flash/);
+      assert.match(block, /headline:/);
+      assert.match(block, /body:/);
+    }
+    assert.doesNotMatch(campaign, /body: ['\"][^'\"]*20:00/);
+    assert.match(campaign, /paidBenefitNote: '8月13日—8月27日 · 两周免费用'/);
+    assert.match(campaign, /teamBenefitNote: '8月13日—8月27日 · 两周免费用'/);
+    assert.match(page, /DEEPSEEK_V4_PRO_CAMPAIGN\.startAt/);
+    assert.match(page, /DEEPSEEK_V4_PRO_CAMPAIGN\.endAtExclusive/);
     assert.match(page, /now >= campaignStartAt && now < campaignEndAt/);
     assert.match(page, /data-pricing-campaign-surface/);
     assert.match(page, /class="pr-campaign-disclaimer"/);
-    assert.match(page, /套餐内的无限制模型额度与免费生成次数，仅可通过Open Design使用；无法在MCP\/CLI\/API及其他场景使用。解释权归官方所有。/);
+    assert.match(campaign, /套餐内的无限制模型额度与免费生成次数，仅可通过OpenDesign使用/);
     assert.match(page, /<p class="pr-foot" set:html=\{footnoteHtml\} \/>\s*<p class="pr-campaign-disclaimer" data-pricing-campaign-surface hidden>\{deepSeekCampaign\.disclaimer\}<\/p>/);
     assert.doesNotMatch(page, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
     assert.match(page, /\.pr-campaign-disclaimer\s*\{[\s\S]*font-size:\s*\.82rem;/);
     assert.match(page, /track\('surface_view',\s*\{\s*area:\s*'campaign_banner'/);
-    assert.match(page, /element:\s*'deepseek_v4_flash_benefit'/);
+    assert.match(page, /element:\s*'deepseek_v4_pro_benefit'/);
     assert.match(page, /window\.__odRecordCampaignEntry\?\./);
     assert.match(page, /'landing_pricing_team_plan'\s*:\s*'landing_pricing_personal_plan'/);
-    assert.match(page, /'deepseek_v4_flash'/);
+    assert.match(page, /'deepseek_v4_pro'/);
     // First-touch envelope + device id survive Pricing → Cloud. Campaign id is
-    // re-decided by campaignActive and written only via __odAttributedUrl.
+    // re-decided by campaignEligible and written only via __odAttributedUrl.
     assert.match(page, /'od_conversion_source',\s*'od_device_id'/);
     assert.match(page, /od_campaign_id is intentionally NOT forwarded/);
     assert.match(page, /window\.__odTrack\('ui_click', props\)/);
@@ -135,39 +153,41 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /限时抢购/);
   });
 
-  it("decides campaign visibility by the real window with no URL preview backdoor", async () => {
-    // Product decision: the former ?campaign= preview fixture is fully
-    // removed. The pricing surfaces toggle on the fixed activity window only;
-    // pre-launch review happens by temporarily overriding startAt.
+  it("does not expose a campaign review preview backdoor", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
-    assert.match(page, /campaignActive = now >= campaignStartAt && now < campaignEndAt/);
-    assert.doesNotMatch(page, /data-campaign-revie[w]/);
-    assert.doesNotMatch(page, /campaignPrevie[w]|campaignReviewPara[m]|campaignReviewAllowe[d]/);
-    assert.doesNotMatch(page, /get\('campaign'\)/);
+    assert.match(page, /campaignEligible = now >= campaignStartAt && now < campaignEndAt/);
+    assert.match(page, /campaignVisible = campaignEligible/);
+    assert.match(page, /surface\.hidden = !campaignVisible/);
+    assert.doesNotMatch(page, /data-campaign-review-param|campaignPreview|previewEndAt/);
   });
 
   it("stamps campaign attribution on subscribe CTAs only inside the activity window", async () => {
     // Clicks outside the fixed window must not count toward the campaign:
     // the CTA keeps recording od_entry_* attribution, but the minted entry
-    // and the ui_click props carry the campaign id only while campaignActive
+    // and the ui_click props carry the campaign id only while campaignEligible
     // is true.
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
     assert.match(
       page,
-      /__odRecordCampaignEntry\?\.\(\s*audience === 'team' \? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',\s*campaignActive \? 'deepseek_v4_flash' : undefined,\s*\)/,
+      /__odRecordCampaignEntry\?\.\(\s*audience === 'team' \? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan',\s*campaignEligible \? 'deepseek_v4_pro' : undefined,\s*\)/,
     );
-    assert.match(page, /\.\.\.\(campaignActive \? \{ campaign_id: 'deepseek_v4_flash' \} : \{\}\)/);
+    assert.match(page, /\.\.\.\(campaignEligible \? \{ campaign_id: 'deepseek_v4_pro' \} : \{\}\)/);
     assert.doesNotMatch(
       page,
-      /element: 'subscribe',[\s\S]{0,300}?\n\s*campaign_id: 'deepseek_v4_flash',/,
+      /element: 'subscribe',[\s\S]{0,300}?\n\s*campaign_id: 'deepseek_v4_pro',/,
     );
   });
 
   it("aligns the highlighted campaign checkmark with the benefit list below", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
+    assert.match(
+      page,
+      /\.pr-campaign-model-benefit > div\s*\{[\s\S]*display:\s*grid;[\s\S]*gap:\s*2px;/,
+      "the campaign date note must render on its own line below the model benefit",
+    );
     assert.match(page, /\.pr-campaign-model-benefit::before\s*\{\s*left:\s*8px;\s*\}/);
     assert.match(
       page,
@@ -178,6 +198,47 @@ describe("pricing contract", () => {
       page,
       /\.pr-team-feature-list li\.pr-campaign-model-benefit::before\s*\{[\s\S]*left:\s*8px;[\s\S]*top:\s*18px;[\s\S]*transform:\s*translateY\(-50%\);/,
       "the team campaign checkmark must override the later base list rule",
+    );
+  });
+
+  it("keeps the multimodal coming-soon note above the video label", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+
+    assert.match(
+      page,
+      /<span class="pr-mode-copy">\s*<small>\{comingSoonLabel\}<\/small>\s*<strong>\{L\.videoGeneration\}<\/strong>/,
+    );
+    assert.match(
+      page,
+      /<span class="pr-mode-copy">\s*<small aria-hidden="true"><\/small>\s*<strong>\{L\.imageGeneration\}<\/strong>/,
+      "image and video labels must share the same copy grid",
+    );
+    assert.match(
+      page,
+      /<span class="pr-mode-copy">\s*<small aria-hidden="true"><\/small>\s*<strong>\{L\.designAgent\}<\/strong>/,
+      "design and video labels must share the same reserved note row",
+    );
+    assert.match(
+      page,
+      /\.pr-mode-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-rows:\s*0\.82rem auto;[\s\S]*gap:\s*4px;/,
+    );
+    assert.match(page, /\.pr-mode-copy strong\s*\{\s*grid-row:\s*2;/);
+    assert.match(page, /\.pr-mode-copy small:empty\s*\{\s*visibility:\s*hidden;/);
+    assert.doesNotMatch(page, /\{L\.videoGeneration\}<span class="pr-soon-tag">/);
+  });
+
+  it("renders exactly one OpenDesign Cloud capability section", async () => {
+    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+
+    assert.doesNotMatch(
+      page,
+      /data-pricing-cloud-capability/,
+      "the superseded duplicate capability block must stay removed",
+    );
+    assert.equal(
+      page.match(/<section class="pr-multimodal"/g)?.length,
+      1,
+      "the retained Cloud capability section must render exactly once",
     );
   });
 
@@ -223,6 +284,24 @@ describe("pricing contract", () => {
 
     assert.match(headers, /^\/pricing\/plans\.json$/m);
     assert.match(headers, /^  Content-Type: application\/json; charset=utf-8$/m);
+  });
+
+  it("keeps HTML edge TTL short so locale pages cannot drift for an hour after deploy", async () => {
+    // 2026-08 campaign rollout: s-maxage=3600 + stale-while-revalidate=86400 left
+    // /zh/pricing/ (and other paths) on stale edge objects while /pricing/ was
+    // fresh. HTML must stay short-TTL; production also host-purges after deploy.
+    const headers = await readFile(HEADERS_PATH, "utf8");
+    const htmlRule = headers.match(
+      /^\/\n  Cache-Control: (.+)$/m,
+    )?.[1];
+    assert.ok(htmlRule, "expected Cache-Control for `/` HTML");
+    assert.match(htmlRule, /s-maxage=60\b/);
+    assert.doesNotMatch(htmlRule, /s-maxage=3600\b/);
+    assert.doesNotMatch(htmlRule, /stale-while-revalidate=86400\b/);
+    assert.match(
+      headers,
+      /^\/pricing\/plans\.json$\n(?:  .+\n)*?  Cache-Control: public, max-age=0, s-maxage=60, must-revalidate$/m,
+    );
   });
 
   it("keeps the public contract in sync with the build-time snapshot", async () => {

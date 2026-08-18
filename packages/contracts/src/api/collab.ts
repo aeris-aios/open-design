@@ -17,6 +17,29 @@ import type {
 
 export type CollabMemberRole = 'owner' | 'admin' | 'member';
 
+/** Public single-file snapshot returned by the daemon publish routes. */
+export interface PublicProjectFilePublication {
+  url: string;
+  slug: string;
+  fileName: string;
+}
+
+export const PUBLIC_FILE_MANUAL_REVOKE_REQUIRED =
+  'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED' as const;
+
+/** Recovery data returned when a new public snapshot could not be persisted or redacted. */
+export interface PublicFileManualRevokeRequiredData extends PublicProjectFilePublication {
+  projectId: string;
+}
+
+export interface PublicFileManualRevokeRequiredResponse {
+  error: {
+    code: typeof PUBLIC_FILE_MANUAL_REVOKE_REQUIRED;
+    message: string;
+    data: PublicFileManualRevokeRequiredData;
+  };
+}
+
 /** A member present in a shared project (heartbeat identity). */
 export interface CollabPresenceMember {
   memberId: string;
@@ -135,6 +158,12 @@ export interface CollabSyncStatusResponse {
   ownerDisplayName?: string;
   /** The owner's team role (owner/admin/member), from the same directory entry. */
   ownerRole?: CollabMemberRole;
+}
+
+/** Idempotent local bootstrap for a hub-authorized Team project first open. */
+export interface CollabProjectBootstrapResponse {
+  ok: true;
+  awaitingFirstMaterialization: boolean;
 }
 
 /** POST /api/projects/:id/collab/pull response. */
@@ -300,6 +329,8 @@ export interface WorkspaceCollabContext {
   workspaceName?: string;
   /** Display name for the presence overlay (optional; falls back to the id). */
   displayName?: string;
+  /** Signed-in user's profile image for identity surfaces such as project bylines. */
+  avatarUrl?: string | null;
 }
 
 /**

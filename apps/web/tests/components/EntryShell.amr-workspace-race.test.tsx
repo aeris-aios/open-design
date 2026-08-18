@@ -90,7 +90,7 @@ function teamContext(workspaceId: string, workspaceMemberId: string): WorkspaceC
 function amrAgent(): AgentInfo {
   return {
     id: 'amr',
-    name: 'Open Design AMR',
+    name: 'OpenDesign AMR',
     bin: 'amr',
     available: true,
     models: [{ id: 'glm-5', label: 'GLM 5' }],
@@ -548,6 +548,7 @@ describe('EntryShell AMR workspace precheck race', () => {
     await waitFor(() => expect(contextReads).toBeGreaterThan(0));
     const submitButton = await screen.findByTestId('home-hero-submit');
     setHomeHeroPrompt('Create an image of a quiet reading room.');
+    await waitFor(() => expect((submitButton as HTMLButtonElement).disabled).toBe(false));
     vi.useFakeTimers();
     fireEvent.click(submitButton);
 
@@ -699,7 +700,7 @@ describe('EntryShell AMR workspace precheck race', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'Sign in to Open Design' }),
+      await screen.findByRole('heading', { name: 'Sign in to OpenDesign' }),
     ).toBeTruthy();
     expect(window.location.pathname).toBe('/onboarding');
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -784,12 +785,14 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     await screen.findByTestId('home-hero-input');
     setHomeHeroPrompt('Keep this draft through Cloud reauthentication');
-    fireEvent.click(await screen.findByTestId('home-hero-submit'));
+    const submitButton = await screen.findByTestId('home-hero-submit');
+    await waitFor(() => expect((submitButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(submitButton);
 
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(window.location.pathname).toBe('/onboarding'));
     expect(
-      await screen.findByRole('heading', { name: 'Sign in to Open Design' }),
+      await screen.findByRole('heading', { name: 'Sign in to OpenDesign' }),
     ).toBeTruthy();
     expect(window.localStorage.getItem('open-design:home-composer:prompt')).toBe(
       'Keep this draft through Cloud reauthentication',
@@ -879,7 +882,9 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     await waitFor(() => expect(contextReads).toBeGreaterThan(0));
     setHomeHeroPrompt('Build a workspace-scoped landing page');
-    fireEvent.click(await screen.findByTestId('home-hero-submit'));
+    const submit = await screen.findByTestId('home-hero-submit');
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
     await waitFor(() => {
       expect(mockedCheckAmrBalanceGate).toHaveBeenNthCalledWith(1, {
         workspaceType: 'team',
