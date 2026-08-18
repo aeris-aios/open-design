@@ -522,9 +522,12 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
    右边界反而对不上;让壳子收缩到内容宽,再由 .msg-me 整体推到右边。
    中间 6px:比附件之间的 7px 略紧,让它们读起来是一组而不是两件事。 */
 /* 附件和正文是同一条消息的两部分,靠得越近越像一条 —— 4 而不是 6。 */
-.msg-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 380px; }
+/* 壳子放到 412、气泡仍锁 380:附件行要够宽才能把最后一张切在腰上(见 .att),
+   但气泡不能跟着变宽 —— 412 的气泡离面板左缘只剩 8px,"我说的话贴右边"
+   这个读感就没了。两条上限各管各的,右边界照样对齐。 */
+.msg-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 412px; }
 .msg-stack .att { max-width: 100%; }
-.msg-stack .bub { max-width: 100%; }
+.msg-stack .bub { max-width: 380px; }
 /* ---- 长串兜底 ----
    凡是承载【用户输入或外部数据】的容器,都要能把一串没有空格的东西断开:
    链接、token、路径、base64。中文自己会断,带空格的英文也会断,所以这个
@@ -616,8 +619,23 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
   display: flex; flex-wrap: nowrap; gap: 7px;
   /* 用定值不用 min(84%, …):百分比要靠父级解析,而这张卡在 mod-split 的
      网格列里,百分比基数算不出来时整个容器会塌掉 —— 实测失败态那张卡
-     因此整个不渲染。380px 本来就是气泡在 460px 面板里的上限,写死更稳。 */
-  max-width: 380px;
+     因此整个不渲染,写死更稳。
+     ------------------------------------------------------------
+     412 = 6 x 64 + 28,【刻意错开卡片的节拍】。
+     卡 57 + 间隙 7 = 一格 64。原来写 380,正好落在第 6 张卡之后的
+     那道 3px 缝里 —— 7 张附件渲染出来是 6 张齐齐整整的卡,右边什么都
+     不缺,于是"后面还有"这件事一点痕迹都没有;而滚动条是藏起来的,
+     用户没有任何理由去拨它。注意这跟附件数量无关:只要是整排图卡,
+     切点永远落在那道缝里,8 张 20 张都一样。
+     412 把切点挪到第 7 张卡的腰上:6 张整的 + 半张。被切开的东西本身
+     就在说"我没画完",不用再加渐隐遮罩或「+2」角标。
+     为什么不是更窄的 348(5 张半):两张文档长条并排是 180+7+180=367,
+     348 会把第二张切掉一角 —— 那儿其实没有第三个附件,是个假信号,
+     「文档」和「文件名过长」两态首当其冲。所以行宽有个 367 的下限,
+     再往上找第一个能切在卡腰上的数,就是 412。
+     只对整排图卡是准的;混了文档长条节拍不齐,切点落哪儿看数据,
+     但缝只占一格的十分之一,正好落进去是小概率。 */
+  max-width: 412px;
   margin-inline-start: auto;
   overflow-x: auto; scrollbar-width: none;
   padding-bottom: 1px;
@@ -2197,15 +2215,10 @@ body { background: var(--bg-subtle); overflow: auto; }
               <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">读取 <code>tokens.css</code></span><span class="ms">0.3s</span></div>
               <div class="tool is-fail"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><span class="nm">读取 <code>规范.pdf</code></span><button class="why" type="button">失败</button><span class="ms">1.2s</span></div>
 
-        <div class="card">
-                <div class="h"><span class="mk is-run"></span><b>构建产物,看能不能跑通</b></div>
+        <div class="card" style="border-color:var(--red-border)">
+                <div class="h"><span class="mk is-fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></span><b>构建产物,看能不能跑通</b><span class="fx">失败</span><span class="n">2.1s</span></div>
                 <div class="term mod-cmd"><div>npm run build</div></div>
-                <div class="term">
-                  <div>vite v5.4.2 building for production...</div>
-                  <div>transforming (142) src/components/ProductCard.tsx</div>
-                  <div>transforming (218) src/pages/Settings.tsx</div>
-                  <div>rendering chunks...<span class="caret"></span></div>
-                </div>
+                <div class="term"><div class="er">✗ Could not resolve "./ProductCard" from src/pages/List.tsx</div></div>
               </div>
 
         <div class="errb">
@@ -2267,6 +2280,16 @@ body { background: var(--bg-subtle); overflow: auto; }
                   <li><span class="k">3</span><span>按同一套间距做设置页</span></li>
                   <li><span class="k">4</span><span>接上两页之间的跳转</span></li>
                 </ol>
+              </div>
+
+        <!-- 回合状态跟在这一轮的内容【后面】,和「跑完」那屏的「已完成」同一个位置。
+             放在中断卡前面会被读成上面那张意图澄清的结尾 —— .fb 靠 -4px 上贴,
+             贴的是它上面那块。 -->
+        <div class="fb">
+                <span class="fin mod-stop"><i></i>已停止,仍有未完成任务</span>
+                <button type="button" aria-label="复制" data-tip="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <button type="button" aria-label="新开会话" data-tip="新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
+                <span class="sp"></span><span class="tm">14:32</span>
               </div>
 
         <div class="up">
