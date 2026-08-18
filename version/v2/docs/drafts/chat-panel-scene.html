@@ -1840,13 +1840,13 @@ button.att-d:hover { border-color: var(--border-strong); }
    ------------------------------------------------------------
    裁完之后又走到了另一头:30x24 的框,墨迹 26x19,而它旁边的中文只有 13px、
    同一列位置上的完成标记只有 15px —— 一个"别管它"的状态图标比谁都大。
-   现在 21x17,墨迹 18.4x13.5:横里比 15 的标记宽一点(三条弧本来就是横长的),
-   竖里跟它齐平。
+   现在 18x15,墨迹 15.8x11.5:比同一列位置上的完成标记(15)只宽 0.8,
+   比旁边 13px 的中文高 一点点 —— 它是个背景状态,不该比正文更响。
    描边改用 non-scaling-stroke:之前 stroke-width 写在 viewBox 单位里,
    跟着框一起缩放 —— 上一轮把框放大一倍,描边也悄悄粗了一倍,只好再回头
    补一个 1.1 去抵消。现在描边锁死 1.6px,和 .ck 的勾同一档,
    以后再改尺寸不会连累粗细。 */
-.tool .wifi { flex: none; width: 21px; height: 17px; color: var(--text-soft);
+.tool .wifi { flex: none; width: 18px; height: 15px; color: var(--text-soft);
   stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 /* 失败那一行不换图标,只换颜色。
    三态用同一枚 wifi:图标说的是"连接"这件事,它没变;变的是结果,
