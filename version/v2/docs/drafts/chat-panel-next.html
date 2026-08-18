@@ -1203,11 +1203,15 @@ button.att-d:hover { border-color: var(--border-strong); }
   background: var(--brand-text); border: none;
   font-size: var(--t-cap); font-weight: 500; line-height: 1.6; color: var(--bg);
 }
-.vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
+/* 方向名底下【不挂一句描述】。
+   「大留白、细字重,一屏只讲一件事」这种话是在把图上看得见的东西翻译成文字 ——
+   四张都写就是四段要读的句子,横在图和图之间,挑图这个动作反倒被文字打断。
+   这张卡存在的理由恰恰是"抽象词说不清,所以给你看图";再补描述等于承认图没说清。
+   名字留着,是因为选完之后「已确认」那条陈述要有个词可写。 */
 
 /* 预览位与附件缩略图同一处理:一块纯灰压住图片该占的范围,不画内容。
    这是占位不是效果图 —— 真正的"内置精选预览图"到位后换掉 .mini 即可,
-   外框、勾选圈、标题描述都不用动。
+   外框、勾选圈、方向名都不用动。
    代价说明白:四张现在长得一样,这份稿子里没法判断"能不能比出风格差异",
    那要等真图。能判断的是版式、勾选、推荐位和"帮我决定"的出口。 */
 
@@ -2568,19 +2572,19 @@ button.att-d:hover { border-color: var(--border-strong); }
                 <div class="opts mod-visual">
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span></span>
                   </button>
                 </div>
                 <div class="foot">
@@ -2600,19 +2604,19 @@ button.att-d:hover { border-color: var(--border-strong); }
                 <div class="opts mod-visual">
                   <button class="vopt is-on" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span></span>
                   </button>
                 </div>
                 <div class="foot">
@@ -2632,19 +2636,19 @@ button.att-d:hover { border-color: var(--border-strong); }
                 <div class="opts mod-visual">
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span></span>
                   </button>
                   <button class="vopt is-on" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span></span>
                   </button>
                 </div>
                 <div class="foot">
@@ -2687,7 +2691,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          <span><b>单选</b>(圆钮)/ <b>多选</b>(方钮)— 两种都是先选、再点底部「确认」提交,一项没选时「确认」置灰。<b>自己填</b> — 选项之一,选中后原地长出输入框。<b>跳过</b> — 交由 Agent 判断。<b>视觉方向</b>另走看图选择,3–5 个方向各给预览图,其中一个是推荐项,并给一条「帮我决定」。<b>已回答</b>后收成一条陈述:单选一句话,多选逐条列出,视觉方向带上选中的缩略图。</span>
+          <span><b>单选</b>(圆钮)/ <b>多选</b>(方钮)— 两种都是先选、再点底部「确认」提交,一项没选时「确认」置灰。<b>自己填</b> — 选项之一,选中后原地长出输入框。<b>跳过</b> — 交由 Agent 判断。<b>视觉方向</b>另走看图选择,3–5 个方向各给预览图 + 一个方向名(不配描述,图本身就是描述),其中一个是推荐项,并给一条「帮我决定」。<b>已回答</b>后收成一条陈述:单选一句话,多选逐条列出,视觉方向带上选中的缩略图。</span>
         </div>
       </article>
 
