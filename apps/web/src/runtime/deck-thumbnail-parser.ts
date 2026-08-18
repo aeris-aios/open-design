@@ -30,6 +30,7 @@ export type DeckThumbnailFallbackReason =
   | 'no-dom-parser'
   | 'no-slides'
   | 'no-styles'
+  | 'viewport-media-query'
   | 'external-stylesheet';
 
 /** One reconstructed wrapper element between the shadow root and the slide. */
@@ -163,6 +164,12 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
   }
   const rawStyle = stripCssComments(importedBlocks.map((imported) => imported.css).join('\n'));
   if (!rawStyle.trim()) return unrenderable('no-styles');
+  // A shadow-root thumbnail's @media rules evaluate against the Open Design
+  // host window, not the preview iframe. A deck can therefore take its desktop
+  // branch in the rail while the visible preview takes its mobile branch. Keep
+  // these decks on the isolated iframe fallback, whose viewport is explicitly
+  // matched to the live preview by DeckThumbnailRail.
+  if (hasViewportMediaQuery(rawStyle)) return unrenderable('viewport-media-query');
 
   const designSize = resolveDesignSize(doc, rawStyle);
 
@@ -195,6 +202,12 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
 }
 
 const VIEWPORT_UNIT_TOKEN_RE = /(-?\d*\.?\d+)\s*(vw|vh|vmin|vmax|svw|svh|lvw|lvh|dvw|dvh)\b/gi;
+const VIEWPORT_MEDIA_QUERY_RE =
+  /@media\s+[^{}]*(?:\b(?:min|max)-(?:width|height)\b|\b(?:width|height|orientation|aspect-ratio)\s*:)[^{}]*\{/i;
+
+function hasViewportMediaQuery(css: string): boolean {
+  return VIEWPORT_MEDIA_QUERY_RE.test(css);
+}
 
 // Replace each `<n><viewport-unit>` with `calc(<n> * <k>px)` where `k` is the
 // design canvas dimension / 100. Works inside `clamp()`/`min()`/`max()` and
