@@ -56,6 +56,14 @@ afterEach(() => {
 });
 
 describe('ChatComposer infinite re-render regression (#2097)', () => {
+  it('omits the removed mode picker from the project composer', () => {
+    renderComposer();
+
+    expect(screen.queryByTestId('composer-mode-trigger')).toBeNull();
+    expect(screen.queryByTestId('composer-mode-clear')).toBeNull();
+    expect(screen.getByTestId('chat-send')).toBeTruthy();
+  });
+
   it('shows only stop while streaming with an empty composer', () => {
     renderComposer({ streaming: true });
 

@@ -58,8 +58,58 @@ describe('ChatPane session switcher', () => {
     fireEvent.click(screen.getByTestId('conversation-history-trigger'));
 
     expect(screen.getByTestId('conversation-history-menu')).toBeTruthy();
+    expect(screen.queryByText('chat.conversationsHeading')).toBeNull();
+    expect(screen.queryByTestId('conversation-history-count')).toBeNull();
     expect(screen.getByTestId('conversation-select-conv-1').textContent).toBe('Contract review draft');
     expect(screen.getByTestId('conversation-select-conv-2').textContent).toBe('Pricing page copy');
+  });
+
+  it('places the icon-only New action directly after history and keeps it out of the menu', () => {
+    const onNewConversation = vi.fn();
+    renderChatPane({
+      conversations: [conversation({ id: 'conv-1', title: 'Contract review draft' })],
+      activeConversationId: 'conv-1',
+      onNewConversation,
+      projectHeader: <span data-testid="project-header-label">Project Alpha</span>,
+    });
+
+    const newButton = screen.getByTestId('conversation-history-new');
+    const historyTrigger = screen.getByTestId('conversation-history-trigger');
+    const historyWrap = historyTrigger.closest('.chat-history-wrap');
+
+    expect(newButton.parentElement).toHaveClass('chat-project-header-actions');
+    expect(historyWrap?.nextElementSibling).toBe(newButton);
+    expect(newButton).toHaveAccessibleName('chat.newConversation');
+    expect(newButton).toHaveTextContent('');
+    expect(newButton.querySelector('svg')).toHaveAttribute('width', '16');
+    expect(newButton.querySelector('svg')).toHaveAttribute('height', '16');
+    expect(historyTrigger.querySelector('svg')).toHaveAttribute('width', '16');
+    expect(historyTrigger.querySelector('svg')).toHaveAttribute('height', '16');
+    fireEvent.click(historyTrigger);
+    const menu = screen.getByTestId('conversation-history-menu');
+    expect(menu.querySelector('[data-testid="conversation-history-new"]')).toBeNull();
+
+    fireEvent.click(newButton);
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('conversation-history-menu')).toBeNull();
+  });
+
+  it('disables the header New action without disabling history', () => {
+    const onNewConversation = vi.fn();
+    renderChatPane({
+      conversations: [conversation({ id: 'conv-1', title: 'Contract review draft' })],
+      activeConversationId: 'conv-1',
+      onNewConversation,
+      newConversationDisabled: true,
+    });
+
+    const newButton = screen.getByTestId('conversation-history-new');
+    expect(newButton).toBeDisabled();
+    fireEvent.click(newButton);
+    expect(onNewConversation).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('conversation-history-trigger'));
+    expect(screen.getByTestId('conversation-history-menu')).toBeTruthy();
   });
 
   it('selects a conversation from the history menu', () => {
@@ -243,6 +293,9 @@ function renderChatPane(props: {
   conversations: Conversation[];
   activeConversationId: string | null;
   onSelectConversation?: (id: string) => void;
+  onNewConversation?: () => void;
+  newConversationDisabled?: boolean;
+  projectHeader?: React.ReactNode;
 }) {
   return render(chatPaneElement(props));
 }
@@ -251,10 +304,16 @@ function chatPaneElement({
   conversations,
   activeConversationId,
   onSelectConversation,
+  onNewConversation,
+  newConversationDisabled,
+  projectHeader,
 }: {
   conversations: Conversation[];
   activeConversationId: string | null;
   onSelectConversation?: (id: string) => void;
+  onNewConversation?: () => void;
+  newConversationDisabled?: boolean;
+  projectHeader?: React.ReactNode;
 }) {
   return (
     <ChatPane
@@ -270,6 +329,9 @@ function chatPaneElement({
       activeConversationId={activeConversationId}
       onSelectConversation={onSelectConversation ?? vi.fn()}
       onDeleteConversation={vi.fn()}
+      onNewConversation={onNewConversation}
+      newConversationDisabled={newConversationDisabled}
+      projectHeader={projectHeader}
     />
   );
 }

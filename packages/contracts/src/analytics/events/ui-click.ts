@@ -767,18 +767,6 @@ export interface ChatPanelClickProps {
 // `sessionModeToTracking` so analytics speaks the product's language.
 export type TrackingSessionMode = 'ask' | 'design' | 'plan';
 
-// Toggling the ask/design switch in the chat composer.
-export interface ComposerSessionModeClickProps {
-  // The composer renders on both the home hero and the in-project chat panel;
-  // the toggle is the same control on both surfaces.
-  page_name: 'home' | 'chat_panel';
-  area: 'chat_composer';
-  element: 'session_mode_toggle';
-  mode_before: TrackingSessionMode;
-  mode_after: TrackingSessionMode;
-  project_id?: string;
-}
-
 // The "设计百宝箱" (Design toolbox) flyout inside the composer's "+" menu.
 // `design_toolbox_open` fires when the panel is opened; `..._action` when a
 // predefined follow-up action is picked (`toolbox_action_id`); `..._resource`
@@ -1678,7 +1666,6 @@ export type UiClickProps =
   | IntegrationsSkillsTabClickProps
   | IntegrationsUseEverywhereTabClickProps
   | ChatPanelClickProps
-  | ComposerSessionModeClickProps
   | DesignToolboxClickProps
   | ComposerBarClickProps
   | NextStepActionClickProps

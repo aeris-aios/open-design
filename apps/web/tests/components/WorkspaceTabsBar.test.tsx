@@ -9,6 +9,7 @@ import {
   openWorkspaceTab,
   WorkspaceTabsBar,
 } from '../../src/components/WorkspaceTabsBar';
+import { setWorkspaceTabsDock } from '../../src/components/workspaceTabsDock';
 import { navigate, type Route } from '../../src/router';
 import type { Project } from '../../src/types';
 
@@ -974,6 +975,95 @@ describe('WorkspaceTabsBar navigation semantics', () => {
         expect.stringContaining('Project Beta'),
         expect.stringContaining('Project Alpha'),
       ]);
+    });
+  });
+});
+
+describe('WorkspaceTabsBar docked project picker', () => {
+  let dock: HTMLDivElement;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.clearAllMocks();
+    dock = document.createElement('div');
+    document.body.append(dock);
+    setWorkspaceTabsDock(dock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    setWorkspaceTabsDock(null);
+    dock.remove();
+  });
+
+  it('uses the whole selected-project control only to toggle the menu and keeps icons in the list', async () => {
+    window.localStorage.setItem(
+      'open-design:workspace-tabs:v1',
+      JSON.stringify({
+        activeTabId: 'project:project-alpha',
+        tabs: [
+          {
+            id: 'entry:home:seed',
+            kind: 'entry',
+            view: 'home',
+            createdAt: 1,
+            lastActiveAt: 1,
+          },
+          {
+            id: 'project:project-alpha',
+            kind: 'project',
+            projectId: 'project-alpha',
+            conversationId: null,
+            fileName: null,
+            createdAt: 2,
+            lastActiveAt: 3,
+          },
+          {
+            id: 'project:project-beta',
+            kind: 'project',
+            projectId: 'project-beta',
+            conversationId: null,
+            fileName: null,
+            createdAt: 3,
+            lastActiveAt: 2,
+          },
+        ],
+      }),
+    );
+    render(<WorkspaceTabsBar route={{ ...projectRoute }} projects={[project, projectBeta]} />);
+
+    const trigger = await screen.findByTestId('workspace-tabs-dropdown-trigger');
+    const name = screen.getByTestId('workspace-tabs-dropdown-label');
+
+    // The selected project at the top has only the chevron; its folder icon
+    // belongs in the expanded list, not in this compact selected-value row.
+    expect(trigger.querySelectorAll('svg')).toHaveLength(1);
+    expect(screen.queryByRole('listbox')).toBeNull();
+
+    fireEvent.click(name);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    const listbox = screen.getByRole('listbox');
+    const activeOption = screen.getByRole('option', { name: 'Project Alpha' });
+    expect(listbox).toBeTruthy();
+    // The active row retains both its project icon and selected checkmark.
+    expect(activeOption.querySelectorAll('svg')).toHaveLength(2);
+
+    fireEvent.click(name);
+    expect(screen.queryByRole('listbox')).toBeNull();
+
+    const chevron = trigger.querySelector('svg');
+    expect(chevron).toBeTruthy();
+    fireEvent.click(chevron!);
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+
+    fireEvent.click(screen.getByRole('option', { name: 'Project Beta' }));
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(navigate).toHaveBeenCalledWith({
+      kind: 'project',
+      projectId: 'project-beta',
+      conversationId: null,
+      fileName: null,
     });
   });
 });

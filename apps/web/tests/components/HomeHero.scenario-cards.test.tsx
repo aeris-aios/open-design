@@ -3,8 +3,8 @@
 // Scenario-card rail coverage.
 //   - The default create rail renders illustrated scenario cards carrying a
 //     title AND a one-line description.
-//   - The rail leads with Website clone, then the slide deck ("Slides"), per the
-//     curated create order.
+//   - The rail leads with the slide deck ("Slides"), per the curated create
+//     order, and omits the retired Website-clone option.
 //   - The finer-grained scenarios (wireframe / mobile / document) exist and
 //     route to a working scenario plugin.
 
@@ -88,14 +88,16 @@ describe('HomeHero scenario cards', () => {
     ).toContain('Slide deck');
   });
 
-  it('leads the create rail with the slide deck and trails Website clone', () => {
+  it('leads the create rail with the slide deck and omits Website clone', () => {
     const ordered = orderedCreateChips();
     const ids = ordered.map((chip) => chip.id);
     expect(ids[0]).toBe('deck');
-    // Website clone sits behind every other explicit rail type (only the
-    // unlisted catalog tail, e.g. Brand Kit, follows), so the visible pill
-    // row overflows it into the 全部 popover at typical widths.
-    expect(ids.indexOf('web-clone')).toBeGreaterThan(ids.indexOf('audio'));
+    expect(ids).not.toContain('web-clone');
+    expect(findChip('web-clone')).toBeUndefined();
+
+    renderHero();
+    openTemplatePicker();
+    expect(screen.queryByTestId('home-hero-template-wedge-web-clone')).toBeNull();
   });
 
   it('adds the finer-grained scenarios as templates routed to a scenario plugin', () => {

@@ -124,8 +124,8 @@ export function InviteDialog({
   // in-flow descendant to its box — a dropdown rendered inside it can never
   // extend past the row. The role menu therefore lives in a portal on <body>,
   // anchored to its trigger's viewport rect; re-anchor on resize and on any
-  // scroll (capture phase covers the rows container itself). Same pattern as
-  // ComposerModePicker.
+  // scroll (capture phase covers the rows container itself). This follows the
+  // same anchoring pattern as other portalled menus.
   useLayoutEffect(() => {
     if (openRoleIndex === null) {
       setRoleMenuPos(null);

@@ -103,6 +103,57 @@ describe('recvpYDfW12NBu — example-prompt preset thumbnails read as mostly pad
   });
 });
 
+describe('example-prompt preset rail — show at most five complete cards', () => {
+  it('uses a fixed five-column grid without horizontal scrolling', () => {
+    const wrap = cssDeclarations(homeHeroCss, '.home-hero__plugin-presets-wrap');
+    const rail = cssDeclarations(homeHeroCss, '.home-hero__plugin-presets');
+
+    // 1284px = 5 × 248px cards + 4 × 10px gaps + the rail's 4px horizontal
+    // padding. The component renders no sixth card, so the grid never scrolls.
+    expect(ruleValue(wrap, '--home-hero-preset-window-max')).toBe('1284px');
+    expect(ruleValue(wrap, 'width')).toBe(
+      'min(100cqw, var(--home-hero-preset-window-max))',
+    );
+    expect(ruleValue(wrap, 'max-width')).toBe('var(--home-hero-preset-window-max)');
+    expect(ruleValue(rail, 'display')).toBe('grid');
+    expect(homeHeroCss).toMatch(
+      /\.home-hero__plugin-presets\s*{[^}]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/,
+    );
+    expect(ruleValue(rail, 'gap')).toBe('10px');
+    expect(ruleValue(rail, 'overflow-x')).toBe('clip');
+  });
+});
+
+describe('home working-directory picker — hover and open stay white', () => {
+  it('matches the design-system picker instead of the grey neutral fill', () => {
+    const hover = cssDeclarations(
+      homeHeroCss,
+      ".home-hero__working-dir-picker [data-testid='working-dir-trigger']:hover",
+    );
+    const expanded = cssDeclarations(
+      homeHeroCss,
+      ".home-hero__working-dir-picker [data-testid='working-dir-trigger'][aria-expanded='true']",
+    );
+
+    expect(ruleValue(hover, 'background')).toBe('var(--bg)');
+    expect(ruleValue(hover, 'color')).toBe('var(--text-strong)');
+    expect(ruleValue(expanded, 'background')).toBe('var(--bg)');
+    expect(ruleValue(expanded, 'color')).toBe('var(--text-strong)');
+  });
+});
+
+describe('home design-system picker — hover stays white', () => {
+  it('overrides the global grey button hover fill', () => {
+    const hover = cssDeclarations(
+      homeHeroCss,
+      '.home-hero__ds-row-trigger:hover:not(:disabled)',
+    );
+
+    expect(ruleValue(hover, 'background')).toBe('var(--bg)');
+    expect(ruleValue(hover, 'color')).toBe('var(--text-strong)');
+  });
+});
+
 describe('recvpYEHCwtxXX — selected recent-project checkbox degrades to outline on hover', () => {
   it('re-asserts the filled accent state at matching specificity on hover', () => {
     // The base selected style.

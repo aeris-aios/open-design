@@ -80,6 +80,22 @@ describe('Toast', () => {
     ).not.toBeNull();
   });
 
+  it('places error feedback in the top app chrome by default', () => {
+    const { container, rerender } = render(<Toast message="Could not save" tone="error" />);
+    expect(container.querySelector('.od-toast.placement-top')).not.toBeNull();
+
+    rerender(<Toast message="Working directory unavailable" role="alert" />);
+    expect(container.querySelector('.od-toast.placement-top')).not.toBeNull();
+  });
+
+  it('keeps non-error feedback at the bottom unless a caller opts into top placement', () => {
+    const { container, rerender } = render(<Toast message="Folder opened" tone="success" />);
+    expect(container.querySelector('.od-toast.placement-bottom')).not.toBeNull();
+
+    rerender(<Toast message="Folder opened" tone="success" placement="top" />);
+    expect(container.querySelector('.od-toast.placement-top')).not.toBeNull();
+  });
+
   it('renders a Dismiss button when both code and onDismiss are present', () => {
     render(<Toast message="manual copy" code="x" onDismiss={() => {}} />);
     expect(screen.getByRole('button', { name: /Dismiss/i })).not.toBeNull();

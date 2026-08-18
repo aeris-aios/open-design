@@ -235,15 +235,14 @@ test('[P1] real daemon run treats an in-place artifact edit as produced work', a
   await expect(versionsDialog.getByRole('option')).toHaveCount(3);
 });
 
-test('[P1] Plan mode daemon run creates, opens, and restores an editable markdown plan', async ({ page }) => {
-  await createProject(page, 'Plan mode markdown smoke');
+test('[P1] daemon run creates, opens, and restores an editable markdown plan', async ({ page }) => {
+  await createProject(page, 'Markdown plan smoke');
   await expectWorkspaceReady(page);
 
-  await selectComposerSessionMode(page, 'Plan mode');
   const runRequestPromise = page.waitForRequest(isCreateRunRequest);
   await sendPrompt(page, 'Create a deterministic plan document');
   const runRequest = await runRequestPromise;
-  expect((runRequest.postDataJSON() as { sessionMode?: string }).sessionMode).toBe('plan');
+  expect((runRequest.postDataJSON() as { sessionMode?: string }).sessionMode).toBe('design');
 
   const { projectId } = await currentProjectContext(page);
   await expectProjectFilesToContain(page, projectId, ['plan.md']);
@@ -290,27 +289,25 @@ test('[P1] media-only turn auto-opens the generated image file', async ({ page }
   expect(rawResponse.headers()['content-type']).toContain('image/png');
 });
 
-// Red spec for "Plan 模式生成 HTML 后没有自动打开生成的文件": after the user
+// Red spec for "生成 HTML 后没有自动打开生成的文件": after the user
 // reviews the plan and asks for the final deliverable, the generation turn
 // writes the HTML as a project file (Write tool, no inline artifact echo) and
 // then touches the plan document again. The viewer must auto-open the
 // generated HTML instead of staying on the markdown plan.
-test('[P1] Plan mode generation turn auto-opens the generated HTML file', async ({ page }) => {
+test('[P1] generation turn auto-opens the generated HTML file', async ({ page }) => {
   test.fail(true, 'Plan generation persists index.html but does not auto-open the generated deliverable.');
   test.setTimeout(120_000);
-  await createProject(page, 'Plan mode html auto-open smoke', 'claude');
+  await createProject(page, 'HTML auto-open smoke', 'claude');
   await expectWorkspaceReady(page);
 
-  await selectComposerSessionMode(page, 'Plan mode');
   await sendPrompt(page, 'Create a deterministic plan document');
   const { projectId } = await currentProjectContext(page);
   await expectProjectFilesToContain(page, projectId, ['plan.md']);
   const planTab = page.getByTestId('file-workspace').getByRole('tab', { name: /plan\.md/i });
   await expect(planTab).toHaveAttribute('aria-selected', 'true');
 
-  // Mirror the real Plan-mode interaction: the user reviews and edits the
-  // markdown plan in the split editor (autosave on) before asking for the
-  // final deliverable.
+  // Mirror the real interaction: the user reviews and edits the markdown plan
+  // in the split editor (autosave on) before asking for the final deliverable.
   const planEditor = page.getByRole('textbox', { name: /markdown editor/i });
   await page.getByRole('tab', { name: 'Code', exact: true }).click();
   await expect(planEditor).toHaveValue(/Deterministic Plan/);
@@ -326,19 +323,18 @@ test('[P1] Plan mode generation turn auto-opens the generated HTML file', async 
   await expect(htmlTab).toHaveAttribute('aria-selected', 'true');
 });
 
-// Red spec, regeneration loop: Plan mode's core iteration is
+// Red spec, regeneration loop: the core iteration is
 // plan → generate → edit the plan → generate AGAIN. On the second generation
 // the HTML file already exists, so a pre/post file-name diff sees no "new"
 // file — the viewer must still re-focus the regenerated HTML. Uses the codex
 // fake runtime (no tool_use events, like most CLI protocols) so the per-write
 // auto-open path cannot mask the turn-end selection.
-test('[P1] Plan mode regeneration re-opens the existing generated HTML file', async ({ page }) => {
+test('[P1] regeneration re-opens the existing generated HTML file', async ({ page }) => {
   test.fixme(true, 'Blocked by #5352: generation does not reliably open or refocus index.html.');
   test.setTimeout(120_000);
-  await createProject(page, 'Plan mode html regen smoke');
+  await createProject(page, 'HTML regeneration smoke');
   await expectWorkspaceReady(page);
 
-  await selectComposerSessionMode(page, 'Plan mode');
   await sendPrompt(page, 'Create a deterministic plan document');
   const { projectId, conversationId } = await currentProjectContext(page);
   await expectProjectFilesToContain(page, projectId, ['plan.md']);
@@ -872,23 +868,6 @@ async function expectWorkspaceReady(page: Page) {
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toBeVisible();
   await expect(page.getByTestId('file-workspace')).toBeVisible();
-}
-
-async function selectComposerSessionMode(page: Page, modeTitle: 'Ask mode' | 'Plan mode' | 'Design mode') {
-  // #5517 composer mode picker: Ask maps to the real `chat` session mode.
-  const modeId = modeTitle === 'Ask mode' ? 'chat' : modeTitle === 'Plan mode' ? 'plan' : 'design';
-  const modeName = modeTitle.replace(' mode', '');
-  const trigger = page.getByTestId('chat-composer').getByTestId('composer-mode-trigger');
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-
-  const menu = page.getByTestId('composer-mode-menu');
-  await expect(menu).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-chat')).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-plan')).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-design')).toBeVisible();
-  await menu.getByTestId(`composer-mode-menu-${modeId}`).click();
-  await expect(trigger).toHaveAttribute('aria-label', `Mode: ${modeName}`);
 }
 
 async function sendPrompt(page: Page, prompt: string) {

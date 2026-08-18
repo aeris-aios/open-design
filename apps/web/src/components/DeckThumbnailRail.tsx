@@ -21,7 +21,16 @@
 //   deck animations settle at their final frame instead of keeping N
 //   compositor layers rasterizing forever.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from 'react';
 import { useT } from '../i18n';
 import { useInView } from './plugins-home/useInView';
 import { DeckSlideThumbnail } from './DeckSlideThumbnail';
@@ -87,6 +96,7 @@ interface DeckThumbnailItemProps {
   getSrcDoc: (index: number) => string;
   onSelect: (index: number) => void;
   onVisibilityChange: (index: number, inView: boolean) => void;
+  disabled?: boolean;
 }
 
 const DeckThumbnailItem = memo(function DeckThumbnailItem({
@@ -99,6 +109,7 @@ const DeckThumbnailItem = memo(function DeckThumbnailItem({
   getSrcDoc,
   onSelect,
   onVisibilityChange,
+  disabled = false,
 }: DeckThumbnailItemProps) {
   // `once: false` so scrolling a thumbnail far away releases its slot in the
   // LRU window instead of pinning every slide ever seen. The list is the
@@ -145,6 +156,10 @@ const DeckThumbnailItem = memo(function DeckThumbnailItem({
       type="button"
       className={`deck-thumbnail-button${active ? ' active' : ''}`}
       aria-current={active ? 'true' : undefined}
+      disabled={disabled}
+      style={{
+        '--deck-thumbnail-stagger-delay': `${Math.min(index, 12) * 20}ms`,
+      } as CSSProperties & Record<string, string | number>}
       title={label}
       onClick={() => onSelect(index)}
     >
@@ -194,6 +209,8 @@ export interface DeckThumbnailRailProps {
    * thumbnail uses the iframe fallback (decks we can't statically render).
    */
   parsedDeck?: ParsedDeckThumbnails | null;
+  /** Keep the rail mounted while its host animates it out of view. */
+  collapsed?: boolean;
   onSelect: (index: number) => void;
 }
 
@@ -203,6 +220,7 @@ export const DeckThumbnailRail = memo(function DeckThumbnailRail({
   labelTotal,
   buildThumbSrcDoc,
   parsedDeck = null,
+  collapsed = false,
   onSelect,
 }: DeckThumbnailRailProps) {
   const t = useT();
@@ -240,7 +258,11 @@ export const DeckThumbnailRail = memo(function DeckThumbnailRail({
   const mounted = useMemo(() => new Set(mountedOrder), [mountedOrder]);
 
   return (
-    <aside className="deck-thumbnail-rail" aria-label="Slides">
+    <aside
+      className="deck-thumbnail-rail"
+      aria-label="Slides"
+      aria-hidden={collapsed ? true : undefined}
+    >
       <div className="deck-thumbnail-list" ref={listRef}>
         {Array.from({ length: count }, (_, index) => (
           <DeckThumbnailItem
@@ -257,6 +279,7 @@ export const DeckThumbnailRail = memo(function DeckThumbnailRail({
             getSrcDoc={getSrcDoc}
             onSelect={onSelect}
             onVisibilityChange={onVisibilityChange}
+            disabled={collapsed}
           />
         ))}
       </div>

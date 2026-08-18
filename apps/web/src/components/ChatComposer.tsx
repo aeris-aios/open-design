@@ -24,7 +24,6 @@ import { useAnalytics } from '../analytics/provider';
 import {
   trackChatPanelClick,
   trackComposerBarClick,
-  trackComposerSessionModeClick,
   trackContextLinkResult,
   trackDesignToolboxClick,
   trackFigmaHelpModalSurfaceView,
@@ -35,7 +34,6 @@ import type {
   ComposerBarClickProps,
   DesignToolboxClickProps,
 } from '@open-design/contracts/analytics';
-import { sessionModeToTracking } from '@open-design/contracts/analytics';
 import { deriveUploadCohort } from '../analytics/upload-tracking';
 import { projectRawUrl, uploadProjectFiles, openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir, dirExists, applyLibraryAsset, fetchLibraryAssetElementHtml } from "../providers/registry";
 import {
@@ -71,7 +69,6 @@ import {
   type ProjectReferenceSelection,
 } from './ProjectReferenceModal';
 import { assetTitle, elementMetaOf } from './LibraryAssetMeta';
-import { ComposerModePicker } from './ComposerModePicker';
 import type { LibraryAsset, LibraryElementMeta } from '@open-design/contracts';
 import {
   DESIGN_TOOLBOX_ACTIONS,
@@ -232,7 +229,6 @@ interface Props {
   activeProjectFileName?: string | null;
   streaming: boolean;
   sessionMode?: ChatSessionMode;
-  onSessionModeChange?: (mode: ChatSessionMode) => void;
   sendDisabled?: boolean;
   // Read-only viewer of a team-shared project: makes the Lexical editor
   // non-editable (in addition to `sendDisabled` blocking the send action) so
@@ -441,7 +437,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       activeProjectFileName = null,
       streaming,
       sessionMode = 'design',
-      onSessionModeChange,
       sendDisabled = false,
       inputDisabled = false,
       initialDraft,
@@ -3130,7 +3125,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               }}
             />
             <ComposerPlusMenu
-              workspaceContext={workspaceContext}
               triggerTestId="chat-plus-trigger"
               placementPreference="up"
               openRequest={plusMenuOpenRequest}
@@ -3165,19 +3159,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               onAddConnector={() => {
                 trackComposerBar({ element: 'plus_add', resource_kind: 'connector' });
                 onOpenConnectors?.();
-              }}
-              plugins={pluginsForComposer}
-              onPickPlugin={(record) => {
-                trackComposerBar({
-                  element: 'plus_pick',
-                  resource_kind: 'plugin',
-                  resource_id: record.id,
-                });
-                void insertPluginMention(record);
-              }}
-              onAddPlugin={() => {
-                trackComposerBar({ element: 'plus_add', resource_kind: 'plugin' });
-                onBrowsePlugins?.();
               }}
               skills={skills}
               onPickSkill={(skill) => {
@@ -3323,22 +3304,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             {designSystemPicker}
             {leadingAccessory}
             <span className="composer-spacer" />
-            <ComposerModePicker
-              mode={sessionMode}
-              onModeChange={(next) => {
-                if (next !== sessionMode) {
-                  trackComposerSessionModeClick(analytics.track, {
-                    page_name: 'chat_panel',
-                    area: 'chat_composer',
-                    element: 'session_mode_toggle',
-                    mode_before: sessionModeToTracking(sessionMode),
-                    mode_after: sessionModeToTracking(next),
-                    project_id: projectId ?? undefined,
-                  });
-                }
-                onSessionModeChange?.(next);
-              }}
-            />
             {footerAccessory}
             {showStopButton ? (
               <button

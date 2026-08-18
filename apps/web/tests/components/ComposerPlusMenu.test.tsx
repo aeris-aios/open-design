@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 // Regression coverage for the shared composer "+" menu (replaces the deleted
-// ChatComposer.tools-menu-caret.test.tsx, #3195): the connector / plugin / MCP
-// pick rows must cancel `mousedown` so the editor keeps focus and the caller's
+// ChatComposer.tools-menu-caret.test.tsx, #3195): the connector / MCP pick
+// rows must cancel `mousedown` so the editor keeps focus and the caller's
 // insertMention lands at the caret instead of the draft end.
 
 import { readFileSync } from 'node:fs';
@@ -19,7 +19,6 @@ afterEach(() => {
 });
 
 const CONNECTOR = { id: 'c1', name: 'Notion', status: 'connected' } as never;
-const PLUGIN = { id: 'p1', title: 'Deck Maker', manifest: {} } as never;
 const MCP_SERVER = { id: 'm1', label: 'Linear', enabled: true } as never;
 
 function renderMenu(
@@ -29,8 +28,6 @@ function renderMenu(
   const props: ComponentProps<typeof ComposerPlusMenu> = {
     connectors: [CONNECTOR],
     onPickConnector: vi.fn(),
-    plugins: [PLUGIN],
-    onPickPlugin: vi.fn(),
     mcpServers: [MCP_SERVER],
     onPickMcp: vi.fn(),
     onAttachFiles: vi.fn(),
@@ -72,69 +69,68 @@ function expectPickRowPreventsMousedown(name: RegExp) {
 }
 
 describe('ComposerPlusMenu pick-row caret protection', () => {
-  it('cancels mousedown on the connector / plugin / MCP pick rows', () => {
+  it('cancels mousedown on the connector / MCP pick rows', () => {
     renderMenu();
     fireEvent.click(screen.getByTestId('plus-trigger'));
 
     fireEvent.click(screen.getByRole('menuitem', { name: /Connectors/i }));
     expectPickRowPreventsMousedown(/Notion/i);
 
-    fireEvent.click(screen.getByRole('menuitem', { name: /Plugins/i }));
-    expectPickRowPreventsMousedown(/Deck Maker/i);
-
     fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
     expectPickRowPreventsMousedown(/Linear/i);
   });
 
-  it('keeps the plugin flyout open when filtering reflows fire a mouseleave mid-search', () => {
+  it('keeps the flyout open when filtering reflows fire a mouseleave mid-search', () => {
     vi.useFakeTimers();
     try {
       renderMenu({
-        plugins: [
-          PLUGIN,
-          { id: 'p2', title: 'Slide Builder', manifest: {} } as never,
+        mcpServers: [
+          MCP_SERVER,
+          { id: 'm2', label: 'Notion MCP', enabled: true } as never,
         ],
       });
       fireEvent.click(screen.getByTestId('plus-trigger'));
-      fireEvent.click(screen.getByRole('menuitem', { name: /Plugins/i }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
 
       // The user clicks into the search box (focus enters the flyout) and types,
       // pruning the list. In a real browser the shrinking list reflows rows out
       // from under the stationary cursor, so Chromium synthesizes a `mouseleave`
       // on the flyout even though the pointer never moved.
-      const search = screen.getByPlaceholderText('Plugins') as HTMLInputElement;
+      const search = screen.getByPlaceholderText('MCP') as HTMLInputElement;
       search.focus();
-      fireEvent.change(search, { target: { value: 'deck' } });
+      fireEvent.change(search, { target: { value: 'linear' } });
       const flyout = document.querySelector('.plus-menu__flyout') as HTMLElement;
       fireEvent.mouseLeave(flyout);
 
       // The hover-close grace period elapses; the panel must survive because the
-      // search box still owns focus — yanking it away would make the plugin
+      // search box still owns focus — yanking it away would make the server
       // impossible to pick.
       act(() => {
         vi.advanceTimersByTime(400);
       });
 
-      expect(screen.queryByPlaceholderText('Plugins')).not.toBeNull();
-      expect(screen.getByRole('menuitem', { name: /Deck Maker/i })).toBeTruthy();
+      expect(screen.queryByPlaceholderText('MCP')).not.toBeNull();
+      expect(screen.getByRole('menuitem', { name: /Linear/i })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('resets the shared search query when switching submenus', () => {
+  it('resets the search query when re-entering a submenu', () => {
     renderMenu();
     fireEvent.click(screen.getByTestId('plus-trigger'));
 
-    fireEvent.click(screen.getByRole('menuitem', { name: /Plugins/i }));
-    const pluginSearch = screen.getByPlaceholderText('Plugins') as HTMLInputElement;
-    fireEvent.change(pluginSearch, { target: { value: 'deck' } });
-    expect(pluginSearch.value).toBe('deck');
-
-    // Moving to the MCP submenu must clear the query so it doesn't cross-filter.
     fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
     const mcpSearch = screen.getByPlaceholderText('MCP') as HTMLInputElement;
-    expect(mcpSearch.value).toBe('');
+    fireEvent.change(mcpSearch, { target: { value: 'linear' } });
+    expect(mcpSearch.value).toBe('linear');
+
+    // Moving away and back must clear the query so a stale search never
+    // filters the freshly opened list.
+    fireEvent.click(screen.getByRole('menuitem', { name: /Connectors/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
+    const reopenedSearch = screen.getByPlaceholderText('MCP') as HTMLInputElement;
+    expect(reopenedSearch.value).toBe('');
     expect(screen.getByText('Linear')).toBeTruthy();
   });
 
@@ -170,7 +166,6 @@ describe('ComposerPlusMenu pick-row caret protection', () => {
       expect(menu.style.top).toBe('auto');
       expect(menu.style.bottom).toBe('52px');
       expect(screen.getByRole('menuitem', { name: /Connectors/i })).toBeTruthy();
-      expect(screen.getByRole('menuitem', { name: /Plugins/i })).toBeTruthy();
       expect(screen.getByRole('menuitem', { name: /^MCP/i })).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
@@ -238,8 +233,8 @@ describe('ComposerPlusMenu pick-row caret protection', () => {
       const menu = screen.getByRole('menu');
       expect(menu.className).toContain('plus-menu__popup--flyout-left');
 
-      fireEvent.click(screen.getByRole('menuitem', { name: /Plugins/i }));
-      expect(screen.getByRole('menuitem', { name: /Deck Maker/i })).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
+      expect(screen.getByRole('menuitem', { name: /Linear/i })).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
@@ -272,8 +267,8 @@ describe('ComposerPlusMenu pick-row caret protection', () => {
       const menu = screen.getByRole('menu');
       expect(menu.className).toContain('plus-menu__popup--flyout-contained');
 
-      fireEvent.click(screen.getByRole('menuitem', { name: /Plugins/i }));
-      expect(screen.getByRole('menuitem', { name: /Deck Maker/i })).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
+      expect(screen.getByRole('menuitem', { name: /Linear/i })).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
@@ -306,8 +301,8 @@ describe('ComposerPlusMenu pick-row caret protection', () => {
       const menu = screen.getByRole('menu');
       expect(menu.className).toContain('plus-menu__popup--flyout-contained');
 
-      fireEvent.click(screen.getByRole('menuitem', { name: /Plugins/i }));
-      expect(screen.getByRole('menuitem', { name: /Deck Maker/i })).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: /^MCP/i }));
+      expect(screen.getByRole('menuitem', { name: /Linear/i })).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
@@ -337,9 +332,9 @@ describe('ComposerPlusMenu pick-row caret protection', () => {
         }) as DOMRect;
 
       fireEvent.click(trigger);
-      const pluginParent = screen.getByRole('menuitem', { name: /Plugins/i });
-      const pluginRow = pluginParent.closest('.plus-menu__submenu-row') as HTMLDivElement;
-      pluginRow.getBoundingClientRect = () =>
+      const mcpParent = screen.getByRole('menuitem', { name: /^MCP/i });
+      const mcpRow = mcpParent.closest('.plus-menu__submenu-row') as HTMLDivElement;
+      mcpRow.getBoundingClientRect = () =>
         ({
           x: 24,
           y: 210,
@@ -352,13 +347,13 @@ describe('ComposerPlusMenu pick-row caret protection', () => {
           toJSON: () => ({}),
         }) as DOMRect;
 
-      fireEvent.click(pluginParent);
+      fireEvent.click(mcpParent);
 
       const menu = screen.getAllByRole('menu')[0];
       expect(menu).toBeDefined();
       expect(menu?.className).toContain('plus-menu__popup--flyout-y-down');
       expect(menu?.style.getPropertyValue('--plus-menu-flyout-max-height')).toBe('303px');
-      expect(screen.getByRole('menuitem', { name: /Deck Maker/i })).toBeTruthy();
+      expect(screen.getByRole('menuitem', { name: /Linear/i })).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
@@ -658,7 +653,6 @@ describe('ComposerPlusMenu module wiring', () => {
   it('invokes every submenu pick and "Add …" row handler', () => {
     const { props } = renderMenu({
       onAddConnector: vi.fn(),
-      onAddPlugin: vi.fn(),
       onAddMcp: vi.fn(),
     });
 
@@ -676,19 +670,22 @@ describe('ComposerPlusMenu module wiring', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add connectors' }));
     expect(props.onAddConnector).toHaveBeenCalledTimes(1);
 
-    openSubmenu(/Plugins/i);
-    fireEvent.click(screen.getByRole('menuitem', { name: /Deck Maker/i }));
-    expect(props.onPickPlugin).toHaveBeenCalledWith(PLUGIN);
-    openSubmenu(/Plugins/i);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add plugin' }));
-    expect(props.onAddPlugin).toHaveBeenCalledTimes(1);
-
     openSubmenu(/^MCP/i);
     fireEvent.click(screen.getByRole('menuitem', { name: /Linear/i }));
     expect(props.onPickMcp).toHaveBeenCalledWith(MCP_SERVER);
     openSubmenu(/^MCP/i);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add MCP server' }));
     expect(props.onAddMcp).toHaveBeenCalledTimes(1);
+  });
+
+  // The Plugins submenu was removed from the "+" menu (user request): plugins
+  // are reached through their own surfaces (the 插件 quick pill / plugins
+  // home), so the row must not come back as a menu duplicate.
+  it('does not offer a Plugins submenu row', () => {
+    renderMenu();
+    openMenu();
+    expect(screen.queryByTestId('composer-plus-plugins')).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Plugins/i })).toBeNull();
   });
 
   it('renders the Design toolbox submenu when a toolbox renderer is provided', () => {

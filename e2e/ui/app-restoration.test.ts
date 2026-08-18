@@ -2588,8 +2588,6 @@ async function sendPrompt(page: Page, prompt: string) {
 
 async function startNewConversation(page: Page) {
   const previousPath = new URL(page.url()).pathname;
-  await page.getByTestId('conversation-history-trigger').click();
-  await expect(page.getByTestId('conversation-list')).toBeVisible();
   await page.getByTestId('conversation-history-new').click();
   await expect(page.getByTestId('conversation-list')).toHaveCount(0);
   await expect

@@ -576,7 +576,7 @@ test('[P1] home left rail expands and collapses from the shell controls', async 
   await expect(expand).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('[P1] home composer plus menu exposes attachment, connector, plugin, and MCP entries', async ({ page }) => {
+test('[P1] home composer plus menu exposes attachment, connector, and MCP entries', async ({ page }) => {
   await gotoEntryHome(page);
 
   const input = page.getByTestId('home-hero-input');
@@ -584,17 +584,14 @@ test('[P1] home composer plus menu exposes attachment, connector, plugin, and MC
   await page.getByTestId('home-hero-plus-trigger').click();
   await expect(page.getByTestId('composer-plus-attach')).toBeVisible();
   await expect(page.getByTestId('composer-plus-connectors')).toBeVisible();
-  await expect(page.getByTestId('composer-plus-plugins')).toBeVisible();
+  // The Plugins row was removed from the "+" menu; plugins live on their own
+  // surfaces (plugins home / quick pill).
+  await expect(page.getByTestId('composer-plus-plugins')).toHaveCount(0);
   await expect(page.getByTestId('composer-plus-mcp')).toBeVisible();
 
   await page.getByTestId('composer-plus-connectors').click();
   await expect(page.getByText(/No connected connectors/i)).toBeVisible();
 
-  await page.getByTestId('composer-plus-plugins').click();
-  await page.getByRole('menuitem', { name: /Web Prototype/i }).click();
-  await expect(input).toContainText(/Web Prototype/i);
-
-  await page.getByTestId('home-hero-plus-trigger').click();
   await page.getByTestId('composer-plus-mcp').click();
   await page.getByRole('menuitem', { name: /Docs MCP/i }).click();
   await expect(input).toContainText(/Docs MCP/i);
@@ -1170,51 +1167,6 @@ test('[P0] empty home composer submits the active placeholder suggestion with te
   expect(typeof body.pluginId).toBe('string');
   expect(typeof body.metadata?.kind).toBe('string');
   await expect(page).toHaveURL(/\/projects\//);
-});
-
-test('[P1] home session mode toggle switches Ask planning prompts away from design routing', async ({ page }) => {
-  await routeProjectCreates(page);
-  await routeRunsAccepted(page);
-  await gotoEntryHome(page);
-
-  const modeTrigger = page.getByTestId('composer-mode-trigger');
-  // Design is the app default and is now represented as an explicit selection.
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Design');
-  await modeTrigger.click();
-  // Every mode description is always visible in the open menu (no hover card).
-  await expect(page.getByText(/planning, and discussion/i)).toBeVisible();
-
-  await page.getByTestId('composer-mode-menu-chat').click();
-  await expect(modeTrigger).toContainText('Ask');
-  await page.getByTestId('home-hero-input').fill('Help me plan the IA before designing screens.');
-
-  const askRequestPromise = page.waitForRequest((request) =>
-    request.method() === 'POST' && new URL(request.url()).pathname === '/api/projects',
-  );
-  await page.getByTestId('home-hero-submit').click();
-  const askBody = await askRequestPromise.then((request) => request.postDataJSON() as {
-    conversationMode?: string;
-    pluginId?: string | null;
-  });
-
-  expect(askBody.conversationMode).toBe('chat');
-  expect(askBody.pluginId ?? null).toBeNull();
-
-  await gotoEntryHome(page);
-  await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
-  await page.getByTestId('home-hero-input').fill('Design the screens from this brief.');
-
-  const designRequestPromise = page.waitForRequest((request) =>
-    request.method() === 'POST' && new URL(request.url()).pathname === '/api/projects',
-  );
-  await page.getByTestId('home-hero-submit').click();
-  const designBody = await designRequestPromise.then((request) => request.postDataJSON() as {
-    conversationMode?: string;
-    pluginId?: string | null;
-  });
-
-  expect(designBody.conversationMode).toBe('design');
-  expect(typeof designBody.pluginId).toBe('string');
 });
 
 test('[P0] home design-system picker carries explicit and cleared selections into project creation', async ({ page }) => {

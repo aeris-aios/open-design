@@ -1,7 +1,6 @@
 import {
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -10,15 +9,11 @@ import {
 import { createPortal } from 'react-dom';
 import type {
   ConnectorDetail,
-  InstalledPluginRecord,
   McpServerConfig,
   SkillSummary,
-  WorkspaceCollabContext,
 } from '@open-design/contracts';
-import { useI18n, useT } from '../i18n';
+import { useT } from '../i18n';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
-import { ComposerPluginPreview } from './ComposerPluginPreview';
-import { localizePluginTitle } from './plugins-home/localization';
 import { resolveFlyoutSide } from './composer-flyout-placement';
 import { Icon, type IconName } from './Icon';
 
@@ -26,12 +21,6 @@ const PLUS_MENU_MARGIN = 12;
 const PLUS_MENU_GAP = 8;
 const PLUS_MENU_WIDTH = 190;
 const PLUS_MENU_FLYOUT_WIDTH = 360;
-// The Plugins flyout is wider than the others because it carries a
-// side-by-side hover-preview column. This MUST match the rendered width of
-// `.plus-menu__flyout--plugins` in styles/home/plus-menu.css — over-reserving
-// here makes medium-width panes wrongly fall back to the contained layout and
-// silently drop the preview column.
-const PLUS_MENU_PLUGIN_FLYOUT_WIDTH = 466;
 const PLUS_MENU_FLYOUT_MAX_HEIGHT = 320;
 // Fallback "does the menu fit?" budget used only until the popup has been
 // measured (first layout pass). Once `contentHeight` is known the real stack
@@ -41,7 +30,7 @@ export type PlusMenuPlacementPreference = 'auto' | 'down' | 'up';
 type PlusMenuFlyoutPlacement = 'right' | 'left' | 'contained';
 type PlusMenuFlyoutVerticalPlacement = 'down' | 'up';
 type PlusMenuVerticalPlacement = 'down' | 'up';
-export type PlusMenuSubmenu = 'connectors' | 'plugins' | 'skills' | 'mcp' | 'toolbox' | 'workingDir';
+export type PlusMenuSubmenu = 'connectors' | 'skills' | 'mcp' | 'toolbox' | 'workingDir';
 
 // Analytics mapping for the submenu flyouts: which resource list each
 // submenu carries. `toolbox` is intentionally absent — the project composer
@@ -49,7 +38,6 @@ export type PlusMenuSubmenu = 'connectors' | 'plugins' | 'skills' | 'mcp' | 'too
 // its flyout carries actions, not an attachable resource list.
 export const PLUS_SUBMENU_RESOURCE_KIND = {
   connectors: 'connector',
-  plugins: 'plugin',
   skills: 'skill',
   mcp: 'mcp',
 } as const;
@@ -140,10 +128,7 @@ function getPlusMenuStyle(
   };
 }
 
-function getFlyoutPlacement(
-  anchor: HTMLElement,
-  flyoutWidth: number = PLUS_MENU_FLYOUT_WIDTH,
-): PlusMenuFlyoutPlacement {
+function getFlyoutPlacement(anchor: HTMLElement): PlusMenuFlyoutPlacement {
   const rect = anchor.getBoundingClientRect();
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
   const boundary = getFlyoutBoundary(anchor);
@@ -155,7 +140,7 @@ function getFlyoutPlacement(
   return resolveFlyoutSide({
     menuLeft,
     menuWidth,
-    flyoutWidth,
+    flyoutWidth: PLUS_MENU_FLYOUT_WIDTH,
     gap: PLUS_MENU_GAP,
     boundaryLeft: boundary.left,
     boundaryRight: boundary.right,
@@ -163,24 +148,11 @@ function getFlyoutPlacement(
 }
 
 export interface ComposerPlusMenuProps {
-  workspaceContext?: WorkspaceCollabContext | null;
   /** Connector context options shown under the "Connectors" submenu. */
   connectors: ConnectorDetail[];
   onPickConnector: (connector: ConnectorDetail) => void;
   /** Opens the connector integration surface; omit to hide the add row. */
   onAddConnector?: () => void;
-
-  /** Installed plugin options shown under the "Plugins" submenu. */
-  plugins: InstalledPluginRecord[];
-  onPickPlugin: (plugin: InstalledPluginRecord) => void;
-  /** Opens the plugin registry; omit to hide the add row. */
-  onAddPlugin?: () => void;
-  /**
-   * Hide the whole Plugins submenu row. The project composer sets this: its
-   * 插件 quick pill above the input owns the plugins surface, so the row here
-   * would be a duplicate. Home keeps the row (it has no pills).
-   */
-  hidePluginsRow?: boolean;
 
   /** Enabled MCP servers shown under the "MCP" submenu. */
   mcpServers: McpServerConfig[];
@@ -253,9 +225,8 @@ export interface ComposerPlusMenuProps {
 
   /**
    * Notified when the menu opens. The project composer uses this to latch its
-   * lazy plugin / MCP / connector fetches, so the Plugins / Connectors / MCP
-   * submenus aren't empty when the "+" menu is the first thing clicked on a
-   * cold composer.
+   * lazy MCP / connector fetches, so the Connectors / MCP submenus aren't
+   * empty when the "+" menu is the first thing clicked on a cold composer.
    */
   onOpen?: () => void;
 
@@ -272,7 +243,7 @@ export interface ComposerPlusMenuProps {
    * that flyout's search box. Carries which list was searched, never the
    * query text.
    */
-  onSearchUsed?: (submenu: 'plugins' | 'skills' | 'mcp') => void;
+  onSearchUsed?: (submenu: 'skills' | 'mcp') => void;
 
   /**
    * Home opens below the trigger like Claude Design's project picker, while
@@ -290,17 +261,6 @@ export interface ComposerPlusMenuProps {
   openRequest?: { nonce: number; submenu?: PlusMenuSubmenu } | null;
 }
 
-function pluginMatches(
-  plugin: InstalledPluginRecord,
-  needle: string,
-  localizedTitle: string,
-): boolean {
-  if (!needle) return true;
-  // Match the localized title too, so a Chinese search hits a plugin whose
-  // raw `title` is English but whose `title_i18n` is the displayed name.
-  return `${localizedTitle} ${plugin.title} ${plugin.id}`.toLowerCase().includes(needle);
-}
-
 function mcpMatches(server: McpServerConfig, needle: string): boolean {
   if (!needle) return true;
   return `${server.label ?? ''} ${server.id}`.toLowerCase().includes(needle);
@@ -313,14 +273,9 @@ function mcpMatches(server: McpServerConfig, needle: string): boolean {
  * project-only design-toolbox row.
  */
 export function ComposerPlusMenu({
-  workspaceContext = null,
   connectors,
   onPickConnector,
   onAddConnector,
-  plugins,
-  onPickPlugin,
-  onAddPlugin,
-  hidePluginsRow,
   mcpServers,
   onPickMcp,
   onAddMcp,
@@ -345,14 +300,9 @@ export function ComposerPlusMenu({
   openRequest,
 }: ComposerPlusMenuProps) {
   const t = useT();
-  const { locale } = useI18n();
   const [open, setOpen] = useState(false);
   const [submenu, setSubmenu] = useState<PlusMenuSubmenu | null>(null);
   const [query, setQuery] = useState('');
-  // Id of the plugin row the preview column is mirroring. Defaults to the
-  // first filtered row (see `hoveredPlugin`) so the panel is never blank
-  // while the menu is open.
-  const [hoveredPluginId, setHoveredPluginId] = useState<string | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const [flyoutPlacement, setFlyoutPlacement] = useState<PlusMenuFlyoutPlacement>('right');
   const [flyoutVerticalPlacement, setFlyoutVerticalPlacement] = useState<PlusMenuFlyoutVerticalPlacement>('down');
@@ -368,13 +318,11 @@ export function ComposerPlusMenu({
   // Whether onSearchUsed already fired for the current submenu-open session.
   const searchUsedRef = useRef(false);
 
-  // The plugin and MCP flyouts share one `query`, but it is scoped to whichever
-  // submenu is open. Reset it whenever the active submenu changes so a stale
-  // plugin search (e.g. "deck") never filters the MCP list — which would
-  // otherwise show the empty state even when servers exist.
+  // `query` is scoped to whichever submenu is open. Reset it whenever the
+  // active submenu changes so a stale search never filters the next list —
+  // which would otherwise show the empty state even when entries exist.
   useEffect(() => {
     setQuery('');
-    setHoveredPluginId(null);
     searchUsedRef.current = false;
   }, [submenu]);
 
@@ -399,10 +347,10 @@ export function ComposerPlusMenu({
       // Typing into a flyout's search box narrows its list, which reflows rows
       // out from under a stationary cursor — the browser then synthesizes a
       // `mouseleave` on the flyout even though the pointer never moved. Honoring
-      // that close would yank the search box (and its preview column) away
-      // mid-search, making the plugin impossible to pick. Keep the submenu open
-      // while its own search input still owns focus; the outside-click / Escape
-      // handlers remain the deliberate ways to dismiss it.
+      // that close would yank the search box away mid-search, making the item
+      // impossible to pick. Keep the submenu open while its own search input
+      // still owns focus; the outside-click / Escape handlers remain the
+      // deliberate ways to dismiss it.
       const active = document.activeElement;
       if (active && popupRef.current?.contains(active) && active.tagName === 'INPUT') {
         return;
@@ -469,11 +417,7 @@ export function ComposerPlusMenu({
   }, [openRequest]);
 
   function handleQueryChange(value: string) {
-    if (
-      !searchUsedRef.current &&
-      value.trim() &&
-      (submenu === 'plugins' || submenu === 'mcp')
-    ) {
+    if (!searchUsedRef.current && value.trim() && submenu === 'mcp') {
       searchUsedRef.current = true;
       onSearchUsed?.(submenu);
     }
@@ -527,11 +471,7 @@ export function ComposerPlusMenu({
         if (next !== contentHeight) setContentHeight(next);
       }
       setMenuStyle(getPlusMenuStyle(anchor, placementPreference, measured));
-      const flyoutWidth =
-        submenu === 'plugins'
-          ? PLUS_MENU_PLUGIN_FLYOUT_WIDTH
-          : PLUS_MENU_FLYOUT_WIDTH;
-      setFlyoutPlacement(getFlyoutPlacement(anchor, flyoutWidth));
+      setFlyoutPlacement(getFlyoutPlacement(anchor));
       const activeRow = popupRef.current?.querySelector<HTMLDivElement>('.plus-menu__submenu-row.is-open') ?? null;
       updateFlyoutGeometry(activeRow);
     };
@@ -546,21 +486,9 @@ export function ComposerPlusMenu({
   }, [open, submenu, placementPreference, contentHeight]);
 
   const needle = query.trim().toLowerCase();
-  const filteredPlugins = needle
-    ? plugins.filter((p) => pluginMatches(p, needle, localizePluginTitle(locale, p)))
-    : plugins;
   const filteredMcp = needle
     ? mcpServers.filter((s) => mcpMatches(s, needle))
     : mcpServers;
-  // The preview mirrors the hovered row, falling back to the first visible
-  // plugin so the panel is populated the moment the submenu opens. When a
-  // search prunes the hovered row out of view, the fallback re-anchors it.
-  const hoveredPlugin = useMemo(() => {
-    if (submenu !== 'plugins' || filteredPlugins.length === 0) return null;
-    return (
-      filteredPlugins.find((p) => p.id === hoveredPluginId) ?? filteredPlugins[0]
-    );
-  }, [submenu, filteredPlugins, hoveredPluginId]);
   const popupStyle = menuStyle
     ? ({
         ...menuStyle,
@@ -706,83 +634,6 @@ export function ComposerPlusMenu({
               </div>
             </PlusSubmenuRow>
           ) : null}
-          {hidePluginsRow ? null : (
-          <PlusSubmenuRow
-            label={t('entry.navPlugins')}
-            icon="sparkles"
-            open={submenu === 'plugins'}
-            testId="composer-plus-plugins"
-            onOpen={(row) => openSubmenu('plugins', row)}
-            onClose={scheduleCloseSubmenu}
-            flyoutClassName={
-              filteredPlugins.length > 0 ? 'plus-menu__flyout--plugins' : undefined
-            }
-          >
-            <div className="plus-menu__plugin-pane">
-              <div className="plus-menu__plugin-main">
-                <div className="plus-menu__search">
-                  <Icon name="search" size={14} />
-                  <input
-                    value={query}
-                    onChange={(event) => handleQueryChange(event.target.value)}
-                    placeholder={t('entry.navPlugins')}
-                    aria-label={t('entry.navPlugins')}
-                  />
-                </div>
-                <div className="plus-menu__list">
-                  {filteredPlugins.length === 0 ? (
-                    <div className="plus-menu__empty">{t('homeHero.noPlugins')}</div>
-                  ) : (
-                    filteredPlugins.map((plugin) => (
-                      <button
-                        key={plugin.id}
-                        type="button"
-                        role="menuitem"
-                        className={`plus-menu__item${
-                          plugin.id === hoveredPlugin?.id ? ' is-previewed' : ''
-                        }`}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onMouseEnter={() => setHoveredPluginId(plugin.id)}
-                        onFocus={() => setHoveredPluginId(plugin.id)}
-                        onClick={() => {
-                          close();
-                          onPickPlugin(plugin);
-                        }}
-                      >
-                        <Icon name="sparkles" size={15} className="plus-menu__item-icon" />
-                        <span>{localizePluginTitle(locale, plugin)}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-                {onAddPlugin ? (
-                  <>
-                    <div className="plus-menu__divider" />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="plus-menu__item"
-                      onClick={() => {
-                        close();
-                        onAddPlugin();
-                      }}
-                    >
-                      <Icon name="plus" size={15} className="plus-menu__item-icon" />
-                      <span>{t('homeHero.addPlugin')}</span>
-                    </button>
-                  </>
-                ) : null}
-              </div>
-              {hoveredPlugin ? (
-                <ComposerPluginPreview
-                  record={hoveredPlugin}
-                  locale={locale}
-                  workspaceContext={workspaceContext}
-                />
-              ) : null}
-            </div>
-          </PlusSubmenuRow>
-          )}
           {renderToolbox ? (
             <PlusSubmenuRow
               label={toolboxLabel ?? t('chat.designToolbox.tooltip')}
@@ -944,7 +795,6 @@ function PlusSubmenuRow({
   open,
   onOpen,
   onClose,
-  flyoutClassName,
   testId,
   children,
 }: {
@@ -953,8 +803,6 @@ function PlusSubmenuRow({
   open: boolean;
   onOpen: (row: HTMLDivElement | null) => void;
   onClose: () => void;
-  /** Extra class on the flyout, e.g. the wide plugins-preview variant. */
-  flyoutClassName?: string;
   testId?: string;
   children: ReactNode;
 }) {
@@ -981,7 +829,7 @@ function PlusSubmenuRow({
       </button>
       {open ? (
         <div
-          className={`plus-menu__flyout${flyoutClassName ? ` ${flyoutClassName}` : ''}`}
+          className="plus-menu__flyout"
           role="menu"
           onMouseEnter={() => onOpen(rowRef.current)}
           onMouseLeave={onClose}

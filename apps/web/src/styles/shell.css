@@ -1162,12 +1162,22 @@ body[data-artifact-share-access='private'] .ws-tabs-file-actions-before {
   display: none;
 }
 .artifact-version-panel {
+  --artifact-version-panel-top: 58px;
   position: fixed;
-  top: 58px;
+  top: var(--artifact-version-panel-top);
   right: 24px;
   z-index: 85;
   width: min(390px, calc(100vw - 48px));
-  max-height: min(76vh, 720px);
+  max-height: min(
+    76vh,
+    720px,
+    calc(100vh - var(--artifact-version-panel-top) - var(--spacing-16))
+  );
+  max-height: min(
+    76vh,
+    720px,
+    calc(100dvh - var(--artifact-version-panel-top) - var(--spacing-16))
+  );
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1177,6 +1187,13 @@ body[data-artifact-share-access='private'] .ws-tabs-file-actions-before {
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--bg-panel) 96%, white 4%);
   box-shadow: var(--shadow-lg);
+}
+/* In the project workspace the floating panel shares the viewport with two
+   stacked chrome rows: the 44px workspace strip and the 44px file-action
+   strip. Start below both rows so Share / Download remain visible and
+   clickable, with one spacing token of breathing room. */
+body:has(.ws-tabs-shell) .artifact-version-panel {
+  --artifact-version-panel-top: calc(44px + 44px + var(--spacing-8));
 }
 .artifact-version-panel__head {
   display: flex;
@@ -1198,14 +1215,6 @@ body[data-artifact-share-access='private'] .ws-tabs-file-actions-before {
   margin: 4px 0 0;
   color: var(--text-muted);
   font-size: 12px;
-}
-/* While the history panel is open it floats over the tab-row file actions,
-   but the dark 分享 button's right sliver still peeked past the panel's edge
-   and read as a control overflowing the panel frame (dogfood 2026-07-27).
-   The cluster is unreachable behind the fixed panel anyway — hide it. */
-body:has(.artifact-version-panel) .ws-tabs-file-actions,
-body:has(.artifact-version-panel) .ws-tabs-file-actions-before {
-  visibility: hidden;
 }
 .artifact-version-panel__head strong {
   display: block;
@@ -1588,6 +1597,16 @@ body:has(.artifact-version-panel) .ws-tabs-file-actions-before {
   top: auto;
   right: auto;
   transform: translateX(-50%);
+  max-height: calc(
+    100vh - var(--zoom-menu-anchor-bottom, var(--spacing-68)) - var(--spacing-8)
+  );
+  max-height: min(
+    320px,
+    calc(100dvh - var(--zoom-menu-anchor-bottom, var(--spacing-68)) - var(--spacing-8))
+  );
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   /* Over the dock (z-index 4) and the preview canvas that swallowed the clicks
      while this was clipped. */
   z-index: 60;

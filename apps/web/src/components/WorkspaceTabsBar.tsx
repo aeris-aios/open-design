@@ -848,6 +848,9 @@ export function WorkspaceTabsBar({
     () => subscribeWorkspaceTabsDock(() => setTabsDockEl(getWorkspaceTabsDock())),
     [],
   );
+  useEffect(() => {
+    setDockMenuOpen(false);
+  }, [state.activeTabId, tabsDockEl]);
 
   // Refresh the fallback cache from whatever this fetch actually returned,
   // before `displayTabFor` below reads it — same render pass, so a tab
@@ -1569,7 +1572,6 @@ export function WorkspaceTabsBar({
     const activeDisplay =
       displayTabById.get(activeTab.id)
         ?? displayTabFor(activeTab, projectById, t, knownProjectNamesRef.current);
-    const isEntryActive = activeTab.kind === 'entry';
     // Most recently opened first. The active tab ranks first even before the
     // MRU effect has run for it; never-activated tabs keep strip order after.
     const mru = tabMruRef.current;
@@ -1586,16 +1588,22 @@ export function WorkspaceTabsBar({
         <button
           type="button"
           className="workspace-tabs-dropdown__trigger"
+          aria-label={activeDisplay.title}
           aria-haspopup="listbox"
           aria-expanded={dockMenuOpen}
-          onClick={() => setDockMenuOpen((v) => !v)}
+          aria-controls="workspace-tabs-dropdown-menu"
+          onClick={() => setDockMenuOpen((open) => !open)}
           data-testid="workspace-tabs-dropdown-trigger"
         >
-          <span className="workspace-tabs-dropdown__icon" aria-hidden>
-            <Icon name={isEntryActive ? 'home' : activeDisplay.icon} size={14} />
+          <span
+            className="workspace-tabs-dropdown__label"
+            data-testid="workspace-tabs-dropdown-label"
+          >
+            {activeDisplay.title}
           </span>
-          <span className="workspace-tabs-dropdown__label">{activeDisplay.title}</span>
-          <Icon name="chevron-down" size={14} />
+          <span className="workspace-tabs-dropdown__toggle" aria-hidden>
+            <Icon name="chevron-down" size={14} />
+          </span>
         </button>
         {dockMenuOpen ? (
           <>
@@ -1603,7 +1611,11 @@ export function WorkspaceTabsBar({
               className="workspace-tabs-dropdown__backdrop"
               onClick={() => setDockMenuOpen(false)}
             />
-            <div className="workspace-tabs-dropdown__menu" role="listbox">
+            <div
+              id="workspace-tabs-dropdown-menu"
+              className="workspace-tabs-dropdown__menu"
+              role="listbox"
+            >
               {projectTabs.map((tab) => {
                 const display =
                   displayTabById.get(tab.id)

@@ -25,7 +25,6 @@ import type {
   RefObject,
 } from 'react';
 import type {
-  ChatSessionMode,
   ConnectorDetail,
   DesignSystemSummary,
   InputFieldSpec,
@@ -39,13 +38,11 @@ import type { SkillSummary } from '../types';
 import { Icon, type IconName } from './Icon';
 import { useAnalytics } from '../analytics/provider';
 import {
-  trackComposerSessionModeClick,
   trackContextLinkResult,
   trackFigmaHelpModalSurfaceView,
   trackHomeChatComposerClick,
   trackProjectReferenceModalSurfaceView,
 } from '../analytics/events';
-import { sessionModeToTracking } from '@open-design/contracts/analytics';
 import {
   chipsForGroup,
   HOME_APPLY_TEMPLATE_EVENT,
@@ -97,7 +94,6 @@ import { FigmaHelpModal } from './FigmaHelpModal';
 import { TemplatePicker } from './home-hero/TemplatePicker';
 import { TypeFanCarousel } from './home-hero/TypeFanCarousel';
 import { LibraryPicker } from './LibraryPicker';
-import { ComposerModePicker } from './ComposerModePicker';
 import { assetTitle } from './LibraryAssetMeta';
 import { libraryAssetRawUrl } from '../providers/registry';
 import type { LibraryAsset } from '@open-design/contracts';
@@ -156,8 +152,6 @@ interface Props {
   // showing: the host seeds the prompt with `scenario.text`, binds the
   // scenario's template, and creates the project -- one-click "just start".
   onSubmitScenario?: (scenario: PlaceholderScenario) => void;
-  sessionMode?: ChatSessionMode;
-  onSessionModeChange?: (mode: ChatSessionMode) => void;
   activePluginTitle: string | null;
   // True when the active plugin chip shows a user-picked plugin (Community card
   // or example-prompt preset) rather than a task-type chip's default plugin —
@@ -301,8 +295,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     onPromptChange,
     onSubmit,
     onSubmitScenario = () => undefined,
-    sessionMode = 'design',
-    onSessionModeChange,
     firstRunGuide,
     activePluginTitle,
     activePluginIsExplicit = false,
@@ -1400,7 +1392,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               </span>
             ) : null}
             {showActivePluginRow ? (
-              <span className="home-hero__active-chip" data-testid="home-hero-active-plugin">
+              <span
+                className="home-hero__active-chip home-hero__active-chip--plugin"
+                data-testid="home-hero-active-plugin"
+              >
                 <button
                   type="button"
                   className="home-hero__active-chip-body"
@@ -1799,7 +1794,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
           />
           <div className="home-hero__foot-left">
             <ComposerPlusMenu
-              workspaceContext={workspaceContext}
               triggerTestId="home-hero-plus-trigger"
               placementPreference="down"
               onOpen={() =>
@@ -1847,26 +1841,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                   resource_kind: 'connector',
                 });
                 onAddConnector();
-              }}
-              plugins={pluginOptions}
-              onPickPlugin={(record) => {
-                trackHomeChatComposerClick(analytics.track, {
-                  page_name: 'home',
-                  area: 'chat_composer',
-                  element: 'plus_pick',
-                  resource_kind: 'plugin',
-                  resource_id: record.id,
-                });
-                pickPlugin(record);
-              }}
-              onAddPlugin={() => {
-                trackHomeChatComposerClick(analytics.track, {
-                  page_name: 'home',
-                  area: 'chat_composer',
-                  element: 'plus_add',
-                  resource_kind: 'plugin',
-                });
-                onAddPlugin();
               }}
               skills={skillOptions}
               onPickSkill={(skill) => {
@@ -2025,21 +1999,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             ) : null}
           </div>
           <div className="home-hero__foot-right">
-            <ComposerModePicker
-              mode={sessionMode}
-              onModeChange={(next) => {
-                if (next !== sessionMode) {
-                  trackComposerSessionModeClick(analytics.track, {
-                    page_name: 'home',
-                    area: 'chat_composer',
-                    element: 'session_mode_toggle',
-                    mode_before: sessionModeToTracking(sessionMode),
-                    mode_after: sessionModeToTracking(next),
-                  });
-                }
-                onSessionModeChange?.(next);
-              }}
-            />
             {executionSwitcher ? (
               <div className="home-hero__execution-switcher">
                 {executionSwitcher}
@@ -2226,6 +2185,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   );
 });
 
+const MAX_VISIBLE_PLUGIN_PROMPT_PRESETS = 5;
+
 function PluginPromptPresets({
   activePluginId,
   chipId,
@@ -2247,9 +2208,7 @@ function PluginPromptPresets({
   pulseFirstPreset?: boolean;
 }) {
   const { t } = useI18n();
-  // Same edge hover/click auto-scroll as the scenario rail, so this row is
-  // reachable without a trackpad when it overflows.
-  const edgeScroll = useEdgeAutoScroll(plugins.length);
+  const visiblePlugins = plugins.slice(0, MAX_VISIBLE_PLUGIN_PROMPT_PRESETS);
   return (
     <div
       className="home-hero__prompt-examples home-hero__plugin-presets-wrap"
@@ -2260,11 +2219,10 @@ function PluginPromptPresets({
       </div>
       <div className="home-hero__rail-scroller">
         <div
-          ref={edgeScroll.scrollRef}
           className="home-hero__plugin-presets"
           role="list"
         >
-          {plugins.map((record, index) => (
+          {visiblePlugins.map((record, index) => (
             <PluginPromptPresetCard
               key={record.id}
               chipId={chipId}
@@ -2279,7 +2237,6 @@ function PluginPromptPresets({
             />
           ))}
         </div>
-        <EdgeScrollZones {...edgeScroll} />
       </div>
     </div>
   );
@@ -3084,7 +3041,7 @@ function modelOptionIcon(value: string, label: string): ModelOptionIconSpec {
   }
   if (normalized.includes('senseaudio')) return { label: 'SA', tone: 'sense' };
   if (normalized.includes('grok') || normalized.includes('xai') || normalized.includes('xai/')) {
-    return { label: 'xAI', tone: 'grok', src: '/model-icons/x.svg' };
+    return { label: 'xAI', tone: 'grok', src: '/agent-icons/grok-build.png' };
   }
   if (normalized.includes('gemini') || normalized.includes('imagen') || normalized.includes('veo') || normalized.includes('google') || normalized.includes('nano-banana')) {
     return { label: 'Google Gemini', tone: 'google', src: '/model-icons/google-gemini.svg' };

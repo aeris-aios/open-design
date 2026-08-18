@@ -598,8 +598,6 @@ async function sendPrompt(page: Page, prompt: string) {
 }
 
 async function startNewConversation(page: Page) {
-  await page.getByTestId('conversation-history-trigger').click();
-  await expect(page.getByTestId('conversation-list')).toBeVisible();
   await page.getByTestId('conversation-history-new').click();
   await expect(page.getByTestId('conversation-list')).toHaveCount(0);
 }

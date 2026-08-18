@@ -49,10 +49,12 @@ export type IconName =
   | 'info'
   | 'kanban'
   | 'key'
+  | 'layers'
   | 'layers-filled'
   | 'languages'
   | 'layout'
   | 'lightbulb'
+  | 'list'
   | 'arrow-right'
   | 'link'
   | 'lock'
@@ -171,6 +173,7 @@ const REMIX_ICON: Partial<Record<IconName, string>> = {
   'layers-filled': 'stack-fill',
   layout: 'layout-line',
   lightbulb: 'lightbulb-line',
+  list: 'list-check-2',
   link: 'link',
   lock: 'lock-line',
   'log-in': 'login-circle-line',
@@ -651,6 +654,7 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
           <rect x="17" y="4" width="4" height="13" rx="1" />
         </svg>
       );
+    case 'layers':
     case 'layers-filled':
       return (
         <svg {...common} fill="currentColor" stroke="none">

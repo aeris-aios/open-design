@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Dialog, DialogFooter, DialogTitle } from '@open-design/components';
 import type {
   ApplyResult,
-  ChatSessionMode,
   ConnectorDetail,
   InputFieldSpec,
   McpServerConfig,
@@ -537,7 +536,6 @@ export function HomeView({
     text: string;
     chipId: string | null;
   } | null>(null);
-  const [sessionMode, setSessionMode] = useState<ChatSessionMode>('design');
   const [activeSkill, setActiveSkill] = useState<SkillSummary | null>(null);
   const [selectedPluginContexts, setSelectedPluginContexts] = useState<SelectedPluginContext[]>([]);
   const [selectedMcpContexts, setSelectedMcpContexts] = useState<SelectedMcpContext[]>([]);
@@ -2499,14 +2497,10 @@ export function HomeView({
             submittedActive?.projectMetadata ?? fallbackProjectMetadata ?? null,
           );
       // Scenario plugins (chips / preset cards) and explicit skill picks are
-      // mutually exclusive routing sources. In Design mode, free-form prompts
-      // route through the default design router; in Ask mode they stay plain
-      // chat conversations with no hidden router plugin.
+      // mutually exclusive routing sources. Home creation always uses the
+      // default design router when no explicit scenario plugin is selected.
       const resolvedSkillId = submittedActive ? null : activeSkill?.id ?? null;
-      const routedPluginId =
-        sessionMode === 'design'
-          ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
-          : submittedActive?.record.id ?? null;
+      const routedPluginId = submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID;
       // The example-prompt override is a one-shot marker. Decide whether to
       // send it now, but defer spending the marker until the create is
       // accepted — a rejected attempt stays retryable and must resend it.
@@ -2537,7 +2531,7 @@ export function HomeView({
         ...(workingDir ? { workingDir } : {}),
         ...(workingDirToken ? { workingDirToken } : {}),
         ...(contextLinkedDirs.length > 0 ? { linkedDirs: contextLinkedDirs } : {}),
-        conversationMode: sessionMode,
+        conversationMode: 'design',
         ...(examplePromptToSend ? { examplePromptContext: examplePromptToSend } : {}),
       });
       if (accepted === false) {
@@ -2599,8 +2593,6 @@ export function HomeView({
         onPromptChange={handlePromptChange}
         onSubmit={submit}
         onSubmitScenario={submitScenario}
-        sessionMode={sessionMode}
-        onSessionModeChange={setSessionMode}
         submitting={sending}
         activePluginTitle={activeBadgeTitle}
         activePluginIsExplicit={activePluginIsExplicit}
@@ -2711,6 +2703,7 @@ export function HomeView({
         projects={projects}
         designSystems={designSystems}
         heading={t('recentProjects.title')}
+        headerControls="view-only"
         {...(isSharedProject ? { isSharedProject } : {})}
         {...(onProjectShared ? { onProjectShared } : {})}
         {...(onProjectShareFailed ? { onProjectShareFailed } : {})}

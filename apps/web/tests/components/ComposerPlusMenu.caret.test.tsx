@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ComposerPlusMenu } from '../../src/components/ComposerPlusMenu';
 import type {
   ConnectorDetail,
-  InstalledPluginRecord,
   McpServerConfig,
 } from '@open-design/contracts';
 
@@ -33,26 +32,6 @@ const CONNECTOR: ConnectorDetail = {
   tools: [],
 };
 
-const PLUGIN: InstalledPluginRecord = {
-  id: 'sample-plugin',
-  title: 'Sample Plugin',
-  version: '1.0.0',
-  trust: 'restricted',
-  sourceKind: 'bundled',
-  source: 'bundled/sample',
-  capabilitiesGranted: [],
-  manifest: {
-    name: 'sample-plugin',
-    version: '1.0.0',
-    title: 'Sample Plugin',
-    description: 'Sample',
-    od: { kind: 'skill' },
-  },
-  fsPath: '/plugins/sample',
-  installedAt: 0,
-  updatedAt: 0,
-};
-
 const MCP_SERVER: McpServerConfig = {
   id: 'slack',
   label: 'Slack MCP',
@@ -66,8 +45,6 @@ function renderMenu() {
     <ComposerPlusMenu
       connectors={[CONNECTOR]}
       onPickConnector={vi.fn()}
-      plugins={[PLUGIN]}
-      onPickPlugin={vi.fn()}
       mcpServers={[MCP_SERVER]}
       onPickMcp={vi.fn()}
       onAttachFiles={vi.fn()}
@@ -111,13 +88,6 @@ describe('ComposerPlusMenu picker mousedown protection (#3195)', () => {
     openMenu();
     openSubmenu('Connectors');
     expectMousedownPrevented(pickerRow('GitHub'));
-  });
-
-  it('the plugins picker prevents default on mousedown so the caret survives focus transfer', () => {
-    renderMenu();
-    openMenu();
-    openSubmenu('Plugins');
-    expectMousedownPrevented(pickerRow('Sample Plugin'));
   });
 
   it('the MCP picker prevents default on mousedown so the caret survives focus transfer', () => {

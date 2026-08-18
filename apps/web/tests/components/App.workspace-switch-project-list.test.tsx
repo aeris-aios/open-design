@@ -1097,4 +1097,63 @@ describe('App project list across a workspace switch', () => {
       },
     });
   });
+
+  it('keeps an unbound local deep link unscoped while workspace authority stays unavailable', async () => {
+    const localProject: Project = {
+      ...project('local-project', 'Local project'),
+      workspaceId: null,
+    };
+    const directory = deferred<Response>();
+    const projectResourceRequests: Array<{ headers: Headers }> = [];
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname = new URL(String(input), 'http://d.local').pathname;
+      const headers = new Headers(init?.headers);
+      if (pathname === '/api/workspace/directory') return directory.promise;
+      if (pathname === `/api/projects/${localProject.id}/workspace-scope`) {
+        return new Response(JSON.stringify({
+          scope: {
+            kind: 'unbound',
+            projectId: localProject.id,
+            workspaceId: null,
+            context: null,
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (pathname === `/api/projects/${localProject.id}`) {
+        return new Response(JSON.stringify({
+          project: localProject,
+          resolvedDir: '/tmp/local-project',
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (pathname.endsWith('/mock-project-resource')) {
+        projectResourceRequests.push({ headers });
+      }
+      return new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }));
+    vi.mocked(listProjects).mockImplementation(() => new Promise<Project[]>(() => {}));
+    window.history.replaceState(null, '', `/projects/${localProject.id}`);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-view')).toBeTruthy();
+      expect(projectResourceRequests).toHaveLength(1);
+    });
+    expect(projectViewLifecycle.renders.mock.lastCall?.[0]).toMatchObject({
+      project: { id: localProject.id, workspaceId: null },
+      workspaceContextOverride: null,
+    });
+    expect(projectResourceRequests[0]?.headers.get('x-od-workspace-id')).toBeNull();
+    expect(projectResourceRequests[0]?.headers.get('x-od-workspace-member-id')).toBeNull();
+  });
 });

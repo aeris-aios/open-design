@@ -687,7 +687,7 @@ test('[P1] project detail composer working directory picker opens without leavin
   await expect(page).toHaveURL(/\/projects\//);
 });
 
-test('[P1] project detail composer plus menu exposes attachment, connector, plugin, and MCP entries', async ({ page }) => {
+test('[P1] project detail composer plus menu exposes attachment, connector, and MCP entries', async ({ page }) => {
   await routeComposerPlusFixtures(page);
   await page.goto('/');
   await createProject(page, 'Composer plus context menu');
@@ -697,14 +697,13 @@ test('[P1] project detail composer plus menu exposes attachment, connector, plug
   await composer.getByTestId('chat-plus-trigger').click();
   await expect(page.getByTestId('composer-plus-attach')).toBeVisible();
   await expect(page.getByTestId('composer-plus-connectors')).toBeVisible();
-  await expect(page.getByTestId('composer-plus-plugins')).toBeVisible();
+  // The Plugins row was removed from the "+" menu; plugins live on their own
+  // surfaces (插件 quick pill / plugins home).
+  await expect(page.getByTestId('composer-plus-plugins')).toHaveCount(0);
   await expect(page.getByTestId('composer-plus-mcp')).toBeVisible();
 
   await page.getByTestId('composer-plus-connectors').click();
   await expect(page.getByRole('menuitem', { name: /Figma Connector/i })).toBeVisible();
-
-  await page.getByTestId('composer-plus-plugins').click();
-  await expect(page.getByRole('menuitem', { name: /Composer Context Plugin/i })).toBeVisible();
 
   await page.getByTestId('composer-plus-mcp').click();
   await expect(page.getByRole('menuitem', { name: /Design Docs MCP/i })).toBeVisible();
@@ -1684,7 +1683,7 @@ test('[P0] @critical project detail composer agent menu lets the user switch the
   ).toContainText(/GPT 5\.5/i);
 });
 
-test('[P0] project detail composer model and Plan mode switches carry into the next daemon run request', async ({ page }) => {
+test('[P0] project detail composer model choice carries into the next default Design run request', async ({ page }) => {
   test.setTimeout(60_000);
   const runRequestBodies: Array<Record<string, unknown>> = [];
   await routeSuccessfulRuns(page, { bodies: runRequestBodies, runId: 'agent-model-run' });
@@ -1698,10 +1697,8 @@ test('[P0] project detail composer model and Plan mode switches carry into the n
 
   await pickComposerModel(page, /^GPT 5\.5$/i);
 
-  await selectComposerSessionMode(page, 'Plan mode');
-
   const input = page.getByTestId('chat-composer-input');
-  await input.fill('Plan the selected local agent run.');
+  await input.fill('Use the selected local agent for this design run.');
   await Promise.all([
     page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
     page.getByTestId('chat-send').click(),
@@ -1710,7 +1707,7 @@ test('[P0] project detail composer model and Plan mode switches carry into the n
   expect(runRequestBodies.length).toBeGreaterThan(0);
   expect(runRequestBodies[0]?.agentId).toBe('codex');
   expect(runRequestBodies[0]?.model).toBe('gpt-5.5');
-  expect(runRequestBodies[0]?.sessionMode).toBe('plan');
+  expect(runRequestBodies[0]?.sessionMode).toBe('design');
 });
 
 test('[P1] GPT 5.5 Fast service tier carries into the next Codex daemon run request', async ({ page }) => {
@@ -1748,72 +1745,6 @@ test('[P1] GPT 5.5 Fast service tier carries into the next Codex daemon run requ
     serviceTier: 'priority',
   });
 });
-test('[P1] project detail composer can alternate Design, Ask, and Plan modes across turns', async ({ page }) => {
-  test.setTimeout(60_000);
-  const runRequestBodies: Array<Record<string, unknown>> = [];
-  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'mode-run' });
-
-  await page.goto('/');
-  await createProject(page, 'Composer session mode alternation');
-  await expectWorkspaceReady(page);
-
-  async function sendTurn(prompt: string) {
-    const input = page.getByTestId('chat-composer-input');
-    await expect(input).toBeVisible();
-    await input.fill(prompt);
-    await Promise.all([
-      page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-      page.getByTestId('chat-send').click(),
-    ]);
-    await expect(input).toHaveText('');
-  }
-
-  await selectComposerSessionMode(page, 'Design mode');
-  await sendTurn('Design the first iteration.');
-
-  await selectComposerSessionMode(page, 'Ask mode');
-  await sendTurn('Ask a clarifying question about the direction.');
-
-  await selectComposerSessionMode(page, 'Plan mode');
-  await sendTurn('Plan the implementation steps.');
-
-  await selectComposerSessionMode(page, 'Design mode');
-  await sendTurn('Design the final iteration.');
-
-  expect(runRequestBodies.map((body) => body.sessionMode)).toEqual(['design', 'chat', 'plan', 'design']);
-});
-
-test('[P1] project detail composer keeps the selected mode across consecutive turns', async ({ page }) => {
-  test.setTimeout(60_000);
-  const runRequestBodies: Array<Record<string, unknown>> = [];
-  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'same-mode-run' });
-
-  await page.goto('/');
-  await createProject(page, 'Composer same session mode reuse');
-  await expectWorkspaceReady(page);
-
-  async function sendTurn(prompt: string) {
-    const input = page.getByTestId('chat-composer-input');
-    await expect(input).toBeVisible();
-    await input.fill(prompt);
-    await Promise.all([
-      page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-      page.getByTestId('chat-send').click(),
-    ]);
-    await expect(input).toHaveText('');
-  }
-
-  await selectComposerSessionMode(page, 'Plan mode');
-  await sendTurn('Plan the first pass.');
-  await sendTurn('Plan the second pass without changing mode.');
-
-  expect(runRequestBodies.map((body) => body.sessionMode)).toEqual(['plan', 'plan']);
-  await expect(page.getByTestId('chat-composer').getByTestId('composer-mode-trigger')).toHaveAttribute(
-    'aria-label',
-    'Mode: Plan',
-  );
-});
-
 test('[P0] @critical project detail composer opens Execution settings where BYOK model choice persists', async ({ page }) => {
   test.setTimeout(60_000);
   let config = {
@@ -2195,47 +2126,6 @@ test('[P1] project detail workspace keeps design file tabs and preview controls 
   await expect(page.locator('pre.viewer-source')).toHaveCount(0);
 });
 
-test('[P1] project detail session mode switch carries Ask and Plan semantics into daemon runs', async ({ page }) => {
-  const runRequestBodies: Array<Record<string, unknown>> = [];
-  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'session-mode-run' });
-
-  await page.goto('/');
-  await createProject(page, 'Project session mode contract');
-  await expectWorkspaceReady(page);
-
-  const modeTrigger = page.getByTestId('composer-mode-trigger');
-  // Design is the app default and is represented as an explicit selection.
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Design');
-
-  await modeTrigger.click();
-  await page.getByTestId('composer-mode-menu-plan').click();
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Plan');
-  await expect(modeTrigger).toContainText('Plan');
-
-  await page.getByTestId('chat-composer-input').fill('Draft the plan before generating files.');
-  await Promise.all([
-    page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-    page.getByTestId('chat-send').click(),
-  ]);
-  await expect.poll(() => runRequestBodies.length).toBe(1);
-  expect(runRequestBodies[0]?.sessionMode).toBe('plan');
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Plan');
-
-  await modeTrigger.click();
-  await page.getByTestId('composer-mode-menu-chat').click();
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Ask');
-  await expect(modeTrigger).toContainText('Ask');
-
-  await page.getByTestId('chat-composer-input').fill('Just answer this without creating files.');
-  await Promise.all([
-    page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-    page.getByTestId('chat-send').click(),
-  ]);
-  await expect.poll(() => runRequestBodies.length).toBe(2);
-  expect(runRequestBodies[1]?.sessionMode).toBe('chat');
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Ask');
-});
-
 test('[P1] BYOK OpenCode project run sends provider config through the daemon contract', async ({ page }) => {
   const byokConfig = {
     mode: 'api',
@@ -2480,7 +2370,7 @@ test('[P1] project detail active file context is sent with the run and shown on 
   await expect(chip).toContainText(uploadedName);
 });
 
-test('[P1] project detail session mode and active file context survive reload in message history', async ({ page }) => {
+test('[P1] project detail default Design mode and active file context survive reload in message history', async ({ page }) => {
   const runRequestBodies: Array<Record<string, unknown>> = [];
   await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'workspace-context-reload-run' });
 
@@ -2495,11 +2385,6 @@ test('[P1] project detail session mode and active file context survive reload in
   );
   await expect(tabBySuffix(page, uploadedName)).toHaveAttribute('aria-selected', 'true');
 
-  const modeTrigger = page.getByTestId('composer-mode-trigger');
-  await modeTrigger.click();
-  await page.getByTestId('composer-mode-menu-plan').click();
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Plan');
-
   await page.getByTestId('chat-composer-input').fill('Persist this file context through reload.');
   await Promise.all([
     page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
@@ -2508,14 +2393,14 @@ test('[P1] project detail session mode and active file context survive reload in
 
   await expect.poll(() => runRequestBodies.length).toBe(1);
   const context = runRequestBodies[0]?.context as { workspaceItems?: Array<{ label?: string; id?: string }> } | undefined;
-  expect(runRequestBodies[0]?.sessionMode).toBe('plan');
+  expect(runRequestBodies[0]?.sessionMode).toBe('design');
   expect(context?.workspaceItems?.some((item) => item.label === uploadedName || item.id?.includes(uploadedName))).toBe(true);
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Plan');
+  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Design');
   await expect(page.getByTestId('msg-workspace-context-chip').last()).toContainText(uploadedName);
 
   await page.reload();
   await expectWorkspaceReady(page);
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Plan');
+  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Design');
   await expect(page.getByTestId('msg-workspace-context-chip').last()).toContainText(uploadedName);
 });
 
@@ -2896,7 +2781,7 @@ test('[P1] read-only project viewers do not see conversation fork actions', asyn
   await expect(page.getByTestId('assistant-fork-button')).toHaveCount(0);
 });
 
-test('[P1] project detail conversations menu supports new chat, search, counts, and run duration metadata', async ({ page }) => {
+test('[P1] project detail conversations menu supports new chat, search, and run metadata', async ({ page }) => {
   const { projectId, conversations } = await seedProjectConversationHistory(page);
   await routeConversationHistoryFixtures(page, projectId, conversations);
 
@@ -2906,7 +2791,8 @@ test('[P1] project detail conversations menu supports new chat, search, counts, 
   await page.getByTestId('conversation-history-trigger').click();
   const menu = page.getByTestId('conversation-history-menu');
   await expect(menu).toBeVisible();
-  await expect(page.getByTestId('conversation-history-count')).toHaveText('3');
+  await expect(menu.getByTestId('conversation-history-new')).toHaveCount(0);
+  await expect(menu.getByTestId('conversation-history-count')).toHaveCount(0);
 
   await expect(page.getByTestId(`conversation-select-${conversations[0]!.id}`)).toContainText('Runway final polish');
   await expect(page.getByTestId(`conversation-meta-${conversations[0]!.id}`)).toHaveText('8 msg · 5m 42s');
@@ -2914,7 +2800,6 @@ test('[P1] project detail conversations menu supports new chat, search, counts, 
   await expect(page.getByTestId(`conversation-meta-${conversations[2]!.id}`)).toContainText('6 msg ·');
 
   await page.getByTestId('conversation-history-search').fill('font audit');
-  await expect(page.getByTestId('conversation-history-count')).toHaveText('1 / 3');
   await expect(page.getByTestId(`conversation-item-${conversations[1]!.id}`)).toBeVisible();
   await expect(page.getByTestId(`conversation-item-${conversations[0]!.id}`)).toHaveCount(0);
 
@@ -2928,7 +2813,6 @@ test('[P1] project detail conversations menu supports new chat, search, counts, 
   await expect(page.getByTestId('conversation-history-menu')).toHaveCount(0);
 
   await page.getByTestId('conversation-history-trigger').click();
-  await expect(page.getByTestId('conversation-history-count')).toHaveText('4');
   await expect(page.getByTestId('conversation-select-conv-new-history')).toContainText('Untitled');
   await expect(page.getByTestId('conversation-meta-conv-new-history')).toHaveText('0 msg · now');
 });
@@ -4074,23 +3958,6 @@ async function selectAvatarModelOption(
   }
   await expect(option).toBeVisible({ timeout: 10_000 });
   await option.click();
-}
-
-async function selectComposerSessionMode(page: Page, modeTitle: 'Ask mode' | 'Plan mode' | 'Design mode') {
-  // #5517 composer mode picker: Ask maps to the real `chat` session mode.
-  const modeId = modeTitle === 'Ask mode' ? 'chat' : modeTitle === 'Plan mode' ? 'plan' : 'design';
-  const modeName = modeTitle.replace(' mode', '');
-  const trigger = page.getByTestId('chat-composer').getByTestId('composer-mode-trigger');
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-
-  const menu = page.getByTestId('composer-mode-menu');
-  await expect(menu).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-chat')).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-plan')).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-design')).toBeVisible();
-  await menu.getByTestId(`composer-mode-menu-${modeId}`).click();
-  await expect(trigger).toHaveAttribute('aria-label', `Mode: ${modeName}`);
 }
 
 async function routeComposerPlusFixtures(page: Page) {

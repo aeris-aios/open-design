@@ -95,6 +95,9 @@ interface Props {
    *  omits this and keeps the compact "最近项目 / 查看全部" header. */
   heading?: string;
   description?: string;
+  /** Full management controls stay available in Drafts / All projects. Home's
+   *  recent-projects header can opt into the compact view switch only. */
+  headerControls?: 'full' | 'view-only';
   /** Return false when opening failed and the grid stayed mounted, so aborted
    * background cover work can resume after the foreground attempt finishes. */
   onOpen: (id: string) => boolean | void | Promise<boolean | void>;
@@ -325,6 +328,7 @@ export function RecentProjectsStrip({
   designSystems = EMPTY_DESIGN_SYSTEMS,
   heading,
   description,
+  headerControls = 'full',
   onOpen,
   onViewAll,
   onDelete,
@@ -1330,178 +1334,193 @@ export function RecentProjectsStrip({
             ) : null}
           </div>
           <div className="recent-projects__controls">
-            {space === 'team' &&
-            canAccessInviteFlow &&
-            inviteTarget.kind !== 'unavailable' ? (
-              <button
-                type="button"
-                className="recent-projects__invite"
-                onClick={() => {
-                  trackCollection('invite_teammates');
-                  if (inviteTarget.kind === 'vela') {
-                    window.open(inviteTarget.url, '_blank', 'noopener,noreferrer');
-                  } else if (inviteTarget.kind === 'local') {
-                    setInviteOpen(true);
-                  }
-                }}
-              >
-                <Icon name="share" size={15} /> {t('recentProjects.inviteTeammates')}
-              </button>
-            ) : null}
-            {canManageCollection ? (
-              <button
-                type="button"
-                className={`recent-projects__select-toggle${selectionMode ? ' is-active' : ''}`}
-                aria-pressed={selectionMode}
-                onClick={() => {
-                  trackCollection('multi_select_toggle', {
-                    selection_count_bucket: countBucket(selectedCount),
-                  });
-                  setSelectionMode((current) => !current);
-                  setSelectedProjectIds(new Set());
-                  setMenuOpenId(null);
-                }}
-              >
-                {t('recentProjects.multiSelect')}
-              </button>
-            ) : null}
-            {showOwnerFilter ? (
-              <div className="recent-projects__filter-wrap">
-                <button
-                  type="button"
-                  className="recent-projects__filter"
-                  aria-expanded={openHeaderMenu === 'owner'}
-                  onClick={() => setOpenHeaderMenu((current) => current === 'owner' ? null : 'owner')}
-                >
-                  {t(OWNER_FILTER_OPTIONS.find((option) => option.id === ownerFilter)?.labelKey ?? 'recentProjects.ownerAll')}
-                  <Icon name="chevron-down" size={13} />
-                </button>
-                {openHeaderMenu === 'owner' ? (
-                  <div className="recent-projects__filter-menu" role="menu">
-                    {OWNER_FILTER_OPTIONS.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className={ownerFilter === option.id ? 'is-active' : undefined}
-                        onClick={() => {
-                          trackCollection('filter', {
-                            filter_type: 'owner',
-                            filter_value: option.id,
-                          });
-                          setOwnerFilter(option.id);
-                          setOpenHeaderMenu(null);
-                        }}
-                      >
-                        {t(option.labelKey)}
-                      </button>
-                    ))}
+            {headerControls === 'full' ? (
+              <>
+                {space === 'team' &&
+                canAccessInviteFlow &&
+                inviteTarget.kind !== 'unavailable' ? (
+                  <button
+                    type="button"
+                    className="recent-projects__invite"
+                    onClick={() => {
+                      trackCollection('invite_teammates');
+                      if (inviteTarget.kind === 'vela') {
+                        window.open(inviteTarget.url, '_blank', 'noopener,noreferrer');
+                      } else if (inviteTarget.kind === 'local') {
+                        setInviteOpen(true);
+                      }
+                    }}
+                  >
+                    <Icon name="share" size={15} /> {t('recentProjects.inviteTeammates')}
+                  </button>
+                ) : null}
+                {canManageCollection ? (
+                  <button
+                    type="button"
+                    className={`recent-projects__select-toggle${selectionMode ? ' is-active' : ''}`}
+                    aria-pressed={selectionMode}
+                    onClick={() => {
+                      trackCollection('multi_select_toggle', {
+                        selection_count_bucket: countBucket(selectedCount),
+                      });
+                      setSelectionMode((current) => !current);
+                      setSelectedProjectIds(new Set());
+                      setMenuOpenId(null);
+                    }}
+                  >
+                    {t('recentProjects.multiSelect')}
+                  </button>
+                ) : null}
+                {showOwnerFilter ? (
+                  <div className="recent-projects__filter-wrap">
+                    <button
+                      type="button"
+                      className="recent-projects__filter"
+                      aria-expanded={openHeaderMenu === 'owner'}
+                      onClick={() => setOpenHeaderMenu((current) => current === 'owner' ? null : 'owner')}
+                    >
+                      {t(OWNER_FILTER_OPTIONS.find((option) => option.id === ownerFilter)?.labelKey ?? 'recentProjects.ownerAll')}
+                      <Icon name="chevron-down" size={13} />
+                    </button>
+                    {openHeaderMenu === 'owner' ? (
+                      <div className="recent-projects__filter-menu" role="menu">
+                        {OWNER_FILTER_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={ownerFilter === option.id ? 'is-active' : undefined}
+                            onClick={() => {
+                              trackCollection('filter', {
+                                filter_type: 'owner',
+                                filter_value: option.id,
+                              });
+                              setOwnerFilter(option.id);
+                              setOpenHeaderMenu(null);
+                            }}
+                          >
+                            {t(option.labelKey)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
-              </div>
-            ) : null}
-            <div className="recent-projects__filter-wrap">
-              <button
-                type="button"
-                className="recent-projects__filter"
-                aria-expanded={openHeaderMenu === 'kind'}
-                onClick={() => setOpenHeaderMenu((current) => current === 'kind' ? null : 'kind')}
-              >
-                {kindFilterLabel(
-                  KIND_FILTER_OPTIONS.find((option) => option.id === kindFilter) ?? KIND_FILTER_OPTIONS[0]!,
-                  t,
-                )}
-                <Icon name="chevron-down" size={13} />
-              </button>
-              {openHeaderMenu === 'kind' ? (
-                <div className="recent-projects__filter-menu" role="menu">
-                  {KIND_FILTER_OPTIONS.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={kindFilter === option.id ? 'is-active' : undefined}
-                      onClick={() => {
-                        trackCollection('filter', {
-                          filter_type: 'project_type',
-                          filter_value: option.id,
-                        });
-                        setKindFilter(option.id);
-                        setOpenHeaderMenu(null);
-                      }}
-                    >
-                      {kindFilterLabel(option, t)}
-                    </button>
-                  ))}
+                <div className="recent-projects__filter-wrap">
+                  <button
+                    type="button"
+                    className="recent-projects__filter"
+                    aria-expanded={openHeaderMenu === 'kind'}
+                    onClick={() => setOpenHeaderMenu((current) => current === 'kind' ? null : 'kind')}
+                  >
+                    {kindFilterLabel(
+                      KIND_FILTER_OPTIONS.find((option) => option.id === kindFilter) ?? KIND_FILTER_OPTIONS[0]!,
+                      t,
+                    )}
+                    <Icon name="chevron-down" size={13} />
+                  </button>
+                  {openHeaderMenu === 'kind' ? (
+                    <div className="recent-projects__filter-menu" role="menu">
+                      {KIND_FILTER_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={kindFilter === option.id ? 'is-active' : undefined}
+                          onClick={() => {
+                            trackCollection('filter', {
+                              filter_type: 'project_type',
+                              filter_value: option.id,
+                            });
+                            setKindFilter(option.id);
+                            setOpenHeaderMenu(null);
+                          }}
+                        >
+                          {kindFilterLabel(option, t)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-            {hasActiveFilter ? (
-              // Only rendered once a filter narrows the grid, so it never
-              // competes for attention with the plain owner/kind/sort chips
-              // above — see recvqbipG9QDTt.
-              <button
-                type="button"
-                className="recent-projects__filter-clear"
-                data-testid="recent-projects-clear-filters"
-                onClick={() => {
-                  trackCollection('filter', {
-                    filter_type: 'owner',
-                    filter_value: 'all',
-                  });
-                  trackCollection('filter', {
-                    filter_type: 'project_type',
-                    filter_value: 'all',
-                  });
-                  setOwnerFilter('all');
-                  setKindFilter('all');
-                  setOpenHeaderMenu(null);
-                }}
-              >
-                <Icon name="close" size={12} />
-                {t('recentProjects.clearFilters')}
-              </button>
-            ) : null}
-            <div className="recent-projects__filter-wrap">
-              <button
-                type="button"
-                className="recent-projects__view-btn"
-                aria-label={t('recentProjects.sortAria')}
-                aria-expanded={openHeaderMenu === 'sort'}
-                onClick={() => setOpenHeaderMenu((current) => current === 'sort' ? null : 'sort')}
-              >
-                <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 7h6M3 12h10M3 17h14M17 4v8m0 0 3-3m-3 3-3-3" />
-                </svg>
-              </button>
-              {openHeaderMenu === 'sort' ? (
-                <div className="recent-projects__filter-menu" role="menu">
-                  {SORT_OPTIONS.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={sort === option.id ? 'is-active' : undefined}
-                      onClick={() => {
-                        trackCollection('sort', {
-                          sort_value:
-                            option.id === 'updatedAsc'
-                              ? 'updated_asc'
-                              : option.id === 'nameAsc'
-                                ? 'name_asc'
-                                : 'updated_desc',
-                        });
-                        setSort(option.id);
-                        setOpenHeaderMenu(null);
-                      }}
-                    >
-                      {t(option.labelKey)}
-                    </button>
-                  ))}
+                {hasActiveFilter ? (
+                  // Only rendered once a filter narrows the grid, so it never
+                  // competes for attention with the plain owner/kind/sort chips
+                  // above — see recvqbipG9QDTt.
+                  <button
+                    type="button"
+                    className="recent-projects__filter-clear"
+                    data-testid="recent-projects-clear-filters"
+                    onClick={() => {
+                      trackCollection('filter', {
+                        filter_type: 'owner',
+                        filter_value: 'all',
+                      });
+                      trackCollection('filter', {
+                        filter_type: 'project_type',
+                        filter_value: 'all',
+                      });
+                      setOwnerFilter('all');
+                      setKindFilter('all');
+                      setOpenHeaderMenu(null);
+                    }}
+                  >
+                    <Icon name="close" size={12} />
+                    {t('recentProjects.clearFilters')}
+                  </button>
+                ) : null}
+                <div className="recent-projects__filter-wrap">
+                  <button
+                    type="button"
+                    className="recent-projects__view-btn"
+                    aria-label={t('recentProjects.sortAria')}
+                    aria-expanded={openHeaderMenu === 'sort'}
+                    onClick={() => setOpenHeaderMenu((current) => current === 'sort' ? null : 'sort')}
+                  >
+                    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 7h6M3 12h10M3 17h14M17 4v8m0 0 3-3m-3 3-3-3" />
+                    </svg>
+                  </button>
+                  {openHeaderMenu === 'sort' ? (
+                    <div className="recent-projects__filter-menu" role="menu">
+                      {SORT_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={sort === option.id ? 'is-active' : undefined}
+                          onClick={() => {
+                            trackCollection('sort', {
+                              sort_value:
+                                option.id === 'updatedAsc'
+                                  ? 'updated_asc'
+                                  : option.id === 'nameAsc'
+                                    ? 'name_asc'
+                                    : 'updated_desc',
+                            });
+                            setSort(option.id);
+                            setOpenHeaderMenu(null);
+                          }}
+                        >
+                          {t(option.labelKey)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-            <div className="recent-projects__view" role="group" aria-label={t('designs.viewToggleAria')}>
+              </>
+            ) : null}
+            <div
+              className="recent-projects__view"
+              role="group"
+              aria-label={t('designs.viewToggleAria')}
+              data-testid="recent-projects-view-switch"
+              data-view={view}
+            >
+              <span
+                className="recent-projects__view-knob"
+                data-testid="recent-projects-view-knob"
+                aria-hidden="true"
+              />
               <button
                 type="button"
-                className={`recent-projects__view-btn${view === 'grid' ? ' is-active' : ''}`}
+                className="recent-projects__view-option"
                 aria-pressed={view === 'grid'}
                 aria-label={t('designs.viewGrid')}
                 onClick={() => {
@@ -1515,7 +1534,7 @@ export function RecentProjectsStrip({
               </button>
               <button
                 type="button"
-                className={`recent-projects__view-btn${view === 'list' ? ' is-active' : ''}`}
+                className="recent-projects__view-option"
                 aria-pressed={view === 'list'}
                 aria-label={t('recentProjects.viewList')}
                 onClick={() => {
@@ -1525,9 +1544,7 @@ export function RecentProjectsStrip({
                   }
                 }}
               >
-                <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-                  <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
-                </svg>
+                <Icon name="list" size={15} />
               </button>
             </div>
           </div>

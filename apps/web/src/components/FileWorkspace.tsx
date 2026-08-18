@@ -3299,6 +3299,7 @@ export function FileWorkspace({
       projectId={projectId}
       projectKind={projectKind}
       file={file}
+      projectFiles={visibleFiles}
       filesRefreshKey={filesRefreshKey}
       isDeck={isDeck}
       streaming={streaming}

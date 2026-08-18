@@ -1,8 +1,8 @@
-/* -------- App wash: Craft-style frosted-glass ground ------------------- */
-/* A single pre-blurred pastel wash painted once at the body level, plus
+/* -------- App wash: neutral frosted-glass ground ----------------------- */
+/* A single neutral wash painted once at the body level, plus
    "veil" tokens that let the page containers above it go translucent so the
-   wash glows through. The wash is blurred BY CONSTRUCTION (soft radial
-   gradients) — it costs one composited paint and zero backdrop-filter.
+   shared ground shows through. It costs one composited paint and zero
+   backdrop-filter.
    Real backdrop-filter stays reserved for the few small sticky/floating
    strips that must frost scrolling content (nav rail, sticky headers).
 
@@ -11,20 +11,14 @@
    to the exact solid token it replaced, restoring the flat look. */
 
 :root {
-  /* Pastel wash palette. Alphas run a touch hot because the veils above
-     mute them. */
-  --wash-base: #ffffff; /* pure white ground */
+  /* Keep the application ground neutral so the workspace does not pick up
+     decorative blue or pink corner tints. */
+  --wash-base: #f7f7f7;
   --wash-blue: rgba(168, 196, 236, 0.55); /* pale sky blue */
   --wash-pink: rgba(240, 197, 216, 0.45); /* pale rose */
   --wash-peach: rgba(247, 224, 196, 0.5); /* warm cream light */
   --wash-mist: rgba(213, 229, 248, 0.38); /* cool secondary blue */
-  /* Percent-sized ellipses scale with the viewport — no seams on resize. */
-  --app-wash:
-    radial-gradient(52% 44% at 12% -4%, var(--wash-blue) 0%, transparent 68%),
-    radial-gradient(44% 38% at 90% 6%, var(--wash-pink) 0%, transparent 66%),
-    radial-gradient(48% 42% at 82% 94%, var(--wash-peach) 0%, transparent 64%),
-    radial-gradient(56% 48% at 14% 102%, var(--wash-mist) 0%, transparent 70%),
-    linear-gradient(var(--wash-base), var(--wash-base));
+  --app-wash: linear-gradient(var(--wash-base), var(--wash-base));
 
   /* Veils: translucent stand-ins for the solid backgrounds of the page
      containers between body and the content surfaces. One token per
@@ -39,9 +33,7 @@
   --veil-panel: transparent; /* was var(--bg-panel): chat .pane */
 }
 
-/* Whisper-level wash in dark: the same design language, but the blobs sit
-   at ≤0.14 alpha on the unchanged app black so dark translucency has
-   something to show without tinting the workspace. Veil tokens derive from
+/* Dark mode keeps the same neutral treatment. Veil tokens derive from
    --bg/--bg-panel and flip with the theme on their own. */
 [data-theme='dark'] {
   --wash-base: #202020;

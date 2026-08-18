@@ -7,11 +7,17 @@ const appWashCss = readFileSync(
 );
 
 describe('desktop app wash platform contract', () => {
+  it('keeps the shared application background neutral', () => {
+    expect(appWashCss).toMatch(/--wash-base:\s*#f7f7f7;/);
+    expect(appWashCss).toMatch(
+      /--app-wash:\s*linear-gradient\(var\(--wash-base\), var\(--wash-base\)\);/,
+    );
+  });
+
   it('uses a neutral token mix only for Windows desktop hosts', () => {
     expect(appWashCss).toMatch(
       /html:has\(\.workspace-shell--desktop\[data-host-platform='win32'\]\)\s*{\s*--app-wash:\s*color-mix\(in srgb, var\(--bg-panel\) 50%, var\(--bg-subtle\)\);\s*}/,
     );
-    expect(appWashCss).toContain('radial-gradient(');
   });
 
   it('limits window-vibrancy material rules to macOS desktop hosts', () => {

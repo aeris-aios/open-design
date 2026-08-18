@@ -367,12 +367,13 @@
   transform: translateY(-0.5px);
 }
 .home-hero__subtype-chip.is-active {
-  background: var(--accent-tint);
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--bg);
+  border-color: var(--border-selected);
   color: var(--accent);
 }
 .home-hero__subtype-chip.is-active:hover:not(:disabled) {
-  background: var(--accent-tint);
+  background: var(--bg);
+  border-color: var(--border-selected);
   color: var(--accent);
 }
 .home-hero__subtype-chip.is-pending {
@@ -617,6 +618,11 @@
 .home-hero__active-chip--file {
   background: transparent;
 }
+.home-hero__active-chip--plugin {
+  /* The body has no trailing inset below, so this is the exact distance from
+     the plugin label to the clear-button box. */
+  gap: var(--spacing-4);
+}
 .home-hero__active-chip--image-file {
   gap: var(--spacing-6);
   min-height: 44px;
@@ -680,6 +686,13 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
+}
+/* The plugin icon is the leading cap of the body's neutral fill, while the
+   parent gap owns the label-to-clear spacing. Other chip types keep the base
+   inline padding above. */
+.home-hero__active-chip--plugin .home-hero__active-chip-body {
+  padding-inline-start: 0;
+  padding-inline-end: 0;
 }
 .home-hero__active-chip-body:disabled {
   cursor: default;
@@ -1487,9 +1500,16 @@
 }
 .home-hero__working-dir-picker [data-testid='working-dir-trigger']:hover,
 .home-hero__working-dir-picker [data-testid='working-dir-trigger']:focus-visible {
-  /* Solid fill (matches the design-system picker beside it) — the previous
-     translucent mix read as a see-through smudge over the frosted footer. */
-  background: var(--bg-subtle);
+  /* White, matching the design-system picker beside it. The earlier grey
+     --bg-subtle fill floated as a visible grey chip over the white composer
+     tray while its neighbor stayed white — the pair must hover identically. */
+  background: var(--bg);
+  color: var(--text-strong);
+}
+.home-hero__working-dir-picker [data-testid='working-dir-trigger'][aria-expanded='true'] {
+  /* The open trigger holds the same white fill as hover, including while the
+     pointer remains over it, so opening the menu never shifts the pill. */
+  background: var(--bg);
   color: var(--text-strong);
 }
 /* The working-directory dropdown must float below its trigger and never
@@ -1538,10 +1558,13 @@
     background-color 140ms var(--ease-out),
     color 140ms var(--ease-out);
 }
-.home-hero__ds-row-trigger:hover,
+.home-hero__ds-row-trigger:hover:not(:disabled),
 .home-hero__ds-row-trigger:focus-visible {
   outline: none;
-  background: var(--bg-subtle);
+  /* Keep this pill white on hover. The :not(:disabled) also raises this
+     selector above the global button:hover primitive, which otherwise
+     repaints the trigger with the grey --bg-subtle surface. */
+  background: var(--bg);
   color: var(--text-strong);
 }
 .home-hero__ds-row-trigger:disabled {
@@ -2327,9 +2350,8 @@
    positioning pulls it out of flow, so the surrounding layout is unchanged. */
 .home-hero__error {
   position: fixed;
-  /* Rides the top chrome row itself (the ⌂ / badge / avatar band, 52px):
-     centered in that strip rather than floating below it. */
-  top: 7px;
+  /* Share the top account/avatar control's 24px centre line. */
+  top: var(--spacing-4);
   /* Centered via auto margins, NOT translateX: entrance.css's
      od-fade-slide-down (fill: both) owns this element's transform and would
      override a translate-based centering. */
@@ -2522,44 +2544,37 @@
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
-/* Break out of the hero's 960px column to the full home column, so the strip
-   is exactly as wide as the 最近项目 grid below. 100cqw reads the .home-view
-   size container; the symmetric margins re-center the wider box inside the
-   centered hero (they collapse to 0 when the viewport is narrower than the
-   hero cap and the two widths coincide). */
+/* Break out of the hero's 960px column while keeping the five visible presets
+   in one complete, non-scrolling row. 1284px = 5 × 248px cards + 4 × 10px
+   gaps + 4px horizontal padding. On smaller screens the grid folds without
+   introducing horizontal scrolling. */
 .home-hero__plugin-presets-wrap {
-  width: 100cqw;
-  max-width: 100cqw;
-  margin-inline: calc((100% - 100cqw) / 2);
+  --home-hero-preset-window-max: 1284px;
+  width: min(100cqw, var(--home-hero-preset-window-max));
+  max-width: var(--home-hero-preset-window-max);
+  margin-inline: calc((100% - min(100cqw, var(--home-hero-preset-window-max))) / 2);
 }
 
-/* Positioning context so the edge auto-scroll zones anchor to just the
-   scrolling presets row (not the title above it). */
 .home-hero__rail-scroller {
   position: relative;
   min-height: 194px;
 }
 
 .home-hero__plugin-presets {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: stretch;
   gap: 10px;
-  overflow-x: auto;
+  overflow-x: clip;
   overflow-y: visible;
-  overscroll-behavior-x: contain;
   padding: 1px 2px 8px;
-  /* No visible scrollbar: trackpad/wheel scrolling and the edge auto-scroll
-     zones (useEdgeAutoScroll) already cover navigation. */
-  scrollbar-width: none;
 }
-.home-hero__plugin-presets::-webkit-scrollbar { display: none; }
 
 /* Each preset is wrapped in a positioning cell so the "Open as project"
    overlay can sit over the thumbnail without nesting a button inside the
-   card button. The flex sizing lives on the cell; the card button fills it. */
+   card button. The grid owns the sizing; the card button fills its cell. */
 .home-hero__plugin-preset-cell {
   position: relative;
-  flex: 0 0 248px;
   min-width: 0;
   display: flex;
   /* One source for the preview row's height: the preview box below pins
@@ -2888,8 +2903,8 @@
   .home-hero__prompt-examples-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .home-hero__plugin-preset-cell {
-    flex-basis: 224px;
+  .home-hero__plugin-presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .home-hero__plugin-preset {
     min-height: 170px;
@@ -2940,8 +2955,8 @@
   .home-hero__prompt-examples-grid {
     grid-template-columns: 1fr;
   }
-  .home-hero__plugin-preset-cell {
-    flex-basis: 208px;
+  .home-hero__plugin-presets {
+    grid-template-columns: minmax(0, 1fr);
   }
   .home-hero__plugin-preset {
     min-height: 160px;
@@ -3127,8 +3142,8 @@
   background-color: #f9fff4;
   background-image: none;
   color: #2f781d;
-  /* Same selected stroke as the composer-mode (设计) pill: an inset 1px ring
-     at 22% of the deep brand green. */
+  /* Keep the selected state crisp with an inset 1px ring at 22% of the deep
+     brand green. */
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #2f781d 22%, transparent);
 }
 .home-hero__footer-option--select[data-field-name='template']:hover,

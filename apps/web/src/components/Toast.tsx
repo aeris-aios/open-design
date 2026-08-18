@@ -71,7 +71,7 @@ export function Toast({
   onDismiss,
   role = 'status',
   tone = 'default',
-  placement = 'bottom',
+  placement,
 }: ToastProps) {
   const t = useT();
   // When code is present the toast is a manual-action surface; never
@@ -114,6 +114,11 @@ export function Toast({
   }, [message, details, code, effectiveTtl, hasDismiss]);
 
   const iconName = TONE_ICON[tone];
+  // Errors belong in the app's top chrome so they remain visible without
+  // covering the canvas content. Callers can still opt into a different
+  // placement explicitly, while success/default feedback keeps the existing
+  // bottom placement.
+  const resolvedPlacement = placement ?? (tone === 'error' || role === 'alert' ? 'top' : 'bottom');
 
   // Animation is owned entirely by CSS (`.od-toast` `od-toast-in` on mount,
   // `.leaving` `od-toast-out` on exit). A previous motion/react `<motion.div>`
@@ -124,7 +129,7 @@ export function Toast({
   // source of truth for both motion and centering.
   return (
     <div
-      className={`od-toast tone-${tone} placement-${placement}${className ? ` ${className}` : ''}${leaving ? ' leaving' : ''}`}
+      className={`od-toast tone-${tone} placement-${resolvedPlacement}${className ? ` ${className}` : ''}${leaving ? ' leaving' : ''}`}
       role={role}
       aria-live={role === 'alert' ? 'assertive' : 'polite'}
     >

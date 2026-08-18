@@ -13,6 +13,14 @@
   --entry-rail-width: 236px;
 }
 
+/* The open rail card overlaps the chrome row by one 4px spacing step. Let that
+   small overhang paint outside the body grid area so the card keeps its full
+   top corners; the outer .workspace-shell still clips everything to the
+   window bounds. Closed rails and project routes retain normal clipping. */
+.workspace-shell__body:has(> .entry-shell--no-header > .entry.entry--rail-open) {
+  overflow: visible;
+}
+
 /* `.entry-shell` is always mounted inside `.workspace-shell__body`, which
    reserves its own space above for the app's persistent tab-chrome header
    (shell.css: `.workspace-shell` grid rows `44px minmax(0, 1fr)`) and already
@@ -95,10 +103,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  /* Top margin 0: the tab bar already contributes a 10px gap below the tabs
-     (its bottom padding), so the single visible gap between the tabs and this
-     rail card stays 10px instead of doubling to 20 (tab 10 + rail 10). */
-  margin: 0 10px 10px;
+  /* Pull the card 4px into the tab-bar row so its top edge sits closer to the
+     Home control while retaining a 6px safety gap around the 32px hit area. */
+  margin: calc(-1 * var(--spacing-4)) var(--spacing-10) var(--spacing-10);
   /* Bottom padding trimmed 12 → 5 so the account row's gap to the panel's
      bottom edge (trigger padding 4 + footer padding 6 + 5 + 1px stroke = 16px)
      matches its 16px left/right inset. */

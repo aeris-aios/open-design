@@ -2333,13 +2333,19 @@ export async function fetchProjectFilePreview(
   projectId: string,
   name: string,
   workspaceContext?: WorkspaceCollabContext | null,
+  options?: { cache?: RequestCache; cacheBustKey?: string | number },
 ): Promise<ProjectFilePreview | null> {
   try {
+    const baseUrl = `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(name)}/preview`;
+    const requestUrl = options?.cacheBustKey == null
+      ? baseUrl
+      : `${baseUrl}?cacheBust=${encodeURIComponent(String(options.cacheBustKey))}`;
+    const init: RequestInit = {};
+    if (options?.cache) init.cache = options.cache;
+    if (workspaceContext) init.headers = workspaceProjectHeaders(workspaceContext);
     const resp = await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(name)}/preview`,
-      workspaceContext
-        ? { headers: workspaceProjectHeaders(workspaceContext) }
-        : undefined,
+      requestUrl,
+      Object.keys(init).length > 0 ? init : undefined,
     );
     if (!resp.ok) return null;
     return (await resp.json()) as ProjectFilePreview;

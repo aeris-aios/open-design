@@ -112,6 +112,7 @@ export interface Dict {
   'chat.plus.mcp': string;
   'chat.referenceProject.title': string;
   'chat.referenceProject.search': string;
+  'chat.historySearchPlaceholder': string;
   'chat.referenceProject.empty': string;
   'chat.referenceProject.emptyAll': string;
   'chat.referenceProject.loadFailed': string;
@@ -3055,12 +3056,6 @@ export interface Dict {
   'chat.mode.plan.costNote': string;
   'chat.mode.design.cost': string;
   'chat.mode.design.costNote': string;
-  // Composer mode picker (#5517): trigger/clear aria copy. Mode names and
-  // descriptions reuse `chat.mode.*.label` / `chat.mode.*.summary`.
-  'chat.modePicker.choose': string;
-  'chat.modePicker.current': string;
-  'chat.modePicker.clear': string;
-  'chat.modePicker.mode': string;
   'chat.composerHint': string;
   'chat.cliSettingsTitle': string;
   'chat.cliSettingsAria': string;

@@ -1086,8 +1086,6 @@ test('[P1] rail destinations navigate and Home keeps its composer execution pill
 test('[P0] @critical home composer routes free-form prompts through the default deck scenario', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
-
   const input = page.getByTestId('home-hero-input');
   const prompt =
     'Turn this into an infographic: "5 habits of effective code reviewers — read the PR description first, review tests before implementation"';

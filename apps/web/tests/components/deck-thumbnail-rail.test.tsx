@@ -96,6 +96,21 @@ describe('DeckThumbnailRail', () => {
     expect(onSelect).toHaveBeenCalledWith(2);
   });
 
+  it('disables collapsed thumbnails and gives them an ordered exit stagger', () => {
+    const { container } = render(
+      <DeckThumbnailRail {...railProps({ collapsed: true })} />,
+    );
+
+    expect(container.querySelector('.deck-thumbnail-rail')?.getAttribute('aria-hidden')).toBe('true');
+    const buttons = Array.from(
+      container.querySelectorAll('.deck-thumbnail-button'),
+    ) as HTMLButtonElement[];
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+    expect(
+      buttons.map((button) => button.style.getPropertyValue('--deck-thumbnail-stagger-delay')),
+    ).toEqual(['0ms', '20ms', '40ms']);
+  });
+
   it('renders shadow-root thumbnails (not iframes) when a parsed deck is given', () => {
     const deck = `<!doctype html><html><head><style>
       .deck-stage { width: 1920px; height: 1080px; }

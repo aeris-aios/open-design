@@ -1,10 +1,10 @@
 // Composer footer toolbar alignment.
 //
-// The composer's bottom row mixes five controls authored in five different
+// The composer's bottom row mixes up to four controls authored in four different
 // components — the + icon (.icon-btn), the working-dir pill
 // (.working-dir-pill-trigger), the agent avatar (.avatar-agent-trigger), the
-// composer mode picker (.composer-mode__trigger) and Send
-// (.composer-send). The composer mounts under `.chat-composer-fixed-layer` (a
+// Send button (.composer-send). The composer mounts under
+// `.chat-composer-fixed-layer` (a
 // body-level portal), so the `.app`-scoped "one control system" normalization
 // in chat.css never reached it and the controls drifted to 28/30/32px. Even
 // though the row centers them, the differing heights left the pills and Send
@@ -87,7 +87,6 @@ test('[P1] composer footer controls keep their size hierarchy on one baseline', 
       '.icon-btn',
       '.working-dir-pill-trigger',
       '.avatar-agent-trigger',
-      '.composer-mode__trigger',
       '.composer-send',
     ];
     const controls: Array<{ sel: string; height: number; center: number }> = [];
@@ -105,7 +104,7 @@ test('[P1] composer footer controls keep their size hierarchy on one baseline', 
 
   // The toolbar should never collapse to a single control; if it does, the
   // selectors below are stale and the height assertion is meaningless.
-  expect(controls.length).toBeGreaterThanOrEqual(4);
+  expect(controls.length).toBeGreaterThanOrEqual(3);
 
   const centers = controls.map((c) => c.center);
   const spread = (xs: number[]) => Math.max(...xs) - Math.min(...xs);

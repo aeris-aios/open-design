@@ -1154,6 +1154,69 @@ describe('recvqabp2Uy23r — shared badge grid overlay vs list inline', () => {
   });
 });
 
+describe('Recent Projects view-only header controls', () => {
+  function renderViewOnlyHeader() {
+    return render(
+      <RecentProjectsStrip
+        projects={[project({ id: 'project-1', name: 'Only Project' })]}
+        onOpen={() => {}}
+        heading="Recent projects"
+        headerControls="view-only"
+        canManageProjectCollection
+      />,
+    );
+  }
+
+  it('keeps only the grid and list options in the full-page header', () => {
+    const { container } = renderViewOnlyHeader();
+
+    const controls = container.querySelector('.recent-projects__controls');
+    expect(controls).not.toBeNull();
+    expect(within(controls as HTMLElement).getAllByRole('button')).toHaveLength(2);
+    expect(within(controls as HTMLElement).getByRole('button', { name: 'Grid view' })).toBeTruthy();
+    expect(within(controls as HTMLElement).getByRole('button', { name: 'List view' })).toBeTruthy();
+
+    // These capabilities remain available to the full team/drafts toolbars,
+    // but the Recent Projects heading deliberately exposes no collection
+    // management or filtering controls.
+    expect(screen.queryByRole('button', { name: 'Multi-select' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'All' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Any type' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sort projects' })).toBeNull();
+  });
+
+  it('behaves as one two-state switch with a shared sliding knob', () => {
+    const { container } = renderViewOnlyHeader();
+
+    const viewSwitch = screen.getByRole('group', { name: 'View mode' });
+    const grid = within(viewSwitch).getByRole('button', { name: 'Grid view' });
+    const list = within(viewSwitch).getByRole('button', { name: 'List view' });
+    const knob = within(viewSwitch).getByTestId('recent-projects-view-knob');
+    const projects = container.querySelector('.recent-projects__row');
+
+    expect(grid.getAttribute('aria-pressed')).toBe('true');
+    expect(list.getAttribute('aria-pressed')).toBe('false');
+    expect(viewSwitch.getAttribute('data-view')).toBe('grid');
+    expect(knob.getAttribute('aria-hidden')).toBe('true');
+    expect(projects?.classList.contains('recent-projects__row--grid')).toBe(true);
+    expect(projects?.classList.contains('recent-projects__row--list')).toBe(false);
+
+    fireEvent.click(list);
+    expect(grid.getAttribute('aria-pressed')).toBe('false');
+    expect(list.getAttribute('aria-pressed')).toBe('true');
+    expect(viewSwitch.getAttribute('data-view')).toBe('list');
+    expect(projects?.classList.contains('recent-projects__row--grid')).toBe(false);
+    expect(projects?.classList.contains('recent-projects__row--list')).toBe(true);
+
+    fireEvent.click(grid);
+    expect(grid.getAttribute('aria-pressed')).toBe('true');
+    expect(list.getAttribute('aria-pressed')).toBe('false');
+    expect(viewSwitch.getAttribute('data-view')).toBe('grid');
+    expect(projects?.classList.contains('recent-projects__row--grid')).toBe(true);
+    expect(projects?.classList.contains('recent-projects__row--list')).toBe(false);
+  });
+});
+
 describe('recvqbipG9QDTt — Recent Projects filter needs a visible clear entry', () => {
   // RecentProjectsStrip mounts once per host view and stays alive across
   // EntryShell tab switches — Home's instance in particular is only ever

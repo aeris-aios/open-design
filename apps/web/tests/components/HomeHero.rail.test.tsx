@@ -308,6 +308,24 @@ describe('HomeHero intent rail', () => {
     expect(onOpenPluginDetails).not.toHaveBeenCalled();
   });
 
+  it('renders only the first five matching plugin presets', () => {
+    const deckPlugins = Array.from({ length: 7 }, (_, index) =>
+      makePlugin(`example-deck-${index + 1}`, 'deck', `Deck ${index + 1}`),
+    );
+    renderHero({
+      activeChipId: 'deck',
+      pluginOptions: deckPlugins,
+    });
+
+    const presets = screen.getAllByTestId('home-hero-plugin-preset');
+    expect(presets).toHaveLength(5);
+    expect(presets.map((preset) => preset.getAttribute('data-plugin-id'))).toEqual(
+      deckPlugins.slice(0, 5).map((plugin) => plugin.id),
+    );
+    expect(screen.queryByText('Deck 6')).toBeNull();
+    expect(screen.queryByText('Deck 7')).toBeNull();
+  });
+
   it('maps powered WebGL presets to the WebGL chip without exposing a Worker chip', () => {
     const webgl = makePlugin('example-webgl-experience', 'prototype', 'WebGL Experience', [
       'webgl',

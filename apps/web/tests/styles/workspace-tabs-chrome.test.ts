@@ -5,6 +5,8 @@ const shellCss = readFileSync(new URL('../../src/styles/shell.css', import.meta.
 const routinesCss = readFileSync(new URL('../../src/styles/viewer/routines.css', import.meta.url), 'utf8');
 const composioCss = readFileSync(new URL('../../src/styles/viewer/composio.css', import.meta.url), 'utf8');
 const entryLayoutCss = readFileSync(new URL('../../src/styles/home/entry-layout.css', import.meta.url), 'utf8');
+const drawerCss = readFileSync(new URL('../../src/styles/workspace/drawer.css', import.meta.url), 'utf8');
+const chatCss = readFileSync(new URL('../../src/styles/chat.css', import.meta.url), 'utf8');
 
 function cssDeclarations(css: string, selector: string): string {
   const blocks: string[] = [];
@@ -27,6 +29,90 @@ function ruleValue(block: string, property: string): string {
 }
 
 describe('workspace tabs chrome styles', () => {
+  it('keeps a 4px gap between the collapse control and project selector', () => {
+    const dock = cssDeclarations(routinesCss, '.split-chat-tabs-dock');
+
+    expect(ruleValue(dock, 'gap')).toBe('var(--spacing-4)');
+  });
+
+  it('centres the dock chevron over the chat history icon', () => {
+    const dropdown = cssDeclarations(routinesCss, '.workspace-tabs-dropdown__trigger');
+    const toggle = cssDeclarations(routinesCss, '.workspace-tabs-dropdown__toggle');
+    const chatHeader = cssDeclarations(chatCss, '.chat-project-header');
+    const history = cssDeclarations(chatCss, '.chat-session-trigger');
+
+    expect(ruleValue(dropdown, 'padding')).toBe('0 var(--spacing-12)');
+    expect(ruleValue(chatHeader, 'padding')).toBe('8px 12px');
+    expect(ruleValue(toggle, 'width')).toBe('28px');
+    expect(ruleValue(history, 'width')).toBe('28px');
+  });
+
+  it('keeps the dock chevron seat transparent across pointer and expanded states', () => {
+    const resting = cssDeclarations(routinesCss, '.workspace-tabs-dropdown__toggle');
+    const hover = cssDeclarations(
+      routinesCss,
+      '.workspace-tabs-dropdown__trigger:hover .workspace-tabs-dropdown__toggle',
+    );
+    const active = cssDeclarations(
+      routinesCss,
+      '.workspace-tabs-dropdown__trigger:active .workspace-tabs-dropdown__toggle',
+    );
+    const expanded = cssDeclarations(
+      routinesCss,
+      ".workspace-tabs-dropdown__trigger[aria-expanded='true'] .workspace-tabs-dropdown__toggle",
+    );
+    const expandedIcon = cssDeclarations(
+      routinesCss,
+      ".workspace-tabs-dropdown__trigger[aria-expanded='true'] .workspace-tabs-dropdown__toggle > svg",
+    );
+
+    expect(ruleValue(resting, 'background')).toBe('transparent');
+    expect(ruleValue(hover, 'background')).toBe('transparent');
+    expect(ruleValue(active, 'background')).toBe('transparent');
+    expect(ruleValue(expanded, 'background')).toBe('transparent');
+    expect(ruleValue(expandedIcon, 'transform')).toBe('rotate(180deg)');
+  });
+
+  it('matches the docked project selector opacity to the chat card', () => {
+    const chatSlot = cssDeclarations(routinesCss, '.app .split-chat-slot');
+    const chatPane = cssDeclarations(routinesCss, '.app .split-chat-slot > .pane');
+    const resting = cssDeclarations(routinesCss, '.workspace-tabs-dropdown__trigger');
+    const hover = cssDeclarations(
+      routinesCss,
+      '.workspace-tabs-dropdown__trigger:hover:not(:disabled)',
+    );
+
+    expect(ruleValue(chatSlot, '--project-chat-card-surface')).toBe(
+      'color-mix(in srgb, #fff 85%, transparent)',
+    );
+    expect(ruleValue(chatPane, 'background')).toBe('var(--project-chat-card-surface)');
+    expect(ruleValue(resting, 'background')).toBe(
+      'var(--project-chat-card-surface, var(--bg))',
+    );
+    expect(ruleValue(hover, 'background')).toBe(ruleValue(resting, 'background'));
+  });
+
+  it('keeps the download action colors unchanged on hover', () => {
+    const resting = cssDeclarations(drawerCss, '.app .ws-tabs-actions .chrome-action-dark');
+    const hover = cssDeclarations(
+      drawerCss,
+      '.app .ws-tabs-actions .chrome-action-dark:hover:not(:disabled)',
+    );
+    const restingIcon = cssDeclarations(
+      drawerCss,
+      '.app .ws-tabs-actions .chrome-action-dark svg',
+    );
+    const hoverIcon = cssDeclarations(
+      drawerCss,
+      '.app .ws-tabs-actions .chrome-action-dark:hover:not(:disabled) svg',
+    );
+
+    expect(ruleValue(hover, 'background')).toBe(ruleValue(resting, 'background'));
+    expect(ruleValue(hover, 'border-color')).toBe(ruleValue(resting, 'border-color'));
+    expect(ruleValue(hover, 'color')).toBe(ruleValue(resting, 'color'));
+    expect(ruleValue(hoverIcon, 'color')).toBe(ruleValue(restingIcon, 'color'));
+  });
+
   it('keeps only a small intentional inset before the first tab', () => {
     const chrome = cssDeclarations(shellCss, '.workspace-tabs-chrome.app-chrome-header');
     const traffic = cssDeclarations(shellCss, '.workspace-tabs-chrome .workspace-tabs-traffic');
@@ -40,6 +126,26 @@ describe('workspace tabs chrome styles', () => {
     expect(ruleValue(traffic, 'margin-right')).toBe('var(--app-chrome-traffic-margin)');
     expect(ruleValue(projectChrome, 'padding')).toBe('0 8px 0 0');
     expect(ruleValue(projectStrip, 'align-items')).toBe('center');
+  });
+
+  it('keeps the project-route Home button free of card chrome', () => {
+    const home = cssDeclarations(routinesCss, '.workspace-tabs-home-chrome');
+
+    expect(ruleValue(home, 'background')).toBe('transparent');
+    expect(ruleValue(home, 'border')).toBe('0');
+    expect(ruleValue(home, 'box-shadow')).toBe('none');
+  });
+
+  it('keeps the Home glyph fixed when the chat chrome hands off to the Home tab', () => {
+    const chatHome = cssDeclarations(routinesCss, '.workspace-tabs-home-chrome');
+    const homeStrip = cssDeclarations(routinesCss, '.workspace-shell .workspace-tabs-strip');
+    const homeTab = cssDeclarations(routinesCss, '.workspace-shell .workspace-tab.is-pinned');
+    const workspaceTab = cssDeclarations(routinesCss, '.workspace-shell .workspace-tab');
+
+    expect(ruleValue(chatHome, 'margin-left')).toBe('var(--spacing-8)');
+    expect(ruleValue(homeStrip, '--workspace-tabs-edge-inset')).toBe('var(--spacing-8)');
+    expect(ruleValue(homeTab, 'width')).toBe(ruleValue(chatHome, 'width'));
+    expect(ruleValue(workspaceTab, 'height')).toBe(ruleValue(chatHome, 'height'));
   });
 
   it('keeps the project composer input inset and focus ring polished', () => {
@@ -278,6 +384,23 @@ describe('workspace tabs chrome styles', () => {
     expect(entryLayoutCss).not.toContain('.entry-nav-rail::after');
   });
 
+  it('lets the 4px-raised entry rail paint past the body clip edge', () => {
+    const shell = cssDeclarations(shellCss, '.workspace-shell');
+    const sharedBody = cssDeclarations(shellCss, '.workspace-shell__body');
+    const entryBody = cssDeclarations(
+      entryLayoutCss,
+      '.workspace-shell__body:has(> .entry-shell--no-header > .entry.entry--rail-open)',
+    );
+    const panel = cssDeclarations(entryLayoutCss, '.entry-nav-rail__panel');
+
+    expect(ruleValue(shell, 'overflow')).toBe('hidden');
+    expect(ruleValue(sharedBody, 'overflow')).toBe('hidden');
+    expect(ruleValue(entryBody, 'overflow')).toBe('visible');
+    expect(ruleValue(panel, 'margin')).toBe(
+      'calc(-1 * var(--spacing-4)) var(--spacing-10) var(--spacing-10)',
+    );
+  });
+
   it('keeps workspace tabs compact and centered in the top chrome', () => {
     const projectTab = cssDeclarations(routinesCss, '.workspace-shell .workspace-tab');
     const activeProjectTab = cssDeclarations(routinesCss, '.workspace-shell .workspace-tab.is-active');
@@ -333,8 +456,9 @@ describe('workspace tabs chrome styles', () => {
 
     // Home never shrinks (flex-shrink 0) in either chrome…
     expect(ruleValue(pinnedShared, 'flex')).toBe('0 0 52px');
-    // Round-4 skin: the pinned tab is a single-icon pill (~half a project tab).
-    expect(ruleValue(pinnedProject, 'flex')).toBe('0 0 78px');
+    // Project skin: Home uses the same 32px slot as the chat-route chrome
+    // control, so the icon stays fixed when the two DOM variants hand off.
+    expect(ruleValue(pinnedProject, 'flex')).toBe('0 0 32px');
     // …and stays stuck to the left edge with an opaque background so scrolled
     // project tabs pass behind it instead of squeezing it.
     expect(ruleValue(pinnedShared, 'position')).toBe('sticky');

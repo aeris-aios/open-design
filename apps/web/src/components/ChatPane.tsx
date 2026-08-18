@@ -2353,7 +2353,6 @@ export function ChatPane({
       projectFiles={projectFiles}
       activeProjectFileName={activeProjectFileName}
       sessionMode={sessionMode}
-      onSessionModeChange={onSessionModeChange}
       skills={skills}
       streaming={streaming}
       sendDisabled={sendDisabled}
@@ -2472,120 +2471,111 @@ export function ChatPane({
         {projectHeader ? (
           <span className="chat-project-header-title">{projectHeader}</span>
         ) : null}
-        <div
-          className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
-          ref={historyWrapRef}
-        >
-          <button
-            type="button"
-            className="chat-session-trigger icon-only"
-            data-testid="conversation-history-trigger"
-            title={
-              activeConversation?.title
-                ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
-                : t('chat.conversationsTitle')
-            }
-            aria-label={t('chat.conversationsAria')}
-            aria-haspopup="menu"
-            aria-expanded={showConvList}
-            onClick={() => {
-              setShowConvList((v) => {
-                const next = !v;
-                if (next) {
-                  trackChatPanelClick(analytics.track, {
-                    page_name: 'chat_panel',
-                    area: 'chat_panel',
-                    element: 'history',
-                  });
-                }
-                return next;
-              });
-            }}
+        <div className="chat-project-header-actions">
+          <div
+            className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
+            ref={historyWrapRef}
           >
-            <Icon name="comment" size={16} />
-          </button>
-          {showConvList ? (
-            <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
-              <div className="chat-history-menu-head">
-                <span className="chat-history-menu-title">
-                  {t('chat.conversationsHeading')}
-                  <span className="chat-history-menu-count">
-                    <span data-testid="conversation-history-count">
-                    {filteredConversations.length === conversations.length
-                      ? compactCount(conversations.length)
-                      : `${compactCount(filteredConversations.length)} / ${compactCount(conversations.length)}`}
-                    </span>
-                  </span>
-                </span>
-                {onNewConversation ? (
-                  <button
-                    type="button"
-                    className="chat-history-new"
-                    data-testid="conversation-history-new"
-                    disabled={newConversationDisabled}
-                    onClick={() => {
-                      if (newConversationDisabled) return;
-                      trackChatPanelClick(analytics.track, {
-                        page_name: 'chat_panel',
-                        area: 'chat_panel',
-                        element: 'new_chat',
-                      });
-                      onNewConversation();
-                      setShowConvList(false);
-                    }}
-                  >
-                    <Icon name="plus" size={11} />
-                    <span>{t('chat.new')}</span>
-                  </button>
-                ) : null}
+            <button
+              type="button"
+              className="chat-session-trigger icon-only"
+              data-testid="conversation-history-trigger"
+              title={
+                activeConversation?.title
+                  ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
+                  : t('chat.conversationsTitle')
+              }
+              aria-label={t('chat.conversationsAria')}
+              aria-haspopup="menu"
+              aria-expanded={showConvList}
+              onClick={() => {
+                setShowConvList((v) => {
+                  const next = !v;
+                  if (next) {
+                    trackChatPanelClick(analytics.track, {
+                      page_name: 'chat_panel',
+                      area: 'chat_panel',
+                      element: 'history',
+                    });
+                  }
+                  return next;
+                });
+              }}
+            >
+              <Icon name="comment" size={16} />
+            </button>
+            {showConvList ? (
+              <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
+                <label className="chat-history-search">
+                  <Icon name="search" size={12} />
+                  <input
+                    type="search"
+                    value={conversationSearch}
+                    onChange={(event) => setConversationSearch(event.currentTarget.value)}
+                    placeholder={t('chat.historySearchPlaceholder')}
+                    data-testid="conversation-history-search"
+                  />
+                  {conversationSearch ? (
+                    <button
+                      type="button"
+                      className="chat-history-search-clear"
+                      onClick={() => setConversationSearch('')}
+                      aria-label={t('chat.comments.clear')}
+                    >
+                      <Icon name="close" size={10} />
+                    </button>
+                  ) : null}
+                </label>
+                <div className="chat-history-list" data-testid="conversation-list">
+                  {conversations.length === 0 ? (
+                    <div className="chat-history-empty">
+                      {t('chat.emptyConversations')}
+                    </div>
+                  ) : filteredConversations.length === 0 ? (
+                    <div className="chat-history-empty">
+                      No conversations match.
+                    </div>
+                  ) : (
+                    filteredConversations.map((c) => (
+                      <ConversationRow
+                        key={c.id}
+                        conversation={c}
+                        active={c.id === activeConversationId}
+                        messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
+                        onSelect={() => {
+                          onSelectConversation(c.id);
+                          setShowConvList(false);
+                        }}
+                        onDelete={() => onDeleteConversation(c.id)}
+                        t={t}
+                      />
+                    ))
+                  )}
+                </div>
               </div>
-              <label className="chat-history-search">
-                <Icon name="search" size={12} />
-                <input
-                  type="search"
-                  value={conversationSearch}
-                  onChange={(event) => setConversationSearch(event.currentTarget.value)}
-                  placeholder="Search conversations"
-                  data-testid="conversation-history-search"
-                />
-                {conversationSearch ? (
-                  <button
-                    type="button"
-                    className="chat-history-search-clear"
-                    onClick={() => setConversationSearch('')}
-                    aria-label={t('chat.comments.clear')}
-                  >
-                    <Icon name="close" size={10} />
-                  </button>
-                ) : null}
-              </label>
-              <div className="chat-history-list" data-testid="conversation-list">
-                {conversations.length === 0 ? (
-                  <div className="chat-history-empty">
-                    {t('chat.emptyConversations')}
-                  </div>
-                ) : filteredConversations.length === 0 ? (
-                  <div className="chat-history-empty">
-                    No conversations match.
-                  </div>
-                ) : (
-                  filteredConversations.map((c) => (
-                    <ConversationRow
-                      key={c.id}
-                      conversation={c}
-                      active={c.id === activeConversationId}
-                      messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
-                      onSelect={() => {
-                        onSelectConversation(c.id);
-                        setShowConvList(false);
-                      }}
-                      onDelete={() => onDeleteConversation(c.id)}
-                      t={t}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
+            ) : null}
+          </div>
+          {onNewConversation ? (
+            <button
+              type="button"
+              className="chat-history-new"
+              data-testid="conversation-history-new"
+              disabled={newConversationDisabled}
+              title={t('chat.newConversation')}
+              aria-label={t('chat.newConversation')}
+              onClick={() => {
+                if (newConversationDisabled) return;
+                trackChatPanelClick(analytics.track, {
+                  page_name: 'chat_panel',
+                  area: 'chat_panel',
+                  element: 'new_chat',
+                });
+                onNewConversation();
+                setShowConvList(false);
+              }}
+            >
+              <Icon name="plus" size={16} />
+            </button>
           ) : null}
         </div>
       </div>

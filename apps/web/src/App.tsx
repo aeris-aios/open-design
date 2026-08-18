@@ -3730,8 +3730,42 @@ function AppInner() {
   const handleRenameProject = useCallback(async (id: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const previous = projectsRef.current.find((project) => project.id === id) ?? null;
-    const renameContext = workspaceContextRef.current;
+    // A project route owns its opened row independently from the ambient Home
+    // catalogue. In particular, a deep-linked Workspace A project can remain
+    // open while the shell is already showing Workspace B. The docked project
+    // title is fed that route-owned row below, so its rename path must use the
+    // same source of truth instead of silently returning when A is absent from
+    // `projectsRef.current`.
+    const currentRoute = routeRef.current;
+    const routeSnapshot =
+      currentRoute.kind === 'project' && currentRoute.projectId === id
+        ? routeProjectSnapshotRef.current
+        : null;
+    const previous =
+      projectsRef.current.find((project) => project.id === id)
+      ?? routeSnapshot?.project
+      ?? null;
+    if (!previous) return;
+
+    // Use the authority attached to the opened project, never whichever
+    // Workspace happens to be selected in the navigation rail. If neither
+    // cached context matches a bound project, resolve its exact authority
+    // before mutating rather than sending a headerless or cross-Workspace
+    // PATCH that the daemon must reject.
+    const persistedWorkspaceId = previous.workspaceId?.trim() ?? '';
+    const routeContext = projectRouteWorkspaceContextRef.current;
+    const ambientContext = workspaceContextRef.current;
+    let renameContext: WorkspaceCollabContext | null = null;
+    if (persistedWorkspaceId) {
+      if (routeContext?.workspaceId === persistedWorkspaceId) {
+        renameContext = routeContext;
+      } else if (ambientContext?.workspaceId === persistedWorkspaceId) {
+        renameContext = ambientContext;
+      } else {
+        renameContext = await resolveBoundProjectWorkspaceContext(persistedWorkspaceId);
+        if (!renameContext) return;
+      }
+    }
     const renameAccountGeneration = currentWorkspaceAccountGeneration();
     const renameScopeKey = projectListScopeKey(renameContext);
     const renameProjectionKey = JSON.stringify([
@@ -3741,7 +3775,6 @@ function AppInner() {
     ]);
     let renameState = projectRenameStatesRef.current.get(renameProjectionKey);
     if (!renameState || renameState.pending === 0) {
-      if (!previous) return;
       renameState = {
         generation: 0,
         confirmed: previous,
@@ -3754,7 +3787,17 @@ function AppInner() {
     renameState.pending += 1;
     projectListMutationVersionRef.current += 1;
     const renameMutationVersion = projectListMutationVersionRef.current;
-    const optimistic = { ...(previous ?? renameState.confirmed), name: trimmed };
+    // Match ProjectView's inline-title rename semantics: a name explicitly
+    // typed by the user must not be replaced by first-prompt auto naming.
+    const metadata = previous.metadata
+      ? { ...previous.metadata, nameSource: 'user' as const }
+      : undefined;
+    const optimistic: Project = {
+      ...previous,
+      name: trimmed,
+      ...(metadata ? { metadata } : {}),
+      updatedAt: Date.now(),
+    };
     pendingProjectNameProjectionsRef.current.set(renameProjectionKey, {
       accountGeneration: renameAccountGeneration,
       scopeKey: renameScopeKey,
@@ -3763,18 +3806,38 @@ function AppInner() {
       confirmed: false,
     });
     setProjects((curr) =>
-      curr.map((p) => (p.id === id ? { ...p, name: trimmed } : p)),
+      curr.map((p) => (p.id === id ? optimistic : p)),
     );
+    if (
+      routeSnapshot?.project.id === id
+      && routeSnapshot.accountGeneration === renameAccountGeneration
+    ) {
+      routeProjectSnapshotRef.current = {
+        ...routeSnapshot,
+        project: optimistic,
+      };
+      setRouteProjectSnapshotRevision((current) => current + 1);
+    }
     if (renameContext) {
       patchProjectDisplaySnapshots({
         accountGeneration: renameAccountGeneration,
         context: renameContext,
         patch: (cachedProjects) => cachedProjects.map((project) =>
-          project.id === id ? { ...project, name: trimmed } : project),
+          project.id === id
+            ? {
+                ...project,
+                name: optimistic.name,
+                metadata: optimistic.metadata,
+                updatedAt: optimistic.updatedAt,
+              }
+            : project),
       });
     }
     const runRename = async () => {
-      const persisted = await patchProject(id, { name: trimmed }, renameContext);
+      const persisted = await patchProject(id, {
+        name: trimmed,
+        ...(metadata ? { metadata } : {}),
+      }, renameContext);
       if (persisted) renameState.confirmed = persisted;
       const isLatestQueuedRename =
         projectRenameStatesRef.current.get(renameProjectionKey) === renameState
@@ -3801,6 +3864,18 @@ function AppInner() {
               : project),
         });
       }
+      const currentRouteSnapshot = routeProjectSnapshotRef.current;
+      if (
+        currentRouteSnapshot?.project.id === id
+        && currentRouteSnapshot.accountGeneration === renameAccountGeneration
+        && currentRouteSnapshot.project.name === trimmed
+      ) {
+        routeProjectSnapshotRef.current = {
+          ...currentRouteSnapshot,
+          project: nextProject,
+        };
+        setRouteProjectSnapshotRevision((current) => current + 1);
+      }
       const isCurrentScope =
         currentWorkspaceAccountGeneration() === renameAccountGeneration
         && projectListScopeKey(workspaceContextRef.current) === renameScopeKey;
@@ -3820,7 +3895,7 @@ function AppInner() {
         return;
       }
       setProjects((current) => current.map((project) =>
-        project.id === id
+        project.id === id && project.name === trimmed
           ? {
               ...project,
               name: persisted.name,
@@ -4915,6 +4990,12 @@ function AppInner() {
         </div>
       );
     } else if (activeProject) {
+      // `null` is authoritative for a legacy/local project. Passing
+      // `undefined` here made ProjectView fall back to the ambient Workspace
+      // request; while that authority was unavailable, a local project
+      // incorrectly became a read-only "shared project" and its title edit
+      // could not settle. Bound projects still carry their exact route-owned
+      // context through the same prop.
       appMain = (
         <ProjectView
           key={projectViewAuthorizationLifetimeKey(
@@ -4922,11 +5003,7 @@ function AppInner() {
             activeProjectWorkspaceContext,
           )}
           project={activeProject}
-          workspaceContextOverride={
-            activeProject.workspaceId
-              ? activeProjectWorkspaceContext
-              : undefined
-          }
+          workspaceContextOverride={activeProjectWorkspaceContext}
           initialWorkspaceScope={
             routeProjectSnapshotRef.current?.project.id === activeProject.id
               ? routeProjectSnapshotRef.current.workspaceScope

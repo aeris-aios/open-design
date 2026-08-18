@@ -67,7 +67,6 @@ import type {
   IntegrationsSkillsTabClickProps,
   IntegrationsUseEverywhereTabClickProps,
   ChatPanelClickProps,
-  ComposerSessionModeClickProps,
   ComposerBarClickProps,
   DesignToolboxClickProps,
   NextStepActionClickProps,
@@ -796,13 +795,6 @@ export function trackIntegrationsUseEverywhereTabClick(
 export function trackChatPanelClick(
   track: Track,
   props: ChatPanelClickProps,
-): void {
-  send(track, 'ui_click', props);
-}
-
-export function trackComposerSessionModeClick(
-  track: Track,
-  props: ComposerSessionModeClickProps,
 ): void {
   send(track, 'ui_click', props);
 }
