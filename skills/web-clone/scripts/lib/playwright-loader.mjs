@@ -4,9 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import { systemChromium } from "./system-browser.mjs";
 
-// Use an already-provided Playwright runtime when a source checkout has one.
-// Product runs fall back to the zero-dependency CDP adapter below, so a
-// web-clone task never mutates the user's project or downloads a browser.
+// Reuse an already-provided Playwright runtime when one is available: explicit
+// package paths first, then dependencies visible from the script or process
+// cwd. Product runs otherwise fall back to the zero-dependency CDP adapter, so
+// a web-clone task never mutates the user's project or downloads a browser.
 export function loadPlaywright() {
   const requireFromScript = createRequire(import.meta.url);
   const requireFromCwd = createRequire(path.join(process.cwd(), "noop.js"));
