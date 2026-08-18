@@ -98,8 +98,24 @@ describe('Website Clone main path', () => {
       );
       expect(closed.closed).toBe(true);
 
+      // Paired with the CONNECT teardown regression in the daemon suite, pin
+      // that the daemon-wide broker can serve the next Website Clone session.
+      const recreated = await requestJson<BrowserSessionResponse>(
+        webUrl,
+        `/api/projects/${encodeURIComponent(project.project.id)}/browser-sessions`,
+        { body: {} },
+      );
+      expect(recreated.browserSession.id).not.toBe(created.browserSession.id);
+      const reclosed = await requestJson<{ closed: boolean }>(
+        webUrl,
+        `/api/projects/${encodeURIComponent(project.project.id)}/browser-sessions/${encodeURIComponent(recreated.browserSession.id)}`,
+        { method: 'DELETE' },
+      );
+      expect(reclosed.closed).toBe(true);
+
       await suite.report.json('summary.json', {
         browserBroker: created.browserSession,
+        browserBrokerRecreated: recreated.browserSession,
         electronRequired: false,
         playwrightInstalledInProject: false,
         projectId: project.project.id,

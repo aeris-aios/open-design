@@ -128,6 +128,7 @@ async function proxyConnect(
   policy: BrowserNetworkPolicy,
   tunnels: Set<Duplex>,
 ): Promise<void> {
+  const stopPendingClientError = guardPendingClient(client);
   try {
     const authority = request.url ?? '';
     const target = await resolveBrowserNetworkTarget(`https://${authority}`, policy);
@@ -136,14 +137,20 @@ async function proxyConnect(
       host: target.address,
       port: target.url.port ? Number(target.url.port) : 443,
     });
-    trackTunnel(client, upstream, tunnels);
+    let connected = false;
+    trackBrowserNetworkTunnel(client, upstream, tunnels, (error) => {
+      if (connected) return false;
+      writeProxyFailure(client, 502, proxyErrorMessage(error));
+      return true;
+    });
+    stopPendingClientError();
     upstream.once('connect', () => {
+      connected = true;
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length > 0) upstream.write(head);
       client.pipe(upstream);
       upstream.pipe(client);
     });
-    upstream.once('error', (error) => writeProxyFailure(client, 502, proxyErrorMessage(error)));
   } catch (error) {
     writeProxyFailure(client, 403, `browser proxy blocked tunnel: ${proxyErrorMessage(error)}`);
   }
@@ -156,6 +163,7 @@ async function proxyUpgrade(
   policy: BrowserNetworkPolicy,
   tunnels: Set<Duplex>,
 ): Promise<void> {
+  const stopPendingClientError = guardPendingClient(client);
   try {
     const target = await resolveBrowserNetworkTarget(requestUrl(request).href, policy);
     const upstream = net.connect({
@@ -163,8 +171,15 @@ async function proxyUpgrade(
       host: target.address,
       port: target.url.port ? Number(target.url.port) : 80,
     });
-    trackTunnel(client, upstream, tunnels);
+    let connected = false;
+    trackBrowserNetworkTunnel(client, upstream, tunnels, (error) => {
+      if (connected) return false;
+      writeProxyFailure(client, 502, proxyErrorMessage(error));
+      return true;
+    });
+    stopPendingClientError();
     upstream.once('connect', () => {
+      connected = true;
       const headers = upstreamHeaders(request, target.url.host);
       const serialized = Object.entries(headers)
         .filter(([, value]) => value != null)
@@ -178,19 +193,67 @@ async function proxyUpgrade(
       client.pipe(upstream);
       upstream.pipe(client);
     });
-    upstream.once('error', (error) => writeProxyFailure(client, 502, proxyErrorMessage(error)));
   } catch (error) {
     writeProxyFailure(client, 403, `browser proxy blocked upgrade: ${proxyErrorMessage(error)}`);
   }
 }
 
-function trackTunnel(client: Duplex, upstream: Duplex, tunnels: Set<Duplex>): void {
+function guardPendingClient(client: Duplex): () => void {
+  const onError = () => client.destroy();
+  const stop = () => client.off('error', onError);
+  client.on('error', onError);
+  client.once('close', stop);
+  return stop;
+}
+
+/**
+ * A CONNECT/upgrade tunnel is one lifecycle even though Node exposes two
+ * sockets. `pipe()` deliberately does not forward source errors, so both
+ * endpoints need their own guard and either endpoint closing must tear down
+ * its peer. Otherwise a normal Chrome TLS shutdown can surface EPIPE as an
+ * uncaught daemon exception or leave a half-open upstream behind.
+ */
+export function trackBrowserNetworkTunnel(
+  client: Duplex,
+  upstream: Duplex,
+  tunnels: Set<Duplex>,
+  handleUpstreamConnectError?: (error: Error) => boolean,
+): void {
   tunnels.add(client);
   tunnels.add(upstream);
-  const forget = () => {
+
+  let clientClosed = false;
+  let upstreamClosed = false;
+  const destroyBoth = () => {
+    if (!client.destroyed) client.destroy();
+    if (!upstream.destroyed) upstream.destroy();
+  };
+  const forgetWhenClosed = () => {
+    if (!clientClosed || !upstreamClosed) return;
     tunnels.delete(client);
     tunnels.delete(upstream);
+    client.off('error', onClientError);
+    upstream.off('error', onUpstreamError);
   };
-  client.once('close', forget);
-  upstream.once('close', forget);
+  const onClientError = () => destroyBoth();
+  const onUpstreamError = (error: Error) => {
+    const responseOwnsClient = handleUpstreamConnectError?.(error) ?? false;
+    if (!upstream.destroyed) upstream.destroy();
+    if (!responseOwnsClient && !client.destroyed) client.destroy();
+  };
+  const onClientClose = () => {
+    clientClosed = true;
+    if (!upstream.destroyed) upstream.destroy();
+    forgetWhenClosed();
+  };
+  const onUpstreamClose = () => {
+    upstreamClosed = true;
+    if (!client.destroyed) client.destroy();
+    forgetWhenClosed();
+  };
+
+  client.on('error', onClientError);
+  upstream.on('error', onUpstreamError);
+  client.once('close', onClientClose);
+  upstream.once('close', onUpstreamClose);
 }

@@ -1,11 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { createServer, request } from 'node:http';
+import { createConnection, createServer as createTcpServer, type Socket } from 'node:net';
+import { PassThrough, type Duplex } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import { WEB_CLONE_CDP_METHODS } from '../src/browser-cdp.js';
-import { createBrowserNetworkProxy } from '../src/browser-network-proxy.js';
+import {
+  createBrowserNetworkProxy,
+  trackBrowserNetworkTunnel,
+} from '../src/browser-network-proxy.js';
 import { assertBrowserNetworkUrl, type BrowserDnsLookup } from '../src/browser-network-policy.js';
 import { removeBrowserProfile, terminateBrowserProcess } from '../src/browser-sessions.js';
 
@@ -57,6 +62,59 @@ describe('Website Clone browser broker security boundary', () => {
     }
   });
 
+  it.each(['client', 'upstream'] as const)(
+    'contains a normal HTTPS tunnel EPIPE from the %s endpoint and tears down its peer',
+    async (source) => {
+      const client = new PassThrough();
+      const upstream = new PassThrough();
+      const tunnels = new Set<Duplex>();
+      const clientClosed = new Promise<void>((resolve) => client.once('close', () => resolve()));
+      const upstreamClosed = new Promise<void>((resolve) => upstream.once('close', () => resolve()));
+
+      trackBrowserNetworkTunnel(client, upstream, tunnels);
+      const socketError = Object.assign(new Error('normal HTTPS tunnel teardown'), { code: 'EPIPE' });
+      expect(() => (source === 'client' ? client : upstream).emit('error', socketError)).not.toThrow();
+
+      await Promise.all([clientClosed, upstreamClosed]);
+      expect(client.destroyed).toBe(true);
+      expect(upstream.destroyed).toBe(true);
+      expect(tunnels.size).toBe(0);
+    },
+  );
+
+  it('closes an HTTPS CONNECT peer and keeps the proxy available for the next browser tunnel', async () => {
+    const targetSockets = new Set<Socket>();
+    const target = createTcpServer((socket) => {
+      targetSockets.add(socket);
+      socket.on('error', () => undefined);
+      socket.once('close', () => targetSockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress === 'string') throw new Error('target did not bind');
+    const proxy = await createBrowserNetworkProxy({ allowPrivateNetwork: true });
+
+    try {
+      const first = await connectTunnel(proxy.port, targetAddress.port);
+      first.on('error', () => undefined);
+      await waitFor(() => targetSockets.size === 1);
+      first.destroy();
+      await waitFor(() => targetSockets.size === 0);
+
+      // A daemon-fatal uncaughtException would prevent this follow-up tunnel,
+      // which represents the next browser session using the same broker.
+      const second = await connectTunnel(proxy.port, targetAddress.port);
+      second.on('error', () => undefined);
+      expect(second.destroyed).toBe(false);
+      second.destroy();
+      await waitFor(() => targetSockets.size === 0);
+    } finally {
+      await proxy.close();
+      for (const socket of targetSockets) socket.destroy();
+      await new Promise<void>((resolve) => target.close(() => resolve()));
+    }
+  });
+
   it('exposes only the CDP methods required by the staged recon adapter', () => {
     expect(WEB_CLONE_CDP_METHODS).toEqual(new Set([
       'Emulation.setDeviceMetricsOverride',
@@ -94,6 +152,39 @@ async function requestThroughProxy(proxyPort: number, url: string): Promise<{ bo
     outbound.once('error', reject);
     outbound.end();
   });
+}
+
+async function connectTunnel(proxyPort: number, targetPort: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port: proxyPort });
+    let response = '';
+    const onError = (error: Error) => reject(error);
+    const onData = (chunk: Buffer) => {
+      response += chunk.toString('latin1');
+      if (!response.includes('\r\n\r\n')) return;
+      socket.off('data', onData);
+      socket.off('error', onError);
+      if (!response.startsWith('HTTP/1.1 200')) {
+        reject(new Error(`CONNECT failed: ${response}`));
+        socket.destroy();
+        return;
+      }
+      resolve(socket);
+    };
+    socket.once('error', onError);
+    socket.on('data', onData);
+    socket.once('connect', () => {
+      socket.write(`CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\n\r\n`);
+    });
+  });
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt >= timeoutMs) throw new Error('condition timed out');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe('Website Clone browser process cleanup', () => {
