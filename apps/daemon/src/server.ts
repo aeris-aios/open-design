@@ -768,15 +768,12 @@ import {
 } from './collab/active-workspace-selection.js';
 import {
   headerValue,
-  isWorkspaceResourceLocked,
-  resolveOptionalWorkspaceRequestAuthority,
-  type WorkspaceRequestAuthorityResult,
+  resolveOptionalLocalWorkspaceRequestAuthority,
   workspaceResourceContext,
   workspaceResourceContextFromRequest,
 } from './collab/workspace-resource-mutation.js';
 import {
   createAuthorizeProjectRequest,
-  resolveBoundProjectWorkspaceReadAuthority,
 } from './collab/project-request-authority.js';
 import { withLastKnownWorkspaceContext } from './collab/workspace-context.js';
 import {
@@ -4414,13 +4411,9 @@ export async function startServer({
     projectId,
     { fresh: false },
   );
-  const resolveProjectCommentWorkspaceContextWith = async (
+  const resolveLocalProjectCommentWorkspaceContext = async (
     req: any,
     projectId: string,
-    verify: (
-      req: any,
-      projectId?: string,
-    ) => ReturnType<typeof verifyProjectWorkspaceContextForRequest>,
   ) => {
     const binding = getWorkspaceProjectByProjectId(db, projectId);
     if (revokedTeamProjectMirrors.has(projectId)) {
@@ -4442,26 +4435,80 @@ export async function startServer({
         message: 'workspace project read is not allowed',
       };
     }
-    const verified = await verify(req, projectId);
-    if (!verified.ok) return verified;
-    return { ok: true as const, context: verified.context };
+    const local = resolveOptionalLocalWorkspaceRequestAuthority(req);
+    if (!local.ok) return local;
+    if (local.context) {
+      if (
+        local.context.workspaceId !== binding.workspaceId
+        || (
+          binding.visibility !== 'team'
+          && binding.createdByWorkspaceMemberId
+          && local.context.workspaceMemberId
+            !== binding.createdByWorkspaceMemberId
+        )
+      ) {
+        return {
+          ok: false as const,
+          status: 403 as const,
+          code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
+          message: 'workspace project access is not allowed',
+        };
+      }
+      return {
+        ok: true as const,
+        context: {
+          ...local.context,
+          workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
+          ...(binding.visibility === 'team'
+            ? { teamId: binding.workspaceId }
+            : { teamId: null }),
+        },
+      };
+    }
+    const persistedMemberId = binding.createdByWorkspaceMemberId?.trim()
+      || 'local-user';
+    return {
+      ok: true as const,
+      context: workspaceContextFromDirectoryItem({
+        workspaceId: binding.workspaceId,
+        workspaceName: binding.workspaceId,
+        workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
+        workspaceMemberId: persistedMemberId,
+        role: 'member',
+        memberStatus: 'active',
+        lifecycleState: 'active',
+      }, configuredAmrEnv()),
+    };
   };
   const resolveProjectCommentWorkspaceContext = (
     req: any,
     projectId: string,
-  ) => resolveProjectCommentWorkspaceContextWith(
-    req,
-    projectId,
-    verifiedWorkspaceContextForRequest,
-  );
+  ) => resolveLocalProjectCommentWorkspaceContext(req, projectId);
   const resolveProjectCommentReadWorkspaceContext = (
     req: any,
     projectId: string,
-  ) => resolveProjectCommentWorkspaceContextWith(
-    req,
-    projectId,
-    verifiedWorkspaceReadContextForRequest,
-  );
+  ) => resolveLocalProjectCommentWorkspaceContext(req, projectId);
+  const resolveFreshProjectCommentWorkspaceContext = async (
+    req: any,
+    projectId: string,
+  ) => {
+    const binding = getWorkspaceProjectByProjectId(db, projectId);
+    if (
+      revokedTeamProjectMirrors.has(projectId)
+      || binding?.resourceState === 'deleted'
+    ) {
+      return {
+        ok: false as const,
+        status: 403 as const,
+        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
+        message: 'workspace project read is not allowed',
+      };
+    }
+    if (!binding?.workspaceId) {
+      return { ok: true as const, context: null };
+    }
+    return verifiedWorkspaceContextForRequest(req, projectId);
+  };
   const verifiedTeamMirrorScope = async (
     scope: TeamMirrorPullScope,
   ): Promise<boolean> => {
@@ -7338,62 +7385,12 @@ export async function startServer({
     stageProjectDirsForDelete,
     validateLinkedDirs,
   };
-  const resolveProjectWorkspaceAuthority = async (
-    projectId: string,
-    options: { fresh: boolean },
-  ): Promise<WorkspaceRequestAuthorityResult | null> => {
-    const binding = getWorkspaceProjectByProjectId(db, projectId);
-    if (!binding?.workspaceId) return null;
-
-    if (process.env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() === 'vela') {
-      const readDirectory = options.fresh
-        ? fetchFreshMutationWorkspaceDirectory
-        : fetchWorkspaceDirectory;
-      const directory = await readDirectory().catch(() => ({
-        ok: false as const,
-        items: [],
-      }));
-      return resolveBoundProjectWorkspaceReadAuthority(
-        binding.workspaceId,
-        directory,
-        configuredAmrEnv(),
-      );
-    }
-
-    return {
-      ok: true,
-      context: workspaceContextFromDirectoryItem({
-        workspaceId: binding.workspaceId,
-        workspaceName: binding.workspaceId,
-        workspaceType: 'personal',
-        workspaceMemberId:
-          binding.createdByWorkspaceMemberId ?? 'local-user',
-        role: 'owner',
-        memberStatus: 'active',
-        lifecycleState: 'active',
-      }, configuredAmrEnv()),
-    };
-  };
   const authorizeProjectRequest = createAuthorizeProjectRequest({
     db,
     getWorkspaceProject,
     getWorkspaceProjectByProjectId,
     isProjectRevoked: (_db, projectId) =>
       revokedTeamProjectMirrors.has(projectId),
-    verifyWorkspaceReadAuthority,
-    resolveWorkspaceReadAuthority: async (projectId) => {
-      const authority = await resolveProjectWorkspaceAuthority(
-        projectId,
-        { fresh: false },
-      );
-      return authority ?? {
-        ok: false,
-        status: 403,
-        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
-        message: 'workspace project access is not allowed',
-      };
-    },
-    verifyWorkspaceRequestAuthority,
     sendApiError,
   });
   const authorizeProjectToolRequest = async (
@@ -7401,59 +7398,27 @@ export async function startServer({
     projectId,
     options,
   ) => {
-    const resolvedAuthority = await resolveProjectWorkspaceAuthority(
-      projectId,
-      { fresh: true },
-    );
-    if (!resolvedAuthority) return { workspace: null };
-    if (!resolvedAuthority.ok) {
-      if (resolvedAuthority.retryable) {
-        sendApiError(
-          res,
-          resolvedAuthority.status,
-          resolvedAuthority.code,
-          resolvedAuthority.message,
-          { retryable: true },
-        );
-      } else {
-        sendApiError(
-          res,
-          resolvedAuthority.status,
-          resolvedAuthority.code,
-          resolvedAuthority.message,
-        );
-      }
-      return null;
-    }
-    const authority = resolvedAuthority.context;
-    const scopedAuthorize = createAuthorizeProjectRequest({
-      db,
-      getWorkspaceProject,
-      getWorkspaceProjectByProjectId,
-      isProjectRevoked: (_db, id) =>
-        revokedTeamProjectMirrors.has(id),
-      verifyWorkspaceRequestAuthority: async () => ({
-        ok: true,
-        context: authority,
-      }),
-      sendApiError,
-    });
-    const request = {
+    const binding = getWorkspaceProjectByProjectId(db, projectId);
+    const localRequest = {
       query: {},
       get(name) {
         const normalized = name.toLowerCase();
-        if (normalized === 'x-od-workspace-id') return authority.workspaceId;
+        if (normalized === 'x-od-workspace-id') return binding?.workspaceId ?? undefined;
         if (normalized === 'x-od-workspace-member-id') {
-          return authority.workspaceMemberId;
+          return binding?.workspaceId
+            ? binding.createdByWorkspaceMemberId ?? 'local-user'
+            : undefined;
         }
         return undefined;
       },
     };
-    if (!await scopedAuthorize(request, res, projectId, options)) return null;
+    if (!await authorizeProjectRequest(localRequest, res, projectId, options)) return null;
+    if (!binding?.workspaceId) return { workspace: null };
     return {
       workspace: {
-        workspaceId: authority.workspaceId,
-        workspaceMemberId: authority.workspaceMemberId,
+        workspaceId: binding.workspaceId,
+        workspaceMemberId:
+          binding.createdByWorkspaceMemberId ?? 'local-user',
       },
     };
   };
@@ -7840,6 +7805,7 @@ export async function startServer({
     // status change, tombstone) to the cross-daemon relay.
     resolveWorkspaceContext: resolveProjectCommentWorkspaceContext,
     resolveReadWorkspaceContext: resolveProjectCommentReadWorkspaceContext,
+    resolveFreshWorkspaceContext: resolveFreshProjectCommentWorkspaceContext,
     resolveProjectOwnerMemberId: async (projectId, context) => {
       if (!context || context.workspaceType !== 'team') return null;
       return resolveSharedProjectOwner(projectId, {
@@ -7972,14 +7938,6 @@ export async function startServer({
   // principal check `unshare` already enforces. Anything not teamSynced is
   // the caller's own, so it stays unrestricted.
   //
-  // Spec 9.2: on top of that existing rule, a workspace the caller's own
-  // request marks as locked/deleted (billing lapse, deletion in progress)
-  // blocks mutation unconditionally — the one real gap design system had
-  // that project/plugin already closed via `enforceWorkspaceResourceMutation`.
-  // Reuses that module's own `workspaceResourceContextFromRequest`/
-  // `isWorkspaceResourceLocked` rather than re-deriving the header contract
-  // here.
-  //
   // Hoisted out of `registerDesignSystemRoutes`'s deps (recvqb6mfyqXLD) so
   // `registerStaticResourceRoutes`'s design-system LIST route can decorate
   // every teamSynced entry with the same verdict — any detail surface a
@@ -7992,10 +7950,6 @@ export async function startServer({
     id: string,
     req: any,
   ): Promise<boolean> => {
-    const requestCtx = workspaceResourceContextFromRequest(req);
-    if (requestCtx && requestCtx !== 'missing' && isWorkspaceResourceLocked(requestCtx)) {
-      return false;
-    }
     const synced = await isTeamSyncedUserDesignSystem(root, id);
     if (!synced) return true;
     const resolution = await resolveTeamResourceScope(req);
@@ -8300,7 +8254,6 @@ export async function startServer({
     projectFiles: projectFileDeps,
     conversations: conversationDeps,
     research: researchDeps,
-    fetchWorkspaceDirectory,
     authorizeProjectRequest,
     authorizeProjectToolRequest,
   });
@@ -14409,10 +14362,7 @@ export async function startServer({
       loadPluginRegistryView,
       renderPluginBriefTemplate,
       authorizePluginRequest: async (req, res, pluginId) => {
-        const authority = await resolveOptionalWorkspaceRequestAuthority(
-          req,
-          verifyWorkspaceRequestAuthority,
-        );
+        const authority = resolveOptionalLocalWorkspaceRequestAuthority(req);
         if (!authority.ok) {
           sendApiError(
             res,
@@ -14466,7 +14416,6 @@ export async function startServer({
           agentCliEnvForAgent(appConfig.agentCliEnv, 'amr'),
         ).loggedIn;
       },
-      verifyWorkspaceRequestAuthority,
     },
     authorizeProjectRequest,
   });
@@ -14933,7 +14882,6 @@ export async function startServer({
     db,
     paths: { RUNTIME_DATA_DIR },
     routines: { routineService },
-    fetchWorkspaceDirectory,
   });
 
   // proxy routes (anthropic / openai / azure / google / ollama) live

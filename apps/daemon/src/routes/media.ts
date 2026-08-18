@@ -26,11 +26,7 @@ import {
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   type ToolTokenGrant,
 } from '../tool-tokens.js';
-import {
-  authorizePersistedAutomationWorkspaceScope,
-  normalizePersistedAutomationWorkspaceScope,
-} from '../automations/workspace-scope.js';
-import type { WorkspaceDirectoryFetchResult } from '../collab/vela-workspace-context.js';
+import { normalizePersistedAutomationWorkspaceScope } from '../automations/workspace-scope.js';
 
 const LONG_MEDIA_PROXY_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -49,7 +45,6 @@ const AIHUBMIX_CATALOG_TTL_MS = 5 * 60 * 1000;
 const aihubmixCatalogCache = new Map<string, { at: number; models: Array<{ id: string; label: string }> }>();
 
 export interface RegisterMediaRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'ids' | 'auth' | 'media' | 'appConfig' | 'orbit' | 'nativeDialogs' | 'projectStore' | 'projectFiles' | 'conversations' | 'research'> {
-  fetchWorkspaceDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   authorizeProjectRequest: AuthorizeProjectRequest;
   authorizeProjectToolRequest: AuthorizeProjectToolRequest;
 }
@@ -583,10 +578,6 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
               code: 'WORKSPACE_CONTEXT_INCOMPLETE',
             });
           }
-          await authorizePersistedAutomationWorkspaceScope(
-            scope,
-            ctx.fetchWorkspaceDirectory,
-          );
         }
       }
       const config = await writeAppConfig(RUNTIME_DATA_DIR, req.body);
@@ -594,9 +585,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       onAppConfigWritten?.(config);
       res.json({ config });
     } catch (err: any) {
-      const status = err?.code === 'WORKSPACE_AUTHORITY_UNAVAILABLE'
-        ? 503
-        : err?.code === 'WORKSPACE_ACCESS_DENIED'
+      const status = err?.code === 'WORKSPACE_ACCESS_DENIED'
           ? 403
           : 500;
       res
@@ -682,9 +671,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       const locale = typeof req.body?.locale === 'string' ? req.body.locale : null;
       res.json(await orbitService.start('manual', { locale }));
     } catch (err: any) {
-      const status = err?.code === 'WORKSPACE_AUTHORITY_UNAVAILABLE'
-        ? 503
-        : err?.code === 'WORKSPACE_ACCESS_DENIED'
+      const status = err?.code === 'WORKSPACE_ACCESS_DENIED'
           ? 403
           : 500;
       res
@@ -867,8 +854,8 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       )
     ) return;
 
-    // Token callers must prove fresh project authority before task lookup so
-    // a revoked member or an authority outage cannot probe task existence.
+    // Token callers must prove their grant targets the persisted local project
+    // before task lookup; cloud availability is irrelevant to this local wait.
     const taskId = req.params.id;
     const task = getLiveMediaTask(taskId);
     if (!task) return res.status(404).json({ error: 'task not found' });
