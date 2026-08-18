@@ -906,7 +906,10 @@ button.att-d:hover { border-color: var(--border-strong); }
    秒数,只会把注意力钉在一个从此不再相关的数字上;总耗时最后在回合状态行里有。
    —— 和重连横幅不做滚动倒计时是同一条。 */
 .thinking-live { display: flex; align-items: center; gap: 7px; font-size: var(--t-mini); color: var(--text-muted); }
-.think { margin: 0; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); overflow-wrap: anywhere; }
+/* 它是正文,不是注解 —— 给最深的一档。旁边那些行(执行计划、每个步骤)都是
+   --text-strong,这段话反倒更浅的话,就成了"标签比它标注的内容还重"。
+   和 .say 同一条:没有 hover 态的可读内容,不用留一档给鼠标。 */
+.think { margin: 0; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-strong); overflow-wrap: anywhere; }
 
 /* 展开时给卡头一条分隔线:它是这张卡的标题,不是列表的第一行。 */
 .fold[open] > summary { border-bottom: 1px solid var(--border-soft); }
@@ -1156,22 +1159,21 @@ button.att-d:hover { border-color: var(--border-strong); }
 .vmeta { display: block; padding: 7px 9px; }
 .vt { display: flex; align-items: center; gap: 5px; font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); }
 .vopt.is-on .vt { color: var(--brand-text); }
-/* 「推荐」用中性深色,不借选中的绿。
+/* 「推荐」是描边角标,不是实心深块。
    ------------------------------------------------------------
-   推荐和选中是两件独立的事:推荐是 Agent 的建议、点不点都不变;
-   选中是你的选择、会变。两个都用绿就分不清,而当推荐项恰好被选中时
-   两层绿叠在一起,标签直接消失(原来就是这样)。
-   深色药丸在白底和浅绿底上读起来一样,且一眼就不是选中色。 */
-/* 字号只能是 12 —— 产品的字号阶梯下限就是 12,本文件禁止私开 11px
-   (见文件头「字号」那段)。所以让它退后一档靠的是【字重和体量】,不是字号:
-     · 字重 500 而不是 600:它现在跟被它标注的标题一样重,标注不该压过被标注的东西
-     · 内边距收到 0 5px、圆角贴着字:药丸越小越像个角标,越大越像个按钮
-     · 底色改成 82% 的墨,不是纯墨:在白底和浅绿底上都还读得清,但不再是全场最黑的一块
-   实心不透明这一条不动:推荐项可能落在绿色的选中卡上,浅色药丸在那儿会糊掉。 */
+   推荐和选中是两件独立的事:推荐是 Agent 的建议、点不点都不变;选中是你的选择、
+   会变。所以它不能借绿 —— 两个都用绿就分不清,而推荐项恰好被选中时两层绿叠在
+   一起,标签直接消失。
+   但"不用绿"不等于"用近黑实心":一小块深色压在浅绿卡上,是全场最重的一块,
+   一个【标注】压过了被它标注的东西。改成白底 + 细描边 + 中性字:
+     · 在白底上它是一枚安静的描边角标
+     · 在浅绿的选中卡上,白底反而把它托出来,而且一眼就不是选中色
+   蓝色不能用 —— 这套里 --blue 归 :focus-visible 的焦点圈,占着"焦点"的语义。
+   字号只能是 12(产品阶梯下限,禁止私开 11px),所以退后一档靠的是体量和字重。 */
 .vrec {
-  flex: none; padding: 0 5px; border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text-strong) 82%, transparent); border: none;
-  font-size: var(--t-cap); font-weight: 500; line-height: 1.6; color: var(--bg);
+  flex: none; padding: 0 6px; border-radius: var(--radius-pill);
+  background: var(--bg); border: 1px solid var(--border-strong);
+  font-size: var(--t-cap); font-weight: 500; line-height: 1.5; color: var(--text-muted);
 }
 .vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
 
