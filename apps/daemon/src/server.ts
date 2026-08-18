@@ -133,6 +133,8 @@ import {
 import {
   daemonAgentPayloadToPersistedAgentEvent,
   persistRunEventToAssistantMessage,
+  flushRunMessageEvents,
+  finalizeRunMessageEvents,
   persistRunFailureClassification,
   pinAssistantMessageOnRunCreate,
 } from './runtimes/chat-run-messages.js';
@@ -143,6 +145,7 @@ import {
   retryFinalResultForRunStatus,
   runArtifactCountForRun,
   runDesignSystemCreatedForRun,
+  runFilesWrittenForRun,
   runPreviewModuleCountForRun,
   runRetryEventsForAnalytics,
   runSideEffectsForRun,
@@ -925,6 +928,8 @@ import {
 } from './collab/remembered-team-resource-scopes.js';
 import { readVelaControlApiContext } from './integrations/vela.js';
 import {
+  fetchBillingCheckoutUrl,
+  fetchVelaBillingCatalog,
   fetchVelaBillingSummary,
   fetchVelaWorkspaceBillingProjection,
   isVelaWorkspaceAuthorizationError,
@@ -3402,6 +3407,7 @@ export async function startServer({
       return verifyWorkspaceRequestContext({
         ...input,
         fetchWorkspaceDirectory: fetchDirectory,
+        configuredEnv: configuredAmrEnv(),
       });
     }
     // Local/dev has no signed membership directory. Its explicit request
@@ -3446,7 +3452,7 @@ export async function startServer({
         role: claimed.role,
         memberStatus: claimed.memberStatus,
         lifecycleState: claimed.lifecycleState,
-      }),
+      }, configuredAmrEnv()),
     };
   };
   const verifyWorkspaceReadAuthority = (req: unknown) =>
@@ -3460,6 +3466,7 @@ export async function startServer({
           // A miss is intentionally returned as unavailable. The project gate
           // then falls through to the existing fresh authority verifier.
           fetchWorkspaceDirectory: workspaceDirectoryAuthority.cached,
+          configuredEnv: configuredAmrEnv(),
         })
       : undefined;
   const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
@@ -3501,7 +3508,9 @@ export async function startServer({
         && item.memberStatus === 'active'
         && item.lifecycleState === 'active',
     );
-    return membership ? workspaceContextFromDirectoryItem(membership) : null;
+    return membership
+      ? workspaceContextFromDirectoryItem(membership, configuredAmrEnv())
+      : null;
   };
   const teamResourceVersions = createTeamResourceVersionStore(RUNTIME_DATA_DIR);
   const teamProjectContentResourceId = (
@@ -3626,6 +3635,7 @@ export async function startServer({
   // verify the exact Workspace/member carried by each request.
   const workspaceContext = withLastKnownWorkspaceContext(
     createWorkspaceContextProviderFromEnv(process.env, {
+      configuredEnv: configuredAmrEnv,
       getActiveWorkspaceId: () => activeWorkspace.get(),
       setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
       // Only called after the membership directory CONFIRMS the pinned
@@ -3709,7 +3719,7 @@ export async function startServer({
       if (cached) {
         return {
           ok: true as const,
-          context: workspaceContextFromDirectoryItem(cached),
+          context: workspaceContextFromDirectoryItem(cached, configuredAmrEnv()),
         };
       }
     }
@@ -3727,6 +3737,7 @@ export async function startServer({
     ...(fetchProjectCreationWorkspaceDirectory
       ? { fetchWorkspaceDirectory: fetchProjectCreationWorkspaceDirectory }
       : {}),
+    configuredEnv: configuredAmrEnv,
   });
   function persistWorkspaceProjectSyncState(
     projectId: string,
@@ -3949,7 +3960,9 @@ export async function startServer({
         && item.memberStatus === 'active'
         && item.lifecycleState !== 'deleted',
     );
-    return membership ? workspaceContextFromDirectoryItem(membership) : null;
+    return membership
+      ? workspaceContextFromDirectoryItem(membership, configuredAmrEnv())
+      : null;
   };
 
   // Uncached remote catalog authority for both comment relay delivery and the
@@ -5170,7 +5183,7 @@ export async function startServer({
       readVelaControlApiContext,
       configuredAmrEnv(),
     ),
-    fetch: () => fetchVelaBillingSummary(),
+    fetch: () => fetchVelaBillingSummary({ configuredEnv: configuredAmrEnv() }),
   });
   const workspaceBillingRuntime = createWorkspaceBillingRuntimeCoordinator({
     fetchProjection: async ({ workspaceId }) => {
@@ -5178,7 +5191,9 @@ export async function startServer({
         // The Vela CLI sends only the Bearer credential plus workspace-id
         // candidate. Vela re-derives the member principal server-side, and
         // the runtime validates the returned member id before accepting it.
-        return await fetchVelaWorkspaceBillingProjection(workspaceId);
+        return await fetchVelaWorkspaceBillingProjection(workspaceId, {
+          configuredEnv: configuredAmrEnv(),
+        });
       } catch (error) {
         if (isVelaWorkspaceAuthorizationError(error)) {
           throw new WorkspaceBillingAccessRevokedError();
@@ -5248,6 +5263,7 @@ export async function startServer({
   let workspaceAnalyticsService: AnalyticsService | null = null;
   registerCollabContextRoutes(app, {
     workspaceContext: collab.workspaceContext,
+    configuredEnv: configuredAmrEnv,
     verifyWorkspaceReadAuthority: verifyWorkspaceContextReadAuthority,
     readCachedWorkspaceAuthority: cachedWorkspaceContextForRequest,
     activeWorkspace,
@@ -5257,6 +5273,13 @@ export async function startServer({
     onWorkspaceSwitched: (workspaceId) => warmWorkspaceDigestFaces(workspaceId),
     fetchBilling: accountBillingSummary.read,
     billingRuntime: workspaceBillingRuntime,
+    fetchBillingCatalog: (workspaceId) => fetchVelaBillingCatalog(workspaceId, {
+      configuredEnv: configuredAmrEnv(),
+    }),
+    startCheckout: (input) => fetchBillingCheckoutUrl({
+      ...input,
+      configuredEnv: configuredAmrEnv(),
+    }),
     // Same directory read the route would have made on its own, wrapped so every
     // workspace type it carries is memoized for the team-share invariant.
     listWorkspaceDirectory,
@@ -7620,7 +7643,7 @@ export async function startServer({
         );
         return null;
       }
-      authority = workspaceContextFromDirectoryItem(item);
+      authority = workspaceContextFromDirectoryItem(item, configuredAmrEnv());
     } else {
       authority = workspaceContextFromDirectoryItem({
         workspaceId: binding.workspaceId,
@@ -7631,7 +7654,7 @@ export async function startServer({
         role: 'owner',
         memberStatus: 'active',
         lifecycleState: 'active',
-      });
+      }, configuredAmrEnv());
     }
     const scopedAuthorize = createAuthorizeProjectRequest({
       db,
@@ -7957,6 +7980,7 @@ export async function startServer({
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
     fetchWorkspaceDirectory,
+    configuredEnv: configuredAmrEnv,
     fetchProjectCreationWorkspaceDirectory,
     createWorkspaceOwnedDesignSystem: createWorkspaceOwnedDesignSystemForContext,
     pluginScope: {
@@ -10398,6 +10422,10 @@ export async function startServer({
     if (typeof clientRequestId === 'string' && clientRequestId)
       run.clientRequestId = clientRequestId;
     if (typeof agentId === 'string' && agentId) run.agentId = agentId;
+    const finishRun = (status, code = null, signal = null) => {
+      finalizeRunMessageEvents(db, run);
+      return design.runs.finish(run, status, code, signal);
+    };
     // Freeze the billing address once, before the first asynchronous setup
     // step. HTTP-created runs already carry the scope captured by the request
     // authorization transaction. Internal runs pin here. Retries reuse the
@@ -11051,6 +11079,7 @@ export async function startServer({
         artifactCount: runArtifactCountForRun(run),
         designSystemCreated: runDesignSystemCreatedForRun(run),
         previewModuleCount: runPreviewModuleCountForRun(run),
+        filesWritten: runFilesWrittenForRun(run),
       });
       let outcome;
       if (!artifactBaseline || artifactBaseline.contended) {
@@ -11067,6 +11096,7 @@ export async function startServer({
             artifactsModified: diff.modified,
             designSystemCreated: diff.designSystemCreated,
             previewModuleCount: diff.previewModuleCount,
+            filesWritten: diff.filesWritten,
             projectRoot: artifactBaseline.cwd,
             diff,
           };
@@ -11957,11 +11987,12 @@ export async function startServer({
           reason_code: thresholdSignal,
         });
       }
-      const finished = design.runs.finish(run, status, code, signal);
+      const finished = finishRun(status, code, signal);
       return finished;
     };
     const finishWithRetryDecision = (status, code = null, signal = null) => {
       lifecycle.mark('finalize_start');
+      flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
       // attempt. Runtime fatal/stream signals are only known in the close
       // handler, and the retry classifier reads this diagnostic to distinguish
@@ -13656,7 +13687,7 @@ export async function startServer({
           if (run.cancelRequested) {
             finishStrategyAwarePhysicalRun('canceled', 1, null);
           } else if (succeeded) {
-            design.runs.finish(run, 'succeeded', 0, null);
+            finishRun('succeeded', 0, null);
           } else {
             finishStrategyAwarePhysicalRun('failed', 1, null);
           }

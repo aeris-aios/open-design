@@ -359,7 +359,7 @@ export interface ReportRunOpts {
   fetchImpl?: typeof fetch;
   /** App-config AMR env used only when resolving the completed-run Vela sink. */
   configuredEnv?: Record<string, string>;
-  /** Keep object-authority registration anonymous and content-free. */
+  /** Emit only the content-free object-authority trace projection. */
   deliveryPurpose?: 'final' | 'object-registration';
   /** Stable identity persisted before crossing the final delivery boundary. */
   deliveryIdempotencyKey?: string;
@@ -2205,12 +2205,12 @@ function asVelaSourceEvents(batch: unknown[]): VelaSourceEvent[] {
 }
 
 function stableVelaEventId(event: VelaSourceEvent): string {
-  const bodyId =
-    typeof event.body.id === 'string' && event.body.id.trim()
-      ? event.body.id.trim()
-      : JSON.stringify(event.body);
+  // Retries and deterministic rebuilds of the same event keep one id, while
+  // a later upsert of the same trace/observation with richer data gets a new
+  // ingestion id and cannot be mistaken for the earlier registration event.
+  const canonicalBody = JSON.stringify(event.body);
   return `od-${createHash('sha256')
-    .update(`${event.type}\n${bodyId}`, 'utf8')
+    .update(`${event.type}\n${canonicalBody}`, 'utf8')
     .digest('hex')}`;
 }
 
@@ -2660,6 +2660,13 @@ async function exportLegacyLangfuseRun(
   if (config.kind === 'vela') {
     const installationId = ctx.installationId?.trim() ?? '';
     if (!installationId) {
+      if (opts.deliveryPurpose === 'object-registration') {
+        return {
+          langfuse_expected: true,
+          langfuse_delivery_status: 'failed',
+          langfuse_drop_reason: 'missing_sink_config',
+        };
+      }
       const fallback = readTelemetrySinkConfig();
       if (!fallback) {
         return withDeliveryDiagnostics({
@@ -2679,6 +2686,7 @@ async function exportLegacyLangfuseRun(
         : await postLangfuseBatch(fallback, batch, fetchImpl, onAttempt);
     } else {
       delivery = await postVelaBatch(config, batch, installationId, fetchImpl, {
+        allowAnonymousAuthFallback: opts.deliveryPurpose !== 'object-registration',
         ...(deliveryIdempotencyKey ? { deliveryIdempotencyKey } : {}),
         onAttempt,
       });

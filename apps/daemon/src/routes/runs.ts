@@ -165,6 +165,8 @@ import {
   BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
 } from '../runtimes/byok-opencode.js';
 import { resolveChatRunInactivityTimeoutMs } from '../runtimes/chat-run-lifecycle.js';
+import { runMessageEventPersistenceAnalytics } from '../runtimes/chat-run-messages.js';
+import { TERMINAL_RUN_STATUSES } from '../runtimes/runs.js';
 import {
   deriveActivationMilestones,
   runAskedUserQuestion,
@@ -177,6 +179,7 @@ import {
 import {
   runArtifactCountForRun,
   runDesignSystemCreatedForRun,
+  runFilesWrittenForRun,
   runPreviewModuleCountForRun,
 } from '../runtimes/run-lifecycle-analytics.js';
 import {
@@ -403,6 +406,7 @@ interface ChatRun {
     artifactsModified?: number;
     designSystemCreated: boolean;
     previewModuleCount: number;
+    filesWritten?: number;
     diff?: RunArtifactDiff;
   };
   artifactPaths?: string[];
@@ -3297,11 +3301,13 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           runDesignSystemCreatedForRun(run);
         const toolStreamPreviewModuleCount = (): number =>
           runPreviewModuleCountForRun(run);
+        const toolStreamFilesWritten = (): number => runFilesWrittenForRun(run);
         let artifactCount: number;
         let artifactsCreated: number | undefined;
         let artifactsModified: number | undefined;
         let designSystemCreated: boolean;
         let previewModuleCount: number;
+        let filesWritten: number | undefined;
         let artifactDiff: RunArtifactDiff | undefined;
         const artifactOutcome = run.artifactOutcome;
         if (artifactOutcome) {
@@ -3310,6 +3316,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           artifactsModified = artifactOutcome.artifactsModified;
           designSystemCreated = artifactOutcome.designSystemCreated;
           previewModuleCount = artifactOutcome.previewModuleCount;
+          filesWritten = artifactOutcome.filesWritten;
           artifactDiff = artifactOutcome.diff;
         } else {
           const artifactBaseline = runArtifactBaselines.take(run.id);
@@ -3330,15 +3337,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
               artifactsModified = diff.modified;
               designSystemCreated = diff.designSystemCreated;
               previewModuleCount = diff.previewModuleCount;
+              filesWritten = diff.filesWritten;
             } else {
               artifactCount = toolStreamArtifactCount();
               designSystemCreated = toolStreamDesignSystemCreated();
               previewModuleCount = toolStreamPreviewModuleCount();
+              filesWritten = toolStreamFilesWritten();
             }
           } else {
             artifactCount = toolStreamArtifactCount();
             designSystemCreated = toolStreamDesignSystemCreated();
             previewModuleCount = toolStreamPreviewModuleCount();
+            filesWritten = toolStreamFilesWritten();
           }
         }
         const touchedArtifactPaths = runTouchedArtifactPaths(run);
@@ -3441,6 +3451,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
               : {}),
             ...(artifactsCreated !== undefined ? { artifacts_created: artifactsCreated } : {}),
             ...(artifactsModified !== undefined ? { artifacts_modified: artifactsModified } : {}),
+            ...(filesWritten !== undefined ? { files_written_count: filesWritten } : {}),
             asked_user_question: clarificationRequested,
             retry_attempt_count: run.retryAttemptCount ?? 0,
             retry_final_result: run.retryFinalResult ?? 'not_attempted',
@@ -3539,6 +3550,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             tool_error_count: toolAnalytics.tool_error_count,
             tool_name_count: toolAnalytics.tool_name_count,
             tool_names: toolAnalytics.tool_names_csv,
+            ...runMessageEventPersistenceAnalytics(run),
           };
         Object.assign(
           finishedProperties,

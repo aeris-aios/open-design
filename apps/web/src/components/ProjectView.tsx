@@ -1871,8 +1871,8 @@ export function ProjectView({
   // preflight context; they must never fall through to the Personal wallet.
   const projectRunPreflightContext =
     projectRunBillingContext ?? projectRunWorkspaceContext;
-  const projectRunRequiresWorkspaceScope =
-    config.mode === 'daemon' && config.agentId === 'amr';
+  const cloudModelSelected = config.mode === 'daemon' && config.agentId === 'amr';
+  const projectRunRequiresWorkspaceScope = cloudModelSelected;
   // An Open Design Cloud run needs a wallet, and the ONLY client-side veto is
   // "there is no billing principal at all". Either witness suffices: the
   // caller's own cloud identity, or a project scope that already names an
@@ -7140,7 +7140,10 @@ export function ProjectView({
       };
       const pushEvent = (ev: AgentEvent) => {
         textBuffer.flush();
-        updateAssistant((prev) => ({ ...prev, events: [...(prev.events ?? []), ev] }));
+        updateAssistant((prev) => ({
+          ...prev,
+          events: appendCoalescedAgentEvent(prev.events ?? [], ev),
+        }));
         if (ev.kind === 'live_artifact') {
           setLiveArtifactEvents((prev) => appendLiveArtifactEventItem(prev, ev));
           void refreshLiveArtifacts().then(() => {
@@ -7337,6 +7340,7 @@ export function ProjectView({
             return;
           }
           if (ev.kind === 'text') textBuffer.appendTextEvent(ev.text);
+          else if (ev.kind === 'thinking') textBuffer.appendEvent(ev);
           else pushEvent(ev);
         },
         onToolInputDelta: (id: string, name: string, delta: string) => {
@@ -8317,11 +8321,7 @@ export function ProjectView({
       commentAttachments: ChatCommentAttachment[],
       meta?: ChatSendMeta,
     ): Promise<ChatSendOutcome> => {
-      if (
-        activeConversationId
-        && config.mode === 'daemon'
-        && config.agentId === 'amr'
-      ) {
+      if (activeConversationId && cloudModelSelected) {
         const decision = await requestAmrArtifactUpgrade({
           projectId: project.id,
           conversationId: activeConversationId,
@@ -8331,7 +8331,7 @@ export function ProjectView({
       }
       void handleSend(prompt, attachments, commentAttachments, meta);
     },
-    [activeConversationId, config.agentId, config.mode, handleSend, project.id],
+    [activeConversationId, cloudModelSelected, handleSend, project.id],
   );
 
   // Cancel every in-flight run for the current conversation (the user's own
@@ -12629,6 +12629,7 @@ export function createBufferedTextUpdates({
 }) {
   let pendingContentDelta = '';
   let pendingTextEventDelta = '';
+  let pendingThinkingEventDelta = '';
   let flushFrame: number | null = null;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
@@ -12655,27 +12656,36 @@ export function createBufferedTextUpdates({
       return;
     }
     cancelScheduledFlush();
-    if (!pendingContentDelta && !pendingTextEventDelta && !needsFlush) return;
+    if (
+      !pendingContentDelta
+      && !pendingTextEventDelta
+      && !pendingThinkingEventDelta
+      && !needsFlush
+    ) return;
     flushing = true;
     needsFlush = false;
     const contentDelta = pendingContentDelta;
     const textEventDelta = pendingTextEventDelta;
+    const thinkingEventDelta = pendingThinkingEventDelta;
     pendingContentDelta = '';
     pendingTextEventDelta = '';
+    pendingThinkingEventDelta = '';
     try {
       updateMessage((prev) => ({
         ...prev,
         content: prev.content + contentDelta,
-        events: textEventDelta
-          ? [...(prev.events ?? []), { kind: 'text', text: textEventDelta }]
-          : prev.events,
+        events: appendBufferedAgentDeltas(
+          prev.events ?? [],
+          textEventDelta,
+          thinkingEventDelta,
+        ),
       }));
       persistSoon();
       if (contentDelta) onContentDelta?.(contentDelta);
     } finally {
       flushing = false;
     }
-    if (pendingContentDelta || pendingTextEventDelta || needsFlush) {
+    if (pendingContentDelta || pendingTextEventDelta || pendingThinkingEventDelta || needsFlush) {
       needsFlush = false;
       scheduleFlush();
     }
@@ -12702,6 +12712,7 @@ export function createBufferedTextUpdates({
 
   const appendTextEvent = (delta: string) => {
     if (disposed) return;
+    if (pendingThinkingEventDelta) flush();
     pendingTextEventDelta += delta;
     needsFlush = true;
     scheduleFlush();
@@ -12713,8 +12724,18 @@ export function createBufferedTextUpdates({
       appendTextEvent(ev.text);
       return;
     }
+    if (ev.kind === 'thinking') {
+      if (pendingTextEventDelta) flush();
+      pendingThinkingEventDelta += ev.text;
+      needsFlush = true;
+      scheduleFlush();
+      return;
+    }
     flush();
-    updateMessage((prev) => ({ ...prev, events: [...(prev.events ?? []), ev] }));
+    updateMessage((prev) => ({
+      ...prev,
+      events: appendCoalescedAgentEvent(prev.events ?? [], ev),
+    }));
     persistSoon();
   };
 
@@ -12723,6 +12744,7 @@ export function createBufferedTextUpdates({
     cancelScheduledFlush();
     pendingContentDelta = '';
     pendingTextEventDelta = '';
+    pendingThinkingEventDelta = '';
     needsFlush = false;
     if (hasDocument) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -12758,4 +12780,31 @@ export function createBufferedTextUpdates({
   const hasPendingText = () => pendingTextEventDelta.length > 0;
 
   return { appendContent, appendTextEvent, appendEvent, flush, cancel, hasPendingText };
+}
+
+function appendCoalescedAgentEvent(events: AgentEvent[], event: AgentEvent): AgentEvent[] {
+  const last = events[events.length - 1];
+  if (
+    (event.kind === 'text' || event.kind === 'thinking')
+    && last?.kind === event.kind
+  ) {
+    return [
+      ...events.slice(0, -1),
+      { ...last, text: last.text + event.text },
+    ];
+  }
+  return [...events, event];
+}
+
+function appendBufferedAgentDeltas(
+  events: AgentEvent[],
+  textDelta: string,
+  thinkingDelta: string,
+): AgentEvent[] {
+  let next = events;
+  if (textDelta) next = appendCoalescedAgentEvent(next, { kind: 'text', text: textDelta });
+  if (thinkingDelta) {
+    next = appendCoalescedAgentEvent(next, { kind: 'thinking', text: thinkingDelta });
+  }
+  return next;
 }
