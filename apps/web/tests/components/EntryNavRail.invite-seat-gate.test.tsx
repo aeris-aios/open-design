@@ -155,8 +155,9 @@ describe('EntryNavRail workspace-switcher invite target (recvqgbyLNk4eE)', () =>
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('treats the directory-derived zero/zero seat sentinel as unknown', () => {
+  it('lets the invite API resolve the directory-derived zero/zero seat sentinel', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const fetchSpy = vi.mocked(globalThis.fetch);
     const context = teamContext(3);
     renderRail({
       ...context,
@@ -171,7 +172,18 @@ describe('EntryNavRail workspace-switcher invite target (recvqgbyLNk4eE)', () =>
     fireEvent.click(screen.getByTestId('workspace-switcher'));
     fireEvent.click(menu().getByRole('menuitem', { name: /邀请同事/ }));
 
-    expect(screen.getByRole('dialog')).toBeTruthy();
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getAllByRole('textbox')[0]!, {
+      target: { value: 'teammate@example.com' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /确认并邀请/ }));
+
+    await vi.waitFor(() => {
+      expect(fetchSpy.mock.calls.some(([url, init]) => (
+        String(url) === '/api/workspace/invite'
+        && (init as RequestInit | undefined)?.method === 'POST'
+      ))).toBe(true);
+    });
     expect(openSpy).not.toHaveBeenCalled();
   });
 
