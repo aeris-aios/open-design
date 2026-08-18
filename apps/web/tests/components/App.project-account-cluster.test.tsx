@@ -359,4 +359,19 @@ describe('project route — floating account cluster', () => {
       expect(screen.queryByTestId('entry-nav-account')).toBeNull();
     });
   });
+
+  it('keeps the project mounted and shows recovery status during a transient authority outage', async () => {
+    useProjectRouteWorkspaceContextMock.mockReturnValue({
+      context: PROJECT_WORKSPACE_CONTEXT,
+      loading: false,
+      failure: 'unavailable',
+      retry: vi.fn(),
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText('Project view')).toBeTruthy();
+    expect(screen.getByTestId('project-workspace-recovery-tip')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
 });

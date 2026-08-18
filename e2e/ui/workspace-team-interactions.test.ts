@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Page, Route } from '@playwright/test';
 
 import { expect, test } from '@/playwright/suite';
@@ -112,6 +113,7 @@ type WorkspaceMocks = {
   activeWorkspaceId: () => string;
   setCurrent: (workspace: WorkspaceFixture) => void;
   setBalance: (balanceUsd: string) => void;
+  setDirectoryUnavailable: (unavailable: boolean) => void;
 };
 
 type WorkspaceProjectMove = {
@@ -1465,6 +1467,68 @@ test('[P0] successful first-open materialization opens one read-only local mirro
   await expect.poll(() => pullAttempts).toBe(1);
 });
 
+test('[P0] an open Team project stays usable while Workspace authority retries a 503', async ({
+  page,
+}) => {
+  // The ambient shell has already switched to B while this still-open project
+  // remains bound to A. That mismatch is what makes the project route own an
+  // independent directory revalidation instead of borrowing ambient context.
+  await pinWindowWorkspace(page, TEAM_SECOND);
+  const workspaceMocks = await wireWorkspaceMocks(
+    page,
+    TEAM_SECOND,
+    [TEAM_OWNER, TEAM_SECOND],
+  );
+
+  const projectId = randomUUID();
+  const created = await page.request.post('/api/projects', {
+    headers: {
+      'x-od-workspace-id': TEAM_OWNER.workspaceId,
+      'x-od-workspace-type': TEAM_OWNER.workspaceType,
+      'x-od-workspace-member-id': TEAM_OWNER.workspaceMemberId,
+      'x-od-workspace-role': TEAM_OWNER.role,
+      'x-od-workspace-member-status': TEAM_OWNER.memberStatus,
+      'x-od-workspace-lifecycle-state': TEAM_OWNER.lifecycleState,
+      'x-od-workspace-can-share-projects': 'true',
+      'x-od-workspace-can-write-synced-files': 'true',
+    },
+    data: {
+      id: projectId,
+      name: 'Workspace authority continuity',
+      designSystemId: null,
+      skillId: null,
+      metadata: { kind: 'prototype' },
+      pendingPrompt: null,
+    },
+  });
+  expect(created.ok()).toBe(true);
+
+  await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('file-workspace')).toBeVisible({ timeout: T.long });
+
+  workspaceMocks.setDirectoryUnavailable(true);
+  const failedRevalidation = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === 'GET'
+      && url.pathname === '/api/workspace/directory'
+      && response.status() === 503;
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+
+  await failedRevalidation;
+  await expect(page.getByTestId('project-workspace-recovery-tip')).toBeVisible();
+  await expect(page.getByTestId('file-workspace')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+
+  workspaceMocks.setDirectoryUnavailable(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+
+  await expect(page.getByTestId('project-workspace-recovery-tip')).toHaveCount(0, {
+    timeout: T.long,
+  });
+  await expect(page.getByTestId('file-workspace')).toBeVisible();
+});
+
 function workspace(
   input: Pick<
     WorkspaceFixture,
@@ -1506,6 +1570,7 @@ async function wireWorkspaceMocks(
 ): Promise<WorkspaceMocks> {
   let current = initial;
   let balanceUsd = '0.00';
+  let directoryUnavailable = false;
   const activeBodies: WorkspaceMocks['activeBodies'] = [];
   const inviteBodies: WorkspaceMocks['inviteBodies'] = [];
 
@@ -1548,6 +1613,13 @@ async function wireWorkspaceMocks(
       return;
     }
     if (pathname === '/api/workspace/directory' && method === 'GET') {
+      if (directoryUnavailable) {
+        await route.fulfill({
+          status: 503,
+          json: { error: 'workspace authority temporarily unavailable' },
+        });
+        return;
+      }
       await route.fulfill({
         json: {
           items: directory.map(directoryItem),
@@ -1627,6 +1699,9 @@ async function wireWorkspaceMocks(
     },
     setBalance: (nextBalanceUsd) => {
       balanceUsd = nextBalanceUsd;
+    },
+    setDirectoryUnavailable: (unavailable) => {
+      directoryUnavailable = unavailable;
     },
   };
 }

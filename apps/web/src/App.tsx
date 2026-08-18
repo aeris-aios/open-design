@@ -66,6 +66,7 @@ import {
   WorkspaceTabsBar,
 } from './components/WorkspaceTabsBar';
 import { WorkspaceTopRightAccountCluster } from './components/EntryNavRail';
+import { ProjectWorkspaceRecoveryTip } from './components/ProjectWorkspaceRecoveryTip';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -5072,7 +5073,14 @@ function AppInner() {
           </div>
         </div>
       );
-    } else if (activeProject && projectRouteWorkspaceContext.failure) {
+    } else if (
+      activeProject
+      && projectRouteWorkspaceContext.failure
+      && (
+        projectRouteWorkspaceContext.failure === 'forbidden'
+        || activeProjectWorkspaceContext === null
+      )
+    ) {
       appMain = (
         <div className="entry-shell entry-shell--no-header">
           <div className="centered-loader">
@@ -5312,6 +5320,11 @@ function AppInner() {
                 : undefined
             }
           />
+        ) : null}
+        {route.kind === 'project'
+          && activeProjectWorkspaceContext
+          && projectRouteWorkspaceContext.failure === 'unavailable' ? (
+          <ProjectWorkspaceRecoveryTip />
         ) : null}
         <div className="workspace-shell__body">
           {appMain}
