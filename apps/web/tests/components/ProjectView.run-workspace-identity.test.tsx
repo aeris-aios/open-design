@@ -646,7 +646,7 @@ describe('a Home auto-send identifies its caller before the project scope resolv
     expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
   });
 
-  it('keeps a cold Home run attached while workspace authority refreshes', async () => {
+  it('keeps a cold Home run attached when an empty authority refresh settles after stream events', async () => {
     const activeStream = deferred<void>();
     let runOptions: Parameters<typeof streamViaDaemon>[0] | undefined;
     mockedStreamViaDaemon.mockImplementation((options) => {
@@ -688,11 +688,6 @@ describe('a Home auto-send identifies its caller before the project scope resolv
     });
 
     await waitFor(() => expect(mockedListMessages).toHaveBeenCalledTimes(2));
-    await act(async () => {
-      authorityReload.resolve([]);
-      await authorityReload.promise;
-    });
-
     const expectedOutput = 'The first packaged run is still live.';
     await act(async () => {
       runOptions?.onRunCreated?.('run-first-home');
@@ -718,6 +713,92 @@ describe('a Home auto-send identifies its caller before the project scope resolv
         }),
       ]);
     });
+
+    await act(async () => {
+      authorityReload.resolve([]);
+      await authorityReload.promise;
+    });
+
+    expect(chatPaneSpy.mock.calls.at(-1)?.[0].messages).toEqual([
+      expect.objectContaining({ role: 'user', content: SEED_PROMPT }),
+      expect.objectContaining({
+        role: 'assistant',
+        runId: 'run-first-home',
+        events: expect.arrayContaining([
+          expect.objectContaining({ kind: 'text', text: expectedOutput }),
+        ]),
+      }),
+    ]);
+
+    activeStream.resolve();
+  });
+
+  it('keeps a terminal cold Home run attached when the empty refresh outlives its controller', async () => {
+    const activeStream = deferred<void>();
+    let runOptions: Parameters<typeof streamViaDaemon>[0] | undefined;
+    mockedStreamViaDaemon.mockImplementation((options) => {
+      runOptions = options;
+      return activeStream.promise;
+    });
+
+    const view = renderProjectView();
+    await waitFor(() => expect(runOptions).toBeDefined());
+
+    const authorityReload = deferred<ChatMessage[]>();
+    mockedListMessages.mockReturnValueOnce(authorityReload.promise);
+    workspaceScopeMocks.projectScope = {
+      loading: false,
+      scope: {
+        kind: 'team',
+        projectId: PROJECT_ID,
+        workspaceId: TEAM_WORKSPACE,
+        visibility: 'team',
+        context: {
+          ...CALLER_CONTEXT,
+          role: 'admin',
+          permissions: buildWorkspacePermissions({
+            role: 'admin',
+            lifecycleState: 'active',
+          }),
+        } as WorkspaceCollabContext & { workspaceType: 'team' },
+      },
+    };
+    await act(async () => {
+      view.rerender(projectViewElement());
+    });
+    await waitFor(() => expect(mockedListMessages).toHaveBeenCalledTimes(2));
+
+    const expectedOutput = 'The terminal first run stays visible.';
+    await act(async () => {
+      runOptions?.onRunCreated?.('run-terminal-home');
+      runOptions?.onRunStatus?.('running');
+      runOptions?.handlers.onAgentEvent({ kind: 'text', text: expectedOutput });
+      runOptions?.handlers.onAgentEvent({
+        kind: 'tool_use',
+        id: 'write-terminal-index',
+        name: 'Write',
+        input: { file_path: 'index.html', content: '<main>complete</main>' },
+      });
+      runOptions?.onRunStatus?.('succeeded');
+    });
+
+    await act(async () => {
+      authorityReload.resolve([]);
+      await authorityReload.promise;
+      runOptions?.handlers.onDone('');
+    });
+
+    expect(chatPaneSpy.mock.calls.at(-1)?.[0].messages).toEqual([
+      expect.objectContaining({ role: 'user', content: SEED_PROMPT }),
+      expect.objectContaining({
+        role: 'assistant',
+        runId: 'run-terminal-home',
+        endedAt: expect.any(Number),
+        events: expect.arrayContaining([
+          expect.objectContaining({ kind: 'text', text: expectedOutput }),
+        ]),
+      }),
+    ]);
 
     activeStream.resolve();
   });

@@ -3004,27 +3004,60 @@ export function ProjectView({
     const reloadingCurrentConversation =
       messagesConversationIdRef.current === activeConversationId
       && messagesAuthorityKeyRef.current === projectRunAuthorityKey;
+    const liveReloadMessageIds = new Set<string>();
+    if (
+      messagesConversationIdRef.current === activeConversationId
+      && streamingConversationIdRef.current === activeConversationId
+      && abortRef.current !== null
+      && cancelRef.current !== null
+      && projectResourceAuthorityRef.current !== 'denied'
+    ) {
+      const currentMessages = messagesRef.current;
+      let assistantIndex = -1;
+      for (let index = currentMessages.length - 1; index >= 0; index -= 1) {
+        const message = currentMessages[index];
+        if (message?.role === 'assistant' && isActiveRunStatus(message.runStatus)) {
+          liveReloadMessageIds.add(message.id);
+          assistantIndex = index;
+          break;
+        }
+      }
+      for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+        const message = currentMessages[index];
+        if (message?.role !== 'user') continue;
+        liveReloadMessageIds.add(message.id);
+        break;
+      }
+    }
+    const preservingLiveConversation = liveReloadMessageIds.size > 0;
     // Reset the initialized flag so auto-send waits for this authoritative DB
     // read to settle before checking messages.length. A same-conversation
-    // authority refresh keeps the prior transcript visible, but invalidates
-    // its initialized state until the refresh succeeds.
+    // authority refresh keeps the prior transcript visible. An authority-key
+    // handoff keeps only the live turn, so its pending read cannot detach the
+    // stream or later replace those rows with an empty snapshot.
     setMessagesInitialized(false);
     let cancelled = false;
     const requestWorkspaceContext = projectRunWorkspaceContextRef.current;
-    setMessagesConversationId(null);
     setFailedMessagesConversationId(null);
-    setStreaming(false);
-    streamingConversationIdRef.current = null;
-    setStreamingConversationId(null);
+    if (!preservingLiveConversation) {
+      setMessagesConversationId(null);
+      setStreaming(false);
+      streamingConversationIdRef.current = null;
+      setStreamingConversationId(null);
+    }
     if (!reloadingCurrentConversation) {
-      setMessages([]);
+      setMessages((current) =>
+        preservingLiveConversation
+          ? current.filter((message) => liveReloadMessageIds.has(message.id))
+          : [],
+      );
       commitPreviewComments([]);
       setAttachedComments([]);
       setArtifact(null);
       savedArtifactRef.current = null;
     }
     const commentsGeneration = previewCommentsGenerationRef.current;
-    if (!reloadingCurrentConversation) {
+    if (!reloadingCurrentConversation && !preservingLiveConversation) {
       messagesConversationIdRef.current = null;
       messagesAuthorityKeyRef.current = null;
     }
@@ -3052,7 +3085,14 @@ export function ProjectView({
           requestWorkspaceContext,
         );
         if (cancelled) return;
-        setMessages(normalizeConversationMessageOrder(list));
+        setMessages((current) =>
+          preservingLiveConversation
+            ? mergeServerMessagesIntoConversation(
+                current.filter((message) => liveReloadMessageIds.has(message.id)),
+                list,
+              )
+            : normalizeConversationMessageOrder(list),
+        );
         setMessagesInitialized(true);
         setAttachedComments([]);
         setArtifact(null);
@@ -3066,16 +3106,22 @@ export function ProjectView({
         if (cancelled) return;
         const message = err instanceof Error ? err.message : 'Could not load messages for this conversation.';
         if (!reloadingCurrentConversation) {
-          setMessages([]);
+          setMessages((current) =>
+            preservingLiveConversation
+              ? current.filter((item) => liveReloadMessageIds.has(item.id))
+              : [],
+          );
           commitPreviewComments([]);
           setAttachedComments([]);
           setArtifact(null);
           savedArtifactRef.current = null;
         }
         setError(message);
-        messagesConversationIdRef.current = null;
-        messagesAuthorityKeyRef.current = null;
-        setMessagesConversationId(null);
+        if (!preservingLiveConversation) {
+          messagesConversationIdRef.current = null;
+          messagesAuthorityKeyRef.current = null;
+          setMessagesConversationId(null);
+        }
         setFailedMessagesConversationId(activeConversationId);
       }
     })();
