@@ -1183,9 +1183,8 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
         // Falls back to the server-rendered releases-page href when detection or
         // the API fails.
         const enhanceDownloadCta = () => {
-          // `[data-download-page]` CTAs (e.g. the nav "Download" button) must
-          // keep their server-rendered href to the /download/ page — only the
-          // direct-download CTAs (hero) are rewritten to the release asset.
+          // Page-only CTAs can opt out with `[data-download-page]`; the shared
+          // nav CTA is now a direct download and intentionally participates.
           const buttons = Array.from(
             document.querySelectorAll('[data-download-cta]:not([data-download-page])'),
           );

@@ -601,7 +601,7 @@ export function Header({
             aria-label={headerCopy.downloadAria}
             title={headerCopy.downloadTitle}
             data-download-cta
-            data-download-page
+            data-direct-download
             data-download-placement='nav'
           >
             {headerCopy.download}
