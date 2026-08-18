@@ -312,6 +312,10 @@
 /* Sizing only — colour, hover and focus come from the shared Button primitive
    so this stays in step with every other primary action in the app. */
 .submit {
+  /* Same push as .skip. Submit replaces Skip in the footer, so without this it
+     collapsed back against the counter and the primary action jumped from the
+     right edge to the left the moment the field opened. */
+  margin-left: auto;
   font-size: var(--font-size-12, 12px);
   padding: 6px 14px;
   border-radius: 999px;
