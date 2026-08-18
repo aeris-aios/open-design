@@ -7469,6 +7469,149 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
+  it('cancels an in-flight srcDoc recovery probe when the viewer unmounts', () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+        />,
+      );
+
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      expect(postMessage.mock.calls.some(
+        ([message]) => (
+          (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe'
+        ),
+      )).toBe(true);
+
+      safetyEventMock.mockClear();
+      unmount();
+      act(() => {
+        vi.runAllTimers();
+      });
+
+      expect(safetyEventMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restarts srcDoc verification after a retained viewer rapidly reactivates', () => {
+    vi.useFakeTimers();
+    try {
+      const renderViewer = (workspaceActive: boolean) => (
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          workspaceActive={workspaceActive}
+        />
+      );
+      const { rerender } = render(renderViewer(true));
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      const probes = () => postMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; generation?: string; probeId?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-ready-probe');
+      expect(probes()).toHaveLength(1);
+
+      safetyEventMock.mockClear();
+      rerender(renderViewer(false));
+      rerender(renderViewer(true));
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+      expect(probes()).toHaveLength(2);
+      const reactivationProbe = probes()[1]!;
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type: 'od:srcdoc-transport-activated',
+            generation: reactivationProbe.generation,
+            probeId: reactivationProbe.probeId,
+            bodyComplete: true,
+          },
+        }));
+        vi.runAllTimers();
+      });
+
+      expect(safetyEventMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels srcDoc verification in Code mode and restarts it on Preview', () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+        />,
+      );
+
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      const probes = () => postMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; generation?: string; probeId?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-ready-probe');
+      expect(probes()).toHaveLength(1);
+
+      safetyEventMock.mockClear();
+      fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(safetyEventMock).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+      const previewFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const previewPostMessage = vi.spyOn(previewFrame.contentWindow!, 'postMessage');
+      const previewProbes = () => previewPostMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; generation?: string; probeId?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-ready-probe');
+      const probeCountBeforeRecoveryCheck = previewProbes().length;
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(previewProbes()).toHaveLength(probeCountBeforeRecoveryCheck + 1);
+      const previewProbe = previewProbes().at(-1)!;
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: previewFrame.contentWindow,
+          data: {
+            type: 'od:srcdoc-transport-activated',
+            generation: previewProbe.generation,
+            probeId: previewProbe.probeId,
+            bodyComplete: true,
+          },
+        }));
+        vi.runAllTimers();
+      });
+
+      expect(safetyEventMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(previewFrame);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves an authored base without minting a project-scoped preview capability', async () => {
     const context = teamWorkspaceContext();
     const authoredBase = '<base href="https://cdn.example/assets/">';
