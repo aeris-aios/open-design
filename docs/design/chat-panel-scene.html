@@ -1163,21 +1163,21 @@ button.att-d:hover { border-color: var(--border-strong); }
 .vmeta { display: block; padding: 7px 9px; }
 .vt { display: flex; align-items: center; gap: 5px; font-size: var(--t-mini); font-weight: 600; color: var(--text-strong); }
 .vopt.is-on .vt { color: var(--brand-text); }
-/* 「推荐」是描边角标,不是实心深块。
+/* 「推荐」用深绿实心 —— 和记忆图标同一个 --brand-text。
    ------------------------------------------------------------
-   推荐和选中是两件独立的事:推荐是 Agent 的建议、点不点都不变;选中是你的选择、
-   会变。所以它不能借绿 —— 两个都用绿就分不清,而推荐项恰好被选中时两层绿叠在
-   一起,标签直接消失。
-   但"不用绿"不等于"用近黑实心":一小块深色压在浅绿卡上,是全场最重的一块,
-   一个【标注】压过了被它标注的东西。改成白底 + 细描边 + 中性字:
-     · 在白底上它是一枚安静的描边角标
-     · 在浅绿的选中卡上,白底反而把它托出来,而且一眼就不是选中色
-   蓝色不能用 —— 这套里 --blue 归 :focus-visible 的焦点圈,占着"焦点"的语义。
-   字号只能是 12(产品阶梯下限,禁止私开 11px),所以退后一档靠的是体量和字重。 */
+   之前是近黑实心:一小块最重的墨压在浅绿卡上,标注压过了被标注的东西。
+   之后试过白底描边,在白卡上安静,但推荐项一旦被选中(卡变浅绿),白药丸就成了
+   卡上唯一的白块,反而更扎眼。
+   深绿是这里唯一两边都成立的解:和选中同一个色系,不再是外来的一块;靠【明度】
+   而不是【色相】跟浅绿的选中态分开 —— 药丸 #0d5400 对白卡 9.2:1、对浅绿选中卡
+   8.7:1,两种底上都读得出。白字压在药丸上 9.2:1。
+   代价:绿在这套里也代表"通过/选中",一枚绿药丸有被读成"这项已选"的风险 ——
+   靠「推荐」两个字本身消歧,而真正的选中信号是单选圈和整张卡的底色,体量大得多。
+   字号只能是 12(产品阶梯下限,禁止私开 11px),退后一档靠体量和字重。 */
 .vrec {
   flex: none; padding: 0 6px; border-radius: var(--radius-pill);
-  background: var(--bg); border: 1px solid var(--border-strong);
-  font-size: var(--t-cap); font-weight: 500; line-height: 1.5; color: var(--text-muted);
+  background: var(--brand-text); border: none;
+  font-size: var(--t-cap); font-weight: 500; line-height: 1.6; color: var(--bg);
 }
 .vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
 
@@ -1277,7 +1277,9 @@ button.att-d:hover { border-color: var(--border-strong); }
    自己的形状。装着终端输出的那张例外 —— 里面是代码,断行位置不该由卡宽决定。 */
 .card:has(.term) { width: auto; }
 /* 生图那条例外:满宽会把缩略图甩到最右边,和标签之间隔着一片空。 */
-.tool:has(.strip) { width: fit-content; max-width: 100%; }
+/* 带缩略图条的那行跟着满宽 —— 它是产物,和上下的折叠行、产物卡同一层,窄着像
+   落单的。缩略图靠右:.tool .nm 默认 flex:1 会吃掉剩余空间,把图顶到行尾,
+   这里正是要这个效果 —— 左边一句"生成了什么",右边是生成的东西本身。 */
 .tool .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool .nm code { font-family: var(--mono); font-size: var(--t-mini); color: var(--text-strong); }
 .tool .ms { flex: none; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
@@ -1518,11 +1520,6 @@ button.att-d:hover { border-color: var(--border-strong); }
    也正因为有它,"停止且无剩余"不需要再单独摆一条通知 —— 这一行就够了。 */
 .fb .fin i { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--brand-text); }
 .fb .fin.mod-stop i { background: var(--text-faint); }
-/* 用等宽数字,不用等宽【字体】。
-   JiduMonoPro 里没有「·」的字形,整段套 mono 之后那个分隔点会渲染成
-   一个豆腐块 —— 实测就是这样。而这里真正需要的只是"数字不跳",
-   font-variant-numeric: tabular-nums 正好只做这件事,标点仍走正文字体。 */
-.fb .fin .cost { margin-inline-start: 5px; font-variant-numeric: tabular-nums; color: var(--text-soft); }
 .fb button {
   display: grid; place-items: center; width: 26px; height: 26px;
   border-radius: var(--radius-sm); color: var(--text-soft);
@@ -1914,7 +1911,7 @@ body { background: var(--bg-subtle); overflow: auto; }
    构件墙里看不出来。Queue 和输入框钉在底部,不随流水滚走。 */
 .panel {
   display: flex; flex-direction: column;
-  height: 1038px;  /* 五屏里最高的那屏(执行中)所需;谁的日志都不用滚,矮的那屏靠 margin-top:auto 贴底 */
+  height: 1042px;  /* 五屏里最高的那屏(执行中)所需;谁的日志都不用滚,矮的那屏靠 margin-top:auto 贴底 */
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--bg); overflow: hidden;
 }
@@ -2138,12 +2135,12 @@ body { background: var(--bg-subtle); overflow: auto; }
         <div class="say">两页都好了,<mark class="sel">商品卡已经抽成共享组件<span class="selbar"><button type="button">添加到对话</button></span></mark>,改一处两页都跟着变。</div>
 
         <div class="fb">
-          <span class="fin"><i></i>已完成<span class="cost">8.4k</span></span><span class="sp"></span>
+          <span class="fin"><i></i>已完成</span>
           <button type="button" aria-label="有帮助" data-tip="有帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 22V11l5-9a2 2 0 012 2v5h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117 21H7z"/></svg></button>
           <button type="button" aria-label="没帮助" data-tip="没帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 2v11l-5 9a2 2 0 01-2-2v-5H5a2 2 0 01-2-2.3l1.4-8A2 2 0 017 3h10z"/></svg></button>
           <button type="button" aria-label="复制" data-tip="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
           <button type="button" aria-label="新开会话" data-tip="新开会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="20" r="3"/><path d="M6 9v3a2 2 0 002 2h8a2 2 0 002-2V9M12 14v3"/></svg></button>
-          <span class="tm">14:32</span>
+          <span class="sp"></span><span class="tm">14:32</span>
         </div>
 
         <div class="nexts">
