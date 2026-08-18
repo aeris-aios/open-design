@@ -106,7 +106,10 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       { id: 'why-design', label: 'Can DeepSeek Harness do design?' },
       { id: 'gui', label: 'Is there a GUI for DeepSeek Harness?' },
       { id: 'setup', label: '1. Install and configure DeepSeek Harness' },
-      { id: 'open-design', label: '2–5. Connect and use it in OpenDesign' },
+      { id: 'open-design', label: '2. Download OpenDesign' },
+      { id: 'detect-harness', label: '3. Detect DeepSeek Harness' },
+      { id: 'connect-profile', label: '4. Connect the OpenDesign profile' },
+      { id: 'first-design-task', label: '5. Start a design task' },
       { id: 'design-workflow', label: 'Run the UI build and review loop' },
       { id: 'plugins', label: 'Make the workflow reusable' },
       { id: 'pitfalls', label: 'Avoid weak visual output' },
@@ -405,32 +408,35 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'open-design',
-        heading: 'Steps 2–5: Connect DeepSeek Harness to OpenDesign',
+        heading: 'Step 2: Download OpenDesign 0.19.1 or later',
         blocks: [
           {
             kind: 'p',
             text: 'Once dsh works locally, the rest happens in OpenDesign. DeepSeek Harness integration is available in OpenDesign 0.19.1 and later.',
           },
           {
-            kind: 'steps',
-            items: [
-              {
-                label: '2 · Download OpenDesign 0.19.1 or later',
-                body: 'Get the current desktop build from the [OpenDesign download page](/download/), install it, and launch the app.',
-              },
-              {
-                label: '3 · Detect DeepSeek Harness',
-                body: 'Open Settings → Models & providers → Local CLI, then choose Rescan. Restart OpenDesign or rescan again if it was already open during installation. The DeepSeek Harness card appears when OpenDesign finds the `dsh` executable from step 1.',
-              },
-              {
-                label: '4 · Connect the OpenDesign profile',
-                body: 'Select the DeepSeek Harness card. If it says “Connection setup required,” confirm “Install and select.” OpenDesign verifies its own component, asks dsh to install it into the `open-design` profile, rescans, and tests the connection.',
-              },
-              {
-                label: '5 · Start a design task',
-                body: 'Confirm the card shows the Harness version and “Synced from CLI,” then click Test. After the test passes, open or create a project, choose DeepSeek Harness and a synced model, and send your design request.',
-              },
-            ],
+            kind: 'p',
+            text: 'Get the current desktop build from the [OpenDesign download page](/download/), install it, and launch the app.',
+          },
+        ],
+      },
+      {
+        id: 'detect-harness',
+        heading: 'Step 3: Detect DeepSeek Harness',
+        blocks: [
+          {
+            kind: 'p',
+            text: 'Open Settings → Models & providers → Local CLI, then choose Rescan. Restart OpenDesign or rescan again if it was already open during installation. The DeepSeek Harness card appears when OpenDesign finds the `dsh` executable from step 1.',
+          },
+        ],
+      },
+      {
+        id: 'connect-profile',
+        heading: 'Step 4: Connect the OpenDesign profile',
+        blocks: [
+          {
+            kind: 'p',
+            text: 'Select the DeepSeek Harness card. If it says “Connection setup required,” confirm “Install and select.” OpenDesign verifies its own component, asks dsh to install it into the `open-design` profile, rescans, and tests the connection.',
           },
           {
             kind: 'image',
@@ -441,6 +447,16 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
           {
             kind: 'p',
             text: 'That completes the connection. The UI and `od agent setup deepseek-harness --json` use the same local setup path; each run starts `dsh --profile open-design --stdio`, while Harness keeps the session identity for later turns.',
+          },
+        ],
+      },
+      {
+        id: 'first-design-task',
+        heading: 'Step 5: Start a design task',
+        blocks: [
+          {
+            kind: 'p',
+            text: 'Confirm the card shows the Harness version and “Synced from CLI,” then click Test. After the test passes, open or create a project, choose DeepSeek Harness and a synced model, and send your design request.',
           },
           {
             kind: 'code',
@@ -601,7 +617,10 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       { id: 'why-design', label: 'DeepSeek Harness 能做设计吗？' },
       { id: 'gui', label: 'DeepSeek Harness 有图形界面吗？' },
       { id: 'setup', label: '1. 安装并配置 DeepSeek Harness' },
-      { id: 'open-design', label: '2–5. 接入 OpenDesign 并开始设计' },
+      { id: 'open-design', label: '2. 下载 OpenDesign' },
+      { id: 'detect-harness', label: '3. 探测 DeepSeek Harness' },
+      { id: 'connect-profile', label: '4. 接入 OpenDesign Profile' },
+      { id: 'first-design-task', label: '5. 开始设计任务' },
       { id: 'design-workflow', label: '执行 UI 构建与验收闭环' },
       { id: 'plugins', label: '把工作流固化下来' },
       { id: 'pitfalls', label: '避免低质量视觉输出' },
@@ -784,18 +803,24 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       },
       {
         id: 'open-design',
-        heading: '第 2–5 步：把 DeepSeek Harness 接入 OpenDesign',
+        heading: '第 2 步：下载 OpenDesign 0.19.1 或更高版本',
         blocks: [
           { kind: 'p', text: 'dsh 在本机正常运行后，剩下的操作都在 OpenDesign 里完成。DeepSeek Harness 接入能力从 OpenDesign 0.19.1 开始提供。' },
-          {
-            kind: 'steps',
-            items: [
-              { label: '2 · 下载 OpenDesign 0.19.1 或更高版本', body: '从 [OpenDesign 下载页](/download/)获取当前桌面版本，完成安装并启动应用。' },
-              { label: '3 · 探测 DeepSeek Harness', body: '进入“设置 → 模型与提供商 → 本机 CLI”，点击“重新扫描”。如果安装时 OpenDesign 已经打开，请重启应用或再次扫描。找到第 1 步安装的 `dsh` 后，就会显示 DeepSeek Harness 卡片。' },
-              { label: '4 · 接入 OpenDesign Profile', body: '选择 DeepSeek Harness 卡片。若显示“需要安装连接组件”，确认“安装并选择”。OpenDesign 会校验自己的组件，通过 dsh 安装到 `open-design` profile，然后重新扫描并测试连接。' },
-              { label: '5 · 开始设计任务', body: '确认卡片显示 Harness 版本和“已从 CLI 同步”，然后点击“测试”。测试通过后，打开或新建项目，选择 DeepSeek Harness 与同步过来的模型，再发送设计需求。' },
-            ],
-          },
+          { kind: 'p', text: '从 [OpenDesign 下载页](/download/)获取当前桌面版本，完成安装并启动应用。' },
+        ],
+      },
+      {
+        id: 'detect-harness',
+        heading: '第 3 步：探测 DeepSeek Harness',
+        blocks: [
+          { kind: 'p', text: '进入“设置 → 模型与提供商 → 本机 CLI”，点击“重新扫描”。如果安装时 OpenDesign 已经打开，请重启应用或再次扫描。找到第 1 步安装的 `dsh` 后，就会显示 DeepSeek Harness 卡片。' },
+        ],
+      },
+      {
+        id: 'connect-profile',
+        heading: '第 4 步：接入 OpenDesign Profile',
+        blocks: [
+          { kind: 'p', text: '选择 DeepSeek Harness 卡片。若显示“需要安装连接组件”，确认“安装并选择”。OpenDesign 会校验自己的组件，通过 dsh 安装到 `open-design` profile，然后重新扫描并测试连接。' },
           {
             kind: 'image',
             src: '/agents/deepseek-harness-design/deepseek-harness-design-open-design-settings.webp',
@@ -803,6 +828,13 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
             caption: '这里是连接成功的检查点：已识别 Harness 版本、显示“已从 CLI 同步”，并且“测试”可以正常通过。',
           },
           { kind: 'p', text: '到这里接入就完成了。界面与 `od agent setup deepseek-harness --json` 使用同一条本地设置路径；每次运行都会启动 `dsh --profile open-design --stdio`，Harness 会保留会话标识供后续轮次继续使用。' },
+        ],
+      },
+      {
+        id: 'first-design-task',
+        heading: '第 5 步：开始设计任务',
+        blocks: [
+          { kind: 'p', text: '确认卡片显示 Harness 版本和“已从 CLI 同步”，然后点击“测试”。测试通过后，打开或新建项目，选择 DeepSeek Harness 与同步过来的模型，再发送设计需求。' },
           {
             kind: 'code',
             lang: 'text',
