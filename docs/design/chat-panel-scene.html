@@ -902,8 +902,10 @@ button.att-d:hover { border-color: var(--border-strong); }
       "为什么这么做",动作行说"于是做了什么"。
    都不需要框,也不需要展开收起:它本来就是几句话,套个可折叠模块等于给一句话
    建了个房子。过程里本来就该有纯文字,不是所有东西都得装进模块。 */
+/* 不挂耗时。这一行只活到第一个字落地为止,给一个马上要消失的状态配一个跳动的
+   秒数,只会把注意力钉在一个从此不再相关的数字上;总耗时最后在回合状态行里有。
+   —— 和重连横幅不做滚动倒计时是同一条。 */
 .thinking-live { display: flex; align-items: center; gap: 7px; font-size: var(--t-mini); color: var(--text-muted); }
-.thinking-live .ms { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
 .think { margin: 0; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); overflow-wrap: anywhere; }
 
 /* 展开时给卡头一条分隔线:它是这张卡的标题,不是列表的第一行。 */
@@ -1996,7 +1998,7 @@ body { background: var(--bg-subtle); overflow: auto; }
 
         <div class="ahead"><svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--agent-claude)" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0v-3.1h3V5h17.998zM6 10.949h1.488V8.102H6zm10.51 0H18V8.102h-1.49z" clip-rule="evenodd"/></svg><span>Claude</span></div>
 
-        <div class="thinking-live"><span class="breath"></span><span class="shimmer">Thinking</span><span class="ms">3s</span></div>
+        <div class="thinking-live"><span class="breath"></span><span class="shimmer">Thinking</span></div>
 
         </div>
         <div class="dock">
