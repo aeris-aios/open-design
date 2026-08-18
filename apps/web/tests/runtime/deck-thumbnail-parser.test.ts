@@ -458,7 +458,7 @@ describe('parseDeckThumbnails', () => {
 
   it('lifts a top-level import with a directly quoted URL', () => {
     const fontHref = 'https://fonts.googleapis.com/css2?family=Inter';
-    const deck = frameworkDeck(1).replace('<style>', `<style>@import "${fontHref}" screen;`);
+    const deck = frameworkDeck(1).replace('<style>', `<style>@import "${fontHref}";`);
 
     const parsed = parseDeckThumbnails(deck);
 
@@ -472,6 +472,38 @@ describe('parseDeckThumbnails', () => {
     ['a non-font import', '@import url("https://cdn.example.com/layout.css");'],
   ])('falls back for %s', (_case, importRule) => {
     const deck = frameworkDeck(1).replace('<style>', `<style>${importRule}`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
+  });
+
+  it.each([
+    ['print media', '@import url("https://fonts.googleapis.com/css2?family=Inter") print;'],
+    [
+      'a true supports condition',
+      '@import url("https://fonts.googleapis.com/css2?family=Inter") supports(display: grid);',
+    ],
+    [
+      'a false supports condition',
+      '@import url("https://fonts.googleapis.com/css2?family=Inter") supports(display: unknown-value);',
+    ],
+    ['a named layer', '@import url("https://fonts.googleapis.com/css2?family=Inter") layer(deck-fonts);'],
+  ])('falls back rather than changing the semantics of %s', (_case, importRule) => {
+    const deck = frameworkDeck(1).replace('<style>', `<style>${importRule}`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
+  });
+
+  it('falls back for an import after a normal rule', () => {
+    const deck = frameworkDeck(1).replace(
+      '</style>',
+      '@import url("https://fonts.googleapis.com/css2?family=Inter");</style>',
+    );
 
     const parsed = parseDeckThumbnails(deck);
 

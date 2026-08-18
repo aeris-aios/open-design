@@ -143,9 +143,8 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
   // and each `var(--slide-bg)` resolves to transparent, painting nothing over
   // the near-black thumbnail host (black thumbnails). Comments are inert, so
   // removing them changes only which selectors the rewrites can see.
-  const styleWithImports = Array.from(doc.querySelectorAll('style'))
-    .map((el) => el.textContent || '')
-    .join('\n');
+  const styleBlocks = Array.from(doc.querySelectorAll('style')).map((el) => el.textContent || '');
+  const styleWithImports = styleBlocks.join('\n');
   if (!styleWithImports.trim()) return unrenderable('no-styles');
 
   // Constructable stylesheets ignore @import, so leaving an approved webfont
@@ -153,12 +152,16 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
   // shadow thumbnail. Lift approved font imports into the host alongside
   // <link> fonts; any other import may contain layout CSS we cannot reproduce
   // safely, so use the isolated iframe fallback instead.
-  const imported = extractStylesheetImports(styleWithImports);
-  if (imported.unsafe) return unrenderable('external-stylesheet');
-  for (const href of imported.fontLinks) {
-    if (!fontLinks.includes(href)) fontLinks.push(href);
+  const importedBlocks = styleBlocks.map(extractStylesheetImports);
+  if (importedBlocks.some((imported) => imported.unsafe)) {
+    return unrenderable('external-stylesheet');
   }
-  const rawStyle = stripCssComments(imported.css);
+  for (const imported of importedBlocks) {
+    for (const href of imported.fontLinks) {
+      if (!fontLinks.includes(href)) fontLinks.push(href);
+    }
+  }
+  const rawStyle = stripCssComments(importedBlocks.map((imported) => imported.css).join('\n'));
   if (!rawStyle.trim()) return unrenderable('no-styles');
 
   const designSize = resolveDesignSize(doc, rawStyle);
@@ -385,6 +388,7 @@ function extractStylesheetImports(css: string): StylesheetImportExtraction {
   let quote: '"' | "'" | null = null;
   let escaped = false;
   let inComment = false;
+  let importPreludeOpen = true;
 
   for (let i = 0; i < css.length; i += 1) {
     const char = css[i]!;
@@ -409,6 +413,7 @@ function extractStylesheetImports(css: string): StylesheetImportExtraction {
     }
     if (char === '"' || char === "'") {
       quote = char;
+      if (braceDepth === 0) importPreludeOpen = false;
       continue;
     }
     if (char === '{') {
@@ -424,10 +429,11 @@ function extractStylesheetImports(css: string): StylesheetImportExtraction {
       css.slice(i, i + '@import'.length).toLowerCase() !== '@import' ||
       isCssIdentifierChar(css[i + '@import'.length])
     ) {
+      if (braceDepth === 0 && !/\s/.test(char)) importPreludeOpen = false;
       continue;
     }
 
-    if (braceDepth !== 0) {
+    if (braceDepth !== 0 || !importPreludeOpen) {
       unsafe = true;
       continue;
     }
@@ -439,7 +445,8 @@ function extractStylesheetImports(css: string): StylesheetImportExtraction {
     const statement = css.slice(i, end);
     const match = CSS_IMPORT_HREF_RE.exec(statement);
     const href = match?.slice(1).find((value): value is string => typeof value === 'string')?.trim() ?? '';
-    if (!href || !isApprovedFontHref(href)) unsafe = true;
+    const condition = match ? statement.slice(match[0].length, -1).trim() : '';
+    if (!href || condition || !isApprovedFontHref(href)) unsafe = true;
     else if (!fontLinks.includes(href)) fontLinks.push(href);
 
     chunks.push(css.slice(chunkStart, i));
