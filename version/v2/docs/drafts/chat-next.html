@@ -2498,13 +2498,20 @@ button.att-d:hover { border-color: var(--border-strong); }
         <div class="cmp-h"><span class="no">7</span><span class="nm">任务进度</span></div>
         <div class="cmp-meta">
           <div><b>出现时机</b> 记住了偏好之后 · 执行任务的全程</div>
-          <div><b>默认状态</b> 收起;输出按任务归组</div>
+          <div><b>默认状态</b> 外面最多两行:「已完成 N 个」(收起) + 当前这一步(展开)</div>
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>执行中 · 当前组展开,已完成的组自动收起</span><i></i></div>
+            <div class="st-l mod-def"><span>执行中 · 跑完的当场并进「已完成 N 个」,外面只留正在跑的这一步</span><i></i></div>
             <div class="st-b">
-              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+              <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 2 个</span><span class="ms">24.6s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                <div class="body mod-stack">
+                  <p class="think">两张图是同一套栅格,先复刻列表页再拿它的商品卡去拼设置页,可以省一半工。</p>
+                  <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
+                  <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
+                  <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>抽出商品卡为共享组件</span><span class="ms">6.4s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary><div class="body">提取样式 · 参数化价格与标签 · 两页各替换一处</div></details>
+                </div>
+              </details>
               <details class="fold" open style="margin-top:6px">
                 <summary><span class="mk is-run"></span><span>按同一套间距做设置页</span><span class="ms">第 3/4 步</span></summary>
                 <div class="body">
@@ -2523,7 +2530,7 @@ button.att-d:hover { border-color: var(--border-strong); }
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
-          <span><b>展开收起</b> — 点任务组标题行。手动展开的组不再自动收起。展示当前任务名、第 n/N 步、耗时。<b>跑完之后整段收成一行</b> —— 过程只在进行中有用:那时人要判断「它在干嘛、还要多久、要不要停」。一旦跑完,该看的是结果(产物、总结、下一步);过程降级成「万一要查」的东西,继续摊在外面就是拿十几行噪音把结果推下屏。<b>耗时留在这一行</b>,不在下面的回合状态行里再写一遍 —— 同一个数字写两遍,第二遍不携带任何信息。<b>展开看到的是当时真的跑了什么</b> —— Thinking、澄清、计划、每个步骤连同它的工具行和耗时,原件搬进来,各自还能再往下展开。<b>不是一行用点隔开的名字</b>:那是目录不是过程,点开等于白点。收起来省的是版面,不是信息。<b>只收「它怎么做的」—— 读文件、跑命令、每步耗时这类事后才偶尔要查的东西。</b>以下四类【永远不折叠】,它们是用户回看时真正要找的:<b>① 产物</b> —— 生成的页面、图、文件,这是这一轮的交付物,折起来等于把成果藏了;<b>② 意图澄清</b> —— 你做的决定。结果要是不对,第一件要翻的就是"我当时选的是什么";<b>③ agent 的文字结论</b> —— 开场白和总结,它说给你听的话;<b>④ 它记住了什么</b> —— 这是"它认得你"的凭据,埋起来等于把这件事悄悄做了,用户永远不知道。再加上反馈行和下一步引导。判断口诀:<b>过程可以折,结论和成果不能折。</b></span>
+          <span><b>展开收起</b> — 点任务组标题行。手动展开的组不再自动收起。展示当前任务名、第 n/N 步、耗时。<b>跑一步、收一步</b> —— 一个步骤结束就【当场】并进「已完成 N 个」那一行,外面永远只有两行:已完成 N 个(收起)+ 正在跑的这一步(展开)。不这么做的话,四步任务外面摊四行,十步摊十行 —— 而跑完的那几行除了把当前进度往下推,不再提供任何东西:它们的状态已经由那个数字概括了。<b>跑完之后整段收成一行</b> —— 过程只在进行中有用:那时人要判断「它在干嘛、还要多久、要不要停」。一旦跑完,该看的是结果(产物、总结、下一步);过程降级成「万一要查」的东西,继续摊在外面就是拿十几行噪音把结果推下屏。<b>耗时留在这一行</b>,不在下面的回合状态行里再写一遍 —— 同一个数字写两遍,第二遍不携带任何信息。<b>展开看到的是当时真的跑了什么</b> —— Thinking、澄清、计划、每个步骤连同它的工具行和耗时,原件搬进来,各自还能再往下展开。<b>不是一行用点隔开的名字</b>:那是目录不是过程,点开等于白点。收起来省的是版面,不是信息。<b>只收「它怎么做的」—— 读文件、跑命令、每步耗时这类事后才偶尔要查的东西。</b>以下四类【永远不折叠】,它们是用户回看时真正要找的:<b>① 产物</b> —— 生成的页面、图、文件,这是这一轮的交付物,折起来等于把成果藏了;<b>② 意图澄清</b> —— 你做的决定。结果要是不对,第一件要翻的就是"我当时选的是什么";<b>③ agent 的文字结论</b> —— 开场白和总结,它说给你听的话;<b>④ 它记住了什么</b> —— 这是"它认得你"的凭据,埋起来等于把这件事悄悄做了,用户永远不知道。再加上反馈行和下一步引导。判断口诀:<b>过程可以折,结论和成果不能折。</b></span>
         </div>
       </article>
 
