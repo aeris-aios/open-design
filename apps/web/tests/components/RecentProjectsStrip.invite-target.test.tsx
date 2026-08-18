@@ -107,13 +107,15 @@ describe('RecentProjectsStrip invite target (recvqgbyLNk4eE)', () => {
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('fails closed while the team seat state is unknown', () => {
+  it('keeps the permission-gated local invite flow while team seats are unknown', () => {
     workspaceState.context = teamContextWithUnknownSeats();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     renderTeamProjects();
 
-    expect(
-      screen.queryByRole('button', { name: /Invite teammates|邀请同事/ }),
-    ).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Invite teammates|邀请同事/ }));
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
   it('hides the invite entry when neither local capacity nor a safe Vela URL exists', () => {
