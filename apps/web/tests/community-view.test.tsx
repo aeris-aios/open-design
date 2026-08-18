@@ -259,6 +259,7 @@ describe('CommunityView catalogue source', () => {
 describe('CommunityView previews', () => {
   it('centres deck media in the 16:9 preview crop while legacy bakes are being replaced', async () => {
     await renderCommunity();
+    fireEvent.click(readFacets().find((facet) => facet.label === 'Slides')!.tab);
 
     expect(renderedCards()[0]!.querySelector('.community-template-card__preview.is-deck'))
       .not.toBeNull();
