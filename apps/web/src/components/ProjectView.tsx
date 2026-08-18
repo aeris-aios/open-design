@@ -1879,6 +1879,8 @@ export function ProjectView({
         : projectRunWorkspaceContext
           ? 'workspace'
           : 'pending';
+  const projectResourceAuthorityRef = useRef(projectResourceAuthority);
+  projectResourceAuthorityRef.current = projectResourceAuthority;
   const projectRunWorkspaceContextRef = useRef(projectRunWorkspaceContext);
   projectRunWorkspaceContextRef.current = projectRunWorkspaceContext;
   // The AMR pre-run balance gate uses the project's resolved scope, or the one
@@ -7042,14 +7044,45 @@ export function ProjectView({
       let streamedText = '';
 
       const updateAssistant = (updater: (prev: ChatMessage) => ChatMessage) => {
-        setMessages((curr) =>
-          curr.map((m) => {
+        setMessages((curr) => {
+          let found = false;
+          const next = curr.map((m) => {
             if (m.id !== assistantId) return m;
+            found = true;
             const updated = updater(m);
             latestAssistantMsg = updated;
             return updated;
-          }),
-        );
+          });
+          if (found) return next;
+
+          // A workspace-authority refresh can reload the same conversation
+          // while POST /runs is retrying. That authoritative read may still
+          // be empty and replace the Home handoff's client-owned user and
+          // assistant placeholders. The stream remains attached, however, so
+          // dropping later deltas here leaves a successful daemon run blank
+          // until a tab switch or reload reads the persisted transcript.
+          //
+          // Restore only the two rows owned by the live controller for the
+          // project and conversation still on screen. A revoked authority is
+          // never allowed to resurrect them, and settled historical messages
+          // keep the existing clear-on-authority-change behavior.
+          if (
+            abortRef.current !== controller
+            || projectIdRef.current !== project.id
+            || activeConversationIdRef.current !== runConversationId
+            || projectResourceAuthorityRef.current === 'denied'
+          ) {
+            return curr;
+          }
+          const updated = updater(latestAssistantMsg);
+          latestAssistantMsg = updated;
+          const userAlreadyPresent = curr.some((message) => message.id === userMsg.id);
+          return [
+            ...curr,
+            ...(userAlreadyPresent ? [] : [userMsg]),
+            updated,
+          ];
+        });
       };
       let persistTimer: ReturnType<typeof setTimeout> | null = null;
       const persistAssistantSoon = () => {
