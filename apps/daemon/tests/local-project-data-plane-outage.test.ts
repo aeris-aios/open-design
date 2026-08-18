@@ -47,6 +47,7 @@ describe('local project data plane during Workspace authority outage', () => {
     const projectId = `local-outage-${randomUUID()}`;
     const mirrorProjectId = `readonly-mirror-outage-${randomUUID()}`;
     const conversationId = `conversation-${randomUUID()}`;
+    const mirrorConversationId = `mirror-conversation-${randomUUID()}`;
     const workspaceId = `workspace-${randomUUID()}`;
     const memberId = `member-${randomUUID()}`;
     const now = Date.now();
@@ -110,6 +111,13 @@ describe('local project data plane during Workspace authority outage', () => {
     insertProject(db, {
       id: mirrorProjectId,
       name: 'Read-only mirror outage fixture',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertConversation(db, {
+      id: mirrorConversationId,
+      projectId: mirrorProjectId,
+      title: 'Shared comments',
       createdAt: now,
       updatedAt: now,
     });
@@ -212,6 +220,27 @@ describe('local project data plane during Workspace authority outage', () => {
     await expect(mirrorRun.json()).resolves.toMatchObject({
       error: { code: 'WORKSPACE_PROJECT_PERMISSION_DENIED' },
     });
+
+    const mirrorComment = await fetch(
+      `${daemon.url}/api/projects/${mirrorProjectId}/conversations/${mirrorConversationId}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...staleHeaders },
+        body: JSON.stringify({
+          note: 'viewer feedback saved during outage',
+          target: {
+            filePath: 'index.html',
+            elementId: 'shared-heading',
+            selector: 'h1',
+            label: 'h1',
+            text: 'Owner content',
+            htmlHint: '<h1>',
+            position: { x: 0, y: 0, width: 10, height: 10 },
+          },
+        }),
+      },
+    );
+    expect(mirrorComment.status).toBe(200);
     expect(workspaceDirectoryRequests, 'read-only mirror access')
       .toBe(directoryRequestsAfterStartup);
 
