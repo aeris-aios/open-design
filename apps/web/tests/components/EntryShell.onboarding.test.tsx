@@ -627,6 +627,47 @@ describe('EntryShell new project rail', () => {
       undefined,
     );
   });
+
+  it('does not persist the modal hidden default Skill on an automatic OD Next route', async () => {
+    const onCreateProject = vi.fn(() => true);
+    renderHome({
+      skills: [{
+        id: 'agent-browser',
+        name: 'agent-browser',
+        description: 'Inspect rendered prototypes',
+        mode: 'prototype',
+        surface: 'web',
+        previewType: 'html',
+        designSystemRequired: true,
+        defaultFor: ['prototype'],
+        triggers: [],
+        upstream: null,
+        hasBody: true,
+        examplePrompt: '',
+        aggregatesExamples: false,
+      }],
+      projects: [{
+        id: 'project-existing',
+        name: 'Existing project',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 2,
+        status: { value: 'not_started' },
+      }],
+      onCreateProject,
+    }, '/projects');
+
+    fireEvent.click(screen.getByTestId('designs-new-project'));
+    await screen.findByTestId('new-project-panel');
+    fireEvent.click(screen.getByTestId('create-project'));
+
+    await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+    expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({
+      skillId: null,
+      metadata: expect.objectContaining({ kind: 'prototype' }),
+    }));
+  });
 });
 
 describe('EntryShell Home submit handoff', () => {

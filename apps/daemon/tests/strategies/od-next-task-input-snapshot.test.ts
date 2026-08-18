@@ -21,6 +21,7 @@ import {
   createOdNextTaskInputSnapshot,
   loadOdNextTaskInputSnapshot,
   OdNextTaskInputSnapshotError,
+  removeOdNextRunInputProjection,
 } from '../../src/strategies/od-next/task-input-snapshot.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -223,6 +224,10 @@ describe('OD Next task-scoped input snapshots', () => {
       runId: 'run-1',
     });
     expect(readFileSync(restarted.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
+    removeOdNextRunInputProjection(restarted);
+    expect(existsSync(restarted.projectionDir)).toBe(false);
+    expect(existsSync(restarted.projectionAccessRoot)).toBe(false);
+    expect(readFileSync(canonical.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
   });
 
   it('rejects an intermediate attachments-directory symlink even with identical bytes', () => {

@@ -22,6 +22,7 @@ import {
   type SetStateAction,
 } from 'react';
 import {
+  defaultScenarioTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
   type AmrWalletSnapshot,
   type ChatSessionMode,
@@ -1341,8 +1342,21 @@ export function EntryShell({
     // single row without touching the form.
     const pluginId = defaultPluginIdForMetadata(input.metadata);
     const pluginInputs = defaultPluginInputsForCreate(input, pluginId);
+    const automaticStrategyRoute = pluginId
+      ? defaultScenarioTaskProfileForProjectMetadata(input.metadata, pluginId)
+      : null;
+    const { skillSelectionProvenance, ...projectInput } = input;
     return onCreateProject({
-      ...input,
+      ...projectInput,
+      // The modal's Blank card historically persisted a hidden default Skill
+      // (for example agent-browser) even though the automatic scenario already
+      // owns the task workflow. When OD Next replaces that scenario, carrying
+      // the hidden Skill makes it look user-selected and can correctly trip
+      // the planning-only validator. Keep explicit template/Skill picks exact;
+      // omit only the UI's implicit default on the four automatic routes.
+      ...(automaticStrategyRoute && skillSelectionProvenance === 'automatic-default'
+        ? { skillId: null }
+        : {}),
       ...(pluginInputs ? { pluginInputs } : {}),
     });
   }

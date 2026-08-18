@@ -847,6 +847,42 @@ export function createOdNextRunInputProjection(input: {
   }
 }
 
+/**
+ * Remove one immutable per-Run projection and its now-empty task directory.
+ * Canonical task inputs are intentionally untouched; only the disposable
+ * projection returned by createOdNextRunInputProjection is accepted.
+ */
+export function removeOdNextRunInputProjection(
+  projection: Pick<OdNextRunInputProjection, 'projectionDir' | 'projectionAccessRoot'>,
+): void {
+  const projectionAccessRoot = path.resolve(projection.projectionAccessRoot);
+  const projectionDir = path.resolve(projection.projectionDir);
+  if (path.dirname(projectionDir) !== projectionAccessRoot) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next Run projection is outside its task access root.',
+    );
+  }
+  let accessRootStat: fs.Stats;
+  try {
+    accessRootStat = fs.lstatSync(projectionAccessRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (accessRootStat.isSymbolicLink() || !accessRootStat.isDirectory()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task projection root must remain a non-symlink directory.',
+    );
+  }
+  fs.chmodSync(projectionAccessRoot, 0o700);
+  removeRunProjectionTree(projectionDir);
+  if (fs.readdirSync(projectionAccessRoot).length === 0) {
+    fs.rmdirSync(projectionAccessRoot);
+  } else {
+    fs.chmodSync(projectionAccessRoot, 0o555);
+  }
+}
+
 export function removeOdNextTaskInputSnapshot(
   descriptor: OdNextTaskInputSnapshotDescriptor | null | undefined,
 ): void {

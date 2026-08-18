@@ -486,6 +486,7 @@ import {
   createOdNextRunInputProjection,
   loadOdNextTaskInputSnapshot,
   OdNextTaskInputSnapshotError,
+  removeOdNextRunInputProjection,
 } from './strategies/od-next/task-input-snapshot.js';
 import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
 import {
@@ -9118,6 +9119,7 @@ export async function startServer({
     workspaceScope,
     designSystemScope,
     frozenSkillPackage,
+    odNextSyntheticCanary = false,
   }) => {
     const project =
       typeof projectId === 'string' && projectId
@@ -9883,9 +9885,17 @@ export async function startServer({
               ? { runtimeCompanionVersion: versions.runtimeCompanionVersion }
               : {}),
           });
+          if (odNextSyntheticCanary && process.env.NODE_ENV === 'production') {
+            throw new Error(
+              'OD Next synthetic runtime planning facts are local-only.',
+            );
+          }
           if (
-            capability.reason !== 'capability_resolved'
-            || !capability.snapshot
+            !capability.snapshot
+            || (
+              capability.reason !== 'capability_resolved'
+              && !odNextSyntheticCanary
+            )
           ) {
             throw new Error(
               `OD Next runtime planning facts unavailable: ${capability.reason}`,
@@ -10168,6 +10178,8 @@ export async function startServer({
       workspaceScope: meta.workspaceScope,
       designSystemScope,
       frozenSkillPackage,
+      odNextSyntheticCanary:
+        meta.strategyRolloutDecision?.syntheticCanary === true,
     });
     const loadedTaskInputs = loadOdNextTaskInputSnapshot(
       taskInputSnapshot,
@@ -10475,9 +10487,28 @@ export async function startServer({
     if (typeof clientRequestId === 'string' && clientRequestId)
       run.clientRequestId = clientRequestId;
     if (typeof agentId === 'string' && agentId) run.agentId = agentId;
+    let odNextTaskInputSnapshot = null;
+    const cleanupOdNextRunInputProjection = () => {
+      if (!odNextTaskInputSnapshot) return;
+      try {
+        removeOdNextRunInputProjection(odNextTaskInputSnapshot);
+      } catch (error) {
+        console.warn(
+          '[od-next] run input projection cleanup failed',
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        odNextTaskInputSnapshot = null;
+      }
+    };
     const finishRun = (status, code = null, signal = null) => {
+      cleanupOdNextRunInputProjection();
       finalizeRunMessageEvents(db, run);
       return design.runs.finish(run, status, code, signal);
+    };
+    const failRun = (code, message) => {
+      cleanupOdNextRunInputProjection();
+      return design.runs.fail(run, code, message);
     };
     // Freeze the billing address once, before the first asynchronous setup
     // step. HTTP-created runs already carry the scope captured by the request
@@ -10553,13 +10584,12 @@ export async function startServer({
         : normalizeConversationSessionMode(conversationSession?.sessionMode);
     const def = getAgentDef(agentId);
     if (!def)
-      return design.runs.fail(
-        run,
+      return failRun(
         'AGENT_UNAVAILABLE',
         `unknown agent: ${agentId}`,
       );
     if (!def.bin)
-      return design.runs.fail(run, 'AGENT_UNAVAILABLE', 'agent has no binary');
+      return failRun('AGENT_UNAVAILABLE', 'agent has no binary');
     const byokOpenCodeProvider = def.id === 'byok-opencode'
       ? buildOpenCodeByokProviderConfig(
           byokProvider,
@@ -10567,8 +10597,7 @@ export async function startServer({
         )
       : null;
     if (def.id === 'byok-opencode' && !byokOpenCodeProvider) {
-      return design.runs.fail(
-        run,
+      return failRun(
         'BYOK_PROVIDER_REQUIRED',
         BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
       );
@@ -10597,7 +10626,7 @@ export async function startServer({
       assertValidRuntimeDefFirstOutputTimeoutMs(def.firstOutputTimeoutMs);
     } catch (err) {
       if (err instanceof RangeError) {
-        return design.runs.fail(run, 'AGENT_RUNTIME_DEF_INVALID', err.message);
+        return failRun('AGENT_RUNTIME_DEF_INVALID', err.message);
       }
       throw err;
     }
@@ -10607,7 +10636,7 @@ export async function startServer({
       (typeof message !== 'string' || !message.trim()) &&
       safeCommentAttachments.length === 0
     ) {
-      return design.runs.fail(run, 'BAD_REQUEST', 'message required');
+      return failRun('BAD_REQUEST', 'message required');
     }
     const browserUseRunState = buildBrowserUseRunState({
       requested: isBrowserUseRequested(message, currentPrompt, systemPrompt),
@@ -10664,7 +10693,7 @@ export async function startServer({
         cwd = await ensureProject(PROJECTS_DIR, projectId, chatMeta);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
-          return design.runs.fail(run, 'BAD_REQUEST', err.message);
+          return failRun('BAD_REQUEST', err.message);
         }
         cwd = null;
       }
@@ -10691,15 +10720,13 @@ export async function startServer({
 
     // Sanitise supplied image paths: must live under UPLOAD_DIR and stay
     // below the prompt-image safety cap.
-    let odNextTaskInputSnapshot = null;
     if (run.odNextTaskInputSnapshot) {
       if (
         strategyTaskAtStart
         && run.odNextTaskInputSnapshot.manifestSha256
           !== strategyTaskAtStart.frozenInputIdentity.taskInputManifestSha256
       ) {
-        return design.runs.fail(
-          run,
+        return failRun(
           'OD_NEXT_INPUT_SNAPSHOT_TAMPERED',
           'OD Next Run input descriptor no longer matches the persisted task identity.',
         );
@@ -10712,8 +10739,7 @@ export async function startServer({
           runId: run.id,
         });
       } catch (error) {
-        return design.runs.fail(
-          run,
+        return failRun(
           error instanceof OdNextTaskInputSnapshotError
             ? error.code
             : 'OD_NEXT_INPUT_SNAPSHOT_INVALID',
@@ -10721,8 +10747,7 @@ export async function startServer({
         );
       }
     } else if (isOdNextRequestStage) {
-      return design.runs.fail(
-        run,
+      return failRun(
         'OD_NEXT_INPUT_SNAPSHOT_INVALID',
         'OD Next request Run is missing its immutable task input snapshot.',
       );
@@ -10730,15 +10755,13 @@ export async function startServer({
     const { safeImages, oversizedImages, failedImages } =
       resolveSafePromptImagePaths(odNextTaskInputSnapshot ? [] : imagePaths);
     if (oversizedImages.length > 0) {
-      return design.runs.fail(
-        run,
+      return failRun(
         'BAD_REQUEST',
         'Image attachments must be 1 MB or smaller.',
       );
     }
     if (failedImages.length > 0) {
-      return design.runs.fail(
-        run,
+      return failRun(
         'INTERNAL_ERROR',
         'Failed to read one or more image attachments.',
       );
@@ -11689,8 +11712,7 @@ export async function startServer({
         : promptTelemetry;
     } catch (error) {
       if (!(error instanceof InvalidOdNextExactSendPromptError)) throw error;
-      return design.runs.fail(
-        run,
+      return failRun(
         'OD_NEXT_TASK_STATE_INVALID',
         error.message,
       );
@@ -11878,6 +11900,7 @@ export async function startServer({
     // drive a second close-handler pass that finalizes the run as failed before
     // the retry ever spawns.
     const tearDownAttemptForRetry = () => {
+      cleanupOdNextRunInputProjection();
       // Snapshot the failing attempt's child + process group BEFORE we detach
       // them, so the reap targets THIS attempt's group and never the next one.
       const priorChild = run.child;
@@ -12657,6 +12680,7 @@ export async function startServer({
         if (run.cancelRequested || design.runs.isTerminal(run.status)) {
           lifecycle.mark('launch_preflight_end');
           cleanupPromptFile();
+          cleanupOdNextRunInputProjection();
           return;
         }
         const preflight = await preflightCodexDefaultModel({
@@ -12668,6 +12692,7 @@ export async function startServer({
         if (run.cancelRequested || design.runs.isTerminal(run.status)) {
           lifecycle.mark('launch_preflight_end');
           cleanupPromptFile();
+          cleanupOdNextRunInputProjection();
           return;
         }
         if (preflight.status === 'compatible' || preflight.status === 'incompatible') {
@@ -13248,6 +13273,7 @@ export async function startServer({
       cleanupPromptFile();
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
+      cleanupOdNextRunInputProjection();
       return;
     }
 

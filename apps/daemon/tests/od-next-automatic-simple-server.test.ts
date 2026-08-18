@@ -396,6 +396,50 @@ describe('OD Next automatic production through the real server', () => {
     await waitForRunTerminal(started.url, explicitImageRun.runId as string);
   });
 
+  it('binds unresolved runtime facts only for the explicit local synthetic canary', async () => {
+    const agentCliVersion = 'codex-cli 99.0.0-local-canary';
+    const fixture = await createPublicRolloutFixture(
+      'synthetic-planning-facts',
+      'design',
+      undefined,
+      agentCliVersion,
+    );
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+
+    const unresolvedCapability = resolveBundledOdNextRuntimeCapability({
+      agentId: 'codex',
+      agentCliVersion,
+    });
+    expect(unresolvedCapability).toMatchObject({
+      reason: 'fixture_manifest_missing',
+      snapshot: { nativeSessionContinuation: { support: 'unknown' } },
+    });
+
+    const created = await postRun(
+      started.url,
+      publicRunRequest(
+        fixture,
+        'Hold the public rollout run open until canceled.',
+        'synthetic-planning-facts-request',
+      ),
+    );
+    expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    const task = getStrategyTaskExecution(database(), created.taskExecutionId as string);
+    expect(task?.promptBundle.text).toContain(
+      unresolvedCapability.snapshot!.snapshotHash.slice('sha256:'.length),
+    );
+
+    const canceled = await fetch(
+      `${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`,
+      { method: 'POST' },
+    );
+    expect(canceled.status).toBe(200);
+  });
+
   it('exposes the instance stop latch through the shared API and CLI CAS reset', async () => {
     const fixture = await createPublicRolloutFixture('rollout-control', 'design');
     started = fixture.started;
@@ -1601,10 +1645,15 @@ async function createPublicRolloutFixture(
   label: string,
   conversationMode: 'design' | 'chat' | 'plan' = 'chat',
   pluginId?: string,
+  agentCliVersion = 'codex-cli 0.147.0',
 ) {
   const suffix = `${label}-${Date.now()}`;
   const binDir = await mkdtemp(path.join(os.tmpdir(), `od-next-public-${label}-`));
-  const { bin, logPath } = await writePublicRolloutCodex(binDir, label);
+  const { bin, logPath } = await writePublicRolloutCodex(
+    binDir,
+    label,
+    agentCliVersion,
+  );
   const started = await startDaemon();
   const projectId = `od-next-public-${suffix}`;
   const projectResponse = await fetch(`${started.url}/api/projects`, {
@@ -1712,6 +1761,7 @@ function publicRunRequest(
 async function writePublicRolloutCodex(
   dir: string,
   label: string,
+  agentCliVersion = 'codex-cli 0.147.0',
 ): Promise<{ bin: string; logPath: string }> {
   const bin = path.join(dir, `codex-public-${label}`);
   const logPath = path.join(dir, `codex-public-${label}.jsonl`);
@@ -1719,7 +1769,7 @@ async function writePublicRolloutCodex(
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const logPath = ${JSON.stringify(logPath)};
-if (argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
+if (argv.includes('--version')) { console.log(${JSON.stringify(agentCliVersion)}); process.exit(0); }
 if (argv.includes('--help')) { console.log('Usage: codex exec'); process.exit(0); }
 let stdin = '';
 process.stdin.setEncoding('utf8');
