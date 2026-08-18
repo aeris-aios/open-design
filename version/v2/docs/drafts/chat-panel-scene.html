@@ -718,6 +718,9 @@ button.att-i:hover { border-color: var(--border-strong); }
    两处共用 .att 的单行滚动,只在这里把那个 auto 外边距归零。 */
 .att.mod-tray, .att.mod-tray > :first-child { margin-inline-start: 0; }
 .att.mod-tray { max-width: none; }
+/* 只给组件页用:把托盘按真实输入框的净内宽夹住,好让"滚"这件事看得见。
+   406 = 460 面板 − 两侧 20 边距 − 输入框 2 边框 − 托盘左右 9 内边距 ×2,量过。 */
+.att-demo { width: 406px; max-width: 100%; }
 .att-i { position: relative; }
 /* 「×」的本体样式不绑在图卡上 —— 文档长条也要用同一枚。
    两处只有【位置】不同:图卡上它浮在右上角(absolute),长条上它就是行尾
