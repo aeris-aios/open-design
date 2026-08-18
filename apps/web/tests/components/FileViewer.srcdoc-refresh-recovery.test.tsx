@@ -242,7 +242,7 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
     expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
   });
 
-  it('recovers when a partial head bridge answers the probe before the body completed', () => {
+  it('recovers when a settled partial document answers the probe without completing its body', () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (
       input: RequestInfo | URL,
@@ -283,7 +283,7 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
           generation: probe!.generation,
           probeId: probe!.probeId,
           bodyComplete: false,
-          documentReadyState: 'loading',
+          documentReadyState: 'complete',
           bodyPresent: true,
           bodyChildCount: 2,
           documentElementChildCount: 2,
@@ -311,7 +311,7 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
         transport_stage: 'head_bridge_alive_body_tail_missing',
         activation_acknowledged: true,
         body_complete: false,
-        frame_ready_state: 'loading',
+        frame_ready_state: 'complete',
         frame_body_present: true,
         frame_body_child_count: 2,
         frame_document_element_child_count: 2,
@@ -320,6 +320,122 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
       },
     });
     expect(JSON.stringify(payload)).not.toContain('partial-document');
+  });
+
+  it('does not remount a healthy document while a parser-blocking script is still loading', () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ) => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlFile()}
+        filesRefreshKey={0}
+        liveHtml={`<html><body>
+          <script>window.previewBootCount = (window.previewBootCount || 0) + 1;</script>
+          <script src="https://slow.example/parser-blocking.js"></script>
+          <main>Delayed but healthy</main>
+        </body></html>`}
+      />,
+    );
+
+    const parsingFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(parsingFrame.contentWindow!, 'postMessage');
+    act(() => {
+      vi.advanceTimersByTime(1_500);
+    });
+    const firstProbe = postMessage.mock.calls.find(
+      ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+    )?.[0] as { generation?: string; probeId?: string } | undefined;
+    expect(firstProbe?.probeId).toBeTruthy();
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: parsingFrame.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: firstProbe!.generation,
+          probeId: firstProbe!.probeId,
+          bodyComplete: false,
+          documentReadyState: 'loading',
+        },
+      }));
+    });
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(parsingFrame);
+
+    fireEvent.load(parsingFrame);
+    const probes = postMessage.mock.calls.filter(
+      ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+    );
+    const completionProbe = probes.at(-1)?.[0] as { generation?: string; probeId?: string };
+    expect(completionProbe.probeId).not.toBe(firstProbe!.probeId);
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: parsingFrame.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: completionProbe.generation,
+          probeId: completionProbe.probeId,
+          bodyComplete: true,
+          documentReadyState: 'complete',
+        },
+      }));
+      vi.runAllTimers();
+    });
+
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(parsingFrame);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/i/v0/e/'))).toBe(false);
+  });
+
+  it('recovers when a truncated document stays loading through the parsing grace period', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlFile()}
+        filesRefreshKey={0}
+        liveHtml={srcDocHtml('stuck-loading-document')}
+      />,
+    );
+
+    const partialFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(partialFrame.contentWindow!, 'postMessage');
+    act(() => {
+      vi.advanceTimersByTime(1_500);
+    });
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const probes = postMessage.mock.calls.filter(
+        ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+      );
+      const probe = probes.at(-1)?.[0] as { generation?: string; probeId?: string };
+      expect(probe.probeId).toBeTruthy();
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: partialFrame.contentWindow,
+          data: {
+            type: 'od:srcdoc-transport-activated',
+            generation: probe.generation,
+            probeId: probe.probeId,
+            bodyComplete: false,
+            documentReadyState: 'loading',
+          },
+        }));
+        if (attempt < 7) vi.advanceTimersByTime(1_500);
+      });
+    }
+
+    const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(recoveredFrame).not.toBe(partialFrame);
+    expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
   });
 
   it('revalidates an early activation acknowledgement after the frame load completes', () => {

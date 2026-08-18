@@ -624,6 +624,8 @@ const MAX_CACHED_PREVIEW_CONTENT_WIDTHS = 128;
 const PREVIEW_CONTENT_WIDTH_CACHE_VERSION = 2;
 const SRC_DOC_ACTIVATION_RECOVERY_TIMEOUT_MS = 1500;
 const SRC_DOC_READY_PROBE_TIMEOUT_MS = 1500;
+const SRC_DOC_PARSING_RECHECK_MS = 1500;
+const SRC_DOC_PARSING_COMPLETION_TIMEOUT_MS = 10_000;
 let previewContentMeasurementDocumentEpochSequence = 0;
 let previewContentMeasurementHostInstanceSequence = 0;
 let previewTransportGenerationSequence = 0;
@@ -10215,6 +10217,10 @@ function HtmlViewer({
     probeId: string;
     recoverOnFailure: boolean;
   } | null>(null);
+  const srcDocParsingGraceRef = useRef<{
+    generation: string;
+    deadline: number;
+  } | null>(null);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
     if (!workspaceActive) return;
     const win = target?.contentWindow;
@@ -10349,6 +10355,7 @@ function HtmlViewer({
       timeoutMs: signal === 'probe_timeout' ? SRC_DOC_READY_PROBE_TIMEOUT_MS : undefined,
     });
     pendingSrcDocTransportProbeRef.current = null;
+    srcDocParsingGraceRef.current = null;
     verifiedSrcDocTransportRef.current = null;
     readySrcDocTransportRef.current = null;
     activatedSrcDocTransportHtmlRef.current = null;
@@ -10494,6 +10501,7 @@ function HtmlViewer({
         && data.bodyComplete === true
       ) {
         pendingSrcDocTransportProbeRef.current = null;
+        srcDocParsingGraceRef.current = null;
         verifiedSrcDocTransportRef.current = { frame, generation: data.generation };
       } else if (
         typeof data.probeId === 'string'
@@ -10503,6 +10511,42 @@ function HtmlViewer({
         && pending.probeId === data.probeId
         && pending.recoverOnFailure
       ) {
+        if (data.documentReadyState === 'loading') {
+          // A healthy parser can remain in `loading` while it waits on an
+          // authored parser-blocking resource. The head bridge is responsive,
+          // so keep challenging this generation without remounting and risk
+          // running earlier authored side effects twice. A bounded grace
+          // period still recovers Chromium's permanently-aborted half-document.
+          pendingSrcDocTransportProbeRef.current = null;
+          const now = Date.now();
+          const currentGrace = srcDocParsingGraceRef.current;
+          const grace = currentGrace?.generation === data.generation
+            ? currentGrace
+            : {
+                generation: data.generation,
+                deadline: now + SRC_DOC_PARSING_COMPLETION_TIMEOUT_MS,
+              };
+          srcDocParsingGraceRef.current = grace;
+          if (now >= grace.deadline) {
+            recoverUnacknowledgedSrcDocTransport(data.generation, 'body_incomplete', {
+              readyState: 'loading',
+              bodyPresent: typeof data.bodyPresent === 'boolean' ? data.bodyPresent : undefined,
+              bodyChildCount: typeof data.bodyChildCount === 'number' ? data.bodyChildCount : undefined,
+              documentElementChildCount:
+                typeof data.documentElementChildCount === 'number'
+                  ? data.documentElementChildCount
+                  : undefined,
+            });
+            return;
+          }
+          window.setTimeout(() => {
+            if (expectedSrcDocTransportGenerationRef.current !== data.generation) return;
+            const verified = verifiedSrcDocTransportRef.current;
+            if (verified?.frame === frame && verified.generation === data.generation) return;
+            probeSrcDocTransport(data.generation, true);
+          }, Math.min(SRC_DOC_PARSING_RECHECK_MS, grace.deadline - now));
+          return;
+        }
         // The exact challenged head bridge answered, but it could not observe
         // the inert marker placed after all authored body content. This is the
         // characteristic half-document state from an aborted about:srcdoc;
@@ -10531,7 +10575,12 @@ function HtmlViewer({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [recoverUnacknowledgedSrcDocTransport, replayPreviewBridgeModes, workspaceActive]);
+  }, [
+    probeSrcDocTransport,
+    recoverUnacknowledgedSrcDocTransport,
+    replayPreviewBridgeModes,
+    workspaceActive,
+  ]);
   // React can commit a fresh `srcdoc` attribute while Chromium aborts the
   // corresponding about:srcdoc navigation. The injected head bridge may run
   // and announce eagerly before that abort, so a plain generation ACK is not a
