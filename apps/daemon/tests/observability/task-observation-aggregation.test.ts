@@ -147,6 +147,7 @@ function observation(input: {
   usage?: ReturnType<typeof completeUsage>;
   prompt?: Record<string, unknown>;
   turnAccounting?: NormalizedAgentObservationV1['turnAccounting'];
+  quality?: NormalizedAgentObservationV1['quality'];
   attributes?: Record<string, unknown>;
   limitations?: string[];
 }): NormalizedAgentObservationV1 {
@@ -174,6 +175,7 @@ function observation(input: {
       limitations: [],
     },
     ...(input.turnAccounting ? { turnAccounting: input.turnAccounting } : {}),
+    ...(input.quality ? { quality: input.quality } : {}),
     ...(input.attributes ? { attributes: input.attributes } : {}),
     limitations: input.limitations ?? [],
   });
@@ -299,6 +301,8 @@ describe('strategy task observation aggregation', () => {
     expect(aggregate.root).toMatchObject({
       observationId: strategyTaskRootObservationId('task-1'),
       taskExecutionId: 'task-1',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
       status: 'completed',
       route: 'full_plan',
       executionMode: 'simple',
@@ -491,6 +495,109 @@ describe('strategy task observation aggregation', () => {
     expect(batch.every((event) => event.id.startsWith('od-'))).toBe(true);
     expect(JSON.stringify(batch)).not.toContain('fixture-secret');
     expect(JSON.stringify(batch)).not.toContain('/Users/alice');
+  });
+
+  it('maps the safe main-Run result, error, tool payloads, and manifests without raw attributes', () => {
+    const facts = RUNS.map((run) => runObservation(run, run.inputStage === 'production'
+      ? {
+          status: 'failed',
+          quality: {
+            schema: 'open-design.safe-run-quality/v1',
+            result: {
+              output: { text: 'safe assistant output', redacted: true, truncated: false },
+              error: {
+                message: { text: 'safe failure', redacted: true, truncated: false },
+                code: 'AGENT_EXIT',
+                category: 'runtime',
+                detail: 'provider_error',
+                stage: 'agent_call',
+              },
+            },
+            tools: [{
+              callHash: 'c'.repeat(64),
+              name: 'Bash',
+              input: { text: 'safe command', redacted: true, truncated: false },
+              output: { text: 'safe result', redacted: true, truncated: false },
+              status: 'completed',
+              isError: false,
+            }],
+            manifests: {
+              completeness: 'complete',
+              attachments: [],
+              artifacts: [{
+                object_class: 'artifact',
+                artifact_id: 'artifact-1',
+                storage_ref: 'od://objects/artifact/artifact-1',
+                status: 'ok',
+                redacted: false,
+                truncated: false,
+              }],
+              inputTextSnapshots: [],
+            },
+          },
+        }
+      : {}));
+    facts.push(observation({
+      id: 'tool:quality',
+      runId: 'run-production',
+      taskRunIndex: 3,
+      stage: 'production',
+      kind: 'tool',
+      parentId: strategyTaskRunObservationId('task-1', 'run-production'),
+      attributes: {
+        toolName: 'Bash',
+        toolCallHash: 'c'.repeat(64),
+        rawInput: 'must-not-export',
+      },
+    }));
+    const aggregate = aggregateStrategyTaskObservations({ task: task(), observations: facts });
+    const batch = eventBodies(buildLegacyTaskObservationPayload(aggregate));
+    const run = batch.find(
+      (event) => event.body.id === strategyTaskRunObservationId('task-1', 'run-production'),
+    )!;
+    const tool = batch.find((event) => event.body.id === 'tool:quality')!;
+
+    expect(run.body.output).toBe('safe assistant output');
+    expect(run.body.statusMessage).toBe('safe failure');
+    expect(run.body.metadata).toMatchObject({
+      errorCode: 'AGENT_EXIT',
+      failureCategory: 'runtime',
+      manifestCompleteness: 'complete',
+    });
+    expect(tool.body).toMatchObject({ input: 'safe command', output: 'safe result' });
+    expect((tool.body.metadata as Record<string, unknown>).isError).toBe(false);
+    expect(JSON.stringify(batch)).not.toContain('must-not-export');
+  });
+
+  it('keeps Task trace identity aligned with the existing user, session, project, and release dimensions', () => {
+    const aggregate = aggregateStrategyTaskObservations({
+      task: task(),
+      observations: RUNS.map((run) => runObservation(run)),
+    });
+    const trace = eventBodies(buildLegacyTaskObservationPayload(aggregate, {
+      environment: 'production',
+      tag: 'od-next-task-v1',
+      installationId: 'installation-1',
+      appVersion: '0.19.2',
+      appChannel: 'beta',
+      packaged: true,
+      clientType: 'desktop',
+    })).find((event) => event.type === 'trace-create')!;
+
+    expect(trace.body).toMatchObject({
+      sessionId: 'conversation-1',
+      userId: 'installation-1',
+      release: '0.19.2',
+      version: '0.19.2',
+      metadata: {
+        projectId: 'project-1',
+        conversationId: 'conversation-1',
+        appVersion: '0.19.2',
+        appChannel: 'beta',
+        packaged: true,
+        clientType: 'desktop',
+      },
+    });
   });
 
   it('maps legacy absolute time from one unix-epoch evidence item only', () => {

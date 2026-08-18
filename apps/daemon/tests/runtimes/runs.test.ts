@@ -1222,14 +1222,14 @@ describe('run event log persistence', () => {
       langfuse_attempt_count: 2,
     });
 
-    expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toMatchObject({
+    const failedDeliveryState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    expect(failedDeliveryState).toMatchObject({
       status: 'failed',
       exitCode: 1,
       analyticsRecovery: {
         insertId: 'run-created-1',
         completedAt: expect.any(Number),
       },
-      langfuseCompletedAt: expect.any(Number),
       telemetryDelivery: {
         version: 1,
         idempotencyKey: expect.stringMatching(/^od-run-telemetry-v1-[a-f0-9]{64}$/u),
@@ -1237,9 +1237,10 @@ describe('run event log persistence', () => {
         attemptCount: 2,
         crashWindow: false,
         dropReason: 'network_error',
-        finalizedAt: expect.any(Number),
       },
     });
+    expect(failedDeliveryState).not.toHaveProperty('langfuseCompletedAt');
+    expect(failedDeliveryState.telemetryDelivery).not.toHaveProperty('finalizedAt');
   });
 
   it('restores the accepted plugin workflow binding from durable run state', () => {

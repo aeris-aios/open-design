@@ -569,6 +569,7 @@ describe('Langfuse message finalization gate', () => {
       reportedRuns,
       taskObservationRollout: {
         modeForRun: vi.fn(() => 'send' as const),
+        representationForRun: vi.fn(() => 'task_accepted' as const),
         beginFinalizeForRun,
         finalizeForRun,
       },
@@ -584,17 +585,8 @@ describe('Langfuse message finalization gate', () => {
     expect(report).not.toHaveBeenCalled();
     expect(beginFinalizeForRun).toHaveBeenCalledWith(run.id);
     expect(finalizeForRun).not.toHaveBeenCalled();
-    expect(beginTelemetryDelivery).toHaveBeenCalledWith(run);
-    expect(beginFinalizeForRun.mock.invocationCallOrder[0]).toBeLessThan(
-      beginTelemetryDelivery.mock.invocationCallOrder[0]!,
-    );
-    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
-      langfuse_expected: false,
-      langfuse_delivery_status: 'not_expected',
-      langfuse_drop_reason: 'task_hierarchy_rollout',
-      langfuse_attempt_count: 0,
-      langfuse_idempotency_key: 'od-run-telemetry-v1-task-hierarchy',
-    });
+    expect(beginTelemetryDelivery).not.toHaveBeenCalled();
+    expect(finalizeTelemetryDelivery).not.toHaveBeenCalled();
     expect(reportedRuns).toContain(run.id);
     expect(run.status).toBe('succeeded');
   });
@@ -650,6 +642,7 @@ describe('Langfuse message finalization gate', () => {
       reportedRuns: new Set<string>(),
       taskObservationRollout: {
         modeForRun: () => 'observe',
+        representationForRun: () => 'single_run',
         beginFinalizeForRun: vi.fn(),
         finalizeForRun: vi.fn(async () => {
           observed = true;
@@ -686,6 +679,7 @@ describe('Langfuse message finalization gate', () => {
       reportedRuns: new Set<string>(),
       taskObservationRollout: {
         modeForRun: () => 'send',
+        representationForRun: () => 'task_accepted',
         beginFinalizeForRun,
         finalizeForRun: vi.fn(async () => ({ action: 'already_finalized' })),
       },
@@ -744,6 +738,7 @@ describe('Langfuse message finalization gate', () => {
       reportedRuns: new Set<string>(),
       taskObservationRollout: {
         modeForRun: () => 'send',
+        representationForRun: () => 'single_run',
         beginFinalizeForRun: () => {
           throw new Error('synthetic task store unavailable');
         },
@@ -769,6 +764,158 @@ describe('Langfuse message finalization gate', () => {
       expect.objectContaining({ langfuse_drop_reason: 'task_hierarchy_rollout' }),
     );
     expect(run.status).toBe('succeeded');
+  });
+
+  it('keeps the single-run compatibility obligation when Task mode lookup fails', async () => {
+    const run = {
+      id: 'run-task-mode-failed',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const beginTelemetryDelivery = vi.fn(() => ({
+      version: 1,
+      idempotencyKey: 'od-run-telemetry-v1-mode-fallback',
+      status: 'in_flight',
+      attemptCount: 0,
+      crashWindow: true,
+      startedAt: 1,
+    }));
+    const finalizeTelemetryDelivery = vi.fn();
+    const beginFinalizeForRun = vi.fn(() => ({
+      durableTaskTruth: true,
+      suppressSingleRun: true,
+      completion: Promise.resolve({ action: 'sent' }),
+    }));
+    const report = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reporter = createFinalizedMessageTelemetryReporter({
+      design: {
+        runs: {
+          get: vi.fn(() => run),
+          beginTelemetryDelivery,
+          finalizeTelemetryDelivery,
+        },
+      },
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      taskObservationRollout: {
+        modeForRun: () => {
+          throw new Error('synthetic representation insert failure');
+        },
+        representationForRun: () => 'single_run',
+        beginFinalizeForRun,
+        finalizeForRun: vi.fn(),
+      },
+      report,
+    });
+
+    reporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(warn).toHaveBeenCalledWith(
+      '[telemetry] task observation representation failed',
+      'Error: synthetic representation insert failure',
+    );
+    expect(beginFinalizeForRun).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledOnce();
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+    });
+  });
+
+  it('resumes single-run delivery in the same boot after a pre-network compatibility release', async () => {
+    const run = {
+      id: 'run-task-pre-network-release',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      status: 'succeeded',
+      createdAt: 1,
+      updatedAt: 2,
+      events: [],
+    };
+    const earlierRun = { ...run, id: 'run-task-pre-network-release-earlier' };
+    const runsById = new Map([
+      [run.id, run],
+      [earlierRun.id, earlierRun],
+    ]);
+    let representation: 'task_pending' | 'single_run' = 'task_pending';
+    const beginTelemetryDelivery = vi.fn(() => ({
+      version: 1,
+      idempotencyKey: 'od-run-telemetry-v1-release',
+      status: 'in_flight',
+      attemptCount: 0,
+      crashWindow: true,
+      startedAt: 1,
+    }));
+    const finalizeTelemetryDelivery = vi.fn();
+    const report = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+    const reporter = createFinalizedMessageTelemetryReporter({
+      design: {
+        runs: {
+          get: vi.fn((runId: string) => runsById.get(runId)),
+          beginTelemetryDelivery,
+          finalizeTelemetryDelivery,
+        },
+      },
+      db: 'db',
+      dataDir: '/tmp/od-data',
+      reportedRuns: new Set<string>(),
+      taskObservationRollout: {
+        modeForRun: () => representation === 'task_pending' ? 'send' : 'off',
+        representationForRun: () => representation,
+        beginFinalizeForRun: () => ({
+          durableTaskTruth: true,
+          suppressSingleRun: true,
+          completion: Promise.resolve().then(() => {
+            representation = 'single_run';
+            return { action: 'compatibility' };
+          }),
+        }),
+        finalizeForRun: vi.fn(),
+      },
+      report,
+    });
+
+    reporter(
+      { ...terminalMessage, runId: earlierRun.id, endedAt: 1233 },
+      { telemetryFinalized: true },
+    );
+    reporter(
+      { ...terminalMessage, runId: run.id, endedAt: 1234 },
+      { telemetryFinalized: true },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(beginTelemetryDelivery).toHaveBeenCalledTimes(2);
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(earlierRun, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+    });
+    expect(finalizeTelemetryDelivery).toHaveBeenCalledWith(run, {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted',
+    });
   });
 
   it.each([

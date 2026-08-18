@@ -277,6 +277,74 @@ describe('NormalizedAgentObservationV1', () => {
     }
   });
 
+  it('accepts only the versioned safe Run quality projection fields', () => {
+    const quality = {
+      schema: 'open-design.safe-run-quality/v1',
+      result: {
+        output: {
+          text: 'redacted assistant result',
+          redacted: true,
+          truncated: false,
+        },
+        error: {
+          message: {
+            text: '[REDACTED:sk_key]',
+            redacted: true,
+            truncated: false,
+          },
+          code: 'AGENT_EXIT',
+          category: 'runtime',
+          detail: 'provider_error',
+          stage: 'agent_call',
+        },
+      },
+      tools: [{
+        callHash: 'a'.repeat(64),
+        name: 'Bash',
+        input: {
+          text: 'ls [REDACTED:local_path]',
+          redacted: true,
+          truncated: false,
+        },
+        output: {
+          text: 'done',
+          redacted: true,
+          truncated: false,
+        },
+        status: 'completed',
+        isError: false,
+      }],
+      manifests: {
+        completeness: 'complete',
+        attachments: [{
+          object_class: 'attachment',
+          attachment_id: 'att-1',
+          storage_ref: 'od://objects/attachment/att-1',
+          status: 'ok',
+          redacted: false,
+          truncated: false,
+        }],
+        artifacts: [],
+        inputTextSnapshots: [],
+      },
+    } as const;
+    const parsed = NormalizedAgentObservationV1Schema.parse(baseObservation({ quality }));
+    expect(parsed.quality).toEqual(quality);
+
+    expect(() => NormalizedAgentObservationV1Schema.parse(baseObservation({
+      quality: {
+        ...quality,
+        manifests: {
+          ...quality.manifests,
+          attachments: [{
+            ...quality.manifests.attachments[0],
+            rawContent: { secret: 'must-not-cross-the-contract' },
+          }],
+        },
+      },
+    }))).toThrow(/unrecognized key/i);
+  });
+
   it('rejects guessed usage values and self-parent relationships', () => {
     expect(() => NormalizedAgentObservationV1Schema.parse(baseObservation({
       usage: {

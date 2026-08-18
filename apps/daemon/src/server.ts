@@ -2057,6 +2057,11 @@ export function createFinalizedMessageTelemetryReporter({
   reportedRuns: Set<string>;
   taskObservationRollout?: {
     modeForRun(runId: string): 'off' | 'observe' | 'send';
+    representationForRun(runId: string):
+      | 'single_run'
+      | 'task_pending'
+      | 'task_accepted'
+      | 'task_not_expected';
     beginFinalizeForRun(runId: string): {
       durableTaskTruth: boolean;
       suppressSingleRun: boolean;
@@ -2120,7 +2125,7 @@ export function createFinalizedMessageTelemetryReporter({
       insertId: `${runId}-langfuse-report-${reportTrigger}-${reportResult}${skipReason ? `-${skipReason}` : ''}`,
     });
   };
-  return (saved, body = {}, options = {}) => {
+  const reportFinalized = (saved, body = {}, options = {}) => {
     if (!shouldReportRunCompletedFromMessage(saved, body)) return;
     const runId = saved.runId;
     const run = design.runs.get(runId);
@@ -2162,7 +2167,15 @@ export function createFinalizedMessageTelemetryReporter({
       });
       return;
     }
-    const taskObservationMode = taskObservationRollout?.modeForRun(run.id) ?? 'off';
+    let taskObservationMode = 'off';
+    try {
+      taskObservationMode = taskObservationRollout?.modeForRun(run.id) ?? 'off';
+    } catch (error) {
+      // Representation persistence is a best-effort optimization. A SQLite
+      // claim/insert failure must leave the ordinary single-Run obligation
+      // intact instead of aborting the reporter before it reaches that path.
+      console.warn('[telemetry] task observation representation failed', String(error));
+    }
     if (taskObservationMode === 'observe') {
       void taskObservationRollout!.finalizeForRun(run.id).catch((error) => {
         console.warn('[telemetry] task observation failed in observe mode', String(error));
@@ -2183,38 +2196,19 @@ export function createFinalizedMessageTelemetryReporter({
       if (!taskCompletion) {
         // Fall through to the existing single-Run reporter below.
       } else {
-        // A task hierarchy replaces, rather than supplements, every mapped
-        // single-Run trace. Persist this compatibility delivery as terminal so
-        // startup reconciliation cannot resurrect it after a daemon restart.
-        const deliveryAttempt = design.runs.beginTelemetryDelivery?.(run);
-        const delivery = {
-          langfuse_expected: false,
-          langfuse_delivery_status: 'not_expected',
-          langfuse_drop_reason: 'task_hierarchy_rollout',
-          langfuse_attempt_count: 0,
-          ...(deliveryAttempt?.idempotencyKey
-            ? { langfuse_idempotency_key: deliveryAttempt.idempotencyKey }
-            : {}),
-        };
-        design.runs.finalizeTelemetryDelivery?.(run, delivery);
+        // The pending Task row owns this Run, but ownership alone is not a
+        // delivery checkpoint. Keep the Run unfinished until the Task is
+        // accepted/not-expected. A deterministic pre-network release removes
+        // the process-local gate and immediately resumes this same Run through
+        // the compatibility reporter.
         reportedRuns.add(run.id);
-        captureResult({
-          analyticsContext: options.analyticsContext,
-          conversationId: options.conversationId ?? saved.conversationId,
-          delivery,
-          projectId: options.projectId,
-          reportTrigger,
-          reportResult: 'skipped',
-          run,
-          runId: run.id,
-          skipReason: 'not_expected',
-          status: saved.runStatus,
-        });
-        void taskCompletion.catch((error) => {
-          // Observability is deliberately detached from execution completion.
-          // The task rollout service persists a terminal delivery result for all
-          // expected transport failures; this catch only protects composition or
-          // storage faults from escaping the finalized-message path.
+        void taskCompletion.then(() => {
+          if (taskObservationRollout!.representationForRun(run.id) !== 'single_run') {
+            return;
+          }
+          reportedRuns.delete(run.id);
+          reportFinalized(saved, body, options);
+        }).catch((error) => {
           console.warn('[telemetry] task observation delivery failed', String(error));
         });
         return;
@@ -2318,6 +2312,7 @@ export function createFinalizedMessageTelemetryReporter({
       design.runs.finalizeTelemetryDelivery?.(run, state);
     })();
   };
+  return reportFinalized;
 }
 
 export function shouldReportRunCompletionTelemetryFallbackStatus(status: unknown): boolean {
@@ -7343,15 +7338,27 @@ export async function startServer({
   });
   const taskObservationRollout = createTaskObservationRolloutService({
     db,
+    dataDir: RUNTIME_DATA_DIR,
     getRun: (runId) => design.runs.get(runId),
     readTelemetry: async () => {
-      const appConfig = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
+      const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
       return {
         prefs: appConfig.telemetry ?? {},
         installationId: appConfig.installationId ?? null,
+        appVersionInfo: telemetry.getCachedAppVersion(),
       };
     },
-    configuredEnv: configuredAmrEnv,
+    checkpointMappedRun: (runId, reason) => {
+      const mappedRun = design.runs.get(runId);
+      if (!mappedRun) return;
+      design.runs.beginTelemetryDelivery?.(mappedRun);
+      design.runs.finalizeTelemetryDelivery?.(mappedRun, {
+        langfuse_expected: false,
+        langfuse_delivery_status: 'not_expected',
+        langfuse_drop_reason: reason,
+        langfuse_attempt_count: 0,
+      });
+    },
   });
   console.info(
     '[telemetry] effective task observation rollout',
@@ -7369,6 +7376,12 @@ export async function startServer({
     db,
     reportLangfuse: reportRunCompletedFromDaemon,
     taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
+    taskObservationRepresentationForRun: (runId) =>
+      taskObservationRollout.representationForRun(runId),
+    taskObservationNotExpectedReasonForRun: (runId) =>
+      taskObservationRollout.notExpectedReasonForRun(runId),
+    seedTaskObservationRunFact: (runId, fact) =>
+      taskObservationRollout.seedRepresentationFromRunFact(runId, fact),
     beginTaskObservationForRun: (runId) => taskObservationRollout.beginFinalizeForRun(runId),
     runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
   }).then(async (reconciled) => {

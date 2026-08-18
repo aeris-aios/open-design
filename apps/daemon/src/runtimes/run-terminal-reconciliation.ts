@@ -87,6 +87,16 @@ interface ReconciliationOptions {
   db: Database.Database;
   reportLangfuse(args: Record<string, unknown>): unknown | Promise<unknown>;
   taskObservationModeForRun?: (runId: string) => 'off' | 'observe' | 'send';
+  taskObservationRepresentationForRun?: (runId: string) =>
+    | 'single_run'
+    | 'task_pending'
+    | 'task_accepted'
+    | 'task_not_expected';
+  taskObservationNotExpectedReasonForRun?: (runId: string) => string | null;
+  seedTaskObservationRunFact?: (
+    runId: string,
+    fact: Pick<DurableRunState, 'langfuseCompletedAt' | 'telemetryDelivery'>,
+  ) => void | Promise<void>;
   beginTaskObservationForRun?: (runId: string) => {
     suppressSingleRun: boolean;
     completion: Promise<unknown>;
@@ -250,18 +260,19 @@ export async function reconcileDurableRunTerminals(
   const now = Date.now();
   const interruptedRunIds = new Set<string>();
 
+  // PR/beta v1 incorrectly checkpointed ordinary transport failures as
+  // terminal. Repair that derived telemetry state in place while preserving
+  // the stable delivery identity, attempt count, and user-owned Run facts.
+  for (const entry of states) {
+    if (entry.state.telemetryDelivery?.status !== 'failed') continue;
+    delete entry.state.telemetryDelivery.finalizedAt;
+    entry.state.telemetryDelivery.crashWindow = false;
+    delete entry.state.langfuseCompletedAt;
+    writeState(entry.filePath, entry.state);
+  }
+
   for (const entry of states) {
     if (!interruptDurableRunAfterDaemonRestart(entry.state, now)) continue;
-    if (
-      !entry.state.langfuseCompletedAt
-      && typeof entry.state.telemetryDelivery?.finalizedAt !== 'number'
-    ) {
-      entry.state.telemetryDelivery = beginRunTelemetryDelivery(
-        entry.state.telemetryDelivery,
-        entry.state.id,
-        now,
-      );
-    }
     writeState(entry.filePath, entry.state);
     interruptedRunIds.add(entry.state.id);
     result.interrupted += 1;
@@ -280,17 +291,66 @@ export async function reconcileDurableRunTerminals(
     }
   }
 
+  // Seed every mapped Run fact before asking the rollout service to choose a
+  // representation for any Task. Directory order must not let an unmarked
+  // sibling claim pending ownership before a later sibling proves that a
+  // single-Run trace already crossed (or may have crossed) the network.
+  for (const { state } of states) {
+    try {
+      await Promise.resolve(options.seedTaskObservationRunFact?.(state.id, {
+        ...(state.langfuseCompletedAt !== undefined
+          ? { langfuseCompletedAt: state.langfuseCompletedAt }
+          : {}),
+        ...(state.telemetryDelivery ? { telemetryDelivery: state.telemetryDelivery } : {}),
+      }));
+    } catch {
+      console.warn('[telemetry] task fact seeding failed during startup recovery');
+    }
+  }
+
   for (const entry of states) {
     const { state } = entry;
+    let taskRepresentation:
+      | 'single_run'
+      | 'task_pending'
+      | 'task_accepted'
+      | 'task_not_expected'
+      | undefined;
+    try {
+      taskRepresentation = options.taskObservationRepresentationForRun?.(state.id);
+    } catch {
+      console.warn('[telemetry] task representation lookup failed during startup recovery');
+    }
+    if (
+      state.telemetryDelivery?.status === 'not_expected'
+      && state.telemetryDelivery.dropReason === 'task_hierarchy_rollout'
+      && (taskRepresentation === 'task_pending' || taskRepresentation === 'single_run')
+    ) {
+      const preservedKey = state.telemetryDelivery.idempotencyKey;
+      const preservedAttempts = state.telemetryDelivery.attemptCount;
+      delete state.langfuseCompletedAt;
+      state.telemetryDelivery = {
+        version: 1,
+        idempotencyKey: preservedKey,
+        status: 'failed',
+        attemptCount: preservedAttempts,
+        crashWindow: false,
+        startedAt: state.telemetryDelivery.startedAt,
+        dropReason: 'v1_task_hierarchy_completion_repaired',
+      };
+      writeState(entry.filePath, state);
+    }
     const needsAnalytics = Boolean(
       state.analyticsRecovery && !state.analyticsRecovery.completedAt,
     );
-    const needsLangfuse =
-      isRunTelemetryDeliveryCrashWindow(state.telemetryDelivery)
-      || (
-        interruptedRunIds.has(state.id)
-        && !state.langfuseCompletedAt
-        && typeof state.telemetryDelivery?.finalizedAt !== 'number'
+    const needsLangfuse = TERMINAL_STATUSES.has(state.status)
+      && !state.langfuseCompletedAt
+      && typeof state.telemetryDelivery?.finalizedAt !== 'number'
+      && (
+        state.telemetryDelivery === undefined
+        || state.telemetryDelivery.status === 'failed'
+        || isRunTelemetryDeliveryCrashWindow(state.telemetryDelivery)
+        || interruptedRunIds.has(state.id)
       );
     if (!needsAnalytics && !needsLangfuse) continue;
 
@@ -380,16 +440,14 @@ export async function reconcileDurableRunTerminals(
     }
 
     if (needsLangfuse) {
-      state.telemetryDelivery = beginRunTelemetryDelivery(
-        state.telemetryDelivery,
-        state.id,
-      );
-      // Persist before crossing the network boundary. If the daemon dies from
-      // here until the terminal result write, this exact in-flight marker is
-      // the only startup-replay eligibility signal.
-      writeState(entry.filePath, state);
-      const taskObservationMode = options.taskObservationModeForRun?.(state.id) ?? 'off';
+      let taskObservationMode: 'off' | 'observe' | 'send' = 'off';
+      try {
+        taskObservationMode = options.taskObservationModeForRun?.(state.id) ?? 'off';
+      } catch {
+        console.warn('[telemetry] task mode lookup failed during startup recovery');
+      }
       let suppressSingleRun = false;
+      let resolvedTaskRepresentation = taskRepresentation;
       if (taskObservationMode === 'observe') {
         // Observe is best effort and must never own or block the compatibility
         // obligation. A local aggregation/storage fault still replays the
@@ -408,14 +466,53 @@ export async function reconcileDurableRunTerminals(
           throw new Error('Task observation send mode requires a startup finalizer.');
         }
         const handle = options.beginTaskObservationForRun(state.id);
-        await handle.completion;
+        const completion = await handle.completion as { action?: unknown } | undefined;
         suppressSingleRun = handle.suppressSingleRun;
+        let completedRepresentation:
+          | 'single_run'
+          | 'task_pending'
+          | 'task_accepted'
+          | 'task_not_expected'
+          | undefined;
+        try {
+          completedRepresentation = options.taskObservationRepresentationForRun?.(state.id);
+        } catch {
+          console.warn(
+            '[telemetry] completed task representation lookup failed during startup recovery',
+          );
+          if (completion?.action === 'compatibility' || completion?.action === 'observed') {
+            completedRepresentation = 'single_run';
+          }
+        }
+        resolvedTaskRepresentation = completedRepresentation ?? 'task_pending';
+        if (completedRepresentation) {
+          suppressSingleRun = completedRepresentation !== 'single_run';
+        }
       }
+      if (suppressSingleRun && resolvedTaskRepresentation === 'task_pending') {
+        // Task ownership is durable, but the hierarchy has not been accepted.
+        // Keep this Run unfinished so a future boot can retry the Task with
+        // the same identity; do not manufacture a single-Run delivery state.
+        continue;
+      }
+
+      state.telemetryDelivery = beginRunTelemetryDelivery(
+        state.telemetryDelivery,
+        state.id,
+      );
+      // Persist before crossing the single-Run network boundary, or before
+      // checkpointing an accepted Task replacement.
+      writeState(entry.filePath, state);
+      const taskNotExpectedReason = resolvedTaskRepresentation === 'task_not_expected'
+        ? options.taskObservationNotExpectedReasonForRun?.(state.id) ?? null
+        : null;
       const rawDelivery = suppressSingleRun
         ? {
             langfuse_expected: false,
             langfuse_delivery_status: 'not_expected',
-            langfuse_drop_reason: 'task_hierarchy_rollout',
+            langfuse_drop_reason: resolvedTaskRepresentation === 'task_not_expected'
+              ? taskNotExpectedReason ?? 'task_hierarchy_not_expected'
+              : 'task_hierarchy_rollout',
             langfuse_attempt_count: 0,
           }
         : await Promise.resolve(options.reportLangfuse({
@@ -450,6 +547,8 @@ export async function reconcileDurableRunTerminals(
       );
       if (typeof state.telemetryDelivery.finalizedAt === 'number') {
         state.langfuseCompletedAt = state.telemetryDelivery.finalizedAt;
+      } else {
+        delete state.langfuseCompletedAt;
       }
       writeState(entry.filePath, state);
       result.langfuseReplayed += 1;

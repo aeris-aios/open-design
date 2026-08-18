@@ -57,19 +57,6 @@ describe('run telemetry delivery state', () => {
         dropReason: 'content_consent_off',
       },
     },
-    {
-      result: {
-        langfuse_expected: true,
-        langfuse_delivery_status: 'failed' as const,
-        langfuse_drop_reason: 'network_error' as const,
-        langfuse_attempt_count: 2,
-      },
-      expected: {
-        status: 'failed',
-        attemptCount: 2,
-        dropReason: 'network_error',
-      },
-    },
   ])('persists $expected.status as a terminal result', ({ result, expected }) => {
     const inFlight = beginRunTelemetryDelivery(undefined, 'run-1', 1_000);
     const finalized = finalizeRunTelemetryDelivery(inFlight, 'run-1', result, 2_000);
@@ -84,7 +71,34 @@ describe('run telemetry delivery state', () => {
     expect(isRunTelemetryDeliveryCrashWindow(finalized)).toBe(false);
   });
 
-  it('keeps the first terminal result when finalization is repeated', () => {
+  it('keeps an expected failure retryable with the stable delivery identity', () => {
+    const inFlight = beginRunTelemetryDelivery(undefined, 'run-1', 1_000);
+    const failed = finalizeRunTelemetryDelivery(inFlight, 'run-1', {
+      langfuse_expected: true,
+      langfuse_delivery_status: 'failed',
+      langfuse_drop_reason: 'network_error',
+      langfuse_attempt_count: 2,
+    }, 2_000);
+
+    expect(failed).toMatchObject({
+      version: 1,
+      idempotencyKey: inFlight.idempotencyKey,
+      status: 'failed',
+      attemptCount: 2,
+      crashWindow: false,
+      dropReason: 'network_error',
+    });
+    expect(failed).not.toHaveProperty('finalizedAt');
+    expect(beginRunTelemetryDelivery(failed, 'run-1', 3_000)).toMatchObject({
+      idempotencyKey: inFlight.idempotencyKey,
+      status: 'in_flight',
+      attemptCount: 2,
+      crashWindow: true,
+      startedAt: 3_000,
+    });
+  });
+
+  it('allows a later retry to replace a failed result with an accepted terminal result', () => {
     const inFlight = beginRunTelemetryDelivery(undefined, 'run-1', 1_000);
     const first = finalizeRunTelemetryDelivery(inFlight, 'run-1', {
       langfuse_expected: true,
@@ -98,6 +112,11 @@ describe('run telemetry delivery state', () => {
       langfuse_attempt_count: 1,
     }, 3_000);
 
-    expect(duplicate).toEqual(first);
+    expect(duplicate).toMatchObject({
+      idempotencyKey: first.idempotencyKey,
+      status: 'accepted',
+      attemptCount: 2,
+      finalizedAt: 3_000,
+    });
   });
 });

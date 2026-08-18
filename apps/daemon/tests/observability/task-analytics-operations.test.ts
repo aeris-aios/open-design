@@ -186,6 +186,8 @@ function record(input: {
     root: {
       observationId: rootId,
       taskExecutionId: input.id,
+      projectId: 'project-analytics',
+      conversationId: 'conversation-analytics',
       status: 'completed',
       route: 'full_plan',
       executionMode: 'simple',

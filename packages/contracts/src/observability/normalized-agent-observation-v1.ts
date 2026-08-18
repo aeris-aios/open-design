@@ -487,6 +487,94 @@ export type ObservationTurnAccountingV1 = z.infer<
   typeof ObservationTurnAccountingV1Schema
 >;
 
+export const SAFE_RUN_QUALITY_V1_SCHEMA = 'open-design.safe-run-quality/v1' as const;
+
+export const SafeObservationTextV1Schema = z.object({
+  text: z.string(),
+  redacted: z.literal(true),
+  truncated: z.boolean(),
+}).strict();
+export type SafeObservationTextV1 = z.infer<typeof SafeObservationTextV1Schema>;
+
+const safeQualityIdentifierSchema = z.string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
+
+export const SafeObservationErrorV1Schema = z.object({
+  message: SafeObservationTextV1Schema.optional(),
+  code: safeQualityIdentifierSchema.optional(),
+  category: safeQualityIdentifierSchema.optional(),
+  detail: safeQualityIdentifierSchema.optional(),
+  stage: safeQualityIdentifierSchema.optional(),
+}).strict();
+export type SafeObservationErrorV1 = z.infer<typeof SafeObservationErrorV1Schema>;
+
+export const SafeObservationToolV1Schema = z.object({
+  callHash: z.string().regex(/^[a-f0-9]{64}$/),
+  name: safeQualityIdentifierSchema,
+  input: SafeObservationTextV1Schema.optional(),
+  output: SafeObservationTextV1Schema.optional(),
+  status: z.enum(['running', 'completed', 'failed', 'unknown']),
+  isError: z.boolean(),
+  startedAtMs: nonNegativeNumberSchema.optional(),
+  endedAtMs: nonNegativeNumberSchema.optional(),
+}).strict();
+export type SafeObservationToolV1 = z.infer<typeof SafeObservationToolV1Schema>;
+
+export const SafeObservationManifestEntryV1Schema = z.object({
+  object_class: z.enum(['attachment', 'artifact', 'input_text_snapshot']),
+  storage_ref: nonEmptyStringSchema,
+  status: z.enum(['ok', 'partial', 'unavailable']),
+  reason: nonEmptyStringSchema.optional(),
+  project_id: z.string().nullable().optional(),
+  run_id: nonEmptyStringSchema.optional(),
+  workspace_id: z.string().nullable().optional(),
+  size_bytes: nonNegativeNumberSchema.optional(),
+  sha256: nonEmptyStringSchema.optional(),
+  mime_type: nonEmptyStringSchema.optional(),
+  extension: nonEmptyStringSchema.optional(),
+  redacted: z.boolean(),
+  truncated: z.boolean(),
+  stored_in_open_design: z.boolean().optional(),
+  retention_policy: nonEmptyStringSchema.optional(),
+  access_scope: nonEmptyStringSchema.optional(),
+  sensitivity: nonEmptyStringSchema.optional(),
+  source: nonEmptyStringSchema.optional(),
+  expires_at: z.string().nullable().optional(),
+  approved_by: z.string().nullable().optional(),
+  attachment_id: nonEmptyStringSchema.optional(),
+  artifact_id: nonEmptyStringSchema.optional(),
+  input_text_snapshot_id: nonEmptyStringSchema.optional(),
+  type: nonEmptyStringSchema.optional(),
+  artifact_kind: nonEmptyStringSchema.optional(),
+  build_status: nonEmptyStringSchema.optional(),
+  preview_status: nonEmptyStringSchema.optional(),
+  export_status: nonEmptyStringSchema.optional(),
+  open_in_open_design_url: z.string().nullable().optional(),
+  access_policy: nonEmptyStringSchema.optional(),
+}).strict();
+export type SafeObservationManifestEntryV1 = z.infer<
+  typeof SafeObservationManifestEntryV1Schema
+>;
+
+export const SafeRunQualityV1Schema = z.object({
+  schema: z.literal(SAFE_RUN_QUALITY_V1_SCHEMA),
+  result: z.object({
+    output: SafeObservationTextV1Schema.optional(),
+    error: SafeObservationErrorV1Schema.optional(),
+  }).strict().optional(),
+  tools: z.array(SafeObservationToolV1Schema).max(256).optional(),
+  manifests: z.object({
+    completeness: ObservationFactAvailabilityV1Schema,
+    attachments: z.array(SafeObservationManifestEntryV1Schema).max(50),
+    artifacts: z.array(SafeObservationManifestEntryV1Schema).max(50),
+    inputTextSnapshots: z.array(SafeObservationManifestEntryV1Schema).max(50),
+  }).strict().optional(),
+}).strict();
+export type SafeRunQualityV1 = z.infer<typeof SafeRunQualityV1Schema>;
+
 export const NormalizedAgentObservationV1Schema = z.object({
   schema: z.literal(NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA),
   identity: ObservationIdentityV1Schema,
@@ -497,6 +585,7 @@ export const NormalizedAgentObservationV1Schema = z.object({
   usage: NormalizedUsageEvidenceV1Schema,
   timing: NormalizedTimingEvidenceV1Schema,
   turnAccounting: ObservationTurnAccountingV1Schema.optional(),
+  quality: SafeRunQualityV1Schema.optional(),
   limitations: limitationListSchema,
   attributes: z.record(z.unknown()).optional(),
 }).passthrough().superRefine((observation, context) => {

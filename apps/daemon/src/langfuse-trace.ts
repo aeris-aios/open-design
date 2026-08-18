@@ -18,6 +18,14 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
+import {
+  SAFE_RUN_QUALITY_V1_SCHEMA,
+  SafeRunQualityV1Schema,
+  type SafeObservationManifestEntryV1,
+  type SafeObservationTextV1,
+  type SafeRunQualityV1,
+} from '@open-design/contracts';
+
 import type { TelemetryPrefs } from './app-config.js';
 import { normalizeOpenDesignTelemetryRelayUrl } from './integrations/telemetry-relay.js';
 import { readVelaControlApiContext } from './integrations/vela.js';
@@ -445,6 +453,18 @@ export function readTelemetrySinkConfig(
 
   const config = readLangfuseConfig(env);
   return config == null ? null : { kind: 'langfuse', ...config };
+}
+
+/**
+ * Task hierarchy delivery deliberately excludes Vela until that service
+ * advertises and is verified against the versioned Task observation schema.
+ * Keep this named seam separate from completed-run/feedback resolution so a
+ * Vela control key can never mask a valid relay or direct Task sink.
+ */
+export function readTaskTelemetrySinkConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): TelemetrySinkConfig | null {
+  return readTelemetrySinkConfig(env);
 }
 
 function isVelaTelemetryEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -1498,6 +1518,164 @@ function traceSafeToolPayload(
   return redactLocalPaths(redactArtifactBlocks(value));
 }
 
+const SAFE_QUALITY_MANIFEST_KEYS = new Set([
+  'object_class',
+  'storage_ref',
+  'status',
+  'reason',
+  'project_id',
+  'run_id',
+  'workspace_id',
+  'size_bytes',
+  'sha256',
+  'mime_type',
+  'extension',
+  'redacted',
+  'truncated',
+  'stored_in_open_design',
+  'retention_policy',
+  'access_scope',
+  'sensitivity',
+  'source',
+  'expires_at',
+  'approved_by',
+  'attachment_id',
+  'artifact_id',
+  'input_text_snapshot_id',
+  'type',
+  'artifact_kind',
+  'build_status',
+  'preview_status',
+  'export_status',
+  'open_in_open_design_url',
+  'access_policy',
+]);
+
+function safeQualityText(
+  value: string | undefined,
+  maxBytes: number,
+): SafeObservationTextV1 | undefined {
+  if (value === undefined) return undefined;
+  const redacted = redactLocalPaths(redactSecrets(redactArtifactBlocks(value) ?? '')) ?? '';
+  if (redacted.length === 0) return undefined;
+  const truncated = Buffer.byteLength(redacted, 'utf8') > maxBytes;
+  return {
+    text: truncate(redacted, maxBytes) ?? '',
+    redacted: true,
+    truncated,
+  };
+}
+
+function safeQualityIdentifier(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function safeQualityManifestEntry(
+  value: TraceSafeObjectManifestBase,
+): SafeObservationManifestEntryV1 {
+  return Object.fromEntries(Object.entries(value).filter(
+    ([key, entry]) => SAFE_QUALITY_MANIFEST_KEYS.has(key) && entry !== undefined,
+  )) as SafeObservationManifestEntryV1;
+}
+
+/**
+ * Versioned, transport-neutral projection shared by single-Run and Task
+ * hierarchy producers. It accepts only facts the existing single-Run bridge
+ * already collected, applies the same content/tool byte caps plus stricter
+ * local-path masking, and never admits raw provider attributes.
+ */
+export function buildSafeRunQualityProjectionV1(input: {
+  prefs: TelemetryPrefs;
+  messageOutput?: string;
+  errorMessage?: string;
+  errorCode?: string;
+  failure?: RunFailureClassification;
+  tools?: readonly ToolCallSummary[];
+  attachmentManifest?: readonly AttachmentManifestEntry[];
+  artifactManifest?: readonly ArtifactManifestEntry[];
+  inputTextSnapshotManifest?: readonly InputTextSnapshotManifestEntry[];
+  manifestCompleteness?: ObjectManifestCompleteness;
+}): SafeRunQualityV1 | undefined {
+  const wantsContent = input.prefs.metrics === true && input.prefs.content === true;
+  const output = wantsContent
+    ? safeQualityText(input.messageOutput, OUTPUT_MAX_BYTES)
+    : undefined;
+  const errorMessage = safeQualityText(input.errorMessage, OUTPUT_MAX_BYTES);
+  const error = errorMessage || input.errorCode || input.failure
+    ? {
+        ...(errorMessage ? { message: errorMessage } : {}),
+        ...(safeQualityIdentifier(input.errorCode)
+          ? { code: safeQualityIdentifier(input.errorCode)! }
+          : {}),
+        ...(safeQualityIdentifier(input.failure?.failure_category)
+          ? { category: safeQualityIdentifier(input.failure?.failure_category)! }
+          : {}),
+        ...(safeQualityIdentifier(input.failure?.failure_detail)
+          ? { detail: safeQualityIdentifier(input.failure?.failure_detail)! }
+          : {}),
+        ...(safeQualityIdentifier(input.failure?.failure_stage)
+          ? { stage: safeQualityIdentifier(input.failure?.failure_stage)! }
+          : {}),
+      }
+    : undefined;
+  const tools = wantsContent ? input.tools?.slice(0, 256).map((tool) => {
+    const safeInput = safeQualityText(
+      traceSafeToolPayload(tool.name, 'input',
+        tool.input === undefined ? undefined : redactSecrets(tool.input)),
+      TOOL_INPUT_MAX_BYTES,
+    );
+    const safeOutput = safeQualityText(
+      traceSafeToolPayload(tool.name, 'output',
+        tool.output === undefined ? undefined : redactSecrets(tool.output)),
+      TOOL_OUTPUT_MAX_BYTES,
+    );
+    return {
+      callHash: createHash('sha256').update(tool.id, 'utf8').digest('hex'),
+      name: telemetrySafeToolName(tool.name),
+      ...(safeInput ? { input: safeInput } : {}),
+      ...(safeOutput ? { output: safeOutput } : {}),
+      status: tool.isError === true
+        ? 'failed' as const
+        : tool.endedAt >= tool.startedAt
+          ? 'completed' as const
+          : 'unknown' as const,
+      isError: tool.isError === true,
+      ...(Number.isFinite(tool.startedAt) && tool.startedAt >= 0
+        ? { startedAtMs: tool.startedAt }
+        : {}),
+      ...(Number.isFinite(tool.endedAt) && tool.endedAt >= 0
+        ? { endedAtMs: tool.endedAt }
+        : {}),
+    };
+  }) : undefined;
+  const hasManifests = wantsContent && (
+    input.manifestCompleteness !== undefined ||
+    input.attachmentManifest !== undefined ||
+    input.artifactManifest !== undefined ||
+    input.inputTextSnapshotManifest !== undefined
+  );
+  return SafeRunQualityV1Schema.parse({
+    schema: SAFE_RUN_QUALITY_V1_SCHEMA,
+    ...(output || error ? { result: { ...(output ? { output } : {}), ...(error ? { error } : {}) } } : {}),
+    ...(tools && tools.length > 0 ? { tools } : {}),
+    ...(hasManifests
+      ? {
+          manifests: {
+            completeness: input.manifestCompleteness ?? 'unavailable',
+            attachments: (input.attachmentManifest ?? []).slice(0, 50)
+              .map(safeQualityManifestEntry),
+            artifacts: (input.artifactManifest ?? []).slice(0, 50)
+              .map(safeQualityManifestEntry),
+            inputTextSnapshots: (input.inputTextSnapshotManifest ?? []).slice(0, 50)
+              .map(safeQualityManifestEntry),
+          },
+        }
+      : {}),
+  });
+}
+
 function shouldCreateGenerationObservation(ctx: ReportContext): boolean {
   if (ctx.run.status === 'succeeded') return true;
   if (usageTotal(ctx.message.usage) > 0) return true;
@@ -1542,8 +1720,27 @@ export function buildTracePayload(
 ): unknown[] {
   const wantsContent = ctx.prefs.metrics === true && ctx.prefs.content === true;
   const wantsArtifacts = wantsContent;
-  const safeRunError =
-    ctx.run.error === undefined ? undefined : redactSecrets(ctx.run.error);
+  const safeQuality = buildSafeRunQualityProjectionV1({
+    prefs: ctx.prefs,
+    messageOutput: ctx.message.output,
+    ...(ctx.run.error !== undefined ? { errorMessage: ctx.run.error } : {}),
+    ...(ctx.run.errorCode !== undefined ? { errorCode: ctx.run.errorCode } : {}),
+    ...(ctx.run.failure !== undefined ? { failure: ctx.run.failure } : {}),
+    ...(ctx.tools !== undefined ? { tools: ctx.tools } : {}),
+    ...(ctx.attachmentManifest !== undefined
+      ? { attachmentManifest: ctx.attachmentManifest }
+      : {}),
+    ...(ctx.artifactManifest !== undefined
+      ? { artifactManifest: ctx.artifactManifest }
+      : {}),
+    ...(ctx.inputTextSnapshotManifest !== undefined
+      ? { inputTextSnapshotManifest: ctx.inputTextSnapshotManifest }
+      : {}),
+    ...(ctx.manifestCompleteness !== undefined
+      ? { manifestCompleteness: ctx.manifestCompleteness }
+      : {}),
+  });
+  const safeRunError = safeQuality?.result?.error?.message?.text;
 
   const sessionId =
     ctx.conversationId.length <= SESSION_ID_MAX ? ctx.conversationId : undefined;
@@ -1555,9 +1752,7 @@ export function buildTracePayload(
   const inputText = wantsContent
     ? truncate(ctx.message.prompt, INPUT_MAX_BYTES)
     : undefined;
-  const outputText = wantsContent
-    ? truncate(redactArtifactBlocks(ctx.message.output), OUTPUT_MAX_BYTES)
-    : undefined;
+  const outputText = wantsContent ? safeQuality?.result?.output?.text : undefined;
 
   const artifactsList = wantsArtifacts
     ? ctx.artifacts.slice(0, ARTIFACTS_MAX_ITEMS)
@@ -1890,18 +2085,11 @@ export function buildTracePayload(
       // Redaction policy still keys off the producer name (Bash vs content vs
       // unknown); only the labels we emit to Langfuse are allowlisted.
       const safeToolName = telemetrySafeToolName(tool.name);
-      const toolInput = wantsContent
-        ? truncate(
-            traceSafeToolPayload(tool.name, 'input', tool.input),
-            TOOL_INPUT_MAX_BYTES,
-          )
-        : undefined;
-      const toolOutput = wantsContent
-        ? truncate(
-            traceSafeToolPayload(tool.name, 'output', tool.output),
-            TOOL_OUTPUT_MAX_BYTES,
-          )
-        : undefined;
+      const qualityTool = safeQuality?.tools?.find((candidate) => (
+        candidate.callHash === createHash('sha256').update(tool.id, 'utf8').digest('hex')
+      ));
+      const toolInput = wantsContent ? qualityTool?.input?.text : undefined;
+      const toolOutput = wantsContent ? qualityTool?.output?.text : undefined;
       batch.push({
         id: randomUUID(),
         type: 'span-create',

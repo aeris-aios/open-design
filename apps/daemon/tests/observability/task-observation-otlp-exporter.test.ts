@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   aggregateStrategyTaskObservations,
   buildLegacyTaskObservationPayload,
+  TASK_OBSERVATION_SCHEMA_CAPABILITY_V1,
   strategyTaskRunObservationId,
   type StrategyTaskObservationAggregateV1,
 } from '../../src/observability/task-observation-aggregation.js';
@@ -22,6 +23,8 @@ import {
   type OtlpSpanV1,
   type TaskObservationExporterConfig,
 } from '../../src/observability/task-observation-otlp-exporter.js';
+import { readTaskTelemetrySinkConfig } from '../../src/langfuse-trace.js';
+import { buildStructuredMainRunObservationV1 } from '../../src/observability/main-run-observation.js';
 import { createEmptyFrozenSkillPackage } from '../../src/strategies/od-next/frozen-skill-package.js';
 import type { StrategyTaskExecutionRecord } from '../../src/strategies/task-store.js';
 
@@ -112,6 +115,7 @@ function observation(input: {
   usage?: ReturnType<typeof usage>;
   timing?: NormalizedAgentObservationV1['timing'];
   turnAccounting?: NormalizedAgentObservationV1['turnAccounting'];
+  quality?: NormalizedAgentObservationV1['quality'];
   attributes?: Record<string, unknown>;
   limitations?: string[];
 }): NormalizedAgentObservationV1 {
@@ -167,6 +171,7 @@ function observation(input: {
       limitations: [],
     },
     turnAccounting: input.turnAccounting,
+    quality: input.quality,
     attributes: input.attributes,
     limitations: input.limitations ?? [],
   });
@@ -182,6 +187,40 @@ function aggregate(): StrategyTaskObservationAggregateV1 {
         kind: 'task_run',
         promptBoundary: 'hostComposed',
         usage: usage(100, 10),
+        quality: {
+          schema: 'open-design.safe-run-quality/v1',
+          result: {
+            output: { text: 'safe assistant output', redacted: true, truncated: false },
+            error: {
+              message: { text: 'safe failure', redacted: true, truncated: false },
+              code: 'AGENT_EXIT',
+              category: 'runtime',
+              detail: 'provider_error',
+              stage: 'agent_call',
+            },
+          },
+          tools: [{
+            callHash: 'c'.repeat(64),
+            name: 'Bash',
+            input: { text: 'safe command', redacted: true, truncated: false },
+            output: { text: 'safe result', redacted: true, truncated: false },
+            status: 'completed',
+            isError: false,
+          }],
+          manifests: {
+            completeness: 'complete',
+            attachments: [],
+            artifacts: [{
+              object_class: 'artifact',
+              artifact_id: 'artifact-1',
+              storage_ref: 'od://objects/artifact/artifact-1',
+              status: 'ok',
+              redacted: false,
+              truncated: false,
+            }],
+            inputTextSnapshots: [],
+          },
+        },
         attributes: {
           agentCliVersion: 'opencode 1.18.18',
           runtimeAdapterVersion: 'od-opencode-json-events/v1',
@@ -332,7 +371,9 @@ const LEGACY_OBSERVATION_METADATA_FIELDS = [
   'stage',
   'status',
   'buildPackageId',
+  'modelId',
   'modelName',
+  'agentId',
   'toolName',
   'toolCallHash',
   'promptAvailability',
@@ -356,7 +397,9 @@ const OTLP_OBSERVATION_METADATA_FIELDS = [
   'langfuse.observation.metadata.stage',
   'langfuse.observation.metadata.status',
   'langfuse.observation.metadata.build_package_id',
+  'langfuse.observation.metadata.model_id',
   'langfuse.observation.metadata.model_name',
+  'langfuse.observation.metadata.agent_id',
   'langfuse.observation.metadata.tool_name',
   'langfuse.observation.metadata.tool_call_hash',
   'langfuse.observation.metadata.prompt_availability',
@@ -377,6 +420,39 @@ const OTLP_OBSERVATION_METADATA_FIELDS = [
 ] as const;
 
 describe('task observation OTLP exporter', () => {
+  it('carries the structured main-Run model and agent through legacy and OTLP payloads', () => {
+    const runObservation = buildStructuredMainRunObservationV1({
+      taskExecutionId: TASK_ID,
+      runId: RUN_ID,
+      taskRunIndex: 0,
+      parentObservationId: `strategy-task:${TASK_ID}`,
+      stage: 'production',
+      status: 'succeeded',
+      modelId: 'openai/gpt-5.6-codex',
+      agentId: 'codex',
+    });
+    const source = aggregateStrategyTaskObservations({
+      task: task(),
+      observations: [runObservation],
+    });
+
+    const legacy = buildLegacyTaskObservationPayload(source);
+    const otlp = buildOtlpTaskObservationPayload(source);
+    const legacyRun = legacyEventFor(legacy, RUN_OBSERVATION_ID);
+    expect(legacyRun.body.metadata).toMatchObject({
+      modelId: 'openai/gpt-5.6-codex',
+      modelName: 'openai/gpt-5.6-codex',
+      agentId: 'codex',
+    });
+
+    const otlpRun = spanFor(otlp, RUN_OBSERVATION_ID);
+    expect(stringAttribute(otlpRun, 'langfuse.observation.metadata.model_id')).toBe(
+      'openai/gpt-5.6-codex',
+    );
+    expect(stringAttribute(otlpRun, 'langfuse.observation.metadata.agent_id')).toBe('codex');
+    expect(legacyAndOtlpTaskMappingsMatch(source, legacy, otlp)).toBe(true);
+  });
+
   it('maps one complete OTLP span per task/run/child/model/tool with stable parent context', () => {
     const source = aggregate();
     const first = buildOtlpTaskObservationPayload(source);
@@ -436,9 +512,11 @@ describe('task observation OTLP exporter', () => {
       'c'.repeat(64),
     );
     expect(tool.startTimeUnixNano).toBe(tool.endTimeUnixNano);
-    expect(stringAttribute(tool, 'langfuse.observation.input')).toBeUndefined();
+    expect(stringAttribute(tool, 'langfuse.observation.input')).toBe('safe command');
+    expect(stringAttribute(tool, 'langfuse.observation.output')).toBe('safe result');
     const legacyTool = legacyEventFor(buildLegacyTaskObservationPayload(source), 'tool-fixture');
-    expect(legacyTool.body.input).toBeUndefined();
+    expect(legacyTool.body.input).toBe('safe command');
+    expect(legacyTool.body.output).toBe('safe result');
     expect(legacyTool.body.startTime).toBeUndefined();
     expect(legacyTool.body.endTime).toBeUndefined();
     expect(legacyTool.body.metadata).toMatchObject({
@@ -450,6 +528,10 @@ describe('task observation OTLP exporter', () => {
     expect(JSON.stringify(first)).not.toContain('/Users/alice');
     expect(JSON.stringify(first)).not.toContain('/private/usage-secret');
     const legacyRun = legacyEventFor(buildLegacyTaskObservationPayload(source), RUN_OBSERVATION_ID);
+    expect(legacyRun.body.output).toBe('safe assistant output');
+    expect(legacyRun.body.statusMessage).toBe('safe failure');
+    expect(stringAttribute(run, 'langfuse.observation.output')).toBe('safe assistant output');
+    expect(stringAttribute(run, 'langfuse.observation.status_message')).toBe('safe failure');
     const expectedPromptInput = {
       type: 'open-design.od-next-host-composed-prompt',
       schema: 'open-design.od-next-exact-send-prompt/v1',
@@ -499,6 +581,29 @@ describe('task observation OTLP exporter', () => {
     const broken = structuredClone(otlp);
     spanFor(broken, 'child-fixture').parentSpanId = otlpTaskSpanId('wrong-parent');
     expect(legacyAndOtlpTaskMappingsMatch(source, legacy, broken)).toBe(false);
+  });
+
+  it('maps Task user/session/project and app runtime dimensions to OTLP trace attributes', () => {
+    const payload = buildOtlpTaskObservationPayload(aggregate(), {
+      environment: 'production',
+      tag: 'od-next-task-v1',
+      installationId: 'installation-fixture',
+      appVersion: '0.19.2',
+      appChannel: 'beta',
+      packaged: true,
+      clientType: 'desktop',
+    });
+    const root = spanFor(payload, strategyTaskRunObservationId(TASK_ID, RUN_ID))
+      .parentSpanId!;
+    const rootSpan = spans(payload).find((span) => span.spanId === root)!;
+    expect(stringAttribute(rootSpan, 'langfuse.session.id')).toBe('conversation-fixture');
+    expect(stringAttribute(rootSpan, 'user.id')).toBe('installation-fixture');
+    expect(stringAttribute(rootSpan, 'langfuse.release')).toBe('0.19.2');
+    expect(stringAttribute(rootSpan, 'langfuse.trace.metadata.project_id')).toBe(
+      'project-fixture',
+    );
+    expect(stringAttribute(rootSpan, 'langfuse.trace.metadata.app_channel')).toBe('beta');
+    expect(stringAttribute(rootSpan, 'langfuse.trace.metadata.client_type')).toBe('desktop');
   });
 
   it('rejects omission of safe Child model and tool behavior metadata', () => {
@@ -794,14 +899,18 @@ describe('task observation OTLP exporter', () => {
   });
 
   it('reads an explicit mode while reusing existing Langfuse auth and transport defaults', () => {
-    const parsed = readTaskObservationExporterConfig({
+    const env = {
       LANGFUSE_PUBLIC_KEY: 'pk-fixture',
       LANGFUSE_SECRET_KEY: 'sk-fixture',
       LANGFUSE_BASE_URL: 'https://self-host.example.test/',
       LANGFUSE_EXPORTER_MODE: 'otlp',
       LANGFUSE_TIMEOUT_MS: '4321',
       LANGFUSE_RETRIES: '3',
-    });
+    };
+    const parsed = readTaskObservationExporterConfig(
+      readTaskTelemetrySinkConfig(env),
+      env,
+    );
     expect(parsed).toMatchObject({
       mode: 'otlp',
       baseUrl: 'https://self-host.example.test',
@@ -811,19 +920,56 @@ describe('task observation OTLP exporter', () => {
     expect(parsed?.authHeader).toBe(
       `Basic ${Buffer.from('pk-fixture:sk-fixture').toString('base64')}`,
     );
-    expect(readTaskObservationExporterConfig({})).toBeNull();
-    expect(readTaskObservationExporterConfig({
+    expect(readTaskObservationExporterConfig(null, {})).toBeNull();
+    const relayAndDirect = {
       LANGFUSE_PUBLIC_KEY: 'pk-fixture',
       LANGFUSE_SECRET_KEY: 'sk-fixture',
       OPEN_DESIGN_TELEMETRY_RELAY_URL: 'https://relay.example.test',
       LANGFUSE_EXPORTER_MODE: 'otlp',
-    })).toBeNull();
+    };
+    expect(readTaskObservationExporterConfig(
+      readTaskTelemetrySinkConfig(relayAndDirect),
+      relayAndDirect,
+    )).toBeNull();
     expect(describeTaskObservationExporter('dual')).toEqual({
       mode: 'dual',
       primaryProtocol: 'legacy-v1',
       shadowProtocol: 'otlp-v4',
       shadowNetworkEnabled: false,
     });
+  });
+
+  it('selects a Task-capable sink independently from Vela and exposes a versioned schema capability', () => {
+    const env = {
+      LANGFUSE_PUBLIC_KEY: 'pk-fixture',
+      LANGFUSE_SECRET_KEY: 'sk-fixture',
+      LANGFUSE_BASE_URL: 'https://self-host.example.test',
+    };
+    const configuredVela = {
+      VELA_CONTROL_KEY: 'ck-fixture',
+      VELA_API_URL: 'https://vela.example.test',
+    };
+
+    expect(readTaskTelemetrySinkConfig({
+      ...env,
+      OPEN_DESIGN_TELEMETRY_RELAY_URL: 'https://relay.example.test',
+    })).toMatchObject({ kind: 'relay', relayUrl: 'https://relay.example.test' });
+    const direct = readTaskTelemetrySinkConfig(env);
+    expect(direct).toMatchObject({ kind: 'langfuse', baseUrl: 'https://self-host.example.test' });
+    expect(readTaskObservationExporterConfig(direct, {
+      ...env,
+      ...configuredVela,
+      LANGFUSE_EXPORTER_MODE: 'otlp',
+    })).toMatchObject({ mode: 'otlp', baseUrl: 'https://self-host.example.test' });
+    expect(readTaskTelemetrySinkConfig({})).toBeNull();
+    expect(TASK_OBSERVATION_SCHEMA_CAPABILITY_V1).toMatchObject({
+      schema: 'open-design.task-observation-schema-capability/v1',
+      aggregateSchema: 'open-design.strategy-task-observation/v1',
+      normalizedObservationSchema: 'open-design.normalized-agent-observation/v1',
+    });
+    expect(TASK_OBSERVATION_SCHEMA_CAPABILITY_V1.safeQualityFields).toEqual(
+      expect.arrayContaining(['assistant_output', 'tool_io', 'manifests', 'error']),
+    );
   });
 
   it('sends OTLP/JSON with Basic Auth, ingestion v4, and the durable idempotency identity', async () => {

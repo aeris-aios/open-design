@@ -3,6 +3,7 @@ import {
   type NormalizedAgentObservationV1,
   type NormalizedTimingEvidenceV1,
   type NormalizedUsageEvidenceV1,
+  type SafeRunQualityV1,
   type StrategyInputStageV2,
 } from '@open-design/contracts';
 
@@ -28,6 +29,10 @@ export interface StructuredMainRunObservationV1Input {
   parentObservationId?: string;
   stage: StrategyInputStageV2;
   status: string;
+  /** Resolved provider model identifier; emitted only after bounded validation. */
+  modelId?: string;
+  /** Runtime adapter identifier; emitted only after bounded validation. */
+  agentId?: string;
   promptTelemetry?: PromptStackTelemetry;
   usage?: RunUsageAnalytics;
   timing?: RunTimingAnalytics;
@@ -37,6 +42,8 @@ export interface StructuredMainRunObservationV1Input {
   runtimeCompanionName?: string;
   runtimeCompanionVersion?: string;
   runtimeAdapterVersion?: string;
+  /** Safe projection rebuilt from the same durable sources as single-Run telemetry. */
+  quality?: SafeRunQualityV1;
 }
 
 interface SafeOdNextHostComposedPromptV1 extends Record<string, unknown> {
@@ -243,6 +250,14 @@ export function buildStructuredMainRunObservationV1(
   const usage = normalizeMainRunUsage(input.usage);
   const timing = normalizeMainRunTiming(input);
   const exactPrompt = input.promptTelemetry?.odNextExactSend;
+  const safeModelId = typeof input.modelId === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(input.modelId)
+    ? input.modelId
+    : undefined;
+  const safeAgentId = typeof input.agentId === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(input.agentId)
+    ? input.agentId
+    : undefined;
   const prompt = input.promptTelemetry
     ? {
         hostComposed: {
@@ -285,7 +300,10 @@ export function buildStructuredMainRunObservationV1(
     ...(prompt ? { prompt } : {}),
     ...(usage ? { usage } : {}),
     ...(timing ? { timing } : {}),
+    ...(input.quality ? { quality: input.quality } : {}),
     attributes: {
+      ...(safeModelId ? { modelId: safeModelId } : {}),
+      ...(safeAgentId ? { agentId: safeAgentId } : {}),
       ...(input.usage?.agent_reported_model
         ? { agentReportedModel: input.usage.agent_reported_model }
         : {}),

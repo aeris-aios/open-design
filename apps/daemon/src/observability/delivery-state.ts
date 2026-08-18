@@ -4,13 +4,12 @@ export const RUN_TELEMETRY_DELIVERY_STATE_VERSION = 1 as const;
 
 export type RunTelemetryDeliveryTerminalStatus =
   | 'accepted'
-  | 'not_expected'
-  | 'failed';
+  | 'not_expected';
 
 export interface RunTelemetryDeliveryStateV1 {
   version: typeof RUN_TELEMETRY_DELIVERY_STATE_VERSION;
   idempotencyKey: string;
-  status: 'in_flight' | RunTelemetryDeliveryTerminalStatus;
+  status: 'in_flight' | 'failed' | RunTelemetryDeliveryTerminalStatus;
   attemptCount: number;
   crashWindow: boolean;
   startedAt: number;
@@ -76,9 +75,9 @@ export function recordRunTelemetryDeliveryAttempt(
   };
 }
 
-function terminalStatus(
+function resultStatus(
   result: RunTelemetryDeliveryResult,
-): RunTelemetryDeliveryTerminalStatus {
+): RunTelemetryDeliveryStateV1['status'] {
   if (result.langfuse_expected === false) return 'not_expected';
   if (result.langfuse_delivery_status === 'accepted') return 'accepted';
   return 'failed';
@@ -102,13 +101,14 @@ export function finalizeRunTelemetryDelivery(
 ): RunTelemetryDeliveryStateV1 {
   if (typeof previous?.finalizedAt === 'number') return previous;
   const persistedAttempts = previousAttemptCount(previous);
-  const status = terminalStatus(result);
+  const status = resultStatus(result);
   const dropReason = typeof result.langfuse_drop_reason === 'string'
     && result.langfuse_drop_reason
     ? result.langfuse_drop_reason
     : status === 'failed'
       ? 'network_error'
       : undefined;
+  const terminal = status === 'accepted' || status === 'not_expected';
   return {
     version: RUN_TELEMETRY_DELIVERY_STATE_VERSION,
     idempotencyKey:
@@ -121,7 +121,7 @@ export function finalizeRunTelemetryDelivery(
     startedAt:
       typeof previous?.startedAt === 'number' ? previous.startedAt : now,
     ...(dropReason ? { dropReason } : {}),
-    finalizedAt: now,
+    ...(terminal ? { finalizedAt: now } : {}),
   };
 }
 

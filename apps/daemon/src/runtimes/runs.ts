@@ -991,7 +991,11 @@ export function createChatRunService({
       run.id,
       delivery,
     );
-    run.langfuseCompletedAt = run.telemetryDelivery.finalizedAt;
+    if (typeof run.telemetryDelivery.finalizedAt === 'number') {
+      run.langfuseCompletedAt = run.telemetryDelivery.finalizedAt;
+    } else {
+      delete run.langfuseCompletedAt;
+    }
     persistState(run);
     return run.telemetryDelivery;
   };

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import {
+  NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
+  SAFE_RUN_QUALITY_V1_SCHEMA,
   NormalizedAgentObservationV1Schema,
   normalizeAgentObservationV1,
   type NormalizedAgentObservationKindV1,
@@ -80,6 +82,8 @@ export interface TaskObservationStageTotalV1 {
 export interface StrategyTaskObservationRootV1 {
   observationId: string;
   taskExecutionId: string;
+  projectId: string;
+  conversationId: string;
   status: StrategyTaskOutcome;
   route: StrategyTaskExecutionRecord['route'];
   executionMode: StrategyTaskExecutionRecord['executionMode'];
@@ -139,6 +143,21 @@ export interface StrategyTaskObservationAggregateV1 {
   limitations: string[];
 }
 
+export const TASK_OBSERVATION_SCHEMA_CAPABILITY_V1 = {
+  schema: 'open-design.task-observation-schema-capability/v1',
+  aggregateSchema: 'open-design.strategy-task-observation/v1',
+  normalizedObservationSchema: NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
+  safeRunQualitySchema: SAFE_RUN_QUALITY_V1_SCHEMA,
+  safeQualityFields: [
+    'assistant_output',
+    'error',
+    'tool_io',
+    'manifests',
+    'usage',
+    'timing',
+  ],
+} as const;
+
 export interface LegacyTaskObservationExportPlan {
   expectation: RunTelemetryExportExpectation;
   batch: unknown[];
@@ -147,6 +166,11 @@ export interface LegacyTaskObservationExportPlan {
 export interface TaskObservationExportContextV1 {
   environment: string;
   tag: string;
+  installationId?: string | null;
+  appVersion?: string;
+  appChannel?: string;
+  packaged?: boolean;
+  clientType?: 'desktop' | 'web' | 'unknown';
 }
 
 export class InvalidTaskObservationAggregateError extends Error {
@@ -572,6 +596,8 @@ export function aggregateStrategyTaskObservations(input: {
     root: {
       observationId: rootObservationId,
       taskExecutionId: input.task.taskExecutionId,
+      projectId: input.task.projectId,
+      conversationId: input.task.conversationId,
       status: input.task.outcome,
       route: input.task.route,
       executionMode: input.task.executionMode,
@@ -729,9 +755,19 @@ export function safeTaskObservationBuildPackageId(
 export function safeTaskObservationModelName(
   observation: NormalizedAgentObservationV1,
 ): string | undefined {
-  const model = observation.attributes?.['model'];
+  const model = observation.attributes?.['modelId'] ?? observation.attributes?.['model'];
   return typeof model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(model)
     ? model
+    : undefined;
+}
+
+export function safeTaskObservationAgentId(
+  observation: NormalizedAgentObservationV1,
+): string | undefined {
+  const agentId = observation.attributes?.['agentId'];
+  return typeof agentId === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(agentId)
+    ? agentId
     : undefined;
 }
 
@@ -753,6 +789,67 @@ export function safeTaskObservationToolCallHash(
     typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
     ? value
     : undefined;
+}
+
+export interface SafeTaskObservationQualityProjectionV1 {
+  input?: string;
+  output?: string;
+  statusMessage?: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Resolve the already-validated safe quality payload for one exported
+ * observation. Tool I/O is owned by the parent task_run quality projection
+ * and joined by the stable raw-call hash, so arbitrary observation attributes
+ * never become transport content.
+ */
+export function safeTaskObservationQualityProjection(
+  aggregate: StrategyTaskObservationAggregateV1,
+  observation: NormalizedAgentObservationV1,
+): SafeTaskObservationQualityProjectionV1 {
+  if (observation.kind === 'task_run') {
+    const quality = observation.quality;
+    return {
+      ...(quality?.result?.output?.text !== undefined
+        ? { output: quality.result.output.text }
+        : {}),
+      ...(quality?.result?.error?.message?.text !== undefined
+        ? { statusMessage: quality.result.error.message.text }
+        : {}),
+      metadata: {
+        errorCode: quality?.result?.error?.code,
+        failureCategory: quality?.result?.error?.category,
+        failureDetail: quality?.result?.error?.detail,
+        failureStage: quality?.result?.error?.stage,
+        manifestCompleteness: quality?.manifests?.completeness,
+        attachmentManifest: quality?.manifests?.attachments,
+        artifactManifest: quality?.manifests?.artifacts,
+        inputTextSnapshotManifest: quality?.manifests?.inputTextSnapshots,
+      },
+    };
+  }
+  if (observation.kind !== 'tool') return { metadata: {} };
+  const callHash = safeTaskObservationToolCallHash(observation);
+  const toolName = safeTaskObservationToolName(observation);
+  if (!callHash || !toolName) return { metadata: {} };
+  const parentRun = aggregate.observations.find((candidate) => (
+    candidate.kind === 'task_run' &&
+    candidate.identity.runId === observation.identity.runId &&
+    candidate.identity.taskRunIndex === observation.identity.taskRunIndex
+  ));
+  const tool = parentRun?.quality?.tools?.find((candidate) => (
+    candidate.callHash === callHash && candidate.name === toolName
+  ));
+  if (!tool) return { metadata: {} };
+  return {
+    ...(tool.input ? { input: tool.input.text } : {}),
+    ...(tool.output ? { output: tool.output.text } : {}),
+    metadata: {
+      toolStatus: tool.status,
+      isError: tool.isError,
+    },
+  };
 }
 
 /**
@@ -782,6 +879,10 @@ export function buildLegacyTaskObservationPayload(
   pushEvent('trace-create', {
     id: traceId,
     name: 'open-design-strategy-task',
+    sessionId: aggregate.root.conversationId,
+    userId: context?.installationId ?? undefined,
+    release: context?.appVersion,
+    version: context?.appVersion ?? aggregate.root.strategyVersion,
     timestamp: new Date(aggregate.root.createdAt).toISOString(),
     ...(context
       ? {
@@ -796,6 +897,8 @@ export function buildLegacyTaskObservationPayload(
     metadata: {
       schema: aggregate.schema,
       taskExecutionId: aggregate.root.taskExecutionId,
+      projectId: aggregate.root.projectId,
+      conversationId: aggregate.root.conversationId,
       route: aggregate.root.route,
       executionMode: aggregate.root.executionMode,
       taskType: aggregate.root.taskType,
@@ -806,6 +909,10 @@ export function buildLegacyTaskObservationPayload(
       snapshotId: aggregate.root.snapshotId,
       planContractHash: aggregate.root.planContractHash,
       selectedAgentId: aggregate.root.selectedAgentId,
+      appVersion: context?.appVersion,
+      appChannel: context?.appChannel,
+      packaged: context?.packaged,
+      clientType: context?.clientType,
       agentCliVersions: aggregate.root.agentCliVersions,
       runtimeCompanionVersions: aggregate.root.runtimeCompanionVersions,
       runtimeAdapterVersions: aggregate.root.runtimeAdapterVersions,
@@ -824,6 +931,7 @@ export function buildLegacyTaskObservationPayload(
   for (const observation of aggregate.observations) {
     const promptBoundary = promptBoundaryForObservation(observation);
     const promptInput = safePromptInput(observation);
+    const quality = safeTaskObservationQualityProjection(aggregate, observation);
     const common = {
       id: observation.identity.observationId,
       traceId,
@@ -834,7 +942,15 @@ export function buildLegacyTaskObservationPayload(
         ? `strategy-stage:${observation.stage}`
         : observation.kind,
       ...legacyAbsoluteTiming(observation),
-      ...(promptInput !== undefined ? { input: promptInput } : {}),
+      ...(quality.input !== undefined
+        ? { input: quality.input }
+        : promptInput !== undefined
+          ? { input: promptInput }
+          : {}),
+      ...(quality.output !== undefined ? { output: quality.output } : {}),
+      ...(quality.statusMessage !== undefined
+        ? { statusMessage: quality.statusMessage }
+        : {}),
       level: legacyLevel(observation.status),
       metadata: {
         schema: observation.schema,
@@ -844,7 +960,9 @@ export function buildLegacyTaskObservationPayload(
         stage: observation.stage,
         status: observation.status,
         buildPackageId: safeTaskObservationBuildPackageId(observation),
+        modelId: safeTaskObservationModelName(observation),
         modelName: safeTaskObservationModelName(observation),
+        agentId: safeTaskObservationAgentId(observation),
         toolName: safeTaskObservationToolName(observation),
         toolCallHash: safeTaskObservationToolCallHash(observation),
         ...(promptBoundary
@@ -865,6 +983,7 @@ export function buildLegacyTaskObservationPayload(
           observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
         ...safeTaskObservationRuntimeVersions(observation),
+        ...quality.metadata,
         limitations: safeTaskObservationLimitationCodes(observation.limitations),
       },
     };

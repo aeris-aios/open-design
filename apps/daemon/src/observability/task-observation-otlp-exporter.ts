@@ -9,13 +9,14 @@ import type { TelemetryPrefs } from '../app-config.js';
 import {
   HARD_BATCH_MAX_BYTES,
   postLangfuseBatch,
-  readRunTelemetrySinkConfig,
   type LangfuseConfig,
   type LangfuseDeliveryState,
+  type TelemetrySinkConfig,
 } from '../langfuse-trace.js';
 import {
   buildLegacyTaskObservationPayload,
   prepareLegacyTaskObservationExport,
+  safeTaskObservationAgentId,
   safeTaskObservationBuildPackageId,
   safeTaskObservationLimitationCodes,
   safeTaskObservationModelName,
@@ -24,6 +25,7 @@ import {
   safeTaskObservationUsageValueSources,
   safeTaskObservationUsageValues,
   safeTaskObservationRuntimeVersions,
+  safeTaskObservationQualityProjection,
   strategyTaskRootObservationId,
   type TaskObservationExportContextV1,
   type StrategyTaskObservationAggregateV1,
@@ -111,19 +113,17 @@ function parseMode(value: string | undefined): TaskObservationExporterMode {
 }
 
 export function readTaskObservationExporterConfig(
+  sink: TelemetrySinkConfig | null,
   env: NodeJS.ProcessEnv = process.env,
-  configuredEnv: Record<string, string> = {},
 ): TaskObservationExporterConfig | null {
-  const config = readRunTelemetrySinkConfig(env, configuredEnv);
-  // Relay and Vela own their existing legacy wire contracts. This direct
-  // self-host migration must never bypass the effective-sink priority merely
-  // because Langfuse keys are also present in the environment.
-  if (!config || config.kind !== 'langfuse') return null;
+  // Consume the already-selected Task sink. Do not resolve again here: doing
+  // so used to let Vela mask direct Langfuse after Task eligibility chose it.
+  if (!sink || sink.kind !== 'langfuse') return null;
   return {
-    authHeader: config.authHeader,
-    baseUrl: config.baseUrl,
-    timeoutMs: config.timeoutMs,
-    retries: config.retries,
+    authHeader: sink.authHeader,
+    baseUrl: sink.baseUrl,
+    timeoutMs: sink.timeoutMs,
+    retries: sink.retries,
     mode: parseMode(env.LANGFUSE_EXPORTER_MODE),
   };
 }
@@ -195,8 +195,10 @@ function taskTraceAttributes(
   const limitations = safeTaskObservationLimitationCodes(aggregate.limitations);
   return attributes([
     ['langfuse.trace.name', 'open-design-strategy-task'],
-    ['langfuse.session.id', aggregate.root.taskExecutionId],
-    ['langfuse.version', aggregate.root.strategyVersion],
+    ['langfuse.session.id', aggregate.root.conversationId],
+    ['user.id', context?.installationId ?? undefined],
+    ['langfuse.version', context?.appVersion ?? aggregate.root.strategyVersion],
+    ['langfuse.release', context?.appVersion],
     ['langfuse.trace.tags', [
       'od-next-strategy-v2',
       aggregate.root.route,
@@ -208,6 +210,8 @@ function taskTraceAttributes(
     ['deployment.environment.name', context?.environment],
     ['langfuse.trace.metadata.rollout_tag', context?.tag],
     ['langfuse.trace.metadata.task_execution_id', aggregate.root.taskExecutionId],
+    ['langfuse.trace.metadata.project_id', aggregate.root.projectId],
+    ['langfuse.trace.metadata.conversation_id', aggregate.root.conversationId],
     ['langfuse.trace.metadata.route', aggregate.root.route],
     ['langfuse.trace.metadata.execution_mode', aggregate.root.executionMode],
     ['langfuse.trace.metadata.task_type', aggregate.root.taskType],
@@ -217,6 +221,12 @@ function taskTraceAttributes(
     ['langfuse.trace.metadata.snapshot_id', aggregate.root.snapshotId],
     ['langfuse.trace.metadata.plan_contract_hash', aggregate.root.planContractHash],
     ['langfuse.trace.metadata.selected_agent_id', aggregate.root.selectedAgentId],
+    ['langfuse.trace.metadata.app_version', context?.appVersion],
+    ['langfuse.trace.metadata.app_channel', context?.appChannel],
+    ['langfuse.trace.metadata.packaged', context?.packaged === undefined
+      ? undefined
+      : String(context.packaged)],
+    ['langfuse.trace.metadata.client_type', context?.clientType],
     ['langfuse.trace.metadata.agent_cli_versions', jsonString(aggregate.root.agentCliVersions)],
     ['langfuse.trace.metadata.runtime_companion_versions',
       jsonString(aggregate.root.runtimeCompanionVersions)],
@@ -378,6 +388,7 @@ function buildObservationSpan(
   const timing = observationTiming(observation, aggregate.root.updatedAt);
   const prompt = promptBoundary(observation);
   const input = safeObservationInput(observation);
+  const quality = safeTaskObservationQualityProjection(aggregate, observation);
   const usageAccounted = observation.turnAccounting?.disposition !== 'exclude_inherited';
   const usageDetails = observationUsageDetails(observation);
   const usageValues = safeTaskObservationUsageValues(observation);
@@ -405,7 +416,13 @@ function buildObservationSpan(
       ...attributes([
         ['langfuse.observation.type', observation.kind === 'model_call' ? 'generation' : 'span'],
         ['langfuse.observation.level', observationLevel(observation.status)],
-        ['langfuse.observation.input', input === undefined ? undefined : jsonString(input)],
+        ['langfuse.observation.input', quality.input !== undefined
+          ? quality.input
+          : input === undefined
+            ? undefined
+            : jsonString(input)],
+        ['langfuse.observation.output', quality.output],
+        ['langfuse.observation.status_message', quality.statusMessage],
         ['langfuse.observation.model.name', observation.kind === 'model_call'
           ? safeTaskObservationModelName(observation)
           : undefined],
@@ -418,8 +435,12 @@ function buildObservationSpan(
         ['langfuse.observation.metadata.status', observation.status],
         ['langfuse.observation.metadata.build_package_id',
           safeTaskObservationBuildPackageId(observation)],
+        ['langfuse.observation.metadata.model_id',
+          safeTaskObservationModelName(observation)],
         ['langfuse.observation.metadata.model_name',
           safeTaskObservationModelName(observation)],
+        ['langfuse.observation.metadata.agent_id',
+          safeTaskObservationAgentId(observation)],
         ['langfuse.observation.metadata.tool_name',
           safeTaskObservationToolName(observation)],
         ['langfuse.observation.metadata.tool_call_hash',
@@ -448,6 +469,10 @@ function buildObservationSpan(
           runtimeVersions.runtimeCompanionVersion],
         ['langfuse.observation.metadata.runtime_adapter_version',
           runtimeVersions.runtimeAdapterVersion],
+        ['langfuse.observation.metadata.safe_quality',
+          Object.keys(quality.metadata).some((key) => quality.metadata[key] !== undefined)
+            ? jsonString(quality.metadata)
+            : undefined],
       ]),
     ],
     status: spanStatus(observation.status),
@@ -519,9 +544,13 @@ function attributeMatches(span: OtlpSpanV1, expected: OtlpAttribute): boolean {
 const TASK_TRACE_ATTRIBUTE_KEYS = [
   'langfuse.trace.name',
   'langfuse.session.id',
+  'user.id',
   'langfuse.version',
+  'langfuse.release',
   'langfuse.trace.tags',
   'langfuse.trace.metadata.task_execution_id',
+  'langfuse.trace.metadata.project_id',
+  'langfuse.trace.metadata.conversation_id',
   'langfuse.trace.metadata.route',
   'langfuse.trace.metadata.execution_mode',
   'langfuse.trace.metadata.task_type',
@@ -531,6 +560,10 @@ const TASK_TRACE_ATTRIBUTE_KEYS = [
   'langfuse.trace.metadata.snapshot_id',
   'langfuse.trace.metadata.plan_contract_hash',
   'langfuse.trace.metadata.selected_agent_id',
+  'langfuse.trace.metadata.app_version',
+  'langfuse.trace.metadata.app_channel',
+  'langfuse.trace.metadata.packaged',
+  'langfuse.trace.metadata.client_type',
   'langfuse.trace.metadata.agent_cli_versions',
   'langfuse.trace.metadata.runtime_companion_versions',
   'langfuse.trace.metadata.runtime_adapter_versions',
@@ -598,9 +631,15 @@ export function legacyAndOtlpTaskMappingsMatch(
   const legacyTraceMetadata = trace.body.metadata as Record<string, unknown> | undefined;
   if (
     trace.body.name !== 'open-design-strategy-task' ||
+    trace.body.sessionId !== aggregate.root.conversationId ||
+    trace.body.userId !== (context?.installationId ?? undefined) ||
+    trace.body.release !== context?.appVersion ||
+    trace.body.version !== (context?.appVersion ?? aggregate.root.strategyVersion) ||
     !recordMatches(legacyTraceMetadata, {
       schema: aggregate.schema,
       taskExecutionId: aggregate.root.taskExecutionId,
+      projectId: aggregate.root.projectId,
+      conversationId: aggregate.root.conversationId,
       route: aggregate.root.route,
       executionMode: aggregate.root.executionMode,
       taskType: aggregate.root.taskType,
@@ -611,6 +650,10 @@ export function legacyAndOtlpTaskMappingsMatch(
       snapshotId: aggregate.root.snapshotId,
       planContractHash: aggregate.root.planContractHash,
       selectedAgentId: aggregate.root.selectedAgentId,
+      appVersion: context?.appVersion,
+      appChannel: context?.appChannel,
+      packaged: context?.packaged,
+      clientType: context?.clientType,
       agentCliVersions: aggregate.root.agentCliVersions,
       runtimeCompanionVersions: aggregate.root.runtimeCompanionVersions,
       runtimeAdapterVersions: aggregate.root.runtimeAdapterVersions,
@@ -676,7 +719,18 @@ export function legacyAndOtlpTaskMappingsMatch(
     const usageLimitations = safeTaskObservationLimitationCodes(observation.usage.limitations);
     const prompt = promptBoundary(observation);
     const input = safeObservationInput(observation);
-    const expectedInput = input === undefined ? undefined : jsonString(input);
+    const quality = safeTaskObservationQualityProjection(aggregate, observation);
+    const expectedInput = quality.input !== undefined
+      ? quality.input
+      : input === undefined
+        ? undefined
+        : jsonString(input);
+    const qualityMetadata = Object.fromEntries(Object.entries(quality.metadata).filter(
+      ([, value]) => value !== undefined,
+    ));
+    const expectedSafeQualityMetadata = Object.keys(qualityMetadata).length > 0
+      ? jsonString(quality.metadata)
+      : undefined;
     const expectedModel = observation.kind === 'model_call'
       ? safeTaskObservationModelName(observation)
       : undefined;
@@ -695,8 +749,14 @@ export function legacyAndOtlpTaskMappingsMatch(
       legacy.type !== expectedEventType ||
       legacy.body.traceId !== aggregate.root.observationId ||
       legacy.body.name !== expectedName ||
-      (legacy.body.input === undefined) !== (input === undefined) ||
-      (input !== undefined && jsonString(legacy.body.input) !== jsonString(input)) ||
+      (legacy.body.input === undefined) !== (expectedInput === undefined) ||
+      (expectedInput !== undefined && (
+        typeof legacy.body.input === 'string'
+          ? legacy.body.input !== expectedInput
+          : jsonString(legacy.body.input) !== expectedInput
+      )) ||
+      legacy.body.output !== quality.output ||
+      legacy.body.statusMessage !== quality.statusMessage ||
       legacy.body.model !== expectedModel ||
       legacy.body.startTime !== legacyTiming.startTime ||
       legacy.body.endTime !== legacyTiming.endTime ||
@@ -716,7 +776,9 @@ export function legacyAndOtlpTaskMappingsMatch(
         stage: observation.stage,
         status: observation.status,
         buildPackageId: safeTaskObservationBuildPackageId(observation),
+        modelId: safeTaskObservationModelName(observation),
         modelName: safeTaskObservationModelName(observation),
+        agentId: safeTaskObservationAgentId(observation),
         toolName: safeTaskObservationToolName(observation),
         toolCallHash: safeTaskObservationToolCallHash(observation),
         promptAvailability: prompt?.availability,
@@ -730,6 +792,7 @@ export function legacyAndOtlpTaskMappingsMatch(
         turnAccountingDisposition: observation.turnAccounting?.disposition,
         turnAccountingOwnerObservationId: observation.turnAccounting?.ownerObservationId,
         timingAvailability: observation.timing.availability,
+        ...quality.metadata,
         limitations,
         ...runtimeVersions,
       }) ||
@@ -743,8 +806,12 @@ export function legacyAndOtlpTaskMappingsMatch(
       attributeValue(otlp, 'langfuse.observation.metadata.status') !== observation.status ||
       attributeValue(otlp, 'langfuse.observation.metadata.build_package_id') !==
         safeTaskObservationBuildPackageId(observation) ||
+      attributeValue(otlp, 'langfuse.observation.metadata.model_id') !==
+        safeTaskObservationModelName(observation) ||
       attributeValue(otlp, 'langfuse.observation.metadata.model_name') !==
         safeTaskObservationModelName(observation) ||
+      attributeValue(otlp, 'langfuse.observation.metadata.agent_id') !==
+        safeTaskObservationAgentId(observation) ||
       attributeValue(otlp, 'langfuse.observation.metadata.tool_name') !==
         safeTaskObservationToolName(observation) ||
       attributeValue(otlp, 'langfuse.observation.metadata.tool_call_hash') !==
@@ -752,6 +819,10 @@ export function legacyAndOtlpTaskMappingsMatch(
       attributeValue(otlp, 'langfuse.observation.metadata.prompt_availability') !==
         prompt?.availability ||
       attributeValue(otlp, 'langfuse.observation.input') !== expectedInput ||
+      attributeValue(otlp, 'langfuse.observation.output') !== quality.output ||
+      attributeValue(otlp, 'langfuse.observation.status_message') !== quality.statusMessage ||
+      attributeValue(otlp, 'langfuse.observation.metadata.safe_quality') !==
+        expectedSafeQualityMetadata ||
       attributeValue(otlp, 'langfuse.observation.model.name') !== expectedModel ||
       attributeValue(otlp, 'langfuse.observation.metadata.usage_availability') !==
         observation.usage.availability ||

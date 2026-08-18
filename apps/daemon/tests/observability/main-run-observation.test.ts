@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { buildStructuredMainRunObservationV1 } from '../../src/observability/main-run-observation.js';
+import { buildSafeRunQualityProjectionV1 } from '../../src/langfuse-trace.js';
 import {
   bindOdNextExactSendPromptEvidence,
   buildPromptStackTelemetry,
@@ -10,6 +11,120 @@ import {
 import { scanRunEventsForUsageAnalytics } from '../../src/run-analytics-observability.js';
 
 describe('buildStructuredMainRunObservationV1', () => {
+  it('keeps only bounded model and agent identifiers', () => {
+    const safe = buildStructuredMainRunObservationV1({
+      runId: 'run-runtime-safe',
+      taskRunIndex: 0,
+      stage: 'request',
+      status: 'succeeded',
+      modelId: 'openai/gpt-5.6-codex',
+      agentId: 'codex',
+    });
+    expect(safe.attributes).toMatchObject({
+      modelId: 'openai/gpt-5.6-codex',
+      agentId: 'codex',
+    });
+
+    const unsafe = buildStructuredMainRunObservationV1({
+      runId: 'run-runtime-unsafe',
+      taskRunIndex: 0,
+      stage: 'request',
+      status: 'failed',
+      modelId: 'model token=sk-secret',
+      agentId: '/Users/alice/private-agent',
+    });
+    expect(unsafe.attributes).not.toHaveProperty('modelId');
+    expect(unsafe.attributes).not.toHaveProperty('agentId');
+  });
+
+  it('reuses the single-Run safe projection for output, errors, tools, and manifests', () => {
+    const quality = buildSafeRunQualityProjectionV1({
+      prefs: { metrics: true, content: true, artifactManifest: true },
+      messageOutput:
+        'done token=sk-test-1234567890123456789012 <artifact>private body</artifact>',
+      errorMessage: 'failed at /Users/alice/private token=sk-test-1234567890123456789012',
+      errorCode: 'AGENT_EXIT',
+      failure: {
+        failure_category: 'auth',
+        failure_detail: 'auth_required',
+        failure_stage: 'session_init',
+        retryable: false,
+        user_action: 'login',
+      },
+      tools: [{
+        id: 'tool-1',
+        name: 'Bash',
+        startedAt: 1_000,
+        endedAt: 1_050,
+        input: 'cat /Users/alice/private token=sk-test-1234567890123456789012',
+        output: 'done /home/alice/private',
+      }, {
+        id: 'tool-2',
+        name: 'Write',
+        startedAt: 1_100,
+        endedAt: 1_150,
+        input: 'private file content',
+        output: 'private result',
+      }],
+      attachmentManifest: [{
+        object_class: 'attachment',
+        attachment_id: 'att-1',
+        storage_ref: 'od://objects/attachment/att-1',
+        status: 'ok',
+        project_id: 'project-1',
+        run_id: 'run-1',
+        workspace_id: null,
+        redacted: false,
+        truncated: false,
+        stored_in_open_design: true,
+        retention_policy: 'project_lifetime',
+        access_scope: 'project',
+        sensitivity: 'private',
+        source: 'user_upload',
+        expires_at: null,
+        approved_by: null,
+      }],
+      manifestCompleteness: 'complete',
+    });
+    expect(quality).toBeDefined();
+    if (!quality) throw new Error('expected the safe projection');
+
+    const observation = buildStructuredMainRunObservationV1({
+      taskExecutionId: 'task-safe-quality',
+      runId: 'run-safe-quality',
+      taskRunIndex: 0,
+      stage: 'request',
+      status: 'failed',
+      quality,
+    });
+
+    expect(observation.quality?.result?.output?.text).toContain(
+      '[REDACTED:artifact_content]',
+    );
+    expect(observation.quality?.result?.error).toMatchObject({
+      code: 'AGENT_EXIT',
+      category: 'auth',
+      detail: 'auth_required',
+      stage: 'session_init',
+    });
+    expect(observation.quality?.tools).toHaveLength(2);
+    expect(observation.quality?.tools?.[0]).toMatchObject({
+      callHash: createHash('sha256').update('tool-1').digest('hex'),
+      name: 'Bash',
+      status: 'completed',
+    });
+    expect(observation.quality?.tools?.[1]?.input?.text).toContain(
+      '[REDACTED:tool_input:content_tool:Write]',
+    );
+    expect(observation.quality?.manifests?.attachments).toHaveLength(1);
+    const serialized = JSON.stringify(observation.quality);
+    expect(serialized).not.toContain('/Users/alice');
+    expect(serialized).not.toContain('/home/alice');
+    expect(serialized).not.toContain('sk-test-');
+    expect(serialized).not.toContain('private file content');
+    expect(serialized).not.toContain('private body');
+  });
+
   it.each([
     ['request', 'bundle', 'open-design.od-next-prompt-bundle/v1'],
     ['clarification', 'turn', 'open-design.od-next-request-turn/v1'],
