@@ -1549,6 +1549,11 @@ process.stdin.on("end", () => {
     expect(e2eVitestGate).toContain("needs: metadata");
     expect(e2eVitestGate).toContain("ref: ${{ needs.metadata.outputs.commit }}");
     expect(e2eVitestGate).toContain("playwright install --with-deps chromium");
+    expect(e2eVitestGate).toContain("Allow Chromium user namespaces on GitHub Ubuntu");
+    expect(e2eVitestGate).toContain("kernel.apparmor_restrict_unprivileged_userns=0");
+    expect(e2eVitestGate).not.toContain("--no-sandbox");
+    expect(e2eVitestGate.indexOf("kernel.apparmor_restrict_unprivileged_userns=0"))
+      .toBeLessThan(e2eVitestGate.indexOf("pnpm --filter @open-design/e2e test"));
     expect(e2eVitestGate).toContain("pnpm --filter @open-design/e2e test");
 
     const daemonGate = sectionBetween(prerelease, "  daemon_unit_tests:", "  verify:");
