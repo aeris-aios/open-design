@@ -522,9 +522,12 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
    右边界反而对不上;让壳子收缩到内容宽,再由 .msg-me 整体推到右边。
    中间 6px:比附件之间的 7px 略紧,让它们读起来是一组而不是两件事。 */
 /* 附件和正文是同一条消息的两部分,靠得越近越像一条 —— 4 而不是 6。 */
-.msg-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 380px; }
+/* 壳子放到 412、气泡仍锁 380:附件行要够宽才能把最后一张切在腰上(见 .att),
+   但气泡不能跟着变宽 —— 412 的气泡离面板左缘只剩 8px,"我说的话贴右边"
+   这个读感就没了。两条上限各管各的,右边界照样对齐。 */
+.msg-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 412px; }
 .msg-stack .att { max-width: 100%; }
-.msg-stack .bub { max-width: 100%; }
+.msg-stack .bub { max-width: 380px; }
 /* ---- 长串兜底 ----
    凡是承载【用户输入或外部数据】的容器,都要能把一串没有空格的东西断开:
    链接、token、路径、base64。中文自己会断,带空格的英文也会断,所以这个
@@ -616,8 +619,23 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
   display: flex; flex-wrap: nowrap; gap: 7px;
   /* 用定值不用 min(84%, …):百分比要靠父级解析,而这张卡在 mod-split 的
      网格列里,百分比基数算不出来时整个容器会塌掉 —— 实测失败态那张卡
-     因此整个不渲染。380px 本来就是气泡在 460px 面板里的上限,写死更稳。 */
-  max-width: 380px;
+     因此整个不渲染,写死更稳。
+     ------------------------------------------------------------
+     412 = 6 x 64 + 28,【刻意错开卡片的节拍】。
+     卡 57 + 间隙 7 = 一格 64。原来写 380,正好落在第 6 张卡之后的
+     那道 3px 缝里 —— 7 张附件渲染出来是 6 张齐齐整整的卡,右边什么都
+     不缺,于是"后面还有"这件事一点痕迹都没有;而滚动条是藏起来的,
+     用户没有任何理由去拨它。注意这跟附件数量无关:只要是整排图卡,
+     切点永远落在那道缝里,8 张 20 张都一样。
+     412 把切点挪到第 7 张卡的腰上:6 张整的 + 半张。被切开的东西本身
+     就在说"我没画完",不用再加渐隐遮罩或「+2」角标。
+     为什么不是更窄的 348(5 张半):两张文档长条并排是 180+7+180=367,
+     348 会把第二张切掉一角 —— 那儿其实没有第三个附件,是个假信号,
+     「文档」和「文件名过长」两态首当其冲。所以行宽有个 367 的下限,
+     再往上找第一个能切在卡腰上的数,就是 412。
+     只对整排图卡是准的;混了文档长条节拍不齐,切点落哪儿看数据,
+     但缝只占一格的十分之一,正好落进去是小概率。 */
+  max-width: 412px;
   margin-inline-start: auto;
   overflow-x: auto; scrollbar-width: none;
   padding-bottom: 1px;
