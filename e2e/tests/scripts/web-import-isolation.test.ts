@@ -30,7 +30,6 @@ test("web import isolation rejects sidecar and platform package imports", () => 
     [
       "import { parseStamp } from '@open-design/platform';",
       "type SidecarRuntime = import('@open-design/sidecar').Runtime;",
-      "const proto = await import('@open-design/sidecar-proto');",
       "const sidecar = await import('@/../../packages/sidecar/src/index');",
     ].join("\n"),
   );
@@ -40,7 +39,6 @@ test("web import isolation rejects sidecar and platform package imports", () => 
     [
       "@open-design/platform",
       "@open-design/sidecar",
-      "@open-design/sidecar-proto",
       "@/../../packages/sidecar/src/index",
     ],
   );

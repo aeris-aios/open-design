@@ -7,6 +7,7 @@ import {
   waitForDesktopRuntime,
   waitForWebRuntime,
 } from "../src/sidecar-client.js";
+import type { SidecarControlPlane } from "@open-design/sidecar/control";
 
 describe("sidecar startup waits", () => {
   it("allows daemon initialization to continue past the legacy 35 second deadline", () => {
@@ -24,7 +25,7 @@ describe("sidecar startup waits", () => {
       const startedAt = Date.now();
       await assert.rejects(
         waitForRuntime(
-          { base: "unused", namespace: `exited-${appName}-${process.pid}` },
+          { control: {} as SidecarControlPlane },
           5_000,
           () => false,
         ),

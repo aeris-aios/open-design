@@ -4,31 +4,24 @@ import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MESSAGES,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
-  isDesktopUpdateAction,
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+} from "@open-design/contracts/runtime/sidecars";
+import {
+  DESKTOP_UPDATE_ACTIONS,
   type DesktopEvalResult,
   type DesktopScreenshotResult,
   type DesktopStatusSnapshot,
   type DesktopUpdateAction,
   type DesktopUpdateResult,
-  type SidecarStamp,
-} from "@open-design/sidecar-proto";
-import { createSidecarLaunchEnv, requestJsonIpc, resolveAppIpcPath } from "@open-design/sidecar";
+  type DesktopSidecarMethods,
+} from "@open-design/host/sidecar";
 import {
-  collectProcessTreePids,
-  createProcessStampArgs,
   isProcessAlive,
-  listProcessSnapshots,
-  matchesStampedProcess,
   readLogTail,
   spawnLoggedProcess,
-  stopProcesses,
 } from "@open-design/platform";
 import type { ToolPackConfig } from "../config.js";
+import { createToolPackControl } from "../control.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
@@ -36,198 +29,21 @@ import { DESKTOP_LOG_ECHO_ENV } from "./constants.js";
 import { pathExists, scrubMacExtendedAttributes } from "./fs.js";
 import { resolveMacInstallIdentity } from "./identity.js";
 import { desktopIdentityPath, desktopLogPath, macAppExecutablePath, resolveMacPaths } from "./paths.js";
-import type { DesktopRootIdentityFallback, DesktopRootIdentityMarker, MacCleanupResult, MacInspectResult, MacInstallResult, MacStartResult, MacStartSource, MacStopResult, MacUninstallResult } from "./types.js";
+import type { MacCleanupResult, MacInspectResult, MacInstallResult, MacStartResult, MacStartSource, MacStopResult, MacUninstallResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 const UPDATE_ACTION_TIMEOUT_MS = 10 * 60 * 1000;
-
-function desktopStamp(config: ToolPackConfig): SidecarStamp {
-  return {
-    app: APP_KEYS.DESKTOP,
-    ipc: resolveAppIpcPath({
-      app: APP_KEYS.DESKTOP,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: config.namespace,
-    }),
-    mode: SIDECAR_MODES.RUNTIME,
-    namespace: config.namespace,
-    source: SIDECAR_SOURCES.TOOLS_PACK,
-  };
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
 }
 
-function isDesktopRootIdentityMarker(value: unknown): value is DesktopRootIdentityMarker {
-  if (!isRecord(value)) return false;
-  return (
-    value.version === 1 &&
-    typeof value.pid === "number" &&
-    typeof value.ppid === "number" &&
-    typeof value.appPath === "string" &&
-    typeof value.executablePath === "string" &&
-    typeof value.logPath === "string" &&
-    typeof value.namespaceRoot === "string" &&
-    typeof value.startedAt === "string" &&
-    typeof value.updatedAt === "string" &&
-    isRecord(value.stamp)
-  );
-}
-
-function summarizeDesktopMarker(
-  marker: DesktopRootIdentityMarker | null,
-): Partial<DesktopRootIdentityMarker> | undefined {
-  if (marker == null) return undefined;
-  return {
-    appPath: marker.appPath,
-    executablePath: marker.executablePath,
-    logPath: marker.logPath,
-    namespaceRoot: marker.namespaceRoot,
-    pid: marker.pid,
-    ppid: marker.ppid,
-    stamp: marker.stamp,
-    startedAt: marker.startedAt,
-    updatedAt: marker.updatedAt,
-    version: marker.version,
-  };
-}
-
-async function readDesktopRootIdentityMarker(config: ToolPackConfig): Promise<{
-  fallback: DesktopRootIdentityFallback;
-  marker: DesktopRootIdentityMarker | null;
-}> {
-  const markerPath = desktopIdentityPath(config);
-  let payload: unknown;
-
-  try {
-    payload = JSON.parse(await readFile(markerPath, "utf8"));
-  } catch (error) {
-    const code = typeof error === "object" && error != null && "code" in error
-      ? String((error as { code?: unknown }).code)
-      : null;
-    return {
-      fallback: {
-        markerPath,
-        reason: code === "ENOENT" ? "marker-not-found" : "marker-read-failed",
-      },
-      marker: null,
-    };
-  }
-
-  if (!isDesktopRootIdentityMarker(payload)) {
-    return {
-      fallback: {
-        markerPath,
-        reason: "marker-invalid-shape",
-      },
-      marker: null,
-    };
-  }
-
-  return {
-    fallback: {
-      marker: summarizeDesktopMarker(payload),
-      markerPath,
-      reason: "marker-present",
-    },
-    marker: payload,
-  };
-}
-
-function commandMatchesDesktopMarker(
-  command: string,
-  marker: DesktopRootIdentityMarker,
-): boolean {
-  return command.includes(marker.executablePath) || command.includes(macAppExecutablePath(marker.appPath, basename(marker.executablePath)));
-}
-
-async function resolveDesktopRootIdentityFallback(config: ToolPackConfig): Promise<{
-  fallback: DesktopRootIdentityFallback;
-  rootPid: number | null;
-}> {
-  const { fallback, marker } = await readDesktopRootIdentityMarker(config);
-  if (marker == null) return { fallback, rootPid: null };
-
-  let stamp: SidecarStamp;
-  try {
-    stamp = OPEN_DESIGN_SIDECAR_CONTRACT.normalizeStamp(marker.stamp);
-  } catch {
-    return {
-      fallback: { ...fallback, reason: "marker-invalid-stamp" },
-      rootPid: null,
-    };
-  }
-
-  const expectedIpc = resolveAppIpcPath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    namespace: config.namespace,
-  });
-  if (
-    stamp.app !== APP_KEYS.DESKTOP ||
-    stamp.mode !== SIDECAR_MODES.RUNTIME ||
-    stamp.namespace !== config.namespace ||
-    stamp.ipc !== expectedIpc ||
-    (stamp.source !== SIDECAR_SOURCES.PACKAGED && stamp.source !== SIDECAR_SOURCES.TOOLS_PACK)
-  ) {
-    return {
-      fallback: { ...fallback, reason: "marker-stamp-mismatch" },
-      rootPid: null,
-    };
-  }
-
-  if (marker.namespaceRoot !== config.roots.runtime.namespaceRoot) {
-    return {
-      fallback: { ...fallback, reason: "marker-namespace-root-mismatch" },
-      rootPid: null,
-    };
-  }
-
-  const processes = await listProcessSnapshots();
-  const processInfo = processes.find((entry) => entry.pid === marker.pid) ?? null;
-  if (processInfo == null) {
-    return {
-      fallback: { ...fallback, reason: "marker-pid-not-running" },
-      rootPid: null,
-    };
-  }
-
-  if (!commandMatchesDesktopMarker(processInfo.command, marker)) {
-    return {
-      fallback: {
-        ...fallback,
-        processCommand: processInfo.command,
-        reason: "marker-command-mismatch",
-      },
-      rootPid: null,
-    };
-  }
-
-  return {
-    fallback: {
-      ...fallback,
-      processCommand: processInfo.command,
-      reason: "marker-matched",
-    },
-    rootPid: marker.pid,
-  };
-}
-
-function isUnmanagedDesktopFallback(fallback: DesktopRootIdentityFallback | undefined): boolean {
-  return fallback != null && ![
-    "marker-matched",
-    "marker-not-found",
-    "marker-pid-not-running",
-  ].includes(fallback.reason);
-}
-
 async function waitForDesktopStatus(config: ToolPackConfig, timeoutMs = 45_000): Promise<DesktopStatusSnapshot | null> {
-  const stamp = desktopStamp(config);
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      return await requestJsonIpc<DesktopStatusSnapshot>(stamp.ipc, { type: SIDECAR_MESSAGES.STATUS }, { timeoutMs: 1000 });
+      const desktop = await createToolPackControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
+      return await desktop.call("status", {}, { timeoutMs: 1000 });
     } catch {
       await new Promise((resolveWait) => setTimeout(resolveWait, 200));
     }
@@ -527,7 +343,8 @@ export async function installPackedMacDmg(config: ToolPackConfig): Promise<MacIn
 
 export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStartResult> {
   const target = await resolvePackedMacStartTarget(config);
-  const stamp = desktopStamp(config);
+  const control = createToolPackControl(config);
+  await control.stop(APP_KEYS.DESKTOP);
   const logPath = desktopLogPath(config);
   const launchConfigPath = await writeLaunchPackagedConfig(config, target.appPath);
   await mkdir(dirname(logPath), { recursive: true });
@@ -537,20 +354,15 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   let child: ChildProcess;
   try {
     child = await spawnLoggedProcess({
-      args: createProcessStampArgs(stamp, OPEN_DESIGN_SIDECAR_CONTRACT),
+      args: [],
       command: target.executablePath,
       cwd: target.appPath,
       detached: true,
-      env: createSidecarLaunchEnv({
-        base: join(config.roots.runtime.namespaceRoot, "runtime"),
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        extraEnv: {
+      env: {
           ...process.env,
           [DESKTOP_LOG_ECHO_ENV]: "0",
           [PACKAGED_CONFIG_PATH_ENV]: launchConfigPath,
-        },
-        stamp,
-      }),
+      },
       logFd: logHandle.fd,
     });
   } finally {
@@ -600,82 +412,16 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   };
 }
 
-async function findManagedDesktopProcessTree(config: ToolPackConfig): Promise<{
-  fallback?: DesktopRootIdentityFallback;
-  pids: number[];
-}> {
-  const processes = await listProcessSnapshots();
-  const stampedRootPids = processes
-    .filter((processInfo) =>
-      [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].some((source) =>
-        matchesStampedProcess(
-          processInfo,
-          { mode: SIDECAR_MODES.RUNTIME, namespace: config.namespace, source },
-          OPEN_DESIGN_SIDECAR_CONTRACT,
-        )
-      ),
-    )
-    .map((processInfo) => processInfo.pid);
-  const identity = await resolveDesktopRootIdentityFallback(config);
-  const pids = collectProcessTreePids(processes, [
-    ...stampedRootPids,
-    identity.rootPid,
-  ]);
-  return { fallback: identity.fallback, pids };
-}
-
-async function waitForNoManagedDesktopProcesses(
-  config: ToolPackConfig,
-  timeoutMs = 6000,
-): Promise<{ fallback?: DesktopRootIdentityFallback; pids: number[] }> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const current = await findManagedDesktopProcessTree(config);
-    if (current.pids.length === 0) return current;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
-  }
-  return await findManagedDesktopProcessTree(config);
-}
-
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
-  const stamp = desktopStamp(config);
-  const before = await findManagedDesktopProcessTree(config);
-  let gracefulRequested = false;
-
-  try {
-    await requestJsonIpc(stamp.ipc, { type: SIDECAR_MESSAGES.SHUTDOWN }, { timeoutMs: 1500 });
-    gracefulRequested = true;
-  } catch {
-    gracefulRequested = false;
-  }
-
-  const remainingAfterGraceful = gracefulRequested ? await waitForNoManagedDesktopProcesses(config) : before;
-  if (remainingAfterGraceful.pids.length === 0) {
-    const unmanaged = !gracefulRequested && before.pids.length === 0 && isUnmanagedDesktopFallback(before.fallback);
-    if (!unmanaged) {
-      await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-    }
-    return {
-      ...(before.fallback == null ? {} : { fallback: before.fallback }),
-      gracefulRequested,
-      namespace: config.namespace,
-      remainingPids: [],
-      status: unmanaged ? "unmanaged" : before.pids.length === 0 ? "not-running" : "stopped",
-      stoppedPids: before.pids,
-    };
-  }
-
-  const stopped = await stopProcesses(remainingAfterGraceful.pids);
-  if (stopped.remainingPids.length === 0) {
-    await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-  }
+  const stopped = await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
+  const pids = stopped.pid == null ? [] : [stopped.pid];
+  if (stopped.stopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   return {
-    ...(remainingAfterGraceful.fallback == null ? {} : { fallback: remainingAfterGraceful.fallback }),
-    gracefulRequested,
+    gracefulRequested: stopped.pid != null,
     namespace: config.namespace,
-    remainingPids: stopped.remainingPids,
-    status: stopped.remainingPids.length === 0 ? "stopped" : "partial",
-    stoppedPids: stopped.stoppedPids,
+    remainingPids: stopped.stopped ? [] : pids,
+    status: stopped.pid == null ? "not-running" : stopped.stopped ? "stopped" : "partial",
+    stoppedPids: stopped.stopped ? pids : [],
   };
 }
 
@@ -695,42 +441,27 @@ export async function readPackedMacLogs(config: ToolPackConfig) {
 
 function resolveUpdateAction(value: string | undefined): DesktopUpdateAction | null {
   if (value == null) return null;
-  if (isDesktopUpdateAction(value)) return value;
+  if (Object.values(DESKTOP_UPDATE_ACTIONS).includes(value as DesktopUpdateAction)) return value as DesktopUpdateAction;
   throw new Error("--update-action must be status, check, clear-cache, download, or install");
 }
 
 export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string; updateAction?: string }): Promise<MacInspectResult> {
-  const stamp = desktopStamp(config);
-  const status = await requestJsonIpc<DesktopStatusSnapshot>(
-    stamp.ipc,
-    { type: SIDECAR_MESSAGES.STATUS },
-    { timeoutMs: 2000 },
-  ).catch(() => null);
+  const control = createToolPackControl(config);
+  const desktop = await control.connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP).catch(() => null);
+  const status = await desktop?.call("status", {}, { timeoutMs: 2000 }).catch(() => null) ?? null;
   const updateAction = resolveUpdateAction(options.updateAction);
 
   return {
     ...(options.expr == null ? {} : {
-      eval: await requestJsonIpc<DesktopEvalResult>(
-        stamp.ipc,
-        { input: { expression: options.expr }, type: SIDECAR_MESSAGES.EVAL },
-        { timeoutMs: 5000 },
-      ),
+      eval: await desktop!.call("eval", { expression: options.expr }, { timeoutMs: 5000 }) as DesktopEvalResult,
     }),
     launcher: await readToolPackLauncherRuntimeSnapshot(config),
     updateCache: await readToolPackUpdateCacheLifecycleSnapshot(config),
     ...(options.path == null ? {} : {
-      screenshot: await requestJsonIpc<DesktopScreenshotResult>(
-        stamp.ipc,
-        { input: { path: options.path }, type: SIDECAR_MESSAGES.SCREENSHOT },
-        { timeoutMs: 10000 },
-      ),
+      screenshot: await desktop!.call("screenshot", { path: options.path }, { timeoutMs: 10000 }) as DesktopScreenshotResult,
     }),
     ...(updateAction == null ? {} : {
-      update: await requestJsonIpc<DesktopUpdateResult>(
-        stamp.ipc,
-        { input: { action: updateAction }, type: SIDECAR_MESSAGES.UPDATE },
-        { timeoutMs: UPDATE_ACTION_TIMEOUT_MS },
-      ),
+      update: await desktop!.call("update", { action: updateAction }, { timeoutMs: UPDATE_ACTION_TIMEOUT_MS }) as DesktopUpdateResult,
     }),
     status,
   };

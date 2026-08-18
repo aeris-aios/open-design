@@ -316,8 +316,7 @@ open-design/
 │   └── desktop/               # Electron runtime, launched/inspected by tools-dev
 ├── packages/
 │   ├── contracts/             # shared web/daemon app contracts
-│   ├── sidecar-proto/         # OpenDesign sidecar protocol contract
-│   ├── sidecar/               # generic sidecar runtime primitives
+│   ├── sidecar/               # Generic atomic Sidecar control plane
 │   └── platform/              # generic process/platform primitives
 ├── tools/dev/                 # `pnpm tools-dev` lifecycle and inspect CLI
 ├── e2e/                       # Playwright UI + external integration/Vitest harness

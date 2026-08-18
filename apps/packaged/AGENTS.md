@@ -17,7 +17,7 @@ Follow the root `AGENTS.md` and `apps/AGENTS.md` first. This app owns only the p
 
 ## Rules
 
-- Consume `@open-design/sidecar-proto`, `@open-design/sidecar`, and `@open-design/platform` primitives; do not hand-build stamp flags or process matching logic.
+- Bootstrap exactly one `@open-design/sidecar` control plane and consume product DTOs from `@open-design/contracts` / `@open-design/host`; do not hand-build transport, identity, or process-matching dialects.
 - Keep data/log/runtime/cache paths namespace-scoped and independent from daemon/web ports.
 - Keep Next.js packaged runtime as SSR/web-sidecar-owned; do not put Next output under `OD_RESOURCE_ROOT`.
 - `OD_RESOURCE_ROOT` is for daemon non-Next read-only resources. Keep its bundled-tree contract aligned with the authoritative list in `tools/pack/src/resources.ts` instead of maintaining a shorter copy here.

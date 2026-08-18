@@ -16,17 +16,10 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  SIDECAR_ENV,
-  SIDECAR_MESSAGES,
-  normalizeWebSidecarMessage,
-  type SidecarStamp,
+  OPEN_DESIGN_RUNTIME_ENV,
+  type OpenDesignRuntimeContext,
   type WebStatusSnapshot,
-} from "@open-design/sidecar-proto";
-import {
-  createJsonIpcServer,
-  type JsonIpcServerHandle,
-  type SidecarRuntimeContext,
-} from "@open-design/sidecar";
+} from "@open-design/contracts/runtime/sidecars";
 
 const HOST = process.env.OD_HOST || "127.0.0.1";
 if (process.env.OD_HOST != null && !/^[a-zA-Z0-9._\-:[\]@]+$/.test(process.env.OD_HOST)) {
@@ -34,10 +27,10 @@ if (process.env.OD_HOST != null && !/^[a-zA-Z0-9._\-:[\]@]+$/.test(process.env.O
 }
 const DAEMON_HOST = "127.0.0.1";
 const STANDALONE_BACKEND_HOST = "127.0.0.1";
-const DAEMON_PORT_ENV = SIDECAR_ENV.DAEMON_PORT;
-const WEB_DIST_DIR_ENV = SIDECAR_ENV.WEB_DIST_DIR;
-const WEB_PORT_ENV = SIDECAR_ENV.WEB_PORT;
-const TOOLS_DEV_PARENT_PID_ENV = SIDECAR_ENV.TOOLS_DEV_PARENT_PID;
+const DAEMON_PORT_ENV = OPEN_DESIGN_RUNTIME_ENV.DAEMON_PORT;
+const WEB_DIST_DIR_ENV = OPEN_DESIGN_RUNTIME_ENV.WEB_DIST_DIR;
+const WEB_PORT_ENV = OPEN_DESIGN_RUNTIME_ENV.WEB_PORT;
+const TOOLS_DEV_PARENT_PID_ENV = OPEN_DESIGN_RUNTIME_ENV.TOOLS_DEV_PARENT_PID;
 const WEB_OUTPUT_MODE_ENV = "OD_WEB_OUTPUT_MODE";
 const WEB_STANDALONE_ROOT_ENV = "OD_WEB_STANDALONE_ROOT";
 const STANDALONE_PARENT_PID_ENV = "OD_STANDALONE_PARENT_PID";
@@ -209,7 +202,7 @@ export function resolveStandaloneServerEntry(
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function shouldUseStandaloneOutput(runtime: SidecarRuntimeContext<SidecarStamp>): boolean {
+function shouldUseStandaloneOutput(runtime: OpenDesignRuntimeContext): boolean {
   return runtime.mode !== "dev" && process.env[WEB_OUTPUT_MODE_ENV] === "standalone";
 }
 
@@ -930,7 +923,7 @@ function attachParentMonitor(stop: () => Promise<void>): void {
 }
 
 async function createWebSidecarHandle(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  _runtime: OpenDesignRuntimeContext,
   httpServer: HttpServer,
   closeRuntime: () => Promise<void> | void,
   isRuntimeRunning?: () => boolean,
@@ -942,7 +935,6 @@ async function createWebSidecarHandle(
     updatedAt: new Date().toISOString(),
     url: `http://${HOST}:${port}`,
   };
-  let ipcServer: JsonIpcServerHandle | null = null;
   let stopped = false;
   let resolveStopped!: () => void;
   const stoppedPromise = new Promise<void>((resolveStop) => {
@@ -961,30 +953,12 @@ async function createWebSidecarHandle(
     stopped = true;
     state.state = "stopped";
     state.updatedAt = new Date().toISOString();
-    await settleShutdownTask(ipcServer?.close());
     await settleShutdownTask(closeServer(httpServer));
     await settleShutdownTask(Promise.resolve().then(closeRuntime));
     resolveStopped();
   }
 
   attachParentMonitor(stop);
-
-  ipcServer = await createJsonIpcServer({
-    socketPath: runtime.ipc,
-    handler: async (message: unknown) => {
-      const request = normalizeWebSidecarMessage(message);
-      switch (request.type) {
-        case SIDECAR_MESSAGES.STATUS:
-          refreshRuntimeState();
-          return { ...state };
-        case SIDECAR_MESSAGES.SHUTDOWN:
-          setImmediate(() => {
-            stopThenExit(stop);
-          });
-          return { accepted: true };
-      }
-    },
-  });
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
@@ -1029,7 +1003,7 @@ export function createDaemonProxyHandler(
 }
 
 async function startRegularNextSidecar(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  runtime: OpenDesignRuntimeContext,
   webRoot: string,
 ): Promise<WebSidecarHandle> {
   const dev = process.env.OD_WEB_PROD !== "1" && runtime.mode === "dev";
@@ -1046,7 +1020,7 @@ async function startRegularNextSidecar(
 }
 
 async function startStandaloneNextSidecar(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  runtime: OpenDesignRuntimeContext,
   webRoot: string | null,
 ): Promise<WebSidecarHandle> {
   const daemonOrigin = resolveDaemonOrigin();
@@ -1074,7 +1048,7 @@ async function startStandaloneNextSidecar(
   }
 }
 
-export async function startWebSidecar(runtime: SidecarRuntimeContext<SidecarStamp>): Promise<WebSidecarHandle> {
+export async function startWebSidecar(runtime: OpenDesignRuntimeContext): Promise<WebSidecarHandle> {
   if (shouldUseStandaloneOutput(runtime)) {
     const webRoot = resolveConfiguredStandaloneRoot() == null ? resolveWebRoot() : null;
     return await startStandaloneNextSidecar(runtime, webRoot);

@@ -1,4 +1,4 @@
-import type { DesktopEvalResult, DesktopScreenshotResult, DesktopStatusSnapshot, DesktopUpdateResult, SidecarStamp } from "@open-design/sidecar-proto";
+import type { DesktopEvalResult, DesktopScreenshotResult, DesktopStatusSnapshot, DesktopUpdateResult } from "@open-design/host/sidecar";
 import type { CacheReport } from "../cache.js";
 import type { ToolPackBuildOutput, ToolPackConfig } from "../config.js";
 import type { ToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
@@ -90,32 +90,11 @@ export type MacInspectResult = {
   update?: DesktopUpdateResult;
 };
 
-export type DesktopRootIdentityMarker = {
-  appPath: string;
-  executablePath: string;
-  logPath: string;
-  namespaceRoot: string;
-  pid: number;
-  ppid: number;
-  stamp: SidecarStamp;
-  startedAt: string;
-  updatedAt: string;
-  version: 1;
-};
-
-export type DesktopRootIdentityFallback = {
-  marker?: Partial<DesktopRootIdentityMarker>;
-  markerPath: string;
-  processCommand?: string;
-  reason: string;
-};
-
 export type MacStopResult = {
-  fallback?: DesktopRootIdentityFallback;
   gracefulRequested: boolean;
   namespace: string;
   remainingPids: number[];
-  status: "not-running" | "partial" | "stopped" | "unmanaged";
+  status: "not-running" | "partial" | "stopped";
   stoppedPids: number[];
 };
 

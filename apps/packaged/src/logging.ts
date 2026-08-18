@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
 
-import type { SidecarStamp } from "@open-design/sidecar-proto";
+import type { OpenDesignRuntimeContext } from "@open-design/contracts/runtime/sidecars";
 
 import type { PackagedNamespacePaths } from "./paths.js";
 
@@ -241,21 +241,21 @@ export function createPackagedDesktopLogger(paths: PackagedNamespacePaths): Pack
 export function attachPackagedDesktopProcessLogging(options: {
   logger: PackagedDesktopLogger;
   paths: PackagedNamespacePaths;
-  stamp: SidecarStamp;
+  runtime: OpenDesignRuntimeContext;
 }): void {
-  const { logger, paths, stamp } = options;
+  const { logger, paths, runtime } = options;
 
   logger.info("packaged desktop starting", {
     daemonDataRoot: paths.dataRoot,
     electronUserDataRoot: paths.electronUserDataRoot,
     executablePath: process.execPath,
     logPath: paths.desktopLogPath,
-    namespace: stamp.namespace,
+    namespace: runtime.namespace,
     pid: process.pid,
     ppid: process.ppid,
     resourceRoot: paths.resourceRoot,
     runtimeRoot: paths.runtimeRoot,
-    source: stamp.source,
+    source: runtime.source,
   });
 
   process.on("uncaughtExceptionMonitor", (error) => {

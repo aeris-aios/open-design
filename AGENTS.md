@@ -22,8 +22,8 @@ This file is the single source of truth for agents entering this repository. Rea
 - `apps/desktop` is the Electron shell; it discovers the web URL through sidecar IPC.
 - `apps/packaged` is the thin packaged Electron runtime entry; it starts packaged sidecars and owns the `od://` entry glue only.
 - `apps/landing-page` is the standalone static Astro marketing and public catalog site. It reads repository content at build time and is not part of the daemon/web product runtime.
-- `packages/contracts` is the pure TypeScript web/daemon app contract layer.
-- `packages/sidecar-proto` owns the OpenDesign sidecar business protocol; `packages/sidecar` owns the generic sidecar runtime; `packages/platform` owns generic OS process primitives.
+- `packages/contracts` is the pure TypeScript web/daemon app contract layer and owns OpenDesign daemon/web sidecar DTOs; `packages/host` owns desktop sidecar DTOs.
+- `packages/sidecar` owns the generic atomic control plane; `packages/platform` owns generic OS process primitives.
 - `tools/dev` is the local development lifecycle control plane.
 - `tools/pack` is the local packaged build/start/stop/logs control plane, packaged updater harness, installer identity/registry validation surface, and mac beta release artifact preparation surface.
 - `tools/serve` is the local fixture-service control plane; first service is `tools-serve start updater` for deterministic updater metadata and artifacts.
@@ -171,10 +171,10 @@ Do not add a new business-named follow-on workflow such as `foo.comment.atom.yml
 - New `.js`, `.mjs`, or `.cjs` files need an explicit generated/vendor/compatibility reason and must pass `pnpm guard`.
 - App business logic must not know about sidecar/control-plane concepts. Keep sidecar awareness in `apps/<app>/sidecar` or the desktop sidecar entry wrapper.
 - Shared web/daemon app contracts belong in `packages/contracts`; that package must not depend on Next.js, Express, Node filesystem/process APIs, browser APIs, SQLite, daemon internals, or the sidecar control-plane protocol.
-- Sidecar process stamps must have exactly five fields: `app`, `mode`, `namespace`, `ipc`, and `source`.
-- Orchestration layers (`tools-dev`, `tools-pack`, packaged launchers) must call package primitives; do not hand-build `--od-stamp-*` args or process-scan regexes.
+- Sidecar ownership has one identity: `channel + namespace + generation + service`, resolved by `@open-design/sidecar`; orchestration layers must not create a second stamp, marker, transport-env, or process-scan dialect.
+- Orchestration layers (`tools-dev`, `tools-pack`, packaged launchers) must call the atomic control-plane primitives. Existing-plane tools recover the exact live scope from the product-owned runtime identity and never guess a generation.
 - Packaged runtime paths must be namespace-scoped and independent from daemon/web ports; ports are transient transport details only.
-- Default runtime files live under `<project-root>/.tmp/<source>/<namespace>/...`; POSIX IPC sockets are fixed at `/tmp/open-design/ipc/<namespace>/<app>.sock`.
+- Default runtime files live under `<project-root>/.tmp/<source>/<namespace>/...`; private control endpoints are derived exclusively by `@open-design/sidecar` and must not be consumed as product API.
 
 ## Capability exposure (UI/CLI dual-track)
 
@@ -282,7 +282,7 @@ root `pnpm tools-pr` script without a new explicit maintainer decision.
 - Playwright UI tests must import `test`/`expect` from `@/playwright/suite`, not directly from `@playwright/test`; type-only imports from `@playwright/test` remain fine. The suite owns one isolated tools-dev daemon/web/data root per Playwright worker. Do not add a shared-runtime fallback; set Playwright workers to `1` when constrained.
 - Playwright suite code must not own workspace prebuild policy. CI and callers keep the existing prebuild steps; `tools-dev` daemon freshness checks are only a fallback guard.
 - On a GUI-capable machine, validate desktop by running `pnpm tools-dev`, then `pnpm tools-dev inspect desktop status`.
-- Stamp/namespace changes must validate two concurrent namespaces and run desktop `inspect eval` plus `inspect screenshot` for each namespace.
+- Control-scope/namespace changes must validate two concurrent namespaces and run desktop `inspect eval` plus `inspect screenshot` for each namespace.
 - Path/log changes must run `pnpm tools-dev logs --namespace <name> --json` and confirm log paths are under `.tmp/tools-dev/<namespace>/...`.
 
 ## Bug follow-up workflow
@@ -359,9 +359,9 @@ The current web runtime is `apps/web`. The historical `apps/nextjs` layout has b
 
 Desktop queries runtime status through sidecar IPC. The web URL comes from `tools-dev` launch status, not from desktop guessing ports or reading web internals.
 
-## How are sidecar-proto, sidecar, and platform split?
+## How are product sidecar contracts, sidecar, and platform split?
 
-`@open-design/sidecar-proto` owns OpenDesign app/mode/source constants, namespace validation, stamp fields/flags, IPC message schema, status shapes, and error semantics. `@open-design/sidecar` provides only generic bootstrap, IPC transport, path/runtime resolution, launch env, and JSON runtime files. `@open-design/platform` provides only generic OS process stamp serialization, command parsing, and process matching/search primitives, consuming the proto descriptor.
+`@open-design/contracts/runtime/sidecars` owns OpenDesign daemon/web identities, runtime projection, DTOs, and validators; `@open-design/host/sidecar` owns desktop capabilities. `@open-design/sidecar` is the sole generic control-plane implementation: bootstrap/access, typed calls, capability delegation, atomic launch/stop, and private transport. `@open-design/platform` provides generic OS/process primitives and must not define a second sidecar identity or lifecycle protocol.
 
 ## When is `pnpm install` required?
 

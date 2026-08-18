@@ -14,16 +14,8 @@ import {
   type LogSource,
 } from '@open-design/diagnostics';
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MODES,
-  type SidecarStamp,
-} from '@open-design/sidecar-proto';
-import {
-  resolveLogFilePath,
-  resolveRuntimeNamespaceRoot,
-  type SidecarRuntimeContext,
-} from '@open-design/sidecar';
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+} from '@open-design/contracts/runtime/sidecars';
 
 import { readCurrentAppVersionInfo } from './app-version.js';
 import { agentCliEnvForAgent, readAppConfig } from './app-config.js';
@@ -85,7 +77,13 @@ async function resolveDiagnosticsAgentEnvironment(
 
 export interface DiagnosticsHandlerOptions {
   /** Sidecar runtime context, present when daemon is launched via tools-dev or packaged sidecar. */
-  runtime: SidecarRuntimeContext<SidecarStamp> | null;
+  runtime: {
+    logsRoot?: string;
+    mode?: string;
+    namespace?: string;
+    runtimeRoot?: string;
+    source?: string;
+  } | null;
   /** Project root used to derive crash-report match strings. */
   projectRoot: string;
   /** Directory containing per-run event logs at <runsDir>/<runId>/events.jsonl. */
@@ -137,26 +135,13 @@ async function shouldListOptionalSource(path: string): Promise<boolean> {
 }
 
 async function buildSidecarLogSources(
-  runtime: SidecarRuntimeContext<SidecarStamp> | null,
+  runtime: { logsRoot?: string } | null,
 ): Promise<LogSource[]> {
-  if (runtime == null) return [];
-  // In packaged builds `runtime.base` is `<namespaceRoot>/runtime`, so the log
-  // tree lives a level UP at `<namespaceRoot>/logs`; `resolveRuntimeNamespaceRoot`
-  // accounts for that (a plain `resolveNamespaceRoot` here resolved every
-  // daemon/web log to an ENOENT phantom path and captured none of them).
-  const namespaceRoot = resolveRuntimeNamespaceRoot({
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    runtime,
-    runtimeMode: SIDECAR_MODES.RUNTIME,
-  });
+  if (runtime?.logsRoot == null) return [];
   const apps = [APP_KEYS.DAEMON, APP_KEYS.WEB, APP_KEYS.DESKTOP];
   const sources: LogSource[] = [];
   for (const app of apps) {
-    const absolutePath = resolveLogFilePath({
-      app,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      runtimeRoot: namespaceRoot,
-    });
+    const absolutePath = join(runtime.logsRoot, app, 'latest.log');
     sources.push({
       name: `logs/${app}/latest.log`,
       absolutePath,
@@ -209,18 +194,9 @@ async function buildSidecarLogSources(
 // The desktop relocates Electron's crashDumps to `<logs/desktop>/crashes` (see
 // apps/desktop/src/main/crash-diagnostics.ts) so the minidumps live inside the
 // same log tree this export already collects. Derive that dir the same way.
-function resolveDesktopCrashDumpsDir(runtime: SidecarRuntimeContext<SidecarStamp> | null): string | null {
-  if (runtime == null) return null;
-  const namespaceRoot = resolveRuntimeNamespaceRoot({
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    runtime,
-    runtimeMode: SIDECAR_MODES.RUNTIME,
-  });
-  const desktopLog = resolveLogFilePath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    runtimeRoot: namespaceRoot,
-  });
+function resolveDesktopCrashDumpsDir(runtime: { logsRoot?: string } | null): string | null {
+  if (runtime?.logsRoot == null) return null;
+  const desktopLog = join(runtime.logsRoot, APP_KEYS.DESKTOP, 'latest.log');
   return join(dirname(desktopLog), 'crashes');
 }
 
@@ -276,7 +252,7 @@ export function createDiagnosticsExportHandler(options: DiagnosticsHandlerOption
             runtimeAvailable: options.runtime != null,
             sourceTag: options.runtime?.source ?? null,
             mode: options.runtime?.mode ?? null,
-            base: options.runtime?.base ?? null,
+            runtimeRoot: options.runtime?.runtimeRoot ?? null,
             projectRoot: options.projectRoot,
             browserUse,
           },

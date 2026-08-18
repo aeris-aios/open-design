@@ -3,29 +3,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_ENV,
-  SIDECAR_SOURCES,
-} from "@open-design/sidecar-proto";
-import {
-  resolveAppIpcPath,
-  resolveAppRuntimePath,
-  resolveLogFilePath,
-  resolveNamespace,
-  resolveNamespaceRoot,
-  resolveSidecarBase,
-  resolveSourceRuntimeRoot,
-} from "@open-design/sidecar";
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
+  OPEN_DESIGN_SERVICES,
+  normalizeOpenDesignNamespace,
+} from "@open-design/contracts/runtime/sidecars";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const WORKSPACE_ROOT = path.resolve(__dirname, "../../..");
 
-export const ALL_APPS = [APP_KEYS.DAEMON, APP_KEYS.WEB, APP_KEYS.DESKTOP] as const;
-export const DEFAULT_START_APPS = [APP_KEYS.DAEMON, APP_KEYS.WEB, APP_KEYS.DESKTOP] as const;
-export const DEFAULT_RUN_APPS = [APP_KEYS.DAEMON, APP_KEYS.WEB] as const;
-export const DEFAULT_STOP_APPS = [APP_KEYS.DESKTOP, APP_KEYS.WEB, APP_KEYS.DAEMON] as const;
+export const ALL_APPS = [OPEN_DESIGN_SERVICES.DAEMON, OPEN_DESIGN_SERVICES.WEB, OPEN_DESIGN_SERVICES.DESKTOP] as const;
+export const DEFAULT_START_APPS = [...ALL_APPS] as const;
+export const DEFAULT_RUN_APPS = [OPEN_DESIGN_SERVICES.DAEMON, OPEN_DESIGN_SERVICES.WEB] as const;
+export const DEFAULT_STOP_APPS = [OPEN_DESIGN_SERVICES.DESKTOP, OPEN_DESIGN_SERVICES.WEB, OPEN_DESIGN_SERVICES.DAEMON] as const;
 
 export type ToolDevAppName = (typeof ALL_APPS)[number];
 
@@ -40,7 +30,6 @@ export type ToolDevOptions = {
 
 export type ToolDevAppConfig = {
   app: ToolDevAppName;
-  ipcPath: string;
   latestLogPath: string;
   logDir: string;
 };
@@ -89,13 +78,8 @@ function resolveAppConfig(options: {
 }): ToolDevAppConfig {
   return {
     app: options.app,
-    ipcPath: resolveAppIpcPath({
-      app: options.app,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: options.namespace,
-    }),
-    latestLogPath: resolveLogFilePath({ runtimeRoot: options.namespaceRoot, app: options.app, contract: OPEN_DESIGN_SIDECAR_CONTRACT }),
-    logDir: path.dirname(resolveLogFilePath({ runtimeRoot: options.namespaceRoot, app: options.app, contract: OPEN_DESIGN_SIDECAR_CONTRACT })),
+    latestLogPath: path.join(options.namespaceRoot, "logs", options.app, "latest.log"),
+    logDir: path.join(options.namespaceRoot, "logs", options.app),
   };
 }
 
@@ -116,9 +100,9 @@ export function resolveTargetApps(appName: string | undefined, defaults: readonl
 export function resolveStartApps(appName: string | undefined): ToolDevAppName[] {
   if (appName == null) return [...DEFAULT_START_APPS];
   if (!isToolDevAppName(appName)) throw unsupportedAppError(appName);
-  if (appName === APP_KEYS.WEB) return [APP_KEYS.DAEMON, APP_KEYS.WEB];
-  if (appName === APP_KEYS.DESKTOP) return [APP_KEYS.DAEMON, APP_KEYS.WEB, APP_KEYS.DESKTOP];
-  return [APP_KEYS.DAEMON];
+  if (appName === OPEN_DESIGN_SERVICES.WEB) return [OPEN_DESIGN_SERVICES.DAEMON, OPEN_DESIGN_SERVICES.WEB];
+  if (appName === OPEN_DESIGN_SERVICES.DESKTOP) return [...ALL_APPS];
+  return [OPEN_DESIGN_SERVICES.DAEMON];
 }
 
 export function resolveRunApps(appName: string | undefined): ToolDevAppName[] {
@@ -129,9 +113,9 @@ export function resolveRunApps(appName: string | undefined): ToolDevAppName[] {
 export function resolveStopApps(appName: string | undefined): ToolDevAppName[] {
   if (appName == null) return [...DEFAULT_STOP_APPS];
   if (!isToolDevAppName(appName)) throw unsupportedAppError(appName);
-  if (appName === APP_KEYS.WEB) return [APP_KEYS.WEB, APP_KEYS.DAEMON];
-  if (appName === APP_KEYS.DESKTOP) return [APP_KEYS.DESKTOP];
-  return [APP_KEYS.DAEMON];
+  if (appName === OPEN_DESIGN_SERVICES.WEB) return [OPEN_DESIGN_SERVICES.WEB, OPEN_DESIGN_SERVICES.DAEMON];
+  if (appName === OPEN_DESIGN_SERVICES.DESKTOP) return [OPEN_DESIGN_SERVICES.DESKTOP];
+  return [OPEN_DESIGN_SERVICES.DAEMON];
 }
 
 export function parsePortOption(value: number | string | null | undefined, optionName: string): number | null {
@@ -153,22 +137,12 @@ export function parseParentPidOption(value: number | string | null | undefined):
 }
 
 export function resolveToolDevConfig(options: ToolDevOptions = {}): ToolDevConfig {
-  const namespace = resolveNamespace({ namespace: options.namespace, env: process.env, contract: OPEN_DESIGN_SIDECAR_CONTRACT });
-  const toolsDevRoot = resolveSidecarBase({
-    base: options.toolsDevRoot ?? process.env[SIDECAR_ENV.BASE] ?? resolveSourceRuntimeRoot({
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      projectRoot: WORKSPACE_ROOT,
-      source: SIDECAR_SOURCES.TOOLS_DEV,
-    }),
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    env: process.env,
-    projectRoot: WORKSPACE_ROOT,
-    source: SIDECAR_SOURCES.TOOLS_DEV,
-  });
-  const namespaceRoot = resolveNamespaceRoot({ base: toolsDevRoot, namespace, contract: OPEN_DESIGN_SIDECAR_CONTRACT });
-  const daemon = resolveAppConfig({ app: APP_KEYS.DAEMON, namespace, namespaceRoot, toolsDevRoot });
-  const desktop = resolveAppConfig({ app: APP_KEYS.DESKTOP, namespace, namespaceRoot, toolsDevRoot });
-  const web = resolveAppConfig({ app: APP_KEYS.WEB, namespace, namespaceRoot, toolsDevRoot });
+  const namespace = normalizeOpenDesignNamespace(options.namespace ?? OPEN_DESIGN_RUNTIME_DEFAULTS.namespace);
+  const toolsDevRoot = path.resolve(options.toolsDevRoot ?? path.join(WORKSPACE_ROOT, ".tmp", "tools-dev"));
+  const namespaceRoot = path.join(toolsDevRoot, namespace);
+  const daemon = resolveAppConfig({ app: OPEN_DESIGN_SERVICES.DAEMON, namespace, namespaceRoot, toolsDevRoot });
+  const desktop = resolveAppConfig({ app: OPEN_DESIGN_SERVICES.DESKTOP, namespace, namespaceRoot, toolsDevRoot });
+  const web = resolveAppConfig({ app: OPEN_DESIGN_SERVICES.WEB, namespace, namespaceRoot, toolsDevRoot });
   const desktopPackageJsonPath = path.join(WORKSPACE_ROOT, "apps/desktop/package.json");
   let cachedElectronBinaryPath: string | undefined;
 
@@ -189,8 +163,8 @@ export function resolveToolDevConfig(options: ToolDevOptions = {}): ToolDevConfi
       },
       web: {
         ...web,
-        nextDistDir: resolveAppRuntimePath({ app: APP_KEYS.WEB, namespaceRoot, fileName: "next", contract: OPEN_DESIGN_SIDECAR_CONTRACT }),
-        nextTsconfigPath: resolveAppRuntimePath({ app: APP_KEYS.WEB, namespaceRoot, fileName: "tsconfig.json", contract: OPEN_DESIGN_SIDECAR_CONTRACT }),
+        nextDistDir: path.join(namespaceRoot, OPEN_DESIGN_SERVICES.WEB, "next"),
+        nextTsconfigPath: path.join(namespaceRoot, OPEN_DESIGN_SERVICES.WEB, "tsconfig.json"),
         sidecarEntryPath: path.join(WORKSPACE_ROOT, "apps/web/sidecar/index.ts"),
       },
     },

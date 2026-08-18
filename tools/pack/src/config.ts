@@ -4,10 +4,9 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import {
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_DEFAULTS,
-} from "@open-design/sidecar-proto";
-import { resolveNamespace } from "@open-design/sidecar";
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
+  normalizeOpenDesignNamespace,
+} from "@open-design/contracts/runtime/sidecars";
 import { releaseChannelFromVersion, releaseNamespace } from "@open-design/release";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,7 +176,7 @@ function resolveToolPackAppVersion(value: string | undefined): string | undefine
 
 function defaultNamespaceForAppVersion(platform: ToolPackPlatform, appVersion: string | undefined): string {
   const channel = releaseChannelFromVersion(appVersion);
-  if (channel == null) return SIDECAR_DEFAULTS.namespace;
+  if (channel == null) return OPEN_DESIGN_RUNTIME_DEFAULTS.namespace;
 
   return releaseNamespace(channel, platform);
 }
@@ -368,11 +367,9 @@ export function resolveToolPackConfig(
   options: ToolPackCliOptions = {},
 ): ToolPackConfig {
   const appVersion = resolveToolPackAppVersion(options.appVersion);
-  const namespace = resolveNamespace({
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    env: process.env,
-    namespace: options.namespace ?? defaultNamespaceForAppVersion(platform, appVersion),
-  });
+  const namespace = normalizeOpenDesignNamespace(
+    options.namespace ?? defaultNamespaceForAppVersion(platform, appVersion),
+  );
   const defaultToolPackRoot = join(WORKSPACE_ROOT, ".tmp", "tools-pack");
   const toolPackRoot = resolve(options.dir ?? defaultToolPackRoot);
   const cacheRoot = resolve(options.cacheDir ?? join(defaultToolPackRoot, "cache"));

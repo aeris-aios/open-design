@@ -18,7 +18,7 @@ import {
   type DesktopUpdateErrorSnapshot,
   type DesktopUpdateReinstallSnapshot,
   type DesktopUpdateState,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
 
 import { isDesktopUpdateChannel, type DesktopUpdaterConfig } from "./config.js";
 import type { ResolvedChecksumSnapshot, UpdateReleaseRef } from "./store.js";

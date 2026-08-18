@@ -2,8 +2,6 @@ import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 
 import { buildLauncherAfterQuitArgs, buildLauncherDelegatedArgs } from "@open-design/launcher-proto";
-import { createProcessStampArgs } from "@open-design/platform";
-import { OPEN_DESIGN_SIDECAR_CONTRACT, type SidecarStamp } from "@open-design/sidecar-proto";
 
 import {
   armPackagedLauncherRuntimeAttempt,
@@ -25,7 +23,6 @@ export type PackagedPayloadDesktopLaunchPlan = {
 
 export function planPackagedPayloadDesktopDelegation(
   runtime: PackagedLauncherRuntime,
-  stamp: SidecarStamp,
   options: {
     currentPid?: number;
     forwardedArgs?: readonly string[];
@@ -56,7 +53,6 @@ export function planPackagedPayloadDesktopDelegation(
       ...(options.forwardedArgs ?? process.argv).filter((arg) =>
         arg.startsWith("opendesign://")
       ),
-      ...createProcessStampArgs(stamp, OPEN_DESIGN_SIDECAR_CONTRACT),
     ],
     command: runtime.desktopExecutablePath,
     cwd: dirname(runtime.desktopExecutablePath),
@@ -65,7 +61,6 @@ export function planPackagedPayloadDesktopDelegation(
 
 export async function launchPackagedPayloadDesktop(
   runtime: PackagedLauncherRuntime,
-  stamp: SidecarStamp,
   options: {
     currentPid?: number;
     forwardedArgs?: readonly string[];
@@ -74,7 +69,7 @@ export async function launchPackagedPayloadDesktop(
     timeoutMs?: number;
   } = {},
 ): Promise<boolean> {
-  const plan = planPackagedPayloadDesktopDelegation(runtime, stamp, options);
+  const plan = planPackagedPayloadDesktopDelegation(runtime, options);
   if (plan == null) return false;
 
   // Pre-arm BEFORE spawn: a payload that spawns successfully but dies before

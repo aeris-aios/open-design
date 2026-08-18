@@ -5,20 +5,20 @@ import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DesktopStatusSnapshot } from "@open-design/sidecar-proto";
+import type { DesktopStatusSnapshot } from "@open-design/host/sidecar";
 
 import type { ToolPackConfig } from "../src/config.js";
 import { resolveMacPaths } from "../src/mac/paths.js";
 
 const requestJsonIpc = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
-const resolveAppIpcPath = vi.fn(() => "/tmp/open-design/ipc/test/desktop.sock");
-const createSidecarLaunchEnv = vi.fn(({ extraEnv }: { extraEnv: NodeJS.ProcessEnv }) => extraEnv);
+const stopControl = vi.fn<() => Promise<{ code: number | null; pid: number | null; signal: NodeJS.Signals | null; stopped: boolean }>>(
+  async () => ({ code: 0, pid: null, signal: null, stopped: true }),
+);
 const collectProcessTreePids = vi.fn(
   (_processes: unknown[], rootPids: Array<number | null>) =>
     rootPids.filter((pid): pid is number => typeof pid === "number"),
 );
 const listProcessSnapshots = vi.fn(async () => [] as Array<{ command: string; pid: number; ppid: number }>);
-const matchesStampedProcess = vi.fn<typeof import("@open-design/platform").matchesStampedProcess>(() => false);
 const stopProcesses = vi.fn(async (pids: number[]) => ({ remainingPids: [], stoppedPids: pids }));
 const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => {
   return Object.assign(new EventEmitter(), {
@@ -28,18 +28,17 @@ const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => 
   }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
 });
 
-vi.mock("@open-design/sidecar", () => ({
-  createSidecarLaunchEnv,
-  requestJsonIpc,
-  resolveAppIpcPath,
+vi.mock("../src/control.js", () => ({
+  createToolPackControl: () => ({
+    connect: async () => ({ call: requestJsonIpc }),
+    stop: stopControl,
+  }),
 }));
 
 vi.mock("@open-design/platform", () => ({
   collectProcessTreePids,
-  createProcessStampArgs: vi.fn(() => []),
   isProcessAlive: vi.fn(() => true),
   listProcessSnapshots,
-  matchesStampedProcess,
   readLogTail: vi.fn(async () => []),
   spawnLoggedProcess,
   stopProcesses,
@@ -89,12 +88,12 @@ afterEach(() => {
   vi.clearAllMocks();
   requestJsonIpc.mockResolvedValue({ state: "running" });
   listProcessSnapshots.mockResolvedValue([]);
-  matchesStampedProcess.mockReturnValue(false);
   collectProcessTreePids.mockImplementation(
     (_processes: unknown[], rootPids: Array<number | null>) =>
       rootPids.filter((pid): pid is number => typeof pid === "number"),
   );
   stopProcesses.mockImplementation(async (pids: number[]) => ({ remainingPids: [], stoppedPids: pids }));
+  stopControl.mockResolvedValue({ code: 0, pid: null, signal: null, stopped: true });
 });
 
 describe("startPackedMacApp", () => {
@@ -243,40 +242,20 @@ describe("startPackedMacApp", () => {
 });
 
 describe("stopPackedMacApp", () => {
-  it("waits for a packaged-source payload desktop to exit after graceful shutdown", async () => {
+  it("delegates convergence to the atomic control plane", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
     const config = makeConfig(root);
-    const payloadDesktop = { command: "payload-desktop", pid: 4242, ppid: 1 };
-
     try {
-      requestJsonIpc.mockResolvedValue({ state: "running" });
-      listProcessSnapshots
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([]);
-      matchesStampedProcess.mockImplementation((processInfo, criteria) => {
-        const sidecarCriteria = criteria as { namespace?: string; source?: string };
-        return (
-          processInfo.command === payloadDesktop.command &&
-          sidecarCriteria.namespace === config.namespace &&
-          sidecarCriteria.source === "packaged"
-        );
-      });
+      stopControl.mockResolvedValue({ code: 0, pid: 4242, signal: null, stopped: true });
 
       await expect(stopPackedMacApp(config)).resolves.toMatchObject({
         gracefulRequested: true,
         namespace: config.namespace,
         remainingPids: [],
         status: "stopped",
-        stoppedPids: [payloadDesktop.pid],
+        stoppedPids: [4242],
       });
-      expect(listProcessSnapshots).toHaveBeenCalledTimes(3);
-      expect(matchesStampedProcess).toHaveBeenCalledWith(
-        payloadDesktop,
-        expect.objectContaining({ namespace: config.namespace, source: "packaged" }),
-        expect.anything(),
-      );
-      expect(stopProcesses).not.toHaveBeenCalled();
+      expect(stopControl).toHaveBeenCalledWith("desktop");
     } finally {
       await rm(root, { force: true, recursive: true });
     }

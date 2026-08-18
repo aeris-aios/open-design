@@ -310,8 +310,7 @@ open-design/
 │   └── desktop/               # runtime Electron, lancé/inspecté par tools-dev
 ├── packages/
 │   ├── contracts/             # contrats app partagés web/daemon
-│   ├── sidecar-proto/         # contrat du protocole sidecar OpenDesign
-│   ├── sidecar/               # primitives runtime sidecar génériques
+│   ├── sidecar/               # plan de contrôle Sidecar atomique générique
 │   └── platform/              # primitives process/platform génériques
 ├── tools/dev/                 # lifecycle `pnpm tools-dev` et inspect CLI
 ├── e2e/                       # UI Playwright + harness intégration externe/Vitest

@@ -18,7 +18,7 @@ import {
   type DesktopRenderSlidesInput,
   type DesktopRenderSlidesResult,
   type DesktopUpdateStatusSnapshot,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
 import type {
   OpenDesignHostActionResult,
   OpenDesignHostCaptureResult,

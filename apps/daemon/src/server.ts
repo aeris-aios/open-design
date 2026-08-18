@@ -6,7 +6,7 @@ import type {
   DesktopExportPdfResult,
   DesktopRenderSlidesInput,
   DesktopRenderSlidesResult,
-} from '@open-design/sidecar-proto';
+} from '@open-design/host/sidecar';
 import express from 'express';
 import multer from 'multer';
 import JSZip from 'jszip';
@@ -189,7 +189,7 @@ export {
 
 export { resolveProjectRoot };
 import { createCommandInvocation } from '@open-design/platform';
-import { SIDECAR_ENV } from '@open-design/sidecar-proto';
+import { forwardSidecarEnvironment } from '@open-design/sidecar/control';
 import {
   buildLiveArtifactsMcpServersForAgent,
   checkPromptArgvBudget,
@@ -1621,10 +1621,7 @@ export function createAgentRuntimeEnv(
       env[pathextKey] = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
     }
   }
-  const sidecarIpcPath = baseEnv[SIDECAR_ENV.IPC_PATH];
-  if (typeof sidecarIpcPath === 'string' && sidecarIpcPath.length > 0) {
-    env[SIDECAR_ENV.IPC_PATH] = sidecarIpcPath;
-  }
+  Object.assign(env, forwardSidecarEnvironment(baseEnv));
   if (SANDBOX_RUNTIME.enabled) {
     const noProxy = mergeNoProxyWithLoopbackDefaults(env.NO_PROXY ?? env.no_proxy);
     if (noProxy) {
@@ -2530,13 +2527,13 @@ export type DesktopPdfExporter = (input: DesktopExportPdfInput) => Promise<Deskt
 export type DesktopSlideRenderer = (input: DesktopRenderSlidesInput) => Promise<DesktopRenderSlidesResult>;
 export type DesktopArtifactExporter = (input: DesktopExportArtifactInput) => Promise<DesktopExportArtifactResult>;
 
-// Loosely typed shape — we only access `namespace`, `base`, `mode`, and
+// Loosely typed product shape — we only access `namespace`, `runtimeRoot`, `mode`, and
 // `source` from the runtime context when building the diagnostics export.
-// Anything richer would force a dependency from server.ts into the sidecar
-// package, which the boundary checks explicitly forbid.
+// The generic Sidecar control protocol stays outside this server boundary.
 export interface DaemonRuntimeContext {
   namespace: string;
-  base: string;
+  runtimeRoot: string;
+  logsRoot?: string;
   mode?: string;
   source?: string;
 }

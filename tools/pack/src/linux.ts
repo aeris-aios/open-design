@@ -5,21 +5,17 @@ import { basename, dirname, join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MESSAGES,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+} from "@open-design/contracts/runtime/sidecars";
+import {
   type DesktopEvalResult,
   type DesktopScreenshotResult,
   type DesktopStatusSnapshot,
-  type SidecarStamp,
-} from "@open-design/sidecar-proto";
-import { createSidecarLaunchEnv, requestJsonIpc, resolveAppIpcPath } from "@open-design/sidecar";
+  type DesktopSidecarMethods,
+} from "@open-design/host/sidecar";
 import {
   collectProcessTreePids,
   createPackageManagerInvocation,
-  createProcessStampArgs,
   listProcessSnapshots,
   readLogTail,
   spawnBackgroundProcess,
@@ -27,6 +23,7 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "./config.js";
+import { createToolPackControl } from "./control.js";
 import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
 import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources.js";
 import { copyOptionalVelaCliBinary } from "./vela-cli.js";
@@ -53,7 +50,6 @@ export const INTERNAL_PACKAGES = [
   { directory: "packages/contracts", name: "@open-design/contracts" },
   { directory: "packages/registry-protocol", name: "@open-design/registry-protocol" },
   { directory: "packages/launcher-proto", name: "@open-design/launcher-proto" },
-  { directory: "packages/sidecar-proto", name: "@open-design/sidecar-proto" },
   { directory: "packages/sidecar", name: "@open-design/sidecar" },
   { directory: "packages/platform", name: "@open-design/platform" },
   { directory: "packages/download", name: "@open-design/download" },
@@ -132,7 +128,6 @@ export function buildDockerArgs(
   //
   // Shell-interpolation safety for the inner `bash -lc` command:
   //   - config.namespace is sanitized at config-time by resolveNamespace() in
-  //     @open-design/sidecar-proto (restricted to namespace charset)
   //   - config.to is enum-validated by resolveToolPackBuildOutput() in config.ts
   //     to one of "all" | "appimage" | "dir"
   //   - config.portable is a boolean
@@ -467,7 +462,6 @@ async function buildWorkspaceArtifacts(config: ToolPackConfig): Promise<void> {
   await runPnpm(config, ["--filter", "@open-design/release", "build"]);
   await runPnpm(config, ["--filter", "@open-design/contracts", "build"]);
   await runPnpm(config, ["--filter", "@open-design/registry-protocol", "build"]);
-  await runPnpm(config, ["--filter", "@open-design/sidecar-proto", "build"]);
   await runPnpm(config, ["--filter", "@open-design/launcher-proto", "build"]);
   await runPnpm(config, ["--filter", "@open-design/sidecar", "build"]);
   await runPnpm(config, ["--filter", "@open-design/platform", "build"]);
@@ -898,171 +892,13 @@ export function shouldRejectLinuxHeadlessInspectOptions(options: {
   return options.expr != null || options.path != null;
 }
 
-type DesktopRootIdentityMarker = {
-  appPath: string;
-  executablePath: string;
-  logPath: string;
-  namespaceRoot: string;
-  pid: number;
-  ppid: number;
-  stamp: SidecarStamp;
-  startedAt: string;
-  updatedAt: string;
-  version: 1;
-};
-
-type DesktopRootIdentityFallback = {
-  marker?: Partial<DesktopRootIdentityMarker>;
-  markerPath: string;
-  processCommand?: string;
-  reason: string;
-};
-
 export type LinuxStopResult = {
-  fallback?: DesktopRootIdentityFallback;
   gracefulRequested: boolean;
   namespace: string;
   remainingPids: number[];
-  status: "not-running" | "partial" | "stopped" | "unmanaged";
+  status: "not-running" | "partial" | "stopped";
   stoppedPids: number[];
 };
-
-type ProcessSnapshots = Awaited<ReturnType<typeof listProcessSnapshots>>;
-type ProcessSnapshot = ProcessSnapshots[number];
-
-type DesktopAppImageMarkerValidation =
-  | { status: "valid"; candidate: ProcessSnapshot }
-  | { status: "not-running" }
-  | { status: "invalid"; candidate: ProcessSnapshot; processCommand: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value != null && !Array.isArray(value);
-}
-
-function isDesktopRootIdentityMarker(value: unknown): value is DesktopRootIdentityMarker {
-  if (!isRecord(value)) return false;
-  return (
-    value.version === 1 &&
-    typeof value.pid === "number" &&
-    typeof value.ppid === "number" &&
-    typeof value.appPath === "string" &&
-    typeof value.executablePath === "string" &&
-    typeof value.logPath === "string" &&
-    typeof value.namespaceRoot === "string" &&
-    typeof value.startedAt === "string" &&
-    typeof value.updatedAt === "string" &&
-    isRecord(value.stamp)
-  );
-}
-
-async function readRootIdentityMarker(markerPath: string): Promise<{
-  fallback: DesktopRootIdentityFallback;
-  marker: DesktopRootIdentityMarker | null;
-}> {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(await readFile(markerPath, "utf8"));
-  } catch (error) {
-    const code = isRecord(error) && "code" in error ? String(error.code) : null;
-    return {
-      fallback: { markerPath, reason: code === "ENOENT" ? "marker-not-found" : "marker-read-failed" },
-      marker: null,
-    };
-  }
-  if (!isDesktopRootIdentityMarker(payload)) {
-    return { fallback: { markerPath, reason: "marker-invalid-shape" }, marker: null };
-  }
-  return {
-    fallback: { marker: payload, markerPath, reason: "marker-present" },
-    marker: payload,
-  };
-}
-
-async function readDesktopRootIdentityMarker(config: ToolPackConfig): Promise<{
-  fallback: DesktopRootIdentityFallback;
-  marker: DesktopRootIdentityMarker | null;
-}> {
-  return readRootIdentityMarker(desktopIdentityPath(config));
-}
-
-async function readHeadlessRootIdentityMarker(config: ToolPackConfig): Promise<{
-  fallback: DesktopRootIdentityFallback;
-  marker: DesktopRootIdentityMarker | null;
-}> {
-  return readRootIdentityMarker(headlessIdentityPath(config));
-}
-
-async function readProcessEnv(pid: number): Promise<Record<string, string>> {
-  try {
-    const raw = await readFile(`/proc/${pid}/environ`, "utf8");
-    const result: Record<string, string> = {};
-    for (const entry of raw.split("\0")) {
-      const eq = entry.indexOf("=");
-      if (eq <= 0) continue;
-      result[entry.slice(0, eq)] = entry.slice(eq + 1);
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-async function readProcessExe(pid: number): Promise<string> {
-  try {
-    return await readlink(`/proc/${pid}/exe`);
-  } catch {
-    return "";
-  }
-}
-
-async function validateDesktopAppImageMarker(
-  config: ToolPackConfig,
-  marker: DesktopRootIdentityMarker,
-  snapshots: ProcessSnapshots,
-): Promise<DesktopAppImageMarkerValidation> {
-  const candidate = snapshots.find((s) => s.pid === marker.pid);
-  if (candidate == null) return { status: "not-running" };
-
-  // Validate the marker stamp (file content written by apps/packaged itself)
-  // rather than the process command line. Menu launches via the .desktop
-  // entry don't pass createProcessStampArgs to the AppImage -- they only set
-  // OD_PACKAGED_NAMESPACE -- so apps/packaged falls back to a SIDECAR_SOURCES.PACKAGED
-  // stamp. Validating the process command would reject those legitimate
-  // launches as `unmanaged`, which on uninstall would also remove the
-  // AppImage/desktop/icon files out from under the still-running app.
-  // Accept either TOOLS_PACK (CLI start) or PACKAGED (menu launch). Mirrors
-  // the dual-source acceptance pattern in mac/lifecycle.ts.
-  const expectedIpc = resolveAppIpcPath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    namespace: config.namespace,
-  });
-  const stampOk =
-    marker.stamp.app === APP_KEYS.DESKTOP &&
-    marker.stamp.mode === SIDECAR_MODES.RUNTIME &&
-    marker.stamp.namespace === config.namespace &&
-    marker.stamp.ipc === expectedIpc &&
-    (marker.stamp.source === SIDECAR_SOURCES.TOOLS_PACK ||
-      marker.stamp.source === SIDECAR_SOURCES.PACKAGED);
-  const paths = resolveLinuxPaths(config);
-  const exePath = await readProcessExe(marker.pid);
-  const env = await readProcessEnv(marker.pid);
-  // marker.appPath is unreliable on Linux (apps/packaged writes "/"). Use the
-  // canonical install path we know about, falling back to the built AppImage
-  // for not-yet-installed builds.
-  const candidateAppImagePath =
-    (await pathExists(paths.installAppImagePath)) ? paths.installAppImagePath : await findBuiltAppImage(paths);
-  const cmdOk = candidateAppImagePath != null && matchesAppImageProcess(
-    { pid: marker.pid, executable: exePath, env },
-    candidateAppImagePath,
-  );
-
-  if (stampOk && cmdOk && marker.namespaceRoot === config.roots.runtime.namespaceRoot) {
-    return { candidate, status: "valid" };
-  }
-
-  return { candidate, processCommand: candidate.command, status: "invalid" };
-}
 
 function desktopLogPath(config: ToolPackConfig): string {
   return join(config.roots.runtime.namespaceRoot, "logs", APP_KEYS.DESKTOP, "latest.log");
@@ -1076,31 +912,11 @@ function headlessIdentityPath(config: ToolPackConfig): string {
   return join(config.roots.runtime.namespaceRoot, "runtime", "headless-root.json");
 }
 
-function linuxDesktopStamp(config: ToolPackConfig): SidecarStamp {
-  return {
-    app: APP_KEYS.DESKTOP,
-    ipc: resolveAppIpcPath({
-      app: APP_KEYS.DESKTOP,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: config.namespace,
-    }),
-    mode: SIDECAR_MODES.RUNTIME,
-    namespace: config.namespace,
-    source: SIDECAR_SOURCES.TOOLS_PACK,
-  };
-}
-
 export function createLinuxDesktopLaunchEnv(
   config: ToolPackConfig,
-  stamp: SidecarStamp,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const env = createSidecarLaunchEnv({
-    base: join(config.roots.runtime.namespaceRoot, "runtime"),
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    extraEnv: { ...baseEnv, [DESKTOP_LOG_ECHO_ENV]: "0" },
-    stamp,
-  });
+  const env: NodeJS.ProcessEnv = { ...baseEnv, [DESKTOP_LOG_ECHO_ENV]: "0" };
   delete env.ELECTRON_RUN_AS_NODE;
   return env;
 }
@@ -1116,14 +932,8 @@ async function waitForMarker(markerPath: string, timeoutMs: number): Promise<boo
 
 async function fetchDesktopStatus(config: ToolPackConfig): Promise<DesktopStatusSnapshot | null> {
   try {
-    const ipc = resolveAppIpcPath({
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: config.namespace,
-      app: APP_KEYS.DESKTOP,
-    });
-    const reply = await requestJsonIpc(ipc, { type: SIDECAR_MESSAGES.STATUS });
-    if (reply == null || typeof reply !== "object") return null;
-    return reply as DesktopStatusSnapshot;
+    const desktop = await createToolPackControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
+    return await desktop.call("status", {}, { timeoutMs: 2_000 });
   } catch {
     return null;
   }
@@ -1144,23 +954,21 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
 
-  // Remove any stale desktop-root.json from a previous run that didn't stop
-  // cleanly (SIGKILL, OOM, crash). Otherwise waitForMarker below would return
-  // instantly on the stale file instead of waiting for the new spawn's marker.
+  // Resolve and converge the exact live generation before clearing its product
+  // identity. Clearing first would make control fall back to cold generation 0.
+  await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
   await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-
-  const stamp = linuxDesktopStamp(config);
 
   // --appimage-extract-and-run bypasses FUSE-mounted SquashFS, which is too slow
   // for daemon startup on first launch (smoke testing showed startup exceeded the
   // packaged sidecar's 35-second timeout when running from FUSE).
-  const args = ["--appimage-extract-and-run", ...createProcessStampArgs(stamp, OPEN_DESIGN_SIDECAR_CONTRACT)];
+  const args = ["--appimage-extract-and-run"];
 
   const child = await spawnBackgroundProcess({
     args,
     command: appImagePath,
     cwd: dirname(appImagePath),
-    env: createLinuxDesktopLaunchEnv(config, stamp),
+    env: createLinuxDesktopLaunchEnv(config),
     logFd: null,
   });
 
@@ -1169,8 +977,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   // overhead vs mac's direct .app launch.
   //
   // If the readiness wait or the post-ready status fetch throws, the detached
-  // child we just spawned is still running but unidentifiable to a future
-  // `linux stop` (the marker is the only persistent identity source). Tear it
+  // child may not have published its control identity yet. Tear it
   // down via the same process-tree path stopPackedLinuxApp uses, then rethrow
   // so the failure surfaces to the caller. Any cleanup error is suppressed --
   // we want the original failure preserved in the rejection.
@@ -1205,75 +1012,15 @@ async function teardownOrphanedStart(rootPid: number): Promise<void> {
 }
 
 export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const { fallback, marker } = await readDesktopRootIdentityMarker(config);
-
-  if (marker == null) {
-    return {
-      fallback,
-      gracefulRequested: false,
-      namespace: config.namespace,
-      remainingPids: [],
-      status: "not-running",
-      stoppedPids: [],
-    };
-  }
-
-  // Validate the marker still represents a live, owned process.
-  const snapshots = await listProcessSnapshots();
-  const validation = await validateDesktopAppImageMarker(config, marker, snapshots);
-  if (validation.status === "not-running") {
-    return {
-      fallback: { ...fallback, reason: "marker-pid-not-running" },
-      gracefulRequested: false,
-      namespace: config.namespace,
-      remainingPids: [],
-      status: "not-running",
-      stoppedPids: [],
-    };
-  }
-
-  if (validation.status === "invalid") {
-    return {
-      fallback: {
-        ...fallback,
-        marker: { pid: marker.pid, stamp: marker.stamp },
-        processCommand: validation.processCommand,
-        reason: "marker-validation-failed",
-      },
-      gracefulRequested: false,
-      namespace: config.namespace,
-      remainingPids: [marker.pid],
-      status: "unmanaged",
-      stoppedPids: [],
-    };
-  }
-
-  // Try graceful shutdown via IPC first. mac/lifecycle.ts's pattern: best-effort SHUTDOWN
-  // request with a short timeout so Electron renderers + sidecars get a chance
-  // to flush state (SQLite WAL, logs) before SIGTERM.
-  let gracefulRequested = false;
-  try {
-    await requestJsonIpc(marker.stamp.ipc, { type: SIDECAR_MESSAGES.SHUTDOWN }, { timeoutMs: 1500 });
-    gracefulRequested = true;
-  } catch {
-    gracefulRequested = false;
-  }
-
-  // Gather process tree, then SIGTERM -> SIGKILL via stopProcesses.
-  const treePids = collectProcessTreePids(snapshots, [marker.pid]);
-  const result = await stopProcesses(treePids);
-
-  // Remove the marker on a clean stop so the next start has a fresh slate.
-  if (result.remainingPids.length === 0) {
-    await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-  }
-
+  const result = await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
+  const pids = result.pid == null ? [] : [result.pid];
+  if (result.stopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   return {
-    gracefulRequested,
+    gracefulRequested: result.pid != null,
     namespace: config.namespace,
-    remainingPids: result.remainingPids,
-    status: result.remainingPids.length === 0 ? "stopped" : "partial",
-    stoppedPids: result.stoppedPids,
+    remainingPids: result.stopped ? [] : pids,
+    status: result.pid == null ? "not-running" : result.stopped ? "stopped" : "partial",
+    stoppedPids: result.stopped ? pids : [],
   };
 }
 
@@ -1300,12 +1047,8 @@ export async function inspectPackedLinuxApp(
     throw new Error("linux inspect --headless supports status only; omit --expr and --path");
   }
 
-  const stamp = linuxDesktopStamp(config);
-  const status = await requestJsonIpc<DesktopStatusSnapshot>(
-    stamp.ipc,
-    { type: SIDECAR_MESSAGES.STATUS },
-    { timeoutMs: 2000 },
-  ).catch(() => null);
+  const desktop = await createToolPackControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP).catch(() => null);
+  const status = await desktop?.call("status", {}, { timeoutMs: 2000 }).catch(() => null) ?? null;
 
   if (options.headless === true) {
     return { status };
@@ -1315,20 +1058,12 @@ export async function inspectPackedLinuxApp(
     ...(options.expr == null
       ? {}
       : {
-          eval: await requestJsonIpc<DesktopEvalResult>(
-            stamp.ipc,
-            { input: { expression: options.expr }, type: SIDECAR_MESSAGES.EVAL },
-            { timeoutMs: 5000 },
-          ),
+          eval: await desktop!.call("eval", { expression: options.expr }, { timeoutMs: 5000 }) as DesktopEvalResult,
         }),
     ...(options.path == null
       ? {}
       : {
-          screenshot: await requestJsonIpc<DesktopScreenshotResult>(
-            stamp.ipc,
-            { input: { path: options.path }, type: SIDECAR_MESSAGES.SCREENSHOT },
-            { timeoutMs: 10000 },
-          ),
+          screenshot: await desktop!.call("screenshot", { path: options.path }, { timeoutMs: 10000 }) as DesktopScreenshotResult,
         }),
     status,
   };
@@ -1354,14 +1089,11 @@ async function tryRemove(path: string): Promise<"ok" | "already-removed"> {
   return "ok";
 }
 
-// "stopped" means we just brought the process tree down cleanly.
+// "stopped" means we just brought the controlled process down cleanly.
 // "not-running" means there was nothing to stop in the first place.
 // Either state makes it safe to delete install files. "partial" means
-// remainingPids is non-empty (SIGTERM->SIGKILL didn't take everyone), and
-// "unmanaged" means the marker pointed at a process we couldn't validate as
-// ours -- in both cases something is still using the AppImage's mounted or
-// extracted contents, so destructive removal would leave broken file handles
-// and an orphan with stale state.
+// remainingPids is non-empty, so destructive removal could leave broken file
+// handles and an orphan with stale state.
 function isSafeToRemoveInstallFiles(stop: LinuxStopResult): boolean {
   return stop.status === "stopped" || stop.status === "not-running";
 }
@@ -1438,7 +1170,7 @@ export type LinuxCleanupResult = {
   removedOutputRoot: boolean;
   removedRuntimeNamespaceRoot: boolean;
   runtimeNamespaceRoot: string;
-  // True when stopPackedLinuxApp returned "partial" or "unmanaged" -- the
+  // True when stopPackedLinuxApp returned "partial" -- the
   // output and runtime namespace roots may contain files held open by a
   // surviving process tree, so we leave them in place rather than yanking
   // SQLite WAL files / log handles / IPC sockets out from under it.
@@ -1549,7 +1281,7 @@ export async function installPackedLinuxHeadless(config: ToolPackConfig): Promis
 
   // Write a self-contained launcher script. The namespace is baked in so the
   // launcher name and the runtime namespace always agree. namespace is
-  // pre-sanitized by sidecar-proto to [A-Za-z0-9._-]. OD_DATA_DIR is baked
+  // pre-sanitized by the OpenDesign runtime contract to [A-Za-z0-9._-]. OD_DATA_DIR is baked
   // so the headless process writes its runtime data under the same paths that
   // tools-pack stop/logs expect.
   const dataDir = dirname(config.roots.runtime.namespaceBaseRoot);
@@ -1578,6 +1310,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   }
 
   const nodeCommand = (await pathExists(nodePath)) ? nodePath : process.execPath;
+  await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
   const logPath = headlessLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
@@ -1639,86 +1372,18 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
 }
 
 export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const { fallback, marker } = await readHeadlessRootIdentityMarker(config);
-
-  if (marker == null) {
-    return {
-      fallback,
-      gracefulRequested: false,
-      namespace: config.namespace,
-      remainingPids: [],
-      status: "not-running",
-      stoppedPids: [],
-    };
-  }
-
-  const snapshots = await listProcessSnapshots();
-  const candidate = snapshots.find((s) => s.pid === marker.pid);
-  if (candidate == null) {
-    return {
-      fallback: { ...fallback, reason: "marker-pid-not-running" },
-      gracefulRequested: false,
-      namespace: config.namespace,
-      remainingPids: [],
-      status: "not-running",
-      stoppedPids: [],
-    };
-  }
-
-  // Validate the stamp from headless-root.json. A menu-launched AppImage writes
-  // the same PACKAGED source to desktop-root.json, so the distinct marker path
-  // is the ownership boundary that keeps --headless stop/cleanup from claiming
-  // the AppImage runtime.
-  const expectedIpc = resolveAppIpcPath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    namespace: config.namespace,
-  });
-  const stampOk =
-    marker.stamp.app === APP_KEYS.DESKTOP &&
-    marker.stamp.mode === SIDECAR_MODES.RUNTIME &&
-    marker.stamp.namespace === config.namespace &&
-    marker.stamp.ipc === expectedIpc &&
-    marker.stamp.source === SIDECAR_SOURCES.PACKAGED;
-
-  if (!stampOk || marker.namespaceRoot !== config.roots.runtime.namespaceRoot) {
-    return {
-      fallback: {
-        ...fallback,
-        marker: { pid: marker.pid, stamp: marker.stamp },
-        processCommand: candidate.command,
-        reason: "marker-validation-failed",
-      },
-      gracefulRequested: false,
-      namespace: config.namespace,
-      remainingPids: [marker.pid],
-      status: "unmanaged",
-      stoppedPids: [],
-    };
-  }
-
-  let gracefulRequested = false;
-  try {
-    await requestJsonIpc(marker.stamp.ipc, { type: SIDECAR_MESSAGES.SHUTDOWN }, { timeoutMs: 1500 });
-    gracefulRequested = true;
-  } catch {
-    gracefulRequested = false;
-  }
-
-  const treePids = collectProcessTreePids(snapshots, [marker.pid]);
-  const result = await stopProcesses(treePids);
-
-  if (result.remainingPids.length === 0) {
+  const result = await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
+  const pids = result.pid == null ? [] : [result.pid];
+  if (result.stopped) {
     await rm(headlessIdentityPath(config), { force: true }).catch(() => undefined);
     await rm(webIdentityPath(config), { force: true }).catch(() => undefined);
   }
-
   return {
-    gracefulRequested,
+    gracefulRequested: result.pid != null,
     namespace: config.namespace,
-    remainingPids: result.remainingPids,
-    status: result.remainingPids.length === 0 ? "stopped" : "partial",
-    stoppedPids: result.stoppedPids,
+    remainingPids: result.stopped ? [] : pids,
+    status: result.pid == null ? "not-running" : result.stopped ? "stopped" : "partial",
+    stoppedPids: result.stopped ? pids : [],
   };
 }
 
@@ -1743,24 +1408,6 @@ export async function cleanupPackedLinuxNamespace(
       skipped: true,
       stop,
     };
-  }
-
-  if (mode === "headless") {
-    const { marker } = await readDesktopRootIdentityMarker(config);
-    if (marker != null) {
-      const desktop = await validateDesktopAppImageMarker(config, marker, await listProcessSnapshots());
-      if (desktop.status !== "not-running") {
-        return {
-          namespace: config.namespace,
-          outputRoot,
-          removedOutputRoot: false,
-          removedRuntimeNamespaceRoot: false,
-          runtimeNamespaceRoot,
-          skipped: true,
-          stop,
-        };
-      }
-    }
   }
 
   const hadOutput = await pathExists(outputRoot);

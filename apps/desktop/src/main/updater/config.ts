@@ -3,11 +3,13 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   DESKTOP_UPDATE_CHANNELS,
   DESKTOP_UPDATE_MODES,
-  SIDECAR_SOURCES,
   type DesktopUpdateChannel,
   type DesktopUpdateMode,
-  type SidecarSource,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
+import {
+  OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES,
+  type OpenDesignRuntimeSource as SidecarSource,
+} from "@open-design/contracts/runtime/sidecars";
 import { isReleaseChannel, releaseChannelFromVersion } from "@open-design/release";
 
 /**

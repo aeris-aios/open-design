@@ -41,6 +41,8 @@ describe('@open-design/contracts package runtime shape', () => {
     expect(pkg.exports?.['./runtime/deck-stage-fallback']?.types).toBe(
       './dist/runtime/deck-stage-fallback.d.ts',
     );
+    expect(pkg.exports?.['./runtime/sidecars']?.default).toBe('./dist/runtime/sidecars.mjs');
+    expect(pkg.exports?.['./runtime/sidecars']?.types).toBe('./dist/runtime/sidecars.d.ts');
     expect(pkg.exports?.['./api/handoff']?.default).toBe('./dist/api/handoff.mjs');
     expect(pkg.exports?.['./api/handoff']?.types).toBe('./dist/api/handoff.d.ts');
     expect(pkg.exports?.['./critique']?.default).toBe('./dist/critique.mjs');
@@ -68,6 +70,7 @@ describe('@open-design/contracts package runtime shape', () => {
     const handoff = await import('@open-design/contracts/api/handoff');
     const critique = await import('@open-design/contracts/critique');
     const deckStageFallback = await import('@open-design/contracts/runtime/deck-stage-fallback');
+    const sidecars = await import('@open-design/contracts/runtime/sidecars');
 
     expect(contracts.composeSystemPrompt).toEqual(expect.any(Function));
     expect(contracts.exampleHealthResponse).toEqual({ ok: true, service: 'daemon' });
@@ -98,5 +101,44 @@ describe('@open-design/contracts package runtime shape', () => {
       enabled: false,
       protocolVersion: critique.CRITIQUE_PROTOCOL_VERSION,
     });
+    expect(sidecars.createOpenDesignRuntimeProjection('runtime', 'packaged')).toEqual({
+      mode: 'runtime',
+      protocol: 1,
+      source: 'packaged',
+    });
+  });
+
+  it('validates product-owned Sidecar runtime inputs at the contract boundary', async () => {
+    const sidecars = await import('@open-design/contracts/runtime/sidecars');
+
+    expect(sidecars.normalizeOpenDesignNamespace('release-beta_win.2')).toBe(
+      'release-beta_win.2',
+    );
+    expect(() => sidecars.normalizeOpenDesignNamespace('../release-beta')).toThrow();
+    expect(sidecars.createOpenDesignRuntimeContext({
+      identity: { channel: 'beta', generation: 29, namespace: 'release-beta' },
+      projection: {
+        value: sidecars.createOpenDesignRuntimeProjection('runtime', 'packaged'),
+      },
+      roots: {
+        dataRoot: '/data',
+        logsRoot: '/logs',
+        resourceRoot: '/resources',
+        runtimeRoot: '/runtime',
+      },
+    })).toMatchObject({
+      channel: 'beta',
+      generation: 29,
+      mode: 'runtime',
+      namespace: 'release-beta',
+      source: 'packaged',
+    });
+    expect(sidecars.DAEMON_SIDECAR_INPUTS.registerWebUrl.parse({
+      url: 'http://127.0.0.1:5173',
+    })).toEqual({ url: 'http://127.0.0.1:5173' });
+    expect(() => sidecars.DAEMON_SIDECAR_INPUTS.registerWebUrl.parse({
+      url: 'https://example.com:5173',
+    })).toThrow();
+    expect(() => sidecars.WEB_SIDECAR_INPUTS.status.parse({ extra: true })).toThrow();
   });
 });

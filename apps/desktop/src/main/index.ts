@@ -5,12 +5,17 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, Menu, app, dialog, globalShortcut, shell, type MenuItemConstructorOptions } from "electron";
 
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_ENV,
-  SIDECAR_MESSAGES,
-  SIDECAR_MODES,
-  normalizeDesktopSidecarMessage,
+  OPEN_DESIGN_RUNTIME_ENV,
+  OPEN_DESIGN_SERVICES,
+  createOpenDesignRuntimeContext,
+  type DaemonSidecarMethods,
+  type DaemonStatusSnapshot,
+  type OpenDesignRuntimeContext,
+  type WebSidecarMethods,
+  type WebStatusSnapshot,
+} from "@open-design/contracts/runtime/sidecars";
+import {
+  DESKTOP_SIDECAR_INPUTS,
   type DesktopClickInput,
   type DesktopEvalInput,
   type DesktopExportArtifactInput,
@@ -19,25 +24,19 @@ import {
   type DesktopScreenshotInput,
   type DesktopStatusSnapshot,
   type DesktopUpdateStatusSnapshot,
-  type DaemonStatusSnapshot,
   type DesktopUpdateInput,
-  type RegisterDesktopAuthResult,
-  type SidecarStamp,
-  type WebStatusSnapshot,
-} from "@open-design/sidecar-proto";
+  type DesktopSidecarMethods,
+} from "@open-design/host/sidecar";
 import { dirname, join } from "node:path";
 
 import {
-  bootstrapSidecarRuntime,
-  createJsonIpcServer,
-  requestJsonIpc,
-  resolveAppIpcPath,
-  resolveLogFilePath,
-  resolveRuntimeNamespaceRoot,
-  type JsonIpcServerHandle,
-  type SidecarRuntimeContext,
-} from "@open-design/sidecar";
-import { readProcessStamp } from "@open-design/platform";
+  attachSidecar,
+  readSidecarContext,
+  resumeControlPlane,
+  type AttachedSidecar,
+  type AttachSidecarOptions,
+  type SidecarControlPlane,
+} from "@open-design/sidecar/control";
 
 import { createDesktopRuntime, type DesktopRuntime } from "./runtime.js";
 import { dispatchInviteDeeplink, registerInviteDeeplink } from "./invite-deeplink.js";
@@ -104,7 +103,7 @@ export {
   type PickAndImportFolderResult,
 } from "./runtime.js";
 
-const TOOLS_DEV_PARENT_PID_ENV = SIDECAR_ENV.TOOLS_DEV_PARENT_PID;
+const TOOLS_DEV_PARENT_PID_ENV = OPEN_DESIGN_RUNTIME_ENV.TOOLS_DEV_PARENT_PID;
 const AMR_PROFILE_ENV_KEY = "OPEN_DESIGN_AMR_PROFILE";
 const AMR_PROFILE_AGENT_ID = "amr";
 const AMR_ENVIRONMENT_PROFILES = ["prod", "test", "feature-test", "local"] as const;
@@ -207,6 +206,11 @@ export type DesktopMainOptions = {
   };
 };
 
+export type DesktopSidecarHost = Readonly<{
+  control: SidecarControlPlane;
+  expose(options: AttachSidecarOptions<DesktopSidecarMethods>): Promise<AttachedSidecar>;
+}>;
+
 function isDirectEntry(): boolean {
   const entryPath = process.argv[1];
   if (entryPath == null || entryPath.length === 0 || entryPath.startsWith("--")) return false;
@@ -239,30 +243,20 @@ function attachParentMonitor(stop: () => Promise<void>): void {
   timer.unref();
 }
 
-function createWebDiscovery(runtime: SidecarRuntimeContext<SidecarStamp>): () => Promise<string | null> {
+function createWebDiscovery(control: SidecarControlPlane): () => Promise<string | null> {
   return async () => {
-    const webIpc = resolveAppIpcPath({
-      app: APP_KEYS.WEB,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: runtime.namespace,
-    });
-    const web = await requestJsonIpc<WebStatusSnapshot>(webIpc, { type: SIDECAR_MESSAGES.STATUS }, { timeoutMs: 600 }).catch(() => null);
+    const web = await control.connect<WebSidecarMethods>(OPEN_DESIGN_SERVICES.WEB)
+      .then((client) => client.call("status", {}, { timeoutMs: 600 }))
+      .catch(() => null);
     return web?.url ?? null;
   };
 }
 
-function createDaemonDiscovery(runtime: SidecarRuntimeContext<SidecarStamp>): () => Promise<string | null> {
+function createDaemonDiscovery(control: SidecarControlPlane): () => Promise<string | null> {
   return async () => {
-    const daemonIpc = resolveAppIpcPath({
-      app: APP_KEYS.DAEMON,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: runtime.namespace,
-    });
-    const daemon = await requestJsonIpc<DaemonStatusSnapshot>(
-      daemonIpc,
-      { type: SIDECAR_MESSAGES.STATUS },
-      { timeoutMs: 600 },
-    ).catch(() => null);
+    const daemon = await control.connect<DaemonSidecarMethods>(OPEN_DESIGN_SERVICES.DAEMON)
+      .then((client) => client.call("status", {}, { timeoutMs: 600 }))
+      .catch(() => null);
     return daemon?.url ?? null;
   };
 }
@@ -288,14 +282,14 @@ export async function resolveFirstAvailableBaseUrl(
 // the direct daemon before the web `/api/*` proxy so a compiling web renderer
 // cannot make native app-config actions temporarily unavailable.
 function resolveDaemonBaseUrl(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  control: SidecarControlPlane,
   options: Pick<DesktopMainOptions, "discoverDaemonUrl" | "discoverWebUrl">,
 ): () => Promise<string> {
   return () => resolveFirstAvailableBaseUrl([
     ...(options.discoverDaemonUrl ? [options.discoverDaemonUrl] : []),
-    createDaemonDiscovery(runtime),
+    createDaemonDiscovery(control),
     ...(options.discoverWebUrl ? [options.discoverWebUrl] : []),
-    createWebDiscovery(runtime),
+    createWebDiscovery(control),
   ]);
 }
 
@@ -412,7 +406,7 @@ type DesktopMenuController = {
 };
 
 function installDesktopMenu(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  control: SidecarControlPlane,
   options: Pick<DesktopMainOptions, "discoverDaemonUrl" | "discoverWebUrl"> & {
     onOpenUpdateDialog?: () => void;
     updater: DesktopUpdater;
@@ -429,7 +423,7 @@ function installDesktopMenu(
     dialog.showErrorBox(message, detail);
   };
 
-  const discoverAppConfigBaseUrl = resolveDaemonBaseUrl(runtime, options);
+  const discoverAppConfigBaseUrl = resolveDaemonBaseUrl(control, options);
 
   const readCurrentAmrProfile = async (): Promise<AmrEnvironmentProfile> => {
     const baseUrl = await discoverAppConfigBaseUrl();
@@ -686,24 +680,16 @@ function summarizeDesktopIpcInput(input: unknown): Record<string, unknown> | nul
  * bypassable path. We log the failure so the operator can investigate.
  */
 async function registerDesktopAuthWithDaemon(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  control: SidecarControlPlane,
   secret: Buffer,
 ): Promise<boolean> {
-  const daemonIpc = resolveAppIpcPath({
-    app: APP_KEYS.DAEMON,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    namespace: runtime.namespace,
-  });
-  const message = {
-    input: { secret: secret.toString("base64") },
-    type: SIDECAR_MESSAGES.REGISTER_DESKTOP_AUTH,
-  };
   const delays = REGISTER_DESKTOP_AUTH_RETRY_DELAYS_MS;
   for (let attempt = 0; attempt <= delays.length; attempt += 1) {
     try {
-      const result = await requestJsonIpc<RegisterDesktopAuthResult>(
-        daemonIpc,
-        message,
+      const daemon = await control.connect<DaemonSidecarMethods>(OPEN_DESIGN_SERVICES.DAEMON);
+      const result = await daemon.call(
+        "registerDesktopAuth",
+        { secret: secret.toString("base64") },
         { timeoutMs: REGISTER_DESKTOP_AUTH_TIMEOUT_MS },
       );
       if (result?.accepted === true) return true;
@@ -720,8 +706,9 @@ async function registerDesktopAuthWithDaemon(
 }
 
 export async function runDesktopMain(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  runtime: OpenDesignRuntimeContext,
   options: DesktopMainOptions = {},
+  sidecar: DesktopSidecarHost,
 ): Promise<void> {
   // Install the defensive uncaughtException filter BEFORE awaiting
   // app.whenReady, so a setTypeOfService EINVAL thrown by undici during
@@ -763,7 +750,7 @@ export async function runDesktopMain(
   // once with a fresh token. A persistent failure surfaces in the
   // renderer toast rather than silently dropping forever.
   const desktopAuthSecret = randomBytes(32);
-  const registered = await registerDesktopAuthWithDaemon(runtime, desktopAuthSecret);
+  const registered = await registerDesktopAuthWithDaemon(sidecar.control, desktopAuthSecret);
   if (!registered) {
     console.warn(
       "[open-design desktop] initial import-token handshake with daemon did not complete; " +
@@ -781,28 +768,14 @@ export async function runDesktopMain(
       launcherPayloadExtractorPath: options.update?.launcherPayloadExtractorPath,
       launcherRuntimePath: options.update?.launcherRuntimePath,
       namespace: runtime.namespace,
-      runtimeBase: runtime.base,
+      runtimeBase: runtime.runtimeRoot,
       source: runtime.source,
     },
     { openPath: (path) => shell.openPath(path) },
   );
-  // Resolve the namespace root the same way the daemon diagnostics export does
-  // (apps/daemon/src/diagnostics-export.ts buildSidecarLogSources). In packaged
-  // builds `runtime.base` is `<namespaceRoot>/runtime`, so re-appending the
-  // namespace via `resolveNamespaceRoot` would write renderer.log to a phantom
-  // `<namespaceRoot>/runtime/<namespace>/logs/desktop` dir that the export
-  // reader never looks in. Keeping both sides on `resolveRuntimeNamespaceRoot`
-  // co-locates renderer.log with the desktop log dir AND keeps it captured.
-  const namespaceRoot = resolveRuntimeNamespaceRoot({
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    runtime,
-    runtimeMode: SIDECAR_MODES.RUNTIME,
-  });
-  const desktopLogPath = resolveLogFilePath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    runtimeRoot: namespaceRoot,
-  });
+  // The control owner resolves logsRoot once for the whole runtime context, so
+  // desktop and daemon diagnostics cannot derive competing namespace paths.
+  const desktopLogPath = join(runtime.logsRoot, OPEN_DESIGN_SERVICES.DESKTOP, "latest.log");
   const rendererLogPath = join(dirname(desktopLogPath), "renderer.log");
 
   // Start local crash-dump collection before the main window (and its renderer)
@@ -830,7 +803,7 @@ export async function runDesktopMain(
   let disposeMenu: () => void = () => undefined;
   let updateScheduler: DesktopUpdaterScheduler | null = null;
   let removeDiagnosticsIpc: () => void = () => undefined;
-  let ipcServer: JsonIpcServerHandle | null = null;
+  let attachedSidecar: AttachedSidecar | null = null;
   let shuttingDown = false;
   let pendingUpdateDialogRequest = false;
 
@@ -884,7 +857,7 @@ export async function runDesktopMain(
     updateScheduler?.stop("shutdown");
     disposeMenu();
     removeDiagnosticsIpc();
-    await ipcServer?.close().catch(() => undefined);
+    await attachedSidecar?.close().catch(() => undefined);
     await desktop?.close().catch(() => undefined);
     // Mark the session clean only AFTER teardown actually completed, right
     // before app.quit(). Doing it at the start of shutdown would flag a quit as
@@ -898,69 +871,94 @@ export async function runDesktopMain(
     void shutdown().finally(() => process.exit(0));
   }
 
-  console.info("[open-design desktop] starting desktop IPC server", { ipc: runtime.ipc });
-  ipcServer = await createJsonIpcServer({
-    socketPath: runtime.ipc,
-    handler: async (message: unknown) => {
-      const request = normalizeDesktopSidecarMessage(message);
-      const startedAt = Date.now();
-      const input = "input" in request ? summarizeDesktopIpcInput(request.input) : null;
-      console.info("[open-design desktop] desktop IPC request start", { input, type: request.type });
-      try {
-        const activeDesktop = desktop;
-        switch (request.type) {
-          case SIDECAR_MESSAGES.STATUS:
-            return await desktopStatusSnapshot(activeDesktop);
-          case SIDECAR_MESSAGES.SHUTDOWN:
-            setImmediate(() => {
-              shutdownAndExit();
-            });
-            return { accepted: true };
-        }
-        if (activeDesktop == null) {
-          throw new Error("desktop runtime is not initialized");
-        }
-        switch (request.type) {
-          case SIDECAR_MESSAGES.EVAL:
-            return await activeDesktop.eval(request.input as DesktopEvalInput);
-          case SIDECAR_MESSAGES.SCREENSHOT:
-            return await activeDesktop.screenshot(request.input as DesktopScreenshotInput);
-          case SIDECAR_MESSAGES.CONSOLE:
-            return activeDesktop.console();
-          case SIDECAR_MESSAGES.SHOW:
-            activeDesktop.show();
-            dispatchInviteDeeplink(request.input?.deeplinkUrl ?? null);
-            notifyDesktopExternalShow(options.onExternalShow);
-            return { accepted: true };
-          case SIDECAR_MESSAGES.CLICK:
-            return await activeDesktop.click(request.input as DesktopClickInput);
-          case SIDECAR_MESSAGES.EXPORT_PDF:
-            return await activeDesktop.exportPdf(request.input as DesktopExportPdfInput);
-          case SIDECAR_MESSAGES.RENDER_SLIDES:
-            return await activeDesktop.renderSlides(request.input as DesktopRenderSlidesInput);
-          case SIDECAR_MESSAGES.EXPORT_ARTIFACT:
-            return await activeDesktop.exportArtifact(request.input as DesktopExportArtifactInput);
-          case SIDECAR_MESSAGES.UPDATE:
-            return await updater.handle((request.input as DesktopUpdateInput).action);
-        }
-      } catch (error) {
-        console.error("[open-design desktop] desktop IPC request failed", {
-          durationMs: Date.now() - startedAt,
-          error: error instanceof Error ? error.message : String(error),
-          type: request.type,
-        });
-        throw error;
-      } finally {
-        console.info("[open-design desktop] desktop IPC request end", {
-          durationMs: Date.now() - startedAt,
-          type: request.type,
-        });
-      }
-    },
-  });
-  console.info("[open-design desktop] desktop IPC server listening", { ipc: runtime.ipc });
+  const invokeDesktopMethod = async <T>(
+    method: string,
+    input: unknown,
+    invoke: () => T | Promise<T>,
+  ): Promise<T> => {
+    const startedAt = Date.now();
+    console.info("[open-design desktop] desktop capability start", {
+      input: summarizeDesktopIpcInput(input),
+      method,
+    });
+    try {
+      return await invoke();
+    } catch (error) {
+      console.error("[open-design desktop] desktop capability failed", {
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+        method,
+      });
+      throw error;
+    } finally {
+      console.info("[open-design desktop] desktop capability end", {
+        durationMs: Date.now() - startedAt,
+        method,
+      });
+    }
+  };
+  const requireDesktop = (): DesktopRuntime => {
+    if (desktop == null) throw new Error("desktop runtime is not initialized");
+    return desktop;
+  };
 
-  const menuController = installDesktopMenu(runtime, {
+  attachedSidecar = await sidecar.expose({
+    handlers: {
+      click(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.click.parse(input);
+        return invokeDesktopMethod("click", parsed, () => requireDesktop().click(parsed));
+      },
+      console(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.console.parse(input);
+        return invokeDesktopMethod("console", parsed, () => requireDesktop().console());
+      },
+      eval(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.eval.parse(input);
+        return invokeDesktopMethod("eval", parsed, () => requireDesktop().eval(parsed));
+      },
+      exportArtifact(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.exportArtifact.parse(input);
+        return invokeDesktopMethod("exportArtifact", parsed, () => requireDesktop().exportArtifact(parsed));
+      },
+      exportPdf(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.exportPdf.parse(input);
+        return invokeDesktopMethod("exportPdf", parsed, () => requireDesktop().exportPdf(parsed));
+      },
+      renderSlides(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.renderSlides.parse(input);
+        return invokeDesktopMethod("renderSlides", parsed, () => requireDesktop().renderSlides(parsed));
+      },
+      screenshot(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.screenshot.parse(input);
+        return invokeDesktopMethod("screenshot", parsed, () => requireDesktop().screenshot(parsed));
+      },
+      show(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.show.parse(input);
+        return invokeDesktopMethod("show", parsed, () => {
+          requireDesktop().show();
+          dispatchInviteDeeplink(parsed.deeplinkUrl ?? null);
+          notifyDesktopExternalShow(options.onExternalShow);
+          return { accepted: true } as const;
+        });
+      },
+      status(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.status.parse(input);
+        return invokeDesktopMethod("status", parsed, () => desktopStatusSnapshot(desktop));
+      },
+      update(input) {
+        const parsed = DESKTOP_SIDECAR_INPUTS.update.parse(input);
+        return invokeDesktopMethod("update", parsed, () => updater.handle(parsed.action));
+      },
+    },
+    onStopRequested: shutdown,
+  });
+  console.info("[open-design desktop] desktop control ready", {
+    channel: runtime.channel,
+    generation: runtime.generation,
+    namespace: runtime.namespace,
+  });
+
+  const menuController = installDesktopMenu(sidecar.control, {
     ...options,
     onOpenUpdateDialog: () => {
       if (desktop == null) {
@@ -976,7 +974,7 @@ export async function runDesktopMain(
   console.info("[open-design desktop] creating desktop runtime");
   desktop = await createDesktopRuntime({
     desktopAuthSecret,
-    discoverUrl: options.discoverWebUrl ?? createWebDiscovery(runtime),
+    discoverUrl: options.discoverWebUrl ?? createWebDiscovery(sidecar.control),
     discoverDaemonUrl: options.discoverDaemonUrl,
     osLocale,
     preloadPath: options.preloadPath,
@@ -985,7 +983,7 @@ export async function runDesktopMain(
     // (after a daemon restart, or after a missed startup window). The
     // runtime then mints a FRESH token (new nonce + new exp — replay
     // protection still works) and POSTs once more.
-    registerDesktopAuthWithDaemon: () => registerDesktopAuthWithDaemon(runtime, desktopAuthSecret),
+    registerDesktopAuthWithDaemon: () => registerDesktopAuthWithDaemon(sidecar.control, desktopAuthSecret),
     rendererLogPath,
     // Mark "reached running" only when the window is ACTUALLY revealed (web app
     // mounted + shown), not when createDesktopRuntime returns — it starts async
@@ -1012,7 +1010,7 @@ export async function runDesktopMain(
     },
   });
 
-  const discoverDaemonBaseUrl = resolveDaemonBaseUrl(runtime, options);
+  const discoverDaemonBaseUrl = resolveDaemonBaseUrl(sidecar.control, options);
   // Report each abnormal exit of a prior run now that the daemon is up to relay
   // it (best-effort; the events carry no user content). Each is dropped from the
   // queue only once the daemon acks it, so a failed report is retried next launch.
@@ -1036,18 +1034,18 @@ export async function runDesktopMain(
     (event, properties) => reportDesktopObservabilityEvent(discoverDaemonBaseUrl, event, properties),
   );
   removeDiagnosticsIpc = registerDesktopDiagnosticsIpc({
-    discoverDaemonBaseUrl: resolveDaemonBaseUrl(runtime, options),
+    discoverDaemonBaseUrl: resolveDaemonBaseUrl(sidecar.control, options),
   });
   // Route opendesign:// team-invite deeplinks to the daemon (desktop wake-up).
   registerInviteDeeplink({
-    resolveDaemonBaseUrl: resolveDaemonBaseUrl(runtime, options),
+    resolveDaemonBaseUrl: resolveDaemonBaseUrl(sidecar.control, options),
     focus: () => focusDesktopForDeeplink(desktop),
     onCompleted: (outcome) => {
       console.info("[open-design desktop] invite deeplink continuation completed", outcome);
     },
     protocolClientPath: options.inviteProtocolClientPath,
   });
-  const discoverUpdaterAppConfigBaseUrl = resolveDaemonBaseUrl(runtime, options);
+  const discoverUpdaterAppConfigBaseUrl = resolveDaemonBaseUrl(sidecar.control, options);
   updateScheduler = createDesktopUpdaterScheduler(updater, {
     backoffInitialMs: updater.config.checkBackoffInitialMs,
     backoffMaxMs: updater.config.checkBackoffMaxMs,
@@ -1094,15 +1092,12 @@ export async function runDesktopMain(
 }
 
 if (isDirectEntry()) {
-  const stamp = readProcessStamp(process.argv.slice(2), OPEN_DESIGN_SIDECAR_CONTRACT);
-  if (stamp == null) throw new Error("sidecar stamp is required");
-
-  const runtime = bootstrapSidecarRuntime(stamp, process.env, {
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-  });
-
-  void runDesktopMain(runtime).catch((error: unknown) => {
+  const context = readSidecarContext();
+  const control = resumeControlPlane(context);
+  void runDesktopMain(createOpenDesignRuntimeContext(context), {}, {
+    control,
+    expose: (options) => attachSidecar(options),
+  }).catch((error: unknown) => {
     console.error(error instanceof Error ? error.stack || error.message : String(error));
     process.exit(1);
   });

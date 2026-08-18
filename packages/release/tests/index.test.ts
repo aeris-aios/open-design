@@ -11,6 +11,8 @@ import {
   releaseInstallIdentity,
   releaseMetadataVersionFields,
   releaseNamespace,
+  resolveWindowsReleaseNamespaceToken,
+  resolveWindowsUninstallRegistryKey,
   isReleaseChannel,
 } from "../src/index.js";
 
@@ -81,6 +83,15 @@ describe("@open-design/release", () => {
     expect(releaseChannelFromNamespace("open-design")).toBe("stable");
     expect(releaseChannelFromNamespace("beta-local-flow")).toBeNull();
     expect(releaseChannelFromNamespace("release-local")).toBeNull();
+  });
+
+  it("derives Windows release identity from the same namespace token", () => {
+    expect(resolveWindowsReleaseNamespaceToken("release beta/win x64")).toBe(
+      "release-beta-win-x64",
+    );
+    expect(resolveWindowsUninstallRegistryKey("release beta/win x64")).toBe(
+      "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-beta-win-x64",
+    );
   });
 
 });

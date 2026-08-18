@@ -9,12 +9,9 @@ import {
   resolveLauncherPaths,
   resolveLauncherVersionPaths,
 } from "@open-design/launcher-proto";
-import { readProcessStamp } from "@open-design/platform";
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_SOURCES,
-} from "@open-design/sidecar-proto";
+  OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES,
+} from "@open-design/contracts/runtime/sidecars";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -105,10 +102,7 @@ describe("legacy payload desktop handoff", () => {
       await writeFile(join(runtimeRoot, "desktop-root.json"), `${JSON.stringify({
         executablePath: outerExecutablePath,
         pid: 4321,
-        stamp: {
-          app: APP_KEYS.DESKTOP,
-          ipc: "/tmp/open-design/ipc/release-beta/desktop.sock",
-          mode: "runtime",
+        runtime: {
           namespace,
           source: SIDECAR_SOURCES.PACKAGED,
         },
@@ -148,7 +142,6 @@ describe("legacy payload desktop handoff", () => {
         confirmTimeoutMs: 100,
         env: {
           ELECTRON_RUN_AS_NODE: "1",
-          OD_SIDECAR_BASE: runtimeRoot,
           PATH: "/usr/bin",
         },
         now: () => new Date("2026-07-15T02:00:00.000Z"),
@@ -175,19 +168,14 @@ describe("legacy payload desktop handoff", () => {
       });
       expect(spawn).toHaveBeenCalledOnce();
       expect(launchedEnv).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
-      expect(launchedEnv).not.toHaveProperty("OD_SIDECAR_BASE");
       expect(launchedEnv).toMatchObject({
+        OD_PACKAGED_NAMESPACE: namespace,
         OD_PACKAGED_NAMESPACE_BASE_ROOT: join(root, "namespaces"),
         PATH: "/usr/bin",
       });
       expect(parseLauncherAfterQuitArgs(launchedArgs)).toEqual({ targetPid: 4321, timeoutMs: 60_000 });
       expect(parseLauncherHandoffResumeArgs(launchedArgs)).toEqual({
         handoffId: "f5d4a712-8ba9-4c28-bcad-6dbed5db2d7c",
-      });
-      expect(readProcessStamp(launchedArgs, OPEN_DESIGN_SIDECAR_CONTRACT)).toMatchObject({
-        app: APP_KEYS.DESKTOP,
-        namespace,
-        source: SIDECAR_SOURCES.PACKAGED,
       });
       expect(requestDesktop).toHaveBeenLastCalledWith("shutdown");
 
@@ -208,10 +196,7 @@ describe("legacy payload desktop handoff", () => {
       await writeFile(join(runtimeRoot, "desktop-root.json"), `${JSON.stringify({
         executablePath: outerExecutablePath,
         pid: 4321,
-        stamp: {
-          app: APP_KEYS.DESKTOP,
-          ipc: "/tmp/open-design/ipc/release-beta/desktop.sock",
-          mode: "runtime",
+        runtime: {
           namespace,
           source: SIDECAR_SOURCES.TOOLS_PACK,
         },
@@ -345,10 +330,7 @@ describe("legacy payload desktop handoff", () => {
     await writeFile(join(runtimeRoot, "desktop-root.json"), `${JSON.stringify({
       executablePath: outerExecutablePath,
       pid: 4321,
-      stamp: {
-        app: APP_KEYS.DESKTOP,
-        ipc: "/tmp/open-design/ipc/release-beta/desktop.sock",
-        mode: "runtime",
+      runtime: {
         namespace,
         source: SIDECAR_SOURCES.PACKAGED,
       },

@@ -1,7 +1,8 @@
-import { dirname } from "node:path";
+import { stat } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 
-import { removeFile, writeJsonFile } from "@open-design/sidecar";
-import type { SidecarStamp } from "@open-design/sidecar-proto";
+import { readJsonFile, removeFile, writeJsonFile } from "@open-design/sidecar";
+import type { OpenDesignRuntimeContext } from "@open-design/contracts/runtime/sidecars";
 
 import type { PackagedNamespacePaths } from "./paths.js";
 
@@ -12,7 +13,7 @@ export type PackagedDesktopRootIdentity = {
   namespaceRoot: string;
   pid: number;
   ppid: number;
-  stamp: SidecarStamp;
+  runtime: Pick<OpenDesignRuntimeContext, "channel" | "generation" | "namespace" | "source">;
   startedAt: string;
   updatedAt: string;
   version: 1;
@@ -31,13 +32,38 @@ export type PackagedDesktopIdentityHandle = {
   identity: PackagedDesktopRootIdentity;
 };
 
+export async function readPackagedDesktopControlIdentity(
+  paths: PackagedNamespacePaths,
+): Promise<PackagedDesktopRootIdentity | null> {
+  let newest: { identity: PackagedDesktopRootIdentity; mtimeMs: number } | null = null;
+  for (const identityPath of [paths.desktopIdentityPath, paths.headlessIdentityPath]) {
+    try {
+      const identity = await readJsonFile<PackagedDesktopRootIdentity>(identityPath);
+      if (
+        identity == null
+        || identity.runtime.namespace !== basename(paths.namespaceRoot)
+        || typeof identity.runtime.channel !== "string"
+        || !Number.isSafeInteger(identity.runtime.generation)
+        || identity.runtime.generation < 0
+      ) {
+        continue;
+      }
+      const { mtimeMs } = await stat(identityPath);
+      if (newest == null || mtimeMs > newest.mtimeMs) newest = { identity, mtimeMs };
+    } catch {
+      // Missing or concurrently retired identities do not define a live owner.
+    }
+  }
+  return newest?.identity ?? null;
+}
+
 function resolveCurrentMacAppPath(executablePath: string): string {
   return dirname(dirname(dirname(executablePath)));
 }
 
 function createPackagedDesktopRootIdentity(options: {
   paths: PackagedNamespacePaths;
-  stamp: SidecarStamp;
+  runtime: OpenDesignRuntimeContext;
 }): PackagedDesktopRootIdentity {
   const now = new Date().toISOString();
   const executablePath = process.execPath;
@@ -49,7 +75,12 @@ function createPackagedDesktopRootIdentity(options: {
     namespaceRoot: options.paths.namespaceRoot,
     pid: process.pid,
     ppid: process.ppid,
-    stamp: options.stamp,
+    runtime: {
+      channel: options.runtime.channel,
+      generation: options.runtime.generation,
+      namespace: options.runtime.namespace,
+      source: options.runtime.source,
+    },
     startedAt: now,
     updatedAt: now,
     version: 1,
@@ -59,7 +90,7 @@ function createPackagedDesktopRootIdentity(options: {
 export async function writePackagedDesktopIdentity(options: {
   identityPath?: string;
   paths: PackagedNamespacePaths;
-  stamp: SidecarStamp;
+  runtime: OpenDesignRuntimeContext;
 }): Promise<PackagedDesktopIdentityHandle> {
   const identity = createPackagedDesktopRootIdentity(options);
   const identityPath = options.identityPath ?? options.paths.desktopIdentityPath;

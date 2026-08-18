@@ -1,7 +1,10 @@
 import { access, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { SIDECAR_DEFAULTS, normalizeNamespace } from "@open-design/sidecar-proto";
+import {
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
+  normalizeOpenDesignNamespace,
+} from "@open-design/contracts/runtime/sidecars";
 
 // `electron` is loaded lazily so this module can also be imported from the
 // headless entry, which runs in a plain Node process without the electron
@@ -185,8 +188,8 @@ async function resolvePackagedRelativeEntry(value: string | undefined): Promise<
 
 export async function readPackagedConfig(): Promise<PackagedConfig> {
   const raw = await readRawPackagedConfig();
-  const namespace = normalizeNamespace(
-    process.env[PACKAGED_NAMESPACE_ENV] ?? raw.namespace ?? SIDECAR_DEFAULTS.namespace,
+  const namespace = normalizeOpenDesignNamespace(
+    process.env[PACKAGED_NAMESPACE_ENV] ?? raw.namespace ?? OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
   );
   const electronApp = await loadElectronApp();
   const namespaceBaseRoot = resolvePackagedNamespaceBaseRoot(

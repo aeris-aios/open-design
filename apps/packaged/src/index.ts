@@ -1,31 +1,23 @@
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
-  type SidecarStamp,
-} from "@open-design/sidecar-proto";
+  OPEN_DESIGN_RUNTIME_SOURCES,
+  OPEN_DESIGN_SERVICES,
+} from "@open-design/contracts/runtime/sidecars";
 import {
   parseLauncherAfterQuitArgs,
   parseLauncherDelegatedArgs,
   parseLauncherHandoffResumeArgs,
 } from "@open-design/launcher-proto";
 import {
-  bootstrapSidecarRuntime,
-  createSidecarLaunchEnv,
-  resolveAppIpcPath,
-} from "@open-design/sidecar";
-import {
   applyLoopbackConnectionLimitSwitch,
   applyOsLocaleSwitch,
   createSplashWindow,
   setSplashStage,
 } from "@open-design/desktop/main";
-import { readProcessStamp } from "@open-design/platform";
 import { join } from "node:path";
 import { app, dialog } from "electron";
 
 import { readPackagedConfig } from "./config.js";
+import { createPackagedControl } from "./control.js";
 import {
   claimPackagedDownloadAttribution,
   discoverPackagedDownloadAttribution,
@@ -83,32 +75,6 @@ let startupTelemetryContext:
     }
   | null = null;
 
-function createPackagedDesktopStamp(namespace: string): SidecarStamp {
-  return {
-    app: APP_KEYS.DESKTOP,
-    ipc: resolveAppIpcPath({
-      app: APP_KEYS.DESKTOP,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace,
-    }),
-    mode: SIDECAR_MODES.RUNTIME,
-    namespace,
-    source: SIDECAR_SOURCES.PACKAGED,
-  };
-}
-
-function applyLaunchEnv(base: string, stamp: SidecarStamp): void {
-  const env = createSidecarLaunchEnv({
-    base,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    stamp,
-  });
-
-  for (const [key, value] of Object.entries(env)) {
-    if (value != null) process.env[key] = value;
-  }
-}
-
 function applyPackagedUpdaterEnv(updateMetadataUrl: string | null): void {
   if (updateMetadataUrl == null) return;
   if (process.env.OD_UPDATE_METADATA_URL != null && process.env.OD_UPDATE_METADATA_URL.length > 0) return;
@@ -142,8 +108,7 @@ async function main(): Promise<void> {
   const afterQuit = parseLauncherAfterQuitArgs(process.argv.slice(1));
   const handoffResume = parseLauncherHandoffResumeArgs(process.argv.slice(1));
   const delegated = parseLauncherDelegatedArgs(process.argv.slice(1));
-  const argvStamp = readProcessStamp(process.argv.slice(1), OPEN_DESIGN_SIDECAR_CONTRACT);
-  const namespace = argvStamp?.namespace ?? config.namespace;
+  const namespace = config.namespace;
   const namespaceConfig = namespace === config.namespace ? config : { ...config, namespace };
   const initialPaths = resolvePackagedNamespacePaths(namespaceConfig, namespace, process.env);
   if (!await waitForLauncherAfterQuit(afterQuit, initialPaths)) {
@@ -159,12 +124,11 @@ async function main(): Promise<void> {
   if (exitPackagedLauncherForExistingDesktop(existingDesktop, (code) => app.exit(code))) {
     return;
   }
-  const stamp = argvStamp ?? createPackagedDesktopStamp(namespace);
   const launcherRuntime = await resolvePackagedLauncherRuntime(namespaceConfig, initialPaths, {
     delegated,
     resume: handoffResume,
   });
-  if (await launchPackagedPayloadDesktop(launcherRuntime, stamp)) {
+  if (await launchPackagedPayloadDesktop(launcherRuntime)) {
     app.exit(0);
     return;
   }
@@ -182,7 +146,7 @@ async function main(): Promise<void> {
     posthogHost: activeConfig.posthogHost,
     appVersion: activeConfig.appVersion,
     namespace,
-    source: SIDECAR_SOURCES.PACKAGED,
+    source: OPEN_DESIGN_RUNTIME_SOURCES.PACKAGED,
     // Pass installationRoot explicitly: OD_INSTALLATION_DIR is only set in the
     // daemon child env, not this parent process (see startup-telemetry.ts).
     installationRoot: paths.installationRoot,
@@ -207,7 +171,13 @@ async function main(): Promise<void> {
     return null;
   });
   packagedLogger = createPackagedDesktopLogger(paths);
-  attachPackagedDesktopProcessLogging({ logger: packagedLogger, paths, stamp });
+  const { control, runtime } = createPackagedControl(
+    activeConfig.appVersion,
+    launcherRuntime.selection.selected ? launcherRuntime.selection.pointer.generation : 0,
+    namespace,
+    paths,
+  );
+  attachPackagedDesktopProcessLogging({ logger: packagedLogger, paths, runtime });
   const retireObsoleteInstalledOuter = createObsoleteInstalledOuterRetirement({
     currentExecutablePath: process.execPath,
     currentPid: process.pid,
@@ -224,7 +194,7 @@ async function main(): Promise<void> {
   })) {
     return;
   }
-  const identity = await writePackagedDesktopIdentity({ paths, stamp });
+  const identity = await writePackagedDesktopIdentity({ paths, runtime });
   await app.whenReady();
 
   // Show the brand splash IMMEDIATELY, before we await the daemon/web sidecars
@@ -236,15 +206,7 @@ async function main(): Promise<void> {
   // BEFORE the sidecar boot below — rather than re-adding the delay afterwards.
   const splash = createSplashWindow();
 
-  applyLaunchEnv(paths.runtimeRoot, stamp);
-
-  const runtime = bootstrapSidecarRuntime(stamp, process.env, {
-    app: APP_KEYS.DESKTOP,
-    base: paths.runtimeRoot,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-  });
-
-  const sidecars = await startPackagedSidecars(runtime, paths, {
+  const sidecars = await startPackagedSidecars(control, paths, {
     appVersion: activeConfig.appVersion,
     amrProfile: activeConfig.amrProfile,
     daemonCliEntry: activeConfig.daemonCliEntry,
@@ -355,6 +317,9 @@ async function main(): Promise<void> {
       launcherPayloadExtractorPath: activeConfig.resourceRoot == null ? null : join(activeConfig.resourceRoot, "bin", "7z.exe"),
       launcherRuntimePath: launcherRuntime.launcherPaths.runtimePath,
     },
+  }, {
+    control,
+    expose: async (options) => await control.expose({ service: OPEN_DESIGN_SERVICES.DESKTOP, ...options }),
   });
 }
 

@@ -79,7 +79,6 @@ const residualAllowedExactPaths = new Set([
   "packages/plugin-runtime/esbuild.config.mjs",
   "packages/registry-protocol/esbuild.config.mjs",
   "packages/sidecar/esbuild.config.mjs",
-  "packages/sidecar-proto/esbuild.config.mjs",
   // Maintainer utility scripts ported from the media branch. They are
   // executed directly by Node and are not loaded by the app runtime.
   "scripts/import-prompt-templates.mjs",
@@ -818,7 +817,6 @@ const webImportIsolationSkippedDirectories = new Set([
 const webImportIsolationForbiddenPackages = [
   "@open-design/platform",
   "@open-design/sidecar",
-  "@open-design/sidecar-proto",
 ];
 const webImportIsolationForbiddenDaemonRoots = [
   "apps/daemon/src",
@@ -827,7 +825,6 @@ const webImportIsolationForbiddenDaemonRoots = [
 const webImportIsolationForbiddenPackageRoots = [
   "packages/platform",
   "packages/sidecar",
-  "packages/sidecar-proto",
 ];
 
 type WebImportIsolationViolation = {

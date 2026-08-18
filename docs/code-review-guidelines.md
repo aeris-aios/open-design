@@ -151,14 +151,14 @@ For TypeScript source, package/tool/app behavior, tests, command surfaces, runti
 
 ### 4.2 Contract and protocol changes
 
-For any change to `packages/contracts`, `packages/sidecar-proto`, persisted SQLite schema, or other public seams (HTTP routes, SSE event unions, IPC message shapes, on-disk resource formats).
+For any change to `packages/contracts`, `packages/host/sidecar`, the public `packages/sidecar` control API, persisted SQLite schema, or other public seams (HTTP routes, SSE event unions, capability methods, on-disk resource formats).
 
 **Accept when:**
 
 - The contract/protocol/schema change lands **before** consumers wire against it (or in the same PR with both sides updated).
 - Changes are backwards-compatible, OR there is an explicit migration plan: schema migration script, backfill strategy, or one-release window of compatible reads.
 - `packages/contracts` stays free of Next.js, Express, Node filesystem/process APIs, browser APIs, SQLite, daemon internals, and sidecar control-plane dependencies.
-- Sidecar process stamps still have exactly five fields: `app`, `mode`, `namespace`, `ipc`, `source`.
+- Sidecar ownership remains the exact `channel + namespace + generation + service` identity; private endpoint metadata does not leak into product contracts.
 - Both producers and consumers have type/test coverage of the new shape.
 
 **Block when:**

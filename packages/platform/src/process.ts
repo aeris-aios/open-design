@@ -1,9 +1,8 @@
 /**
  * @module process
  *
- * OS process lifecycle and stamp primitives: encode/decode `--flag=value`
- * process stamps and match them against a contract, spawn background and logged
- * child processes, probe liveness, enumerate process snapshots (POSIX `ps` /
+ * OS process lifecycle primitives: spawn background and logged child processes,
+ * probe liveness, enumerate process snapshots (POSIX `ps` /
  * Windows `Get-CimInstance`), walk a process tree, and stop a set of PIDs with
  * SIGTERM-then-SIGKILL escalation.
  *
@@ -16,20 +15,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { createCommandInvocation, type CommandInvocationRequest } from "./command.js";
 
-export type ProcessStampShape = object;
-
-export type ProcessStampField<TStamp extends ProcessStampShape> = Extract<keyof TStamp, string>;
-
-export type ProcessStampContract<
-  TStamp extends ProcessStampShape,
-  TCriteria extends Partial<TStamp> = Partial<TStamp>,
-> = {
-  normalizeStamp(input: unknown): TStamp;
-  normalizeStampCriteria(input?: unknown): TCriteria;
-  stampFields: readonly ProcessStampField<TStamp>[];
-  stampFlags: { readonly [K in ProcessStampField<TStamp>]: string };
-};
-
 export type SpawnProcessRequest = CommandInvocationRequest & {
   cwd?: string;
   detached?: boolean;
@@ -41,8 +26,6 @@ export type ProcessSnapshot = {
   pid: number;
   ppid: number;
 };
-
-export type StampedProcessMatchCriteria<TStamp extends ProcessStampShape> = Partial<TStamp>;
 
 export type StopProcessesResult = {
   alreadyStopped: boolean;
@@ -101,130 +84,6 @@ function errorCode(error: unknown): string | null {
   if (typeof error !== "object" || error == null || !("code" in error)) return null;
   const code = (error as { code?: unknown }).code;
   return code == null ? null : String(code);
-}
-
-/**
- * Serialize a process stamp into `--flag=value` CLI arguments per the contract.
- * Every stamp field must normalize to a string or an error is thrown.
- *
- * @param stamp - The stamp object to encode.
- * @param contract - The stamp contract providing field list, flags, and normalization.
- * @returns The `--flag=value` argument strings, one per stamp field.
- */
-export function createProcessStampArgs<TStamp extends ProcessStampShape>(
-  stamp: TStamp,
-  contract: ProcessStampContract<TStamp>,
-): string[] {
-  const normalized = contract.normalizeStamp(stamp);
-  return contract.stampFields.map((field) => {
-    const value = normalized[field];
-    if (typeof value !== "string") {
-      throw new Error(`process stamp field ${field} must normalize to a string`);
-    }
-    return `${contract.stampFlags[field]}=${value}`;
-  });
-}
-
-/** @internal Split a command line string into whitespace-separated argument tokens. */
-function commandArgs(command: string): string[] {
-  return command.trim().split(/\s+/).filter((part) => part.length > 0);
-}
-
-/**
- * Read the value of a CLI flag from an argument list, supporting both the
- * `--flag value` and inline `--flag=value` forms.
- *
- * @param args - The argument list to search.
- * @param flagName - The flag name (including any leading dashes).
- * @returns The flag's value, or `null` when the flag is absent.
- */
-export function readFlagValue(args: readonly string[], flagName: string): string | null {
-  const inlinePrefix = `${flagName}=`;
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-    if (argument === flagName) return args[index + 1] ?? null;
-    if (typeof argument === "string" && argument.startsWith(inlinePrefix)) {
-      return argument.slice(inlinePrefix.length);
-    }
-  }
-  return null;
-}
-
-/**
- * Decode a process stamp from a raw argument list per the contract, returning
- * `null` when normalization fails (e.g. a required field is missing).
- *
- * @param args - The process argument list to read stamp flags from.
- * @param contract - The stamp contract providing field list, flags, and normalization.
- * @returns The decoded stamp, or `null` when it cannot be normalized.
- */
-export function readProcessStamp<TStamp extends ProcessStampShape>(
-  args: readonly string[],
-  contract: ProcessStampContract<TStamp>,
-): TStamp | null {
-  try {
-    const input = Object.fromEntries(
-      contract.stampFields.map((field) => [field, readFlagValue(args, contract.stampFlags[field])]),
-    );
-    return contract.normalizeStamp(input);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Decode a process stamp from a full command-line string by tokenizing it first.
- *
- * @param command - The full command line to read stamp flags from.
- * @param contract - The stamp contract providing field list, flags, and normalization.
- * @returns The decoded stamp, or `null` when it cannot be normalized.
- */
-export function readProcessStampFromCommand<TStamp extends ProcessStampShape>(
-  command: string,
-  contract: ProcessStampContract<TStamp>,
-): TStamp | null {
-  return readProcessStamp(commandArgs(command), contract);
-}
-
-/**
- * Test whether a stamp matches criteria: every criterion field that is set must
- * equal the corresponding normalized stamp field; unset criteria fields match
- * anything.
- *
- * @param stamp - The stamp to test.
- * @param criteria - The partial criteria to match against (undefined matches all).
- * @param contract - The stamp contract providing field list and normalization.
- * @returns `true` when every specified criterion matches the stamp.
- */
-export function matchesProcessStamp<TStamp extends ProcessStampShape, TCriteria extends Partial<TStamp> = Partial<TStamp>>(
-  stamp: TStamp,
-  criteria: TCriteria | undefined,
-  contract: ProcessStampContract<TStamp, TCriteria>,
-): boolean {
-  const normalizedStamp = contract.normalizeStamp(stamp);
-  const normalizedCriteria = contract.normalizeStampCriteria(criteria ?? {});
-  return contract.stampFields.every((field) => {
-    const expected = normalizedCriteria[field as keyof TCriteria];
-    return expected == null || normalizedStamp[field] === expected;
-  });
-}
-
-/**
- * Test whether a process snapshot's command line carries a stamp matching the
- * criteria. Combines stamp decoding from the command with `matchesProcessStamp`.
- *
- * @param processInfo - A snapshot exposing at least the `command` string.
- * @param criteria - The partial criteria to match against (undefined matches all).
- * @param contract - The stamp contract providing field list and normalization.
- * @returns `true` when the command carries a decodable stamp that matches.
- */
-export function matchesStampedProcess<TStamp extends ProcessStampShape, TCriteria extends Partial<TStamp> = Partial<TStamp>>(
-  processInfo: Pick<ProcessSnapshot, "command">,
-  criteria: TCriteria | undefined,
-  contract: ProcessStampContract<TStamp, TCriteria>,
-): boolean {
-  const stamp = readProcessStampFromCommand(processInfo.command, contract);
-  return stamp != null && matchesProcessStamp(stamp, criteria, contract);
 }
 
 /** @internal Build the stdio triple for a spawned process, routing stdout/stderr to a log fd when provided. */

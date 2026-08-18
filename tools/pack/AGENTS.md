@@ -14,7 +14,7 @@ Read `tools/pack/CACHE.md` before changing any build-cache node key, adding a ca
 - Linux AppImage build/install/start/stop/logs/uninstall/cleanup smoke commands.
 - Linux headless (no-Electron) install/start/stop via `--headless` flag on `install`, `start`, and `stop`.
 - Linux containerized builds via `electronuserland/builder` Docker image for distro-agnostic glibc compat.
-- Consuming sidecar/process/path primitives from `@open-design/sidecar-proto`, `@open-design/sidecar`, and `@open-design/platform`.
+- Consuming the existing-plane access API from `@open-design/sidecar` and product DTOs from `@open-design/contracts` / `@open-design/host`.
 
 ## Does not own
 
@@ -25,7 +25,7 @@ Read `tools/pack/CACHE.md` before changing any build-cache node key, adding a ca
 
 ## Rules
 
-- Do not hand-build `--od-stamp-*` args; use `createProcessStampArgs` with `OPEN_DESIGN_SIDECAR_CONTRACT`.
+- Do not inspect process command lines or invent marker fallbacks for Sidecar ownership; atomic connect/stop goes through `createToolPackControl`.
 - Do not use port numbers in data/log/runtime/cache path decisions. Namespace decides paths; ports are only transient transports.
 - Public release artifacts must use channel-specific app identity: stable uses `Open Design`, beta uses `Open Design Beta`, prerelease uses `Open Design Prerelease`, and preview uses `Open Design Preview`. Local tools-pack installs may still use namespace-scoped install paths only as a developer multi-instance validation convention.
 - Do not let namespace-named `.app` installs change data/log/runtime/cache path conventions.

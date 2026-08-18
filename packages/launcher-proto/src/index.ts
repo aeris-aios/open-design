@@ -1,7 +1,7 @@
 import { isAbsolute, join, resolve, sep } from "node:path";
 
+import { normalizeOpenDesignNamespace } from "@open-design/contracts/runtime/sidecars";
 import { isReleaseChannel, RELEASE_CHANNELS, type ReleaseChannel } from "@open-design/release";
-import { normalizeNamespace } from "@open-design/sidecar-proto";
 
 export const LAUNCHER_SCHEMA_VERSION = 1 as const;
 export const LAUNCHER_AFTER_QUIT_FLAG = "--od-launcher-after-quit" as const;
@@ -326,7 +326,7 @@ export function parseLauncherHandoffResumeArgs(args: readonly string[]): Launche
 
 export function normalizeLauncherNamespace(value: unknown): string {
   try {
-    return normalizeNamespace(value);
+    return normalizeOpenDesignNamespace(value);
   } catch (error) {
     throw new LauncherProtocolError(error instanceof Error ? error.message : String(error));
   }

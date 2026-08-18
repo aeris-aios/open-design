@@ -9,7 +9,18 @@
 import type { Server } from "node:net";
 
 import { closeServer, listenOnPort } from "./net.js";
-import type { PortAllocation, PortRequest } from "./types.js";
+
+export type PortAllocation = {
+  port: number;
+  source: "dynamic" | "forced";
+};
+
+export type PortRequest = {
+  host?: string;
+  label?: string;
+  port?: number | string | null;
+  reserved?: Set<number>;
+};
 
 /**
  * @internal Validate and parse a port value to an integer in 1..65535, or null

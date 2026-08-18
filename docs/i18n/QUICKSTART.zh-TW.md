@@ -310,8 +310,7 @@ open-design/
 │   └── desktop/               # Electron runtime，由 tools-dev 啟動 / 檢查
 ├── packages/
 │   ├── contracts/             # 共享的 web/daemon 應用程式契約
-│   ├── sidecar-proto/         # OpenDesign sidecar 協定契約
-│   ├── sidecar/               # 通用 sidecar runtime 原語
+│   ├── sidecar/               # 通用原子 Sidecar 控制面
 │   └── platform/              # 通用 process/platform 原語
 ├── tools/dev/                 # `pnpm tools-dev` 生命週期與 inspect CLI
 ├── e2e/                       # Playwright UI + 外部整合 / Vitest 測試場

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import type { OpenDesignRuntimeContext } from '@open-design/contracts/runtime/sidecars';
 
 import {
   createStandaloneBackendEnv,
@@ -15,6 +16,21 @@ import {
   resolveStandaloneServerEntry,
   startWebSidecar,
 } from '../sidecar/server';
+
+function packagedRuntime(root: string, namespace: string): OpenDesignRuntimeContext {
+  return {
+    channel: 'beta',
+    dataRoot: root,
+    generation: 0,
+    logsRoot: join(root, 'logs'),
+    mode: 'runtime',
+    namespace,
+    protocol: 1,
+    resourceRoot: root,
+    runtimeRoot: root,
+    source: 'tools-pack',
+  };
+}
 
 describe('resolveDaemonProxyTarget', () => {
   it('proxies allowlisted relative paths to the daemon origin', () => {
@@ -170,14 +186,7 @@ process.on('SIGTERM', () => server.close(() => process.exit(0)));
       process.env.OD_WEB_STANDALONE_ROOT = standaloneRoot;
       process.env.OD_STANDALONE_STARTUP_TIMEOUT_MS = '3000';
 
-      const handle = await startWebSidecar({
-        app: 'web',
-        base: runtimeRoot,
-        ipc: join(runtimeRoot, 'web.sock'),
-        mode: 'runtime',
-        namespace: 'slow-http',
-        source: 'tools-pack',
-      });
+      const handle = await startWebSidecar(packagedRuntime(runtimeRoot, 'slow-http'));
 
       try {
         await expect(handle.status()).resolves.toMatchObject({ state: 'running' });
@@ -242,14 +251,7 @@ process.on('SIGTERM', () => dummyServer.close(() => process.exit(0)));
       process.env.OD_STANDALONE_STARTUP_TIMEOUT_MS = '1000';
 
       await expect((async () => {
-        handle = await startWebSidecar({
-          app: 'web',
-          base: runtimeRoot,
-          ipc: join(runtimeRoot, 'web.sock'),
-          mode: 'runtime',
-          namespace: 'hijacked-port',
-          source: 'tools-pack',
-        });
+        handle = await startWebSidecar(packagedRuntime(runtimeRoot, 'hijacked-port'));
       })()).rejects.toThrow(/standalone Next\.js server exited before readiness/);
     } finally {
       await handle?.stop();

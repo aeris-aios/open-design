@@ -1,12 +1,10 @@
-import {
-  SIDECAR_DEFAULTS,
-  resolveWindowsReleaseNamespaceToken,
-  resolveWindowsUninstallRegistryKey,
-} from "@open-design/sidecar-proto";
+import { OPEN_DESIGN_RUNTIME_DEFAULTS } from "@open-design/contracts/runtime/sidecars";
 import {
   releaseChannelFromNamespace,
   releaseChannelFromVersion,
   releaseInstallIdentity,
+  resolveWindowsReleaseNamespaceToken,
+  resolveWindowsUninstallRegistryKey,
 } from "@open-design/release";
 
 import type { ToolPackConfig } from "../config.js";
@@ -24,7 +22,7 @@ export type WinInstallIdentity = {
 export function resolveWinInstallIdentity(config: Pick<ToolPackConfig, "namespace" | "appVersion">): WinInstallIdentity {
   const namespaceToken = resolveWindowsReleaseNamespaceToken(config.namespace);
   const channel = releaseChannelFromVersion(config.appVersion)
-    ?? releaseChannelFromNamespace(config.namespace, SIDECAR_DEFAULTS.namespace);
+    ?? releaseChannelFromNamespace(config.namespace, OPEN_DESIGN_RUNTIME_DEFAULTS.namespace);
   const displayName = channel == null ? `${PRODUCT_NAME} ${namespaceToken}` : releaseInstallIdentity(channel).productName;
 
   return {

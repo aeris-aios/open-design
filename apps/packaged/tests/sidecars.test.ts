@@ -15,14 +15,11 @@
  * @see apps/daemon/src/legacy-data-migrator.ts
  * @see https://github.com/nexu-io/open-design/issues/710
  */
-import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, posix } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createJsonIpcServer, resolveAppIpcPath } from '@open-design/sidecar';
-import { APP_KEYS, OPEN_DESIGN_SIDECAR_CONTRACT } from '@open-design/sidecar-proto';
 
 import {
   buildPackagedDaemonSpawnEnv,
@@ -111,37 +108,16 @@ describe('resolveDaemonStatusTimeoutMs', () => {
 
 describe('packaged web URL registration', () => {
   it('registers the current dynamic web URL with the daemon sidecar and supports a later port', async () => {
-    const namespace = `web-url-${process.pid}-${Date.now()}`;
-    const daemonIpc = resolveAppIpcPath({
-      app: APP_KEYS.DAEMON,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace,
-    });
-    const received: unknown[] = [];
-    const server = await createJsonIpcServer({
-      socketPath: daemonIpc,
-      handler: async (message) => {
-        received.push(message);
-        return { accepted: true };
-      },
-    });
-
-    try {
-      await registerPackagedWebUrl(daemonIpc, 'http://127.0.0.1:64248');
-      await registerPackagedWebUrl(daemonIpc, 'http://127.0.0.1:53421');
-      expect(received).toEqual([
-        {
-          input: { url: 'http://127.0.0.1:64248' },
-          type: 'register-web-url',
-        },
-        {
-          input: { url: 'http://127.0.0.1:53421' },
-          type: 'register-web-url',
-        },
-      ]);
-    } finally {
-      await server.close();
-    }
+    const call = vi.fn(async () => ({ accepted: true as const }));
+    const control = { connect: vi.fn(async () => ({ call })) } as never;
+    await registerPackagedWebUrl(control, 'http://127.0.0.1:64248');
+    await registerPackagedWebUrl(control, 'http://127.0.0.1:53421');
+    expect(call).toHaveBeenNthCalledWith(
+      1, 'registerWebUrl', { url: 'http://127.0.0.1:64248' }, { timeoutMs: 1_200 },
+    );
+    expect(call).toHaveBeenNthCalledWith(
+      2, 'registerWebUrl', { url: 'http://127.0.0.1:53421' }, { timeoutMs: 1_200 },
+    );
   });
 });
 
@@ -366,35 +342,6 @@ describe('resolvePackagedElectronNodeCommand', () => {
     await expect(resolvePackagedElectronNodeCommand(execPath, 'linux')).resolves.toBe(execPath);
   });
 });
-
-/**
- * Build a child-process stand-in that satisfies the `watch.child`
- * shape `waitForStatus` consumes. We only use `once('exit')`,
- * `off('exit')`, and the synchronous `exitCode` / `signalCode`
- * fields, so an EventEmitter plus those two properties is enough.
- */
-function fakeChild(): EventEmitter & {
-  exitCode: number | null;
-  pid: number;
-  signalCode: NodeJS.Signals | null;
-  fireExit: (code: number | null, signal: NodeJS.Signals | null) => void;
-} {
-  const emitter = new EventEmitter() as EventEmitter & {
-    exitCode: number | null;
-    pid: number;
-    signalCode: NodeJS.Signals | null;
-    fireExit: (code: number | null, signal: NodeJS.Signals | null) => void;
-  };
-  emitter.exitCode = null;
-  emitter.pid = 1234;
-  emitter.signalCode = null;
-  emitter.fireExit = (code, signal) => {
-    emitter.exitCode = code;
-    emitter.signalCode = signal;
-    emitter.emit('exit', code, signal);
-  };
-  return emitter;
-}
 
 describe('buildPackagedDaemonSpawnEnv', () => {
   // PR #974 round-5 (lefarcen P2): the daemon's import-folder gate must
@@ -760,118 +707,22 @@ describe('buildPackagedDaemonSpawnEnv', () => {
   });
 });
 
-describe('waitForStatus child-exit fast-fail', () => {
-  // mrcfps round-7: when OD_LEGACY_DATA_DIR is set the daemon status
-  // budget extends to 30 minutes for legitimate large-payload migrations.
-  // But a daemon that throws LegacyMigrationError at startup (invalid
-  // legacy dir, existing target payload, symlink, marker write failure)
-  // exits before reporting status, and waiting the full 30 minutes makes
-  // the packaged app look hung. Racing the IPC polling against the
-  // child's exit event surfaces the failure promptly with a pointer to
-  // the daemon log.
-
-  it('rejects within milliseconds when the child exits before status is ready', async () => {
-    const child = fakeChild();
-    const ipcPath = '/tmp/od-test-no-such-ipc-' + Date.now();
-    const logPath = '/tmp/od-test-daemon.log';
-
-    const startedAt = Date.now();
-    const promise = waitForStatus<{ url: string | null }>(
-      ipcPath,
-      (status) => status.url != null,
-      30 * 60 * 1000,
-      { child, logPath },
-    );
-
-    // Simulate the daemon throwing in its startup migrator and exiting
-    // immediately. With the old code, the wait would have blocked for
-    // the full 30-minute budget; with the fix it must reject fast.
-    setTimeout(() => child.fireExit(1, null), 50);
-
-    let captured: unknown;
-    try {
-      await promise;
-    } catch (err) {
-      captured = err;
-    }
-    const elapsed = Date.now() - startedAt;
-
-    expect(captured).toBeInstanceOf(Error);
-    expect((captured as Error).message).toMatch(/daemon exited before reporting status/);
-    expect((captured as Error).message).toContain('code=1');
-    expect((captured as Error).message).toContain(logPath);
-
-    // The whole point: don't sit through DAEMON_MIGRATION_STATUS_TIMEOUT_MS.
-    // Allow generous slack for slow CI runners; the fix should bound this
-    // to roughly the IPC poll cadence (150ms) plus a couple of timer ticks.
-    expect(elapsed).toBeLessThan(2_000);
+describe('waitForStatus', () => {
+  it('retries the product status predicate without owning transport semantics', async () => {
+    const read = vi.fn()
+      .mockResolvedValueOnce({ url: null })
+      .mockResolvedValueOnce({ url: 'http://127.0.0.1:64248' });
+    await expect(waitForStatus<{ url: string | null }>(read, (status) => status.url != null, 1_000))
+      .resolves.toEqual({ url: 'http://127.0.0.1:64248' });
+    expect(read).toHaveBeenCalledTimes(2);
   });
 
-  it('detects a child that exited synchronously before waitForStatus was entered', async () => {
-    const child = fakeChild();
-    // Pretend the daemon process already exited before we got here. The
-    // 'exit' event has already fired and would not re-fire for a late
-    // listener, so waitForStatus must read the synchronous exitCode /
-    // signalCode fields to see the bad state.
-    child.exitCode = 2;
-    child.signalCode = null;
-
-    const startedAt = Date.now();
-    let captured: unknown;
-    try {
-      await waitForStatus<{ url: string | null }>(
-        '/tmp/od-test-no-such-ipc-pre-' + Date.now(),
-        (status) => status.url != null,
-        30 * 60 * 1000,
-        { child, logPath: '/tmp/od-test-daemon.log' },
-      );
-    } catch (err) {
-      captured = err;
-    }
-    const elapsed = Date.now() - startedAt;
-
-    expect(captured).toBeInstanceOf(Error);
-    expect((captured as Error).message).toMatch(/daemon exited before reporting status/);
-    expect((captured as Error).message).toContain('code=2');
-    expect(elapsed).toBeLessThan(2_000);
-  });
-
-  it('does not accept ready status from a stale IPC endpoint owned by a different pid', async () => {
-    const child = fakeChild();
-    child.pid = 5678;
-    const ipcPath = resolveAppIpcPath({
-      app: APP_KEYS.WEB,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: `stale-ipc-${process.pid}-${Date.now()}`,
-    });
-    const server = await createJsonIpcServer({
-      socketPath: ipcPath,
-      handler: async () => ({
-        pid: 1234,
-        state: 'running',
-        updatedAt: new Date().toISOString(),
-        url: 'http://127.0.0.1:1234',
-      }),
-    });
-
-    try {
-      let captured: unknown;
-      try {
-        await waitForStatus<{ pid?: number | null; url: string | null }>(
-          ipcPath,
-          (status) => status.url != null,
-          250,
-          { child, logPath: join(tmpdir(), 'od-test-web.log') },
-        );
-      } catch (err) {
-        captured = err;
-      }
-
-      expect(captured).toBeInstanceOf(Error);
-      expect((captured as Error).message).toContain('sidecar status pid 1234 did not match spawned pid 5678');
-    } finally {
-      await server.close();
-    }
+  it('surfaces the last product status error at the deadline', async () => {
+    await expect(waitForStatus(
+      async () => { throw new Error('status unavailable'); },
+      () => false,
+      1,
+    )).rejects.toThrow(/status unavailable/);
   });
 });
 

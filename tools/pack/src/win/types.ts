@@ -1,11 +1,13 @@
 import type {
   DaemonStatusSnapshot,
+  WebStatusSnapshot,
+} from "@open-design/contracts/runtime/sidecars";
+import type {
   DesktopEvalResult,
   DesktopScreenshotResult,
   DesktopStatusSnapshot,
   DesktopUpdateResult,
-  WebStatusSnapshot,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
 import type { ToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import type { ToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import type { CacheReport } from "../cache.js";

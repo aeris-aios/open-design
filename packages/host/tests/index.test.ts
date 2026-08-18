@@ -27,6 +27,7 @@ import {
   subscribeHostUpdater,
 } from "../src/index.js";
 import { createMockOpenDesignHost, installMockOpenDesignHost } from "../src/testing.js";
+import { DESKTOP_SIDECAR_INPUTS, DESKTOP_UPDATE_ACTIONS } from "../src/sidecar.js";
 
 const hostRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -40,6 +41,23 @@ function filesUnder(dir: string): string[] {
 }
 
 describe("open-design host contract", () => {
+  it("validates product-owned desktop Sidecar inputs", () => {
+    expect(DESKTOP_SIDECAR_INPUTS.update.parse({
+      action: DESKTOP_UPDATE_ACTIONS.CHECK,
+    })).toEqual({ action: "check" });
+    expect(DESKTOP_SIDECAR_INPUTS.show.parse({
+      deeplinkUrl: "opendesign://project/project-1",
+    })).toEqual({ deeplinkUrl: "opendesign://project/project-1" });
+    expect(() => DESKTOP_SIDECAR_INPUTS.show.parse({
+      deeplinkUrl: "https://example.com/project/project-1",
+    })).toThrow();
+    expect(() => DESKTOP_SIDECAR_INPUTS.renderSlides.parse({
+      html: "<main>Open Design</main>",
+      outputDir: "relative/output",
+    })).toThrow();
+    expect(() => DESKTOP_SIDECAR_INPUTS.status.parse({ extra: true })).toThrow();
+  });
+
   it("stays independent from daemon/web contracts", () => {
     const pkg = JSON.parse(readFileSync(join(hostRoot, "package.json"), "utf8")) as {
       dependencies?: Record<string, string>;

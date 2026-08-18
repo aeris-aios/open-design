@@ -54,6 +54,10 @@
       "types": "./dist/runtime/preview-observability.d.ts",
       "default": "./dist/runtime/preview-observability.mjs"
     },
+    "./runtime/sidecars": {
+      "types": "./dist/runtime/sidecars.d.ts",
+      "default": "./dist/runtime/sidecars.mjs"
+    },
     "./design-systems/components-manifest": {
       "types": "./dist/design-systems/components-manifest.d.ts",
       "default": "./dist/design-systems/components-manifest.mjs"

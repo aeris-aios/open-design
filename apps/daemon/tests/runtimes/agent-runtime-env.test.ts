@@ -1,7 +1,16 @@
 import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
-import { SIDECAR_ENV } from '@open-design/sidecar-proto';
+
+const forwardSidecarEnvironment = vi.hoisted(() => vi.fn((env: NodeJS.ProcessEnv) => (
+  env.OD_TEST_CONTROL_CAPABILITY == null
+    ? {}
+    : { OD_TEST_CONTROL_CAPABILITY: env.OD_TEST_CONTROL_CAPABILITY }
+)));
+vi.mock('@open-design/sidecar/control', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@open-design/sidecar/control')>(),
+  forwardSidecarEnvironment,
+}));
 
 import {
   createAgentRuntimeEnv,
@@ -235,19 +244,19 @@ describe('agent runtime tool environment', () => {
     expect(env.no_proxy).toBeUndefined();
   });
 
-  it('passes the daemon sidecar IPC path from the explicit base env into agent wrapper sessions', () => {
+  it('forwards the explicit inherited control capability into agent wrapper sessions', () => {
     const env = createAgentRuntimeEnv(
-      { PATH: '/bin', [SIDECAR_ENV.IPC_PATH]: '/tmp/open-design/ipc/daemon.sock' },
+      { PATH: '/bin', OD_TEST_CONTROL_CAPABILITY: 'opaque' },
       'http://127.0.0.1:7456',
       null,
       '/opt/open-design/bin/node',
     );
 
-    expect(env[SIDECAR_ENV.IPC_PATH]).toBe('/tmp/open-design/ipc/daemon.sock');
+    expect(env.OD_TEST_CONTROL_CAPABILITY).toBe('opaque');
   });
 
-  it('does not pull the daemon sidecar IPC path from ambient process state', () => {
-    vi.stubEnv(SIDECAR_ENV.IPC_PATH, '/tmp/open-design/ipc/stale.sock');
+  it('does not pull the control capability from ambient process state', () => {
+    vi.stubEnv('OD_TEST_CONTROL_CAPABILITY', 'stale');
     try {
       const env = createAgentRuntimeEnv(
         { PATH: '/bin' },
@@ -256,7 +265,7 @@ describe('agent runtime tool environment', () => {
         '/opt/open-design/bin/node',
       );
 
-      expect(env[SIDECAR_ENV.IPC_PATH]).toBeUndefined();
+      expect(env.OD_TEST_CONTROL_CAPABILITY).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();
     }

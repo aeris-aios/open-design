@@ -1,7 +1,10 @@
 import { homedir } from "node:os";
 import { join, posix, win32 } from "node:path";
 
-import { APP_KEYS, normalizeNamespace } from "@open-design/sidecar-proto";
+import {
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+  normalizeOpenDesignNamespace,
+} from "@open-design/contracts/runtime/sidecars";
 
 import type { PackagedConfig } from "./config.js";
 import { PackagedPathAccessError } from "./errors.js";
@@ -102,7 +105,7 @@ export function resolvePackagedNamespacePaths(
   namespace = config.namespace,
   env: NodeJS.ProcessEnv = {},
 ): PackagedNamespacePaths {
-  const normalizedNamespace = normalizeNamespace(namespace);
+  const normalizedNamespace = normalizeOpenDesignNamespace(namespace);
   const namespaceRoot = join(config.namespaceBaseRoot, normalizedNamespace);
   const dataRoot = resolvePackagedDataRoot(config, normalizedNamespace, env);
   // Channel root = parent of the `namespaces/` directory. With the default

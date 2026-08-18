@@ -49,7 +49,6 @@ describe("mac standalone prebundle policy", () => {
       "@open-design/desktop",
       "@open-design/packaged",
       "@open-design/sidecar",
-      "@open-design/sidecar-proto",
       "@open-design/web",
     ]) {
       expect(

@@ -1,28 +1,27 @@
 import { randomBytes } from "node:crypto";
 
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_ENV,
-  SIDECAR_MESSAGES,
-  normalizeDaemonSidecarMessage,
+  OPEN_DESIGN_RUNTIME_ENV,
   type DaemonStatusSnapshot,
-  type DesktopExportArtifactInput,
-  type DesktopExportArtifactResult,
-  type DesktopExportPdfInput,
-  type DesktopExportPdfResult,
-  type DesktopRenderSlidesInput,
-  type DesktopRenderSlidesResult,
   type MintImportTokenResult,
-  type SidecarStamp,
-} from "@open-design/sidecar-proto";
+  type OpenDesignRuntimeContext,
+  type RegisterDesktopAuthInput,
+  type RegisterDesktopAuthResult,
+  type RegisterWebUrlInput,
+  type RegisterWebUrlResult,
+} from "@open-design/contracts/runtime/sidecars";
 import {
-  createJsonIpcServer,
-  requestJsonIpc,
-  resolveAppIpcPath,
-  type JsonIpcServerHandle,
-  type SidecarRuntimeContext,
-} from "@open-design/sidecar";
+  type SidecarControlPlane,
+} from "@open-design/sidecar/control";
+import type {
+  DesktopExportArtifactInput,
+  DesktopExportArtifactResult,
+  DesktopExportPdfInput,
+  DesktopExportPdfResult,
+  DesktopRenderSlidesInput,
+  DesktopRenderSlidesResult,
+  DesktopSidecarMethods,
+} from "@open-design/host/sidecar";
 
 import { startDaemonRuntime, type StartedDaemonRuntime } from "../daemon-startup.js";
 import {
@@ -46,12 +45,15 @@ export function withCurrentDesktopAuthGate(snapshot: DaemonStatusSnapshot): Daem
   return { ...snapshot, desktopAuthGateActive: isDesktopAuthGateActive() };
 }
 
-const DAEMON_PORT_ENV = SIDECAR_ENV.DAEMON_PORT;
-const WEB_PORT_ENV = SIDECAR_ENV.WEB_PORT;
-const TOOLS_DEV_PARENT_PID_ENV = SIDECAR_ENV.TOOLS_DEV_PARENT_PID;
+const DAEMON_PORT_ENV = OPEN_DESIGN_RUNTIME_ENV.DAEMON_PORT;
+const WEB_PORT_ENV = OPEN_DESIGN_RUNTIME_ENV.WEB_PORT;
+const TOOLS_DEV_PARENT_PID_ENV = OPEN_DESIGN_RUNTIME_ENV.TOOLS_DEV_PARENT_PID;
 const DESKTOP_IMPORT_TOKEN_TTL_MS = 60_000;
 
 export type DaemonSidecarHandle = {
+  mintImportToken(baseDir: string): MintImportTokenResult;
+  registerDesktopAuth(input: RegisterDesktopAuthInput): RegisterDesktopAuthResult;
+  registerWebUrl(input: RegisterWebUrlInput): RegisterWebUrlResult;
   status(): Promise<DaemonStatusSnapshot>;
   stop(): Promise<void>;
   waitUntilStopped(): Promise<void>;
@@ -119,43 +121,20 @@ export function mintImportTokenForCli(baseDir: string): MintImportTokenResult {
   };
 }
 
-export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarStamp>): Promise<DaemonSidecarHandle> {
+export async function startDaemonSidecar(
+  runtime: OpenDesignRuntimeContext,
+  control: SidecarControlPlane,
+): Promise<DaemonSidecarHandle> {
+  const desktop = () => control.connect<DesktopSidecarMethods>("desktop");
   const serverHandle: StartedDaemonRuntime = await startDaemonRuntime({
     desktopPdfExporter: async (input: DesktopExportPdfInput): Promise<DesktopExportPdfResult> => {
-      const desktopIpc = resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace: runtime.namespace,
-      });
-      return await requestJsonIpc<DesktopExportPdfResult>(
-        desktopIpc,
-        { input, type: SIDECAR_MESSAGES.EXPORT_PDF },
-        { timeoutMs: 600_000 },
-      );
+      return await (await desktop()).call("exportPdf", input, { timeoutMs: 600_000 });
     },
     desktopSlideRenderer: async (input: DesktopRenderSlidesInput): Promise<DesktopRenderSlidesResult> => {
-      const desktopIpc = resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace: runtime.namespace,
-      });
-      return await requestJsonIpc<DesktopRenderSlidesResult>(
-        desktopIpc,
-        { input, type: SIDECAR_MESSAGES.RENDER_SLIDES },
-        { timeoutMs: 600_000 },
-      );
+      return await (await desktop()).call("renderSlides", input, { timeoutMs: 600_000 });
     },
     desktopArtifactExporter: async (input: DesktopExportArtifactInput): Promise<DesktopExportArtifactResult> => {
-      const desktopIpc = resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace: runtime.namespace,
-      });
-      return await requestJsonIpc<DesktopExportArtifactResult>(
-        desktopIpc,
-        { input, type: SIDECAR_MESSAGES.EXPORT_ARTIFACT },
-        { timeoutMs: 600_000 },
-      );
+      return await (await desktop()).call("exportArtifact", input, { timeoutMs: 600_000 });
     },
     port: parsePort(process.env[DAEMON_PORT_ENV]),
     runtime,
@@ -175,7 +154,6 @@ export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarS
     updatedAt: new Date().toISOString(),
     url: serverHandle.url,
   };
-  let ipcServer: JsonIpcServerHandle | null = null;
   let stopped = false;
   let resolveStopped!: () => void;
   const stoppedPromise = new Promise<void>((resolveStop) => {
@@ -187,54 +165,11 @@ export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarS
     stopped = true;
     state.state = "stopped";
     state.updatedAt = new Date().toISOString();
-    await ipcServer?.close().catch(() => undefined);
     await serverHandle.stop().catch(() => undefined);
     resolveStopped();
   }
 
   attachParentMonitor(stop);
-
-  ipcServer = await createJsonIpcServer({
-    socketPath: runtime.ipc,
-    handler: async (message: unknown) => {
-      const request = normalizeDaemonSidecarMessage(message);
-      switch (request.type) {
-        case SIDECAR_MESSAGES.STATUS:
-          // PR #974 round 6 (mrcfps): recompute the gate flag per
-          // request so `tools-dev start desktop` sees the live value
-          // (the flag flips after REGISTER_DESKTOP_AUTH and stays sticky).
-          return withCurrentDesktopAuthGate(state);
-        case SIDECAR_MESSAGES.SHUTDOWN:
-          setImmediate(() => {
-            void stop().finally(() => process.exit(0));
-          });
-          return { accepted: true };
-        case SIDECAR_MESSAGES.REGISTER_DESKTOP_AUTH:
-          // PR #974: the desktop main process registers its per-process
-          // auth secret here at startup. From this point on the HTTP
-          // server's POST /api/import/folder middleware requires a valid
-          // HMAC token signed with this secret, closing the
-          // renderer→arbitrary-baseDir→shell.openPath bypass.
-          setDesktopAuthSecret(Buffer.from(request.input.secret, "base64"));
-          return { accepted: true };
-        case SIDECAR_MESSAGES.MINT_IMPORT_TOKEN:
-          return mintImportTokenForCli(request.input.baseDir);
-        case SIDECAR_MESSAGES.REGISTER_WEB_URL: {
-          // Packaged startup binds the web sidecar only after the daemon is
-          // ready, so its dynamic port cannot be delivered in the daemon spawn
-          // environment. The namespace-scoped control plane registers the
-          // actual URL here as soon as web reports ready. Keep OD_WEB_PORT as
-          // the daemon-wide live source because origin validation and MCP
-          // install-info already resolve it per request.
-          const webPort = Number(new URL(request.input.url).port);
-          process.env[WEB_PORT_ENV] = String(webPort);
-          state.trustedWebOriginPort = webPort;
-          state.updatedAt = new Date().toISOString();
-          return { accepted: true };
-        }
-      }
-    },
-  });
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
@@ -243,6 +178,20 @@ export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarS
   }
 
   return {
+    mintImportToken(baseDir) {
+      return mintImportTokenForCli(baseDir);
+    },
+    registerDesktopAuth(input) {
+      setDesktopAuthSecret(Buffer.from(input.secret, "base64"));
+      return { accepted: true };
+    },
+    registerWebUrl(input) {
+      const webPort = Number(new URL(input.url).port);
+      process.env[WEB_PORT_ENV] = String(webPort);
+      state.trustedWebOriginPort = webPort;
+      state.updatedAt = new Date().toISOString();
+      return { accepted: true };
+    },
     async status() {
       return withCurrentDesktopAuthGate(state);
     },

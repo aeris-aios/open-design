@@ -40,7 +40,7 @@ type SseEvent = {
 };
 
 describe('namespace isolation spec', () => {
-  test('keeps namespace in lifecycle infrastructure while daemon clients use URL or concrete IPC transport', async () => {
+  test('keeps namespace in lifecycle infrastructure while daemon clients use URL or an opaque capability', async () => {
     const suite = await createSmokeSuite('namespace-isolation');
 
     await suite.with.toolsDev(async ({ runtime, status, webUrl }) => {
@@ -52,11 +52,8 @@ describe('namespace isolation spec', () => {
       expect(daemonStatus).not.toHaveProperty('namespace');
 
       const installInfo = await requestJson<McpInstallInfoResponse>(webUrl, '/api/mcp/install-info');
-      const ipcPath = installInfo.env.OD_SIDECAR_IPC_PATH;
-      if (typeof ipcPath !== 'string' || ipcPath.length === 0) {
-        throw new Error('MCP install-info did not include OD_SIDECAR_IPC_PATH');
-      }
-      expect(ipcPath).toEqual(expect.any(String));
+      const delegatedEnv = installInfo.env;
+      expect(Object.keys(delegatedEnv).filter((key) => key !== 'OD_DATA_DIR').length).toBeGreaterThan(0);
       expect(installInfo.args).not.toContain('--daemon-url');
       expect(installInfo.env.OD_DATA_DIR).toBe(suite.dataDir);
       expect(installInfo.env).not.toHaveProperty('OD_NAMESPACE');
@@ -66,10 +63,10 @@ describe('namespace isolation spec', () => {
       const cliStatus = await runDaemonCliJson<DaemonStatusResponse>(
         ['daemon', 'status', '--json'],
         {
+          ...delegatedEnv,
           OD_DATA_DIR: suite.dataDir,
           OD_NAMESPACE: 'wrong-daemon-namespace',
           OD_SIDECAR_IPC_BASE: path.join(suite.scratchDir, 'wrong-ipc-base'),
-          OD_SIDECAR_IPC_PATH: ipcPath,
           OD_SIDECAR_NAMESPACE: 'wrong-sidecar-namespace',
         },
       );
@@ -79,7 +76,7 @@ describe('namespace isolation spec', () => {
 
       const rejected = await runDaemonCliExpectFailure(
         ['daemon', 'status', '--json', '--namespace', 'should-not-parse'],
-        { OD_SIDECAR_IPC_PATH: ipcPath },
+        delegatedEnv,
       );
       expect(`${rejected.stdout}\n${rejected.stderr}`).toContain('unknown flag: --namespace');
 
@@ -110,7 +107,7 @@ describe('namespace isolation spec', () => {
         installInfo: {
           args: installInfo.args,
           envKeys: Object.keys(installInfo.env).sort(),
-          ipcPath,
+          delegatedEnvKeys: Object.keys(delegatedEnv).sort(),
         },
         plugin: pluginInfo,
         runtime,

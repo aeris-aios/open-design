@@ -4,14 +4,15 @@ import { join } from "node:path";
 import { stopProcesses, waitForProcessExit, type StopProcessesResult } from "@open-design/platform";
 import { compareLauncherVersions, type LauncherAfterQuitRequest } from "@open-design/launcher-proto";
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MESSAGES,
-  type AppKey,
-  type DesktopStatusSnapshot,
-} from "@open-design/sidecar-proto";
-import { requestJsonIpc, resolveAppIpcPath } from "@open-design/sidecar";
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+  type DaemonSidecarMethods,
+  type OpenDesignService as AppKey,
+  type WebSidecarMethods,
+} from "@open-design/contracts/runtime/sidecars";
+import type { DesktopSidecarMethods } from "@open-design/host/sidecar";
+import { accessControlPlane, type SidecarControlAccess } from "@open-design/sidecar/control";
 
+import { readPackagedDesktopControlIdentity } from "./identity.js";
 import type { PackagedNamespacePaths } from "./paths.js";
 
 type LauncherAfterQuitLogger = Pick<Console, "warn"> & Partial<Pick<Console, "info">>;
@@ -53,8 +54,8 @@ export type LauncherProcessControls = {
 };
 
 /**
- * Force a desktop process that outlived the launcher's graceful handshake off
- * the fixed `desktop.sock`.
+ * Force a desktop process that outlived the launcher's graceful handshake out
+ * of its fenced control incarnation.
  *
  * A packaged desktop that ignores SHUTDOWN or never quits keeps holding that
  * socket. A freshly updated daemon then connects to the *stale* desktop, and its
@@ -83,43 +84,18 @@ async function forceStopLingeringDesktop(
   return gone;
 }
 
-async function restartExistingDesktop(
-  input: {
-    ipcPath: string;
-    logger: LauncherAfterQuitLogger;
-    namespace: string;
-    paths: PackagedNamespacePaths;
-    pid: number | null;
-    reason: "headless-owner" | "stale-sidecar" | "superseded-version";
-    requestIpc: typeof requestJsonIpc;
-    stop: typeof stopProcesses;
-    waitForExit: typeof waitForProcessExit;
-  },
-): Promise<boolean> {
-  try {
-    await input.requestIpc(input.ipcPath, { type: SIDECAR_MESSAGES.SHUTDOWN }, { timeoutMs: 800 });
-  } catch (error) {
-    const message = `inspect-found-existing namespace=${input.namespace} shutdown=failed reason=${input.reason} error=${error instanceof Error ? error.message : String(error)}`;
-    await writeLauncherAfterQuitLog(input.paths, message);
-    input.logger.warn(`[open-design launcher] ${message}`);
-    return false;
-  }
-  if (input.pid == null) return true;
-
-  const exited = await input.waitForExit(input.pid, 5000);
+async function restartExistingDesktop(input: {
+  control: SidecarControlAccess;
+  namespace: string;
+  paths: PackagedNamespacePaths;
+  reason: "headless-owner" | "stale-sidecar" | "superseded-version";
+}): Promise<boolean> {
+  const result = await input.control.stop(APP_KEYS.DESKTOP, { graceMs: 5_000 });
   await writeLauncherAfterQuitLog(
     input.paths,
-    `inspect-found-existing namespace=${input.namespace} shutdown=${exited ? "exited" : "timed-out"} reason=${input.reason} pid=${input.pid}`,
+    `inspect-found-existing namespace=${input.namespace} shutdown=${result.stopped ? "exited" : "failed"} reason=${input.reason} pid=${result.pid ?? "unknown"} forced=${result.forced}`,
   );
-  if (exited) return true;
-
-  return await forceStopLingeringDesktop(
-    input.pid,
-    input.reason,
-    input.paths,
-    input.logger,
-    input.stop,
-  );
+  return result.stopped;
 }
 
 function incomingVersionSupersedesExisting(
@@ -167,135 +143,67 @@ export async function inspectExistingDesktopForLauncher(
     incomingVersion?: string | null;
     logger?: LauncherAfterQuitLogger;
     paths: PackagedNamespacePaths;
-    requestIpc?: typeof requestJsonIpc;
-    stopProcesses?: typeof stopProcesses;
-    waitForExit?: typeof waitForProcessExit;
+    control?: SidecarControlAccess;
   },
 ): Promise<LauncherExistingDesktopGateResult> {
   const logger = options.logger ?? console;
-  const requestIpc = options.requestIpc ?? requestJsonIpc;
-  const waitForExit = options.waitForExit ?? waitForProcessExit;
-  const stop = options.stopProcesses ?? stopProcesses;
-  const ipcPath = resolveAppIpcPath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    namespace,
-  });
-  let status: DesktopStatusSnapshot | null = null;
   try {
-    status = await requestIpc<DesktopStatusSnapshot>(
-      ipcPath,
-      { type: SIDECAR_MESSAGES.STATUS },
-      { timeoutMs: 350 },
-    );
-  } catch (error) {
-    const message = `inspect-unavailable namespace=${namespace} action=continue error=${error instanceof Error ? error.message : String(error)}`;
-    await writeLauncherAfterQuitLog(options.paths, message);
-    logger.info?.(`[open-design launcher] ${message}`);
-    return { action: "continue", reason: "inspect-failed" };
-  }
-
-  if (status.state !== "running") {
-    await writeLauncherAfterQuitLog(options.paths, `inspect-not-running namespace=${namespace} state=${status.state}`);
-    return { action: "continue", reason: "not-running" };
-  }
-
-  const staleSidecars: AppKey[] = [];
-  for (const app of [APP_KEYS.DAEMON, APP_KEYS.WEB]) {
-    const sidecarIpcPath = resolveAppIpcPath({
-      app,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace,
-    });
-    const sidecarStatus = await requestIpc<{ url?: unknown }>(
-      sidecarIpcPath,
-      { type: SIDECAR_MESSAGES.STATUS },
-      { timeoutMs: 350 },
-    ).catch(() => null);
-    if (typeof sidecarStatus?.url !== "string" || sidecarStatus.url.length === 0) {
-      staleSidecars.push(app);
+    const identity = options.control == null
+      ? await readPackagedDesktopControlIdentity(options.paths)
+      : null;
+    if (options.control == null && (
+      identity == null
+      || identity.runtime.namespace !== namespace
+      || !Number.isSafeInteger(identity.runtime.generation)
+      || identity.runtime.generation < 0
+    )) {
+      throw new Error("desktop control identity is unavailable");
     }
-  }
-
-  if (staleSidecars.length > 0) {
-    const pid = typeof status.pid === "number" ? status.pid : null;
-    await writeLauncherAfterQuitLog(
-      options.paths,
-      `inspect-found-existing namespace=${namespace} action=restart reason=stale-sidecar apps=${staleSidecars.join(",")} pid=${pid ?? "unknown"}`,
-    );
-    const restarted = await restartExistingDesktop({
-      ipcPath,
-      logger,
-      namespace,
-      paths: options.paths,
-      pid,
-      reason: "stale-sidecar",
-      requestIpc,
-      stop,
-      waitForExit,
-    });
-    if (!restarted) return { action: "exit", reason: "existing-focus-failed" };
-    return { action: "continue", reason: "stale-sidecar" };
-  }
-
-  const existingVersion = status.update?.currentVersion;
-  if (incomingVersionSupersedesExisting(options.incomingVersion, existingVersion)) {
-    const pid = typeof status.pid === "number" ? status.pid : null;
-    await writeLauncherAfterQuitLog(
-      options.paths,
-      `inspect-found-existing namespace=${namespace} action=restart reason=superseded-version incomingVersion=${options.incomingVersion?.trim()} existingVersion=${existingVersion?.trim()} pid=${pid ?? "unknown"}`,
-    );
-    const restarted = await restartExistingDesktop({
-      ipcPath,
-      logger,
-      namespace,
-      paths: options.paths,
-      pid,
-      reason: "superseded-version",
-      requestIpc,
-      stop,
-      waitForExit,
-    });
-    if (!restarted) return { action: "exit", reason: "existing-focus-failed" };
-    return { action: "continue", reason: "superseded-version" };
-  }
-
-  if (status.windowVisible === false) {
-    const pid = typeof status.pid === "number" ? status.pid : null;
-    await writeLauncherAfterQuitLog(
-      options.paths,
-      `inspect-found-existing namespace=${namespace} action=restart reason=headless-owner pid=${pid ?? "unknown"}`,
-    );
-    const restarted = await restartExistingDesktop({
-      ipcPath,
-      logger,
-      namespace,
-      paths: options.paths,
-      pid,
-      reason: "headless-owner",
-      requestIpc,
-      stop,
-      waitForExit,
-    });
-    if (!restarted) return { action: "exit", reason: "existing-focus-failed" };
-    return { action: "continue", reason: "headless-owner" };
-  }
-
-  try {
-    await requestIpc(
-      ipcPath,
-      {
-        ...(options.deeplinkUrl == null ? {} : { input: { deeplinkUrl: options.deeplinkUrl } }),
-        type: SIDECAR_MESSAGES.SHOW,
+    const control = options.control ?? accessControlPlane({
+      runtimeRoot: options.paths.runtimeRoot,
+      scope: {
+        channel: identity!.runtime.channel,
+        generation: identity!.runtime.generation,
+        namespace: identity!.runtime.namespace,
       },
+    });
+    const desktop = await control.connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
+    const status = await desktop.call("status", {}, { timeoutMs: 350 });
+    if (status.state !== "running") {
+      await writeLauncherAfterQuitLog(options.paths, `inspect-not-running namespace=${namespace} state=${status.state}`);
+      return { action: "continue", reason: "not-running" };
+    }
+
+    const staleSidecars: AppKey[] = [];
+    const daemon = await control.connect<DaemonSidecarMethods>(APP_KEYS.DAEMON)
+      .then((client) => client.call("status", {}, { timeoutMs: 350 })).catch(() => null);
+    const web = await control.connect<WebSidecarMethods>(APP_KEYS.WEB)
+      .then((client) => client.call("status", {}, { timeoutMs: 350 })).catch(() => null);
+    if (daemon?.url == null) staleSidecars.push(APP_KEYS.DAEMON);
+    if (web?.url == null) staleSidecars.push(APP_KEYS.WEB);
+
+    const restart = async (reason: "headless-owner" | "stale-sidecar" | "superseded-version") => {
+      const restarted = await restartExistingDesktop({ control, namespace, paths: options.paths, reason });
+      return restarted
+        ? { action: "continue", reason } as const
+        : { action: "exit", reason: "existing-focus-failed" } as const;
+    };
+    if (staleSidecars.length > 0) return await restart("stale-sidecar");
+    if (incomingVersionSupersedesExisting(options.incomingVersion, status.update?.currentVersion)) {
+      return await restart("superseded-version");
+    }
+    if (status.windowVisible === false) return await restart("headless-owner");
+    await desktop.call(
+      "show",
+      options.deeplinkUrl == null ? {} : { deeplinkUrl: options.deeplinkUrl },
       { timeoutMs: 800 },
     );
     await writeLauncherAfterQuitLog(options.paths, `inspect-found-existing namespace=${namespace} focus=accepted`);
     return { action: "exit", reason: "existing-focused" };
   } catch (error) {
-    const message = `inspect-found-existing namespace=${namespace} focus=failed error=${error instanceof Error ? error.message : String(error)}`;
+    const message = `inspect-unavailable namespace=${namespace} action=continue error=${error instanceof Error ? error.message : String(error)}`;
     await writeLauncherAfterQuitLog(options.paths, message);
-    logger.warn(`[open-design launcher] ${message}`);
-    return { action: "exit", reason: "existing-focus-failed" };
+    logger.info?.(`[open-design launcher] ${message}`);
+    return { action: "continue", reason: "inspect-failed" };
   }
 }

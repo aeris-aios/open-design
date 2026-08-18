@@ -141,9 +141,11 @@ describe("claimPackagedSingleInstanceLock", () => {
       await expect(inspectExistingDesktopForLauncher("release-beta-win", {
         deeplinkUrl,
         paths: fakePaths(root),
-        requestIpc: vi.fn(async () => {
-          throw new Error("desktop IPC is not ready");
-        }),
+        control: {
+          connect: vi.fn(async () => {
+            throw new Error("desktop control is not ready");
+          }),
+        } as never,
       })).resolves.toEqual({ action: "continue", reason: "inspect-failed" });
 
       expect(claimPackagedSingleInstanceLock(app, (argv) => {

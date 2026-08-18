@@ -20,41 +20,28 @@ import {
   type LauncherRuntimeDescriptor,
   type LauncherVersionPointer,
 } from "@open-design/launcher-proto";
-import { createProcessStampArgs } from "@open-design/platform";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 import {
   readJsonFile,
-  requestJsonIpc,
-  resolveAppIpcPath,
   writeJsonFile,
 } from "@open-design/sidecar";
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MESSAGES,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
-  type DesktopStatusSnapshot,
-  type SidecarSource,
-  type SidecarStamp,
-} from "@open-design/sidecar-proto";
+  OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES,
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+  type OpenDesignRuntimeSource as SidecarSource,
+} from "@open-design/contracts/runtime/sidecars";
+import type { DesktopSidecarMethods, DesktopStatusSnapshot } from "@open-design/host/sidecar";
+import { stripSidecarEnvironment, type SidecarControlPlane } from "@open-design/sidecar/control";
 
 const HANDOFF_CONFIRM_TIMEOUT_MS = 60_000;
 const HANDOFF_POLL_INTERVAL_MS = 100;
 const HANDOFF_PAYLOAD_WAIT_TIMEOUT_MS = 60_000;
+const PACKAGED_NAMESPACE_ENV = "OD_PACKAGED_NAMESPACE";
 const PACKAGED_NAMESPACE_BASE_ROOT_ENV = "OD_PACKAGED_NAMESPACE_BASE_ROOT";
-const SIDECAR_ONLY_ENV_KEYS = [
-  "ELECTRON_RUN_AS_NODE",
-  "OD_SIDECAR_BASE",
-  "OD_SIDECAR_IPC_PATH",
-  "OD_SIDECAR_NAMESPACE",
-  "OD_SIDECAR_SOURCE",
-] as const;
-
 type DesktopRootIdentity = {
   executablePath: string;
   pid: number;
-  stamp: SidecarStamp;
+  runtime: { namespace: string; source: SidecarSource };
   version: number;
 };
 
@@ -128,12 +115,17 @@ function containsPath(root: string, target: string): boolean {
   return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`);
 }
 
-function desktopProcessEnv(env: NodeJS.ProcessEnv, runtimeRoot: string): NodeJS.ProcessEnv {
+function desktopProcessEnv(
+  env: NodeJS.ProcessEnv,
+  namespace: string,
+  runtimeRoot: string,
+): NodeJS.ProcessEnv {
   const desktopEnv: NodeJS.ProcessEnv = {
-    ...env,
+    ...stripSidecarEnvironment(env),
+    [PACKAGED_NAMESPACE_ENV]: namespace,
     [PACKAGED_NAMESPACE_BASE_ROOT_ENV]: dirname(dirname(runtimeRoot)),
   };
-  for (const key of SIDECAR_ONLY_ENV_KEYS) delete desktopEnv[key];
+  delete desktopEnv.ELECTRON_RUN_AS_NODE;
   return desktopEnv;
 }
 
@@ -179,11 +171,10 @@ async function readDesktopIdentity(
     identity.pid <= 0 ||
     typeof identity.executablePath !== "string" ||
     !isAbsolute(identity.executablePath) ||
-    identity.stamp?.app !== APP_KEYS.DESKTOP ||
-    identity.stamp.namespace !== namespace ||
+    identity.runtime?.namespace !== namespace ||
     (
-      identity.stamp.source !== SIDECAR_SOURCES.PACKAGED &&
-      identity.stamp.source !== SIDECAR_SOURCES.TOOLS_PACK
+      identity.runtime.source !== SIDECAR_SOURCES.PACKAGED &&
+      identity.runtime.source !== SIDECAR_SOURCES.TOOLS_PACK
     )
   ) return null;
   return identity;
@@ -423,20 +414,17 @@ export async function executeLegacyPayloadDesktopHandoff(
     env?: NodeJS.ProcessEnv;
     now?: () => Date;
     requestDesktop?: (message: "shutdown" | "status") => Promise<unknown>;
+    control?: SidecarControlPlane;
     sleep?: (durationMs: number) => Promise<unknown>;
     spawn?: typeof spawn;
   } = {},
 ): Promise<LegacyPayloadDesktopHandoffResult> {
-  const desktopIpcPath = resolveAppIpcPath({
-    app: APP_KEYS.DESKTOP,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-    namespace: prepared.descriptor.namespace,
+  const requestDesktop = options.requestDesktop ?? (async (message) => {
+    if (options.control == null) throw new Error("desktop control plane is required");
+    if (message === "shutdown") return await options.control.requestStop(APP_KEYS.DESKTOP);
+    const desktop = await options.control.connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
+    return await desktop.call("status", {}, { timeoutMs: 800 });
   });
-  const requestDesktop = options.requestDesktop ?? (async (message) => await requestJsonIpc(
-    desktopIpcPath,
-    { type: message === "status" ? SIDECAR_MESSAGES.STATUS : SIDECAR_MESSAGES.SHUTDOWN },
-    { timeoutMs: 800 },
-  ));
   const confirmation = await waitForOuterConfirm(prepared, {
     confirmTimeoutMs: options.confirmTimeoutMs ?? HANDOFF_CONFIRM_TIMEOUT_MS,
     requestDesktop,
@@ -479,27 +467,23 @@ export async function executeLegacyPayloadDesktopHandoff(
     updatedAt: now,
   };
 
-  const desktopStamp: SidecarStamp = {
-    app: APP_KEYS.DESKTOP,
-    ipc: desktopIpcPath,
-    mode: SIDECAR_MODES.RUNTIME,
-    namespace: prepared.descriptor.namespace,
-    source: SIDECAR_SOURCES.PACKAGED,
-  };
   const args = [
     ...buildLauncherAfterQuitArgs({
       targetPid: prepared.descriptor.outer.pid,
       timeoutMs: HANDOFF_PAYLOAD_WAIT_TIMEOUT_MS,
     }),
     ...buildLauncherHandoffResumeArgs({ handoffId: prepared.descriptor.handoffId }),
-    ...createProcessStampArgs(desktopStamp, OPEN_DESIGN_SIDECAR_CONTRACT),
   ];
   let child: ReturnType<typeof spawn>;
   try {
     child = (options.spawn ?? spawn)(prepared.descriptor.payloadExecutablePath, args, {
       cwd: dirname(prepared.descriptor.payloadExecutablePath),
       detached: true,
-      env: desktopProcessEnv(options.env ?? process.env, prepared.runtimeRoot),
+      env: desktopProcessEnv(
+        options.env ?? process.env,
+        prepared.descriptor.namespace,
+        prepared.runtimeRoot,
+      ),
       stdio: "ignore",
       windowsHide: true,
     });

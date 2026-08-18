@@ -314,8 +314,7 @@ open-design/
 │   └── desktop/               # tools-dev가 실행/점검하는 Electron 런타임
 ├── packages/
 │   ├── contracts/             # 공유 web/daemon 앱 contract
-│   ├── sidecar-proto/         # OpenDesign sidecar 프로토콜 contract
-│   ├── sidecar/               # 범용 sidecar 런타임 프리미티브
+│   ├── sidecar/               # 범용 원자적 Sidecar 제어 플레인
 │   └── platform/              # 범용 process/platform 프리미티브
 ├── tools/dev/                 # `pnpm tools-dev` 라이프사이클 및 inspect CLI
 ├── e2e/                       # Playwright UI + 외부 통합/Vitest 하네스

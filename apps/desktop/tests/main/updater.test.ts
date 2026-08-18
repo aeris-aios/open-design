@@ -17,8 +17,8 @@ import {
 import {
   DESKTOP_UPDATE_CHANNELS,
   DESKTOP_UPDATE_STATES,
-  SIDECAR_SOURCES,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
+import { OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES } from "@open-design/contracts/runtime/sidecars";
 import type { ReleaseChannel } from "@open-design/release";
 
 import {

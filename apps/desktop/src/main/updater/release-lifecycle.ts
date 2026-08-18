@@ -7,7 +7,7 @@ import type {
   DesktopUpdateErrorSnapshot,
   DesktopUpdateReleaseLifecycleState,
   DesktopUpdateStatusSnapshot,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
 
 import type { DesktopUpdaterConfig } from "./config.js";
 import {

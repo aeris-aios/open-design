@@ -5,32 +5,22 @@ import path from "node:path";
 import { cac } from "cac";
 
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_ENV,
-  SIDECAR_MESSAGES,
-  SIDECAR_SOURCES,
+  OPEN_DESIGN_RUNTIME_ENV,
+  OPEN_DESIGN_SERVICES as APP_KEYS,
   type DaemonStatusSnapshot,
-  type DesktopClickResult,
-  type DesktopConsoleResult,
-  type DesktopEvalResult,
-  type DesktopScreenshotResult,
-  type DesktopStatusSnapshot,
-  type DesktopUpdateResult,
+  type DaemonSidecarMethods,
+  type WebSidecarMethods,
   type WebStatusSnapshot,
-} from "@open-design/sidecar-proto";
-import { createSidecarLaunchEnv, requestJsonIpc } from "@open-design/sidecar";
+} from "@open-design/contracts/runtime/sidecars";
 import {
-  collectProcessTreePids,
+  type DesktopStatusSnapshot,
+  type DesktopSidecarMethods,
+} from "@open-design/host/sidecar";
+import type { SidecarControlPlane } from "@open-design/sidecar/control";
+import {
   createPackageManagerInvocation,
-  createProcessStampArgs,
   isProcessAlive,
-  listProcessSnapshots,
-  matchesStampedProcess,
   readLogTail,
-  spawnBackgroundProcess,
-  stopProcesses,
-  type StopProcessesResult,
 } from "@open-design/platform";
 
 import {
@@ -70,6 +60,7 @@ import { rewriteCliArgsForDefaultStart } from "./cli-args.js";
 import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
+import { createToolsDevControl } from "./control.js";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -82,7 +73,7 @@ type CliOptions = ToolDevOptions & {
   updateAction?: string;
 };
 
-const TOOLS_DEV_PARENT_PID_ENV = SIDECAR_ENV.TOOLS_DEV_PARENT_PID;
+const TOOLS_DEV_PARENT_PID_ENV = OPEN_DESIGN_RUNTIME_ENV.TOOLS_DEV_PARENT_PID;
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -285,7 +276,7 @@ function printRunForegroundResult(started: Partial<Record<ToolDevAppName, unknow
 }
 
 function runtimeLookup(config: ToolDevConfig) {
-  return { base: config.toolsDevRoot, namespace: config.namespace };
+  return { control: createToolsDevControl(config) };
 }
 
 function appConfig(config: ToolDevConfig, appName: ToolDevAppName) {
@@ -342,80 +333,25 @@ async function runLoggedCommand(request: {
   });
 }
 
-function createAppStamp(config: ToolDevConfig, appName: ToolDevAppName) {
-  const currentAppConfig = appConfig(config, appName);
-  const stamp = {
-    app: appName,
-    ipc: currentAppConfig.ipcPath,
-    mode: "dev" as const,
-    namespace: config.namespace,
-    source: SIDECAR_SOURCES.TOOLS_DEV,
-  };
-
-  return {
-    args: createProcessStampArgs(stamp, OPEN_DESIGN_SIDECAR_CONTRACT),
-    env: createSidecarLaunchEnv({
-      base: config.toolsDevRoot,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      stamp,
-    }),
-    stamp,
-  };
-}
-
-async function findAppProcessTree(config: ToolDevConfig, appName: ToolDevAppName) {
-  const processes = await listProcessSnapshots();
-  const rootPids = processes
-    .filter((processInfo) =>
-      matchesStampedProcess(processInfo, {
-        app: appName,
-        mode: "dev",
-        namespace: config.namespace,
-        source: SIDECAR_SOURCES.TOOLS_DEV,
-      }, OPEN_DESIGN_SIDECAR_CONTRACT),
-    )
-    .map((processInfo) => processInfo.pid);
-  const pids = collectProcessTreePids(processes, rootPids);
-
-  return { pids, rootPids };
-}
-
-async function waitForAppProcessExit(config: ToolDevConfig, appName: ToolDevAppName, timeoutMs = 5000): Promise<number[]> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const current = await findAppProcessTree(config, appName);
-    if (current.pids.length === 0) return [];
-    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
-  }
-  return (await findAppProcessTree(config, appName)).pids;
-}
-
-async function assertNoStaleActiveProcess(config: ToolDevConfig, appName: ToolDevAppName): Promise<void> {
-  const active = await findAppProcessTree(config, appName);
-  if (active.pids.length > 0) {
-    throw new Error(`${appName} has active stamped processes but no reachable IPC status; run tools-dev stop ${appName} first`);
-  }
-}
-
 async function spawnSidecarRuntime(request: {
   appName: typeof APP_KEYS.DAEMON | typeof APP_KEYS.WEB;
   config: ToolDevConfig;
   env: NodeJS.ProcessEnv;
   logHandle: FileHandle;
 }): Promise<{ pid: number }> {
-  const { args: stampArgs, env } = createAppStamp(request.config, request.appName);
   const sidecarConfig = request.config.apps[request.appName];
-  const spawned = await spawnBackgroundProcess({
-    args: [request.config.tsxCliPath, sidecarConfig.sidecarEntryPath, ...stampArgs],
-    command: process.execPath,
+  const spawned = await createToolsDevControl(request.config).launch({
+    args: [request.config.tsxCliPath, sidecarConfig.sidecarEntryPath],
+    executable: process.execPath,
     cwd: request.config.workspaceRoot,
     detached: true,
     env: {
       ...process.env,
-      ...env,
       ...request.env,
     },
-    logFd: request.logHandle.fd,
+    output: request.logHandle.fd,
+    readyTimeoutMs: request.appName === APP_KEYS.DAEMON ? 120_000 : 35_000,
+    service: request.appName,
   });
   return { pid: spawned.pid };
 }
@@ -447,8 +383,8 @@ async function spawnDaemonRuntime(
       appName: APP_KEYS.DAEMON,
       config,
       env: {
-        [SIDECAR_ENV.DAEMON_PORT]: String(daemonPort ?? 0),
-        ...(webPort == null ? {} : { [SIDECAR_ENV.WEB_PORT]: String(webPort) }),
+        [OPEN_DESIGN_RUNTIME_ENV.DAEMON_PORT]: String(daemonPort ?? 0),
+        ...(webPort == null ? {} : { [OPEN_DESIGN_RUNTIME_ENV.WEB_PORT]: String(webPort) }),
         ...(options.parentPid == null ? {} : { [TOOLS_DEV_PARENT_PID_ENV]: String(options.parentPid) }),
         ...(spawnOptions.requireDesktopAuth ? { OD_REQUIRE_DESKTOP_AUTH: "1" } : {}),
       },
@@ -480,10 +416,10 @@ async function spawnWebRuntime(config: ToolDevConfig, options: CliOptions): Prom
           path.join(config.workspaceRoot, "apps/web/node_modules"),
           path.join(config.workspaceRoot, "node_modules"),
         ]),
-        [SIDECAR_ENV.DAEMON_PORT]: daemonPort,
-        [SIDECAR_ENV.WEB_DIST_DIR]: config.apps.web.nextDistDir,
-        [SIDECAR_ENV.WEB_TSCONFIG_PATH]: config.apps.web.nextTsconfigPath,
-        [SIDECAR_ENV.WEB_PORT]: String(webPort ?? 0),
+        [OPEN_DESIGN_RUNTIME_ENV.DAEMON_PORT]: daemonPort,
+        [OPEN_DESIGN_RUNTIME_ENV.WEB_DIST_DIR]: config.apps.web.nextDistDir,
+        [OPEN_DESIGN_RUNTIME_ENV.WEB_TSCONFIG_PATH]: config.apps.web.nextTsconfigPath,
+        [OPEN_DESIGN_RUNTIME_ENV.WEB_PORT]: String(webPort ?? 0),
         PORT: String(webPort ?? 0),
         ...(options.parentPid == null ? {} : { [TOOLS_DEV_PARENT_PID_ENV]: String(options.parentPid) }),
         ...(options.prod === true
@@ -610,7 +546,6 @@ async function writeWebDevTsconfig(config: ToolDevConfig): Promise<void> {
 }
 
 async function spawnDesktopRuntime(config: ToolDevConfig, options: CliOptions): Promise<{ pid: number }> {
-  const { args: stampArgs, env } = createAppStamp(config, APP_KEYS.DESKTOP);
   const logHandle = await openAppLog(config, APP_KEYS.DESKTOP);
 
   try {
@@ -618,7 +553,6 @@ async function spawnDesktopRuntime(config: ToolDevConfig, options: CliOptions): 
     await logHandle.write(`[tools-dev] launching desktop at ${new Date().toISOString()}\n`);
     const spawnEnv: NodeJS.ProcessEnv = {
       ...process.env,
-      ...env,
       ...(options.parentPid == null ? {} : { [TOOLS_DEV_PARENT_PID_ENV]: String(options.parentPid) }),
     };
     // ELECTRON_RUN_AS_NODE=1 makes Electron boot as plain Node and skip
@@ -643,13 +577,15 @@ async function spawnDesktopRuntime(config: ToolDevConfig, options: CliOptions): 
         delete spawnEnv[key];
       }
     }
-    const spawned = await spawnBackgroundProcess({
-      args: [config.apps.desktop.mainEntryPath, ...stampArgs],
-      command: config.apps.desktop.electronBinaryPath,
+    const spawned = await createToolsDevControl(config).launch<DesktopSidecarMethods>({
+      args: [config.apps.desktop.mainEntryPath],
+      executable: config.apps.desktop.electronBinaryPath,
       cwd: config.workspaceRoot,
       detached: true,
       env: spawnEnv,
-      logFd: logHandle.fd,
+      output: logHandle.fd,
+      readyTimeoutMs: 15_000,
+      service: APP_KEYS.DESKTOP,
     });
     return { pid: spawned.pid };
   } finally {
@@ -693,7 +629,6 @@ async function startDaemon(
   if (existing?.url != null) {
     throw new Error(`${APP_KEYS.DAEMON} is already running in namespace ${config.namespace} at ${existing.url}; stop it or choose another namespace`);
   }
-  await assertNoStaleActiveProcess(config, APP_KEYS.DAEMON);
 
   // PR #974 round-4 P1: pin the import-auth gate on the daemon when
   // this spawn is part of a desktop-bundled flow OR a desktop runtime
@@ -741,7 +676,6 @@ async function startWeb(config: ToolDevConfig, options: CliOptions) {
   if (existing?.url != null) {
     throw new Error(`${APP_KEYS.WEB} is already running in namespace ${config.namespace} at ${existing.url}; stop it or choose another namespace`);
   }
-  await assertNoStaleActiveProcess(config, APP_KEYS.WEB);
 
   const spawned = await spawnWebRuntime(config, options);
   try {
@@ -776,7 +710,6 @@ async function startDesktop(config: ToolDevConfig, options: CliOptions) {
     }
     return { app: APP_KEYS.DESKTOP, created: false, logPath: config.apps.desktop.latestLogPath, status: existing };
   }
-  await assertNoStaleActiveProcess(config, APP_KEYS.DESKTOP);
 
   const spawned = await spawnDesktopRuntime(config, options);
   try {
@@ -852,47 +785,20 @@ async function startApp(
   }
 }
 
-async function requestAppShutdown(config: ToolDevConfig, appName: ToolDevAppName): Promise<boolean> {
-  try {
-    await requestJsonIpc(appConfig(config, appName).ipcPath, { type: SIDECAR_MESSAGES.SHUTDOWN }, { timeoutMs: 1500 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function stoppedByGracefulResult(matchedPids: number[]): StopProcessesResult {
-  return {
-    alreadyStopped: matchedPids.length === 0,
-    forcedPids: [],
-    matchedPids,
-    remainingPids: [],
-    stoppedPids: matchedPids,
-  };
-}
-
 async function stopApp(config: ToolDevConfig, appName: ToolDevAppName) {
-  const before = await findAppProcessTree(config, appName);
-  const gracefulRequested = await requestAppShutdown(config, appName);
-  const remainingAfterGraceful = gracefulRequested
-    ? await waitForAppProcessExit(config, appName)
-    : before.pids;
-
-  if (remainingAfterGraceful.length === 0) {
-    return {
-      app: appName,
-      status: before.pids.length === 0 ? "not-running" : "stopped",
-      stop: stoppedByGracefulResult(before.pids),
-      via: gracefulRequested ? "ipc" : "process-scan",
-    };
-  }
-
-  const stop = await stopProcesses(remainingAfterGraceful);
+  const converged = await createToolsDevControl(config).stop(appName);
+  const matchedPids = converged.pid == null ? [] : [converged.pid];
   return {
     app: appName,
-    status: stop.remainingPids.length === 0 ? "stopped" : "partial",
-    stop,
-    via: gracefulRequested ? "ipc+fallback" : "fallback",
+    status: converged.pid == null ? "not-running" : converged.stopped ? "stopped" : "partial",
+    stop: {
+      alreadyStopped: converged.pid == null,
+      forcedPids: converged.forced && converged.pid != null ? [converged.pid] : [],
+      matchedPids,
+      remainingPids: converged.stopped ? [] : matchedPids,
+      stoppedPids: converged.stopped ? matchedPids : [],
+    },
+    via: converged.forced ? "control+force" : "control",
   };
 }
 
@@ -900,30 +806,22 @@ async function inspectAppStatus(config: ToolDevConfig, appName: ToolDevAppName) 
   if (appName === APP_KEYS.DAEMON) {
     const status = await inspectDaemonRuntime(runtimeLookup(config));
     if (status != null) return status;
-    const active = await findAppProcessTree(config, appName);
     return {
-      // PR #974 round 6: synthetic snapshot when the IPC is unreachable
-      // — daemon is starting or idle, so the gate is definitionally not
-      // active yet. The desktop-auth-gate helper treats this branch as
-      // "no daemon running" via the null check, but the type contract
-      // still requires the field.
       desktopAuthGateActive: false,
-      pid: active.rootPids[0] ?? null,
-      state: active.pids.length > 0 ? "starting" : "idle",
+      pid: null,
+      state: "idle",
       url: null,
     } satisfies DaemonStatusSnapshot;
   }
   if (appName === APP_KEYS.WEB) {
     const status = await inspectWebRuntime(runtimeLookup(config));
     if (status != null) return status;
-    const active = await findAppProcessTree(config, appName);
-    return { pid: active.rootPids[0] ?? null, state: active.pids.length > 0 ? "starting" : "idle", url: null } satisfies WebStatusSnapshot;
+    return { pid: null, state: "idle", url: null } satisfies WebStatusSnapshot;
   }
 
   const status = await inspectDesktopRuntime(runtimeLookup(config));
   if (status != null) return status;
-  const active = await findAppProcessTree(config, appName);
-  return { pid: active.rootPids[0] ?? null, state: active.pids.length > 0 ? "unknown" : "idle", url: null };
+  return { pid: null, state: "idle", url: null };
 }
 
 function summarizeStatus(apps: Record<ToolDevAppName, any>): string {
@@ -1032,26 +930,21 @@ function parseTimeoutMs(value: string | undefined): number | undefined {
 async function inspectDesktop(config: ToolDevConfig, target: string | undefined, options: CliOptions) {
   const operation = target ?? "status";
   const timeoutMs = parseTimeoutMs(options.timeout) ?? 30000;
+  const client = operation === "status"
+    ? null
+    : await createToolsDevControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
 
   switch (operation) {
     case "status":
       return (await inspectDesktopRuntime(runtimeLookup(config), 1000)) ?? ({ state: "idle" } satisfies DesktopStatusSnapshot);
     case "eval":
       if (options.expr == null) throw new Error("--expr is required for desktop eval");
-      return await requestJsonIpc<DesktopEvalResult>(
-        config.apps.desktop.ipcPath,
-        { input: { expression: options.expr }, type: SIDECAR_MESSAGES.EVAL },
-        { timeoutMs },
-      );
+      return await client!.call("eval", { expression: options.expr }, { timeoutMs });
     case "screenshot":
       if (options.path == null) throw new Error("--path is required for desktop screenshot");
-      return await requestJsonIpc<DesktopScreenshotResult>(
-        config.apps.desktop.ipcPath,
-        { input: { path: options.path }, type: SIDECAR_MESSAGES.SCREENSHOT },
-        { timeoutMs },
-      );
+      return await client!.call("screenshot", { path: options.path }, { timeoutMs });
     case "console":
-      return await requestJsonIpc<DesktopConsoleResult>(config.apps.desktop.ipcPath, { type: SIDECAR_MESSAGES.CONSOLE }, { timeoutMs });
+      return await client!.call("console", {}, { timeoutMs });
     case "update":
       if (
         options.updateAction != null &&
@@ -1059,18 +952,14 @@ async function inspectDesktop(config: ToolDevConfig, target: string | undefined,
       ) {
         throw new Error("--update-action must be status, check, download, or install");
       }
-      return await requestJsonIpc<DesktopUpdateResult>(
-        config.apps.desktop.ipcPath,
-        { input: { action: options.updateAction ?? "status" }, type: SIDECAR_MESSAGES.UPDATE },
+      return await client!.call(
+        "update",
+        { action: (options.updateAction ?? "status") as "status" | "check" | "download" | "install" },
         { timeoutMs },
       );
     case "click":
       if (options.selector == null) throw new Error("--selector is required for desktop click");
-      return await requestJsonIpc<DesktopClickResult>(
-        config.apps.desktop.ipcPath,
-        { input: { selector: options.selector }, type: SIDECAR_MESSAGES.CLICK },
-        { timeoutMs },
-      );
+      return await client!.call("click", { selector: options.selector }, { timeoutMs });
     default:
       throw new Error(`unsupported desktop inspect target: ${operation}`);
   }

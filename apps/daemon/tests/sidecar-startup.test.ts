@@ -5,18 +5,38 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  APP_KEYS,
-  SIDECAR_MESSAGES,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
-} from '@open-design/sidecar-proto';
-import { requestJsonIpc } from '@open-design/sidecar';
+  createOpenDesignRuntimeProjection,
+  OPEN_DESIGN_RUNTIME_MODES,
+  OPEN_DESIGN_RUNTIME_SOURCES,
+} from '@open-design/contracts/runtime/sidecars';
+import { bootstrapControlPlane } from '@open-design/sidecar/control';
 
 const stopRuntime = vi.fn(async () => undefined);
 const startDaemonRuntime = vi.fn(async () => ({
   stop: stopRuntime,
   url: 'http://127.0.0.1:48123',
 }));
+
+function runtime(root: string, namespace: string, mode: "dev" | "runtime", source: "tools-dev" | "packaged") {
+  return {
+    ...createOpenDesignRuntimeProjection(mode, source),
+    channel: mode === OPEN_DESIGN_RUNTIME_MODES.DEV ? "dev" : "beta",
+    dataRoot: root,
+    generation: 0,
+    logsRoot: join(root, "logs"),
+    namespace,
+    resourceRoot: root,
+    runtimeRoot: root,
+  };
+}
+
+function control(root: string, namespace: string, mode: "dev" | "runtime", source: "tools-dev" | "packaged") {
+  return bootstrapControlPlane({
+    projection: createOpenDesignRuntimeProjection(mode, source),
+    roots: { dataRoot: root, logsRoot: join(root, "logs"), resourceRoot: root, runtimeRoot: root },
+    scope: { channel: mode === OPEN_DESIGN_RUNTIME_MODES.DEV ? "dev" : "beta", generation: 0, namespace },
+  });
+}
 
 vi.mock('../src/daemon-startup.js', () => ({
   startDaemonRuntime,
@@ -40,14 +60,10 @@ describe('daemon sidecar startup', () => {
     const { setDesktopAuthSecret } = await import('../src/desktop-auth.js');
     const { startDaemonSidecar } = await import('../src/sidecar/server.js');
     const root = await mkdtemp(join(tmpdir(), 'od-daemon-sidecar-'));
-    const handle = await startDaemonSidecar({
-      app: APP_KEYS.DAEMON,
-      base: root,
-      ipc: join(root, 'daemon.sock'),
-      mode: SIDECAR_MODES.DEV,
-      namespace: 'test',
-      source: SIDECAR_SOURCES.TOOLS_DEV,
-    });
+    const handle = await startDaemonSidecar(
+      runtime(root, 'test', OPEN_DESIGN_RUNTIME_MODES.DEV, OPEN_DESIGN_RUNTIME_SOURCES.TOOLS_DEV),
+      control(root, 'test', OPEN_DESIGN_RUNTIME_MODES.DEV, OPEN_DESIGN_RUNTIME_SOURCES.TOOLS_DEV),
+    );
 
     try {
       expect(startDaemonRuntime).toHaveBeenCalledWith(
@@ -73,38 +89,20 @@ describe('daemon sidecar startup', () => {
   it('registers the live packaged web URL after daemon startup and replaces it on restart', async () => {
     const { startDaemonSidecar } = await import('../src/sidecar/server.js');
     const root = await mkdtemp(join(tmpdir(), 'od-daemon-sidecar-web-url-'));
-    const ipc = join(root, 'daemon.sock');
-    const handle = await startDaemonSidecar({
-      app: APP_KEYS.DAEMON,
-      base: root,
-      ipc,
-      mode: SIDECAR_MODES.RUNTIME,
-      namespace: 'packaged-web-url',
-      source: SIDECAR_SOURCES.PACKAGED,
-    });
+    const namespace = 'packaged-web-url';
+    const handle = await startDaemonSidecar(
+      runtime(root, namespace, OPEN_DESIGN_RUNTIME_MODES.RUNTIME, OPEN_DESIGN_RUNTIME_SOURCES.PACKAGED),
+      control(root, namespace, OPEN_DESIGN_RUNTIME_MODES.RUNTIME, OPEN_DESIGN_RUNTIME_SOURCES.PACKAGED),
+    );
 
     try {
       expect((await handle.status()).trustedWebOriginPort).toBeNull();
 
-      await requestJsonIpc(
-        ipc,
-        {
-          input: { url: 'http://127.0.0.1:64248' },
-          type: SIDECAR_MESSAGES.REGISTER_WEB_URL,
-        },
-        { timeoutMs: 1_000 },
-      );
+      handle.registerWebUrl({ url: 'http://127.0.0.1:64248' });
       expect(process.env.OD_WEB_PORT).toBe('64248');
       expect((await handle.status()).trustedWebOriginPort).toBe(64248);
 
-      await requestJsonIpc(
-        ipc,
-        {
-          input: { url: 'http://127.0.0.1:53421' },
-          type: SIDECAR_MESSAGES.REGISTER_WEB_URL,
-        },
-        { timeoutMs: 1_000 },
-      );
+      handle.registerWebUrl({ url: 'http://127.0.0.1:53421' });
       expect(process.env.OD_WEB_PORT).toBe('53421');
       expect((await handle.status()).trustedWebOriginPort).toBe(53421);
     } finally {

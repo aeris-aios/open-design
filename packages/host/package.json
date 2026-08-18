@@ -16,6 +16,12 @@
       "require": "./dist/index.cjs",
       "default": "./dist/index.mjs"
     },
+    "./sidecar": {
+      "types": "./dist/sidecar.d.ts",
+      "import": "./dist/sidecar.mjs",
+      "require": "./dist/sidecar.cjs",
+      "default": "./dist/sidecar.mjs"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.mjs",
@@ -29,7 +35,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit"
   },
   "dependencies": {
-    "@open-design/release": "workspace:*"
+    "@open-design/release": "workspace:*",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "24.12.2",

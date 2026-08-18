@@ -5,7 +5,7 @@
  * it only re-exports the public surface from the cohesive sibling modules:
  *
  * - `command`    — cross-platform command-invocation construction.
- * - `process`    — process lifecycle, stamps, snapshots, and stop escalation.
+ * - `process`    — process lifecycle, snapshots, and stop escalation.
  * - `proxy-env`  — system proxy discovery and proxy-aware env merging.
  * - `fs`         — filesystem containment, atomic copy, removal, log tails.
  * - `http`       — HTTP readiness polling.
@@ -28,25 +28,15 @@ export {
 
 export type {
   ProcessSnapshot,
-  ProcessStampContract,
-  ProcessStampField,
-  ProcessStampShape,
   SpawnProcessRequest,
-  StampedProcessMatchCriteria,
   StopProcessesOptions,
   StopProcessesResult,
 } from "./process.js";
 export {
   collectProcessTreePids,
-  createProcessStampArgs,
   isProcessAlive,
   listProcessSnapshots,
-  matchesProcessStamp,
-  matchesStampedProcess,
   processCommandExactlyRunsExecutable,
-  readFlagValue,
-  readProcessStamp,
-  readProcessStampFromCommand,
   spawnBackgroundProcess,
   spawnLoggedProcess,
   stopProcesses,

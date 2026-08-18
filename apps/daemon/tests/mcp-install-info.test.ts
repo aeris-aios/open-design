@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import express from 'express';
-import { SIDECAR_ENV } from '@open-design/sidecar-proto';
+import { OPEN_DESIGN_RUNTIME_ENV } from '@open-design/contracts/runtime/sidecars';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isLocalSameOrigin } from '../src/origin-validation.js';
 import { buildMcpInstallPayload } from '../src/mcp-install-info.js';
+
+const TEST_CONTROL_CAPABILITY = 'OD_TEST_CONTROL_CAPABILITY';
 
 // The install-info endpoint is a self-contained handler that resolves
 // absolute paths to node + cli.js so the Settings → MCP server panel
@@ -65,7 +67,7 @@ function makeInstallInfoApp({ cliPath, port, env = {}, dataDir }: InstallInfoOpt
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const now = Date.now();
-    const webPort = env[SIDECAR_ENV.WEB_PORT] ?? null;
+    const webPort = env[OPEN_DESIGN_RUNTIME_ENV.WEB_PORT] ?? null;
     if (
       cache
       && cache.webPort === webPort
@@ -78,11 +80,11 @@ function makeInstallInfoApp({ cliPath, port, env = {}, dataDir }: InstallInfoOpt
     // Mirror the production handler's sidecar detection so this test
     // exercises the same path; the helper below is the same one
     // server.ts calls.
-    const sidecarIpcPath = env[SIDECAR_ENV.IPC_PATH];
-    const isSidecarMode = sidecarIpcPath != null && sidecarIpcPath.length > 0;
+    const controlCapability = env[TEST_CONTROL_CAPABILITY];
+    const isSidecarMode = controlCapability != null && controlCapability.length > 0;
     const sidecarEnv: Record<string, string> = {};
     if (isSidecarMode) {
-      sidecarEnv[SIDECAR_ENV.IPC_PATH] = sidecarIpcPath;
+      sidecarEnv[TEST_CONTROL_CAPABILITY] = controlCapability;
     }
     for (const key of [
       'OD_MCP_BOOTSTRAP_COMMAND',
@@ -268,7 +270,7 @@ describe('GET /api/mcp/install-info', () => {
     const { port, server } = await startHarness(
       cliPath,
       {
-        [SIDECAR_ENV.IPC_PATH]: '/tmp/open-design/ipc/default/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-default',
       },
       dataDir,
     );
@@ -278,7 +280,7 @@ describe('GET /api/mcp/install-info', () => {
       expect(body.args).toEqual([cliPath, 'mcp']);
       expect(body.env).toEqual({
         OD_DATA_DIR: dataDir,
-        [SIDECAR_ENV.IPC_PATH]: '/tmp/open-design/ipc/default/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-default',
       });
     } finally {
       await new Promise<void>((done) => server?.close(() => done()));
@@ -287,7 +289,7 @@ describe('GET /api/mcp/install-info', () => {
 
   it('returns the live packaged web URL immediately when the registered dynamic port changes', async () => {
     const env: NodeJS.ProcessEnv = {
-      [SIDECAR_ENV.IPC_PATH]: '/tmp/open-design/ipc/live-web/daemon.sock',
+      [TEST_CONTROL_CAPABILITY]: 'opaque-live-web',
     };
     const { port, server } = await startHarness(cliPath, env, dataDir);
     try {
@@ -296,7 +298,7 @@ describe('GET /api/mcp/install-info', () => {
       );
       expect(before.webBaseUrl).toBeNull();
 
-      env[SIDECAR_ENV.WEB_PORT] = '64248';
+      env[OPEN_DESIGN_RUNTIME_ENV.WEB_PORT] = '64248';
       const firstRegistration = await readInstallInfo(
         await fetch(`http://127.0.0.1:${port}/api/mcp/install-info`),
       );
@@ -304,7 +306,7 @@ describe('GET /api/mcp/install-info', () => {
 
       // A restarted packaged runtime may bind a different ephemeral port.
       // The 5-second install-info cache must not keep returning the old one.
-      env[SIDECAR_ENV.WEB_PORT] = '53421';
+      env[OPEN_DESIGN_RUNTIME_ENV.WEB_PORT] = '53421';
       const afterRestart = await readInstallInfo(
         await fetch(`http://127.0.0.1:${port}/api/mcp/install-info`),
       );
@@ -320,8 +322,7 @@ describe('GET /api/mcp/install-info', () => {
     const { port, server } = await startHarness(
       cliPath,
       {
-        [SIDECAR_ENV.IPC_PATH]:
-          '/tmp/open-design/ipc/default/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-default',
         OD_MCP_BOOTSTRAP_COMMAND: '/usr/bin/open',
         OD_MCP_BOOTSTRAP_ARGS: bootstrapArgs,
       },
@@ -334,8 +335,7 @@ describe('GET /api/mcp/install-info', () => {
       const body = await readInstallInfo(res);
       expect(body.env).toEqual({
         OD_DATA_DIR: dataDir,
-        [SIDECAR_ENV.IPC_PATH]:
-          '/tmp/open-design/ipc/default/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-default',
         OD_MCP_BOOTSTRAP_COMMAND: '/usr/bin/open',
         OD_MCP_BOOTSTRAP_ARGS: bootstrapArgs,
       });
@@ -348,7 +348,7 @@ describe('GET /api/mcp/install-info', () => {
     const { port, server } = await startHarness(
       cliPath,
       {
-        [SIDECAR_ENV.IPC_PATH]: '/tmp/open-design/ipc/foo/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-custom',
       },
       dataDir,
     );
@@ -358,7 +358,7 @@ describe('GET /api/mcp/install-info', () => {
       expect(body.args).toEqual([cliPath, 'mcp']);
       expect(body.env).toEqual({
         OD_DATA_DIR: dataDir,
-        [SIDECAR_ENV.IPC_PATH]: '/tmp/open-design/ipc/foo/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-custom',
       });
     } finally {
       await new Promise<void>((done) => server?.close(() => done()));
@@ -369,9 +369,8 @@ describe('GET /api/mcp/install-info', () => {
     const { port, server } = await startHarness(
       cliPath,
       {
-        [SIDECAR_ENV.IPC_PATH]: '/var/run/open-design/foo/daemon.sock',
-        [SIDECAR_ENV.NAMESPACE]: 'foo',
-        [SIDECAR_ENV.IPC_BASE]: '/var/run/open-design',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-custom',
+        OD_TEST_UNRELATED_HINT: 'must-not-forward',
       },
       dataDir,
     );
@@ -380,7 +379,7 @@ describe('GET /api/mcp/install-info', () => {
       const body = await readInstallInfo(res);
       expect(body.env).toEqual({
         OD_DATA_DIR: dataDir,
-        [SIDECAR_ENV.IPC_PATH]: '/var/run/open-design/foo/daemon.sock',
+        [TEST_CONTROL_CAPABILITY]: 'opaque-custom',
       });
     } finally {
       await new Promise<void>((done) => server?.close(() => done()));

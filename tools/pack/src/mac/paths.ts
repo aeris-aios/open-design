@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { APP_KEYS } from "@open-design/sidecar-proto";
+import { OPEN_DESIGN_SERVICES as APP_KEYS } from "@open-design/contracts/runtime/sidecars";
 
 import type { ToolPackConfig } from "../config.js";
 import { PRODUCT_NAME } from "./constants.js";

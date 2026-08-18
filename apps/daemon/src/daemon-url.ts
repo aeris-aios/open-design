@@ -1,12 +1,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  SIDECAR_ENV,
-  SIDECAR_MESSAGES,
-  type DaemonStatusSnapshot,
-} from "@open-design/sidecar-proto";
-import { requestJsonIpc } from "@open-design/sidecar";
+import type { DaemonSidecarMethods } from "@open-design/contracts/runtime/sidecars";
+import { connectSidecar } from "@open-design/sidecar/control";
 
 export const DEFAULT_DAEMON_URL = "http://127.0.0.1:7456";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -24,8 +20,7 @@ export interface ResolveDaemonUrlOptions {
  * Resolve the daemon HTTP base URL for `od` client commands.
  *
  * Spawn order: explicit `--daemon-url` flag, `OD_DAEMON_URL` env, then
- * a STATUS roundtrip to the concrete sidecar IPC endpoint supplied by
- * the lifecycle owner in `OD_SIDECAR_IPC_PATH`, then the default
+ * a status call through the inherited opaque Sidecar capability, then the default
  * `tools-dev status --json` runtime. Falls back to the legacy default
  * for direct `od` launches that do not run as a sidecar.
  */
@@ -48,14 +43,9 @@ async function discoverDaemonUrlFromIpc(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ): Promise<string | null> {
-  const socketPath = env[SIDECAR_ENV.IPC_PATH];
-  if (socketPath == null || socketPath.length === 0) return null;
   try {
-    const status = await requestJsonIpc<DaemonStatusSnapshot>(
-      socketPath,
-      { type: SIDECAR_MESSAGES.STATUS },
-      { timeoutMs },
-    );
+    const client = await connectSidecar<DaemonSidecarMethods>(env);
+    const status = await client.call("status", {}, { timeoutMs });
     return status?.url ?? null;
   } catch {
     return null;

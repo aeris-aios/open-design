@@ -2,20 +2,18 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { SIDECAR_MESSAGES } from "@open-design/sidecar-proto";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ToolPackConfig } from "../src/config.js";
 
 const requestJsonIpc = vi.hoisted(() => vi.fn());
-const listProcessSnapshots = vi.hoisted(() =>
-  vi.fn<typeof import("@open-design/platform").listProcessSnapshots>(async () => []),
-);
-const matchesStampedProcess = vi.hoisted(() =>
-  vi.fn<typeof import("@open-design/platform").matchesStampedProcess>(() => false),
-);
+const stopControl = vi.hoisted(() => vi.fn<() => Promise<{
+  code: number | null;
+  pid: number | null;
+  signal: NodeJS.Signals | null;
+  stopped: boolean;
+}>>(async () => ({ code: 0, pid: null, signal: null, stopped: true })));
 const spawnBackgroundProcess = vi.hoisted(() => vi.fn(async () => ({ pid: 12345 })));
-const stopProcesses = vi.hoisted(() => vi.fn(async () => undefined));
 const invokeNsis = vi.hoisted(() => vi.fn<typeof import("../src/win/nsis.js").invokeNsis>());
 const queryWinRegistryEntries = vi.hoisted(() =>
   vi.fn<typeof import("../src/win/registry.js").queryWinRegistryEntries>(async () => []),
@@ -24,11 +22,14 @@ const resolveWinRegisteredPaths = vi.hoisted(() =>
   vi.fn<typeof import("../src/win/registry.js").resolveWinRegisteredPaths>(async (_config, paths) => paths),
 );
 
-vi.mock("@open-design/sidecar", async () => {
-  const actual = await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar");
+vi.mock("../src/control.js", () => {
   return {
-    ...actual,
-    requestJsonIpc,
+    createToolPackControl: () => ({
+      connect: async (service: string) => ({
+        call: async (method: string, input: unknown) => requestJsonIpc(service, { ...input as object, type: method }),
+      }),
+      stop: stopControl,
+    }),
   };
 });
 
@@ -36,12 +37,15 @@ vi.mock("@open-design/platform", async () => {
   const actual = await vi.importActual<typeof import("@open-design/platform")>("@open-design/platform");
   return {
     ...actual,
-    listProcessSnapshots,
-    matchesStampedProcess,
     spawnBackgroundProcess,
-    stopProcesses,
   };
 });
+
+const SIDECAR_MESSAGES = {
+  EVAL: "eval",
+  SHUTDOWN: "shutdown",
+  STATUS: "status",
+} as const;
 
 vi.mock("../src/win/nsis.js", async () => {
   const actual = await vi.importActual<typeof import("../src/win/nsis.js")>("../src/win/nsis.js");
@@ -274,8 +278,7 @@ describe("inspectPackedWinApp", () => {
       await writeFakeUnpackedExe(config);
       requestJsonIpc.mockReset();
       spawnBackgroundProcess.mockClear();
-      stopProcesses.mockClear();
-      listProcessSnapshots.mockClear();
+      stopControl.mockResolvedValue({ code: 0, pid: null, signal: null, stopped: true });
       process.env.OD_JSON_IPC_TRACE = "already-on";
       requestJsonIpc.mockImplementation(async (ipc: string, payload: { type?: string }) => {
         if (payload.type === SIDECAR_MESSAGES.STATUS) {
@@ -313,39 +316,21 @@ describe("inspectPackedWinApp", () => {
 });
 
 describe("stopPackedWinApp", () => {
-  it("waits for a packaged-source payload desktop to exit after graceful shutdown", async () => {
+  it("delegates convergence to the atomic control plane", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
     const config = createConfig(root);
-    const payloadDesktop = { command: "payload-desktop", pid: 4242, ppid: 1 };
-
     try {
-      requestJsonIpc.mockReset();
-      requestJsonIpc.mockResolvedValue({ accepted: true });
-      listProcessSnapshots.mockReset();
-      listProcessSnapshots
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([]);
-      matchesStampedProcess.mockReset();
-      matchesStampedProcess.mockImplementation((processInfo, criteria) => {
-        const sidecarCriteria = criteria as { namespace?: string; source?: string };
-        return (
-          processInfo.command === payloadDesktop.command &&
-          sidecarCriteria.namespace === config.namespace &&
-          sidecarCriteria.source === "packaged"
-        );
-      });
-      stopProcesses.mockClear();
+      stopControl.mockReset();
+      stopControl.mockResolvedValue({ code: 0, pid: 4242, signal: null, stopped: true });
 
       await expect(stopPackedWinApp(config)).resolves.toEqual({
         gracefulRequested: true,
         namespace: config.namespace,
         remainingPids: [],
         status: "stopped",
-        stoppedPids: [payloadDesktop.pid],
+        stoppedPids: [4242],
       });
-      expect(listProcessSnapshots).toHaveBeenCalledTimes(3);
-      expect(stopProcesses).not.toHaveBeenCalled();
+      expect(stopControl).toHaveBeenCalledWith("desktop");
     } finally {
       await rm(root, { force: true, recursive: true });
     }

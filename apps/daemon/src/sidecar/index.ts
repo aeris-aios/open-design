@@ -1,45 +1,74 @@
-import { APP_KEYS, OPEN_DESIGN_SIDECAR_CONTRACT } from "@open-design/sidecar-proto";
-import { bootstrapSidecarRuntime } from "@open-design/sidecar";
-import { readProcessStamp } from "@open-design/platform";
+import {
+  DAEMON_SIDECAR_INPUTS,
+  createOpenDesignRuntimeContext,
+  type DaemonSidecarMethods,
+} from "@open-design/contracts/runtime/sidecars";
+import {
+  attachSidecar,
+  resumeControlPlane,
+  type SidecarControlPlane,
+} from "@open-design/sidecar/control";
 
-import { startDaemonSidecar } from "./server.js";
+import { startDaemonSidecar, type DaemonSidecarHandle } from "./server.js";
 import {
   executeLegacyPayloadDesktopHandoff,
   prepareLegacyPayloadDesktopHandoff,
+  type LegacyPayloadDesktopHandoffPreparation,
 } from "./payload-desktop-handoff.js";
 
 async function main(): Promise<void> {
-  const stamp = readProcessStamp(process.argv.slice(2), OPEN_DESIGN_SIDECAR_CONTRACT);
-  if (stamp == null) throw new Error("sidecar stamp is required");
-
-  const runtime = bootstrapSidecarRuntime(stamp, process.env, {
-    app: APP_KEYS.DAEMON,
-    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-  });
-  const desktopHandoff = await prepareLegacyPayloadDesktopHandoff({
-    namespace: runtime.namespace,
-    runtimeRoot: runtime.base,
-    source: runtime.source,
-  }).catch((error: unknown) => {
-    console.warn("[packaged desktop handoff] prepare failed", error);
-    return null;
-  });
-  const server = await startDaemonSidecar(runtime);
-
-  process.stdout.write(`${JSON.stringify(await server.status(), null, 2)}\n`);
-  if (desktopHandoff?.kind === "none") {
-    console.info("[packaged desktop handoff] skipped", { reason: desktopHandoff.reason });
-  }
-  if (desktopHandoff?.kind === "prepared") {
-    void executeLegacyPayloadDesktopHandoff(desktopHandoff)
-      .then((result) => {
-        console.info("[packaged desktop handoff]", result);
-      })
-      .catch((error: unknown) => {
-        console.warn("[packaged desktop handoff] execute failed", error);
+  let server: DaemonSidecarHandle | null = null;
+  let control: SidecarControlPlane | null = null;
+  let desktopHandoff: LegacyPayloadDesktopHandoffPreparation | null = null;
+  const attached = await attachSidecar<DaemonSidecarMethods>({
+    async initialize(context) {
+      const runtime = createOpenDesignRuntimeContext(context);
+      desktopHandoff = await prepareLegacyPayloadDesktopHandoff({
+        namespace: runtime.namespace,
+        runtimeRoot: runtime.runtimeRoot,
+        source: runtime.source,
+      }).catch((error: unknown) => {
+        console.warn("[packaged desktop handoff] prepare failed", error);
+        return null;
       });
+      control = resumeControlPlane(context);
+      server = await startDaemonSidecar(runtime, control);
+    },
+    handlers: {
+      mintImportToken(input) {
+        return server!.mintImportToken(DAEMON_SIDECAR_INPUTS.mintImportToken.parse(input).baseDir);
+      },
+      registerDesktopAuth(input) {
+        return server!.registerDesktopAuth(DAEMON_SIDECAR_INPUTS.registerDesktopAuth.parse(input));
+      },
+      registerWebUrl(input) {
+        return server!.registerWebUrl(DAEMON_SIDECAR_INPUTS.registerWebUrl.parse(input));
+      },
+      async status(input) {
+        DAEMON_SIDECAR_INPUTS.status.parse(input);
+        return await server!.status();
+      },
+    },
+    async onStopRequested() {
+      await server?.stop();
+    },
+  });
+
+  try {
+    process.stdout.write(`${JSON.stringify(await server!.status(), null, 2)}\n`);
+    const handoff = desktopHandoff as LegacyPayloadDesktopHandoffPreparation | null;
+    if (handoff?.kind === "none") {
+      console.info("[packaged desktop handoff] skipped", { reason: handoff.reason });
+    }
+    if (handoff?.kind === "prepared") {
+      void executeLegacyPayloadDesktopHandoff(handoff, { control: control! })
+        .then((result) => console.info("[packaged desktop handoff]", result))
+        .catch((error: unknown) => console.warn("[packaged desktop handoff] execute failed", error));
+    }
+    await server!.waitUntilStopped();
+  } finally {
+    await attached.close();
   }
-  await server.waitUntilStopped();
 }
 
 void main().catch((error: unknown) => {

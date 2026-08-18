@@ -214,3 +214,11 @@ export function releaseMetadataVersionFields(channel: ReleaseChannel, releaseVer
     releaseVersion,
   };
 }
+
+export function resolveWindowsReleaseNamespaceToken(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/gu, "-");
+}
+
+export function resolveWindowsUninstallRegistryKey(namespace: string): string {
+  return `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-${resolveWindowsReleaseNamespaceToken(namespace)}`;
+}

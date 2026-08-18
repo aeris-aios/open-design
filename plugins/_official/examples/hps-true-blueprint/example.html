@@ -274,7 +274,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
         <ul class="check mt-m">
           <li>Sidecar is the only broker in or out — no direct daemon socket from agent code</li>
           <li>Every daemon data path derives from one resolved RUNTIME_DATA_DIR</li>
-          <li>Sidecar process stamps carry exactly five fields — app, mode, namespace, ipc, source</li>
+          <li>Sidecar ownership has one exact identity — channel, namespace, generation, service</li>
           <li>App business logic never imports another app's private internals directly</li>
         </ul>
       </div>

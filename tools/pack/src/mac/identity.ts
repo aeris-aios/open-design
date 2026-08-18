@@ -1,4 +1,4 @@
-import { SIDECAR_DEFAULTS } from "@open-design/sidecar-proto";
+import { OPEN_DESIGN_RUNTIME_DEFAULTS } from "@open-design/contracts/runtime/sidecars";
 import {
   releaseChannelFromNamespace,
   releaseChannelFromVersion,
@@ -24,7 +24,7 @@ function sanitizeNamespace(value: string): string {
 export function resolveMacInstallIdentity(config: Pick<ToolPackConfig, "namespace" | "appVersion">): MacInstallIdentity {
   const namespaceToken = sanitizeNamespace(config.namespace);
   const channel = releaseChannelFromVersion(config.appVersion)
-    ?? releaseChannelFromNamespace(config.namespace, SIDECAR_DEFAULTS.namespace);
+    ?? releaseChannelFromNamespace(config.namespace, OPEN_DESIGN_RUNTIME_DEFAULTS.namespace);
   const channelIdentity = channel == null
     ? { appId: "io.open-design.desktop", productName: PRODUCT_NAME }
     : releaseInstallIdentity(channel);

@@ -310,8 +310,7 @@ open-design/
 │   └── desktop/               # Electron ランタイム、tools-dev によって起動／検査される
 ├── packages/
 │   ├── contracts/             # 共有 web/daemon アプリ契約
-│   ├── sidecar-proto/         # OpenDesign sidecar プロトコル契約
-│   ├── sidecar/               # 汎用 sidecar ランタイムプリミティブ
+│   ├── sidecar/               # 汎用アトミック Sidecar 制御プレーン
 │   └── platform/              # 汎用プロセス／プラットフォームプリミティブ
 ├── tools/dev/                 # `pnpm tools-dev` ライフサイクルと inspect CLI
 ├── e2e/                       # Playwright UI + 外部統合／Vitest ハーネス

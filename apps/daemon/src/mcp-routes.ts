@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import fs from 'node:fs';
-import { SIDECAR_ENV } from '@open-design/sidecar-proto';
+import { OPEN_DESIGN_RUNTIME_ENV } from '@open-design/contracts/runtime/sidecars';
+import { forwardSidecarEnvironment } from '@open-design/sidecar/control';
 import { buildMcpInstallPayload, type McpInstallPayload } from './mcp-install-info.js';
 import { installCodexMcp, probeCodexInstall, uninstallCodexMcp } from './codex-cli.js';
 import { MCP_TEMPLATES, buildAcpMcpServers, buildClaudeMcpJson, isManagedProjectCwd, readMcpConfig, writeMcpConfig } from './mcp-config.js';
@@ -42,19 +43,15 @@ export function registerMcpRoutes(app: Express, ctx: RegisterMcpRoutesDeps) {
   function computeInstallPayload(): McpInstallPayload {
     const cliPath = OD_BIN;
     // The daemon was bootstrapped as a sidecar (tools-dev, packaged) iff
-    // bootstrapSidecarRuntime stamped OD_SIDECAR_IPC_PATH into the env.
+    // The Sidecar body inherited an opaque control capability at bootstrap.
     // In sidecar mode the snippet omits --daemon-url and the spawned
     // `od mcp` discovers the live URL via the concrete IPC endpoint on
     // every spawn, so the client config survives ephemeral-port
     // restarts. For direct `od` / `od --port X` launches there is no
     // IPC socket; the helper bakes --daemon-url so custom ports keep
     // working.
-    const sidecarIpcPath = process.env[SIDECAR_ENV.IPC_PATH];
-    const isSidecarMode = sidecarIpcPath != null && sidecarIpcPath.length > 0;
-    const sidecarEnv: Record<string, string> = {};
-    if (isSidecarMode) {
-      sidecarEnv[SIDECAR_ENV.IPC_PATH] = sidecarIpcPath;
-    }
+    const sidecarEnv = forwardSidecarEnvironment() as Record<string, string>;
+    const isSidecarMode = Object.keys(sidecarEnv).length > 0;
     const mcpBootstrapCommand = process.env.OD_MCP_BOOTSTRAP_COMMAND;
     if (
       mcpBootstrapCommand != null
@@ -71,7 +68,7 @@ export function registerMcpRoutes(app: Express, ctx: RegisterMcpRoutesDeps) {
     // CLI-only / headless launches set neither and webBaseUrl falls
     // through as null — MCP clients then just omit the studio deep
     // link from their responses.
-    const webPortRaw = process.env[SIDECAR_ENV.WEB_PORT];
+    const webPortRaw = process.env[OPEN_DESIGN_RUNTIME_ENV.WEB_PORT];
     const webPortNum = webPortRaw ? Number(webPortRaw) : Number.NaN;
     const webBaseUrl = Number.isFinite(webPortNum) && webPortNum > 0
       ? `http://127.0.0.1:${webPortNum}`
@@ -102,7 +99,7 @@ export function registerMcpRoutes(app: Express, ctx: RegisterMcpRoutesDeps) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const now = Date.now();
-    const webPort = process.env[SIDECAR_ENV.WEB_PORT] ?? null;
+    const webPort = process.env[OPEN_DESIGN_RUNTIME_ENV.WEB_PORT] ?? null;
     if (
       installInfoCache
       && installInfoCache.webPort === webPort

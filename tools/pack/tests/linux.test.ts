@@ -6,24 +6,25 @@ import { dirname, join, resolve } from "node:path";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { requestJsonIpc, resolveAppIpcPath } from "@open-design/sidecar";
 import {
-  APP_KEYS,
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
-} from "@open-design/sidecar-proto";
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+  OPEN_DESIGN_RUNTIME_MODES as SIDECAR_MODES,
+  OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES,
+} from "@open-design/contracts/runtime/sidecars";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@open-design/sidecar", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@open-design/sidecar")>();
-  return {
-    ...actual,
-    requestJsonIpc: vi.fn(async () => {
-      throw new Error("requestJsonIpc should not be called for invalid headless inspect options");
-    }),
-  };
-});
+
+const controlCall = vi.hoisted(() => vi.fn<() => Promise<unknown>>(async () => {
+  throw new Error("control call should not be called for invalid headless inspect options");
+}));
+const requestJsonIpc = controlCall;
+
+vi.mock("../src/control.js", () => ({
+  createToolPackControl: () => ({
+    connect: async () => ({ call: async () => controlCall() }),
+    stop: async () => ({ code: null, pid: null, signal: null, stopped: true }),
+  }),
+}));
 
 import type { ToolPackConfig } from "../src/config.js";
 import {
@@ -343,11 +344,7 @@ describe("stopPackedLinuxHeadless", () => {
     const markerPath = join(namespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      ipc: resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace,
-      }),
+      ipc: "legacy-desktop-endpoint",
       mode: SIDECAR_MODES.RUNTIME,
       namespace,
       source: SIDECAR_SOURCES.PACKAGED,
@@ -375,8 +372,6 @@ describe("stopPackedLinuxHeadless", () => {
       const result = await stopPackedLinuxHeadless(config);
 
       expect(result.status).toBe("not-running");
-      expect(result.fallback?.reason).toBe("marker-not-found");
-      expect(result.fallback?.markerPath).toBe(join(namespaceRoot, "runtime", "headless-root.json"));
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -404,11 +399,7 @@ describe("stopPackedLinuxHeadless", () => {
     const markerPath = join(namespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      ipc: resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace,
-      }),
+      ipc: "legacy-desktop-endpoint",
       mode: SIDECAR_MODES.RUNTIME,
       namespace,
       source: SIDECAR_SOURCES.PACKAGED,
@@ -447,7 +438,7 @@ describe("stopPackedLinuxHeadless", () => {
     }
   });
 
-  it("skips headless cleanup while the desktop marker PID is live in the snapshot table", async () => {
+  it("does not let a legacy desktop marker override atomic control state", async () => {
     const root = await mkdtemp(join(tmpdir(), "od-linux-headless-cleanup-live-"));
     const namespace = "cleanup-split-live";
     const namespaceRoot = join(root, "runtime", "linux", "namespaces", namespace);
@@ -469,11 +460,7 @@ describe("stopPackedLinuxHeadless", () => {
     const markerPath = join(namespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      ipc: resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace,
-      }),
+      ipc: "legacy-desktop-endpoint",
       mode: SIDECAR_MODES.RUNTIME,
       namespace,
       source: SIDECAR_SOURCES.PACKAGED,
@@ -505,12 +492,12 @@ describe("stopPackedLinuxHeadless", () => {
 
       const result = await cleanupPackedLinuxNamespace(config, { headless: true });
 
-      expect(result.skipped).toBe(true);
-      expect(result.removedOutputRoot).toBe(false);
-      expect(result.removedRuntimeNamespaceRoot).toBe(false);
-      expect(await pathExists(markerPath)).toBe(true);
-      expect(await pathExists(namespaceRoot)).toBe(true);
-      expect(await pathExists(config.roots.output.namespaceRoot)).toBe(true);
+      expect(result.skipped).toBe(false);
+      expect(result.removedOutputRoot).toBe(true);
+      expect(result.removedRuntimeNamespaceRoot).toBe(true);
+      expect(await pathExists(markerPath)).toBe(false);
+      expect(await pathExists(namespaceRoot)).toBe(false);
+      expect(await pathExists(config.roots.output.namespaceRoot)).toBe(false);
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -546,11 +533,7 @@ describe("stopPackedLinuxApp", () => {
     const markerPath = join(runtimeNamespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      ipc: resolveAppIpcPath({
-        app: APP_KEYS.DESKTOP,
-        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-        namespace,
-      }),
+      ipc: "legacy-desktop-endpoint",
       mode: SIDECAR_MODES.RUNTIME,
       namespace,
       source: SIDECAR_SOURCES.PACKAGED,
@@ -821,22 +804,14 @@ describe("renderLinuxAppImageAppRun", () => {
 describe("createLinuxDesktopLaunchEnv", () => {
   it("strips ELECTRON_RUN_AS_NODE before spawning the Electron AppImage", () => {
     const config = makeConfig();
-    const stamp = {
-      app: APP_KEYS.DESKTOP,
-      ipc: "/tmp/open-design/ipc/default/desktop.sock",
-      mode: SIDECAR_MODES.RUNTIME,
-      namespace: "default",
-      source: SIDECAR_SOURCES.TOOLS_PACK,
-    };
-
-    const env = createLinuxDesktopLaunchEnv(config, stamp, {
+    const env = createLinuxDesktopLaunchEnv(config, {
       ELECTRON_RUN_AS_NODE: "1",
       KEEP_ME: "yes",
     });
 
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
     expect(env.KEEP_ME).toBe("yes");
-    expect(env.OD_SIDECAR_BASE).toBe(resolve(config.roots.runtime.namespaceRoot, "runtime"));
+    expect(Object.keys(env).some((key) => key.startsWith("OD_SIDECAR_"))).toBe(false);
   });
 });
 

@@ -1,9 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createJsonIpcServer, type JsonIpcServerHandle } from "@open-design/sidecar";
-import { SIDECAR_ENV, SIDECAR_MESSAGES } from "@open-design/sidecar-proto";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+const connectSidecar = vi.hoisted(() => vi.fn());
+vi.mock("@open-design/sidecar/control", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@open-design/sidecar/control")>(),
+  connectSidecar,
+}));
 import { resolveDaemonUrl, DEFAULT_DAEMON_URL } from "../src/daemon-url.js";
 
 // Verifies the resolution chain: --daemon-url > OD_DAEMON_URL > sidecar
@@ -11,20 +15,21 @@ import { resolveDaemonUrl, DEFAULT_DAEMON_URL } from "../src/daemon-url.js";
 // so `od` clients follow the live daemon across ephemeral-port restarts.
 
 describe("resolveDaemonUrl", () => {
-  let ipcBaseDir: string;
   let fakeBinDir: string;
   let emptyBinDir: string;
 
   beforeAll(() => {
-    ipcBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "od-mcp-resolve-"));
     fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "od-tools-dev-resolve-"));
     emptyBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "od-tools-dev-empty-"));
   });
 
   afterAll(() => {
-    fs.rmSync(ipcBaseDir, { recursive: true, force: true });
     fs.rmSync(fakeBinDir, { recursive: true, force: true });
     fs.rmSync(emptyBinDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    connectSidecar.mockRejectedValue(new Error("no inherited control capability"));
   });
 
   it("prefers the explicit --daemon-url flag", async () => {
@@ -32,7 +37,6 @@ describe("resolveDaemonUrl", () => {
       flagUrl: "http://flag.example:1111",
       env: {
         OD_DAEMON_URL: "http://env.example:2222",
-        [SIDECAR_ENV.IPC_PATH]: path.join(ipcBaseDir, "daemon.sock"),
       },
     });
     expect(url).toBe("http://flag.example:1111");
@@ -42,7 +46,6 @@ describe("resolveDaemonUrl", () => {
     const url = await resolveDaemonUrl({
       env: {
         OD_DAEMON_URL: "http://env.example:2222",
-        [SIDECAR_ENV.IPC_PATH]: path.join(ipcBaseDir, "daemon.sock"),
       },
     });
     expect(url).toBe("http://env.example:2222");
@@ -52,7 +55,6 @@ describe("resolveDaemonUrl", () => {
     const url = await resolveDaemonUrl({
       env: {
         PATH: emptyBinDir,
-        [SIDECAR_ENV.IPC_PATH]: path.join(ipcBaseDir, "missing.sock"),
       },
       timeoutMs: 200,
     });
@@ -84,40 +86,17 @@ describe("resolveDaemonUrl", () => {
     expect(url).toBe("http://127.0.0.1:60123");
   });
 
-  it("discovers the live daemon URL via the concrete sidecar IPC status endpoint", async () => {
-    const socketPath = process.platform === "win32"
-      ? `\\\\.\\pipe\\open-design-daemon-url-${process.pid}-${Date.now()}`
-      : path.join(ipcBaseDir, "daemon.sock");
-    let ipc: JsonIpcServerHandle | null = null;
-    try {
-      ipc = await createJsonIpcServer({
-        socketPath,
-        handler: (message) => {
-          if (
-            message != null &&
-            typeof message === "object" &&
-            (message as { type?: unknown }).type === SIDECAR_MESSAGES.STATUS
-          ) {
-            return {
-              pid: 4242,
-              state: "running",
-              updatedAt: new Date().toISOString(),
-              url: "http://127.0.0.1:54321",
-            };
-          }
-          throw new Error("unexpected message");
-        },
-      });
+  it("discovers the live daemon URL through the inherited control capability", async () => {
+    const call = vi.fn().mockResolvedValue({
+      pid: 4242,
+      state: "running",
+      updatedAt: new Date().toISOString(),
+      url: "http://127.0.0.1:54321",
+    });
+    connectSidecar.mockResolvedValue({ call });
 
-      const url = await resolveDaemonUrl({
-        env: {
-          [SIDECAR_ENV.IPC_PATH]: socketPath,
-        },
-        timeoutMs: 1000,
-      });
-      expect(url).toBe("http://127.0.0.1:54321");
-    } finally {
-      await ipc?.close();
-    }
+    await expect(resolveDaemonUrl({ env: {}, timeoutMs: 1000 }))
+      .resolves.toBe("http://127.0.0.1:54321");
+    expect(call).toHaveBeenCalledWith("status", {}, { timeoutMs: 1000 });
   });
 });

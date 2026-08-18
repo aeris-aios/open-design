@@ -35,7 +35,7 @@ import {
   type DesktopUpdateReinstallSnapshot,
   type DesktopUpdateStatusSnapshot,
   type DesktopUpdateState,
-} from "@open-design/sidecar-proto";
+} from "@open-design/host/sidecar";
 import {
   markInstallerObservationOpenFailed,
   writePendingInstallerObservation,

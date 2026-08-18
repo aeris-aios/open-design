@@ -34,7 +34,6 @@ export const WIN_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES = [
   "@open-design/launcher-proto",
   "@open-design/packaged",
   "@open-design/sidecar",
-  "@open-design/sidecar-proto",
   "@open-design/web",
 ] as const;
 

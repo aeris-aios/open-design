@@ -7,12 +7,10 @@ import { describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 
 import {
-  APP_KEYS,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
-  type SidecarStamp,
-} from '@open-design/sidecar-proto';
-import type { SidecarRuntimeContext } from '@open-design/sidecar';
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+  OPEN_DESIGN_RUNTIME_MODES as SIDECAR_MODES,
+  OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES,
+} from '@open-design/contracts/runtime/sidecars';
 
 import {
   STANDALONE_LAUNCH_WARNING,
@@ -160,13 +158,11 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       await mkdir(dirname(daemonLogPath), { recursive: true });
       await writeFile(daemonLogPath, `${marker}\n`, 'utf8');
 
-      const runtime: SidecarRuntimeContext<SidecarStamp> = {
-        app: APP_KEYS.DAEMON,
-        // packaged launches children with base == <namespaceRoot>/runtime
-        base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-test-daemon.sock',
+      const runtime = {
+        logsRoot: join(namespaceRoot, 'logs'),
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-stable',
+        runtimeRoot: join(namespaceRoot, 'runtime'),
         source: SIDECAR_SOURCES.PACKAGED,
       };
 
@@ -210,12 +206,11 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       await writeFile(join(daemonLogDir, 'latest.log'), 'fresh session line\n', 'utf8');
       await writeFile(join(daemonLogDir, 'previous.log'), `${previousMarker}\n`, 'utf8');
 
-      const runtime: SidecarRuntimeContext<SidecarStamp> = {
-        app: APP_KEYS.DAEMON,
-        base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-prev.sock',
+      const runtime = {
+        logsRoot: join(namespaceRoot, 'logs'),
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-stable',
+        runtimeRoot: join(namespaceRoot, 'runtime'),
         source: SIDECAR_SOURCES.PACKAGED,
       };
 
@@ -254,12 +249,11 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       await mkdir(daemonLogDir, { recursive: true });
       await writeFile(join(daemonLogDir, 'latest.log'), 'first-launch session\n', 'utf8');
 
-      const runtime: SidecarRuntimeContext<SidecarStamp> = {
-        app: APP_KEYS.DAEMON,
-        base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-noprev.sock',
+      const runtime = {
+        logsRoot: join(namespaceRoot, 'logs'),
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-stable',
+        runtimeRoot: join(namespaceRoot, 'runtime'),
         source: SIDECAR_SOURCES.PACKAGED,
       };
 
@@ -302,12 +296,11 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
         // any read of it now fail with EACCES rather than ENOENT.
         await chmod(daemonLogDir, 0o000);
 
-        const runtime: SidecarRuntimeContext<SidecarStamp> = {
-          app: APP_KEYS.DAEMON,
-          base: join(namespaceRoot, 'runtime'),
-          ipc: '/tmp/od-diag-prevdenied.sock',
+        const runtime = {
+          logsRoot: join(namespaceRoot, 'logs'),
           mode: SIDECAR_MODES.RUNTIME,
           namespace: 'release-stable',
+          runtimeRoot: join(namespaceRoot, 'runtime'),
           source: SIDECAR_SOURCES.PACKAGED,
         };
 
@@ -342,12 +335,11 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       await mkdir(dirname(daemonLogPath), { recursive: true });
       await writeFile(daemonLogPath, 'daemon ok\n', 'utf8');
 
-      const runtime: SidecarRuntimeContext<SidecarStamp> = {
-        app: APP_KEYS.DAEMON,
-        base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-missing.sock',
+      const runtime = {
+        logsRoot: join(namespaceRoot, 'logs'),
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-beta',
+        runtimeRoot: join(namespaceRoot, 'runtime'),
         source: SIDECAR_SOURCES.PACKAGED,
       };
 

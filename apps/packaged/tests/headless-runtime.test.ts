@@ -66,7 +66,7 @@ describe("acquirePackagedHeadlessStartup", () => {
       closed,
       dependencies: {
         confirmRuntime: vi.fn(async () => undefined),
-        createIpcServer: vi.fn(async () => ({
+        createControlServer: vi.fn(async () => ({
           close: async () => {
             closed.push("ipc");
           },

@@ -3,9 +3,9 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_DEFAULTS,
-} from "@open-design/sidecar-proto";
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
+  normalizeOpenDesignNamespace,
+} from "@open-design/contracts/runtime/sidecars";
 
 import {
   PACKAGED_NAMESPACE_ENV,
@@ -37,8 +37,8 @@ function resolveHeadlessAmrProfile(): PackagedConfig["amrProfile"] {
 }
 
 function resolveHeadlessConfig(): PackagedConfig {
-  const namespace = OPEN_DESIGN_SIDECAR_CONTRACT.normalizeNamespace(
-    process.env[PACKAGED_NAMESPACE_ENV] ?? SIDECAR_DEFAULTS.namespace,
+  const namespace = normalizeOpenDesignNamespace(
+    process.env[PACKAGED_NAMESPACE_ENV] ?? OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
   );
   const namespaceBaseRoot = resolveHeadlessNamespaceBaseRoot();
 

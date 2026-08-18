@@ -1,5 +1,5 @@
 import express, { type Express } from 'express';
-import { SIDECAR_DEFAULTS, SIDECAR_ENV } from '@open-design/sidecar-proto';
+import { OPEN_DESIGN_RUNTIME_DEFAULTS } from '@open-design/contracts/runtime/sidecars';
 import { randomUUID } from 'node:crypto';
 import {
   type McpAnalyticsEventRequest,
@@ -257,7 +257,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
         currentVersion: cachedAppVersion.version,
         dataRoot: dataDir,
         logger: console,
-        namespace: process.env[SIDECAR_ENV.NAMESPACE] ?? SIDECAR_DEFAULTS.namespace,
+        namespace: process.env.OD_PACKAGED_NAMESPACE ?? OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
       });
     } catch {
       // Telemetry is best-effort; appVersion is omitted when unavailable.

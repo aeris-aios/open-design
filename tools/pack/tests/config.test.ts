@@ -1,7 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
-import { join, resolve } from "node:path";
 
 import { resolveToolPackConfig, WORKSPACE_ROOT } from "../src/config.js";
+import { createToolPackControl } from "../src/control.js";
 
 const savedTelemetryRelayUrl = process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
 const savedPosthogKey = process.env.POSTHOG_KEY;
@@ -130,6 +134,76 @@ describe("resolveToolPackConfig namespace defaults", () => {
     expect(resolveToolPackConfig("mac", { appVersion: "0.8.0-beta.4", namespace: "custom-beta" }).namespace).toBe(
       "custom-beta",
     );
+  });
+});
+
+describe("tools-pack control scope", () => {
+  it("targets the live desktop generation instead of inventing a tools-pack generation", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
+    const config = resolveToolPackConfig("mac", {
+      appVersion: "0.19.4-beta.30",
+      dir: join(root, "tools-pack"),
+      namespace: "control-scope-test",
+    });
+    const identityPath = join(config.roots.runtime.namespaceRoot, "runtime", "desktop-root.json");
+
+    try {
+      mkdirSync(dirname(identityPath), { recursive: true });
+      writeFileSync(identityPath, JSON.stringify({
+        runtime: {
+          channel: "beta",
+          generation: 7,
+          namespace: config.namespace,
+        },
+      }));
+
+      expect(createToolPackControl(config).scope).toEqual({
+        channel: "beta",
+        generation: 7,
+        namespace: config.namespace,
+      });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("targets the newer headless generation instead of a stale desktop identity", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
+    const config = resolveToolPackConfig("linux", {
+      appVersion: "0.19.4-beta.30",
+      dir: join(root, "tools-pack"),
+      namespace: "control-headless-test",
+    });
+    const desktopIdentityPath = join(config.roots.runtime.namespaceRoot, "runtime", "desktop-root.json");
+    const headlessIdentityPath = join(config.roots.runtime.namespaceRoot, "runtime", "headless-root.json");
+
+    try {
+      mkdirSync(dirname(headlessIdentityPath), { recursive: true });
+      writeFileSync(desktopIdentityPath, JSON.stringify({
+        runtime: {
+          channel: "beta",
+          generation: 3,
+          namespace: config.namespace,
+        },
+      }));
+      writeFileSync(headlessIdentityPath, JSON.stringify({
+        runtime: {
+          channel: "beta",
+          generation: 11,
+          namespace: config.namespace,
+        },
+      }));
+      utimesSync(desktopIdentityPath, new Date(1_000), new Date(1_000));
+      utimesSync(headlessIdentityPath, new Date(2_000), new Date(2_000));
+
+      expect(createToolPackControl(config).scope).toEqual({
+        channel: "beta",
+        generation: 11,
+        namespace: config.namespace,
+      });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 });
 

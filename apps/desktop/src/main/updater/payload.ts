@@ -16,7 +16,7 @@ import {
   type LauncherCleanupEntry,
   type LauncherRuntimeDescriptor,
 } from "@open-design/launcher-proto";
-import type { DesktopUpdateChannel } from "@open-design/sidecar-proto";
+import type { DesktopUpdateChannel } from "@open-design/host/sidecar";
 
 import type { DesktopUpdaterConfig } from "./config.js";
 import {

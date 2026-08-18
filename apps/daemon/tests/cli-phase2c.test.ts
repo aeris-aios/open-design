@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createJsonIpcServer } from '@open-design/sidecar';
-import { SIDECAR_ENV, SIDECAR_MESSAGES, normalizeDaemonSidecarMessage } from '@open-design/sidecar-proto';
+import type { DaemonSidecarMethods } from '@open-design/contracts/runtime/sidecars';
+import { bootstrapControlPlane } from '@open-design/sidecar/control';
 
 import { createAgentRuntimeEnv, startServer } from '../src/server.js';
 import { resetDesktopAuthForTests, setDesktopAuthSecret } from '../src/desktop-auth.js';
@@ -196,25 +196,30 @@ describe('Phase 2C CLI wrappers', () => {
 
     try {
       const ipcRoot = makeFolder();
-      const ipcPath = path.join(ipcRoot, 'daemon.sock');
-      const sidecar = await createJsonIpcServer({
-        socketPath: ipcPath,
-        handler: async (message) => {
-          const request = normalizeDaemonSidecarMessage(message);
-          switch (request.type) {
-            case SIDECAR_MESSAGES.STATUS:
-              return { desktopAuthGateActive: true, state: 'running', url: baseUrl };
-            case SIDECAR_MESSAGES.MINT_IMPORT_TOKEN:
-              return mintImportTokenForCli(request.input.baseDir);
-            default:
-              throw new Error(`unexpected test IPC message: ${request.type}`);
-          }
+      const control = bootstrapControlPlane({
+        projection: { mode: 'runtime', protocol: 1, source: 'packaged' },
+        roots: {
+          dataRoot: path.join(ipcRoot, 'data'),
+          logsRoot: path.join(ipcRoot, 'logs'),
+          resourceRoot: path.join(ipcRoot, 'resources'),
+          runtimeRoot: path.join(ipcRoot, 'runtime'),
+        },
+        scope: { channel: 'beta', generation: 0, namespace: 'cli-test' },
+      });
+      const sidecar = await control.expose<DaemonSidecarMethods>({
+        service: 'daemon',
+        handlers: {
+          mintImportToken: ({ baseDir }) => mintImportTokenForCli(baseDir),
+          registerDesktopAuth: () => ({ accepted: true }),
+          registerWebUrl: () => ({ accepted: true }),
+          status: () => ({ desktopAuthGateActive: true, state: 'running', url: baseUrl }),
         },
       });
       sidecarServers.push(sidecar);
+      const daemonClient = await control.connect<DaemonSidecarMethods>('daemon');
 
       const wrapperEnv = createAgentRuntimeEnv(
-        { PATH: process.env.PATH, [SIDECAR_ENV.IPC_PATH]: ipcPath },
+        daemonClient.environment({ PATH: process.env.PATH }),
         baseUrl,
         null,
         process.execPath,
@@ -283,7 +288,7 @@ describe('Phase 2C CLI wrappers', () => {
 
     const failed = await runCliExpectFailure(
       ['project', 'import', folder, '--name', 'Pending CLI Import', '--json'],
-      { env: { [SIDECAR_ENV.IPC_PATH]: path.join(folder, 'missing-daemon.sock') } },
+      { env: {} },
     );
 
     expect(failed.code).toBe(74);
@@ -302,7 +307,7 @@ describe('Phase 2C CLI wrappers', () => {
 
     const failed = await runCliExpectFailure(
       ['project', 'import', folder, '--name', 'Rejected CLI Import', '--json'],
-      { env: { [SIDECAR_ENV.IPC_PATH]: path.join(folder, 'missing-daemon.sock') } },
+      { env: {} },
     );
 
     expect(failed.code).toBe(75);

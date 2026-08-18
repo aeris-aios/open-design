@@ -48,27 +48,28 @@ describe("desktop updater host boundary", () => {
 
   it("starts desktop IPC before creating the BrowserWindow runtime", () => {
     const main = source("src/main/index.ts");
-    const ipcStart = main.indexOf("ipcServer = await createJsonIpcServer");
+    const ipcStart = main.indexOf("attachedSidecar = await sidecar.expose");
     const runtimeStart = main.indexOf("desktop = await createDesktopRuntime");
     expect(ipcStart).toBeGreaterThanOrEqual(0);
     expect(runtimeStart).toBeGreaterThan(ipcStart);
     const startupIpcBody = main.slice(ipcStart, runtimeStart);
     expect(main).toContain('state: "idle"');
-    expect(startupIpcBody).toContain("desktopStatusSnapshot(activeDesktop)");
-    expect(startupIpcBody).toContain("desktop runtime is not initialized");
+    expect(main).toContain('if (desktop == null) throw new Error("desktop runtime is not initialized")');
+    expect(startupIpcBody).toContain("desktopStatusSnapshot(desktop)");
+    expect(startupIpcBody).toContain("requireDesktop().show()");
   });
 
   it("keeps obsolete installed-outer policy outside generic desktop while exposing the SHOW hook", () => {
     const main = source("src/main/index.ts");
-    const showStart = main.indexOf("case SIDECAR_MESSAGES.SHOW:");
-    const clickStart = main.indexOf("case SIDECAR_MESSAGES.CLICK:", showStart);
+    const showStart = main.indexOf("show(input) {");
+    const clickStart = main.indexOf("status(input) {", showStart);
     expect(showStart).toBeGreaterThanOrEqual(0);
     expect(clickStart).toBeGreaterThan(showStart);
     const showHandler = main.slice(showStart, clickStart);
-    expect(showHandler).toContain("activeDesktop.show()");
-    expect(showHandler).toContain("dispatchInviteDeeplink(request.input?.deeplinkUrl ?? null)");
+    expect(showHandler).toContain("requireDesktop().show()");
+    expect(showHandler).toContain("dispatchInviteDeeplink(parsed.deeplinkUrl ?? null)");
     expect(showHandler).toContain("notifyDesktopExternalShow(options.onExternalShow)");
-    expect(showHandler.indexOf("activeDesktop.show()"))
+    expect(showHandler.indexOf("requireDesktop().show()"))
       .toBeLessThan(showHandler.indexOf("notifyDesktopExternalShow(options.onExternalShow)"));
     expect(main).not.toContain("listProcessSnapshots");
     expect(main).not.toContain("stopProcesses");
@@ -79,7 +80,7 @@ describe("desktop updater host boundary", () => {
     expect(main).toContain("async function snapshotUpdateForStatus()");
     expect(main).toContain("desktop updater status timed out after ${timeoutMs}ms");
     expect(main).toContain("update: updater.snapshot()");
-    expect(main).toContain("return await desktopStatusSnapshot(activeDesktop)");
+    expect(main).toContain('return invokeDesktopMethod("status", parsed, () => desktopStatusSnapshot(desktop))');
     expect(main).not.toContain("return await updater.status()");
   });
 
