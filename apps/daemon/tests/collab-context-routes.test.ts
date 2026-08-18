@@ -261,6 +261,34 @@ describe('collab context routes', () => {
     expect(observeWorkspace.mock.calls[0]?.[2]).not.toHaveProperty('workspaceMemberId');
   });
 
+  it('observes directory-only seat capacity as unknown without synthetic counts', async () => {
+    const observeWorkspace = vi.fn();
+    const api = await startContextServer({
+      observeWorkspace,
+      fetchWorkspaceDirectory: async () => ({
+        ok: true,
+        items: [TEAM_DIRECTORY_ITEM],
+      }),
+    });
+
+    const response = await api.req('/api/workspace/context', {
+      headers: TEAM_HEADERS,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.context.seatSummary).toMatchObject({
+      seatLimit: 0,
+      usedSeats: 0,
+    });
+    expect(observeWorkspace).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId: 'wm-1' }),
+      expect.objectContaining({ seat_state: 'unknown' }),
+    );
+    expect(observeWorkspace.mock.calls[0]?.[2]).not.toHaveProperty('seat_limit');
+    expect(observeWorkspace.mock.calls[0]?.[2]).not.toHaveProperty('member_count');
+  });
+
   it('clears dev enrichment but retains directory-authorized exact context', async () => {
     const api = await startContextServer({
       fetchWorkspaceDirectory: async () => ({

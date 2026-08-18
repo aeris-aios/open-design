@@ -24,6 +24,7 @@ import type {
   WorkspaceInvalidationSsePayload,
   WorkspaceTeamProjectsResponse,
 } from '@open-design/contracts';
+import { workspaceSeatCapacityState } from '@open-design/contracts';
 import {
   parseWorkspaceCollabContext,
   type WorkspaceContextProvider,
@@ -260,15 +261,21 @@ function workspaceGroupProperties(
   context: WorkspaceCollabContext,
 ): Record<string, unknown> {
   const planId = context.planId?.trim().toLowerCase();
+  const seatSummary = context.seatSummary;
+  const seatState = workspaceSeatCapacityState(seatSummary);
   return {
     workspace_type: context.workspaceType,
     workspace_lifecycle: context.lifecycleState,
     billing_state: context.billingState,
     plan_bucket: !planId || planId === 'free' ? 'free' : 'paid',
     provider_mode: context.providerMode,
-    seat_limit: context.seatSummary.seatLimit,
-    member_count: context.seatSummary.usedSeats,
-    seat_state: context.seatSummary.isSeatFull ? 'full' : 'available',
+    ...(seatState !== 'unknown'
+      ? {
+          seat_limit: seatSummary.seatLimit,
+          member_count: seatSummary.usedSeats,
+        }
+      : {}),
+    seat_state: seatState,
   };
 }
 

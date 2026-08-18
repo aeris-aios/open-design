@@ -34,12 +34,13 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { coalescedGet, evictCoalescedGet } from '../lib/coalesced-get';
-import type {
-  WorkspaceActiveResponse,
-  WorkspaceBillingSummary,
-  WorkspaceCollabContext,
-  WorkspaceDirectoryItem,
-  WorkspaceDirectoryResponse,
+import {
+  workspaceSeatCapacityState,
+  type WorkspaceActiveResponse,
+  type WorkspaceBillingSummary,
+  type WorkspaceCollabContext,
+  type WorkspaceDirectoryItem,
+  type WorkspaceDirectoryResponse,
 } from '@open-design/contracts';
 import {
   fetchVelaLoginStatus,
@@ -499,33 +500,18 @@ export function canAccessWorkspaceInviteFlow(
   return context.role === 'owner' && canManageBilling;
 }
 
-function workspaceSeatCapacityUnknown(
-  context: WorkspaceCollabContext | null | undefined,
-): boolean {
-  // Directory-derived contexts use 0/0 because the removed account-global
-  // context projection no longer supplies seat accounting. That pair means
-  // unknown, not a proven zero-seat plan. Explicit invite permission may still
-  // open the form; the invite API remains the capacity authority.
-  return (
-    context?.seatSummary?.seatLimit === 0
-    && context.seatSummary.usedSeats === 0
-  );
-}
-
 export function workspaceInviteAvailableSeats(
   context: WorkspaceCollabContext | null | undefined,
 ): number | undefined {
-  if (!context || workspaceSeatCapacityUnknown(context)) return undefined;
-  return context.seatSummary?.availableSeats;
+  if (workspaceSeatCapacityState(context?.seatSummary) === 'unknown') return undefined;
+  return context?.seatSummary?.availableSeats;
 }
 
 function workspaceSeatFull(
   context: WorkspaceCollabContext,
 ): boolean | undefined {
-  if (workspaceSeatCapacityUnknown(context)) return undefined;
-  const availableSeats = workspaceInviteAvailableSeats(context);
-  if (availableSeats !== undefined) return availableSeats <= 0;
-  return context.seatSummary?.isSeatFull;
+  const state = workspaceSeatCapacityState(context.seatSummary);
+  return state === 'unknown' ? undefined : state === 'full';
 }
 
 /**

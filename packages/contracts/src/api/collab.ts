@@ -251,6 +251,22 @@ export interface WorkspaceSeatSummary {
   isSeatFull: boolean;
 }
 
+/**
+ * Classify seat accounting from an authoritative capacity projection.
+ *
+ * Directory-only contexts use 0/0 as an unknown-capacity sentinel because the
+ * membership directory does not carry billing seat counts. Consumers must not
+ * interpret that synthetic summary as proof that the workspace is full.
+ */
+export function workspaceSeatCapacityState(
+  summary: WorkspaceSeatSummary | null | undefined,
+): 'available' | 'full' | 'unknown' {
+  if (summary == null || (summary.seatLimit === 0 && summary.usedSeats === 0)) {
+    return 'unknown';
+  }
+  return summary.isSeatFull ? 'full' : 'available';
+}
+
 /** Billing-recovery entry (locked/past-due). Mirrors B's `WorkspaceBillingRecovery`. */
 export interface WorkspaceBillingRecovery {
   canEnterBillingRecovery: boolean;
