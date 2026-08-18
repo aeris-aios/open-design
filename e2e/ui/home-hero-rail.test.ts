@@ -180,7 +180,7 @@ const HOME_PLUGINS = [
       name: 'example-live-artifact',
       title: 'Live Artifact',
       version: '0.1.0',
-      description: 'Create refreshable, auditable Open Design artifacts.',
+      description: 'Create refreshable, auditable OpenDesign artifacts.',
       od: {
         kind: 'scenario',
         taskKind: 'new-generation',
@@ -188,7 +188,7 @@ const HOME_PLUGINS = [
         scenario: 'live',
         useCase: {
           query:
-            'Create refreshable, auditable Open Design artifacts backed by connector or local data.',
+            'Create refreshable, auditable OpenDesign artifacts backed by connector or local data.',
         },
       },
     },
@@ -437,7 +437,7 @@ const PROMPT_TEMPLATES = [
 ];
 
 async function waitForLoadingToClear(page: Page) {
-  await page.getByText('Loading Open Design…').waitFor({ state: 'hidden', timeout: 15_000 });
+  await page.getByText('Loading OpenDesign…').waitFor({ state: 'hidden', timeout: 15_000 });
 }
 
 async function seedBrowserConfig(page: Page, config: Record<string, unknown>) {
@@ -462,7 +462,7 @@ async function seedBrowserLocale(page: Page, locale: string) {
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Open Design' });
+  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve OpenDesign' });
   if (await privacyDialog.isVisible().catch(() => false)) {
     await privacyDialog.getByRole('button', { name: /I get it|not now|got it|don't share/i }).click();
   }
@@ -587,6 +587,58 @@ test.beforeEach(async ({ page }) => {
       body: JSON.stringify(body ?? { error: 'Unknown plugin apply route' }),
     });
   });
+});
+
+test('[P1] last project list row keeps its overflow menu inside the viewport', async ({ page }) => {
+  const recentProjects = Array.from({ length: 3 }, (_, index) => ({
+    id: `recent-list-menu-${index + 1}`,
+    name: `List Project ${index + 1}`,
+    skillId: null,
+    designSystemId: null,
+    createdAt: Date.now() - (index + 1) * 10_000,
+    updatedAt: Date.now() - (index + 1) * 5_000,
+    metadata: { kind: 'prototype', nameSource: 'user' },
+  }));
+  const lastProject = recentProjects.at(-1)!;
+
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.route('**/api/projects', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: { projects: recentProjects } });
+      return;
+    }
+    await route.continue();
+  });
+  await gotoEntryHome(page);
+
+  await page.getByRole('button', { name: 'List view' }).click();
+  const lastRow = page.locator(`[data-project-id="${lastProject.id}"]`);
+  await expect(lastRow).toBeVisible();
+  await page.evaluate((projectId) => {
+    const scroller = document.querySelector<HTMLElement>('.entry-main--scroll');
+    const row = document.querySelector<HTMLElement>(`[data-project-id="${projectId}"]`);
+    const trigger = row?.querySelector<HTMLElement>('.recent-projects__card-more');
+    if (!scroller || !row || !trigger) {
+      throw new Error('Recent project list-menu fixture is missing');
+    }
+
+    const desiredTop = scroller.getBoundingClientRect().bottom - 60;
+    scroller.scrollTop += trigger.getBoundingClientRect().top - desiredTop;
+  }, lastProject.id);
+
+  await lastRow.hover();
+  const trigger = lastRow.getByRole('button', { name: /more actions/i });
+  await trigger.click();
+
+  const menu = lastRow.getByRole('menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeInViewport();
+
+  const triggerBox = await trigger.boundingBox();
+  const menuBox = await menu.boundingBox();
+  expect(triggerBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThan(triggerBox?.y ?? 0);
 });
 
 test('[P1] home left rail expands and collapses from the shell controls', async ({ page }) => {
@@ -1814,7 +1866,7 @@ test('[P1] selecting another example updates the composer input', async ({ page 
   await expect(input).toHaveText('Create a live Notion dashboard artifact.');
 
   await useExamplePreset(page, 'example-live-artifact');
-  await expect(input).toHaveText('Create refreshable, auditable Open Design artifacts.');
+  await expect(input).toHaveText('Create refreshable, auditable OpenDesign artifacts.');
 });
 
 /**

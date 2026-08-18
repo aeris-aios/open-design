@@ -136,6 +136,7 @@ import {
   retryFinalResultForRunStatus,
   runArtifactCountForRun,
   runDesignSystemCreatedForRun,
+  runFilesWrittenForRun,
   runPreviewModuleCountForRun,
   runRetryEventsForAnalytics,
   runSideEffectsForRun,
@@ -769,10 +770,14 @@ import {
   headerValue,
   isWorkspaceResourceLocked,
   resolveOptionalWorkspaceRequestAuthority,
+  type WorkspaceRequestAuthorityResult,
   workspaceResourceContext,
   workspaceResourceContextFromRequest,
 } from './collab/workspace-resource-mutation.js';
-import { createAuthorizeProjectRequest } from './collab/project-request-authority.js';
+import {
+  createAuthorizeProjectRequest,
+  resolveBoundProjectWorkspaceReadAuthority,
+} from './collab/project-request-authority.js';
 import { withLastKnownWorkspaceContext } from './collab/workspace-context.js';
 import {
   createWorkspaceTypeRegistry,
@@ -859,6 +864,8 @@ import {
 } from './collab/remembered-team-resource-scopes.js';
 import { readVelaControlApiContext } from './integrations/vela.js';
 import {
+  fetchBillingCheckoutUrl,
+  fetchVelaBillingCatalog,
   fetchVelaBillingSummary,
   fetchVelaWorkspaceBillingProjection,
   isVelaWorkspaceAuthorizationError,
@@ -1602,6 +1609,18 @@ export function createAgentRuntimeEnv(
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === 'OD_API_TOKEN') delete env[key];
   }
+  // A GUI-launched daemon can inherit a broken PATHEXT such as `.CPL` (issue
+  // #6934). Nested native commands then lose stdout/stderr or fail with
+  // ERROR_NO_DATA. On Windows, recover a usable executable-extension list while
+  // preserving an already-valid value and the inherited key casing.
+  if (process.platform === 'win32') {
+    const pathextKey =
+      Object.keys(env).find((key) => key.toLowerCase() === 'pathext') ?? 'PATHEXT';
+    const pathextValue = typeof env[pathextKey] === 'string' ? (env[pathextKey] as string) : '';
+    if (!/\.exe/i.test(pathextValue)) {
+      env[pathextKey] = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
+    }
+  }
   const sidecarIpcPath = baseEnv[SIDECAR_ENV.IPC_PATH];
   if (typeof sidecarIpcPath === 'string' && sidecarIpcPath.length > 0) {
     env[SIDECAR_ENV.IPC_PATH] = sidecarIpcPath;
@@ -1664,7 +1683,7 @@ export function createAgentRuntimeToolPrompt(
     '',
     `- Daemon URL: \`${daemonUrl}\` (also available as \`OD_DAEMON_URL\`).`,
     '- `OD_NODE_BIN` is the absolute path to the Node-compatible runtime that started the daemon; packaged desktop installs provide this even when the user has no system `node` on PATH.',
-    '- `OD_BIN` is the absolute path to the Open Design CLI script. On POSIX shells run wrappers with `"$OD_NODE_BIN" "$OD_BIN" tools ...`; do not call bare `od`, which may resolve to the system octal-dump command on Unix-like systems.',
+    '- `OD_BIN` is the absolute path to the OpenDesign CLI script. On POSIX shells run wrappers with `"$OD_NODE_BIN" "$OD_BIN" tools ...`; do not call bare `od`, which may resolve to the system octal-dump command on Unix-like systems.',
     '- On PowerShell use `& $env:OD_NODE_BIN $env:OD_BIN tools ...`; on cmd.exe use `"%OD_NODE_BIN%" "%OD_BIN%" tools ...`.',
     tokenLine,
     '- Prefer project wrapper commands through `OD_NODE_BIN` + `OD_BIN` over raw HTTP. The wrappers read these environment values automatically.',
@@ -2673,7 +2692,7 @@ export async function startServer({
 
       res.setHeader('WWW-Authenticate', API_TOKEN_BASIC_CHALLENGE);
       return res.status(401).type('text/plain').send(
-        'Open Design authentication required. Use username "open-design" and OD_API_TOKEN as the password.',
+        'OpenDesign authentication required. Use username "open-design" and OD_API_TOKEN as the password.',
       );
     });
   }
@@ -3192,6 +3211,7 @@ export async function startServer({
       return verifyWorkspaceRequestContext({
         ...input,
         fetchWorkspaceDirectory: fetchDirectory,
+        configuredEnv: configuredAmrEnv(),
       });
     }
     // Local/dev has no signed membership directory. Its explicit request
@@ -3236,7 +3256,7 @@ export async function startServer({
         role: claimed.role,
         memberStatus: claimed.memberStatus,
         lifecycleState: claimed.lifecycleState,
-      }),
+      }, configuredAmrEnv()),
     };
   };
   const verifyWorkspaceReadAuthority = (req: unknown) =>
@@ -3250,6 +3270,7 @@ export async function startServer({
           // A miss is intentionally returned as unavailable. The project gate
           // then falls through to the existing fresh authority verifier.
           fetchWorkspaceDirectory: workspaceDirectoryAuthority.cached,
+          configuredEnv: configuredAmrEnv(),
         })
       : undefined;
   const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
@@ -3291,7 +3312,9 @@ export async function startServer({
         && item.memberStatus === 'active'
         && item.lifecycleState === 'active',
     );
-    return membership ? workspaceContextFromDirectoryItem(membership) : null;
+    return membership
+      ? workspaceContextFromDirectoryItem(membership, configuredAmrEnv())
+      : null;
   };
   const teamResourceVersions = createTeamResourceVersionStore(RUNTIME_DATA_DIR);
   const teamProjectContentResourceId = (
@@ -3416,6 +3439,7 @@ export async function startServer({
   // verify the exact Workspace/member carried by each request.
   const workspaceContext = withLastKnownWorkspaceContext(
     createWorkspaceContextProviderFromEnv(process.env, {
+      configuredEnv: configuredAmrEnv,
       getActiveWorkspaceId: () => activeWorkspace.get(),
       setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
       // Only called after the membership directory CONFIRMS the pinned
@@ -3499,7 +3523,7 @@ export async function startServer({
       if (cached) {
         return {
           ok: true as const,
-          context: workspaceContextFromDirectoryItem(cached),
+          context: workspaceContextFromDirectoryItem(cached, configuredAmrEnv()),
         };
       }
     }
@@ -3517,6 +3541,7 @@ export async function startServer({
     ...(fetchProjectCreationWorkspaceDirectory
       ? { fetchWorkspaceDirectory: fetchProjectCreationWorkspaceDirectory }
       : {}),
+    configuredEnv: configuredAmrEnv,
   });
   function persistWorkspaceProjectSyncState(
     projectId: string,
@@ -3739,7 +3764,9 @@ export async function startServer({
         && item.memberStatus === 'active'
         && item.lifecycleState !== 'deleted',
     );
-    return membership ? workspaceContextFromDirectoryItem(membership) : null;
+    return membership
+      ? workspaceContextFromDirectoryItem(membership, configuredAmrEnv())
+      : null;
   };
 
   // Uncached remote catalog authority for both comment relay delivery and the
@@ -4960,7 +4987,7 @@ export async function startServer({
       readVelaControlApiContext,
       configuredAmrEnv(),
     ),
-    fetch: () => fetchVelaBillingSummary(),
+    fetch: () => fetchVelaBillingSummary({ configuredEnv: configuredAmrEnv() }),
   });
   const workspaceBillingRuntime = createWorkspaceBillingRuntimeCoordinator({
     fetchProjection: async ({ workspaceId }) => {
@@ -4968,7 +4995,9 @@ export async function startServer({
         // The Vela CLI sends only the Bearer credential plus workspace-id
         // candidate. Vela re-derives the member principal server-side, and
         // the runtime validates the returned member id before accepting it.
-        return await fetchVelaWorkspaceBillingProjection(workspaceId);
+        return await fetchVelaWorkspaceBillingProjection(workspaceId, {
+          configuredEnv: configuredAmrEnv(),
+        });
       } catch (error) {
         if (isVelaWorkspaceAuthorizationError(error)) {
           throw new WorkspaceBillingAccessRevokedError();
@@ -5038,6 +5067,7 @@ export async function startServer({
   let workspaceAnalyticsService: AnalyticsService | null = null;
   registerCollabContextRoutes(app, {
     workspaceContext: collab.workspaceContext,
+    configuredEnv: configuredAmrEnv,
     verifyWorkspaceReadAuthority: verifyWorkspaceContextReadAuthority,
     readCachedWorkspaceAuthority: cachedWorkspaceContextForRequest,
     activeWorkspace,
@@ -5047,6 +5077,13 @@ export async function startServer({
     onWorkspaceSwitched: (workspaceId) => warmWorkspaceDigestFaces(workspaceId),
     fetchBilling: accountBillingSummary.read,
     billingRuntime: workspaceBillingRuntime,
+    fetchBillingCatalog: (workspaceId) => fetchVelaBillingCatalog(workspaceId, {
+      configuredEnv: configuredAmrEnv(),
+    }),
+    startCheckout: (input) => fetchBillingCheckoutUrl({
+      ...input,
+      configuredEnv: configuredAmrEnv(),
+    }),
     // Same directory read the route would have made on its own, wrapped so every
     // workspace type it carries is memoized for the team-share invariant.
     listWorkspaceDirectory,
@@ -7313,54 +7350,31 @@ export async function startServer({
     stageProjectDirsForDelete,
     validateLinkedDirs,
   };
-  const authorizeProjectRequest = createAuthorizeProjectRequest({
-    db,
-    getWorkspaceProject,
-    getWorkspaceProjectByProjectId,
-    isProjectRevoked: (_db, projectId) =>
-      revokedTeamProjectMirrors.has(projectId),
-    verifyWorkspaceReadAuthority,
-    verifyWorkspaceRequestAuthority,
-    sendApiError,
-  });
-  const authorizeProjectToolRequest = async (
-    res,
-    projectId,
-    options,
-  ) => {
+  const resolveProjectWorkspaceAuthority = async (
+    projectId: string,
+    options: { fresh: boolean },
+  ): Promise<WorkspaceRequestAuthorityResult | null> => {
     const binding = getWorkspaceProjectByProjectId(db, projectId);
-    if (!binding?.workspaceId) return { workspace: null };
+    if (!binding?.workspaceId) return null;
 
-    let authority;
     if (process.env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() === 'vela') {
-      const directory = await fetchFreshMutationWorkspaceDirectory().catch(
-        () => ({ ok: false, items: [] }),
+      const readDirectory = options.fresh
+        ? fetchFreshMutationWorkspaceDirectory
+        : fetchWorkspaceDirectory;
+      const directory = await readDirectory().catch(() => ({
+        ok: false as const,
+        items: [],
+      }));
+      return resolveBoundProjectWorkspaceReadAuthority(
+        binding.workspaceId,
+        directory,
+        configuredAmrEnv(),
       );
-      if (!directory.ok) {
-        sendApiError(
-          res,
-          503,
-          'WORKSPACE_AUTHORITY_UNAVAILABLE',
-          'workspace membership authority is temporarily unavailable',
-          { retryable: true },
-        );
-        return null;
-      }
-      const item = directory.items.find(
-        (candidate) => candidate.workspaceId === binding.workspaceId,
-      );
-      if (!item) {
-        sendApiError(
-          res,
-          403,
-          'WORKSPACE_PROJECT_PERMISSION_DENIED',
-          'workspace project access is not allowed',
-        );
-        return null;
-      }
-      authority = workspaceContextFromDirectoryItem(item);
-    } else {
-      authority = workspaceContextFromDirectoryItem({
+    }
+
+    return {
+      ok: true,
+      context: workspaceContextFromDirectoryItem({
         workspaceId: binding.workspaceId,
         workspaceName: binding.workspaceId,
         workspaceType: 'personal',
@@ -7369,8 +7383,61 @@ export async function startServer({
         role: 'owner',
         memberStatus: 'active',
         lifecycleState: 'active',
-      });
+      }, configuredAmrEnv()),
+    };
+  };
+  const authorizeProjectRequest = createAuthorizeProjectRequest({
+    db,
+    getWorkspaceProject,
+    getWorkspaceProjectByProjectId,
+    isProjectRevoked: (_db, projectId) =>
+      revokedTeamProjectMirrors.has(projectId),
+    verifyWorkspaceReadAuthority,
+    resolveWorkspaceReadAuthority: async (projectId) => {
+      const authority = await resolveProjectWorkspaceAuthority(
+        projectId,
+        { fresh: false },
+      );
+      return authority ?? {
+        ok: false,
+        status: 403,
+        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
+        message: 'workspace project access is not allowed',
+      };
+    },
+    verifyWorkspaceRequestAuthority,
+    sendApiError,
+  });
+  const authorizeProjectToolRequest = async (
+    res,
+    projectId,
+    options,
+  ) => {
+    const resolvedAuthority = await resolveProjectWorkspaceAuthority(
+      projectId,
+      { fresh: true },
+    );
+    if (!resolvedAuthority) return { workspace: null };
+    if (!resolvedAuthority.ok) {
+      if (resolvedAuthority.retryable) {
+        sendApiError(
+          res,
+          resolvedAuthority.status,
+          resolvedAuthority.code,
+          resolvedAuthority.message,
+          { retryable: true },
+        );
+      } else {
+        sendApiError(
+          res,
+          resolvedAuthority.status,
+          resolvedAuthority.code,
+          resolvedAuthority.message,
+        );
+      }
+      return null;
     }
+    const authority = resolvedAuthority.context;
     const scopedAuthorize = createAuthorizeProjectRequest({
       db,
       getWorkspaceProject,
@@ -7695,6 +7762,7 @@ export async function startServer({
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
     fetchWorkspaceDirectory,
+    configuredEnv: configuredAmrEnv,
     fetchProjectCreationWorkspaceDirectory,
     createWorkspaceOwnedDesignSystem: createWorkspaceOwnedDesignSystemForContext,
     pluginScope: {
@@ -8440,7 +8508,7 @@ export async function startServer({
       try { const project = getProject(db, req.params.id); if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found'); const projectBinding = getWorkspaceProjectByProjectId(db, req.params.id); if (!projectBinding?.workspaceId || !projectBinding.createdByWorkspaceMemberId) return sendApiError(res, 409, 'WORKSPACE_PROJECT_UNBOUND', 'project must have an exact workspace owner before installing a plugin'); const installScope = { workspaceId: String(projectBinding.workspaceId), workspaceMemberId: String(projectBinding.createdByWorkspaceMemberId) }; const body = req.body && typeof req.body === 'object' ? req.body : {}; const relativePath = normalizeProjectPluginFolderPath(body.path); const projectRoot = resolveProjectDir(PROJECTS_DIR, req.params.id, project.metadata); const folder = await resolveProjectChildDirectory(projectRoot, relativePath); const warnings = []; const log = []; let plugin = null; let message = 'Install finished.'; for await (const ev of installPlugin(db, { source: folder, roots: PLUGIN_REGISTRY_ROOTS, allowReplacePlugin: (pluginId) => allowScopedPluginReplace(installScope, pluginId) })) { if (ev.message) log.push(ev.message); if (Array.isArray(ev.warnings)) warnings.splice(0, warnings.length, ...ev.warnings); if (ev.kind === 'success') { plugin = ev.plugin; ensureWorkspaceResource(db, 'plugin', installScope.workspaceId, ev.plugin.id, { visibility: 'personal', resourceState: 'active', createdByWorkspaceMemberId: installScope.workspaceMemberId, updatedByWorkspaceMemberId: installScope.workspaceMemberId }); message = `Installed ${ev.plugin.title}.`; break; } if (ev.kind === 'error') { message = ev.message; break; } } res.status(plugin ? 200 : 400).json({ ok: Boolean(plugin), plugin, warnings, message, log }); } catch (err) { const code = err && err.code; const status = code === 'ENOENT' || code === 'ENOTDIR' ? 404 : 400; sendApiError(res, status, status === 404 ? 'PLUGIN_FOLDER_NOT_FOUND' : 'BAD_REQUEST', String(err?.message || err)); }
     },
     handleProjectPluginCli: async (req, res, action) => {
-      try { const project = getProject(db, req.params.id); if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found'); const body = req.body && typeof req.body === 'object' ? req.body : {}; const relativePath = normalizeProjectPluginFolderPath(body.path); const projectRoot = resolveProjectDir(PROJECTS_DIR, req.params.id, project.metadata); const folder = await resolveProjectChildDirectory(projectRoot, relativePath); const subcommand = action === 'publish-github' ? 'publish-repo' : 'open-design-pr'; const timeout = action === 'publish-github' ? 240_000 : 300_000; const result = await execCommandViaLoginShell(OD_NODE_BIN, [OD_BIN, 'plugin', subcommand, folder, '--json'], { timeout }); const payload = result.stdout ? JSON.parse(result.stdout) : null; if (!result.ok || !payload?.ok) return res.status(500).json({ ok: false, code: payload?.error?.label || (action === 'publish-github' ? 'publish-repo-failed' : 'open-design-pr-failed'), message: payload?.error?.stderr || payload?.error?.stdout || (action === 'publish-github' ? 'GitHub repo publish failed.' : 'Open Design PR creation failed.'), log: payload?.steps?.map((step) => step.stderr || step.stdout || step.command).filter(Boolean) ?? [result.stderr || result.stdout || `${subcommand} failed`] }); res.json({ ok: true, message: action === 'publish-github' ? (payload.repoUrl ? `Published plugin to ${payload.repoUrl}.` : 'Published plugin to GitHub.') : (payload.prUrl ? `Opened Open Design PR flow at ${payload.prUrl}.` : 'Opened Open Design PR flow.'), ...(payload.repoUrl ? { url: payload.repoUrl } : {}), ...(payload.prUrl ? { url: payload.prUrl } : {}), log: payload.steps?.map((step) => step.stderr || step.stdout || step.command).filter(Boolean) ?? [] }); } catch (err) { res.status(400).json({ ok: false, message: String(err?.message || err), log: [] }); }
+      try { const project = getProject(db, req.params.id); if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found'); const body = req.body && typeof req.body === 'object' ? req.body : {}; const relativePath = normalizeProjectPluginFolderPath(body.path); const projectRoot = resolveProjectDir(PROJECTS_DIR, req.params.id, project.metadata); const folder = await resolveProjectChildDirectory(projectRoot, relativePath); const subcommand = action === 'publish-github' ? 'publish-repo' : 'open-design-pr'; const timeout = action === 'publish-github' ? 240_000 : 300_000; const result = await execCommandViaLoginShell(OD_NODE_BIN, [OD_BIN, 'plugin', subcommand, folder, '--json'], { timeout }); const payload = result.stdout ? JSON.parse(result.stdout) : null; if (!result.ok || !payload?.ok) return res.status(500).json({ ok: false, code: payload?.error?.label || (action === 'publish-github' ? 'publish-repo-failed' : 'open-design-pr-failed'), message: payload?.error?.stderr || payload?.error?.stdout || (action === 'publish-github' ? 'GitHub repo publish failed.' : 'OpenDesign PR creation failed.'), log: payload?.steps?.map((step) => step.stderr || step.stdout || step.command).filter(Boolean) ?? [result.stderr || result.stdout || `${subcommand} failed`] }); res.json({ ok: true, message: action === 'publish-github' ? (payload.repoUrl ? `Published plugin to ${payload.repoUrl}.` : 'Published plugin to GitHub.') : (payload.prUrl ? `Opened OpenDesign PR flow at ${payload.prUrl}.` : 'Opened OpenDesign PR flow.'), ...(payload.repoUrl ? { url: payload.repoUrl } : {}), ...(payload.prUrl ? { url: payload.prUrl } : {}), log: payload.steps?.map((step) => step.stderr || step.stdout || step.command).filter(Boolean) ?? [] }); } catch (err) { res.status(400).json({ ok: false, message: String(err?.message || err), log: [] }); }
     },
     handleCandidateDraft: async (req, res) => {
       if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
@@ -10296,6 +10364,7 @@ export async function startServer({
         artifactCount: runArtifactCountForRun(run),
         designSystemCreated: runDesignSystemCreatedForRun(run),
         previewModuleCount: runPreviewModuleCountForRun(run),
+        filesWritten: runFilesWrittenForRun(run),
       });
       let outcome;
       if (!artifactBaseline || artifactBaseline.contended) {
@@ -10312,6 +10381,7 @@ export async function startServer({
             artifactsModified: diff.modified,
             designSystemCreated: diff.designSystemCreated,
             previewModuleCount: diff.previewModuleCount,
+            filesWritten: diff.filesWritten,
             projectRoot: artifactBaseline.cwd,
             diff,
           };
@@ -11295,7 +11365,7 @@ export async function startServer({
     });
 
     // External MCP servers configured by the user in Settings → External MCP.
-    // Open Design relays them to the agent so the model can call those tools.
+    // OpenDesign relays them to the agent so the model can call those tools.
     // Two delivery shapes today:
     //   - Claude Code: write a `.mcp.json` into the project cwd. Claude Code
     //     auto-loads that file at spawn (same format the CLI accepts via
@@ -11651,7 +11721,7 @@ export async function startServer({
       );
       await normalizeCodexConfigFile(codexConfigEnv);
 
-      // When Open Design leaves model selection at `default`, Codex resolves
+      // When OpenDesign leaves model selection at `default`, Codex resolves
       // the concrete model from config.toml. A known-old CLI can accept the
       // config, start `exec`, and only then reject a newer configured model.
       // Gate only evidence-backed stable-version/model combinations before
@@ -14281,7 +14351,7 @@ export async function startServer({
       systemPrompt: [
         renderOrbitTemplateSystemPrompt(template),
         systemPrompt,
-        'You are Orbit, an autonomous activity-summary agent inside Open Design.',
+        'You are Orbit, an autonomous activity-summary agent inside OpenDesign.',
         'You must discover connectors and connector tools yourself through the OD CLI; the daemon has not chosen tools for you.',
         'You must create and register a Live Artifact as the final deliverable. Do not merely describe what you would do.',
         'Do not ask follow-up questions, do not emit <question-form>, and do not wait for user input. This run is unattended; pick reasonable defaults and complete the artifact.',

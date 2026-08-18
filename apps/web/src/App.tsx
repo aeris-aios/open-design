@@ -4,6 +4,9 @@ import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { Button } from '@open-design/components';
 import { useAnalytics } from './analytics/provider';
 import {
+  trackExperienceSurveyDismissed,
+  trackExperienceSurveySent,
+  trackExperienceSurveyShown,
   trackFileUploadResult,
   trackProjectCreateResult,
 } from './analytics/events';
@@ -54,6 +57,7 @@ import {
 import { ProjectCreationPendingView } from './components/ProjectCreationPendingView';
 import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
+import { ExperienceSurvey } from './components/ExperienceSurvey';
 import { TooltipLayer } from './components/TooltipLayer';
 import { UpdateDialog } from './components/UpdateDialog';
 import {
@@ -119,6 +123,7 @@ import { workspaceProjectHeaders } from './collab/workspace-identity';
 import {
   beginWorkspaceScopedRead,
   currentWorkspaceAccountGeneration,
+  notifyWorkspaceContextRefresh,
   resolveBoundProjectWorkspaceContext,
   resolveCurrentWorkspaceContextReadWitness,
   useWorkspaceBilling,
@@ -909,7 +914,7 @@ function AppInner() {
   // Observability marker. `apps/web/src/observability/white-screen.ts`
   // keys its "app actually mounted" success condition on this attribute
   // because the dynamic-import loading shell (`<div class="od-loading-shell">
-  // Loading Open Design…</div>`) is itself >MIN_VISIBLE_TEXT and would
+  // Loading OpenDesign…</div>`) is itself >MIN_VISIBLE_TEXT and would
   // otherwise be mistaken for a real mount. Survives subsequent render
   // crashes — once App has mounted at least once, it's no longer a white
   // screen (subsequent failures show up as `$exception`).
@@ -2859,13 +2864,21 @@ function AppInner() {
   useEffect(() => {
     const handleAppConfigChanged = () => {
       void fetchDaemonConfig().then((daemonConfig) => {
+        const previous = latestPersistedConfigRef.current;
         const next = clearStaleAmrModelChoiceOnProfileChange(
-          latestPersistedConfigRef.current,
-          mergeDaemonConfig(latestPersistedConfigRef.current, daemonConfig),
+          previous,
+          mergeDaemonConfig(previous, daemonConfig),
         );
+        const amrProfileChanged = amrProfileForConfig(previous) !== amrProfileForConfig(next);
         latestPersistedConfigRef.current = next;
         saveConfig(next);
         setConfig(next);
+        // The native Develop menu changes the complete AMR account boundary,
+        // not only the agent model catalog. Retire the old workspace selection,
+        // context, directory and every account-scoped cache before refreshing
+        // the new profile; otherwise prod workspace links remain mounted while
+        // status/models/billing already point at feature-test.
+        if (amrProfileChanged) notifyWorkspaceContextRefresh();
         amrModelsRef.current = null;
         restartAmrPolling();
         void refreshAgents();
@@ -5314,7 +5327,17 @@ function AppInner() {
       )}
       <TooltipLayer />
       <UpdateDialog />
+      {/* Mounted at shell level, outside the route views, so a survey armed by
+          an export inside a project stays on screen when the user navigates
+          back to home. */}
+      <ExperienceSurvey
+        metricsConsent={config.telemetry?.metrics === true}
+        onExposure={() => trackExperienceSurveyShown(analytics.track)}
+        onDismiss={() => trackExperienceSurveyDismissed(analytics.track)}
+        onSubmit={(answers) => trackExperienceSurveySent(analytics.track, answers)}
+      />
       <AmrArtifactUpgradeGate
+        cloudModelSelected={config.mode === 'daemon' && config.agentId === 'amr'}
         homeVisible={route.kind === 'home' && route.view === 'home'}
         activeProjectId={route.kind === 'project' ? route.projectId : null}
         activeConversationId={
