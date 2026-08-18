@@ -412,7 +412,7 @@ describe('collab context routes', () => {
     });
   });
 
-  it('keeps workspace selection request-local and does not mutate the daemon active pin', async () => {
+  it('persists the restart default after verifying the request-local selection', async () => {
     const setActive = vi.fn(async () => {});
     const api = await startContextServer({
       activeWorkspace: {
@@ -443,7 +443,8 @@ describe('collab context routes', () => {
       workspaceId: 'ws-b',
       workspaceMemberId: 'wm-b',
     });
-    expect(setActive).not.toHaveBeenCalled();
+    expect(setActive).toHaveBeenCalledOnce();
+    expect(setActive).toHaveBeenCalledWith('ws-b');
   });
 });
 
