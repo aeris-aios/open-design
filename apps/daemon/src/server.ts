@@ -3258,9 +3258,6 @@ export async function startServer({
           configuredEnv: configuredAmrEnv(),
         })
       : undefined;
-  const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
-    verifyWorkspaceRequestAuthority,
-  );
   // Project-creation writes must be authorized by AMR in production, while
   // local/dev and explicitly anonymous clients keep their legacy behavior.
   // Keep this separate from read-side directory fetches so an unconfigured
@@ -4154,6 +4151,8 @@ export async function startServer({
             resourceState: row.resourceState ?? null,
             createdByWorkspaceMemberId: row.createdByWorkspaceMemberId ?? null,
             resourceHubResourceId: row.resourceHubResourceId ?? null,
+            materializationPending:
+              projectIsUnmaterializedSharedPlaceholder(row.id),
           })),
       getLocalBinding: (projectId): LocalTeamProjectBinding | null => {
         const row = getWorkspaceProjectByProjectId(db, projectId) as any;
@@ -4165,6 +4164,8 @@ export async function startServer({
           resourceState: row.resourceState ?? null,
           createdByWorkspaceMemberId: row.createdByWorkspaceMemberId ?? null,
           resourceHubResourceId: row.resourceHubResourceId ?? null,
+          materializationPending:
+            projectIsUnmaterializedSharedPlaceholder(projectId),
         };
       },
       getLocalProjectMetadata: (projectId) => {
@@ -7397,6 +7398,15 @@ export async function startServer({
       projectIsUnmaterializedSharedPlaceholder(projectId),
     sendApiError,
   });
+  // Legacy registrars still receive the historical bound mutation-gate shape,
+  // but production delegates it to the same central authorizer as newer route
+  // modules. This keeps placeholder stamps authoritative across Figma import,
+  // library/import helpers, runs/chat, and every project/file mutation route.
+  const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
+    verifyWorkspaceRequestAuthority,
+    undefined,
+    authorizeProjectRequest,
+  );
   const authorizeProjectToolRequest = async (
     res,
     projectId,
@@ -7718,6 +7728,8 @@ export async function startServer({
     authorizeProjectRequest,
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
+    isProjectUnmaterializedPlaceholder: (projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     fetchWorkspaceDirectory,
     configuredEnv: configuredAmrEnv,
     fetchProjectCreationWorkspaceDirectory,
@@ -8236,6 +8248,8 @@ export async function startServer({
     authorizeProjectRequest,
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
+    isProjectUnmaterializedPlaceholder: (projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     projectFiles: projectFileDeps,
     documents: { buildDocumentPreview },
     artifacts: artifactDeps,
@@ -8770,6 +8784,8 @@ export async function startServer({
     projectStore: projectStoreDeps,
     authorizeProjectRequest,
     authorizeProjectToolRequest,
+    isProjectUnmaterializedPlaceholder: (projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     projectFiles: projectFileDeps,
     verifyWorkspaceRequestAuthority,
   });

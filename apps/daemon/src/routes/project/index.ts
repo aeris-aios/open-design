@@ -173,6 +173,8 @@ export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | '
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
   isProjectRevoked?: (projectId: string) => boolean;
+  /** Durable first-open placeholder stamp lookup. */
+  isProjectUnmaterializedPlaceholder?: (projectId: string) => boolean;
   /** Membership directory used by Workspace account and cloud boundaries. */
   fetchWorkspaceDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   /** Current settings-backed AMR environment for synthesized project contexts. */
@@ -331,6 +333,7 @@ function projectAccess(
  */
 export function createWorkspaceProjectWriteAuthorityCheck(
   _verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority,
+  isProjectUnmaterializedPlaceholder?: (projectId: string) => boolean,
 ) {
   return async function requestCanWriteWorkspaceProject(
     req: any,
@@ -339,7 +342,7 @@ export function createWorkspaceProjectWriteAuthorityCheck(
     db: unknown,
     projectId: string,
   ): Promise<boolean> {
-    return enforceLocalProjectDataPlaneRequest({
+    const allowed = await enforceLocalProjectDataPlaneRequest({
       req,
       projectId,
       options: { mode: 'write', capability: 'writeFiles' },
@@ -347,12 +350,14 @@ export function createWorkspaceProjectWriteAuthorityCheck(
       getWorkspaceProject,
       getWorkspaceProjectByProjectId,
     });
+    return allowed && !isProjectUnmaterializedPlaceholder?.(projectId);
   };
 }
 
 export function createEnforceWorkspaceProjectMutation(
   _verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority,
   _verifyPersonalProjectDeleteLeaseAuthority?: VerifyWorkspaceRequestAuthority,
+  authorizeProjectRequest?: AuthorizeProjectRequest,
 ) {
   return async function enforceWorkspaceProjectMutation(
     req: any,
@@ -370,6 +375,18 @@ export function createEnforceWorkspaceProjectMutation(
     projectId: string,
     capability: WorkspaceProjectMutationCapability,
   ): Promise<boolean> {
+    // Production routes must converge on the central project authority gate.
+    // In particular, that gate carries the durable placeholder-stamp check;
+    // relying only on the placeholder's creator-null binding would make one
+    // accidental reconciliation promotion sufficient to reopen content writes.
+    // Keep the local-data-plane fallback solely for focused legacy fixtures
+    // that do not provide the production authorizer.
+    if (authorizeProjectRequest) {
+      return authorizeProjectRequest(req, res, projectId, {
+        mode: 'write',
+        capability,
+      });
+    }
     return enforceLocalProjectDataPlaneRequest({
       req,
       projectId,
@@ -1733,10 +1750,6 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       workspaceType: context.workspaceTypeAsserted,
     });
   };
-  const enforceWorkspaceProjectMutation = createEnforceWorkspaceProjectMutation(
-    ctx.verifyWorkspaceRequestAuthority,
-    ctx.verifyPersonalProjectDeleteLeaseAuthority,
-  );
   const verifyWorkspaceProjectReadAuthority =
     ctx.verifyWorkspaceReadAuthority ?? ctx.verifyWorkspaceRequestAuthority;
   const authorizeProjectRequest =
@@ -1747,11 +1760,18 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       getWorkspaceProjectByProjectId,
       isProjectRevoked: (_db, projectId) =>
         ctx.isProjectRevoked?.(projectId) ?? false,
+      isProjectUnmaterializedPlaceholder: (_db, projectId) =>
+        ctx.isProjectUnmaterializedPlaceholder?.(projectId) ?? false,
       ...(ctx.verifyWorkspaceRequestAuthority
         ? { verifyWorkspaceRequestAuthority: ctx.verifyWorkspaceRequestAuthority }
         : {}),
       sendApiError,
     });
+  const enforceWorkspaceProjectMutation = createEnforceWorkspaceProjectMutation(
+    ctx.verifyWorkspaceRequestAuthority,
+    ctx.verifyPersonalProjectDeleteLeaseAuthority,
+    authorizeProjectRequest,
+  );
   async function verifiedWorkspaceProjectContext(
     req: any,
   ): Promise<WorkspaceProjectContext | null> {
@@ -4809,6 +4829,8 @@ export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' |
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
   isProjectRevoked?: (projectId: string) => boolean;
+  /** Durable first-open placeholder stamp lookup. */
+  isProjectUnmaterializedPlaceholder?: (projectId: string) => boolean;
 }
 
 export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFileRoutesDeps) {
@@ -4820,9 +4842,6 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { upload } = ctx.uploads;
   const { fs } = ctx.node;
   const { getProject, getWorkspaceProject, getWorkspaceProjectByProjectId } = ctx.projectStore;
-  const enforceWorkspaceProjectMutation = createEnforceWorkspaceProjectMutation(
-    ctx.verifyWorkspaceRequestAuthority,
-  );
   const authorizeProjectRequest =
     ctx.authorizeProjectRequest ??
     createAuthorizeProjectRequest({
@@ -4831,13 +4850,21 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       getWorkspaceProjectByProjectId,
       isProjectRevoked: (_db, projectId) =>
         ctx.isProjectRevoked?.(projectId) ?? false,
+      isProjectUnmaterializedPlaceholder: (_db, projectId) =>
+        ctx.isProjectUnmaterializedPlaceholder?.(projectId) ?? false,
       ...(ctx.verifyWorkspaceRequestAuthority
         ? { verifyWorkspaceRequestAuthority: ctx.verifyWorkspaceRequestAuthority }
         : {}),
       sendApiError,
     });
+  const enforceWorkspaceProjectMutation = createEnforceWorkspaceProjectMutation(
+    ctx.verifyWorkspaceRequestAuthority,
+    undefined,
+    authorizeProjectRequest,
+  );
   const requestCanWriteWorkspaceProject = createWorkspaceProjectWriteAuthorityCheck(
     ctx.verifyWorkspaceRequestAuthority,
+    ctx.isProjectUnmaterializedPlaceholder,
   );
   const { listFiles, listProjectFolders, createProjectFolder, deleteProjectFolder, searchProjectFiles, readProjectFile, resolveProjectDir, resolveProjectFilePath, parseByteRange, renameProjectFile, deleteProjectFile, writeProjectFile, sanitizeName, sanitizePath, ensureProject } = ctx.projectFiles;
   const { buildDocumentPreview } = ctx.documents;
@@ -6782,6 +6809,9 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
 export interface RegisterProjectUploadRoutesDeps extends RouteDeps<'db' | 'http' | 'uploads' | 'node' | 'paths' | 'projectStore' | 'projectFiles'> {
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
+  authorizeProjectRequest?: AuthorizeProjectRequest;
+  /** Durable first-open placeholder stamp lookup. */
+  isProjectUnmaterializedPlaceholder?: (projectId: string) => boolean;
 }
 
 export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUploadRoutesDeps) {
@@ -6792,8 +6822,23 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
   const { getProject, getWorkspaceProject, getWorkspaceProjectByProjectId } = ctx.projectStore;
   const { readProjectFile } = ctx.projectFiles;
   const { fs } = ctx.node;
+  const authorizeProjectRequest =
+    ctx.authorizeProjectRequest ??
+    createAuthorizeProjectRequest({
+      db,
+      getWorkspaceProject,
+      getWorkspaceProjectByProjectId,
+      isProjectUnmaterializedPlaceholder: (_db, projectId) =>
+        ctx.isProjectUnmaterializedPlaceholder?.(projectId) ?? false,
+      ...(ctx.verifyWorkspaceRequestAuthority
+        ? { verifyWorkspaceRequestAuthority: ctx.verifyWorkspaceRequestAuthority }
+        : {}),
+      sendApiError,
+    });
   const enforceWorkspaceProjectMutation = createEnforceWorkspaceProjectMutation(
     ctx.verifyWorkspaceRequestAuthority,
+    undefined,
+    authorizeProjectRequest,
   );
 
   app.post(
