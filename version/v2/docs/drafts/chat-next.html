@@ -422,6 +422,9 @@ button.att-i:hover { border-color: var(--border-strong); }
    两处共用 .att 的单行滚动,只在这里把那个 auto 外边距归零。 */
 .att.mod-tray, .att.mod-tray > :first-child { margin-inline-start: 0; }
 .att.mod-tray { max-width: none; }
+/* 只给组件页用:把托盘按真实输入框的净内宽夹住,好让"滚"这件事看得见。
+   406 = 460 面板 − 两侧 20 边距 − 输入框 2 边框 − 托盘左右 9 内边距 ×2,量过。 */
+.att-demo { width: 406px; max-width: 100%; }
 .att-i { position: relative; }
 /* 「×」的本体样式不绑在图卡上 —— 文档长条也要用同一枚。
    两处只有【位置】不同:图卡上它浮在右上角(absolute),长条上它就是行尾
@@ -1881,10 +1884,22 @@ button.att-d:hover { border-color: var(--border-strong); }
               </div>
             </div>
           </div>
+          <div class="st">
+            <div class="st-l"><span>发送前 · 附件多到装不下,一行横滚</span><i></i></div>
+            <div class="st-b">
+              <!-- 这一格特意卡到 406px —— 460 面板里输入框的净内宽,量出来的。
+                   不卡宽度就看不见这一态:组件页的格子比输入框宽,再多几张也溢不出来。 -->
+              <div class="att-demo">
+                <div class="att mod-tray">
+                  <span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 首页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span><span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 设置页.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span><span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">商品卡组件…明终稿</span><span class="ext">.md</span></span><span class="meta">12 KB</span></span><button class="del" type="button" aria-label="移除 商品卡组件规格说明终稿.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span><span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 走查录屏.mov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span><span class="att-d"><svg class="fi" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span class="tx"><span class="nm"><span class="base">埋点清单-v3</span><span class="ext">.csv</span></span><span class="meta">4 KB</span></span><button class="del" type="button" aria-label="移除 埋点清单-v3.csv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span><span class="att-i"><span class="ph"><span class="mini"></span></span><button class="del" type="button" aria-label="移除 会员中心.png"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg></button></span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="cmp-ops">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v13"/></svg>
-          <span><b>移除</b> — 点「×」拿掉这一个,不影响其它文件。<b>上传中</b>进度压在缩略图上,这几秒发送键不可用。<b>上传失败</b>可单独重试,也可直接移除。与 2 · 用户消息-附件是同一张卡,发送前只多一个「×」。</span>
+          <span><b>移除</b> — 点「×」拿掉这一个,不影响其它文件。<b>上传中</b>进度压在缩略图上,这几秒发送键不可用。<b>上传失败</b>可单独重试,也可直接移除。<b>附件多</b>时不换行、不折成 +N,单行横向滚动,输入框高度因此是常量。与 2 · 用户消息-附件是同一张卡,发送前只多一个「×」。</span>
         </div>
       </article>
 
