@@ -29,6 +29,16 @@ const brokenDeckStageHtml = `<!doctype html>
 </html>`;
 
 describe('buildSrcdoc', () => {
+  it('hides preview scrollbar chrome without disabling document scrolling', () => {
+    const hidden = buildSrcdoc('<main>Preview</main>', { hideScrollbars: true });
+
+    expect(hidden).toContain('data-od-preview-scrollbars-hidden');
+    expect(hidden).toContain('scrollbar-width:none');
+    expect(hidden).toContain('::-webkit-scrollbar');
+    expect(hidden).not.toContain('overflow:hidden');
+    expect(buildSrcdoc('<main>Preview</main>')).not.toContain('data-od-preview-scrollbars-hidden');
+  });
+
   it('preserves an artifact-authored base instead of overriding its navigation semantics', () => {
     const authored = '<base href="https://cdn.example/assets/">';
     const doc = buildSrcdoc(
@@ -458,6 +468,30 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain('data-od-id="');
     // Script / style elements are skipped
     expect(srcdoc).not.toContain('<script data-od-id=');
+  });
+
+  it('keeps authored path-like ids unique while refreshing internal source paths', () => {
+    const dom = new JSDOM('');
+    globalThis.DOMParser = dom.window.DOMParser;
+    const srcdoc = buildSrcdoc(
+      '<main><section data-od-id="path-0">Authored identity</section><section data-od-source-path="path-9">Current sibling</section></main>',
+      { editBridge: true },
+    );
+    Reflect.deleteProperty(globalThis, 'DOMParser');
+    const document = new JSDOM(srcdoc).window.document;
+    const generatedIds = Array.from(document.body.querySelectorAll('[data-od-id]'))
+      .map((element) => element.getAttribute('data-od-id'))
+      .filter((id): id is string => Boolean(id));
+    const sections = Array.from(document.body.querySelectorAll('section'));
+
+    expect(generatedIds).toContain('path-0');
+    expect(sections[0]?.getAttribute('data-od-id')).toBe('path-0');
+    expect(document.querySelector('main')?.getAttribute('data-od-id')).toBeNull();
+    expect(sections.map((section) => section.getAttribute('data-od-source-path'))).toEqual([
+      'path-0-0',
+      'path-0-1',
+    ]);
+    expect(new Set(generatedIds).size).toBe(generatedIds.length);
   });
 
   it('does not overwrite existing data-od-id or data-screen-label annotations', () => {

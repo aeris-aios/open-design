@@ -60,6 +60,7 @@ vi.mock('../../src/state/projects', async () => {
 
 import {
   CommentSidePanel,
+  DECK_THUMBNAIL_RAIL_WIDTH,
   FileViewer,
   LiveArtifactViewer,
   LiveArtifactRefreshHistoryPanel,
@@ -70,8 +71,12 @@ import {
   desktopPreviewAutoFitZoomPercent,
   desktopPreviewDocumentContentWidth,
   deckKeyboardShortcutForEvent,
+  deckPreviewCanvasSize,
   effectivePreviewScale,
   fileVersionPreviewOptions,
+  htmlHasManualEditNavigationAction,
+  manualEditDesktopArtboardGeometry,
+  manualEditIframeWheelPoint,
   parseInspectOverridesFromSource,
   previewOverlayTransform,
   previewMeasurementFrameIsUsable,
@@ -349,8 +354,8 @@ function openCommentsList() {
 }
 
 async function openUnifiedExportTab() {
-  // Export is a standalone header button now (no tab strip inside the popover).
-  fireEvent.click(await screen.findByRole('button', { name: /export/i }));
+  // Download is a standalone header button now (no tab strip inside the popover).
+  fireEvent.click(await screen.findByRole('button', { name: /^download$/i }));
 }
 
 async function openUnifiedShareTab() {
@@ -937,6 +942,16 @@ describe('FileViewer preview scale', () => {
     expect(rule).toContain('box-shadow: none;');
   });
 
+  it('keeps saved manual button actions on the bridged preview transport', () => {
+    expect(htmlHasManualEditNavigationAction(
+      '<button data-od-action="navigate" data-od-href="next.html">Next</button>',
+    )).toBe(true);
+    expect(htmlHasManualEditNavigationAction(
+      "<button DATA-OD-ACTION = 'navigate'>Next</button>",
+    )).toBe(true);
+    expect(htmlHasManualEditNavigationAction('<button>Next</button>')).toBe(false);
+  });
+
   it('centres the desktop artboard instead of dumping the fit slack on the right', () => {
     const css = readExpandedIndexCss();
     // `inset: 0` + an explicit width is over-constrained; LTR anchors the box
@@ -950,21 +965,75 @@ describe('FileViewer preview scale', () => {
     expect(css).toContain('.manual-edit-canvas > .manual-edit-hover-action');
   });
 
-  it('keeps the preview viewport trigger flat by default', () => {
+  it('centres the canvas dock on the visible canvas with a 16px bottom gutter', () => {
     const css = readExpandedIndexCss();
-    const rules = Array.from(css.matchAll(/\.viewer-viewport-trigger\s*\{[^}]+\}/g), (match) => match[0]);
+    const dockRules = Array.from(
+      css.matchAll(/\.canvas-dock\s*\{[^}]+\}/g),
+      (match) => match[0],
+    );
+    const dockRule = dockRules[0] ?? '';
+    const railDockRule = css.match(
+      /\.viewer:has\(> \.viewer-structure-rail\) > \.canvas-dock\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const railRule = css.match(/\.viewer-structure-rail\s*\{[^}]+\}/)?.[0] ?? '';
+    const railPanelRule = css.match(
+      /\.viewer-structure-rail > \[data-testid='design-structure-rail'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const bodyRule = css.match(
+      /\.viewer:has\(> \.viewer-structure-rail\) > \.viewer-body\s*\{[^}]+\}/,
+    )?.[0] ?? '';
 
-    // Flat = no chip. Transparent fill + transparent border + no shadow; the
-    // resting state must not read as a raised control sitting on the bar.
-    expect(rules.some((rule) => rule.includes('background-color: transparent;'))).toBe(true);
-    expect(rules.some((rule) => rule.includes('border-color: transparent;'))).toBe(true);
-    expect(rules.some((rule) => rule.includes('box-shadow: none;'))).toBe(true);
-    expect(rules.every((rule) => !rule.includes('box-shadow: var(--shadow-xs);'))).toBe(true);
-    // …and it must hug its content so the label and chevron stay visible. A
-    // fixed square hid the label and left an empty chip behind (issue: the
-    // deck toolbar's "empty grey block").
-    expect(rules.some((rule) => rule.includes('width: auto;'))).toBe(true);
-    expect(rules.every((rule) => !rule.includes('width: 30px;'))).toBe(true);
+    expect(css).toContain('--viewer-structure-rail-width: 300px;');
+    expect(dockRule).toContain('bottom: var(--spacing-16);');
+    expect(railRule).toContain('width: var(--viewer-structure-rail-width);');
+    expect(bodyRule).toContain('margin-inline-end: var(--viewer-structure-rail-width);');
+    expect(railDockRule).toContain('inset-inline-end: var(--viewer-structure-rail-width);');
+    expect(dockRules.every((rule) => !rule.includes('bottom: 10px;'))).toBe(true);
+  });
+
+  it('uses the lightest neutral behind the white artifact page', () => {
+    const css = readExpandedIndexCss();
+    const canvasRule = css.match(/\.viewer-body-canvas\s*\{[^}]+\}/)?.[0] ?? '';
+    const manualEditRule = css.match(/\.manual-edit-workspace\s*\{[^}]+\}/)?.[0] ?? '';
+    const artifactRule = css.match(/\.preview-frame-clip,\s*\.comment-frame-clip\s*\{[^}]+\}/)?.[0] ?? '';
+
+    expect(css).toContain('--bg-panel: #fafafa;');
+    expect(canvasRule).toContain('background: var(--bg-panel);');
+    expect(manualEditRule).toContain('background: var(--bg-panel);');
+    expect(artifactRule).toContain('background: var(--bg);');
+  });
+
+  it('renders the preview viewport as a two-option switch with an active label', () => {
+    const css = readExpandedIndexCss();
+    const trackRules = Array.from(
+      css.matchAll(/\.viewer-viewport-switcher\s*\{[^}]+\}/g),
+      (match) => match[0],
+    );
+    const optionRules = Array.from(
+      css.matchAll(/\.viewer-viewport-option\s*\{[^}]+\}/g),
+      (match) => match[0],
+    );
+    const option = optionRules.find((rule) => rule.includes('width: 24px;')) ?? '';
+    const thumbRule = css.match(/\.viewer-viewport-thumb\s*\{[^}]+\}/)?.[0] ?? '';
+
+    expect(trackRules.some((rule) => rule.includes('display: inline-flex;'))).toBe(true);
+    expect(trackRules.some((rule) => rule.includes('border-radius: var(--radius-pill);'))).toBe(true);
+    expect(option).toContain('width: 24px;');
+    expect(option).toContain('height: 24px;');
+    expect(option).toContain('justify-content: center;');
+    expect(css).toContain('.viewer-viewport-option.active .viewer-viewport-option-label');
+    expect(css).toContain('padding-inline: var(--spacing-8);');
+    expect(optionRules.some((rule) => rule.includes('font-size: var(--font-size-12);'))).toBe(true);
+    expect(optionRules.some((rule) => rule.includes('font-weight: 500;'))).toBe(true);
+    expect(thumbRule).toContain('transform: translateX(var(--viewer-viewport-thumb-x, 2px));');
+    expect(thumbRule).toContain('transform var(--duration-normal) var(--curve-easy-ease)');
+    expect(thumbRule).toContain('width var(--duration-normal) var(--curve-easy-ease)');
+    expect(css).toContain(".viewer-viewport-switcher[data-has-active='true'] .viewer-viewport-thumb");
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.viewer-viewport-thumb,[\s\S]*?transition-duration: 0\.01ms;/,
+    );
+    expect(css).not.toContain('.viewer-viewport-menu {');
+    expect(css).not.toContain('.viewer-viewport-trigger {');
   });
 
   it('clips deck thumbnail loading overlays to the thumbnail frame radius', () => {
@@ -975,6 +1044,39 @@ describe('FileViewer preview scale', () => {
     expect(rule).toContain('border-radius: inherit;');
     expect(rule).toContain('clip-path: inset(0 round 8px);');
     expect(rule).toContain('overflow: hidden;');
+  });
+
+  it('stagger-slides deck thumbnails left before collapsing the rail', () => {
+    const css = readExpandedIndexCss();
+    const layoutRule = css.match(/\.comment-preview-layer-with-deck-rail\s*\{[^}]+\}/)?.[0] ?? '';
+    const railRule = css.match(/\.deck-thumbnail-rail\s*\{[^}]+\}/)?.[0] ?? '';
+    const collapsedLayoutRule = css.match(
+      /\.comment-preview-layer-with-deck-rail\.comment-preview-layer-deck-rail-collapsed\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const collapsedButtonRule = css.match(
+      /\.preview-viewport-desktop\.comment-preview-layer-with-deck-rail\.comment-preview-layer-deck-rail-collapsed \.deck-thumbnail-button\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+
+    expect(layoutRule).toContain(
+      'grid-template-columns: var(--deck-thumbnail-rail-width) minmax(0, 1fr);',
+    );
+    expect(railRule).toContain('width: var(--deck-thumbnail-rail-width);');
+    expect(layoutRule).toContain(
+      'transition: grid-template-columns var(--duration-slow) var(--curve-easy-ease);',
+    );
+    expect(css).toMatch(
+      /\.comment-preview-layer-with-deck-rail\.comment-preview-layer-deck-rail-collapsed\s*\{[^}]*grid-template-columns: 0 minmax\(0, 1fr\);/,
+    );
+    expect(collapsedLayoutRule).toContain('transition-delay: var(--duration-slower);');
+    expect(collapsedButtonRule).toContain(
+      'transform: translateX(calc(-100% - var(--spacing-12)));',
+    );
+    expect(collapsedButtonRule).toContain(
+      'transition-delay: var(--deck-thumbnail-stagger-delay, 0ms);',
+    );
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.comment-preview-layer-with-deck-rail,[\s\S]*?\.deck-thumbnail-rail,[\s\S]*?\.deck-thumbnail-button\s*\{[\s\S]*?transition-duration: 0\.01ms;[\s\S]*?transition-delay: 0s;/,
+    );
   });
 
   it('uses a centered compact deck rail on mobile and tablet preview frames', () => {
@@ -1027,6 +1129,326 @@ describe('FileViewer preview scale', () => {
     );
   });
 
+  it('layers the edit-only XYFlow surface under the existing artboard', () => {
+    const css = readExpandedIndexCss();
+    const editWorkspace = css.match(/\.manual-edit-workspace\s*\{[^}]+\}/)?.[0] ?? '';
+    const flowCanvas = css.match(/\.manual-edit-flow-canvas\s*\{[^}]+\}/)?.[0] ?? '';
+    const flowPane = css.match(
+      /\.manual-edit-flow-canvas \.react-flow__pane\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const activeFlowPane = css.match(
+      /\.manual-edit-flow-canvas \.react-flow__pane:active\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const editCanvasRules = Array.from(
+      css.matchAll(/\.manual-edit-canvas\s*\{[^}]+\}/g),
+      (match) => match[0],
+    );
+    const nonDesktopWorkspaceRules = Array.from(
+      css.matchAll(/\.manual-edit-workspace\.preview-viewport:not\(\.preview-viewport-desktop\)\s*\{[^}]+\}/g),
+      (match) => match[0],
+    );
+    const nonDesktopCanvasRules = Array.from(
+      css.matchAll(
+        /\.preview-viewport:not\(\.preview-viewport-desktop\)\.manual-edit-workspace \.manual-edit-canvas\s*\{[^}]+\}/g,
+      ),
+      (match) => match[0],
+    );
+
+    // A translated artboard must not expand the outer viewer's scrollHeight;
+    // XYFlow remains the only owner of canvas panning in Edit mode.
+    expect(editWorkspace).toContain('overflow: hidden;');
+    expect(flowCanvas).toContain('position: absolute;');
+    expect(flowCanvas).toContain('inset: 0;');
+    expect(flowCanvas).toContain('z-index: 0;');
+    expect(flowPane).toContain('cursor: grab;');
+    expect(activeFlowPane).toContain('cursor: grabbing;');
+    expect(editCanvasRules.some((rule) => (
+      rule.includes('z-index: 1;')
+      && rule.includes('pointer-events: none;')
+      && rule.includes('transform: translate3d(')
+    ))).toBe(true);
+    expect(css).toMatch(
+      /\.preview-viewport-desktop\.manual-edit-workspace \.manual-edit-canvas\s*\{[^}]*inset-block: 0 auto;[^}]*height: var\(--manual-edit-scaled-artboard-height, calc\(100% - 48px\)\);[^}]*margin-inline: 0;/,
+    );
+    expect(nonDesktopWorkspaceRules.some((rule) => (
+      rule.includes('display: block;')
+      && rule.includes('padding: 0;')
+      && rule.includes('overflow: hidden;')
+    ))).toBe(true);
+    expect(nonDesktopCanvasRules.some((rule) => (
+      rule.includes('position: absolute;')
+      && rule.includes('--manual-edit-scaled-artboard-height,')
+      && rule.includes('calc(var(--preview-viewport-height) * var(--preview-scale, 1))')
+      && rule.includes('margin: 0;')
+    ))).toBe(true);
+    expect(css).toMatch(
+      /\.viewer \.preview-viewport-mobile\.manual-edit-workspace \.manual-edit-canvas,[^}]+border-width: calc\(9px \* var\(--preview-scale, 1\)\);/,
+    );
+    expect(css).toMatch(
+      /\.viewer \.preview-viewport-mobile\.manual-edit-workspace \.manual-edit-canvas,[^}]+border-radius: calc\(30px \* var\(--preview-scale, 1\)\);/,
+    );
+    expect(css).toContain('.manual-edit-canvas-panning > .manual-edit-hover-action,');
+    expect(css).toContain('.manual-edit-canvas-panning iframe {');
+    expect(css).toMatch(
+      /\.manual-edit-asset-shell\s*\{[^}]*inset: 0;[^}]*width: 100%;[^}]*height: 100%;/,
+    );
+    expect(css).toMatch(
+      /\.manual-edit-asset-close\s*\{[^}]*position: absolute;[^}]*width: 36px;[^}]*height: 36px;/,
+    );
+  });
+
+  it('scales the desktop edit artboard height with zoom instead of inversely expanding it', () => {
+    expect(manualEditDesktopArtboardGeometry(1848, 0.1)).toEqual({
+      logicalHeight: 1800,
+      scaledHeight: 180,
+    });
+    expect(manualEditDesktopArtboardGeometry(1848, 1)).toEqual({
+      logicalHeight: 1800,
+      scaledHeight: 1800,
+    });
+    expect(manualEditDesktopArtboardGeometry(1848, 2)).toEqual({
+      logicalHeight: 1800,
+      scaledHeight: 3600,
+    });
+    expect(manualEditDesktopArtboardGeometry(undefined, 0.1)).toEqual({
+      logicalHeight: 800,
+      scaledHeight: 80,
+    });
+    expect(manualEditDesktopArtboardGeometry(1848, 0.5, 3210.2)).toEqual({
+      logicalHeight: 3211,
+      scaledHeight: 1605.5,
+    });
+    expect(manualEditDesktopArtboardGeometry(1848, 0.5, null, 844)).toEqual({
+      logicalHeight: 844,
+      scaledHeight: 422,
+    });
+  });
+
+  it('maps iframe-local pinch coordinates into the scaled outer canvas', () => {
+    expect(manualEditIframeWheelPoint(
+      testRect(100, 50, 360, 142),
+      { width: 1440, height: 568 },
+      { x: 720, y: 284 },
+    )).toEqual({
+      clientX: 280,
+      clientY: 121,
+    });
+  });
+
+  it('keeps the docked edit rail white, glass-edged, divider-free and full-height', () => {
+    const css = readExpandedIndexCss();
+    const railRule = css.match(/\.viewer-structure-rail\s*\{[^}]+\}/)?.[0] ?? '';
+    const railPanelRule = css.match(
+      /\.viewer-structure-rail > \[data-testid='design-structure-rail'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const glassEdgeRule = css.match(
+      /\.viewer:has\(> \.viewer-structure-rail:not\(\.viewer-structure-rail-comments\)\)::after\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const compactGlassEdgeRules = Array.from(
+      css.matchAll(
+        /\.viewer:has\(> \.viewer-structure-rail:not\(\.viewer-structure-rail-comments\)\)::after\s*\{[^}]+\}/g,
+      ),
+      (match) => match[0],
+    );
+    const compactEditGlassEdgeRule = css.match(
+      /\.viewer:has\(> \.viewer-structure-rail:not\(\.viewer-structure-rail-comments\):has\(\.manual-edit-right\)\)::after\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const tabStripRule = css.match(
+      /\.viewer-structure-rail > \[data-testid='design-structure-rail'\] > \[role='tablist'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const inspectorHostRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-edit-slot'\] > \.manual-edit-right\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const editBodyRule = css.match(
+      /\.viewer-structure-rail > \[data-testid='design-structure-rail'\] > div:has\(> \[data-testid='design-structure-edit-slot'\]\)\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const editSlotRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-edit-slot'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const dockedTitlebarRule = css.match(
+      /\.viewer-structure-rail \.manual-edit-titlebar\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const editEmptyRule = css.match(
+      /\.viewer-structure-edit-empty\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const moduleCss = readFileSync(
+      join(process.cwd(), 'src/components/design-files/DesignStructurePanel.module.css'),
+      'utf8',
+    );
+    const tabsRule = moduleCss.match(/\.tabs\s*\{[^}]+\}/)?.[0] ?? '';
+
+    expect(railRule).toContain('background: var(--bg);');
+    expect(railRule).not.toContain('border-inline-start:');
+    expect(railPanelRule).toContain('display: flex;');
+    expect(railPanelRule).toContain('flex-direction: column;');
+    expect(railPanelRule).toContain('min-height: 0;');
+    expect(railPanelRule).toContain('height: 100%;');
+    expect(glassEdgeRule).toContain('width: var(--spacing-18);');
+    expect(glassEdgeRule).toContain('background: linear-gradient(to right, transparent, var(--glass-regular));');
+    expect(glassEdgeRule).toContain('-webkit-backdrop-filter: var(--glass-backdrop);');
+    expect(glassEdgeRule).toContain('backdrop-filter: var(--glass-backdrop);');
+    expect(glassEdgeRule).toContain('mask-image: linear-gradient(to right, transparent, currentColor);');
+    expect(css).toContain("[dir='rtl'] .viewer:has(> .viewer-structure-rail:not(.viewer-structure-rail-comments))::after");
+    expect(compactGlassEdgeRules.some((rule) => rule.includes('display: none;'))).toBe(true);
+    expect(compactEditGlassEdgeRule).toContain('display: block;');
+    expect(tabStripRule).toContain('background: var(--bg);');
+    expect(tabStripRule).toContain('padding-block-start: var(--spacing-12);');
+    expect(tabsRule).toContain('border-bottom:');
+    expect(tabStripRule).toContain('border-bottom: 0;');
+    expect(editBodyRule).toContain('flex: 1 1 auto;');
+    expect(editBodyRule).toContain('display: flex;');
+    expect(editBodyRule).toContain('flex-direction: column;');
+    expect(editSlotRule).toContain('flex: 1 1 auto;');
+    expect(editSlotRule).toContain('display: flex;');
+    expect(editSlotRule).toContain('flex-direction: column;');
+    expect(editSlotRule).toContain('min-height: 0;');
+    expect(editSlotRule).toContain('height: 100%;');
+    expect(inspectorHostRule).toContain('flex: 1 1 auto;');
+    expect(inspectorHostRule).toContain('min-height: 0;');
+    expect(inspectorHostRule).toContain('height: 100%;');
+    expect(dockedTitlebarRule).toContain('display: none;');
+    expect(editEmptyRule).toContain('flex: 1 1 auto;');
+    expect(editEmptyRule).toContain('min-height: 0;');
+    expect(editEmptyRule).toContain('align-items: center;');
+    expect(editEmptyRule).toContain('justify-content: center;');
+    expect(editEmptyRule).toContain('text-align: center;');
+    expect(css).toMatch(/\.viewer-structure-rail \.manual-edit-modal\s*\{[^}]*background: var\(--bg\);/);
+    expect(css).toMatch(/\.viewer-structure-rail \.manual-edit-footer\s*\{[^}]*background: var\(--bg\);/);
+    expect(css).not.toContain('.manual-edit-page-card .manual-edit-modal.cc-panel {\n  height: auto;');
+  });
+
+  it('fits docked inspector footer actions without shrinking the floating-panel buttons', () => {
+    const css = readExpandedIndexCss();
+    const dockedActionsRule = css.match(
+      /\.viewer-structure-rail \.manual-edit-footer-actions\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const dockedLeftRule = css.match(
+      /\.viewer-structure-rail \.manual-edit-footer-left\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const dockedRightRule = css.match(
+      /\.viewer-structure-rail \.manual-edit-footer-right\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const dockedButtonRule = css.match(
+      /\.viewer-structure-rail \.manual-edit-footer-right \.manual-edit-footer-btn\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const baseButtonRule = css.match(
+      /(?:^|\n)\.manual-edit-footer-btn\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+
+    expect(dockedActionsRule).toContain('gap: var(--spacing-8);');
+    expect(dockedLeftRule).toContain('flex: 0 0 var(--spacing-36);');
+    expect(dockedRightRule).toContain('flex: 1 1 0;');
+    expect(dockedRightRule).toContain('gap: var(--spacing-8);');
+    expect(dockedButtonRule).toContain('flex: 1 1 0;');
+    expect(dockedButtonRule).toContain('min-width: 0;');
+    expect(dockedButtonRule).toContain('padding-inline: var(--spacing-8);');
+    expect(baseButtonRule).toContain('min-width: 72px;');
+  });
+
+  it('keeps structure rail tabs from falling back to outlined action buttons', () => {
+    const css = readExpandedIndexCss();
+    const tabRule = css.match(
+      /\.viewer-structure-rail\s*> \[data-testid='design-structure-rail'\]\s*> \[role='tablist'\]\s*> \[role='tab'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const selectedTabRule = css.match(
+      /\.viewer-structure-rail\s*> \[data-testid='design-structure-rail'\]\s*> \[role='tablist'\]\s*> \[role='tab'\]\[aria-selected='true'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+
+    expect(tabRule).toContain('height: auto;');
+    expect(tabRule).toContain('padding: var(--spacing-4) var(--spacing-12);');
+    expect(tabRule).toContain('border: 0;');
+    expect(tabRule).toContain('border-radius: var(--radius-pill);');
+    expect(tabRule).toContain('background: transparent;');
+    expect(tabRule).toContain('box-shadow: none;');
+    expect(selectedTabRule).toContain('background: var(--bg-fill-secondary);');
+    expect(selectedTabRule).toContain('font-weight: 600;');
+  });
+
+  it('keeps the asset browser compact when its CSS module is replaced during hot reload', () => {
+    const css = readExpandedIndexCss();
+    const assetBodyRule = css.match(
+      /\.viewer-structure-rail\s*> \[data-testid='design-structure-rail'\]\s*> \[role='tablist'\]\s*\+ div:has\(\[data-testid='design-structure-assets-view'\]\)\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetViewRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-assets-view'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetTabsRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-assets-tabs'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetTabRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-assets-tabs'\] > \[role='tab'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const selectedAssetTabRule = css.match(
+      /\.viewer-structure-rail\s+\[data-testid='design-structure-assets-tabs'\]\s+> \[role='tab'\]\[aria-selected='true'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetHeadRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-assets-group-head'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetCountRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-assets-count'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetFilesRule = css.match(
+      /\.viewer-structure-rail \[data-testid='design-structure-asset-files'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetRowRule = css.match(
+      /\.viewer-structure-rail\s+\[data-testid='design-structure-asset-files'\]\s+> \[data-testid\^='design-structure-asset-'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const activeAssetRowRule = css.match(
+      /\.viewer-structure-rail\s+\[data-testid='design-structure-asset-files'\]\s+> \[data-testid\^='design-structure-asset-'\]\[aria-current='true'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetNameRule = css.match(
+      /\.viewer-structure-rail \[data-role='asset-name'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const assetExtensionRule = css.match(
+      /\.viewer-structure-rail \[data-role='asset-extension'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+
+    expect(assetBodyRule).toContain('min-width: 0;');
+    expect(assetBodyRule).toContain('box-sizing: border-box;');
+    expect(assetBodyRule).toContain('padding: var(--spacing-12) var(--spacing-20) var(--spacing-24);');
+    expect(assetBodyRule).toContain('overflow-x: hidden;');
+    expect(assetViewRule).toContain('width: 100%;');
+    expect(assetViewRule).toContain('max-width: 100%;');
+    expect(assetViewRule).toContain('min-width: 0;');
+    expect(assetTabsRule).toContain('display: inline-flex;');
+    expect(assetTabsRule).toContain('max-width: 100%;');
+    expect(assetTabsRule).toContain('gap: var(--spacing-2);');
+    expect(assetTabsRule).toContain('border: 0;');
+    expect(assetTabRule).toContain('height: 28px;');
+    expect(assetTabRule).toContain('padding: 0 var(--spacing-12);');
+    expect(assetTabRule).toContain('border: 0;');
+    expect(assetTabRule).toContain('box-shadow: none;');
+    expect(assetTabRule).toContain('white-space: nowrap;');
+    expect(selectedAssetTabRule).toContain('background: var(--bg);');
+    expect(selectedAssetTabRule).toContain('font-weight: 600;');
+    expect(assetHeadRule).toContain('display: flex;');
+    expect(assetHeadRule).toContain('width: 100%;');
+    expect(assetHeadRule).toContain('min-width: 0;');
+    expect(assetHeadRule).toContain('margin-bottom: var(--spacing-8);');
+    expect(assetCountRule).toContain('flex: none;');
+    expect(assetCountRule).toContain('margin-inline-start: auto;');
+    expect(assetCountRule).toContain('font-variant-numeric: tabular-nums;');
+    expect(assetFilesRule).toContain('flex-direction: column;');
+    expect(assetFilesRule).toContain('width: 100%;');
+    expect(assetFilesRule).toContain('min-width: 0;');
+    expect(assetRowRule).toContain('display: grid;');
+    expect(assetRowRule).toContain('grid-template-columns: 14px minmax(0, 1fr) auto;');
+    expect(assetRowRule).toContain('width: 100%;');
+    expect(assetRowRule).toContain('min-width: 0;');
+    expect(assetRowRule).toContain('min-height: 32px;');
+    expect(assetRowRule).toContain('height: auto;');
+    expect(assetRowRule).toContain('overflow: hidden;');
+    expect(assetRowRule).toContain('border: 0;');
+    expect(assetRowRule).toContain('white-space: normal;');
+    expect(activeAssetRowRule).toContain('box-shadow: inset 0 0 0 var(--stroke-thin) var(--border-strong);');
+    expect(assetNameRule).toContain('min-width: 0;');
+    expect(assetNameRule).toContain('overflow: hidden;');
+    expect(assetNameRule).toContain('text-overflow: ellipsis;');
+    expect(assetNameRule).toContain('white-space: nowrap;');
+    expect(assetExtensionRule).toContain('flex: none;');
+    expect(assetExtensionRule).toContain('white-space: nowrap;');
+  });
+
   it('keeps the manual edit titlebar from overlapping the close button', () => {
     const css = readExpandedIndexCss();
 
@@ -1046,6 +1468,46 @@ describe('FileViewer preview scale', () => {
     // 1.5 would put most of the page outside the pane.
     expect(effectivePreviewScale('desktop', 1.5, { width: 320, height: 480 }))
       .toBeCloseTo(320 / 1440, 5);
+  });
+
+  it('fits a deck to the canvas slot beside the expanded thumbnail rail', () => {
+    expect(DECK_THUMBNAIL_RAIL_WIDTH).toBe(194);
+
+    const expandedCanvas = deckPreviewCanvasSize(
+      { width: 1559, height: 900 },
+      { thumbnailRailVisible: true, thumbnailRailCollapsed: false },
+    );
+    const collapsedCanvas = deckPreviewCanvasSize(
+      { width: 1559, height: 900 },
+      { thumbnailRailVisible: true, thumbnailRailCollapsed: true },
+    );
+
+    expect(expandedCanvas).toEqual({ width: 1365, height: 900 });
+    expect(collapsedCanvas).toEqual({ width: 1559, height: 900 });
+    expect(effectivePreviewScale('desktop', 1, expandedCanvas, { fitToCanvas: true }))
+      .toBeCloseTo(1365 / 1440, 5);
+    expect(effectivePreviewScale('desktop', 1, collapsedCanvas, { fitToCanvas: true }))
+      .toBeCloseTo(1559 / 1440, 5);
+    expect(effectivePreviewScale('desktop', 1, collapsedCanvas, { fitToCanvas: true }))
+      .toBeGreaterThan(1);
+  });
+
+  it('shrinks narrow deck slots and protects the minimum available width', () => {
+    const narrowCanvas = deckPreviewCanvasSize(
+      { width: 500, height: 700 },
+      { thumbnailRailVisible: true, thumbnailRailCollapsed: false },
+    );
+    const protectedCanvas = deckPreviewCanvasSize(
+      { width: 120, height: 700 },
+      { thumbnailRailVisible: true, thumbnailRailCollapsed: false },
+    );
+
+    expect(narrowCanvas).toEqual({ width: 306, height: 700 });
+    expect(effectivePreviewScale('desktop', 1, narrowCanvas, { fitToCanvas: true }))
+      .toBeCloseTo(306 / 1440, 5);
+    expect(protectedCanvas).toEqual({ width: 1, height: 700 });
+    expect(effectivePreviewScale('desktop', 1, protectedCanvas, { fitToCanvas: true }))
+      .toBeCloseTo(1 / 1440, 8);
   });
 
   it('calculates a desktop auto-fit zoom for wide landing pages', () => {
@@ -2116,7 +2578,8 @@ describe('FileViewer SVG artifacts', () => {
     expect(refreshedRequest.documentEpoch).toBe(refreshedUrl.searchParams.get('odPreviewEpoch'));
     act(() => postPreviewContentSizeResponse(previewWindow, refreshedRequest, 1440, 900));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.625);
     });
 
   });
@@ -2496,7 +2959,8 @@ describe('FileViewer SVG artifacts', () => {
     expect(refreshedRequest.documentEpoch).toBe(refreshedUrl.searchParams.get('odPreviewEpoch'));
     act(() => postPreviewContentSizeResponse(previewWindow, refreshedRequest, 1440, 900));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.625);
     });
 
     rerender(
@@ -2776,7 +3240,13 @@ describe('FileViewer SVG artifacts', () => {
       }));
     });
     expect(srcDocPostSpy).toHaveBeenCalledWith(
-      { type: 'od-edit-mode', enabled: true },
+      expect.objectContaining({
+        type: 'od-edit-mode',
+        enabled: true,
+        viewport: 'desktop',
+        viewportWidth: 1440,
+        expandDocument: true,
+      }),
       '*',
     );
     fireEvent.load(srcDocFrameAfter!);
@@ -4218,7 +4688,20 @@ describe('FileViewer SVG artifacts', () => {
     expect(container.querySelector('.viewer-source')?.textContent).toContain('section class="slide"');
     openPreviewView();
     expect(container.querySelector('.deck-nav')).toBeNull();
-    expect(container.querySelector('.deck-thumbnail-toolbar-toggle')).toBeTruthy();
+    const thumbnailRailToggle = container.querySelector('.deck-thumbnail-toolbar-toggle');
+    expect(thumbnailRailToggle).toBeTruthy();
+    expect(thumbnailRailToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByTestId('comment-preview-layout').style.getPropertyValue('--deck-thumbnail-rail-width'))
+      .toBe(`${DECK_THUMBNAIL_RAIL_WIDTH}px`);
+    const thumbnailRailToggleIcon = thumbnailRailToggle?.querySelector('svg.od-icon');
+    expect(thumbnailRailToggleIcon).toBeTruthy();
+    expect(thumbnailRailToggleIcon?.getAttribute('viewBox')).toBe('0 0 24 24');
+    expect(thumbnailRailToggleIcon?.getAttribute('fill')).toBe('currentColor');
+    expect(thumbnailRailToggleIcon?.getAttribute('aria-hidden')).toBe('true');
+    expect(thumbnailRailToggleIcon?.getAttribute('focusable')).toBe('false');
+    const thumbnailRailTogglePath = thumbnailRailToggleIcon?.querySelector('path')?.getAttribute('d');
+    expect(thumbnailRailTogglePath).toContain('M20.0833 15.1999');
+    expect(thumbnailRailTogglePath).toContain('M11.9999 3.33233');
     expect(container.querySelector('.deck-thumbnail-rail .deck-thumbnail-toggle')).toBeNull();
     expect(container.querySelector('.deck-floating-nav')).toBeTruthy();
     const thumbnailFrames = Array.from(
@@ -4234,11 +4717,67 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByText('No speaker notes for this slide.')).toBeTruthy();
     fireEvent.click(container.querySelector('.deck-thumbnail-toolbar-toggle')!);
     expect(container.querySelector('.comment-preview-layer-deck-rail-collapsed')).toBeTruthy();
-    expect(container.querySelector('.deck-thumbnail-toolbar-toggle')).toBeTruthy();
+    const collapsedThumbnailRailToggle = container.querySelector('.deck-thumbnail-toolbar-toggle');
+    expect(collapsedThumbnailRailToggle).toBeTruthy();
+    expect(collapsedThumbnailRailToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(collapsedThumbnailRailToggle?.querySelector('svg.od-icon')).toBeTruthy();
+    const collapsedThumbnailRail = container.querySelector('.deck-thumbnail-rail');
+    expect(collapsedThumbnailRail).toBeTruthy();
+    expect(collapsedThumbnailRail?.getAttribute('aria-hidden')).toBe('true');
+    const collapsedThumbnailButtons = Array.from(
+      collapsedThumbnailRail?.querySelectorAll('button') ?? [],
+    ) as HTMLButtonElement[];
+    expect(
+      collapsedThumbnailButtons.every((button) => button.disabled),
+    ).toBe(true);
+    expect(collapsedThumbnailButtons[0]?.style.getPropertyValue('--deck-thumbnail-stagger-delay')).toBe('0ms');
     expect(screen.queryByRole('button', { name: 'Manual' })).toBeNull();
-    expect(container.querySelector('.viewer-viewport-switcher')).toBeTruthy();
+    expect(container.querySelector('.viewer-viewport-switcher')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Desktop' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mobile' })).toBeNull();
+    expect(screen.getByRole('button', { name: /reload preview/i })).toBeTruthy();
+    expect(container.querySelector('.deck-thumbnail-toolbar-toggle')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByRole('menuitem', { name: 'Desktop' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Mobile' })).toBeNull();
     expect(screen.queryByTestId('palette-tweaks-toggle')).toBeNull();
     expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
+  });
+
+  it('hides viewport controls for inferred decks while keeping layers and reload available', () => {
+    const file = baseFile({
+      name: 'inferred-toolbar.html',
+      path: 'inferred-toolbar.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Inferred toolbar',
+        entry: 'inferred-toolbar.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+
+    const { container } = render(
+      <FileViewer
+        projectId="inferred-deck-toolbar-project"
+        projectKind="prototype"
+        file={file}
+        liveHtml={'<html><body><section class="slide">one</section><section class="slide">two</section></body></html>'}
+      />,
+    );
+
+    expect(container.querySelector('.deck-thumbnail-toolbar-toggle')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /reload preview/i })).toBeTruthy();
+    expect(container.querySelector('.viewer-viewport-switcher')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Desktop' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mobile' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByRole('menuitem', { name: 'Desktop' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Mobile' })).toBeNull();
   });
 
   it('rebuilds deck thumbnail resource URLs when the project workspace changes', async () => {
@@ -4727,7 +5266,8 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    const exportButton = screen.getByRole('button', { name: /export/i });
+    const exportButton = screen.getByRole('button', { name: /^download$/i });
+    expect(exportButton.textContent).toContain('Download');
     await waitFor(() => {
       expect(exportButton.classList.contains('export-ready-nudge')).toBe(true);
     });
@@ -4776,7 +5316,7 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    const firstExportButton = screen.getByRole('button', { name: /export/i });
+    const firstExportButton = screen.getByRole('button', { name: /^download$/i });
     await waitFor(() => {
       expect(firstExportButton.classList.contains('export-ready-nudge')).toBe(true);
     });
@@ -4792,7 +5332,7 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    const secondExportButton = screen.getByRole('button', { name: /export/i });
+    const secondExportButton = screen.getByRole('button', { name: /^download$/i });
     await waitFor(() => {
       expect(secondExportButton.classList.contains('export-ready-nudge')).toBe(true);
     });
@@ -5412,7 +5952,10 @@ describe('FileViewer SVG artifacts', () => {
       context,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /share/i }));
+    const shareButton = screen.getByRole('button', { name: /^share$/i });
+    expect(shareButton.textContent).toContain('Share');
+    expect(shareButton.classList.contains('chrome-action-pill')).toBe(true);
+    fireEvent.click(shareButton);
 
     // Share panel: everything that produces a link or reusable asset —
     // publish, deploy, social share, save as template. No file formats.
@@ -5429,7 +5972,9 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.queryByRole('menuitem', { name: /Export as PDF/i })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /Export as image/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /export/i }));
+    const downloadButton = screen.getByRole('button', { name: /^download$/i });
+    expect(downloadButton.classList.contains('chrome-action-pill')).toBe(true);
+    fireEvent.click(downloadButton);
 
     // Export panel: pure file formats, nothing publish/deploy flavored.
     const menuItems = screen.getAllByRole('menuitem').map((item) => item.textContent ?? '');
@@ -7079,8 +7624,8 @@ describe('FileViewer tweaks toolbar', () => {
     return document.querySelector('.canvas-dock .canvas-dock-collapsible');
   }
 
-  it('folds the dock down to pointer, zoom, and full screen in Present', async () => {
-    render(
+  it('fixes Present at 100% and hides its redundant zoom control', async () => {
+    const { container } = render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
       />,
@@ -7101,11 +7646,20 @@ describe('FileViewer tweaks toolbar', () => {
     expect(dockAuthoringFold()?.getAttribute('aria-hidden')).toBe('true');
     expect(dockAuthoringFold()?.contains(screen.getByTestId('draw-overlay-toggle'))).toBe(true);
     expect(dockAuthoringFold()?.contains(screen.getByTestId('comment-panel-toggle'))).toBe(true);
-    // Pointer, zoom, and full screen stand outside the fold. Present is exactly
-    // when a user reaches for full screen, and the dock is its only entry.
-    expect(dockAuthoringFold()?.contains(screen.getByTestId('canvas-dock-select'))).toBe(false);
+    // The pointer tool stays keyboard-only; full screen remains outside the
+    // fold because Present is exactly when a user reaches for it.
+    expect(screen.queryByTestId('canvas-dock-select')).toBeNull();
     expect(dockAuthoringFold()?.contains(screen.getByTestId('canvas-dock-fullscreen'))).toBe(false);
-    expect(dockAuthoringFold()?.contains(document.querySelector('.canvas-dock .zoom-trigger')!)).toBe(false);
+    expect(container.querySelector('.canvas-dock .zoom-trigger')).toBeNull();
+    expect(screen.getByTestId('comment-preview-layout').style.getPropertyValue('--preview-scale')).toBe('1');
+
+    const moreTrigger = container.querySelector<HTMLButtonElement>('.viewer-toolbar-more > button');
+    expect(moreTrigger).not.toBeNull();
+    fireEvent.click(moreTrigger!);
+    expect(Array.from(
+      container.querySelectorAll('.viewer-toolbar-more-menu .viewer-toolbar-more-item'),
+    ).some((item) => /^\d+%$/.test(item.textContent?.trim() ?? ''))).toBe(false);
+    fireEvent.click(moreTrigger!);
 
     fireEvent.click(editTab);
 
@@ -7114,6 +7668,532 @@ describe('FileViewer tweaks toolbar', () => {
     expect(editTab.getAttribute('aria-pressed')).toBe('true');
     expect(presentTab.getAttribute('aria-selected')).toBe('false');
     expect(dockAuthoringFold()?.getAttribute('data-collapsed')).toBeNull();
+    expect(container.querySelector('.canvas-dock .zoom-trigger')).not.toBeNull();
+  });
+
+  it('mounts the XYFlow canvas only while Edit is active', async () => {
+    const { container } = render(
+      <FileViewer projectId="project-flow-canvas" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    expect(screen.queryByTestId('manual-edit-flow-canvas')).toBeNull();
+    expect(container.querySelector('.react-flow')).toBeNull();
+    const urlFrame = container.querySelector('iframe[data-od-render-mode="url-load"]');
+    const srcDocFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]');
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+
+    const editCanvas = await screen.findByTestId('manual-edit-flow-canvas');
+    expect(editCanvas.querySelector('.react-flow')).not.toBeNull();
+    const editWorkspace = editCanvas.parentElement;
+    expect(editWorkspace?.classList.contains('manual-edit-workspace')).toBe(true);
+    expect(editWorkspace?.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
+    expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+    expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+    expect(editCanvas.querySelector('.react-flow__controls')).toBeNull();
+    expect(editCanvas.querySelector('.react-flow__minimap')).toBeNull();
+    expect(editCanvas.querySelector('.react-flow__node')).toBeNull();
+    expect(editCanvas.querySelector('.react-flow__edge')).toBeNull();
+    const flowRoot = editCanvas.querySelector<HTMLElement>('.react-flow');
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+      expect(screen.getByTestId('manual-edit-flow-canvas')).toBe(editCanvas);
+      expect(flowRoot?.dataset.panOnDrag).toBe('true');
+      expect(flowRoot?.dataset.panOnScroll).toBe('true');
+      expect(flowRoot?.dataset.zoomOnPinch).toBe('true');
+      expect(flowRoot?.dataset.zoomActivationKey).toBe('Meta');
+      expect(flowRoot?.dataset.minZoom).toBe('0.1');
+      expect(flowRoot?.dataset.maxZoom).toBe('2');
+      expect(Number(flowRoot?.dataset.viewportY)).toBe(24);
+    });
+    const artboard = editWorkspace?.querySelector<HTMLElement>('.manual-edit-canvas');
+    expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(false);
+
+    // Edit defaults to the cursor so elements are immediately clickable.
+    // Blank canvas already pans with a hand; explicit Hand extends that same
+    // gesture across the artboard by making the iframe pointer-transparent.
+    fireEvent.keyDown(window, { key: 'h' });
+    expect(flowRoot?.dataset.panOnDrag).toBe('true');
+    expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(true);
+    fireEvent.pointerDown(flowRoot!, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(flowRoot!, { clientX: 132, clientY: 124 });
+    fireEvent.pointerUp(flowRoot!);
+    expect(artboard?.style.getPropertyValue('--manual-edit-pan-x')).toBe('32px');
+    expect(artboard?.style.getPropertyValue('--manual-edit-pan-y')).toBe('48px');
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportX)).toBe(32);
+      expect(Number(flowRoot?.dataset.viewportY)).toBe(48);
+    });
+
+    // V returns to Select without leaving Edit or losing the retained viewport.
+    fireEvent.keyDown(window, { key: 'v' });
+    expect(flowRoot?.dataset.panOnDrag).toBe('true');
+    expect(Number(flowRoot?.dataset.viewportX)).toBe(32);
+    expect(Number(flowRoot?.dataset.viewportY)).toBe(48);
+    expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(false);
+    expect(screen.getByTestId('manual-edit-flow-canvas')).toBe(editCanvas);
+
+    // An ordinary two-finger horizontal swipe pans even while Select keeps
+    // iframe element clicks enabled; it never changes zoom.
+    fireEvent.wheel(flowRoot!, { deltaX: 20, deltaY: 0, clientX: 100, clientY: 100 });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportX)).toBe(12);
+      expect(Number(flowRoot?.dataset.viewportY)).toBe(48);
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBe(1);
+    });
+
+    // Re-arming Hand with H also moves left and up from the retained viewport.
+    fireEvent.keyDown(window, { key: 'h' });
+    expect(flowRoot?.dataset.panOnDrag).toBe('true');
+    expect(Number(flowRoot?.dataset.viewportX)).toBe(12);
+    expect(Number(flowRoot?.dataset.viewportY)).toBe(48);
+    fireEvent.pointerDown(flowRoot!, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(flowRoot!, { clientX: 50, clientY: 60 });
+    fireEvent.pointerUp(flowRoot!);
+    expect(artboard?.style.getPropertyValue('--manual-edit-pan-x')).toBe('-38px');
+    expect(artboard?.style.getPropertyValue('--manual-edit-pan-y')).toBe('8px');
+
+    // A trackpad pinch updates XYFlow and the existing dock readout from the
+    // same floating-point zoom. Ordinary two-finger scrolling is not zoom.
+    fireEvent.wheel(flowRoot!, {
+      ctrlKey: true,
+      deltaY: 200,
+      clientX: 100,
+      clientY: 100,
+    });
+    const pinchedZoom = 2 ** -0.4;
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(pinchedZoom);
+      expect(Number(editWorkspace?.style.getPropertyValue('--preview-scale'))).toBeCloseTo(pinchedZoom);
+      expect(screen.getByRole('button', { name: `${Math.round(pinchedZoom * 100)}%` })).not.toBeNull();
+    });
+    const beforeScrollX = Number(flowRoot?.dataset.viewportX);
+    const beforeScrollY = Number(flowRoot?.dataset.viewportY);
+    fireEvent.wheel(flowRoot!, { deltaX: 24, deltaY: 0, clientX: 100, clientY: 100 });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportX)).toBe(beforeScrollX - 24);
+      expect(Number(flowRoot?.dataset.viewportY)).toBe(beforeScrollY);
+    });
+    expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(pinchedZoom);
+
+    // A physical wheel with Command held uses the same pointer-anchored zoom
+    // affordance. Its regular wheel gain is intentionally gentler than pinch.
+    fireEvent.wheel(flowRoot!, {
+      metaKey: true,
+      deltaY: 100,
+      clientX: 100,
+      clientY: 100,
+    });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(pinchedZoom * (2 ** -0.2));
+    });
+    fireEvent.wheel(flowRoot!, {
+      metaKey: true,
+      deltaY: -100,
+      clientX: 100,
+      clientY: 100,
+    });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(pinchedZoom);
+    });
+
+    // Menu zoom travels back into the controlled XYFlow viewport, and a
+    // subsequent pinch continues from that value instead of jumping to 1.
+    fireEvent.click(screen.getByRole('button', { name: `${Math.round(pinchedZoom * 100)}%` }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '50%' }));
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(0.5);
+      expect(Number(editWorkspace?.style.getPropertyValue('--preview-scale'))).toBeCloseTo(0.5);
+      expect(screen.getByRole('button', { name: '50%' })).not.toBeNull();
+    });
+    fireEvent.wheel(flowRoot!, {
+      ctrlKey: true,
+      deltaY: -500,
+      clientX: 100,
+      clientY: 100,
+    });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(1);
+      expect(screen.getByRole('button', { name: '100%' })).not.toBeNull();
+    });
+    fireEvent.wheel(flowRoot!, {
+      ctrlKey: true,
+      deltaY: -500,
+      clientX: 100,
+      clientY: 100,
+    });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBe(2);
+      expect(Number(editWorkspace?.style.getPropertyValue('--preview-scale'))).toBe(2);
+      expect(screen.getByRole('button', { name: '200%' })).not.toBeNull();
+    });
+    fireEvent.wheel(flowRoot!, {
+      ctrlKey: true,
+      deltaY: 3000,
+      clientX: 100,
+      clientY: 100,
+    });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBe(0.1);
+      expect(Number(editWorkspace?.style.getPropertyValue('--preview-scale'))).toBe(0.1);
+      expect(screen.getByRole('button', { name: '10%' })).not.toBeNull();
+    });
+
+    const retainedViewport = {
+      x: Number(flowRoot?.dataset.viewportX),
+      y: Number(flowRoot?.dataset.viewportY),
+      zoom: Number(flowRoot?.dataset.viewportZoom),
+    };
+
+    fireEvent.click(screen.getByTestId('canvas-dock-present'));
+
+    await waitFor(() => expect(screen.queryByTestId('manual-edit-flow-canvas')).toBeNull());
+    expect(screen.queryByTestId('canvas-dock-select')).toBeNull();
+    expect(container.querySelector('.react-flow')).toBeNull();
+    expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+    expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+    expect(screen.getByTestId('comment-preview-canvas').contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const reopenedFlowRoot = (await screen.findByTestId('manual-edit-flow-canvas'))
+      .querySelector<HTMLElement>('.react-flow');
+    await waitFor(() => {
+      expect(Number(reopenedFlowRoot?.dataset.viewportX)).toBeCloseTo(retainedViewport.x);
+      expect(Number(reopenedFlowRoot?.dataset.viewportY)).toBeCloseTo(retainedViewport.y);
+      expect(Number(reopenedFlowRoot?.dataset.viewportZoom)).toBeCloseTo(retainedViewport.zoom);
+      expect(
+        editWorkspace?.querySelector('.manual-edit-canvas')?.classList.contains('manual-edit-canvas-panning'),
+      ).toBe(false);
+    });
+
+    fireEvent.click(screen.getByTestId('canvas-dock-present'));
+    await waitFor(() => expect(screen.queryByTestId('manual-edit-flow-canvas')).toBeNull());
+
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('true'));
+    expect(screen.queryByTestId('manual-edit-flow-canvas')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    await waitFor(() => expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true'));
+    expect(screen.queryByTestId('manual-edit-flow-canvas')).toBeNull();
+  });
+
+  it('presents project assets at a fixed scale and returns to the owning project in Present', async () => {
+    const page = htmlPreviewFile();
+    const siblingPage = htmlPreviewFile({ name: 'details.html', path: 'details.html' });
+    const secondSiblingPage = htmlPreviewFile({ name: 'summary.html', path: 'summary.html' });
+    const image = baseFile({
+      name: 'assets/hero.png',
+      path: 'assets/hero.png',
+      kind: 'image',
+      mime: 'image/png',
+    });
+    const notes = baseFile({
+      name: 'notes.txt',
+      path: 'notes.txt',
+      kind: 'text',
+      mime: 'text/plain',
+    });
+    const onOpenFileReplacing = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.includes('details.html')) {
+        return new Response('<html><body><h1>Details</h1></body></html>', { status: 200 });
+      }
+      if (url.includes('summary.html')) {
+        return new Response('<html><body><h1>Summary</h1></body></html>', { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    }));
+    const { container } = render(
+      <FileViewer
+        projectId="project-assets-canvas"
+        projectKind="prototype"
+        file={page}
+        projectFiles={[page, siblingPage, secondSiblingPage, image, notes]}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+        onOpenFileReplacing={onOpenFileReplacing}
+      />,
+    );
+
+    const urlFrame = container.querySelector('iframe[data-od-render-mode="url-load"]');
+    const srcDocFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]');
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await screen.findByTestId('manual-edit-flow-canvas');
+    fireEvent.click(screen.getByTestId('design-structure-tab-structure'));
+
+    // Structure is a direct page list. Hovering a sibling temporarily paints
+    // that page on the left without navigating or disturbing the live editor.
+    expect(screen.queryByRole('button', { name: /All pages/i })).toBeNull();
+    const detailsRow = screen.getByTestId('design-file-row-details.html');
+    fireEvent.mouseEnter(detailsRow);
+    const pageHoverPreview = await screen.findByTestId('manual-edit-page-hover-preview');
+    expect(pageHoverPreview.getAttribute('data-file-name')).toBe('details.html');
+    expect(screen.queryByTestId('manual-edit-asset-close')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-asset-html-frame').getAttribute('srcdoc')).toContain('Details');
+    });
+    expect(onOpenFileReplacing).not.toHaveBeenCalled();
+    expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+    expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+    expect(container.querySelector('.manual-edit-origin-preview-hidden')).not.toBeNull();
+
+    fireEvent.mouseLeave(detailsRow);
+    await waitFor(() => expect(screen.queryByTestId('manual-edit-page-hover-preview')).toBeNull());
+    expect(container.querySelector('.manual-edit-origin-preview-hidden')).toBeNull();
+    expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
+
+    // Files is the default asset view and includes generated HTML plus the
+    // ordinary files that previously lived only under Design Files.
+    expect(screen.getByTestId('design-structure-assets-files').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('design-structure-asset-preview.html')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-asset-details.html')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-asset-summary.html')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-asset-notes.txt')).toBeTruthy();
+
+    // A sibling HTML asset is a read-only presentation layer. The owning page
+    // and its edit bridge remain mounted behind it while the Assets rail stays
+    // available for browsing.
+    fireEvent.click(screen.getByTestId('design-structure-asset-details.html'));
+    const detailsFrame = await screen.findByTestId('manual-edit-asset-html-frame');
+    await waitFor(() => expect(detailsFrame.getAttribute('srcdoc')).toContain('Details'));
+    fireEvent.click(screen.getByTestId('design-structure-asset-summary.html'));
+    await waitFor(() => {
+      const summaryFrame = screen.getByTestId('manual-edit-asset-html-frame');
+      expect(summaryFrame).not.toBe(detailsFrame);
+      expect(summaryFrame.getAttribute('srcdoc')).toContain('Summary');
+      expect(summaryFrame.getAttribute('srcdoc')).not.toContain('Details');
+    });
+    expect(onOpenFileReplacing).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('design-structure-assets-images'));
+    const imageAssetButton = screen.getByTestId('design-structure-asset-assets/hero.png');
+    imageAssetButton.focus();
+    fireEvent.click(imageAssetButton);
+
+    const assetPreview = await screen.findByTestId('manual-edit-asset-preview');
+    expect(assetPreview.getAttribute('data-file-name')).toBe('assets/hero.png');
+    expect(assetPreview.querySelector('img')?.getAttribute('alt')).toBe('assets/hero.png');
+    expect(screen.queryByTestId('canvas-dock')).toBeNull();
+    expect(assetPreview.closest('.manual-edit-canvas')).toBeNull();
+    expect(assetPreview.parentElement?.classList.contains('manual-edit-asset-shell')).toBe(true);
+    expect(screen.getByTestId('viewer-structure-rail')).toBeTruthy();
+
+    // The original dual HTML transport stays mounted and inert behind the asset.
+    expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+    expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+    expect(container.querySelector('.manual-edit-origin-preview-hidden')).not.toBeNull();
+
+    // Closing restores the owning project, dismisses the rail and lands in the
+    // default Present state rather than returning to Edit.
+    const closeButton = within(assetPreview).getByRole('button', { name: 'Close' });
+    expect(closeButton.tagName).toBe('BUTTON');
+    fireEvent.click(closeButton);
+    await waitFor(() => expect(screen.queryByTestId('manual-edit-asset-preview')).toBeNull());
+    expect(screen.queryByTestId('viewer-structure-rail')).toBeNull();
+    expect(screen.queryByTestId('manual-edit-flow-canvas')).toBeNull();
+    expect(screen.getByTestId('canvas-dock')).toBeTruthy();
+    expect(screen.getByTestId('canvas-dock-present').getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+    expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+
+    // Escape follows the same return path.
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await screen.findByTestId('manual-edit-flow-canvas');
+    fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
+    fireEvent.click(screen.getByTestId('design-structure-assets-images'));
+    fireEvent.click(screen.getByTestId('design-structure-asset-assets/hero.png'));
+    await screen.findByTestId('manual-edit-asset-preview');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('manual-edit-asset-preview')).toBeNull());
+    expect(screen.queryByTestId('viewer-structure-rail')).toBeNull();
+    expect(screen.getByTestId('canvas-dock-present').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('seeds a mobile artboard in XYFlow coordinates and keeps the pinch point fixed', async () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRectMock(this: HTMLElement) {
+        if (this.classList.contains('manual-edit-flow-canvas')) {
+          return testRect(0, 0, 1000, 700);
+        }
+        return originalGetBoundingClientRect.call(this);
+      });
+
+    try {
+      const { container } = render(
+        <FileViewer projectId="project-mobile-flow" projectKind="prototype" file={htmlPreviewFile()}
+          liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mobile' }));
+      const previewLayout = screen.getByTestId('comment-preview-layout');
+      expect(previewLayout.style.getPropertyValue('--preview-viewport-width')).toBe('390px');
+      expect(previewLayout.style.getPropertyValue('--preview-viewport-height')).toBe('844px');
+      const urlFrame = container.querySelector<HTMLIFrameElement>(
+        'iframe[data-od-render-mode="url-load"]',
+      );
+      const srcDocFrame = container.querySelector<HTMLIFrameElement>(
+        'iframe[data-od-render-mode="srcdoc"]',
+      );
+      expect(urlFrame).not.toBeNull();
+      expect(srcDocFrame).not.toBeNull();
+      const urlPostSpy = vi.spyOn(urlFrame!.contentWindow!, 'postMessage');
+      const srcDocPostSpy = vi.spyOn(srcDocFrame!.contentWindow!, 'postMessage');
+      fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+
+      const flowCanvas = await screen.findByTestId('manual-edit-flow-canvas');
+      const flowRoot = flowCanvas
+        .querySelector<HTMLElement>('.react-flow');
+      expect(flowRoot).not.toBeNull();
+      await waitFor(() => {
+        // (1000px host - (390px artboard + 18px bezel)) / 2.
+        expect(Number(flowRoot?.dataset.viewportX)).toBe(296);
+        expect(Number(flowRoot?.dataset.viewportY)).toBe(24);
+      });
+      expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+      expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+      await waitFor(() => {
+        const modeMessages = [...urlPostSpy.mock.calls, ...srcDocPostSpy.mock.calls]
+          .map(([message]) => message)
+          .filter((message): message is Record<string, unknown> => (
+            typeof message === 'object' && message !== null && message.type === 'od-edit-mode'
+          ));
+        expect(modeMessages).toContainEqual(expect.objectContaining({
+          enabled: true,
+          viewport: 'mobile',
+          viewportWidth: 390,
+          viewportHeight: 844,
+          expandDocument: true,
+        }));
+      });
+
+      const activeFrame = container.querySelector<HTMLIFrameElement>('iframe[data-od-active="true"]');
+      expect(activeFrame).not.toBeNull();
+      const editWorkspace = flowCanvas.parentElement;
+      const artboard = editWorkspace?.querySelector<HTMLElement>('.manual-edit-canvas');
+      expect(artboard?.style.getPropertyValue('--manual-edit-artboard-height')).toBe('844px');
+      expect(artboard?.style.getPropertyValue('--manual-edit-scaled-artboard-height')).toBe('844px');
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: activeFrame!.contentWindow,
+          data: {
+            type: 'od-edit-document-size',
+            // The measured document may overflow horizontally, but the host
+            // must keep the authored mobile breakpoint width fixed at 390px.
+            width: 960,
+            height: 2380,
+          },
+        }));
+      });
+      await waitFor(() => {
+        expect(editWorkspace?.style.getPropertyValue('--preview-viewport-width')).toBe('390px');
+        expect(editWorkspace?.style.getPropertyValue('--preview-viewport-height')).toBe('844px');
+        expect(artboard?.style.getPropertyValue('--manual-edit-artboard-height')).toBe('2380px');
+        expect(artboard?.style.getPropertyValue('--manual-edit-scaled-artboard-height')).toBe('2380px');
+      });
+
+      const pinchX = 500;
+      const pinchY = 250;
+      const worldXUnderPinch = pinchX - 296;
+      const worldYUnderPinch = pinchY - 24;
+      fireEvent.wheel(flowRoot!, {
+        ctrlKey: true,
+        deltaY: 200,
+        clientX: pinchX,
+        clientY: pinchY,
+      });
+      await waitFor(() => {
+        const nextZoom = Number(flowRoot?.dataset.viewportZoom);
+        const nextX = Number(flowRoot?.dataset.viewportX);
+        const nextY = Number(flowRoot?.dataset.viewportY);
+        expect(nextZoom).toBeLessThan(1);
+        expect(nextX + (worldXUnderPinch * nextZoom)).toBeCloseTo(pinchX);
+        expect(nextY + (worldYUnderPinch * nextZoom)).toBeCloseTo(pinchY);
+        expect(Number.parseFloat(
+          artboard?.style.getPropertyValue('--manual-edit-scaled-artboard-height') ?? '0',
+        )).toBeCloseTo(2380 * nextZoom);
+        expect(editWorkspace?.style.getPropertyValue('--preview-viewport-width')).toBe('390px');
+      });
+
+      // Viewport changes update the same retained edit document. Desktop keeps
+      // its existing full-height behavior, and returning to Mobile restores the
+      // 390px authored breakpoint without rebuilding either transport frame.
+      const currentZoom = Number(flowRoot?.dataset.viewportZoom);
+      fireEvent.click(screen.getByRole('button', { name: 'Desktop' }));
+      await waitFor(() => {
+        expect(editWorkspace?.classList.contains('preview-viewport-desktop')).toBe(true);
+        expect(editWorkspace?.style.getPropertyValue('--preview-viewport-width')).toBe('1440px');
+      });
+      expect(container.querySelector('iframe[data-od-active="true"]')).toBe(activeFrame);
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: activeFrame!.contentWindow,
+          data: { type: 'od-edit-document-size', width: 1440, height: 3211 },
+        }));
+      });
+      await waitFor(() => {
+        expect(artboard?.style.getPropertyValue('--manual-edit-artboard-height')).toBe('3211px');
+        expect(Number.parseFloat(
+          artboard?.style.getPropertyValue('--manual-edit-scaled-artboard-height') ?? '0',
+        )).toBeCloseTo(3211 * currentZoom);
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mobile' }));
+      await waitFor(() => {
+        expect(editWorkspace?.classList.contains('preview-viewport-mobile')).toBe(true);
+        expect(editWorkspace?.style.getPropertyValue('--preview-viewport-width')).toBe('390px');
+        expect(editWorkspace?.style.getPropertyValue('--preview-viewport-height')).toBe('844px');
+      });
+      expect(container.querySelector('iframe[data-od-active="true"]')).toBe(activeFrame);
+      expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
+      expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it('moves one shared mode thumb between Edit and Present', async () => {
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const segment = document.querySelector<HTMLElement>('.canvas-dock-mode-seg');
+    const editTab = screen.getByTestId('manual-edit-mode-toggle');
+    const presentTab = screen.getByTestId('canvas-dock-present');
+    expect(segment).not.toBeNull();
+
+    Object.defineProperties(editTab, {
+      offsetLeft: { configurable: true, value: 3 },
+      offsetWidth: { configurable: true, value: 56 },
+    });
+    Object.defineProperties(presentTab, {
+      offsetLeft: { configurable: true, value: 59 },
+      offsetWidth: { configurable: true, value: 62 },
+    });
+
+    fireEvent.click(editTab);
+    await waitFor(() => {
+      expect(segment?.style.getPropertyValue('--canvas-mode-thumb-x')).toBe('3px');
+      expect(segment?.style.getPropertyValue('--canvas-mode-thumb-width')).toBe('56px');
+    });
+
+    fireEvent.click(presentTab);
+    await waitFor(() => {
+      expect(segment?.style.getPropertyValue('--canvas-mode-thumb-x')).toBe('59px');
+      expect(segment?.style.getPropertyValue('--canvas-mode-thumb-width')).toBe('62px');
+    });
   });
 
   it('does not fold the dock when the user simply puts every tool down', async () => {
@@ -7132,7 +8212,7 @@ describe('FileViewer tweaks toolbar', () => {
 
     // Putting that tool back down is not a request to present. Folding on "no
     // tool armed" would take away the buttons the user was just using.
-    fireEvent.click(screen.getByTestId('canvas-dock-select'));
+    fireEvent.keyDown(window, { key: 'h' });
 
     await waitFor(() => expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('false'));
     expect(screen.getByTestId('canvas-dock-present').getAttribute('aria-selected')).toBe('false');
@@ -7158,28 +8238,178 @@ describe('FileViewer tweaks toolbar', () => {
     });
   });
 
-  it('leaves the pointer unselected until the user reaches for it', async () => {
-    render(
+  it('removes the pointer button and its popover from the dock', () => {
+    const { container } = render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
       />,
     );
 
-    // Nothing is armed on open, but that is the absence of a tool, not a tool
-    // the user picked — so the pointer must not sit there lit.
-    const pointer = screen.getByTestId('canvas-dock-select');
-    expect(pointer.getAttribute('aria-pressed')).toBe('false');
-    expect(pointer.className).not.toContain('active');
+    expect(screen.queryByTestId('canvas-dock-select')).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByTestId('canvas-pointer-tool-select')).toBeNull();
+    expect(screen.queryByTestId('canvas-pointer-tool-hand')).toBeNull();
+    expect(document.querySelector('.canvas-dock-tools')?.getAttribute('data-collapsed')).toBe('true');
+    expect(container.querySelector('[aria-keyshortcuts="V H"]')?.getAttribute('role')).toBe('status');
 
-    fireEvent.click(pointer);
-    await waitFor(() => expect(pointer.getAttribute('aria-pressed')).toBe('true'));
-
-    // …and arming anything else puts it back down.
-    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
-    await waitFor(() => expect(pointer.getAttribute('aria-pressed')).toBe('false'));
+    const css = readExpandedIndexCss();
+    const collapsedToolsRule = css.match(
+      /\.canvas-dock-tools\[data-collapsed='true'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    expect(css).not.toContain('.canvas-pointer-menu');
+    expect(collapsedToolsRule).toContain('margin-inline-end: calc(-1 * var(--canvas-dock-gap));');
   });
 
-  it('offers quarter-step zoom levels down from 1:1', async () => {
+  it('keeps Select and Hand available through V and H without a dock button', async () => {
+    const { container } = render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    expect(screen.queryByTestId('canvas-dock-select')).toBeNull();
+
+    // V enters Edit with Select so iframe elements remain immediately clickable.
+    fireEvent.keyDown(window, { key: 'v' });
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+    });
+    const artboard = container.querySelector<HTMLElement>('.manual-edit-canvas');
+    const pointerStatus = container.querySelector<HTMLElement>('[aria-keyshortcuts="V H"]');
+    expect(pointerStatus).not.toBeNull();
+    if (!pointerStatus) return;
+    const selectStatus = pointerStatus.textContent;
+    expect(selectStatus).not.toBe('');
+    expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(false);
+
+    fireEvent.keyDown(window, { key: 'h' });
+    await waitFor(() => {
+      expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(true);
+      expect(pointerStatus.textContent).not.toBe(selectStatus);
+    });
+
+    fireEvent.keyDown(window, { key: 'v' });
+    await waitFor(() => expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(false));
+  });
+
+  it('switches Select with V and Hand with H without stealing typing focus', async () => {
+    const { container } = render(
+      <FileViewer projectId="project-shortcuts" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    expect(screen.queryByTestId('canvas-dock-select')).toBeNull();
+    fireEvent.keyDown(window, { key: 'h' });
+    const flowRoot = (await screen.findByTestId('manual-edit-flow-canvas'))
+      .querySelector<HTMLElement>('.react-flow');
+    const artboard = container.querySelector<HTMLElement>('.manual-edit-canvas');
+    await waitFor(() => {
+      expect(flowRoot?.dataset.panOnDrag).toBe('true');
+      expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(true);
+    });
+    fireEvent.wheel(flowRoot!, { ctrlKey: true, deltaY: 100, clientX: 100, clientY: 100 });
+    await waitFor(() => expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(2 ** -0.2));
+
+    fireEvent.keyDown(window, { key: 'v' });
+    await waitFor(() => {
+      expect(flowRoot?.dataset.panOnDrag).toBe('true');
+      expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(false);
+    });
+    fireEvent.wheel(flowRoot!, { ctrlKey: true, deltaY: -100, clientX: 100, clientY: 100 });
+    await waitFor(() => expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(1));
+
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: 'h' });
+    expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(false);
+    input.remove();
+
+    // Element clicks live inside the edit iframe, so its document has the same
+    // gesture/shortcut bridge as the canvas behind it.
+    const activeFrame = container.querySelector<HTMLIFrameElement>('iframe[data-od-active="true"]');
+    const frameBody = activeFrame?.contentDocument?.body;
+    expect(frameBody).toBeTruthy();
+    if (!frameBody) return;
+    const pinnedTarget = manualEditTarget('hero', 'Pinned hero selection', 20);
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: activeFrame?.contentWindow,
+        data: { type: 'od-edit-select', target: pinnedTarget },
+      }));
+    });
+    expect(await screen.findByText('Pinned hero selection')).toBeTruthy();
+    const flowCanvas = screen.getByTestId('manual-edit-flow-canvas');
+    const previewScaleSetSpy = vi.spyOn(flowCanvas.parentElement!.style, 'setProperty');
+    const artboardHeightSetSpy = vi.spyOn(artboard!.style, 'setProperty');
+    const logicalArtboardHeight = Number.parseFloat(
+      artboard?.style.getPropertyValue('--manual-edit-artboard-height') ?? '0',
+    );
+    const bridgeWheel = (input: {
+      ctrlKey?: boolean;
+      metaKey?: boolean;
+      deltaX?: number;
+      deltaY?: number;
+      clientX?: number;
+      clientY?: number;
+    }) => {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: activeFrame?.contentWindow,
+          data: {
+            type: 'od-edit-canvas-wheel',
+            clientX: input.clientX ?? 80,
+            clientY: input.clientY ?? 80,
+            ctrlKey: input.ctrlKey ?? false,
+            metaKey: input.metaKey ?? false,
+            deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+            deltaX: input.deltaX ?? 0,
+            deltaY: input.deltaY ?? 0,
+          },
+        }));
+      });
+    };
+    // Ignore preview-scale work triggered while the selected-target inspector
+    // settles; the assertions below cover only these wheel samples.
+    previewScaleSetSpy.mockClear();
+    const beforeFramePanX = Number(flowRoot?.dataset.viewportX);
+    // Raw trackpad samples arriving before the next paint are accumulated. Pan
+    // needs no geometry read, and the full delta still reaches XYFlow.
+    bridgeWheel({ deltaX: 5, clientX: 78 });
+    bridgeWheel({ deltaX: 6, clientX: 79 });
+    bridgeWheel({ deltaX: 7, clientX: 80 });
+    await waitFor(() => {
+      expect(Number(flowRoot?.dataset.viewportX)).toBe(beforeFramePanX - 18);
+      expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(1);
+    });
+    expect(previewScaleSetSpy).not.toHaveBeenCalled();
+
+    const flowRectSpy = vi.spyOn(flowCanvas, 'getBoundingClientRect');
+    bridgeWheel({ ctrlKey: true, deltaY: 25, clientX: 78 });
+    bridgeWheel({ ctrlKey: true, deltaY: 35, clientX: 79 });
+    bridgeWheel({ ctrlKey: true, deltaY: 40, clientX: 80 });
+    await waitFor(() => expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(2 ** -0.2));
+    expect(flowRectSpy).toHaveBeenCalledTimes(1);
+    expect(previewScaleSetSpy).toHaveBeenCalledTimes(1);
+    expect(artboardHeightSetSpy).toHaveBeenCalledWith(
+      '--manual-edit-scaled-artboard-height',
+      `${logicalArtboardHeight * (2 ** -0.2)}px`,
+    );
+    bridgeWheel({ metaKey: true, deltaY: 100, clientX: 80 });
+    await waitFor(() => expect(Number(flowRoot?.dataset.viewportZoom)).toBeCloseTo(2 ** -0.4));
+    expect(previewScaleSetSpy).toHaveBeenCalledTimes(2);
+    // Pinching navigates the canvas only; it must not clear or retarget the
+    // element the user selected before starting the gesture.
+    expect(screen.getByText('Pinned hero selection')).toBeTruthy();
+    fireEvent.keyDown(frameBody, { key: 'h' });
+    await waitFor(() => {
+      expect(flowRoot?.dataset.panOnDrag).toBe('true');
+      expect(artboard?.classList.contains('manual-edit-canvas-panning')).toBe(true);
+    });
+  });
+
+  it('shows fixed zoom presets while the trigger remains a live readout', async () => {
     // Scoped to this render's container, not `document`: this file mounts many
     // viewers, and a global query can latch onto a dock from a neighbouring
     // test's leftover DOM and then click a trigger whose popover never opens.
@@ -7189,12 +8419,30 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+
     const zoomTrigger = await waitFor(() => {
       const node = container.querySelector('.canvas-dock .zoom-trigger');
       if (!node) throw new Error('dock zoom trigger not mounted');
       return node;
     });
-    fireEvent.click(zoomTrigger);
+    const dockBar = container.querySelector<HTMLElement>('.canvas-dock-inner');
+    if (!dockBar) throw new Error('dock bar not mounted');
+    const barTop = window.innerHeight - 120;
+    vi.spyOn(dockBar, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: barTop,
+      top: barTop,
+      right: 480,
+      bottom: barTop + 52,
+      left: 0,
+      width: 480,
+      height: 52,
+      toJSON: () => ({}),
+    });
+    // The preset layer is discoverable without a click; click remains an
+    // accessible fallback for keyboard and touch input.
+    fireEvent.mouseEnter(zoomTrigger);
 
     // The popover is portaled to the body (the dock strip's overflow clipped
     // it), so it is NOT under `container` — query the document for the floating
@@ -7207,6 +8455,21 @@ describe('FileViewer tweaks toolbar', () => {
       return items.map((item) => item.textContent);
     });
     expect(levels).toEqual(['25%', '50%', '75%', '100%']);
+    const popover = document.querySelector<HTMLElement>('.zoom-menu-popover--floating');
+    const expectedBottom = Math.round(window.innerHeight - barTop + 4);
+    expect(popover?.style.bottom).toBe(`${expectedBottom}px`);
+    expect(popover?.style.getPropertyValue('--zoom-menu-anchor-bottom')).toBe(`${expectedBottom}px`);
+  });
+
+  it('keeps the expanded zoom preset list inside short viewports', () => {
+    const css = readExpandedIndexCss();
+    const floatingPopoverRule = css.match(/\.zoom-menu-popover--floating\s*\{[^}]+\}/)?.[0] ?? '';
+
+    expect(floatingPopoverRule).toContain('var(--zoom-menu-anchor-bottom, var(--spacing-68))');
+    expect(floatingPopoverRule).toContain('100dvh - var(--zoom-menu-anchor-bottom');
+    expect(floatingPopoverRule).toContain('- var(--spacing-8)');
+    expect(floatingPopoverRule).toContain('overflow-y: auto;');
+    expect(floatingPopoverRule).toContain('overscroll-behavior: contain;');
   });
 
   it('keeps the portaled zoom menu open long enough to pick a level', async () => {
@@ -7215,6 +8478,8 @@ describe('FileViewer tweaks toolbar', () => {
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
       />,
     );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
 
     const zoomTrigger = await waitFor(() => {
       const node = container.querySelector('.canvas-dock .zoom-trigger');
@@ -7382,7 +8647,7 @@ describe('FileViewer tweaks toolbar', () => {
   it('keeps preview viewport selection scoped to each HTML file', async () => {
     const firstFile = htmlPreviewFile({ name: 'first.html', path: 'first.html' });
     const secondFile = htmlPreviewFile({ name: 'second.html', path: 'second.html' });
-    const { rerender } = render(
+    const { container, rerender } = render(
       <FileViewer
         projectId="viewport-scope-project"
         projectKind="prototype"
@@ -7391,11 +8656,16 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    const viewportButton = screen.getByRole('button', { name: 'Preview viewport' });
-    expect(viewportButton.textContent).toContain('Desktop');
-    fireEvent.click(viewportButton);
-    fireEvent.click(screen.getByRole('option', { name: /tablet/i }));
-    expect(screen.getByRole('button', { name: 'Preview viewport' }).textContent).toContain('Tablet');
+    const desktopButton = screen.getByRole('button', { name: 'Desktop' });
+    const mobileButton = screen.getByRole('button', { name: 'Mobile' });
+    const switcher = container.querySelector('.viewer-viewport-switcher');
+    expect(switcher?.querySelector('.viewer-viewport-thumb')).toBeTruthy();
+    expect(switcher?.getAttribute('data-has-active')).toBe('true');
+    expect(desktopButton.getAttribute('aria-pressed')).toBe('true');
+    expect(desktopButton.querySelector('.viewer-viewport-option-label')?.textContent).toBe('Desktop');
+    fireEvent.click(mobileButton);
+    expect(mobileButton.getAttribute('aria-pressed')).toBe('true');
+    expect(mobileButton.querySelector('.viewer-viewport-option-label')?.textContent).toBe('Mobile');
 
     rerender(
       <FileViewer
@@ -7406,7 +8676,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    expect((await screen.findByRole('button', { name: 'Preview viewport' })).textContent).toContain('Desktop');
+    expect((await screen.findByRole('button', { name: 'Desktop' })).getAttribute('aria-pressed')).toBe('true');
 
     rerender(
       <FileViewer
@@ -7417,7 +8687,49 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    expect((await screen.findByRole('button', { name: 'Preview viewport' })).textContent).toContain('Tablet');
+    expect((await screen.findByRole('button', { name: 'Mobile' })).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Desktop' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Mobile' })).toBeTruthy();
+  });
+
+  it('uses the adaptive desktop deck viewport instead of a cached mobile selection', async () => {
+    const file = htmlPreviewFile({
+      name: 'cached-mobile-deck.html',
+      path: 'cached-mobile-deck.html',
+    });
+    const projectId = 'cached-mobile-deck-project';
+    const firstView = render(
+      <FileViewer
+        projectId={projectId}
+        projectKind="prototype"
+        file={file}
+        liveHtml='<html><body><main>Plain page</main></body></html>'
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mobile' }));
+    expect(screen.getByTestId('comment-preview-layout').className).toContain('preview-viewport-mobile');
+    firstView.unmount();
+
+    const { container } = render(
+      <FileViewer
+        projectId={projectId}
+        projectKind="prototype"
+        file={file}
+        isDeck
+        liveHtml='<html><body><section class="slide">one</section><section class="slide">two</section></body></html>'
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('comment-preview-layout').className)
+        .toContain('preview-viewport-desktop');
+    });
+    expect(screen.getByTestId('comment-preview-layout').className)
+      .not.toContain('preview-viewport-mobile');
+    expect(container.querySelector('.viewer-viewport-switcher')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mobile' })).toBeNull();
   });
 
   it('keeps the Draw bar open after queueing an annotation', () => {
@@ -7453,6 +8765,7 @@ describe('FileViewer tweaks toolbar', () => {
     const frame = await waitFor(() => {
       const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(activeFrame.srcdoc).toContain('data-od-preview-scrollbars-hidden');
       expect(activeFrame.srcdoc).toContain('data-od-selection-bridge');
       expect(activeFrame.srcdoc).toContain('data-od-snapshot-bridge');
       expect(activeFrame.srcdoc).not.toContain('data-od-lazy-srcdoc-transport');
@@ -8507,7 +9820,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(canvas.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
   });
 
-  it('keeps non-docked tablet comment-tool previews fitted to the padded canvas', async () => {
+  it('keeps non-docked mobile comment-tool previews fitted to the padded canvas', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function getBoundingClientRectMock(this: HTMLElement) {
         if (this.classList.contains('viewer-body')) return testRect(0, 0, 900, 700);
@@ -8516,7 +9829,7 @@ describe('FileViewer tweaks toolbar', () => {
 
     render(
       <FileViewer
-        projectId="project-1"
+        projectId="project-mobile-comment-fit"
         projectKind="prototype"
         file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
@@ -8526,14 +9839,13 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByLabelText('Preview viewport'));
-    fireEvent.click(screen.getByRole('option', { name: 'Tablet' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mobile' }));
     clickAgentTool('comment-panel-toggle');
 
     const layout = screen.getByTestId('comment-preview-layout');
     await waitFor(() => {
       expect(layout.className).not.toContain('comment-preview-layer-with-side-dock');
-      expect(Number(layout.style.getPropertyValue('--preview-scale'))).toBeCloseTo((700 - 48) / 1180);
+      expect(Number(layout.style.getPropertyValue('--preview-scale'))).toBeCloseTo((700 - 48) / 844);
     });
   });
 
@@ -8579,8 +9891,11 @@ describe('FileViewer tweaks toolbar', () => {
     act(() => postPreviewContentSizeResponse(previewWindow, neutralRequest, 1440, 900));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.625);
     });
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '63%' })).toBeTruthy());
     let scaledRequest = latestPreviewContentSizeRequest(previewWindow);
     await waitFor(() => {
       scaledRequest = latestPreviewContentSizeRequest(previewWindow);
@@ -8592,7 +9907,7 @@ describe('FileViewer tweaks toolbar', () => {
     });
     expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
     const scaledShell = Array.from(container.querySelectorAll('div')).find(
-      (node) => node.style.transform === 'scale(0.625)',
+      (node) => node.style.transform === 'scale(var(--preview-scale, 1))',
     );
     expect(scaledShell).toBeTruthy();
 
@@ -8644,7 +9959,8 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.load(frame);
     const responsiveRequest = latestPreviewContentSizeRequest(previewWindow);
     act(() => postPreviewContentSizeResponse(previewWindow, responsiveRequest, 900, 900));
-    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+      .toBeCloseTo(1);
 
     viewerBodyWidth = 720;
     window.dispatchEvent(new Event('resize'));
@@ -8666,7 +9982,8 @@ describe('FileViewer tweaks toolbar', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '80%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.8);
     });
   });
 
@@ -8733,7 +10050,8 @@ describe('FileViewer tweaks toolbar', () => {
     act(() => postPreviewContentWidth(previewWindow, 1440, 900));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.625);
     });
   });
 
@@ -8774,16 +10092,17 @@ describe('FileViewer tweaks toolbar', () => {
     act(() => postPreviewContentWidth(previewWindow, 900));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(1);
     });
     viewerBodyWidth = 720;
     window.dispatchEvent(new Event('resize'));
-    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(1);
     });
     const scaledShell = Array.from(container.querySelectorAll('div')).find(
-      (node) => node.style.transform === 'scale(1)',
+      (node) => node.style.transform === 'scale(var(--preview-scale, 1))',
     );
     expect(scaledShell).toBeTruthy();
   });
@@ -8818,24 +10137,28 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.load(firstFrame);
     act(() => postPreviewContentWidth(firstWindow, 1440, 900));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.625);
     });
     const preReloadRequest = latestPreviewContentSizeRequest(firstWindow);
     const preReloadRequestCount = previewContentSizeRequests(firstWindow).length;
     fireEvent.click(screen.getByRole('button', { name: /reload preview/i }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(1);
     });
     await Promise.resolve();
     expect(previewContentSizeRequests(firstWindow)).toHaveLength(preReloadRequestCount);
     act(() => {
       postPreviewContentSizeResponse(firstWindow, preReloadRequest, 96_400, 96_400);
     });
-    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+      .toBeCloseTo(1);
     first.unmount();
 
     const sameRevision = render(<FileViewer {...props} />);
-    expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+    expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+      .toBeCloseTo(0.625);
     const remountedFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     const remountedWindow = installSandboxedPreviewWindow(remountedFrame);
     fireEvent.load(remountedFrame);
@@ -8846,7 +10169,8 @@ describe('FileViewer tweaks toolbar', () => {
     sameRevision.unmount();
 
     render(<FileViewer {...props} file={{ ...file, mtime: 1710000001 }} />);
-    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+      .toBeCloseTo(1);
   });
 
   it.each([
@@ -8883,7 +10207,8 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.load(frame);
     act(() => postPreviewContentWidth(previewWindow, 1440, 900));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '63%' })).toBeTruthy();
+      expect(Number(screen.getByTestId('comment-preview-layout').getAttribute('data-authoring-preview-scale')))
+        .toBeCloseTo(0.625);
     });
 
     fireEvent.click(screen.getByTestId(toggleTestId));
@@ -10583,6 +11908,14 @@ describe('FileViewer tweaks toolbar', () => {
     expect(rule).toContain('width: min(296px, calc(100% - 28px));');
   });
 
+  it('hides canvas scrollbar chrome while retaining the scrollable preview layout', () => {
+    const css = readFileSync(join(process.cwd(), 'src/styles/viewer/core.css'), 'utf8');
+
+    expect(css).toMatch(/\.viewer-body-canvas,\s*\.viewer-body-canvas > \.preview-viewport\s*\{[^}]*scrollbar-width: none;/);
+    expect(css).toMatch(/\.viewer-body-canvas::\-webkit-scrollbar,\s*\.viewer-body-canvas > \.preview-viewport::\-webkit-scrollbar\s*\{[^}]*display: none;/);
+    expect(css).toMatch(/\.viewer-body\s*\{[^}]*overflow: auto;/);
+  });
+
   it('reorders saved comments with the drag handle for send sequence', () => {
     const onReorder = vi.fn();
     const comments: PreviewComment[] = [
@@ -11554,7 +12887,8 @@ describe('LiveArtifactViewer', () => {
     expect(screen.queryByRole('button', { name: /zoom in/i })).toBeNull();
 
     fireEvent.click(zoomTrigger);
-    // One ladder across every viewer: quarter steps down from 1:1.
+    // Both live artifacts and the XYFlow-backed HTML canvas expose the same
+    // compact fixed ladder; continuous gestures can still land between presets.
     expect(screen.getByRole('menuitem', { name: '25%' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '50%' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: '200%' })).toBeNull();

@@ -643,17 +643,33 @@
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
-}
-/* The inspector is no longer a child of the workspace — it renders in the
-   structure rail's Edit tab — so the rules that positioned it over the artboard
-   are gone with it. `.manual-edit-page-card` survives as a marker class only:
-   the page-styles variant still wants to hug its content rather than fill the
-   rail's height. */
-.manual-edit-page-card .manual-edit-modal.cc-panel {
-  height: auto;
+  /* XYFlow pans the artboard with a transform. Clip that transformed overflow
+     here so it cannot enlarge `.viewer-body` and create a second vertical
+     scroll range outside the canvas. Panning itself remains owned by XYFlow. */
+  overflow: hidden;
+  background: var(--bg-panel);
 }
 
+.manual-edit-flow-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.manual-edit-flow-canvas .react-flow__pane {
+  cursor: grab;
+}
+
+.manual-edit-flow-canvas .react-flow__pane:active {
+  cursor: grabbing;
+}
+
+.manual-edit-workspace.preview-viewport:not(.preview-viewport-desktop) {
+  background: transparent;
+}
 /* Docked in the rail, the inspector is the tab's content — not an object
    resting on it. Its card chrome (border, radius, shadow, glass) was drawn
    against a surface of the SAME `--bg-panel`, so all it produced was an outline
@@ -664,6 +680,7 @@
 .viewer-structure-rail .manual-edit-modal {
   border: 0;
   border-radius: 0;
+  background: var(--bg);
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -713,6 +730,21 @@
 .manual-edit-content-inspector {
   padding-bottom: var(--spacing-12);
   border-bottom: var(--stroke-thin) solid var(--border);
+}
+.manual-edit-action-target {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: var(--font-size-12, 12px);
+  cursor: pointer;
+}
+.manual-edit-action-target input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--blue, #1A74FF);
 }
 .cc-section { display: flex; flex-direction: column; gap: var(--spacing-8); }
 .cc-section-inactive { opacity: 0.58; }
@@ -1150,22 +1182,229 @@
 }
 
 .manual-edit-workspace.preview-viewport:not(.preview-viewport-desktop) {
-  justify-content: center;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  justify-content: initial;
 }
 
 .manual-edit-canvas {
   position: absolute;
   inset: 0;
+  z-index: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-panel);
+  pointer-events: none;
+  transform: translate3d(
+    var(--manual-edit-pan-x, 0),
+    var(--manual-edit-pan-y, 0),
+    0
+  );
+  will-change: transform;
+}
+
+.manual-edit-canvas > div {
+  will-change: transform;
+}
+
+.preview-viewport:not(.preview-viewport-desktop).manual-edit-workspace .manual-edit-canvas {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: calc(var(--preview-viewport-width) * var(--preview-scale, 1));
+  /* Mobile/tablet keep their responsive width and device chrome, but Edit is
+     an expanded document canvas just like desktop — never a clipped viewport. */
+  height: var(
+    --manual-edit-scaled-artboard-height,
+    calc(var(--preview-viewport-height) * var(--preview-scale, 1))
+  );
+  margin: 0;
+}
+
+.preview-viewport-desktop.manual-edit-workspace .manual-edit-canvas {
+  /* Edit publishes one stable logical artboard height. Scaling that height
+     with the width keeps low zoom levels proportional instead of making the
+     iframe viewport taller as the artboard gets narrower. The 48px fallback
+     preserves the previous 24px top/bottom clearance at 100%. */
+  inset-block: 0 auto;
+  height: var(--manual-edit-scaled-artboard-height, calc(100% - 48px));
+  /* XYFlow owns the viewport origin in Edit. Auto margins would add a second,
+     zoom-dependent horizontal offset below the fit width and make the point
+     beneath a trackpad pinch drift sideways. */
+  margin-inline: 0;
 }
 
 .manual-edit-canvas iframe {
   width: 100%;
   height: 100%;
   border: 0;
+  pointer-events: auto;
+}
+
+/* The owning HTML preview remains mounted while a project asset is inspected.
+   Hiding rather than conditionally rendering this branch preserves both
+   transport iframe identities and the manual-edit bridge's in-memory state. */
+.manual-edit-origin-preview-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.manual-edit-asset-shell {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+/* Structure-row previews are transient peeks. They never intercept the
+   pointer or keyboard from the row that owns their lifetime. */
+.manual-edit-page-hover-shell,
+.manual-edit-page-hover-preview {
+  pointer-events: none;
+}
+
+.manual-edit-asset-preview {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  background: var(--bg);
+  pointer-events: auto;
+}
+
+.manual-edit-asset-download {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: var(--stroke-thin) solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.manual-edit-asset-download:hover {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.manual-edit-asset-close {
+  all: unset;
+  position: absolute;
+  inset-block-start: var(--spacing-12);
+  inset-inline-end: var(--spacing-12);
+  z-index: 3;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: var(--stroke-thin) solid var(--border-soft);
+  border-radius: var(--radius-circular);
+  background: var(--bg);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-ultra-fast) var(--curve-easy-ease),
+    border-color var(--duration-ultra-fast) var(--curve-easy-ease),
+    color var(--duration-ultra-fast) var(--curve-easy-ease),
+    transform var(--duration-faster) var(--curve-easy-ease);
+}
+
+.manual-edit-asset-close:hover {
+  background: var(--bg-fill-tertiary);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.manual-edit-asset-close:active {
+  transform: translateY(1px);
+}
+
+.manual-edit-asset-close:focus-visible {
+  outline: var(--stroke-thin) solid var(--blue);
+  outline-offset: 2px;
+}
+
+.manual-edit-asset-preview-body {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-subtle);
+}
+
+.manual-edit-asset-media,
+.manual-edit-asset-sketch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.manual-edit-asset-frame {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.manual-edit-asset-audio,
+.manual-edit-asset-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-12);
+  max-width: 520px;
+  padding: var(--spacing-24);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.manual-edit-asset-audio audio {
+  width: min(420px, 80vw);
+}
+
+.manual-edit-asset-preview-body > .code-viewer,
+.manual-edit-asset-document {
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: var(--spacing-16);
+  overflow: auto;
+  background: var(--bg);
+}
+
+.manual-edit-canvas-panning {
+  pointer-events: none;
+}
+
+.manual-edit-canvas-panning > .manual-edit-hover-action,
+.manual-edit-canvas-panning iframe {
+  pointer-events: none;
 }
 
 .manual-edit-layers,
@@ -1311,11 +1550,11 @@
   border-top: var(--stroke-thin) solid var(--border);
   background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
 }
+.viewer-structure-rail .manual-edit-footer {
+  background: var(--bg);
+}
 .manual-edit-footer .cc-section {
   margin: 0;
-}
-.manual-edit-footer .manual-edit-error {
-  margin: 8px 0 0;
 }
 .manual-edit-footer-actions {
   display: flex;
@@ -1336,6 +1575,30 @@
 }
 .manual-edit-footer-right {
   flex: 0 0 auto;
+}
+
+/* The docked inspector has less horizontal room than the floating panel.
+   Reserve the destructive action's hit target, then let the three document
+   actions share the remaining width instead of overflowing into one another. */
+.viewer-structure-rail .manual-edit-footer-actions {
+  gap: var(--spacing-8);
+}
+.viewer-structure-rail .manual-edit-footer-left {
+  flex: 0 0 var(--spacing-36);
+}
+.viewer-structure-rail .manual-edit-footer-left:empty {
+  display: none;
+}
+.viewer-structure-rail .manual-edit-footer-right {
+  flex: 1 1 0;
+  gap: var(--spacing-8);
+}
+.viewer-structure-rail .manual-edit-footer-right .manual-edit-footer-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: var(--spacing-8);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .manual-edit-delete-btn {
   display: inline-flex;
@@ -1712,16 +1975,6 @@
 
 .manual-edit-style-grid .wide {
   grid-column: 1 / -1;
-}
-
-.manual-edit-error {
-  margin: 0 12px 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--red-border);
-  border-radius: var(--radius-sm);
-  color: var(--red);
-  background: var(--red-bg);
-  font-size: 12px;
 }
 
 .manual-edit-changes {

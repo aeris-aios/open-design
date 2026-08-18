@@ -14,7 +14,7 @@ import styles from './DesignStructurePanel.module.css';
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
 type StructureTab = 'structure' | 'layers' | 'edit' | 'assets';
-type AssetsSubTab = 'brand' | 'mine';
+type AssetsSubTab = 'images' | 'files';
 
 const TAB_ORDER: readonly StructureTab[] = ['structure', 'layers', 'edit', 'assets'];
 
@@ -34,21 +34,7 @@ const TAB_LABEL_KEYS: Record<StructureTab, keyof Dict> = {
  * incident is gone — but an unbounded DOM is still an unbounded DOM.
  */
 const GROUP_RENDER_BATCH = 50;
-
-/**
- * Files that make a project's design system legible on disk. The Brand section
- * lists what the project ACTUALLY carries rather than a catalog of installable
- * kits, so a project with no system reads as empty instead of borrowed.
- */
-const DESIGN_SYSTEM_BASENAMES = new Set([
-  'design.md',
-  'design_system.md',
-  'design-system.md',
-  'tokens.json',
-  'tokens.css',
-  'brand.md',
-]);
-const DESIGN_SYSTEM_DIR_PATTERN = /(^|\/)(design[-_]?system|design[-_]?tokens|brand)\//iu;
+const PAGE_PREVIEW_HOVER_DELAY_MS = 100;
 
 interface StructureGroup {
   key: string;
@@ -75,6 +61,17 @@ export interface DesignStructurePanelProps {
   onToggleSelect: (name: string) => void;
   onEnterDir: (dir: string) => void;
   onOpenFile: (name: string) => void;
+  /** Temporarily previews a page on the caller's canvas while its row is hovered or focused. */
+  onPreviewPageChange?: (file: ProjectFile | null) => void;
+  /**
+   * Preview a project asset on the caller's current canvas. The Design Files
+   * surface omits this and keeps its historical open-file behavior; the live
+   * viewer supplies it so choosing an asset opens a read-only presentation
+   * layer without navigating away from the owning project.
+   */
+  onPreviewAsset?: (file: ProjectFile) => void;
+  /** File currently rendered by the caller's canvas. */
+  activeAssetName?: string | null;
   onOpenLiveArtifact: (tabId: LiveArtifactWorkspaceEntry['tabId']) => void;
   /** Opens the row's context menu at a viewport position (rename / delete / …). */
   onOpenRowMenu?: (name: string, position: { top: number; left: number }) => void;
@@ -115,6 +112,8 @@ export interface DesignStructurePanelProps {
   structurePagesOnly?: boolean;
   /** Plural section header for a category, owned by the parent panel's dictionary. */
   categoryLabel: (category: FileCategory) => string;
+  /** Page already shown by a surrounding viewer; used to mark the matching tree row. */
+  activePageName?: string | null;
   t: TranslateFn;
 }
 
@@ -139,6 +138,9 @@ export function DesignStructurePanel({
   onToggleSelect,
   onEnterDir,
   onOpenFile,
+  onPreviewPageChange,
+  onPreviewAsset,
+  activeAssetName,
   onOpenLiveArtifact,
   onOpenRowMenu,
   renderRenameInput,
@@ -147,10 +149,11 @@ export function DesignStructurePanel({
   structurePagesOnly = false,
   tabs = TAB_ORDER,
   categoryLabel,
+  activePageName,
   t,
 }: DesignStructurePanelProps) {
   const [tab, setTab] = useState<StructureTab>(() => tabs[0] ?? 'structure');
-  const [assetsSubTab, setAssetsSubTab] = useState<AssetsSubTab>('mine');
+  const [assetsSubTab, setAssetsSubTab] = useState<AssetsSubTab>('files');
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [revealed, setRevealed] = useState<Readonly<Record<string, number>>>({});
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
@@ -164,9 +167,10 @@ export function DesignStructurePanel({
   // Deriving the fallback (instead of syncing it through an effect) keeps a
   // deleted selection from leaving one stale frame on screen.
   const activePage = useMemo(() => {
+    if (activePageName && pages.some((page) => page.name === activePageName)) return activePageName;
     if (selectedPage && pages.some((page) => page.name === selectedPage)) return selectedPage;
     return pages[0]?.name ?? null;
-  }, [selectedPage, pages]);
+  }, [activePageName, selectedPage, pages]);
 
   const groups = useMemo(
     () => buildGroups(
@@ -228,7 +232,11 @@ export function DesignStructurePanel({
   }, [tabs]);
 
   return (
-    <div className={styles.rail} data-testid="design-structure-rail">
+    <div
+      className={styles.rail}
+      data-testid="design-structure-rail"
+      data-structure-pages-only={structurePagesOnly ? 'true' : 'false'}
+    >
       {/* A single-tab mount (the flow map's rail) has nothing to switch, so
           the chip and the rule under it would only name what the reader is
           already looking at — the header earns its row only with a choice. */}
@@ -249,7 +257,7 @@ export function DesignStructurePanel({
           ))}
         </div>
       ) : null}
-      <div className={styles.body}>
+      <div className={styles.body} data-role="design-structure-body">
         {tab === 'structure' ? (
           <StructureTree
             groups={groups}
@@ -262,11 +270,13 @@ export function DesignStructurePanel({
             viewerOnly={viewerOnly}
             selected={selected}
             currentDir={currentDir}
+            flattenRootPages={structurePagesOnly}
             onToggleSelect={onToggleSelect}
             onToggleGroup={toggleGroup}
             onRevealMore={revealMore}
             onEnterDir={onEnterDir}
             onOpenPage={openPage}
+            onPreviewPageChange={onPreviewPageChange}
             onOpenLiveArtifact={onOpenLiveArtifact}
             onOpenRowMenu={onOpenRowMenu}
             renderRenameInput={renderRenameInput}
@@ -291,6 +301,8 @@ export function DesignStructurePanel({
             subTab={assetsSubTab}
             onSubTabChange={setAssetsSubTab}
             onOpenFile={onOpenFile}
+            onPreviewAsset={onPreviewAsset}
+            activeAssetName={activeAssetName}
             t={t}
           />
         ) : null}
@@ -314,11 +326,13 @@ function StructureTree({
   viewerOnly,
   selected,
   currentDir,
+  flattenRootPages,
   onToggleSelect,
   onToggleGroup,
   onRevealMore,
   onEnterDir,
   onOpenPage,
+  onPreviewPageChange,
   onOpenLiveArtifact,
   onOpenRowMenu,
   renderRenameInput,
@@ -334,19 +348,43 @@ function StructureTree({
   viewerOnly?: boolean;
   selected: ReadonlySet<string>;
   currentDir: string;
+  flattenRootPages: boolean;
   onToggleSelect: (name: string) => void;
   onToggleGroup: (key: string) => void;
   onRevealMore: (key: string) => void;
   onEnterDir: (dir: string) => void;
   onOpenPage: (name: string) => void;
+  onPreviewPageChange?: (file: ProjectFile | null) => void;
   onOpenLiveArtifact: (tabId: LiveArtifactWorkspaceEntry['tabId']) => void;
   onOpenRowMenu?: (name: string, position: { top: number; left: number }) => void;
   renderRenameInput?: (name: string) => ReactNode | null;
   t: TranslateFn;
 }) {
+  const [hoveredPageName, setHoveredPageName] = useState<string | null>(null);
+  const [focusedPageName, setFocusedPageName] = useState<string | null>(null);
+  const previewPageName = hoveredPageName ?? focusedPageName;
+  const previewPage = useMemo(
+    () => groups.flatMap((group) => group.entries).find((file) => file.name === previewPageName) ?? null,
+    [groups, previewPageName],
+  );
+
+  useEffect(() => {
+    if (!onPreviewPageChange) return;
+    if (!previewPage) {
+      onPreviewPageChange(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      onPreviewPageChange(previewPage);
+    }, PAGE_PREVIEW_HOVER_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [onPreviewPageChange, previewPage]);
+
+  useEffect(() => () => onPreviewPageChange?.(null), [onPreviewPageChange]);
+
   return (
-    <div className={styles.column}>
-      <div className={styles.group}>
+    <div className={styles.column} data-role="structure-page-tree">
+      <div className={styles.group} data-role="structure-page-groups">
         {/* No head row here. The tab strip directly above already says 结构, so
             repeating it named the surface twice, and the group/page tally it
             carried is restated by the counts on the tree's own group rows
@@ -371,83 +409,119 @@ function StructureTree({
           </div>
         ) : null}
         {groups.map((group) => {
-          const isCollapsed = collapsed.has(group.key);
+          const rootPagesAreFlat = flattenRootPages && group.key === 'pages:';
+          const isCollapsed = !rootPagesAreFlat && collapsed.has(group.key);
           const limit = revealed[group.key] ?? GROUP_RENDER_BATCH;
           const visible = group.entries.slice(0, limit);
           const hidden = group.entries.length - visible.length;
           return (
-            <div key={group.key} className={styles.tree}>
-              <button
-                type="button"
-                className={styles.treeHead}
-                aria-expanded={!isCollapsed}
-                onClick={() => onToggleGroup(group.key)}
-              >
-                <span
-                  className={`${styles.chevron} ${isCollapsed ? styles.chevronCollapsed : ''}`}
-                  aria-hidden
+            <div
+              key={group.key}
+              className={`${styles.tree}${rootPagesAreFlat ? ` ${styles.treeFlat}` : ''}`}
+              data-role="structure-page-group"
+              data-root-pages={group.key === 'pages:' ? 'true' : undefined}
+              data-flat={rootPagesAreFlat ? 'true' : undefined}
+            >
+              {rootPagesAreFlat ? null : (
+                <button
+                  type="button"
+                  className={styles.treeHead}
+                  data-role="structure-group-head"
+                  aria-expanded={!isCollapsed}
+                  onClick={() => onToggleGroup(group.key)}
                 >
-                  <RemixIcon name="arrow-down-s-line" size={12} />
-                </span>
-                <span className={styles.treeHeadLabel}>{group.label}</span>
-                <span className={styles.treeHeadCount}>{group.entries.length}</span>
-              </button>
+                  <span
+                    className={`${styles.chevron} ${isCollapsed ? styles.chevronCollapsed : ''}`}
+                    data-role="structure-group-chevron"
+                    aria-hidden
+                  >
+                    <RemixIcon name="arrow-down-s-line" size={12} />
+                  </span>
+                  <span className={styles.treeHeadLabel} data-role="structure-group-label">
+                    {group.label}
+                  </span>
+                  <span className={styles.treeHeadCount} data-role="structure-group-count">
+                    {group.entries.length}
+                  </span>
+                </button>
+              )}
               {isCollapsed ? null : (
                 <>
                   {visible.map((file) => (
                     <div
                       key={file.name}
                       data-testid={`design-file-row-${file.name}`}
+                      data-role="structure-page-row"
                       data-selected={selected.has(file.name) ? 'true' : undefined}
+                      aria-current={file.name === activePage ? 'page' : undefined}
                       className={`${styles.node} ${
                         file.name === activePage ? styles.nodeActive : ''
                       } ${selected.has(file.name) ? styles.nodeSelected : ''}`}
+                      onMouseEnter={() => setHoveredPageName(file.name)}
+                      onMouseLeave={() => setHoveredPageName(null)}
+                      onFocus={() => setFocusedPageName(file.name)}
+                      onBlur={(event) => {
+                        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                        setFocusedPageName(null);
+                      }}
                       onContextMenu={(event) => {
                         if (!onOpenRowMenu) return;
                         event.preventDefault();
                         onOpenRowMenu(file.name, { top: event.clientY, left: event.clientX });
                       }}
                     >
-                      <span
-                        className={styles.nodeCheck}
-                        data-testid={`design-structure-check-${file.name}`}
-                        role={viewerOnly ? undefined : 'checkbox'}
-                        aria-checked={viewerOnly ? undefined : selected.has(file.name)}
-                        aria-disabled={viewerOnly ? 'true' : undefined}
-                        tabIndex={viewerOnly ? -1 : 0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (viewerOnly) return;
-                          onToggleSelect(file.name);
-                        }}
-                        onKeyDown={(event) => {
-                          if (viewerOnly) return;
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
+                      {viewerOnly && rootPagesAreFlat ? null : (
+                        <span
+                          className={styles.nodeCheck}
+                          data-testid={`design-structure-check-${file.name}`}
+                          role={viewerOnly ? undefined : 'checkbox'}
+                          aria-checked={viewerOnly ? undefined : selected.has(file.name)}
+                          aria-disabled={viewerOnly ? 'true' : undefined}
+                          tabIndex={viewerOnly ? -1 : 0}
+                          onClick={(event) => {
                             event.stopPropagation();
+                            if (viewerOnly) return;
                             onToggleSelect(file.name);
-                          }
-                        }}
-                      >
-                        {viewerOnly ? null : (
-                          <RemixIcon
-                            name={
-                              selected.has(file.name) ? 'checkbox-line' : 'checkbox-blank-line'
+                          }}
+                          onKeyDown={(event) => {
+                            if (viewerOnly) return;
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onToggleSelect(file.name);
                             }
-                            size={13}
-                          />
-                        )}
-                      </span>
+                          }}
+                        >
+                          {viewerOnly ? null : (
+                            <RemixIcon
+                              name={
+                                selected.has(file.name) ? 'checkbox-line' : 'checkbox-blank-line'
+                              }
+                              size={13}
+                            />
+                          )}
+                        </span>
+                      )}
                       {renderRenameInput?.(file.name) ?? (
                         <button
                           type="button"
                           className={styles.nodeOpen}
+                          data-role="structure-page-open"
                           title={file.name}
-                          onClick={() => onOpenPage(file.name)}
+                          onClick={() => {
+                            setHoveredPageName(null);
+                            setFocusedPageName(null);
+                            onPreviewPageChange?.(null);
+                            onOpenPage(file.name);
+                          }}
                         >
-                          <span className={styles.nodeName}>{displayLabel(file.name)}</span>
+                          <span className={styles.nodeName} data-role="structure-page-name">
+                            {displayLabel(file.name)}
+                          </span>
                           {group.pages ? null : (
-                            <span className={styles.nodeExt}>{extensionLabel(file.name)}</span>
+                            <span className={styles.nodeExt} data-role="structure-page-extension">
+                              {extensionLabel(file.name)}
+                            </span>
                           )}
                         </button>
                       )}
@@ -473,6 +547,7 @@ function StructureTree({
                       type="button"
                       className={styles.revealMore}
                       data-testid={`design-structure-reveal-${group.key}`}
+                      data-role="structure-page-reveal"
                       onClick={() => onRevealMore(group.key)}
                     >
                       {t('designFiles.showMore', { n: hidden })}
@@ -726,6 +801,8 @@ function AssetsView({
   subTab,
   onSubTabChange,
   onOpenFile,
+  onPreviewAsset,
+  activeAssetName,
   t,
 }: {
   projectId: string;
@@ -733,10 +810,13 @@ function AssetsView({
   subTab: AssetsSubTab;
   onSubTabChange: (next: AssetsSubTab) => void;
   onOpenFile: (name: string) => void;
+  onPreviewAsset?: (file: ProjectFile) => void;
+  activeAssetName?: string | null;
   t: TranslateFn;
 }) {
   const { workspaceContext } = useProjectCollabContext();
   const [imageLimit, setImageLimit] = useState(GROUP_RENDER_BATCH);
+  const [fileLimit, setFileLimit] = useState(GROUP_RENDER_BATCH);
   const images = useMemo(
     () =>
       files
@@ -744,69 +824,110 @@ function AssetsView({
         .sort((a, b) => b.mtime - a.mtime),
     [files],
   );
-  const systemFiles = useMemo(
-    () => files.filter(isDesignSystemFile).sort((a, b) => a.name.localeCompare(b.name)),
+  const projectFiles = useMemo(
+    () =>
+      files
+        .slice()
+        .sort((a, b) => {
+          const categoryDelta = SECTION_ORDER.indexOf(fileCategory(a))
+            - SECTION_ORDER.indexOf(fileCategory(b));
+          if (categoryDelta !== 0) return categoryDelta;
+          const modifiedDelta = b.mtime - a.mtime;
+          return modifiedDelta !== 0 ? modifiedDelta : a.name.localeCompare(b.name);
+        }),
     [files],
   );
   const visibleImages = images.slice(0, imageLimit);
   const hiddenImages = images.length - visibleImages.length;
+  const visibleFiles = projectFiles.slice(0, fileLimit);
+  const hiddenFiles = projectFiles.length - visibleFiles.length;
+  const activate = (asset: ProjectFile) => {
+    if (onPreviewAsset) onPreviewAsset(asset);
+    else onOpenFile(asset.name);
+  };
 
   return (
-    <div className={styles.column}>
-      <div className={styles.segment} role="tablist">
+    <div className={styles.column} data-testid="design-structure-assets-view">
+      <div
+        className={styles.segment}
+        role="tablist"
+        aria-label={t('designStructure.tabAssets')}
+        data-testid="design-structure-assets-tabs"
+      >
         <button
           type="button"
           role="tab"
-          aria-selected={subTab === 'brand'}
-          className={subTab === 'brand' ? styles.segmentActive : undefined}
-          data-testid="design-structure-assets-brand"
-          onClick={() => onSubTabChange('brand')}
+          aria-selected={subTab === 'images'}
+          className={subTab === 'images' ? styles.segmentActive : undefined}
+          data-testid="design-structure-assets-images"
+          onClick={() => onSubTabChange('images')}
         >
-          {t('designStructure.assetsBrand')}
+          {t('designFiles.sectionImages')}
         </button>
         <button
           type="button"
           role="tab"
-          aria-selected={subTab === 'mine'}
-          className={subTab === 'mine' ? styles.segmentActive : undefined}
-          data-testid="design-structure-assets-mine"
-          onClick={() => onSubTabChange('mine')}
+          aria-selected={subTab === 'files'}
+          className={subTab === 'files' ? styles.segmentActive : undefined}
+          data-testid="design-structure-assets-files"
+          onClick={() => onSubTabChange('files')}
         >
-          {t('designStructure.assetsMine')}
+          {t('workspace.allProjectFiles')}
         </button>
       </div>
-      {subTab === 'brand' ? (
-        systemFiles.length === 0 ? (
-          <EmptyNote title={t('designStructure.assetsBrandEmpty')} />
+      {subTab === 'files' ? (
+        projectFiles.length === 0 ? (
+          <EmptyNote title={t('designFiles.empty')} />
         ) : (
-          <div className={styles.group}>
-            <div className={styles.groupHead}>
-              <span>{t('designStructure.assetsBrand')}</span>
-              <span className={styles.groupCount}>
-                {systemFiles.length}
+          <div className={styles.group} data-testid="design-structure-assets-group">
+            <div className={styles.groupHead} data-testid="design-structure-assets-group-head">
+              <span data-testid="design-structure-assets-group-title">
+                {t('workspace.allProjectFiles')}
+              </span>
+              <span className={styles.groupCount} data-testid="design-structure-assets-count">
+                {projectFiles.length}
               </span>
             </div>
-            {systemFiles.map((file) => (
+            <div className={styles.assetFiles} data-testid="design-structure-asset-files">
+              {visibleFiles.map((file) => (
+                <button
+                  key={file.name}
+                  type="button"
+                  className={`${styles.assetFile}${activeAssetName === file.name ? ` ${styles.assetFileActive}` : ''}`}
+                  data-testid={`design-structure-asset-${file.name}`}
+                  title={file.name}
+                  aria-current={activeAssetName === file.name ? 'true' : undefined}
+                  onClick={() => activate(file)}
+                >
+                  <Icon name={assetFileIcon(file)} size={14} />
+                  <span className={styles.nodeName} data-role="asset-name">{file.name}</span>
+                  <span className={styles.nodeExt} data-role="asset-extension">
+                    {extensionLabel(file.name)}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {hiddenFiles > 0 ? (
               <button
-                key={file.name}
                 type="button"
-                className={styles.node}
-                title={file.name}
-                onClick={() => onOpenFile(file.name)}
+                className={styles.revealMore}
+                data-testid="design-structure-reveal-asset-files"
+                onClick={() => setFileLimit((current) => current + GROUP_RENDER_BATCH)}
               >
-                <span className={styles.nodeName}>{file.name}</span>
-                <span className={styles.nodeExt}>{extensionLabel(file.name)}</span>
+                {t('designFiles.showMore', { n: hiddenFiles })}
               </button>
-            ))}
+            ) : null}
           </div>
         )
       ) : images.length === 0 ? (
         <EmptyNote title={t('designStructure.assetsMineEmpty')} />
       ) : (
-        <div className={styles.group}>
-          <div className={styles.groupHead}>
-            <span>{t('designStructure.assetsMine')}</span>
-            <span className={styles.groupCount}>
+        <div className={styles.group} data-testid="design-structure-assets-group">
+          <div className={styles.groupHead} data-testid="design-structure-assets-group-head">
+            <span data-testid="design-structure-assets-group-title">
+              {t('designFiles.sectionImages')}
+            </span>
+            <span className={styles.groupCount} data-testid="design-structure-assets-count">
               {images.length}
             </span>
           </div>
@@ -818,9 +939,10 @@ function AssetsView({
               <button
                 key={file.name}
                 type="button"
-                className={styles.asset}
+                className={`${styles.asset}${activeAssetName === file.name ? ` ${styles.assetActive}` : ''}`}
                 data-testid={`design-structure-asset-${file.name}`}
-                onClick={() => onOpenFile(file.name)}
+                aria-current={activeAssetName === file.name ? 'true' : undefined}
+                onClick={() => activate(file)}
               >
                 <img
                   src={projectFileUrl(projectId, file.name, workspaceContext)}
@@ -846,9 +968,13 @@ function AssetsView({
   );
 }
 
-function isDesignSystemFile(file: ProjectFile): boolean {
-  if (DESIGN_SYSTEM_DIR_PATTERN.test(file.name)) return true;
-  return DESIGN_SYSTEM_BASENAMES.has(baseName(file.name).toLowerCase());
+function assetFileIcon(file: ProjectFile): 'file-code' | 'file-text' | 'image' | 'pencil' | 'file' {
+  const category = fileCategory(file);
+  if (category === 'html' || category === 'stylesheet' || category === 'code') return 'file-code';
+  if (category === 'text' || category === 'document') return 'file-text';
+  if (category === 'image') return 'image';
+  if (category === 'sketch') return 'pencil';
+  return 'file';
 }
 
 /* ------------------------------------------------------------------ */

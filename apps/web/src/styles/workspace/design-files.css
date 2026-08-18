@@ -688,6 +688,8 @@
   cursor: pointer;
 }
 .df-empty {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -699,11 +701,34 @@
   min-height: 320px;
   /* Plain pure-white surface — grid pattern removed. */
   background-color: #fff;
+  overflow: hidden;
+}
+.df-empty-sparkles {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  opacity: 0.72;
+  pointer-events: none;
+  -webkit-mask-image: radial-gradient(
+    ellipse 42% 34% at 50% 54%,
+    #000 0%,
+    #000 28%,
+    transparent 76%
+  );
+  mask-image: radial-gradient(
+    ellipse 42% 34% at 50% 54%,
+    #000 0%,
+    #000 28%,
+    transparent 76%
+  );
 }
 .df-empty-pill {
   /* Chrome-less: the illustration / title / actions sit directly on the
      empty-state surface — no card border, fill, or shadow around them. */
   display: inline-flex;
+  position: relative;
+  z-index: 1;
   flex-direction: column;
   align-items: center;
   gap: 14px;

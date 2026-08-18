@@ -1340,7 +1340,12 @@ function injectUrlPreviewBridge(html: string, bridge: 'scroll' | 'selection' | '
     );
   }
   if (bridge === 'scroll') {
-    return injectBeforeBodyClose(html, 'data-od-url-scroll-bridge', URL_PREVIEW_SCROLL_BRIDGE);
+    const withHiddenScrollbars = injectAfterHeadOpen(
+      html,
+      'data-od-url-preview-scrollbars-hidden',
+      '<style data-od-url-preview-scrollbars-hidden>html,body{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}</style>',
+    );
+    return injectBeforeBodyClose(withHiddenScrollbars, 'data-od-url-scroll-bridge', URL_PREVIEW_SCROLL_BRIDGE);
   }
   if (bridge === 'selection') {
     return injectBeforeBodyClose(html, 'data-od-url-selection-bridge', URL_PREVIEW_SELECTION_BRIDGE);

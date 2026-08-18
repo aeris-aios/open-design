@@ -4,6 +4,8 @@
 // have pages. These cover the parts the parent panel's suite cannot see: the
 // tab switch itself, the page-outline parser behind the Layers tab, and the
 // asset views.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -49,10 +51,13 @@ const t = ((key: string, vars?: Record<string, string | number>) => {
     'designStructure.assetsMine': 'My assets',
     'designStructure.assetsBrandEmpty': 'No design system files yet',
     'designStructure.assetsMineEmpty': 'No images yet',
+    'designFiles.empty': 'No files yet',
+    'designFiles.sectionImages': 'Images',
     'designFiles.sectionFolders': 'Folders',
     'designFiles.sectionLiveArtifacts': 'Live artifacts',
     'designFiles.showMore': `Show +${vars?.n} more`,
     'designFiles.openInTab': 'Open in tab',
+    'workspace.allProjectFiles': 'All project files',
     'common.loading': 'Loading',
   };
   return labels[key] ?? key;
@@ -83,6 +88,26 @@ function renderRail(files: ProjectFile[], overrides: Record<string, unknown> = {
 afterEach(() => cleanup());
 
 describe('DesignStructurePanel structure tab', () => {
+  it('keeps tree controls out of the global bordered 36px button treatment', () => {
+    const css = readFileSync(
+      join(process.cwd(), 'src/components/design-files/DesignStructurePanel.module.css'),
+      'utf8',
+    );
+    const treeHeadRule = css.match(/\.treeHead\s*\{[^}]+\}/)?.[0] ?? '';
+    const nodeRule = css.match(/\.node\s*\{[^}]+\}/)?.[0] ?? '';
+    const nodeOpenRule = css.match(/\.nodeOpen\s*\{[^}]+\}/)?.[0] ?? '';
+
+    for (const rule of [treeHeadRule, nodeRule, nodeOpenRule]) {
+      expect(rule).toContain('height: auto;');
+      expect(rule).toContain('border: 0;');
+      expect(rule).toContain('background: transparent;');
+      expect(rule).toContain('box-shadow: none;');
+    }
+    expect(nodeOpenRule).toContain('padding: 0;');
+    expect(css).toContain('.treeHead:hover:not(:disabled)');
+    expect(css).toContain('.nodeOpen:hover:not(:disabled)');
+  });
+
   it('lists pages only in Structure when structurePagesOnly is set, keeping Assets whole', () => {
     renderRail(
       [
@@ -98,8 +123,110 @@ describe('DesignStructurePanel structure tab', () => {
 
     // …but the Assets tab still sees the full inventory.
     fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
-    fireEvent.click(screen.getByTestId('design-structure-assets-mine'));
+    fireEvent.click(screen.getByTestId('design-structure-assets-images'));
     expect(screen.getByTestId('design-structure-asset-asset-01.png')).toBeTruthy();
+  });
+
+  it('marks the page already open in the viewer instead of the first page in the list', () => {
+    renderRail(
+      [file({ name: 'ops-portal-hifi.html' }), file({ name: 'ops-portal-wireframe.html' })],
+      {
+        structurePagesOnly: true,
+        viewerOnly: true,
+        activePageName: 'ops-portal-wireframe.html',
+      },
+    );
+
+    expect(
+      screen.getByTestId('design-file-row-ops-portal-hifi.html').getAttribute('aria-current'),
+    ).toBeNull();
+    expect(
+      screen.getByTestId('design-file-row-ops-portal-wireframe.html').getAttribute('aria-current'),
+    ).toBe('page');
+  });
+
+  it('shows root pages directly and previews the hovered or focused row', async () => {
+    const onPreviewPageChange = vi.fn();
+    const { onOpenFile } = renderRail(
+      [file({ name: 'index.html' }), file({ name: 'cart.html' })],
+      { structurePagesOnly: true, viewerOnly: true, onPreviewPageChange },
+    );
+
+    expect(screen.queryByRole('button', { name: /All pages/ })).toBeNull();
+    const rail = screen.getByTestId('design-structure-rail');
+    const rootPageGroup = rail.querySelector<HTMLElement>(
+      "[data-role='structure-page-group'][data-root-pages='true']",
+    );
+    expect(rail.getAttribute('data-structure-pages-only')).toBe('true');
+    expect(rootPageGroup?.getAttribute('data-flat')).toBe('true');
+    expect(rootPageGroup?.querySelector("[data-role='structure-group-head']")).toBeNull();
+    const indexRow = screen.getByTestId('design-file-row-index.html');
+    const cartRow = screen.getByTestId('design-file-row-cart.html');
+    expect(indexRow).toBeTruthy();
+    expect(cartRow).toBeTruthy();
+    expect(indexRow.getAttribute('data-role')).toBe('structure-page-row');
+    expect(indexRow.getAttribute('aria-current')).toBe('page');
+    expect(indexRow.querySelector('[data-testid^="design-structure-check-"]')).toBeNull();
+
+    const indexButton = indexRow.querySelector<HTMLButtonElement>(
+      "[data-role='structure-page-open']",
+    )!;
+    expect(indexButton).toBeTruthy();
+    fireEvent.focus(indexButton);
+    await waitFor(() => {
+      expect(onPreviewPageChange).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'index.html' }));
+    });
+
+    fireEvent.mouseEnter(cartRow);
+    await waitFor(() => {
+      expect(onPreviewPageChange).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'cart.html' }));
+    });
+    fireEvent.mouseLeave(cartRow);
+    await waitFor(() => {
+      expect(onPreviewPageChange).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'index.html' }));
+    });
+
+    fireEvent.blur(indexButton, { relatedTarget: null });
+    await waitFor(() => expect(onPreviewPageChange).toHaveBeenLastCalledWith(null));
+
+    fireEvent.click(cartRow.querySelector('button')!);
+    expect(onOpenFile).toHaveBeenCalledWith('cart.html');
+  });
+
+  it('keeps the viewer page tree compact through semantic CSS when its module chunk is absent', () => {
+    const css = readFileSync(join(process.cwd(), 'src/styles/viewer/canvas.css'), 'utf8');
+    const rootHeadRule = css.match(
+      /\[data-role='structure-page-group'\]\[data-root-pages='true'\]\s*>\s*\[data-role='structure-group-head'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const pageRowRule = css.match(
+      /\[data-role='structure-page-row'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const activePageRowRule = css.match(
+      /\[data-role='structure-page-row'\]\[aria-current='page'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+    const pageOpenRule = css.match(
+      /\[data-role='structure-page-open'\]\s*\{[^}]+\}/,
+    )?.[0] ?? '';
+
+    expect(css).toMatch(
+      /\.viewer-structure-rail\s*>\s*\[data-testid='design-structure-rail'\]\[data-structure-pages-only='true'\]\s+\[data-role='structure-page-row'\]\s*\{/,
+    );
+    expect(rootHeadRule).toContain('display: none;');
+    expect(pageRowRule).toContain('all: unset;');
+    expect(pageRowRule).toContain('height: auto;');
+    expect(pageRowRule).toContain('border: 0;');
+    expect(pageRowRule).toContain('background: transparent;');
+    expect(pageRowRule).toContain('box-shadow: none;');
+    expect(pageOpenRule).toContain('all: unset;');
+    expect(pageOpenRule).toContain('height: auto;');
+    expect(pageOpenRule).toContain('padding: 0;');
+    expect(pageOpenRule).toContain('border: 0;');
+    expect(pageOpenRule).toContain('background: transparent;');
+    expect(pageOpenRule).toContain('box-shadow: none;');
+    expect(activePageRowRule).toContain('background: var(--brand-soft);');
+    expect(activePageRowRule).toContain(
+      'box-shadow: inset 0 0 0 var(--stroke-thin) var(--brand-text);',
+    );
   });
 
 
@@ -185,39 +312,77 @@ describe('DesignStructurePanel layers tab', () => {
 });
 
 describe('DesignStructurePanel assets tab', () => {
-  it('shows the project images and opens one on click', () => {
+  it('defaults to every project file and keeps images in their own view', () => {
     const { onOpenFile } = renderRail([
-      file({ name: 'index.html' }),
+      file({ name: 'generated/index.html', mtime: 30 }),
+      file({ name: 'notes.txt', kind: 'text', mime: 'text/plain', mtime: 20 }),
+      file({ name: 'DESIGN.md', kind: 'text', mime: 'text/markdown', mtime: 10 }),
       file({ name: 'hero.png', kind: 'image', mime: 'image/png' }),
     ]);
     fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
 
+    expect(screen.getByTestId('design-structure-assets-view')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-assets-tabs').getAttribute('role')).toBe('tablist');
+    expect(screen.getByTestId('design-structure-assets-group-head')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-assets-group-title').textContent).toBe('All project files');
+    expect(screen.getByTestId('design-structure-assets-count').textContent).toBe('4');
+    expect(screen.getByTestId('design-structure-assets-files').getAttribute('aria-selected')).toBe('true');
+    const generatedHtml = screen.getByTestId('design-structure-asset-generated/index.html');
+    expect(generatedHtml.querySelector('[data-role="asset-name"]')?.textContent).toBe('generated/index.html');
+    expect(generatedHtml.querySelector('[data-role="asset-extension"]')?.textContent).toBe('HTML');
+    expect(screen.getByTestId('design-structure-asset-notes.txt')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-asset-DESIGN.md')).toBeTruthy();
+    expect(screen.getByTestId('design-structure-asset-hero.png')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('design-structure-asset-generated/index.html'));
+    fireEvent.click(screen.getByTestId('design-structure-asset-notes.txt'));
+    expect(onOpenFile).toHaveBeenNthCalledWith(1, 'generated/index.html');
+    expect(onOpenFile).toHaveBeenNthCalledWith(2, 'notes.txt');
+
+    fireEvent.click(screen.getByTestId('design-structure-assets-images'));
     fireEvent.click(screen.getByTestId('design-structure-asset-hero.png'));
-    expect(onOpenFile).toHaveBeenCalledWith('hero.png');
+    expect(onOpenFile).toHaveBeenNthCalledWith(3, 'hero.png');
   });
 
-  it('reads as empty rather than borrowed when the project carries no design system', () => {
-    renderRail([file({ name: 'index.html' })]);
-    fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
-    fireEvent.click(screen.getByTestId('design-structure-assets-brand'));
-
-    expect(screen.getByTestId('design-structure-rail').textContent).toContain(
-      'No design system files yet',
+  it('uses the canvas-preview callback and marks the rendered asset', () => {
+    const onPreviewAsset = vi.fn();
+    renderRail(
+      [file({ name: 'index.html' }), file({ name: 'notes.txt', kind: 'text', mime: 'text/plain' })],
+      { onPreviewAsset, activeAssetName: 'notes.txt' },
     );
+    fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
+
+    const notes = screen.getByTestId('design-structure-asset-notes.txt');
+    expect(notes.getAttribute('aria-current')).toBe('true');
+    fireEvent.click(notes);
+    expect(onPreviewAsset).toHaveBeenCalledWith(expect.objectContaining({ name: 'notes.txt' }));
   });
 
-  it('lists the design system files the project actually has', () => {
+  it('keeps long asset paths intact while exposing separate name and extension cells', () => {
+    const longName = 'assets/generated/previews/operations-portal-desktop-final-preview.png';
     renderRail([
       file({ name: 'index.html' }),
-      file({ name: 'DESIGN.md', kind: 'text', mime: 'text/markdown' }),
-      file({ name: 'design-system/tokens.css', kind: 'code', mime: 'text/css' }),
+      file({ name: longName, kind: 'image', mime: 'image/png' }),
     ]);
     fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
-    fireEvent.click(screen.getByTestId('design-structure-assets-brand'));
 
-    const text = screen.getByTestId('design-structure-rail').textContent ?? '';
-    expect(text).toContain('DESIGN.md');
-    expect(text).toContain('design-system/tokens.css');
+    const head = screen.getByTestId('design-structure-assets-group-head');
+    expect(head.contains(screen.getByTestId('design-structure-assets-group-title'))).toBe(true);
+    expect(head.contains(screen.getByTestId('design-structure-assets-count'))).toBe(true);
+    expect(screen.getByTestId('design-structure-assets-count').textContent).toBe('2');
+    const row = screen.getByTestId(`design-structure-asset-${longName}`);
+    expect(row.getAttribute('title')).toBe(longName);
+    expect(row.querySelector('[data-role="asset-name"]')?.textContent).toBe(longName);
+    expect(row.querySelector('[data-role="asset-extension"]')?.textContent).toBe('PNG');
+  });
+
+  it('reveals project files in bounded batches', () => {
+    renderRail(Array.from({ length: 51 }, (_, index) => file({ name: `page-${index}.html` })));
+    fireEvent.click(screen.getByTestId('design-structure-tab-assets'));
+
+    expect(screen.getAllByTestId(/^design-structure-asset-page-/)).toHaveLength(50);
+    fireEvent.click(screen.getByTestId('design-structure-reveal-asset-files'));
+    expect(screen.getAllByTestId(/^design-structure-asset-page-/)).toHaveLength(51);
   });
 });
 

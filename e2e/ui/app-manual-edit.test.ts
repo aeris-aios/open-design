@@ -18,6 +18,134 @@ function artifactPreviewFrame(page: Page) {
   return page.frameLocator(ACTIVE_ARTIFACT_PREVIEW_SELECTOR);
 }
 
+async function expectDeckPreviewGeometry(page: Page, railExpanded: boolean) {
+  const layout = page.getByTestId('comment-preview-layout');
+  const canvas = page.getByTestId('comment-preview-canvas');
+  const preview = artifactPreview(page);
+  const stage = artifactPreviewFrame(page).locator('#deck-stage');
+  const viewerBody = page.locator('.viewer-body-canvas:visible');
+  const viewer = page.locator('.html-viewer:visible');
+  const rail = page.locator('.deck-thumbnail-rail');
+  const notes = page.getByTestId('speaker-notes-panel');
+
+  await expect.poll(async () => {
+    const [
+      layoutBox,
+      canvasBox,
+      previewBox,
+      bodyBox,
+      viewerBox,
+      railBox,
+      notesBox,
+      layoutOverflow,
+      bodyOverflow,
+      stageGeometry,
+    ] =
+      await Promise.all([
+        layout.boundingBox(),
+        canvas.boundingBox(),
+        preview.boundingBox(),
+        viewerBody.boundingBox(),
+        viewer.boundingBox(),
+        railExpanded ? rail.boundingBox() : Promise.resolve(null),
+        notes.boundingBox(),
+        layout.evaluate((element) => ({
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        })),
+        viewerBody.evaluate((element) => ({
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        })),
+        stage.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+          };
+        }).catch(() => null),
+      ]);
+    if (
+      !layoutBox ||
+      !canvasBox ||
+      !previewBox ||
+      !bodyBox ||
+      !viewerBox ||
+      !notesBox ||
+      !stageGeometry ||
+      stageGeometry.height <= 0
+    ) {
+      return false;
+    }
+
+    const tolerance = 2;
+    const layoutRight = layoutBox.x + layoutBox.width;
+    const layoutBottom = layoutBox.y + layoutBox.height;
+    const canvasRight = canvasBox.x + canvasBox.width;
+    const canvasBottom = canvasBox.y + canvasBox.height;
+    const previewRight = previewBox.x + previewBox.width;
+    const previewBottom = previewBox.y + previewBox.height;
+    const viewerRight = viewerBox.x + viewerBox.width;
+    const notesRight = notesBox.x + notesBox.width;
+    const canvasWithinLayout =
+      canvasBox.x >= layoutBox.x - tolerance &&
+      canvasBox.y >= layoutBox.y - tolerance &&
+      canvasRight <= layoutRight + tolerance &&
+      canvasBottom <= layoutBottom + tolerance;
+    const previewWithinCanvas =
+      previewBox.x >= canvasBox.x - tolerance &&
+      previewBox.y >= canvasBox.y - tolerance &&
+      previewRight <= canvasRight + tolerance &&
+      previewBottom <= canvasBottom + tolerance;
+    const stageUsesAvailableWidth =
+      Math.abs(canvasRight - layoutRight) <= tolerance &&
+      (railExpanded
+        ? Boolean(
+            railBox &&
+            railBox.x >= layoutBox.x - tolerance &&
+            railBox.x + railBox.width <= canvasBox.x + tolerance,
+          )
+        : Math.abs(canvasBox.x - layoutBox.x) <= tolerance);
+    const notesSeparated =
+      notesBox.y >= bodyBox.y + bodyBox.height - tolerance &&
+      notesBox.y >= layoutBottom - tolerance &&
+      notesBox.x >= viewerBox.x - tolerance &&
+      notesRight <= viewerRight + tolerance;
+    const noHorizontalOverflow =
+      layoutOverflow.scrollWidth <= layoutOverflow.clientWidth + 1 &&
+      bodyOverflow.scrollWidth <= bodyOverflow.clientWidth + 1;
+    const stageRight = stageGeometry.x + stageGeometry.width;
+    const stageBottom = stageGeometry.y + stageGeometry.height;
+    const stageIsContained =
+      stageGeometry.x >= -tolerance &&
+      stageGeometry.y >= -tolerance &&
+      stageRight <= stageGeometry.viewportWidth + tolerance &&
+      stageBottom <= stageGeometry.viewportHeight + tolerance;
+    const stageIsCentered =
+      Math.abs((stageGeometry.x + stageGeometry.width / 2) - stageGeometry.viewportWidth / 2) <= tolerance &&
+      Math.abs((stageGeometry.y + stageGeometry.height / 2) - stageGeometry.viewportHeight / 2) <= tolerance;
+    const stageKeepsSixteenByNine =
+      Math.abs((stageGeometry.width / stageGeometry.height) - (16 / 9)) <= 0.01;
+
+    return canvasWithinLayout &&
+      previewWithinCanvas &&
+      stageUsesAvailableWidth &&
+      notesSeparated &&
+      noHorizontalOverflow &&
+      stageIsContained &&
+      stageIsCentered &&
+      stageKeepsSixteenByNine;
+  }, {
+    message: railExpanded
+      ? 'expanded deck stage should fit beside the thumbnail rail without clipping or overflowing'
+      : 'collapsed deck stage should reclaim the rail width without clipping or overflowing',
+  }).toBe(true);
+}
+
 test.beforeEach(async ({ page }) => {
   await applyStandardMocks(page);
 });
@@ -114,6 +242,223 @@ test('[P0] manual edit inspector previews and persists page and selected element
   await expect(page.getByRole('button', { name: /^Share$/ })).toBeVisible();
   const actionMenu = await openShareExportMenu(page);
   await expect(actionMenu.getByRole('menuitem', { name: /Export as PDF/i })).toBeVisible();
+});
+
+test('[P1] mobile manual edit expands a tall responsive page without remounting the iframe', async ({ page }) => {
+  await routeMockAgents(page);
+  const projectId = await createEmptyProject(page, 'Tall mobile manual edit');
+  await seedHtmlArtifact(page, projectId, 'tall-mobile.html', tallResponsiveMobileHtml());
+  await page.goto(`/projects/${projectId}/files/tall-mobile.html`);
+  await openDesignFile(page, 'tall-mobile.html');
+
+  const frame = artifactPreviewFrame(page);
+  const frameElement = artifactPreview(page);
+  const sentinel = frame.getByTestId('tall-mobile-sentinel');
+  const toolbar = page.locator('.viewer-toolbar:visible');
+  const marker = 'tall-mobile-stable-frame';
+  const readMarker = () => frame.locator('body').evaluate(() => (
+    (window as Window & typeof globalThis & { __tallMobileFrameMarker?: string }).__tallMobileFrameMarker
+  ));
+
+  await expect(sentinel).toBeAttached();
+  await frame.locator('body').evaluate((_element, value) => {
+    (window as Window & typeof globalThis & { __tallMobileFrameMarker?: string }).__tallMobileFrameMarker = value;
+  }, marker);
+
+  await toolbar.getByRole('button', { name: 'Mobile', exact: true }).click();
+  await expect(toolbar.getByRole('button', { name: 'Mobile', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(390);
+  await expect.poll(readMarker).toBe(marker);
+
+  // Prove Edit clears the compact preview's inner scroll before handing the
+  // complete document to the outer flow canvas.
+  await sentinel.evaluate((element) => element.scrollIntoView({ block: 'end' }));
+  await expect.poll(() => frame.locator('html').evaluate(() => window.scrollY)).toBeGreaterThan(0);
+
+  await page.getByTestId('manual-edit-mode-toggle').click();
+  await expect(frame.locator('html[data-od-edit-mode][data-od-edit-expand-document]')).toHaveCount(1);
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(390);
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerHeight)).toBeGreaterThan(844);
+  await expect.poll(() => page.locator('.manual-edit-canvas').evaluate((element) => (
+    Number.parseFloat(element.style.getPropertyValue('--manual-edit-artboard-height'))
+  ))).toBeGreaterThan(844);
+  await expect.poll(() => frame.locator('html').evaluate(() => window.scrollY)).toBe(0);
+  // Entering Edit activates the retained srcDoc transport. Mark that active
+  // frame now; subsequent viewport switches must resize it, never replace it.
+  await frame.locator('body').evaluate((_element, value) => {
+    (window as Window & typeof globalThis & { __tallMobileFrameMarker?: string }).__tallMobileFrameMarker = value;
+  }, marker);
+  await expect.poll(readMarker).toBe(marker);
+
+  await expect(sentinel).toBeVisible();
+  await expect.poll(() => sentinel.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= window.innerHeight + 1;
+  })).toBe(true);
+  await sentinel.dispatchEvent('click');
+  await expect(sentinel).toHaveAttribute('data-od-edit-selected', 'true');
+
+  const [frameBox, innerSize] = await Promise.all([
+    frameElement.boundingBox(),
+    frame.locator('html').evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
+  ]);
+  expect(frameBox).not.toBeNull();
+  expect(Math.abs(
+    (frameBox!.width / innerSize.width) - (frameBox!.height / innerSize.height),
+  )).toBeLessThanOrEqual(0.01);
+
+  await toolbar.getByRole('button', { name: 'Desktop', exact: true }).click();
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(1440);
+  await expect.poll(readMarker).toBe(marker);
+  await toolbar.getByRole('button', { name: 'Mobile', exact: true }).click();
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(390);
+  await expect(frame.locator('html[data-od-edit-expand-document]')).toHaveCount(1);
+  await expect.poll(readMarker).toBe(marker);
+});
+
+test('[P1] corner resize persists a mobile-only responsive container without remounting the iframe', async ({ page }) => {
+  await routeMockAgents(page);
+  const projectId = await createEmptyProject(page, 'Responsive corner resize');
+  await seedHtmlArtifact(page, projectId, 'responsive-resize.html', responsiveResizeHtml());
+  await page.goto(`/projects/${projectId}/files/responsive-resize.html`);
+  await openDesignFile(page, 'responsive-resize.html');
+
+  const frame = artifactPreviewFrame(page);
+  const toolbar = page.locator('.viewer-toolbar:visible');
+  const card = frame.locator('[data-od-id="responsive-resize-card"]');
+  const marker = 'responsive-resize-stable-frame';
+  const readMarker = () => frame.locator('body').evaluate(() => (
+    (window as Window & typeof globalThis & { __responsiveResizeMarker?: string }).__responsiveResizeMarker
+  ));
+  const readCardGeometry = () => card.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const parent = element.parentElement!;
+    const parentStyle = getComputedStyle(parent);
+    const parentContentWidth = parent.clientWidth
+      - Number.parseFloat(parentStyle.paddingLeft || '0')
+      - Number.parseFloat(parentStyle.paddingRight || '0');
+    return {
+      width: rect.width,
+      height: rect.height,
+      parentWidth: parentContentWidth,
+      clientHeight: (element as HTMLElement).clientHeight,
+      scrollHeight: (element as HTMLElement).scrollHeight,
+    };
+  });
+
+  await toolbar.getByRole('button', { name: 'Mobile', exact: true }).click();
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(390);
+  await page.getByTestId('manual-edit-mode-toggle').click();
+  await expect(frame.locator('html[data-od-edit-mode][data-od-edit-expand-document]')).toHaveCount(1);
+  await frame.locator('body').evaluate((_body, value) => {
+    (window as Window & typeof globalThis & { __responsiveResizeMarker?: string }).__responsiveResizeMarker = value;
+  }, marker);
+  // Dispatch on the container itself: an ordinary center click lands on its
+  // nested paragraph, whose own source mapping would correctly select the text
+  // leaf instead of exposing container resize handles.
+  await expect(async () => {
+    await card.evaluate((element) => {
+      element.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+        view: window,
+      }));
+    });
+    await expect(card).toHaveAttribute('data-od-edit-selected', 'true');
+  }).toPass({ timeout: 30_000 });
+  await expect(page.locator('.manual-edit-modal')).toContainText('Parameters');
+
+  const handles = frame.locator('.od-edit-guide-handle[data-od-edit-resize-handle]');
+  await expect(handles).toHaveCount(4);
+  await frame.locator('body').evaluate(() => {
+    const frameWindow = window as Window & typeof globalThis & {
+      __manualEditResizeResults?: Array<{ requestId: string; accepted: boolean; error: string | null }>;
+    };
+    frameWindow.__manualEditResizeResults = [];
+    window.addEventListener('message', (event) => {
+      if (event.data?.type !== 'od-edit-resize-result') return;
+      frameWindow.__manualEditResizeResults!.push({
+        requestId: String(event.data.requestId || ''),
+        accepted: event.data.accepted === true,
+        error: typeof event.data.error === 'string' ? event.data.error : null,
+      });
+    });
+  });
+  const initialMobile = await readCardGeometry();
+  expect(initialMobile.width / initialMobile.parentWidth).toBeCloseTo(0.72, 1);
+
+  const southEast = frame.locator('[data-od-edit-resize-handle="se"]');
+  await southEast.scrollIntoViewIfNeeded();
+  const handleBox = await southEast.boundingBox();
+  expect(handleBox).not.toBeNull();
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2);
+  await page.mouse.down();
+  await expect(card).toHaveAttribute('data-od-edit-resizing', 'se');
+  await page.mouse.move(
+    handleBox!.x + handleBox!.width / 2 - 56,
+    handleBox!.y + handleBox!.height / 2,
+    { steps: 6 },
+  );
+  await expect(frame.locator('style[data-od-responsive-size-preview]')).toHaveCount(1);
+  await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(readMarker).toBe(marker);
+  await page.mouse.up();
+  await expect.poll(() => frame.locator('body').evaluate(() => {
+    const result = (window as Window & typeof globalThis & {
+      __manualEditResizeResults?: Array<{ requestId: string; accepted: boolean; error: string | null }>;
+    }).__manualEditResizeResults?.at(-1);
+    return result ? { accepted: result.accepted, error: result.error } : null;
+  })).toEqual({ accepted: true, error: null });
+
+  // Pointer-up persists immediately. The responsive preview is retained only
+  // in the active iframe after the host acknowledges that save; this keeps the
+  // accepted rule visible without rebuilding the document or losing runtime
+  // state. An intentional Reload below replaces it with the persisted rule.
+  await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(readMarker).toBe(marker);
+  await expect(frame.locator('style[data-od-responsive-size-preview]')).toHaveCount(1);
+  await expectFileSource(page, projectId, 'responsive-resize.html', [
+    'data-od-responsive-size',
+    'od-responsive-size:mobile:responsive-resize-card',
+  ]);
+  await expectFileSourceExcludes(page, projectId, 'responsive-resize.html', [
+    'od-responsive-size:desktop:responsive-resize-card',
+  ]);
+  await expect.poll(readMarker).toBe(marker);
+  await expect.poll(async () => {
+    const geometry = await readCardGeometry();
+    return {
+      narrower: geometry.width < initialMobile.width - 24,
+      taller: geometry.height > initialMobile.height + 8,
+      containsText: geometry.scrollHeight <= geometry.clientHeight + 1,
+    };
+  }).toEqual({ narrower: true, taller: true, containsText: true });
+  const resizedMobile = await readCardGeometry();
+  expect(resizedMobile.width).toBeLessThan(initialMobile.width - 24);
+  expect(resizedMobile.height).toBeGreaterThan(initialMobile.height + 8);
+  expect(resizedMobile.scrollHeight).toBeLessThanOrEqual(resizedMobile.clientHeight + 1);
+
+  // The mobile override must not leak into the authored desktop rule.
+  await toolbar.getByRole('button', { name: 'Desktop', exact: true }).click();
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(1440);
+  await expect.poll(readMarker).toBe(marker);
+  const desktop = await readCardGeometry();
+  expect(desktop.width / desktop.parentWidth).toBeCloseTo(0.5, 1);
+
+  await toolbar.getByRole('button', { name: 'Mobile', exact: true }).click();
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(390);
+  await expect.poll(readMarker).toBe(marker);
+  await expect.poll(async () => (await readCardGeometry()).width).toBeCloseTo(resizedMobile.width, 0);
+
+  // Reload is the first intentional iframe rebuild. The saved mobile rule must
+  // survive it and become the starting geometry of the fresh document.
+  await toolbar.getByRole('button', { name: /Reload.*preview/i }).click();
+  await expect(card).toBeVisible();
+  await expect.poll(() => frame.locator('html').evaluate(() => window.innerWidth)).toBe(390);
+  await expect.poll(async () => (await readCardGeometry()).width).toBeCloseTo(resizedMobile.width, 0);
 });
 
 test('[P0] manual edit mode preserves the current page in a multi-page mobile app', async ({ page }) => {
@@ -718,6 +1063,7 @@ test('[P0] manual edit mode keeps deck navigation available for deck-shaped HTML
 
 test('[P1] deck thumbnail rail keeps complete 16:9 slides separated and aligned', async ({ page }) => {
   await routeMockAgents(page);
+  await page.setViewportSize({ width: 1559, height: 900 });
   const projectId = await createEmptyProject(page, 'Deck thumbnail rail layout');
   await seedDeckArtifact(
     page,
@@ -725,16 +1071,37 @@ test('[P1] deck thumbnail rail keeps complete 16:9 slides separated and aligned'
     'thumbnail-rail.html',
     'Thumbnail Rail',
     ['Slide One', 'Slide Two', 'Slide Three'],
-    { frameworkDeck: true },
+    {
+      frameworkDeck: true,
+      speakerNotes: ['First slide note', 'Second slide note', 'Third slide note'],
+    },
   );
   await page.goto(`/projects/${projectId}/files/thumbnail-rail.html`);
   await openDesignFile(page, 'thumbnail-rail.html');
 
   const rail = page.locator('.deck-thumbnail-rail');
+  const railToggle = page.locator('.deck-thumbnail-toolbar-toggle');
   const frames = rail.locator('.deck-thumbnail-frame');
   const numbers = rail.locator('.deck-thumbnail-number');
+  const slideButtons = rail.locator('.deck-thumbnail-button');
+  const toolbar = page.locator('.viewer-toolbar:visible');
+  const moreTrigger = toolbar.locator('.viewer-toolbar-more > button');
+  const notesPanel = page.getByTestId('speaker-notes-panel');
+  const frame = artifactPreviewFrame(page);
   await expect(rail).toBeVisible();
+  await expect(railToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(frames).toHaveCount(3);
+  await expect(toolbar.getByRole('button', { name: /Reload.*preview/i })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Desktop', exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: 'Mobile', exact: true })).toHaveCount(0);
+
+  await moreTrigger.click();
+  const moreMenu = toolbar.getByRole('menu');
+  await expect(moreMenu).toBeVisible();
+  await expect(moreMenu.getByRole('menuitem', { name: 'Desktop', exact: true })).toHaveCount(0);
+  await expect(moreMenu.getByRole('menuitem', { name: 'Mobile', exact: true })).toHaveCount(0);
+  await moreTrigger.click();
+  await expect(moreMenu).toHaveCount(0);
 
   const [railBox, firstFrame, secondFrame, firstNumber] = await Promise.all([
     rail.boundingBox(),
@@ -756,6 +1123,42 @@ test('[P1] deck thumbnail rail keeps complete 16:9 slides separated and aligned'
   expect(firstFrame.x + firstFrame.width).toBeLessThanOrEqual(
     railBox.x + railBox.width,
   );
+
+  await expectDeckPreviewGeometry(page, true);
+
+  await slideButtons.nth(1).click();
+  await expect(frame.getByText('Slide Two')).toBeVisible();
+  await expect(slideButtons.nth(1)).toHaveAttribute('aria-current', 'true');
+  await expect(notesPanel).toContainText('Second slide note');
+  await frame.locator('body').evaluate(() => {
+    (window as Window & typeof globalThis & { __deckRailMountMarker?: string }).__deckRailMountMarker =
+      'deck-rail-stable-frame';
+  });
+
+  const expectStableSecondSlide = async () => {
+    await expect.poll(() => frame.locator('body').evaluate(() => (
+      (window as Window & typeof globalThis & { __deckRailMountMarker?: string }).__deckRailMountMarker
+    ))).toBe('deck-rail-stable-frame');
+    await expect(frame.getByText('Slide Two')).toBeVisible();
+    await expect(slideButtons.nth(1)).toHaveAttribute('aria-current', 'true');
+    await expect(notesPanel).toContainText('Second slide note');
+  };
+
+  await railToggle.click();
+  await expect(railToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(rail).toBeHidden();
+  await expectDeckPreviewGeometry(page, false);
+  await expectStableSecondSlide();
+
+  await railToggle.click();
+  await expect(railToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(rail).toBeVisible();
+  await expectDeckPreviewGeometry(page, true);
+  await expectStableSecondSlide();
+
+  await page.setViewportSize({ width: 960, height: 720 });
+  await expectDeckPreviewGeometry(page, true);
+  await expectStableSecondSlide();
 });
 
 test('[P0] @critical edited HTML file restores selected tab and preview after reload', async ({ page }) => {
@@ -1028,14 +1431,46 @@ async function seedDeckArtifact(
     stopsSlideMessagePropagation?: boolean;
     handlesKeyboard?: boolean;
     frameworkDeck?: boolean;
+    speakerNotes?: string[];
   } = {},
 ) {
   const slideHtml = slides
     .map((slide, index) => `<section class="slide" data-od-id="slide-${index + 1}"${index === 0 ? '' : ' hidden'}><h1>${slide}</h1></section>`)
     .join('\n');
   const deckHtml = options.frameworkDeck
-    ? `<div class="deck-stage" id="deck-stage">${slideHtml}</div>`
+    ? `<div class="deck-shell"><div class="deck-stage" id="deck-stage">${slideHtml}</div></div>`
     : slideHtml;
+  const frameworkDeckRuntime = options.frameworkDeck
+    ? `<style>
+      html, body, .deck-shell { width: 100%; height: 100%; }
+      body { margin: 0; overflow: hidden; background: #09090b; }
+      .deck-shell { position: relative; }
+      .deck-stage {
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 1920px;
+        height: 1080px;
+        transform-origin: top left;
+        background: #fff;
+      }
+      .slide { position: absolute; inset: 0; display: grid; place-items: center; }
+    </style>
+    <script>
+      (() => {
+        const stage = document.getElementById('deck-stage');
+        const fitStage = () => {
+          if (!stage) return;
+          const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+          const x = (window.innerWidth - 1920 * scale) / 2;
+          const y = (window.innerHeight - 1080 * scale) / 2;
+          stage.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(' + scale + ')';
+        };
+        window.addEventListener('resize', fitStage);
+        new ResizeObserver(fitStage).observe(document.documentElement);
+        fitStage();
+      })();
+    </script>`
+    : '';
   const deckChrome = options.stopsSlideMessagePropagation
     ? '<nav><span id="deck-cur">01</span> / <span id="deck-total">03</span></nav>'
     : '';
@@ -1090,12 +1525,15 @@ async function seedDeckArtifact(
   const protocolText = options.mentionsSlideMessageProtocol
     ? '<p>Protocol token: od:slide</p>'
     : '';
+  const speakerNotesScript = options.speakerNotes
+    ? `<script type="application/json" id="speaker-notes">${JSON.stringify(options.speakerNotes)}</script>`
+    : '';
   const resp = await page.request.post(
     `/api/projects/${projectId}/files`,
     {
       data: {
         name: fileName,
-        content: `<!doctype html><html><body>${deckChrome}${deckHtml}${protocolText}${slideScript}</body></html>`,
+        content: `<!doctype html><html><body>${deckChrome}${deckHtml}${protocolText}${speakerNotesScript}${slideScript}${frameworkDeckRuntime}</body></html>`,
         artifactManifest: {
           version: 1,
           kind: 'deck',
@@ -1221,6 +1659,79 @@ function manualEditHtml(): string {
         <h1 data-od-id="hero-title" data-od-label="Hero title">Original Hero</h1>
         <a data-od-id="cta" data-od-label="Primary CTA" href="/start">Start now</a>
         <img data-od-id="hero-image" data-od-label="Hero image" src="/hero.png" alt="Hero" style="width:64px;height:64px;">
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
+function tallResponsiveMobileHtml(): string {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; background: #f8fafc; color: #0f172a; }
+      main { display: grid; gap: 20px; padding: 24px; }
+      .hero { min-height: 720px; padding: 24px; border-radius: 24px; background: #dbeafe; }
+      .responsive-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+      .responsive-grid article { min-height: 620px; padding: 24px; border-radius: 24px; background: white; }
+      footer { min-height: 180px; padding: 32px 24px; border-radius: 24px; background: #0f172a; color: white; }
+      @media (max-width: 700px) {
+        main { padding: 16px; }
+        .responsive-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-od-id="tall-mobile-page">
+      <section class="hero" data-od-id="tall-mobile-hero"><h1>Tall responsive mobile page</h1></section>
+      <section class="responsive-grid" data-od-id="tall-mobile-grid">
+        <article data-od-id="tall-mobile-card-a">First responsive card</article>
+        <article data-od-id="tall-mobile-card-b">Second responsive card</article>
+      </section>
+      <footer data-testid="tall-mobile-sentinel" data-od-id="tall-mobile-sentinel" data-od-label="Bottom sentinel">
+        Bottom sentinel
+      </footer>
+    </main>
+  </body>
+</html>`;
+}
+
+function responsiveResizeHtml(): string {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body { font: 16px/1.5 system-ui, sans-serif; background: #f8fafc; color: #0f172a; }
+      .resize-layout { position: relative; width: min(600px, 100%); min-height: 900px; padding: 16px; }
+      .resize-card {
+        width: 50%;
+        min-height: 96px;
+        padding: 16px;
+        border: 1px solid #94a3b8;
+        border-radius: 16px;
+        background: white;
+        overflow-wrap: anywhere;
+      }
+      .resize-card p { margin: 0; }
+      @media (max-width: 700px) {
+        .resize-card { width: 72%; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="resize-layout" data-od-id="responsive-resize-layout">
+      <section class="resize-card" data-od-id="responsive-resize-card" data-od-label="Responsive resize card">
+        <p data-od-id="responsive-resize-copy">
+          A responsive container must keep every word visible while its width changes. This deliberately long copy wraps onto more lines when the mobile corner moves inward, proving that the saved height is a minimum rather than a clipped fixed height.
+        </p>
       </section>
     </main>
   </body>

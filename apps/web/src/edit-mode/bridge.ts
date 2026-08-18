@@ -1,5 +1,7 @@
+import { MANUAL_EDIT_SIDE_GROUP_STYLE } from './types';
+
 export const MANUAL_EDIT_DISCOVERY_SELECTOR =
-  'main, nav, section, article, aside, header, footer, div, h1, h2, h3, h4, h5, h6, p, a, button, img, ul, ol, li, dl, dt, dd, table, thead, tbody, tfoot, tr, td, th, caption, blockquote, figure, figcaption, label, summary, pre, code, strong, em, b, i, small, mark, span';
+  'main, nav, section, article, aside, header, footer, div, form, fieldset, legend, details, dialog, address, h1, h2, h3, h4, h5, h6, p, a, button, [role="button"], img, picture, ul, ol, menu, li, dl, dt, dd, table, thead, tbody, tfoot, tr, td, th, caption, blockquote, figure, figcaption, label, summary, pre, code, strong, em, b, i, small, mark, span, [data-od-id], [data-od-edit], [data-od-source-path]';
 export const MANUAL_EDIT_SOURCE_PATH_ATTR = 'data-od-source-path';
 export const MANUAL_EDIT_HOST_NODE_SELECTOR = [
   '[data-od-sandbox-shim]',
@@ -11,7 +13,7 @@ export const MANUAL_EDIT_HOST_NODE_SELECTOR = [
   '[data-od-deck-fix]',
 ].join(',');
 
-export type ManualEditKind = 'text' | 'link' | 'image' | 'container';
+export type ManualEditKind = 'text' | 'link' | 'action' | 'image' | 'container';
 
 export function manualEditDomPathForElement(el: Element): string {
   const parts: number[] = [];
@@ -32,10 +34,28 @@ export function isManualEditHostNode(el: Element): boolean {
 
 export function manualEditStableIdForElement(el: Element): string {
   const explicit = el.getAttribute('data-od-id');
-  if (explicit) return explicit;
+  if (explicit && !el.hasAttribute('data-od-generated-id')) return explicit;
   const generated = el.getAttribute(MANUAL_EDIT_SOURCE_PATH_ATTR) || el.getAttribute('data-od-runtime-id') || manualEditDomPathForElement(el);
   if (generated) el.setAttribute('data-od-runtime-id', generated);
+  if (generated && generatedPathCollidesWithAuthoredId(el, generated)) {
+    return sourcePathLocatorWithoutAuthoredCollision(el, generated);
+  }
   return generated || 'unknown';
+}
+
+function generatedPathCollidesWithAuthoredId(el: Element, id: string): boolean {
+  if (!/^path-\d+(?:-\d+)*$/.test(id)) return false;
+  return Array.from(el.ownerDocument.querySelectorAll(`[data-od-id="${id}"]`)).some((candidate) => (
+    candidate !== el && !candidate.hasAttribute('data-od-generated-id')
+  ));
+}
+
+function sourcePathLocatorWithoutAuthoredCollision(el: Element, path: string): string {
+  let locator = `source-path:${path}`;
+  while (el.ownerDocument.querySelector(`[data-od-id="${locator}"]`)) {
+    locator = `source-path:${locator}`;
+  }
+  return locator;
 }
 
 export function isMeaningfulManualEditElement(el: Element, rect: Pick<DOMRect, 'width' | 'height'>): boolean {
@@ -80,6 +100,7 @@ export function manualEditKindForElement(el: Element): ManualEditKind {
   if (explicit) return explicit as ManualEditKind;
   const tag = el.tagName ? el.tagName.toLowerCase() : '';
   if (tag === 'a') return 'link';
+  if (tag === 'button' || el.getAttribute('role') === 'button') return 'action';
   if (tag === 'img') return 'image';
   if (manualEditElementIsTextLeaf(el)) return 'text';
   return 'container';
@@ -168,9 +189,19 @@ export function buildManualEditKeyboardGuard(): string {
 })();</script>`;
 }
 
-export function buildManualEditBridge(enabled: boolean): string {
+export function buildManualEditBridge(enabled: boolean, generation = ''): string {
   return `<script data-od-edit-bridge>(function(){
   var enabled = ${JSON.stringify(enabled)};
+  // This value belongs to the parsed document. It must never be replaced by
+  // a later host mode message: that message may still reach the old WindowProxy
+  // while a new srcdoc navigation is pending.
+  var documentGeneration = ${JSON.stringify(generation)};
+  function postEditMessage(message){
+    var payload = documentGeneration
+      ? Object.assign({}, message, { generation: documentGeneration })
+      : message;
+    window.parent.postMessage(payload, '*');
+  }
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
   var sourcePathAttr = ${JSON.stringify(MANUAL_EDIT_SOURCE_PATH_ATTR)};
@@ -192,9 +223,21 @@ export function buildManualEditBridge(enabled: boolean): string {
   }
   function stableId(el){
     var explicit = el.getAttribute('data-od-id');
-    if (explicit) return explicit;
+    if (explicit && !el.hasAttribute('data-od-generated-id')) return explicit;
     var generated = el.getAttribute(sourcePathAttr) || el.getAttribute('data-od-runtime-id') || domPath(el);
     if (generated) el.setAttribute('data-od-runtime-id', generated);
+    if (generated && /^path-\\d+(?:-\\d+)*$/.test(generated)) {
+      var candidates = document.querySelectorAll('[data-od-id="' + cssEscapeId(generated) + '"]');
+      for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i] !== el && !candidates[i].hasAttribute('data-od-generated-id')) {
+          var locator = 'source-path:' + generated;
+          while (document.querySelector('[data-od-id="' + cssEscapeId(locator) + '"]')) {
+            locator = 'source-path:' + locator;
+          }
+          return locator;
+        }
+      }
+    }
     return generated || 'unknown';
   }
   function isSourceMappable(el){
@@ -280,15 +323,24 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (explicit) return explicit;
     var tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'a') return 'link';
+    if (tag === 'button' || el.getAttribute('role') === 'button') return 'action';
     if (tag === 'img') return 'image';
     if (isTextLeaf(el)) return 'text';
     return 'container';
+  }
+  function actionLabelFor(el){
+    var direct = [];
+    for (var i = 0; i < el.childNodes.length; i++) {
+      var child = el.childNodes[i];
+      if (child.nodeType === 3 && String(child.nodeValue || '').trim()) direct.push(String(child.nodeValue).trim());
+    }
+    return direct.length === 1 ? direct[0] : (el.textContent || '').trim();
   }
   function labelFor(el, id, kind){
     var explicit = el.getAttribute('data-od-label');
     if (explicit) return explicit;
     var tag = el.tagName ? el.tagName.toLowerCase() : 'element';
-    var text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    var text = (kind === 'action' ? actionLabelFor(el) : (el.textContent || '')).replace(/\\s+/g, ' ').trim();
     if (text) return text.slice(0, 42);
     if (kind === 'image') return el.getAttribute('alt') || id;
     return tag + ' #' + id;
@@ -316,6 +368,98 @@ export function buildManualEditBridge(enabled: boolean): string {
       y: Math.round(rect.y),
       width: Math.round(rect.width),
       height: Math.round(rect.height)
+    };
+  }
+  function numericStyleValue(style, name){
+    var value = style ? parseFloat(style[name]) : 0;
+    return Number.isFinite(value) ? value : 0;
+  }
+  function optionalNumericStyleValue(style, name){
+    var value = style ? parseFloat(style[name]) : NaN;
+    return Number.isFinite(value) ? Math.round(value * 1000) / 1000 : undefined;
+  }
+  function hasUnsupportedSizeTransform(style){
+    var transform = style && style.transform ? String(style.transform) : 'none';
+    if (!transform || transform === 'none') return false;
+    var matrix = transform.match(/^matrix\\(\\s*([^)]*)\\)$/);
+    if (!matrix) return true;
+    var values = matrix[1].split(',').map(function(value){ return Number(value.trim()); });
+    if (values.length !== 6 || values.some(function(value){ return !Number.isFinite(value); })) return true;
+    return Math.abs(values[0] - 1) > 0.0001
+      || Math.abs(values[1]) > 0.0001
+      || Math.abs(values[2]) > 0.0001
+      || Math.abs(values[3] - 1) > 0.0001;
+  }
+  function hasResizableBox(style){
+    var display = style && style.display ? String(style.display) : '';
+    return display !== 'none'
+      && display !== 'inline'
+      && display !== 'contents'
+      && display !== 'table-row'
+      && display !== 'table-row-group'
+      && display !== 'table-header-group'
+      && display !== 'table-footer-group'
+      && display !== 'table-cell'
+      && display !== 'table-column'
+      && display !== 'table-column-group'
+      && display !== 'table-caption'
+      && display !== 'ruby'
+      && display !== 'ruby-base'
+      && display !== 'ruby-text'
+      && display !== 'ruby-base-container'
+      && display !== 'ruby-text-container';
+  }
+  function resizeContainingBlock(el, style){
+    var position = style && style.position ? String(style.position) : 'static';
+    if (position === 'fixed') {
+      return {
+        el: document.documentElement,
+        width: Math.max(1, Number(document.documentElement && document.documentElement.clientWidth) || Number(window.innerWidth) || 1),
+        rect: { left: 0, top: 0 },
+        borderLeft: 0,
+        borderTop: 0
+      };
+    }
+    var positioned = position === 'absolute';
+    var block = positioned ? (el.offsetParent || el.parentElement) : el.parentElement;
+    if (!block || !block.getBoundingClientRect) block = document.documentElement;
+    var blockStyle = window.getComputedStyle(block);
+    var blockRect = block.getBoundingClientRect();
+    var width = Number(block.clientWidth) || Number(blockRect.width) || 1;
+    if (!positioned) {
+      width -= numericStyleValue(blockStyle, 'paddingLeft') + numericStyleValue(blockStyle, 'paddingRight');
+    }
+    return {
+      el: block,
+      width: Math.max(1, width),
+      rect: blockRect,
+      borderLeft: numericStyleValue(blockStyle, 'borderLeftWidth'),
+      borderTop: numericStyleValue(blockStyle, 'borderTopWidth')
+    };
+  }
+  function sizingFor(el, kind){
+    var style = window.getComputedStyle(el);
+    var paddingBorderX = numericStyleValue(style, 'paddingLeft')
+      + numericStyleValue(style, 'paddingRight')
+      + numericStyleValue(style, 'borderLeftWidth')
+      + numericStyleValue(style, 'borderRightWidth');
+    var paddingBorderY = numericStyleValue(style, 'paddingTop')
+      + numericStyleValue(style, 'paddingBottom')
+      + numericStyleValue(style, 'borderTopWidth')
+      + numericStyleValue(style, 'borderBottomWidth');
+    var unsupportedTransform = hasUnsupportedSizeTransform(style);
+    return {
+      resizable: kind === 'container' && isSourceMappable(el) && hasResizableBox(style) && !unsupportedTransform,
+      boxSizing: style.boxSizing || 'content-box',
+      position: style.position || 'static',
+      containingBlockWidth: Math.round(resizeContainingBlock(el, style).width * 1000) / 1000,
+      paddingBorderX: Math.round(paddingBorderX * 1000) / 1000,
+      paddingBorderY: Math.round(paddingBorderY * 1000) / 1000,
+      minWidth: optionalNumericStyleValue(style, 'minWidth'),
+      maxWidth: optionalNumericStyleValue(style, 'maxWidth'),
+      minHeight: optionalNumericStyleValue(style, 'minHeight'),
+      maxHeight: optionalNumericStyleValue(style, 'maxHeight'),
+      hasUnsupportedTransform: unsupportedTransform
     };
   }
   function computedSummaryFor(el){
@@ -441,6 +585,25 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (targetVisibility === 'hidden' || targetVisibility === 'collapse') return true;
     return hasHiddenAncestorDisplayState(el);
   }
+  function sourceShapedOuterHtml(el){
+    var clone = el.cloneNode(true);
+    var nodes = [clone];
+    if (clone.querySelectorAll) {
+      var descendants = clone.querySelectorAll('*');
+      for (var i = 0; i < descendants.length; i++) nodes.push(descendants[i]);
+    }
+    for (var j = 0; j < nodes.length; j++) {
+      var node = nodes[j];
+      // Only ids carrying our explicit marker are preview annotations. An
+      // author is allowed to use a path-shaped data-od-id of their own.
+      if (node.hasAttribute('data-od-generated-id')) node.removeAttribute('data-od-id');
+      node.removeAttribute('data-od-runtime-id');
+      node.removeAttribute('data-od-source-path');
+      node.removeAttribute('data-od-generated-id');
+      node.removeAttribute('data-od-edit-selected');
+    }
+    return clone.outerHTML || '';
+  }
   function targetFrom(el, includeOuterHtml){
     var rect = el.getBoundingClientRect();
     var ownRect = rectFor(el);
@@ -453,6 +616,10 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (kind === 'link') {
       fields.text = (el.textContent || '').trim();
       fields.href = el.getAttribute('href') || '';
+    } else if (kind === 'action') {
+      fields.text = actionLabelFor(el);
+      fields.href = el.getAttribute('data-od-href') || '';
+      fields.target = el.getAttribute('data-od-target') === '_blank' ? '_blank' : '_self';
     } else if (kind === 'image') {
       fields.src = el.getAttribute('src') || '';
       fields.alt = el.getAttribute('alt') || '';
@@ -476,8 +643,9 @@ export function buildManualEditBridge(enabled: boolean): string {
       measurements: measurementsFor(ownRect, parentRect, siblingRects),
       alignmentGuides: alignmentGuidesFor(ownRect, parentRect),
       isLayoutContainer: isLayoutContainer(el),
+      sizing: sizingFor(el, kind),
       isHidden: hidden,
-      outerHtml: includeOuterHtml ? (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-id="path-[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '') : ''
+      outerHtml: includeOuterHtml ? sourceShapedOuterHtml(el) : ''
     };
   }
   function allTargets(){
@@ -494,7 +662,137 @@ export function buildManualEditBridge(enabled: boolean): string {
   }
   function postTargets(){
     if (!enabled) return;
-    window.parent.postMessage({ type: 'od-edit-targets', targets: allTargets() }, '*');
+    postEditMessage({ type: 'od-edit-targets', targets: allTargets() });
+  }
+  var viewportUnitRestores = [];
+  function frozenViewportValue(value, viewportWidth, viewportHeight){
+    if (!value || !/(?:dvh|svh|lvh|vh|dvw|svw|lvw|vw|vmin|vmax)\\b/i.test(value)) return value;
+    return String(value).replace(/(-?(?:\\d+\\.?\\d*|\\.\\d+))(dvh|svh|lvh|vh|dvw|svw|lvw|vw|vmin|vmax)\\b/gi, function(_, amount, unit){
+      var number = Number(amount);
+      var normalized = String(unit).toLowerCase();
+      var basis = normalized.indexOf('vh') >= 0
+        ? viewportHeight
+        : normalized.indexOf('vw') >= 0
+          ? viewportWidth
+          : normalized === 'vmin'
+            ? Math.min(viewportWidth, viewportHeight)
+            : Math.max(viewportWidth, viewportHeight);
+      return ((number * basis) / 100) + 'px';
+    });
+  }
+  function freezeStyleViewportUnits(style, viewportWidth, viewportHeight){
+    if (!style) return;
+    var names = [];
+    for (var i = 0; i < style.length; i++) names.push(style[i]);
+    for (var j = 0; j < names.length; j++) {
+      var name = names[j];
+      var value = style.getPropertyValue(name);
+      var frozen = frozenViewportValue(value, viewportWidth, viewportHeight);
+      if (frozen === value) continue;
+      var priority = style.getPropertyPriority(name);
+      viewportUnitRestores.push({ style: style, name: name, value: value, priority: priority });
+      try { style.setProperty(name, frozen, priority); } catch (_) {}
+    }
+  }
+  function freezeRuleViewportUnits(rules, viewportWidth, viewportHeight){
+    if (!rules) return;
+    for (var i = 0; i < rules.length; i++) {
+      var rule = rules[i];
+      if (rule && rule.style) freezeStyleViewportUnits(rule.style, viewportWidth, viewportHeight);
+      try {
+        if (rule && rule.cssRules) freezeRuleViewportUnits(rule.cssRules, viewportWidth, viewportHeight);
+      } catch (_) {}
+    }
+  }
+  function restoreViewportUnits(){
+    for (var i = viewportUnitRestores.length - 1; i >= 0; i--) {
+      var restore = viewportUnitRestores[i];
+      try { restore.style.setProperty(restore.name, restore.value, restore.priority); } catch (_) {}
+    }
+    viewportUnitRestores = [];
+  }
+  var editViewportWidth = 0;
+  var editViewportHeight = 0;
+  function freezeViewportUnits(requestedWidth, requestedHeight){
+    restoreViewportUnits();
+    var viewportWidth = Math.max(1, Number(requestedWidth) || editViewportWidth || Number(window.innerWidth) || 1);
+    var viewportHeight = Math.max(1, Number(requestedHeight) || editViewportHeight || Number(window.innerHeight) || 1);
+    editViewportWidth = viewportWidth;
+    editViewportHeight = viewportHeight;
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      try { freezeRuleViewportUnits(document.styleSheets[i].cssRules, viewportWidth, viewportHeight); } catch (_) {}
+    }
+    var inline = document.querySelectorAll('[style]');
+    for (var j = 0; j < inline.length; j++) freezeStyleViewportUnits(inline[j].style, viewportWidth, viewportHeight);
+  }
+  var documentSizePending = false;
+  var lastDocumentWidth = -1;
+  var lastDocumentHeight = -1;
+  function naturalDocumentSize(){
+    var root = document.documentElement;
+    var body = document.body;
+    if (!root || !body) return null;
+    var width = Math.max(Number(root.scrollWidth) || 0, Number(body.scrollWidth) || 0, Number(root.clientWidth) || 0);
+    var viewportFloor = Math.max(Number(root.clientHeight) || 0, Number(window.innerHeight) || 0);
+    var scrollHeight = Math.max(Number(root.scrollHeight) || 0, Number(body.scrollHeight) || 0);
+    var contentBottom = 0;
+    var nodes = body.querySelectorAll('*');
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var ancestor = node;
+      var fixed = false;
+      while (ancestor && ancestor !== body) {
+        try {
+          if (window.getComputedStyle(ancestor).position === 'fixed') { fixed = true; break; }
+        } catch (_) {}
+        ancestor = ancestor.parentElement;
+      }
+      if (fixed || node.closest('[data-od-edit-guides-layer]')) continue;
+      var rect = node.getBoundingClientRect();
+      if (!Number.isFinite(rect.bottom) || (rect.width <= 0 && rect.height <= 0)) continue;
+      contentBottom = Math.max(contentBottom, rect.bottom + (Number(window.scrollY) || 0));
+    }
+    var descendantBottom = contentBottom;
+    var bodyIntrinsicBottom = 0;
+    var bodyRect = body.getBoundingClientRect();
+    var bodyHeight = Number(body.offsetHeight) || 0;
+    if (bodyHeight > 0 && bodyHeight < viewportFloor - 1) {
+      bodyIntrinsicBottom = bodyRect.top + (Number(window.scrollY) || 0) + bodyHeight;
+    }
+    var tailInset = 0;
+    try {
+      var bodyStyle = window.getComputedStyle(body);
+      tailInset = (parseFloat(bodyStyle.paddingBottom) || 0)
+        + (parseFloat(bodyStyle.borderBottomWidth) || 0)
+        + (parseFloat(bodyStyle.marginBottom) || 0);
+    } catch (_) {}
+    contentBottom = Math.max(descendantBottom + tailInset, bodyIntrinsicBottom);
+    // scrollHeight is authoritative while content really overflows the compact
+    // iframe. Once the host expands the iframe it becomes a viewport floor and
+    // can no longer shrink on its own, so fall back to the last visible content
+    // edge. This breaks the height feedback loop without clipping long pages.
+    var height = scrollHeight > viewportFloor + 1
+      ? scrollHeight
+      : Math.max(contentBottom, editViewportHeight, 1);
+    return { width: Math.max(1, Math.ceil(width)), height: Math.max(1, Math.ceil(height)) };
+  }
+  function postDocumentSize(){
+    if (!enabled) return;
+    var size = naturalDocumentSize();
+    if (!size || (size.width === lastDocumentWidth && size.height === lastDocumentHeight)) return;
+    lastDocumentWidth = size.width;
+    lastDocumentHeight = size.height;
+    postEditMessage({ type: 'od-edit-document-size', width: size.width, height: size.height });
+  }
+  function scheduleDocumentSize(){
+    if (!enabled || documentSizePending) return;
+    documentSizePending = true;
+    var schedule = window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); };
+    schedule(function(){ documentSizePending = false; postDocumentSize(); });
+  }
+  function resetDocumentScroll(){
+    if (document.documentElement) document.documentElement.scrollTop = 0;
+    if (document.body) document.body.scrollTop = 0;
   }
   var lastHoverId = null;
   var lastHoverEl = null;
@@ -507,32 +805,274 @@ export function buildManualEditBridge(enabled: boolean): string {
   var guidesMemoryClearedAt = 0;
   var guidesEnabled = true;
   var selectedTargetId = null;
-  // Free drag-to-reposition state. pointerdown records a pending drag; once the
-  // pointer moves past DRAG_THRESHOLD it becomes an active drag that writes an
-  // inline translate() the same way the inspector writes any style, so the
-  // panel's Save persists it. justDragged suppresses the click that follows a
-  // drag (so the drop doesn't also select / enter text-edit).
+  // Structure-aware drag state. The element never leaves normal HTML flow
+  // while the pointer is moving. Instead we resolve a compatible parent plus
+  // an insertion sibling and draw that slot. The host persists a DOM reorder
+  // on drop, so dragging cannot create arbitrary left/top/translate offsets.
   var DRAG_THRESHOLD = 4;
   var dragPending = null;
+  var dragCommitSequence = 0;
+  var pendingStructuralMove = null;
   var justDragged = false;
-  function readTranslateBase(el){
-    // Split the element's existing inline transform into a non-translate
-    // prefix (rotate/scale/etc. we preserve) and the translate() we manage.
-    var raw = (el.style && el.style.transform) || '';
-    var base = { prefix: '', tx: 0, ty: 0 };
-    var m = raw.match(/translate\\(\\s*(-?[\\d.]+)px\\s*,\\s*(-?[\\d.]+)px\\s*\\)/);
-    if (m) {
-      base.tx = parseFloat(m[1]) || 0;
-      base.ty = parseFloat(m[2]) || 0;
-      base.prefix = raw.replace(m[0], '').replace(/\\s+/g, ' ').trim();
-    } else if (raw && raw !== 'none') {
-      base.prefix = raw.trim();
-    }
-    return base;
+  // Corner resize stays inside the iframe so pointer deltas, DOMRect geometry,
+  // and the selection chrome all share the same logical CSS-pixel space. The
+  // host scales/pans the entire iframe as one artboard, so dividing by host zoom
+  // here would apply the scale twice.
+  var RESIZE_MIN_BORDER_BOX = 16;
+  var resizePending = null;
+  var resizeCommitSequence = 0;
+  var pendingResizeCommit = null;
+  var resizeAnimationFrame = null;
+  var justResized = false;
+  var editViewport = 'desktop';
+  // Accepted rules must remain in the retained iframe until that document is
+  // rebuilt from the newly saved source. Keying by target + viewport lets a
+  // second resize coexist with the first and lets viewport switches reactivate
+  // the matching responsive preview without touching iframe identity.
+  var responsiveSizePreviewRules = Object.create(null);
+  var responsiveSizePreviewStyle = null;
+  var dropVoidTags = { area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1, link:1, meta:1, param:1, source:1, track:1, wbr:1 };
+  var dropRequiredParents = {
+    li: ['ul','ol','menu'], dt: ['dl','div'], dd: ['dl','div'],
+    tr: ['table','thead','tbody','tfoot'], td: ['tr'], th: ['tr'],
+    caption: ['table'], colgroup: ['table'], thead: ['table'], tbody: ['table'], tfoot: ['table'],
+    option: ['select','optgroup','datalist'], optgroup: ['select']
+  };
+  var dropRestrictedChildren = {
+    ul: ['li'], ol: ['li'], menu: ['li'], dl: ['dt','dd','div'],
+    table: ['caption','colgroup','thead','tbody','tfoot','tr'],
+    thead: ['tr'], tbody: ['tr'], tfoot: ['tr'], tr: ['td','th'],
+    select: ['option','optgroup'], optgroup: ['option']
+  };
+  var dropPhrasingParents = {
+    p:1, h1:1, h2:1, h3:1, h4:1, h5:1, h6:1, span:1, strong:1, em:1,
+    b:1, i:1, small:1, mark:1, code:1, pre:1, label:1, legend:1, summary:1,
+    a:1, button:1, abbr:1, cite:1, dfn:1, kbd:1, q:1, s:1, samp:1,
+    sub:1, sup:1, time:1, u:1, var:1
+  };
+  var dropPhrasingChildren = {
+    a:1, abbr:1, b:1, br:1, button:1, cite:1, code:1, dfn:1, em:1, i:1,
+    img:1, kbd:1, label:1, mark:1, q:1, s:1, samp:1, small:1, span:1,
+    strong:1, sub:1, sup:1, time:1, u:1, var:1, wbr:1
+  };
+  var reparentedTextStyleResets = {
+    position:'static', inset:'auto', top:'auto', right:'auto', bottom:'auto', left:'auto',
+    transform:'none', translate:'none', width:'auto', height:'auto', minWidth:'0', minHeight:'0',
+    maxWidth:'100%', maxHeight:'none', margin:'0', padding:'0', gridArea:'auto',
+    gridColumn:'auto', gridRow:'auto', flex:'0 1 auto', flexBasis:'auto', alignSelf:'auto',
+    justifySelf:'auto', whiteSpace:'normal', wordSpacing:'normal', textIndent:'0',
+    overflowWrap:'anywhere'
+  };
+  var whitespacePreservingTextTags = { pre:1, code:1, textarea:1 };
+  var dropBoxTags = {
+    main:1, nav:1, section:1, article:1, aside:1, header:1, footer:1, div:1,
+    form:1, fieldset:1, details:1, dialog:1, address:1, blockquote:1, figure:1,
+    figcaption:1, ul:1, ol:1, menu:1, li:1, dl:1, dt:1, dd:1, table:1,
+    thead:1, tbody:1, tfoot:1, tr:1, td:1, th:1
+  };
+  function includesTag(list, tag){ return !list || list.indexOf(tag) >= 0; }
+  function isVisualDropBox(el){
+    if (!el) return false;
+    if (inferKind(el) === 'container') return true;
+    // A populated text leaf is an insertion sibling, not a box to nest into.
+    // Empty visual elements remain valid drop containers.
+    if (String(el.textContent || '').trim()) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    if (dropBoxTags[tag]) return true;
+    var display = window.getComputedStyle ? String(window.getComputedStyle(el).display || '') : '';
+    return display === 'inline-block' || display === 'flex'
+      || display === 'inline-flex' || display === 'grid' || display === 'inline-grid'
+      || display === 'list-item' || display === 'table-cell';
   }
-  function composeTransform(prefix, tx, ty){
-    var t = 'translate(' + Math.round(tx) + 'px, ' + Math.round(ty) + 'px)';
-    return prefix ? (prefix + ' ' + t) : t;
+  function canAcceptDrop(parent, child){
+    if (!parent || !child || parent === child || child.contains(parent)) return false;
+    if (parent !== document.body && !isSourceMappable(parent)) return false;
+    if (parent.namespaceURI && parent.namespaceURI !== 'http://www.w3.org/1999/xhtml') return false;
+    var parentTag = (parent.tagName || '').toLowerCase();
+    var childTag = (child.tagName || '').toLowerCase();
+    if (!parentTag || parentTag === 'html' || dropVoidTags[parentTag]) return false;
+    if (!includesTag(dropRequiredParents[childTag], parentTag)) return false;
+    if (!includesTag(dropRestrictedChildren[parentTag], childTag)) return false;
+    if (dropPhrasingParents[parentTag] && !dropPhrasingChildren[childTag]) return false;
+    return parent === document.body || isVisualDropBox(parent);
+  }
+  function shouldNormalizeReparentedText(el, parent){
+    return !!(el && parent && el.parentElement !== parent && inferKind(el) === 'text');
+  }
+  function normalizeReparentedText(el, parent){
+    if (!shouldNormalizeReparentedText(el, parent)) return;
+    Object.keys(reparentedTextStyleResets).forEach(function(prop){
+      el.style.setProperty(camelToKebab(prop), reparentedTextStyleResets[prop]);
+    });
+    var tag = (el.tagName || '').toLowerCase();
+    if (!whitespacePreservingTextTags[tag] && el.children.length === 0) {
+      el.textContent = String(el.textContent || '').replace(/\\s+/g, ' ').trim();
+    }
+  }
+  function promoteGeneratedSourceId(el, id){
+    if (!el || !id || id === '__body__' || id.indexOf('source-path:') === 0 || /^path-\\d+(?:-\\d+)*$/.test(id)) return;
+    if (!el.hasAttribute('data-od-id')) el.setAttribute('data-od-id', id);
+    el.removeAttribute('data-od-runtime-id');
+  }
+  function dropId(el){ return el === document.body ? '__body__' : stableId(el); }
+  function dropChildren(parent, dragged){
+    return Array.prototype.slice.call(parent.children).filter(function(child){
+      return child !== dragged && !isHostNode(child) && isSourceMappable(child);
+    });
+  }
+  function dropAxis(parent, nearestRect, clientY){
+    var computed = window.getComputedStyle(parent);
+    var display = computed.display || '';
+    var direction = computed.flexDirection || '';
+    if (display.indexOf('flex') >= 0) return direction.indexOf('row') === 0 ? 'horizontal' : 'vertical';
+    if (display.indexOf('grid') >= 0 && nearestRect) {
+      return Math.abs(clientY - (nearestRect.y + nearestRect.height / 2)) < nearestRect.height * 0.42
+        ? 'horizontal'
+        : 'vertical';
+    }
+    return 'vertical';
+  }
+  // A side drop wraps the anchor and the dragged element into a generated
+  // horizontal <div> group, so both elements must be legal flow children of a
+  // div and the parent must be allowed to hold one. Lists, tables, selects,
+  // and phrasing-only containers therefore never offer left/right slots.
+  function canGroupSideBySide(parent, anchor, dragged){
+    if (!parent || !anchor || !dragged || anchor === dragged) return false;
+    if (dragged === parent || dragged.contains(parent)) return false;
+    var parentTag = parent === document.body ? 'body' : (parent.tagName || '').toLowerCase();
+    if (!parentTag || dropVoidTags[parentTag] || dropPhrasingParents[parentTag]) return false;
+    if (!includesTag(dropRestrictedChildren[parentTag], 'div')) return false;
+    if (!includesTag(dropRequiredParents['div'], parentTag)) return false;
+    var anchorTag = (anchor.tagName || '').toLowerCase();
+    var draggedTag = (dragged.tagName || '').toLowerCase();
+    if (!includesTag(dropRequiredParents[anchorTag], 'div')) return false;
+    if (!includesTag(dropRequiredParents[draggedTag], 'div')) return false;
+    return true;
+  }
+  // Pointer inside the anchor's row and within its outer horizontal third
+  // targets that side; the middle third keeps ordinary vertical insertion.
+  function sidePlacementFor(rect, clientX, clientY){
+    if (clientY < rect.y || clientY > rect.y + rect.height) return null;
+    if (clientX <= rect.x + rect.width / 3) return 'left';
+    if (clientX >= rect.x + rect.width * 2 / 3) return 'right';
+    return null;
+  }
+  function slotForParent(parent, dragged, clientX, clientY){
+    var children = dropChildren(parent, dragged);
+    if (!children.length) return { parent: parent, before: null, axis: 'vertical', children: children };
+    var nearest = children.map(function(child){
+      var rect = child.getBoundingClientRect();
+      var cx = rect.x + rect.width / 2;
+      var cy = rect.y + rect.height / 2;
+      return { child: child, rect: rect, distance: Math.pow(clientX - cx, 2) + Math.pow(clientY - cy, 2) };
+    }).sort(function(a, b){ return a.distance - b.distance; })[0];
+    var axis = dropAxis(parent, nearest.rect, clientY);
+    if (axis === 'vertical') {
+      // Existing horizontal flex/grid containers reorder through the normal
+      // horizontal-axis path above; only vertical containers grow a group.
+      var placement = sidePlacementFor(nearest.rect, clientX, clientY);
+      if (placement && canGroupSideBySide(parent, nearest.child, dragged)) {
+        return {
+          parent: parent, before: null, axis: axis, children: children,
+          placement: placement, anchor: nearest.child
+        };
+      }
+    }
+    var beforeNearest = axis === 'horizontal'
+      ? clientX < nearest.rect.x + nearest.rect.width / 2
+      : clientY < nearest.rect.y + nearest.rect.height / 2;
+    var nearestIndex = children.indexOf(nearest.child);
+    var before = beforeNearest ? nearest.child : (children[nearestIndex + 1] || null);
+    return { parent: parent, before: before, axis: axis, children: children };
+  }
+  function elementDepth(el){
+    var depth = 0;
+    while (el && el !== document.body) { depth += 1; el = el.parentElement; }
+    return depth;
+  }
+  function findDropSlot(clientX, clientY, dragged, eventTarget){
+    var stack = document.elementsFromPoint
+      ? document.elementsFromPoint(clientX, clientY)
+      : [eventTarget];
+    var candidates = [];
+    var seen = [];
+    for (var i = 0; i < stack.length; i++) {
+      var node = stack[i] && stack[i].nodeType === 1 ? stack[i] : null;
+      while (node && node !== document.documentElement) {
+        if (node !== dragged && !dragged.contains(node) && canAcceptDrop(node, dragged) && seen.indexOf(node) < 0) {
+          seen.push(node);
+          var direct = dropChildren(node, dragged);
+          var sameTag = direct.some(function(child){ return child.tagName === dragged.tagName; });
+          var computed = window.getComputedStyle(node);
+          var layout = (computed.display || '').indexOf('flex') >= 0 || (computed.display || '').indexOf('grid') >= 0;
+          candidates.push({
+            parent: node,
+            // Prefer the deepest compatible box under the pointer. The former
+            // current-parent bonus dominated nested targets, so dropping onto
+            // a card inside the same page silently snapped back to the page.
+            score: elementDepth(node) * 1000 + (layout ? 100 : 0) + (sameTag ? 20 : 0)
+              + (node === dragged.parentElement ? 10 : 0)
+          });
+        }
+        node = node.parentElement;
+      }
+    }
+    candidates.sort(function(a, b){ return b.score - a.score; });
+    return candidates.length ? slotForParent(candidates[0].parent, dragged, clientX, clientY) : null;
+  }
+  function isNoopDrop(slot, dragged){
+    if (!slot) return false;
+    // A side drop always restructures the document (it creates a group), so it
+    // is never a same-position noop.
+    if (slot.placement) return false;
+    if (slot.parent !== dragged.parentElement) return false;
+    var originalChildren = Array.prototype.slice.call(slot.parent.children).filter(function(child){
+      return !isHostNode(child) && isSourceMappable(child);
+    });
+    var currentIndex = originalChildren.indexOf(dragged);
+    var currentNext = currentIndex >= 0 ? (originalChildren[currentIndex + 1] || null) : null;
+    return slot.before === currentNext;
+  }
+  function renderDropSlot(slot, dragged){
+    var layer = ensureGuidesLayer();
+    layer.replaceChildren();
+    renderSelectedChrome(layer, targetFrom(dragged, false));
+    if (!slot) return;
+    var parentRect = slot.parent.getBoundingClientRect();
+    renderBox(layer, { rect: { x: parentRect.x, y: parentRect.y, width: parentRect.width, height: parentRect.height } }, 'drop');
+    if (slot.placement && slot.anchor) {
+      // Side drops pair with one anchor row: the insertion line is vertical and
+      // spans that anchor, not the whole parent.
+      var anchorRect = slot.anchor.getBoundingClientRect();
+      var lineX = slot.placement === 'left' ? anchorRect.x : anchorRect.x + anchorRect.width;
+      addGuideNode(layer, 'od-edit-guide-drop-line od-edit-guide-drop-line-v', {
+        left: Math.round(lineX) + 'px',
+        top: Math.round(anchorRect.y + 2) + 'px',
+        height: Math.max(12, Math.round(anchorRect.height - 4)) + 'px'
+      });
+      return;
+    }
+    var beforeRect = slot.before ? slot.before.getBoundingClientRect() : null;
+    var lastRect = !slot.before && slot.children.length
+      ? slot.children[slot.children.length - 1].getBoundingClientRect()
+      : null;
+    if (slot.axis === 'horizontal') {
+      var x = beforeRect ? beforeRect.x : (lastRect ? lastRect.x + lastRect.width : parentRect.x + 8);
+      addGuideNode(layer, 'od-edit-guide-drop-line od-edit-guide-drop-line-v', {
+        left: Math.round(x) + 'px', top: Math.round(parentRect.y + 6) + 'px', height: Math.max(12, Math.round(parentRect.height - 12)) + 'px'
+      });
+    } else {
+      var y = beforeRect ? beforeRect.y : (lastRect ? lastRect.y + lastRect.height : parentRect.y + 8);
+      addGuideNode(layer, 'od-edit-guide-drop-line od-edit-guide-drop-line-h', {
+        left: Math.round(parentRect.x + 6) + 'px', top: Math.round(y) + 'px', width: Math.max(12, Math.round(parentRect.width - 12)) + 'px'
+      });
+    }
+  }
+  function cancelPendingDrag(){
+    if (!dragPending) return;
+    dragPending.el.removeAttribute('data-od-edit-dragging');
+    dragPending = null;
+    renderSelectedChromeForCurrent();
   }
   function clearHoverTracking(){
     if (lastHoverEl) guidesMemoryClearedAt = Date.now();
@@ -558,6 +1098,325 @@ export function buildManualEditBridge(enabled: boolean): string {
     Object.keys(style || {}).forEach(function(key){ node.style[key] = style[key]; });
     if (text) node.textContent = text;
     layer.appendChild(node);
+    return node;
+  }
+  function normalizeEditViewport(value){
+    return value === 'mobile' || value === 'tablet' ? value : 'desktop';
+  }
+  function roundedResizePercent(value){
+    return Math.round(Number(value || 0) * 100) / 100;
+  }
+  function roundedResizePixels(value){
+    return Math.round(Number(value || 0));
+  }
+  function clampedResizePercent(value, min, max){
+    return Math.max(min, Math.min(max, roundedResizePercent(value)));
+  }
+  function resizeRuleKey(viewport, id){
+    return viewport + '::' + id;
+  }
+  function responsiveSizeSelectors(viewport, id){
+    var gate = 'html[data-od-edit-viewport=' + JSON.stringify(normalizeEditViewport(viewport)) + '] ';
+    var value = JSON.stringify(String(id || ''));
+    return [
+      gate + '[data-od-id=' + value + ']',
+      gate + '[data-od-runtime-id=' + value + ']',
+      gate + '[' + sourcePathAttr + '=' + value + ']'
+    ];
+  }
+  function responsiveSizeRuleCss(rule){
+    var size = rule && rule.size ? rule.size : {};
+    var declarations = [];
+    if (Number.isFinite(size.widthPercent)) {
+      declarations.push('width:' + roundedResizePercent(size.widthPercent) + '% !important');
+    }
+    if (Number.isFinite(size.minHeight)) {
+      declarations.push('min-height:' + roundedResizePixels(size.minHeight) + 'px !important');
+    }
+    if (Number.isFinite(size.leftPercent)) {
+      declarations.push('left:' + roundedResizePercent(size.leftPercent) + '% !important');
+      declarations.push('right:auto !important');
+    }
+    if (Number.isFinite(size.topPx)) {
+      declarations.push('top:' + roundedResizePixels(size.topPx) + 'px !important');
+      declarations.push('bottom:auto !important');
+    }
+    if (!declarations.length) return '';
+    return responsiveSizeSelectors(rule.viewport, rule.id).join(',') + '{' + declarations.join(';') + ';}';
+  }
+  function renderResponsiveSizePreviewRules(){
+    var keys = Object.keys(responsiveSizePreviewRules).sort();
+    if (!keys.length) {
+      if (responsiveSizePreviewStyle && responsiveSizePreviewStyle.parentNode) {
+        responsiveSizePreviewStyle.parentNode.removeChild(responsiveSizePreviewStyle);
+      }
+      responsiveSizePreviewStyle = null;
+      return;
+    }
+    if (!responsiveSizePreviewStyle || !responsiveSizePreviewStyle.isConnected) {
+      responsiveSizePreviewStyle = document.createElement('style');
+      responsiveSizePreviewStyle.setAttribute('data-od-responsive-size-preview', 'true');
+      (document.head || document.documentElement).appendChild(responsiveSizePreviewStyle);
+    }
+    responsiveSizePreviewStyle.textContent = keys.map(function(key){
+      return responsiveSizeRuleCss(responsiveSizePreviewRules[key]);
+    }).filter(Boolean).join('\\n');
+  }
+  function setResponsiveSizePreviewRule(key, rule){
+    if (rule) responsiveSizePreviewRules[key] = rule;
+    else delete responsiveSizePreviewRules[key];
+    renderResponsiveSizePreviewRules();
+  }
+  function restoreResizePreviewSnapshot(state){
+    if (!state) return;
+    setResponsiveSizePreviewRule(
+      state.ruleKey,
+      state.hadPreviousRule ? state.previousRule : null
+    );
+  }
+  function positionedResizeOrigin(el, style, block, rect){
+    var position = style.position || 'static';
+    var left = parseFloat(style.left);
+    var top = parseFloat(style.top);
+    if (!Number.isFinite(left)) {
+      if (position === 'relative' || position === 'sticky') {
+        left = 0;
+      } else {
+        left = rect.left
+          - Number(block.rect && block.rect.left || 0)
+          - Number(block.borderLeft || 0)
+          - numericStyleValue(style, 'marginLeft')
+          + (position === 'fixed' ? 0 : Number(block.el && block.el.scrollLeft || 0));
+      }
+    }
+    if (!Number.isFinite(top)) {
+      if (position === 'relative' || position === 'sticky') {
+        top = 0;
+      } else {
+        top = rect.top
+          - Number(block.rect && block.rect.top || 0)
+          - Number(block.borderTop || 0)
+          - numericStyleValue(style, 'marginTop')
+          + (position === 'fixed' ? 0 : Number(block.el && block.el.scrollTop || 0));
+      }
+    }
+    return { left: left, top: top };
+  }
+  function startResizeGesture(ev, handle){
+    if (!enabled || resizePending || pendingResizeCommit || pendingStructuralMove) return false;
+    if (ev.button !== undefined && ev.button !== 0) return false;
+    var direction = handle && handle.getAttribute ? handle.getAttribute('data-od-edit-resize-handle') : '';
+    if (direction !== 'nw' && direction !== 'ne' && direction !== 'sw' && direction !== 'se') return false;
+    var el = selectedTargetId ? findById(selectedTargetId) : null;
+    if (!el || !el.isConnected || inferKind(el) !== 'container' || !isSourceMappable(el)) return false;
+    var style = window.getComputedStyle(el);
+    if (!hasResizableBox(style) || hasUnsupportedSizeTransform(style)) return false;
+    var rect = el.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    var block = resizeContainingBlock(el, style);
+    var paddingBorderX = numericStyleValue(style, 'paddingLeft')
+      + numericStyleValue(style, 'paddingRight')
+      + numericStyleValue(style, 'borderLeftWidth')
+      + numericStyleValue(style, 'borderRightWidth');
+    var paddingBorderY = numericStyleValue(style, 'paddingTop')
+      + numericStyleValue(style, 'paddingBottom')
+      + numericStyleValue(style, 'borderTopWidth')
+      + numericStyleValue(style, 'borderBottomWidth');
+    var positioned = style.position === 'absolute' || style.position === 'fixed';
+    var origin = positionedResizeOrigin(el, style, block, rect);
+    var id = stableId(el);
+    var ruleKey = resizeRuleKey(editViewport, id);
+    var hadPreviousRule = Object.prototype.hasOwnProperty.call(responsiveSizePreviewRules, ruleKey);
+    resizePending = {
+      el: el,
+      id: id,
+      direction: direction,
+      pointerId: ev.pointerId,
+      startX: Number(ev.clientX) || 0,
+      startY: Number(ev.clientY) || 0,
+      clientX: Number(ev.clientX) || 0,
+      clientY: Number(ev.clientY) || 0,
+      shiftKey: !!ev.shiftKey,
+      startRect: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        right: rect.right,
+        bottom: rect.bottom
+      },
+      boxSizing: style.boxSizing || 'content-box',
+      paddingBorderX: paddingBorderX,
+      paddingBorderY: paddingBorderY,
+      block: block,
+      positioned: positioned,
+      origin: origin,
+      viewport: editViewport,
+      ruleKey: ruleKey,
+      hadPreviousRule: hadPreviousRule,
+      previousRule: hadPreviousRule ? responsiveSizePreviewRules[ruleKey] : null,
+      latestSize: null,
+      changed: false
+    };
+    el.setAttribute('data-od-edit-resizing', direction);
+    dragPending = null;
+    if (ev.pointerId !== undefined && el.setPointerCapture) {
+      try { el.setPointerCapture(ev.pointerId); } catch (_) {}
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    return true;
+  }
+  function resizeIntentForState(state){
+    var start = state.startRect;
+    var west = state.direction.charAt(1) === 'w';
+    var north = state.direction.charAt(0) === 'n';
+    var width = west ? start.right - state.clientX : state.clientX - start.x;
+    var height = north ? start.bottom - state.clientY : state.clientY - start.y;
+    width = Math.max(RESIZE_MIN_BORDER_BOX, width);
+    height = Math.max(RESIZE_MIN_BORDER_BOX, height);
+    if (state.shiftKey && start.width > 0 && start.height > 0) {
+      var widthScale = width / start.width;
+      var heightScale = height / start.height;
+      var scale = Math.abs(widthScale - 1) >= Math.abs(heightScale - 1) ? widthScale : heightScale;
+      scale = Math.max(
+        RESIZE_MIN_BORDER_BOX / start.width,
+        RESIZE_MIN_BORDER_BOX / start.height,
+        scale
+      );
+      width = start.width * scale;
+      height = start.height * scale;
+    }
+    var x = west ? start.right - width : start.x;
+    var y = north ? start.bottom - height : start.y;
+    return { x: x, y: y, width: width, height: height };
+  }
+  function responsiveSizeForIntent(state, intent){
+    var contentBox = state.boxSizing !== 'border-box';
+    var cssWidth = Math.max(0, intent.width - (contentBox ? state.paddingBorderX : 0));
+    var cssMinHeight = Math.max(0, intent.height - (contentBox ? state.paddingBorderY : 0));
+    var size = {
+      widthPercent: clampedResizePercent((cssWidth / Math.max(1, state.block.width)) * 100, 0, 10000),
+      minHeight: Math.max(0, roundedResizePixels(cssMinHeight))
+    };
+    if (state.positioned) {
+      size.leftPercent = clampedResizePercent((
+        (state.origin.left + intent.x - state.startRect.x) / Math.max(1, state.block.width)
+      ) * 100, -10000, 10000);
+      size.topPx = Math.max(
+        -250000,
+        Math.min(250000, roundedResizePixels(state.origin.top + intent.y - state.startRect.y))
+      );
+    }
+    return size;
+  }
+  function flushResizeFrame(){
+    resizeAnimationFrame = null;
+    var state = resizePending;
+    if (!state || !state.el || !state.el.isConnected) return;
+    var intent = resizeIntentForState(state);
+    var size = responsiveSizeForIntent(state, intent);
+    state.changed = state.changed
+      || Math.abs(intent.width - state.startRect.width) > 0.1
+      || Math.abs(intent.height - state.startRect.height) > 0.1;
+    state.latestSize = size;
+    setResponsiveSizePreviewRule(state.ruleKey, {
+      id: state.id,
+      viewport: state.viewport,
+      size: size
+    });
+    // CSS constraints and layout containers may not honor the intent exactly.
+    // Always redraw from the browser's rendered truth rather than the pointer
+    // math, so the frame never drifts away from the selected element.
+    renderSelectedChromeForCurrent();
+    scheduleDocumentSize();
+  }
+  function scheduleResizeFrame(ev){
+    if (!resizePending) return;
+    resizePending.clientX = Number(ev.clientX) || 0;
+    resizePending.clientY = Number(ev.clientY) || 0;
+    resizePending.shiftKey = !!ev.shiftKey;
+    if (resizeAnimationFrame !== null) return;
+    var schedule = window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); };
+    resizeAnimationFrame = schedule(flushResizeFrame);
+  }
+  function cancelResizeFrame(){
+    if (resizeAnimationFrame === null) return;
+    if (window.cancelAnimationFrame) window.cancelAnimationFrame(resizeAnimationFrame);
+    else clearTimeout(resizeAnimationFrame);
+    resizeAnimationFrame = null;
+  }
+  function releaseResizeCapture(state){
+    if (!state || state.pointerId === undefined || !state.el || !state.el.releasePointerCapture) return;
+    try {
+      if (!state.el.hasPointerCapture || state.el.hasPointerCapture(state.pointerId)) {
+        state.el.releasePointerCapture(state.pointerId);
+      }
+    } catch (_) {}
+  }
+  function finishResizeGesture(ev, cancelled){
+    var state = resizePending;
+    if (!state) return false;
+    if (ev && ev.pointerId !== undefined && state.pointerId !== undefined && ev.pointerId !== state.pointerId) return false;
+    cancelResizeFrame();
+    if (!cancelled && ev) {
+      var finalClientX = Number(ev.clientX);
+      var finalClientY = Number(ev.clientY);
+      if (Number.isFinite(finalClientX)) state.clientX = finalClientX;
+      if (Number.isFinite(finalClientY)) state.clientY = finalClientY;
+      state.shiftKey = !!ev.shiftKey;
+      flushResizeFrame();
+    }
+    resizePending = null;
+    if (state.el && state.el.removeAttribute) state.el.removeAttribute('data-od-edit-resizing');
+    releaseResizeCapture(state);
+    justResized = !cancelled;
+    if (cancelled || !state.changed || !state.latestSize) {
+      restoreResizePreviewSnapshot(state);
+      renderSelectedChromeForCurrent();
+      scheduleDocumentSize();
+      if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      return true;
+    }
+    var requestId = 'resize-' + Date.now() + '-' + (++resizeCommitSequence);
+    pendingResizeCommit = {
+      requestId: requestId,
+      id: state.id,
+      el: state.el,
+      ruleKey: state.ruleKey,
+      hadPreviousRule: state.hadPreviousRule,
+      previousRule: state.previousRule
+    };
+    postEditMessage({
+      type: 'od-edit-resize-commit',
+      id: state.id,
+      requestId: requestId,
+      viewport: state.viewport,
+      size: state.latestSize
+    });
+    if (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+    return true;
+  }
+  function settleResizeCommit(message){
+    if (!pendingResizeCommit || message.requestId !== pendingResizeCommit.requestId) return false;
+    var commit = pendingResizeCommit;
+    pendingResizeCommit = null;
+    if (message.accepted !== true) {
+      setResponsiveSizePreviewRule(
+        commit.ruleKey,
+        commit.hadPreviousRule ? commit.previousRule : null
+      );
+    }
+    postTargets();
+    scheduleDocumentSize();
+    renderSelectedChromeForCurrent();
+    return true;
   }
   function renderBox(layer, target, mode){
     if (!target || !target.rect) return;
@@ -572,22 +1431,21 @@ export function buildManualEditBridge(enabled: boolean): string {
   function renderSelectedChrome(layer, target){
     if (!target || !target.rect) return;
     renderBox(layer, target, 'selected');
+    if (!(target.sizing && target.sizing.resizable)) return;
     var rect = target.rect;
     var points = [
-      [rect.x, rect.y],
-      [rect.x + rect.width / 2, rect.y],
-      [rect.x + rect.width, rect.y],
-      [rect.x, rect.y + rect.height / 2],
-      [rect.x + rect.width, rect.y + rect.height / 2],
-      [rect.x, rect.y + rect.height],
-      [rect.x + rect.width / 2, rect.y + rect.height],
-      [rect.x + rect.width, rect.y + rect.height]
+      { x: rect.x, y: rect.y, direction: 'nw' },
+      { x: rect.x + rect.width, y: rect.y, direction: 'ne' },
+      { x: rect.x, y: rect.y + rect.height, direction: 'sw' },
+      { x: rect.x + rect.width, y: rect.y + rect.height, direction: 'se' }
     ];
     for (var i = 0; i < points.length; i++) {
-      addGuideNode(layer, 'od-edit-guide-handle', {
-        left: Math.round(points[i][0]) + 'px',
-        top: Math.round(points[i][1]) + 'px'
+      var point = points[i];
+      var handle = addGuideNode(layer, 'od-edit-guide-handle', {
+        left: Math.round(point.x) + 'px',
+        top: Math.round(point.y) + 'px'
       });
+      handle.setAttribute('data-od-edit-resize-handle', point.direction);
     }
   }
   function renderSelectedChromeForCurrent(){
@@ -726,8 +1584,8 @@ export function buildManualEditBridge(enabled: boolean): string {
     guidesMemoryId = id;
     var target = targetFrom(el, true);
     renderHoverRelation(target);
-    window.parent.postMessage({ type: 'od-edit-hover', target: target }, '*');
-    window.parent.postMessage({ type: 'od-edit-inspect-hover', target: target }, '*');
+    postEditMessage({ type: 'od-edit-hover', target: target });
+    postEditMessage({ type: 'od-edit-inspect-hover', target: target });
   }
   function renderHoverRelationOnly(el){
     if (!enabled || !el) return;
@@ -754,6 +1612,16 @@ export function buildManualEditBridge(enabled: boolean): string {
   function closestTarget(event){
     annotateBrandKitRuntimeTargets();
     var el = event.target;
+    var interactive = el && el.closest ? el.closest('a,button,[role="button"]') : null;
+    if (
+      interactive &&
+      interactive !== document.body &&
+      interactive !== document.documentElement &&
+      isSourceMappable(interactive) &&
+      isDiscoveryTarget(interactive)
+    ) {
+      return interactive;
+    }
     while (el && el !== document.documentElement) {
       if (el !== document.body && el !== document.documentElement && isSourceMappable(el) && isDiscoveryTarget(el)) {
         return el;
@@ -802,11 +1670,11 @@ export function buildManualEditBridge(enabled: boolean): string {
   var activeTextEdit = null;
   function postTextSession(el, active, extra){
     if (!el) return;
-    window.parent.postMessage(Object.assign({
+    postEditMessage(Object.assign({
       type: 'od-edit-text-session',
       id: stableId(el),
       active: !!active
-    }, extra || {}), '*');
+    }, extra || {}));
   }
   function finishActiveTextEdit(commit){
     if (!activeTextEdit) return false;
@@ -820,11 +1688,11 @@ export function buildManualEditBridge(enabled: boolean): string {
     var value = (el.textContent || '').trim();
     var changed = value !== session.originalText.trim();
     if (commit && changed) {
-      window.parent.postMessage({
+      postEditMessage({
         type: 'od-edit-text-commit',
         id: stableId(el),
         value: value
-      }, '*');
+      });
     } else if (!commit) {
       el.textContent = session.originalText;
     }
@@ -865,8 +1733,16 @@ export function buildManualEditBridge(enabled: boolean): string {
   function findById(id){
     if (!id) return null;
     if (id === '__body__') return document.body;
-    var el = document.querySelector('[data-od-id="' + cssEscapeId(id) + '"]')
-          || document.querySelector('[data-od-runtime-id="' + cssEscapeId(id) + '"]')
+    var authored = document.querySelector('[data-od-id="' + cssEscapeId(id) + '"]');
+    if (authored) return authored;
+    if (id.indexOf('source-path:') === 0) {
+      var currentPath = id;
+      while (currentPath.indexOf('source-path:') === 0) {
+        currentPath = currentPath.slice('source-path:'.length);
+      }
+      return document.querySelector('[' + sourcePathAttr + '="' + cssEscapeId(currentPath) + '"]');
+    }
+    var el = document.querySelector('[data-od-runtime-id="' + cssEscapeId(id) + '"]')
           || document.querySelector('[' + sourcePathAttr + '="' + cssEscapeId(id) + '"]');
     if (el) return el;
     if (typeof id === 'string' && id.indexOf('path-') === 0) {
@@ -886,7 +1762,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   function applyPreviewStyles(id, styles, version){
     var el = findById(id);
     if (!el) {
-      window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id || '', version: Number(version) || 0, ok: false, error: 'Target not found' }, '*');
+      postEditMessage({ type: 'od-edit-preview-style-applied', id: id || '', version: Number(version) || 0, ok: false, error: 'Target not found' });
       return;
     }
     var keys = Object.keys(styles || {});
@@ -898,20 +1774,71 @@ export function buildManualEditBridge(enabled: boolean): string {
         if (typeof value !== 'string' || value.trim() === '') el.style.removeProperty(cssName);
         else el.style.setProperty(cssName, value.trim());
       }
-      window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: true }, '*');
+      postEditMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: true });
     } catch (e) {
-      window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: false, error: e && e.message ? String(e.message) : 'Could not apply preview styles' }, '*');
+      postEditMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: false, error: e && e.message ? String(e.message) : 'Could not apply preview styles' });
     }
   }
   window.addEventListener('message', function(ev){
     if (!ev.data) return;
+    if (ev.data.type === 'od-edit-resize-result') {
+      settleResizeCommit(ev.data);
+      return;
+    }
+    if (ev.data.type === 'od-edit-drag-result') {
+      if (!pendingStructuralMove || ev.data.requestId !== pendingStructuralMove.requestId) return;
+      var move = pendingStructuralMove;
+      pendingStructuralMove = null;
+      if (ev.data.accepted !== true) {
+        // Unwrap a rejected side group first: the anchor returns to the
+        // wrapper's slot so the element restore below can resolve its original
+        // next sibling (which may be that very anchor).
+        if (move.group && move.anchor && move.anchorParent && move.anchorParent.isConnected) {
+          if (move.group.parentNode === move.anchorParent) {
+            move.anchorParent.insertBefore(move.anchor, move.group);
+          } else if (move.anchor.parentNode === move.group) {
+            move.anchorParent.appendChild(move.anchor);
+          }
+        }
+        if (move.parent && move.parent.isConnected && move.el && move.el.isConnected) {
+          var restoreBefore = move.before && move.before.parentNode === move.parent ? move.before : null;
+          move.parent.insertBefore(move.el, restoreBefore);
+          if (move.style === null) move.el.removeAttribute('style');
+          else move.el.setAttribute('style', move.style);
+          if (move.text !== null) move.el.textContent = move.text;
+        }
+        if (move.group && move.group.parentNode) move.group.parentNode.removeChild(move.group);
+      } else {
+        // Authored semantic ids may stay durable until the saved source is
+        // mounted. Generated path ids are intentionally ignored because the
+        // rebuilt document recalculates them for the new structure.
+        promoteGeneratedSourceId(move.el, move.id);
+        promoteGeneratedSourceId(move.destinationParent, move.parentId);
+        promoteGeneratedSourceId(move.destinationBefore, move.beforeId);
+        if (move.anchor) promoteGeneratedSourceId(move.anchor, move.anchorId);
+      }
+      postTargets();
+      scheduleDocumentSize();
+      renderSelectedChromeForCurrent();
+      return;
+    }
     if (ev.data.type === 'od-edit-mode') {
+      var nextEditViewport = normalizeEditViewport(ev.data.viewport);
+      if (resizePending && nextEditViewport !== editViewport) finishResizeGesture(null, true);
+      editViewport = nextEditViewport;
+      document.documentElement.setAttribute('data-od-edit-viewport', editViewport);
       enabled = !!ev.data.enabled;
       document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
+      document.documentElement.toggleAttribute(
+        'data-od-edit-expand-document',
+        enabled && ev.data.expandDocument !== false
+      );
       if (!enabled) {
         // Leaving edit mode commits the pending inline edit rather than
         // dropping it (the #3647 exit-path regression).
         finishActiveTextEdit(true);
+        finishResizeGesture(null, true);
+        cancelPendingDrag();
         clearSelectedTarget();
         clearGuidesLayer();
         // Re-entering Edit must treat the first pointerover as fresh. Keeping
@@ -921,8 +1848,27 @@ export function buildManualEditBridge(enabled: boolean): string {
         guidesMemoryEl = null;
         guidesMemoryId = null;
         guidesMemoryClearedAt = 0;
+        restoreViewportUnits();
       }
-      if (enabled) setTimeout(postTargets, 0);
+      if (enabled) {
+        // Expanding the iframe changes the meaning of vh/vmin/vmax. Freeze
+        // those authored values against the compact edit viewport first, or a
+        // page with min-height:100vh grows again every time we expand it.
+        freezeViewportUnits(ev.data.viewportWidth, ev.data.viewportHeight);
+        // The expanded document is navigated by the outer canvas. Clear any
+        // preview-mode root scroll so Edit cannot retain a second, hidden
+        // coordinate system inside the iframe.
+        if (ev.data.expandDocument !== false) resetDocumentScroll();
+        lastDocumentWidth = -1;
+        lastDocumentHeight = -1;
+        setTimeout(postTargets, 0);
+        scheduleDocumentSize();
+        setTimeout(scheduleDocumentSize, 80);
+        setTimeout(function(){
+          if (ev.data.expandDocument !== false) resetDocumentScroll();
+          scheduleDocumentSize();
+        }, 260);
+      }
       return;
     }
     if (ev.data.type === 'od-edit-selected-target') {
@@ -976,12 +1922,12 @@ export function buildManualEditBridge(enabled: boolean): string {
       // "live" tells the host the guides belong to a still-active hover (e.g.
       // a keyboard-triggered capture): clearing them afterwards would blank
       // the guides under the user's cursor, so the host must skip the clear.
-      window.parent.postMessage({
+      postEditMessage({
         type: 'od-edit-guides-restore:result',
         id: ev.data.id || null,
         restored: restored,
         live: !!(restored && liveHoverEl)
-      }, '*');
+      });
       return;
     }
     if (ev.data.type === 'od-edit-preview-style') {
@@ -1009,28 +1955,108 @@ export function buildManualEditBridge(enabled: boolean): string {
       return;
     }
   });
+  // Capture wheel/trackpad navigation at the iframe window boundary. This remains
+  // active when a selected text element becomes contenteditable and focused;
+  // document/target listeners in the artifact cannot swallow the gesture first.
+  window.addEventListener('wheel', function(ev){
+    if (!enabled) return;
+    ev.preventDefault();
+    postEditMessage({
+      type: 'od-edit-canvas-wheel',
+      clientX: Number(ev.clientX) || 0,
+      clientY: Number(ev.clientY) || 0,
+      ctrlKey: !!ev.ctrlKey,
+      metaKey: !!ev.metaKey,
+      deltaMode: Number(ev.deltaMode) || 0,
+      deltaX: Number(ev.deltaX) || 0,
+      deltaY: Number(ev.deltaY) || 0
+    });
+  }, { capture: true, passive: false });
   // pointerdown records a candidate drag; the actual move/commit happens in
   // pointermove/pointerup. We don't preventDefault here so a plain press that
   // never moves still behaves as a normal click (select / enter text-edit).
   document.addEventListener('pointerdown', function(ev){
-    if (!enabled || activeTextEdit) return;
+    if (!enabled) return;
+    var resizeHandle = ev.target && ev.target.closest
+      ? ev.target.closest('[data-od-edit-resize-handle]')
+      : null;
+    if (resizeHandle) {
+      startResizeGesture(ev, resizeHandle);
+      return;
+    }
+    if (activeTextEdit || pendingStructuralMove || pendingResizeCommit || resizePending) return;
     if (ev.button !== undefined && ev.button !== 0) return;
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     var el = closestTarget(ev);
     if (!el) { dragPending = null; return; }
-    var base = readTranslateBase(el);
     dragPending = {
       el: el,
       id: stableId(el),
       startX: ev.clientX,
       startY: ev.clientY,
-      prefix: base.prefix,
-      baseTx: base.tx,
-      baseTy: base.ty,
-      started: false
+      started: false,
+      slot: null
     };
+    if (ev.pointerId !== undefined && el.setPointerCapture) {
+      try { el.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
   }, true);
-  document.addEventListener('pointerup', function(ev){
+  function uniqueSideGroupId(){
+    var id = 'od-group-' + Date.now().toString(36) + '-' + dragCommitSequence;
+    while (document.querySelector('[data-od-id="' + cssEscapeId(id) + '"]')) id += '-x';
+    return id;
+  }
+  // A left/right drop inside a vertical container: optimistically wrap the
+  // anchor and the dragged element into one horizontal group so the drop is
+  // visible immediately, then ask the host to persist the identical structure.
+  function commitSideGroupDrag(drag, requestId){
+    var parent = drag.slot.parent;
+    var anchor = drag.slot.anchor;
+    var groupId = uniqueSideGroupId();
+    var parentId = dropId(parent);
+    var anchorId = stableId(anchor);
+    var wrapper = document.createElement('div');
+    wrapper.setAttribute('data-od-id', groupId);
+    wrapper.setAttribute('style', ${JSON.stringify(MANUAL_EDIT_SIDE_GROUP_STYLE)});
+    pendingStructuralMove = {
+      requestId: requestId,
+      el: drag.el,
+      id: drag.id,
+      parent: drag.el.parentNode,
+      before: drag.el.nextSibling,
+      destinationParent: parent,
+      destinationBefore: null,
+      parentId: parentId,
+      beforeId: null,
+      group: wrapper,
+      anchor: anchor,
+      anchorParent: anchor.parentNode,
+      anchorId: anchorId,
+      style: drag.el.getAttribute('style'),
+      text: shouldNormalizeReparentedText(drag.el, wrapper) && drag.el.children.length === 0
+        ? drag.el.textContent
+        : null
+    };
+    normalizeReparentedText(drag.el, wrapper);
+    parent.insertBefore(wrapper, anchor);
+    wrapper.appendChild(anchor);
+    if (drag.slot.placement === 'left') wrapper.insertBefore(drag.el, anchor);
+    else wrapper.appendChild(drag.el);
+    postTargets();
+    scheduleDocumentSize();
+    postEditMessage({
+      type: 'od-edit-drag-commit',
+      id: drag.id,
+      parentId: parentId,
+      beforeId: null,
+      placement: drag.slot.placement,
+      anchorId: anchorId,
+      groupId: groupId,
+      generation: documentGeneration,
+      requestId: requestId
+    });
+  }
+  function finishPendingDrag(ev, cancelled){
     if (!dragPending) return;
     var drag = dragPending;
     dragPending = null;
@@ -1038,13 +2064,70 @@ export function buildManualEditBridge(enabled: boolean): string {
     justDragged = true;
     ev.preventDefault();
     ev.stopPropagation();
-    var transform = drag.el.style.transform || '';
-    var msg = { type: 'od-edit-drag-commit', id: drag.id, transform: transform };
-    if (drag.bumpedDisplay) msg.display = 'inline-block';
-    window.parent.postMessage(msg, '*');
+    drag.el.removeAttribute('data-od-edit-dragging');
+    if (!cancelled && drag.slot && !isNoopDrop(drag.slot, drag.el)) {
+      var requestId = 'move-' + Date.now() + '-' + (++dragCommitSequence);
+      if (drag.slot.placement && drag.slot.anchor) {
+        commitSideGroupDrag(drag, requestId);
+      } else {
+        var normalizeText = shouldNormalizeReparentedText(drag.el, drag.slot.parent);
+        var destinationParent = drag.slot.parent;
+        var destinationBefore = drag.slot.before;
+        var parentId = dropId(destinationParent);
+        var beforeId = destinationBefore ? stableId(destinationBefore) : null;
+        pendingStructuralMove = {
+          requestId: requestId,
+          el: drag.el,
+          id: drag.id,
+          parent: drag.el.parentNode,
+          before: drag.el.nextSibling,
+          destinationParent: destinationParent,
+          destinationBefore: destinationBefore,
+          parentId: parentId,
+          beforeId: beforeId,
+          style: drag.el.getAttribute('style'),
+          text: normalizeText && drag.el.children.length === 0 ? drag.el.textContent : null
+        };
+        // Apply the DOM reorder immediately so the drop feels responsive while
+        // the host saves it. A rejected save rolls this preview back; a successful
+        // save replaces it with a freshly addressed document.
+        normalizeReparentedText(drag.el, drag.slot.parent);
+        drag.slot.parent.insertBefore(drag.el, drag.slot.before);
+        postTargets();
+        scheduleDocumentSize();
+        postEditMessage({
+          type: 'od-edit-drag-commit',
+          id: drag.id,
+          parentId: parentId,
+          beforeId: beforeId,
+          generation: documentGeneration,
+          requestId: requestId
+        });
+      }
+    }
+    renderSelectedChromeForCurrent();
+  }
+  document.addEventListener('pointerup', function(ev){
+    if (finishResizeGesture(ev, false)) return;
+    finishPendingDrag(ev, false);
+  }, true);
+  document.addEventListener('pointercancel', function(ev){
+    if (finishResizeGesture(ev, true)) return;
+    finishPendingDrag(ev, true);
+  }, true);
+  document.addEventListener('lostpointercapture', function(ev){
+    if (!resizePending) return;
+    finishResizeGesture(ev, true);
+  }, true);
+  document.documentElement.addEventListener('keydown', function(ev){
+    if (!resizePending || ev.key !== 'Escape') return;
+    finishResizeGesture(ev, true);
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
   }, true);
   document.addEventListener('click', function(ev){
     if (!enabled) return;
+    if (justResized) { justResized = false; ev.preventDefault(); ev.stopPropagation(); return; }
     if (justDragged) { justDragged = false; ev.preventDefault(); ev.stopPropagation(); return; }
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     ev.preventDefault();
@@ -1056,7 +2139,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       // iframe stay in sync, then let the host decide whether to surface the
       // page-styles card.
       if (activeTextEdit) finishActiveTextEdit(true);
-      window.parent.postMessage({ type: 'od-edit-background' }, '*');
+      postEditMessage({ type: 'od-edit-background' });
       return;
     }
     // Switching to a different target commits the in-flight edit first, so the
@@ -1066,8 +2149,8 @@ export function buildManualEditBridge(enabled: boolean): string {
     var selectedTarget = targetFrom(el, true);
     setSelectedTarget(selectedTarget.id);
     renderSelectedChromeForCurrent();
-    window.parent.postMessage({ type: 'od-edit-select', target: selectedTarget }, '*');
-    window.parent.postMessage({ type: 'od-edit-inspect-select', target: selectedTarget }, '*');
+    postEditMessage({ type: 'od-edit-select', target: selectedTarget });
+    postEditMessage({ type: 'od-edit-inspect-select', target: selectedTarget });
     if (kind === 'text' || kind === 'link') {
       makeEditable(el, ev);
       return;
@@ -1078,6 +2161,11 @@ export function buildManualEditBridge(enabled: boolean): string {
     var target = String(link.getAttribute('target') || '').toLowerCase();
     if (target && target !== '_self') return null;
     var href = link.getAttribute('href');
+    return previewHtmlFileForHref(href, target);
+  }
+  function previewHtmlFileForHref(href, target){
+    target = String(target || '').toLowerCase();
+    if (target && target !== '_self') return null;
     if (!href || href.charAt(0) === '#') return null;
     try {
       var baseUrl = new URL(document.baseURI || location.href);
@@ -1095,6 +2183,17 @@ export function buildManualEditBridge(enabled: boolean): string {
         !/\\.html?$/i.test(fileName)
       ) return null;
       return { fileName: fileName, search: nextUrl.search || '', hash: nextUrl.hash || '' };
+    } catch (_) {
+      return null;
+    }
+  }
+  function previewExternalUrlForHref(href){
+    if (!href) return null;
+    try {
+      var nextUrl = new URL(href, document.baseURI || location.href);
+      var protocol = String(nextUrl.protocol || '').toLowerCase();
+      if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'mailto:' && protocol !== 'tel:') return null;
+      return nextUrl.href;
     } catch (_) {
       return null;
     }
@@ -1117,8 +2216,43 @@ export function buildManualEditBridge(enabled: boolean): string {
       hash: destination.hash
     }, '*');
   }, true);
+  document.addEventListener('click', function(ev){
+    if (enabled || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    var origin = ev.target;
+    var action = origin && origin.closest
+      ? origin.closest('button[data-od-action="navigate"],[role="button"][data-od-action="navigate"]')
+      : null;
+    if (!action) return;
+    var href = String(action.getAttribute('data-od-href') || '').trim();
+    if (!href) return;
+    var target = action.getAttribute('data-od-target') === '_blank' ? '_blank' : '_self';
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+    if (href.charAt(0) === '#') {
+      var anchorId = href.slice(1);
+      var anchor = anchorId ? document.getElementById(anchorId) : document.documentElement;
+      if (anchor && anchor.scrollIntoView) anchor.scrollIntoView({ block: 'start' });
+      try { if (anchorId) history.replaceState(null, '', href); } catch (_) {}
+      return;
+    }
+    var destination = previewHtmlFileForHref(href, target);
+    if (destination) {
+      window.parent.postMessage({
+        type: 'od:preview-open-file',
+        fileName: destination.fileName,
+        search: destination.search,
+        hash: destination.hash
+      }, '*');
+      return;
+    }
+    var url = previewExternalUrlForHref(href);
+    if (!url) return;
+    window.parent.postMessage({ type: 'od:preview-open-url', url: url, target: target }, '*');
+  }, true);
   document.addEventListener('pointerover', function(ev){
     if (!enabled) return;
+    if (resizePending) return;
     // A drag in progress owns the overlay (selection chrome only); pointerover
     // must not surface hover reference guides that would clutter the move.
     if (dragPending && dragPending.started) return;
@@ -1142,40 +2276,35 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, true);
   document.addEventListener('pointermove', function(ev){
     if (!enabled) return;
-    // Active/candidate drag takes over pointermove: translate the element live
-    // and skip the hover-guides bookkeeping below.
+    if (resizePending) {
+      if (resizePending.pointerId === undefined || ev.pointerId === undefined || resizePending.pointerId === ev.pointerId) {
+        scheduleResizeFrame(ev);
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      return;
+    }
+    // Active/candidate drag takes over pointermove: resolve a structural drop
+    // slot and skip the hover-guides bookkeeping below.
     if (dragPending) {
       var dx = ev.clientX - dragPending.startX;
       var dy = ev.clientY - dragPending.startY;
       if (!dragPending.started && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
         dragPending.started = true;
-        // transform() has no effect on non-replaced inline elements (plain
-        // <span>/<a>), so bump those to inline-block once so the drag is
-        // visible; the change is persisted with the transform on commit.
-        try {
-          var disp = window.getComputedStyle(dragPending.el).display;
-          if (disp === 'inline') {
-            dragPending.el.style.display = 'inline-block';
-            dragPending.bumpedDisplay = true;
-          }
-        } catch (e) {}
-        // Grabbing an unselected element selects it first, so the panel + the
-        // selection chrome follow the element being moved.
+        dragPending.el.setAttribute('data-od-edit-dragging', 'true');
+        // Move the in-frame selection chrome without replacing the host's
+        // inspector draft. The host flushes or preserves that draft before it
+        // accepts this structural move.
         if (selectedTargetId !== dragPending.id) {
           setSelectedTarget(dragPending.id);
-          window.parent.postMessage({ type: 'od-edit-select', target: targetFrom(dragPending.el, true) }, '*');
         }
       }
       if (dragPending.started) {
-        dragPending.el.style.transform = composeTransform(dragPending.prefix, dragPending.baseTx + dx, dragPending.baseTy + dy);
-        // Live guides for the element being moved: its four edge lines + the
-        // selection box/handles, redrawn at the new position each frame.
+        dragPending.slot = findDropSlot(ev.clientX, ev.clientY, dragPending.el, ev.target);
+        // Live guides show the receiving component frame plus the exact DOM
+        // insertion line. The dragged element stays in normal document flow.
         if (guidesEnabled) {
-          var dragLayer = ensureGuidesLayer();
-          dragLayer.replaceChildren();
-          var dragTarget = targetFrom(dragPending.el, false);
-          renderReferenceGuides(dragLayer, dragTarget.rect);
-          renderSelectedChrome(dragLayer, dragTarget);
+          renderDropSlot(dragPending.slot, dragPending.el);
         } else {
           renderSelectedChromeForCurrent();
         }
@@ -1202,7 +2331,22 @@ export function buildManualEditBridge(enabled: boolean): string {
     // its stable-id dedupe during ordinary movement.
     postHoverTarget(hoveredEl);
   }, true);
-  window.addEventListener('resize', postTargets);
+  window.addEventListener('resize', function(){ postTargets(); scheduleDocumentSize(); });
+  if (typeof ResizeObserver !== 'undefined') {
+    try {
+      var documentSizeObserver = new ResizeObserver(scheduleDocumentSize);
+      documentSizeObserver.observe(document.documentElement);
+      if (document.body) documentSizeObserver.observe(document.body);
+    } catch (_) {}
+  }
+  if (typeof MutationObserver !== 'undefined' && document.body) {
+    try {
+      var documentMutationObserver = new MutationObserver(scheduleDocumentSize);
+      documentMutationObserver.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+    } catch (_) {}
+  }
+  document.addEventListener('load', scheduleDocumentSize, true);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleDocumentSize).catch(function(){});
   var hoverGuidesScrollScheduled = false;
   var scheduleGuideFrame = window.requestAnimationFrame
     ? window.requestAnimationFrame.bind(window)
@@ -1234,6 +2378,37 @@ export function buildManualEditBridge(enabled: boolean): string {
   // text editing, which would silently eat the hotkey exactly when the user
   // is editing a text element.
   var screenshotTap = { at: 0, left: false, right: false };
+  function isNativeUndoTarget(value){
+    var el = value && value.nodeType === 1 ? value : null;
+    if (!el) return false;
+    var tag = el.tagName ? String(el.tagName).toUpperCase() : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (el.isContentEditable) return true;
+    return !!(el.closest && el.closest('[contenteditable]:not([contenteditable="false"])'));
+  }
+  document.documentElement.addEventListener('keydown', function(ev){
+    if (!enabled || ev.defaultPrevented || ev.isComposing) return;
+    if (String(ev.key || '').toLowerCase() !== 'z') return;
+    if (!(ev.metaKey || ev.ctrlKey) || ev.altKey || ev.shiftKey) return;
+    // Inline text editing owns character-level undo. Only delegate a shortcut
+    // after it has actual text changes. Merely clicking a text element starts
+    // a session too; consuming Command+Z on that unchanged session makes the
+    // shortcut appear broken instead of undoing the previous real edit.
+    if (activeTextEdit) {
+      var liveText = (activeTextEdit.el.textContent || '').trim();
+      if (liveText !== activeTextEdit.originalText.trim()) return;
+      finishActiveTextEdit(false);
+    }
+    if (
+      (guard && guard.editingEl && guard.editingEl.isConnected)
+      || isNativeUndoTarget(ev.target)
+      || isNativeUndoTarget(document.activeElement)
+    ) return;
+    screenshotTap.at = 0;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    postEditMessage({ type: 'od-edit-undo-hotkey' });
+  }, true);
   document.documentElement.addEventListener('keydown', function(ev){
     if (!enabled) return;
     if (ev.key !== 'Meta') {
@@ -1250,7 +2425,7 @@ export function buildManualEditBridge(enabled: boolean): string {
     var now = Date.now();
     if (screenshotTap.at && now - screenshotTap.at <= 600) {
       screenshotTap.at = 0;
-      window.parent.postMessage({ type: 'od-edit-screenshot-hotkey' }, '*');
+      postEditMessage({ type: 'od-edit-screenshot-hotkey' });
     } else {
       screenshotTap.at = now;
     }
@@ -1260,6 +2435,7 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (ev.code === 'MetaRight') screenshotTap.right = false;
   }, true);
   window.addEventListener('blur', function(){
+    finishResizeGesture(null, true);
     screenshotTap.at = 0;
     screenshotTap.left = false;
     screenshotTap.right = false;
@@ -1276,11 +2452,17 @@ export function buildManualEditBridge(enabled: boolean): string {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootEditBridge);
   else setTimeout(bootEditBridge, 0);
   document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
+  document.documentElement.setAttribute('data-od-edit-viewport', editViewport);
 })();</script>`;
 }
 
 export function buildManualEditBridgeStyle(): string {
   return `<style data-od-edit-bridge-style>
+html[data-od-edit-mode][data-od-edit-expand-document],
+html[data-od-edit-mode][data-od-edit-expand-document] body {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+}
 html[data-od-edit-mode] body * { cursor: pointer !important; }
 html[data-od-edit-mode] [data-od-edit-selected] {
   outline: none !important;
@@ -1288,6 +2470,10 @@ html[data-od-edit-mode] [data-od-edit-selected] {
 html[data-od-edit-mode] [data-od-editing="true"] {
   outline: none !important;
   cursor: text !important;
+}
+html[data-od-edit-mode] [data-od-edit-dragging="true"],
+html[data-od-edit-mode] [data-od-edit-dragging="true"] * {
+  cursor: grabbing !important;
 }
 [data-od-edit-guides-layer] {
   position: fixed;
@@ -1307,6 +2493,10 @@ html[data-od-edit-mode] [data-od-editing="true"] {
 [data-od-edit-guides-layer] .od-edit-guide-box-selected {
   border-style: solid;
 }
+[data-od-edit-guides-layer] .od-edit-guide-box-drop {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--selected, var(--accent, CanvasText)) 5%, transparent);
+}
 [data-od-edit-guides-layer] .od-edit-guide-handle {
   position: fixed;
   width: 10px;
@@ -1317,6 +2507,30 @@ html[data-od-edit-mode] [data-od-editing="true"] {
   border-radius: 999px;
   background: Canvas;
   box-sizing: border-box;
+}
+[data-od-edit-guides-layer] .od-edit-guide-handle[data-od-edit-resize-handle] {
+  pointer-events: auto;
+  touch-action: none;
+}
+[data-od-edit-guides-layer] .od-edit-guide-handle[data-od-edit-resize-handle="nw"],
+[data-od-edit-guides-layer] .od-edit-guide-handle[data-od-edit-resize-handle="se"] {
+  cursor: nwse-resize !important;
+}
+[data-od-edit-guides-layer] .od-edit-guide-handle[data-od-edit-resize-handle="ne"],
+[data-od-edit-guides-layer] .od-edit-guide-handle[data-od-edit-resize-handle="sw"] {
+  cursor: nesw-resize !important;
+}
+html[data-od-edit-mode] [data-od-edit-resizing="nw"],
+html[data-od-edit-mode] [data-od-edit-resizing="nw"] *,
+html[data-od-edit-mode] [data-od-edit-resizing="se"],
+html[data-od-edit-mode] [data-od-edit-resizing="se"] * {
+  cursor: nwse-resize !important;
+}
+html[data-od-edit-mode] [data-od-edit-resizing="ne"],
+html[data-od-edit-mode] [data-od-edit-resizing="ne"] *,
+html[data-od-edit-mode] [data-od-edit-resizing="sw"],
+html[data-od-edit-mode] [data-od-edit-resizing="sw"] * {
+  cursor: nesw-resize !important;
 }
 [data-od-edit-guides-layer] .od-edit-guide-line {
   position: fixed;
@@ -1341,6 +2555,20 @@ html[data-od-edit-mode] [data-od-editing="true"] {
   background: var(--amber, var(--selected, var(--accent, CanvasText)));
   color: var(--accent-contrast, Canvas);
   box-shadow: 0 5px 16px color-mix(in srgb, var(--selected, var(--accent, CanvasText)) 18%, transparent);
+}
+[data-od-edit-guides-layer] .od-edit-guide-drop-line {
+  position: fixed;
+  border-radius: 999px;
+  background: var(--selected, var(--accent, CanvasText));
+  box-shadow: 0 0 0 2px color-mix(in srgb, Canvas 72%, transparent);
+}
+[data-od-edit-guides-layer] .od-edit-guide-drop-line-v {
+  width: 2px;
+  margin-left: -1px;
+}
+[data-od-edit-guides-layer] .od-edit-guide-drop-line-h {
+  height: 2px;
+  margin-top: -1px;
 }
 html[data-od-hide-edit-chrome] [data-od-edit-guides-layer],
 html[data-od-hide-edit-chrome] [data-od-edit-selected],

@@ -89,7 +89,7 @@ function renderHtmlPreview(
 }
 
 async function openImageExportDialog() {
-  fireEvent.click(await screen.findByRole('button', { name: /export/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /^download$/i }));
   fireEvent.click(screen.getByRole('menuitem', { name: /export as image/i }));
   expect(await screen.findByRole('dialog', { name: /export as image/i })).toBeTruthy();
 }
@@ -151,7 +151,7 @@ describe('FileViewer image export', () => {
     imageDataUrlToBlobMock.mockResolvedValueOnce(new Blob(['png'], { type: 'image/png' }));
 
     renderHtmlPreview();
-    fireEvent.click(await screen.findByRole('button', { name: /export/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^download$/i }));
     expect(screen.getByRole('menu')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('menuitem', { name: /export as image/i }));
@@ -322,8 +322,7 @@ describe('FileViewer image export', () => {
     });
 
     renderHtmlPreview();
-    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
-    fireEvent.click(screen.getByRole('option', { name: /mobile/i }));
+    fireEvent.click(screen.getByRole('button', { name: /mobile/i }));
     await openImageExportDialog();
     await clickSave();
 
@@ -351,8 +350,7 @@ describe('FileViewer image export', () => {
     imageDataUrlToBlobMock.mockResolvedValueOnce(new Blob(['png'], { type: 'image/png' }));
 
     renderHtmlPreview();
-    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
-    fireEvent.click(screen.getByRole('option', { name: /desktop/i }));
+    fireEvent.click(screen.getByRole('button', { name: /desktop/i }));
     await openImageExportDialog();
     await clickSave();
 
@@ -385,8 +383,7 @@ describe('FileViewer image export', () => {
       '<html><body><div class="deck"><section class="slide">Cover</section></div></body></html>',
       'srcdoc',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
-    fireEvent.click(screen.getByRole('option', { name: /mobile/i }));
+    fireEvent.click(screen.getByRole('button', { name: /mobile/i }));
     await openImageExportDialog();
     await clickSave();
 

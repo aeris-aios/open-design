@@ -38,6 +38,9 @@ export type SrcdocOptions = {
   paletteBridge?: boolean;
   initialPalette?: string | null;
   previewFocusGuard?: boolean;
+  /** Hide the root document scrollbar chrome in the interactive preview while
+   * preserving wheel, trackpad, keyboard, and programmatic scrolling. */
+  hideScrollbars?: boolean;
   /** Install the live-preview error and white-screen reporting bridge. Keep
    * this disabled for exports, captures, thumbnails, and historical previews. */
   previewObservability?: boolean;
@@ -400,7 +403,13 @@ export function buildSrcdoc(
   const withObservability = options.previewObservability
     ? injectAfterHeadOpen(withRedirectGuard, buildPreviewObservabilityBridge())
     : withRedirectGuard;
-  const withKeydownRegistry = options.deck ? injectDeckKeydownRegistryHook(withObservability) : withObservability;
+  const withHiddenScrollbars = options.hideScrollbars
+    ? injectBeforeHeadEnd(
+        withObservability,
+        '<style data-od-preview-scrollbars-hidden>html,body{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}</style>',
+      )
+    : withObservability;
+  const withKeydownRegistry = options.deck ? injectDeckKeydownRegistryHook(withHiddenScrollbars) : withHiddenScrollbars;
   const withFocusGuard = options.previewFocusGuard
     ? injectPreviewFocusGuard(withKeydownRegistry)
     : withKeydownRegistry;
@@ -435,7 +444,9 @@ export function buildSrcdoc(
   const withPalette = options.paletteBridge
     ? injectPaletteBridge(withSelection, { initialPalette: options.initialPalette ?? null })
     : withSelection;
-  const withEdit = options.editBridge ? injectManualEditBridge(withPalette) : withPalette;
+  const withEdit = options.editBridge
+    ? injectManualEditBridge(withPalette, options.transportActivationGeneration ?? '')
+    : withPalette;
   // The tweaks bridge is always injected — it's a passive listener that
   // toggles a `.tw-panel`'s visibility in response to host postMessage. Tying
   // it to a per-call option would force iframe srcdoc regeneration (and a
@@ -1175,7 +1186,6 @@ function annotateManualEditSourcePaths(doc: string): string {
   try {
     const parsed = new DOMParser().parseFromString(doc, 'text/html');
     parsed.body.querySelectorAll(MANUAL_EDIT_DISCOVERY_SELECTOR).forEach((el) => {
-      if (el.hasAttribute(MANUAL_EDIT_SOURCE_PATH_ATTR)) return;
       const path = sourcePathForElement(el);
       if (path) el.setAttribute(MANUAL_EDIT_SOURCE_PATH_ATTR, path);
     });
@@ -1237,7 +1247,14 @@ function annotateMissingOdIds(doc: string): string {
       const tag = el.tagName.toLowerCase();
       if (skipTags.has(tag)) return;
       const path = sourcePathForElement(el);
-      el.setAttribute('data-od-id', path || `od-${tag}-${fallbackIndex++}`);
+      const generatedId = path || `od-${tag}-${fallbackIndex++}`;
+      const existing = parsed.body.querySelector(`[data-od-id="${generatedId}"]`);
+      // An authored (or legacy persisted) id owns its namespace. The source
+      // path annotation added next still makes this element editable without
+      // creating a duplicate data-od-id in the preview DOM.
+      if (existing && existing !== el) return;
+      el.setAttribute('data-od-id', generatedId);
+      el.setAttribute('data-od-generated-id', 'true');
     });
     return serializeHtmlDocument(parsed);
   } catch {
@@ -1245,10 +1262,10 @@ function annotateMissingOdIds(doc: string): string {
   }
 }
 
-function injectManualEditBridge(doc: string): string {
+function injectManualEditBridge(doc: string, generation: string): string {
   const withGuard = injectAfterHeadOpen(doc, buildManualEditKeyboardGuard());
   const withStyle = injectBeforeHeadEnd(withGuard, buildManualEditBridgeStyle());
-  return injectBeforeBodyEnd(withStyle, buildManualEditBridge(false));
+  return injectBeforeBodyEnd(withStyle, buildManualEditBridge(false, generation));
 }
 
 function injectAfterHeadOpen(doc: string, payload: string): string {

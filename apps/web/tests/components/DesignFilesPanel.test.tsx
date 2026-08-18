@@ -214,6 +214,38 @@ describe("DesignFilesPanel sections", () => {
     expect(onUpload).toHaveBeenCalledTimes(1);
   });
 
+  it("renders ambient sparkles behind the empty-state content only", () => {
+    const { rerender } = renderPanel([]);
+
+    const empty = screen.getByTestId("design-files-empty");
+    const sparkles = screen.getByTestId("design-files-empty-sparkles");
+    const content = empty.querySelector(".df-empty-pill");
+    expect(content).toBeTruthy();
+    expect(empty.firstElementChild).toBe(sparkles);
+    expect(sparkles.nextElementSibling).toBe(content);
+    expect(sparkles).toHaveAttribute("aria-hidden", "true");
+
+    rerender(
+      <DesignFilesPanel
+        projectId="test-project"
+        files={[file({ name: "page.html", kind: "html" })]}
+        liveArtifacts={[]}
+        onRefreshFiles={vi.fn()}
+        onOpenFile={vi.fn()}
+        onOpenLiveArtifact={vi.fn()}
+        onRenameFile={vi.fn()}
+        onDeleteFile={vi.fn()}
+        onDeleteFiles={vi.fn()}
+        onUpload={vi.fn()}
+        onUploadFiles={vi.fn()}
+        onPaste={vi.fn()}
+        onNewSketch={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("design-files-empty-sparkles")).toBeNull();
+  });
+
   it("keeps empty-state actions visible but disables mutations for read-only shared viewers", () => {
     const onNewSketch = vi.fn();
     const onOpenBrowser = vi.fn();

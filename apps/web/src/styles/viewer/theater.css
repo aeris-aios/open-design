@@ -725,7 +725,7 @@
    lifts each selector to (0,3,0) so it beats the global rule. */
 .viewer-action:hover:not(:disabled),
 .viewer-tab:hover:not(:disabled):not(.active),
-.viewer-viewport-menu-item:hover:not(:disabled) {
+.viewer-viewport-option:hover:not(:disabled) {
   border-color: transparent;
 }
 /* Selected tab = the segmented switch thumb: keep its thin border (the
@@ -778,22 +778,26 @@
 }
 .comment-preview-layer-with-deck-rail {
   display: grid;
-  grid-template-columns: 194px minmax(0, 1fr);
+  grid-template-columns: var(--deck-thumbnail-rail-width) minmax(0, 1fr);
   gap: 0;
   padding: 0;
   overflow: hidden;
+  transition: grid-template-columns var(--duration-slow) var(--curve-easy-ease);
+  transition-delay: 0s;
 }
-/* Collapsed rail claims no column and no divider: the aside unmounts entirely,
-   so the slide fills the pane edge-to-edge and the toolbar toggle is the only
-   affordance left. No sliver of chrome, no border line. */
+/* First let the thumbnail rows tuck into the left edge with a short stagger;
+   only after that sequence finishes does the grid track close. Keeping both
+   tracks in the declaration makes the final width change interpolable. */
 .comment-preview-layer-with-deck-rail.comment-preview-layer-deck-rail-collapsed {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 0 minmax(0, 1fr);
+  transition-delay: var(--duration-slower);
 }
 .deck-thumbnail-toolbar-toggle {
   flex: 0 0 auto;
 }
 .deck-thumbnail-rail {
   position: relative;
+  width: var(--deck-thumbnail-rail-width);
   min-width: 0;
   min-height: 0;
   /* Hairline divider drawn with an inset shadow (not border) so it never adds
@@ -803,6 +807,19 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 120px),
     #0b0b0d;
   overflow: hidden;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--duration-faster) var(--curve-decelerate-mid),
+    visibility 0s;
+}
+.preview-viewport-desktop.comment-preview-layer-with-deck-rail.comment-preview-layer-deck-rail-collapsed .deck-thumbnail-rail {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--duration-ultra-fast) var(--curve-accelerate-mid) var(--duration-slower),
+    visibility 0s var(--duration-slower);
 }
 .preview-viewport:not(.preview-viewport-desktop).comment-preview-layer-with-deck-rail {
   --deck-device-frame-radius: 18px;
@@ -810,6 +827,9 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
+}
+.preview-viewport:not(.preview-viewport-desktop).comment-preview-layer-with-deck-rail.comment-preview-layer-deck-rail-collapsed .deck-thumbnail-rail {
+  display: none;
 }
 .preview-viewport-mobile.comment-preview-layer-with-deck-rail {
   --deck-device-frame-radius: 28px;
@@ -907,7 +927,18 @@
   color: rgba(255, 255, 255, 0.5);
   text-align: left;
   cursor: pointer;
-  transition: color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform var(--duration-fast) var(--curve-accelerate-mid),
+    opacity var(--duration-fast) var(--curve-accelerate-mid);
+  transition-delay: 0s;
+}
+.preview-viewport-desktop.comment-preview-layer-with-deck-rail.comment-preview-layer-deck-rail-collapsed .deck-thumbnail-button {
+  opacity: 0;
+  transform: translateX(calc(-100% - var(--spacing-12)));
+  transition-delay: var(--deck-thumbnail-stagger-delay, 0ms);
 }
 /* `:not(:disabled)` is load-bearing: it lifts specificity above the global
    `button:hover:not(:disabled)` primitive, whose light-theme --bg-subtle
@@ -1013,6 +1044,12 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .comment-preview-layer-with-deck-rail,
+  .deck-thumbnail-rail,
+  .deck-thumbnail-button {
+    transition-duration: 0.01ms;
+    transition-delay: 0s;
+  }
   .deck-thumbnail-loading::after {
     animation: none;
   }

@@ -360,6 +360,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(bridged.status).toBe(200);
     const html = await bridged.text();
     expect(html).toContain('data-od-url-scroll-bridge');
+    expect(html).toContain('data-od-url-preview-scrollbars-hidden');
+    expect(html).toContain('scrollbar-width:none');
+    expect(html).not.toContain('overflow:hidden');
     expect(html).toContain("type: 'od:preview-scroll'");
     expect(html).toContain("type: 'od:preview-content-size'");
     expect(html).toContain('od:preview-content-size-request');
@@ -529,6 +532,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(bridged.status).toBe(200);
     const html = await bridged.text();
     expect(html.match(/data-od-url-scroll-bridge/g)?.length).toBe(1);
+    expect(html.match(/data-od-url-preview-scrollbars-hidden/g)?.length).toBe(1);
   });
 
   it('does not inject the URL preview selection bridge twice', async () => {

@@ -5,6 +5,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@excalidraw/excalidraw': resolve(__dirname, 'tests/helpers/excalidraw-mock.tsx'),
+      '@xyflow/react': resolve(__dirname, 'tests/helpers/xyflow-mock.tsx'),
+      '@tsparticles/react': resolve(__dirname, 'tests/helpers/tsparticles-react-mock.tsx'),
       'motion/react': resolve(__dirname, 'tests/helpers/motion-mock.tsx'),
     },
   },

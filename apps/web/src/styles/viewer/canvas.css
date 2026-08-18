@@ -47,7 +47,7 @@
 .canvas-dock {
   position: absolute;
   inset-inline: 0;
-  bottom: 16px;
+  bottom: var(--spacing-16);
   z-index: 4;
   display: flex;
   justify-content: center;
@@ -56,17 +56,26 @@
   pointer-events: none;
 }
 .canvas-dock-inner {
+  --canvas-dock-control: var(--bg-fill-tertiary);
+  --canvas-dock-control-hover: var(--bg-fill-secondary);
+  --canvas-dock-gap: var(--spacing-8);
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--canvas-dock-gap);
   max-width: calc(100% - 32px);
-  padding: 5px;
-  border: var(--stroke-thin) solid var(--border);
+  padding: 6px;
+  border: var(--stroke-thin) solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--glass-regular, var(--bg-panel));
+  background: color-mix(in srgb, var(--glass-regular, var(--bg-panel)) 96%, transparent);
   -webkit-backdrop-filter: blur(var(--glass-regular-blur, 28px));
   backdrop-filter: blur(var(--glass-regular-blur, 28px));
-  box-shadow: var(--shadow-md);
+  /* The reference reads as a soft white bezel around a recessed row of
+     controls. The outer spread supplies that rim without making the dock's
+     hit box or layout wider. */
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 92%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--bg-panel) 52%, transparent),
+    var(--shadow-lg);
   pointer-events: auto;
   overflow-x: auto;
   scrollbar-width: none;
@@ -78,15 +87,17 @@
 .canvas-dock-tools {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--canvas-dock-gap);
+}
+.canvas-dock-tools[data-collapsed='true'] {
+  /* Its child stays mounted at zero width for the fold-out animation. Absorb
+     the parent's flex gap once collapsed so the removed pointer control does
+     not leave an empty slot before Full screen. */
+  margin-inline-end: calc(-1 * var(--canvas-dock-gap));
 }
 
 .canvas-dock-divider {
-  flex: none;
-  width: 1px;
-  height: 18px;
-  margin: 0 4px;
-  background: var(--border-soft);
+  display: none;
 }
 
 /* Dock buttons are round and dark-on-active, matching the prototype's dock
@@ -94,10 +105,17 @@
 .canvas-dock .viewer-action {
   flex: none;
   border-radius: var(--radius-pill);
+  background: var(--canvas-dock-control);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+.canvas-dock .viewer-action:hover:not(:disabled) {
+  background: var(--canvas-dock-control-hover);
+  color: var(--text-strong);
 }
 .canvas-dock .viewer-action-icon {
-  width: 30px;
-  height: 30px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -105,38 +123,97 @@
 .canvas-dock .viewer-action.active {
   background: var(--text-strong);
   color: var(--bg);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 16%, transparent),
+    var(--shadow-sm);
 }
 .canvas-dock .viewer-action.active:hover {
   background: var(--text-strong);
+  color: var(--bg);
 }
 .canvas-dock .zoom-trigger {
-  height: 30px;
-  padding: 0 10px;
-  font-size: 12px;
+  min-width: 68px;
+  height: 38px;
+  justify-content: center;
+  padding: 0 14px;
+  font-size: 14px;
 }
-/* Any disabled dock control stays a ghost. The global `button:disabled`
-   (primitives.css) would paint --bg-subtle — a solid grey chip floating in a
-   glass dock whose every other control is transparent. Opacity alone carries
-   "unavailable". */
+.canvas-dock .viewer-comment-count-trigger {
+  min-width: 48px;
+  height: 38px;
+}
+/* Disabled controls keep the same soft-button silhouette as their neighbours;
+   opacity carries the unavailable state without changing the dock's rhythm. */
 .canvas-dock .viewer-action:disabled {
-  background: transparent;
+  background: var(--canvas-dock-control);
   border-color: transparent;
   color: var(--text-muted);
-  opacity: 0.45;
+  opacity: 0.38;
   cursor: default;
 }
 /* The trailing mode segment (编辑 / 演示). Same pill-in-a-trough as the toolbar
-   copy; only the metrics change, so it stands at the dock's 30px control height
+   copy; only the metrics change, so it stands at the dock's 38px control height
    instead of the toolbar's shorter one. */
 .canvas-dock .canvas-dock-mode-seg {
+  position: relative;
+  isolation: isolate;
   flex: none;
-  height: 30px;
+  height: 38px;
+  padding: 3px;
+  background: var(--canvas-dock-control);
+}
+.canvas-dock .canvas-dock-mode-seg::before {
+  content: '';
+  position: absolute;
+  inset-block: 3px;
+  inset-inline-start: 0;
+  z-index: 0;
+  width: var(--canvas-mode-thumb-width, 0px);
+  border-radius: var(--radius-pill);
+  background: var(--text-strong);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transform: translateX(var(--canvas-mode-thumb-x, 0px));
+  transition:
+    transform var(--duration-normal) var(--curve-easy-ease),
+    width var(--duration-normal) var(--curve-easy-ease),
+    opacity var(--duration-faster) var(--curve-easy-ease);
+}
+.canvas-dock .canvas-dock-mode-seg[data-has-active='true']::before {
+  opacity: 1;
 }
 .canvas-dock .canvas-dock-mode-seg .viewer-tab {
-  height: 26px;
-  padding: 0 12px;
+  position: relative;
+  z-index: 1;
+  height: 32px;
+  padding: 0 15px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  font-size: 13px;
+}
+.canvas-dock .canvas-dock-mode-seg .viewer-tab.active {
+  background: transparent;
+  border-color: transparent;
+  color: var(--bg);
+  box-shadow: none;
+}
+.canvas-dock .canvas-dock-mode-seg .viewer-tab.active:hover:not(:disabled) {
+  background: transparent;
+  color: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-dock .canvas-dock-mode-seg::before {
+    transition-duration: 0.01ms;
+  }
+}
+
+/* Inside the expanded authoring set, spacing replaces the old ruler line so
+   every action reads as one of the reference's independent soft buttons. */
+.canvas-dock .viewer-toolbar-tool-divider {
+  display: none;
 }
 
 /* The authoring half folds sideways rather than vanishing. `1fr → 0fr` on a
@@ -156,7 +233,7 @@
 .canvas-dock-collapsible-inner {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--canvas-dock-gap);
   min-width: 0;
   overflow: hidden;
 }
@@ -190,9 +267,19 @@
   bottom: calc(100% + 6px);
 }
 
-@media (max-width: 720px) {
-  .canvas-dock {
-    bottom: 10px;
+@keyframes canvas-dock-popover-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .zoom-menu-popover--floating {
+    animation: canvas-dock-popover-in var(--duration-normal) var(--curve-decelerate-mid) both;
   }
 }
 
@@ -224,8 +311,19 @@
 .viewer .preview-viewport-mobile:not(.comment-preview-layer-with-side-dock) .comment-preview-canvas,
 .viewer .preview-viewport-tablet:not(.comment-preview-layer-with-side-dock) .comment-preview-canvas,
 .viewer .preview-viewport-mobile .preview-frame-clip,
-.viewer .preview-viewport-tablet .preview-frame-clip {
+.viewer .preview-viewport-tablet .preview-frame-clip,
+.viewer .preview-viewport-mobile.manual-edit-workspace .manual-edit-canvas,
+.viewer .preview-viewport-tablet.manual-edit-workspace .manual-edit-canvas {
   box-sizing: content-box;
+}
+
+/* The edit canvas scales the page inside a sized shell rather than scaling the
+   shell itself. Scale its device chrome explicitly so 10% does not leave a
+   fixed 9px bezel around a 39px artboard. */
+.viewer .preview-viewport-mobile.manual-edit-workspace .manual-edit-canvas,
+.viewer .preview-viewport-tablet.manual-edit-workspace .manual-edit-canvas {
+  border-width: calc(9px * var(--preview-scale, 1));
+  border-radius: calc(30px * var(--preview-scale, 1));
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -238,10 +336,12 @@
    Edit mode splits the right edge off for the project's structure, so the
    canvas states what you are editing and the rail states what else there is.
    The rail is absolutely placed and the body reserves the same width, which
-   keeps it out of the preview's own scroll container — the artboard, the dock
-   and the comment layers all measure against that container. */
+   keeps it out of the preview's own scroll container. The body and dock both
+   reserve this same column, so the dock remains centred on the visible canvas
+   rather than on the canvas-plus-rail shell. */
 
 .viewer {
+  --viewer-structure-rail-width: 300px;
   position: relative;
 }
 
@@ -250,10 +350,32 @@
   inset-block: 0;
   inset-inline-end: 0;
   z-index: 2;
-  width: 300px;
+  width: var(--viewer-structure-rail-width);
   overflow-y: auto;
-  border-inline-start: var(--stroke-thin) solid var(--border);
-  background: var(--bg-panel);
+  background: var(--bg);
+}
+
+/* Replace the hard divider with a soft functional-layer transition. The strip
+   sits just outside the Edit rail, over the canvas, so the shared regular-glass
+   blur can sample the artwork beneath it and fade away toward the canvas. */
+.viewer:has(> .viewer-structure-rail:not(.viewer-structure-rail-comments))::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--viewer-structure-rail-width);
+  z-index: 2;
+  width: var(--spacing-18);
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--glass-regular));
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-mask-image: linear-gradient(to right, transparent, currentColor);
+  mask-image: linear-gradient(to right, transparent, currentColor);
+}
+[dir='rtl'] .viewer:has(> .viewer-structure-rail:not(.viewer-structure-rail-comments))::after {
+  background: linear-gradient(to left, transparent, var(--glass-regular));
+  -webkit-mask-image: linear-gradient(to left, transparent, currentColor);
+  mask-image: linear-gradient(to left, transparent, currentColor);
 }
 
 /* The rail's panel fills the rail rather than being sized by its contents.
@@ -267,6 +389,9 @@
    tabs keep overflowing this box and scrolling the rail itself, which is what
    the sticky tab strip above is for. */
 .viewer-structure-rail > [data-testid='design-structure-rail'] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   height: 100%;
 }
 
@@ -278,10 +403,31 @@
    margins that were paying for it) leaves the footer as the only gutter. The
    inline gutter is untouched: the card is meant to be inset from the sides. */
 .viewer-structure-rail > [data-testid='design-structure-rail'] > div:has(> [data-testid='design-structure-edit-slot']) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding-block: 0;
 }
 .viewer-structure-rail [data-testid='design-structure-edit-slot'] {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
   margin-block: 0;
+}
+.viewer-structure-rail [data-testid='design-structure-edit-slot'] > .manual-edit-right {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+/* The Edit tab already names the active surface. Hide the repeated inspector
+   title and its close action only in this docked rail; floating inspectors keep
+   their titlebar for context, dragging, and dismissal. */
+.viewer-structure-rail .manual-edit-titlebar {
+  display: none;
 }
 
 /* The tab strip is sticky, so it has to actually paint. Its own stylesheet
@@ -291,7 +437,587 @@
    资产 and 品牌中心 / 我的素材 stacked on top of each other in the same 40px.
    Take the rail's own surface instead. */
 .viewer-structure-rail > [data-testid='design-structure-rail'] > [role='tablist'] {
-  background: var(--bg-panel);
+  padding-block-start: var(--spacing-12);
+  background: var(--bg);
+  border-bottom: 0;
+}
+
+/* Keep the rail tabs as light navigation pills even if a CSS-module style is
+   briefly replaced during HMR. Without this semantic fallback they inherit the
+   app-wide 36px outlined `button` primitive and read as three unrelated action
+   buttons (结构 / 编辑 / 资产). The module remains the primary owner; these
+   declarations deliberately reproduce its stable visual contract. */
+.viewer-structure-rail
+  > [data-testid='design-structure-rail']
+  > [role='tablist']
+  > [role='tab'] {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: auto;
+  padding: var(--spacing-4) var(--spacing-12);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-13);
+  font-weight: 400;
+  line-height: 1.25;
+  transform: none;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail']
+  > [role='tablist']
+  > [role='tab']:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+  transform: none;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail']
+  > [role='tablist']
+  > [role='tab'][aria-selected='true'] {
+  background: var(--bg-fill-secondary);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* Structure's page tree is part of the Electron viewer's critical chrome.
+   Keep a semantic copy of its layout here, in the eagerly loaded viewer CSS,
+   so a missing/replaced DesignStructurePanel CSS-module chunk cannot turn its
+   page names into app-wide 36px outlined buttons. The data attributes are the
+   stable contract; generated CSS-module class names are deliberately absent.
+   This is scoped to the viewer's pages-only mount, so the full Design Files
+   browser keeps owning its grouped file-tree presentation. */
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  > [data-role='design-structure-body'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: var(--spacing-12) var(--spacing-20) var(--spacing-24);
+}
+
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-tree'] {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+}
+
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-group'] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Root pages live directly under Structure in the viewer. This redundant
+   parent is normally omitted by React; the rule is also a defensive guard if
+   an Electron HMR frame briefly retains the old group-head DOM. */
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-group'][data-root-pages='true']
+  > [data-role='structure-group-head'] {
+  display: none;
+}
+
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-group-head'] {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--spacing-6);
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 5px var(--spacing-6);
+  border: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-strong);
+  font-size: var(--font-size-13);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
+  transform: none;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-group-head']:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-fill-tertiary);
+  transform: none;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-group-label'] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-group-count'] {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-row'] {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--spacing-6);
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 5px var(--spacing-8) 5px var(--spacing-20);
+  border: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-13);
+  line-height: 1.25;
+  white-space: normal;
+  transform: none;
+  transition:
+    background-color var(--dur-quick) var(--ease-out),
+    color var(--dur-quick) var(--ease-out);
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-group'][data-flat='true']
+  > [data-role='structure-page-row'] {
+  padding-inline-start: var(--spacing-8);
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-row']:hover {
+  border-color: transparent;
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-row'][aria-current='page'] {
+  background: var(--brand-soft);
+  box-shadow: inset 0 0 0 var(--stroke-thin) var(--brand-text);
+  color: var(--brand-text);
+  font-weight: 600;
+}
+
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-open'] {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--spacing-8);
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  white-space: normal;
+  transform: none;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-open']:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  transform: none;
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-open']:focus-visible {
+  outline: var(--stroke-thin) solid var(--blue);
+  outline-offset: var(--spacing-2);
+  border-radius: var(--radius-small);
+}
+.viewer-structure-rail
+  > [data-testid='design-structure-rail'][data-structure-pages-only='true']
+  [data-role='structure-page-name'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Assets has a second navigation row and a compact file browser. Keep this
+   critical rail layout semantic as well as module-scoped: during CSS-module
+   HMR the class rules can briefly disappear, and the app-wide `button`
+   primitive otherwise turns every tab and file into a 36px outlined action,
+   concatenates the title/count, and lets long paths widen the rail. */
+.viewer-structure-rail
+  > [data-testid='design-structure-rail']
+  > [role='tablist']
+  + div:has([data-testid='design-structure-assets-images']),
+.viewer-structure-rail
+  > [data-testid='design-structure-rail']
+  > [role='tablist']
+  + div:has([data-testid='design-structure-assets-view']) {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: var(--spacing-12) var(--spacing-20) var(--spacing-24);
+  overflow-x: hidden;
+}
+
+.viewer-structure-rail
+  > [data-testid='design-structure-rail']
+  > [role='tablist']
+  + div
+  > div:has(> [role='tablist'] > [data-testid='design-structure-assets-images']),
+.viewer-structure-rail [data-testid='design-structure-assets-view'] {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.viewer-structure-rail
+  [role='tablist']:has(> [data-testid='design-structure-assets-images']),
+.viewer-structure-rail [data-testid='design-structure-assets-tabs'] {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-12);
+  padding: var(--spacing-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-fill-tertiary);
+}
+
+.viewer-structure-rail
+  [role='tablist']:has(> [data-testid='design-structure-assets-images'])
+  > [role='tab'],
+.viewer-structure-rail [data-testid='design-structure-assets-tabs'] > [role='tab'] {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 var(--spacing-12);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-12);
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  transform: none;
+}
+
+.viewer-structure-rail
+  [role='tablist']:has(> [data-testid='design-structure-assets-images'])
+  > [role='tab']:hover:not(:disabled),
+.viewer-structure-rail
+  [data-testid='design-structure-assets-tabs']
+  > [role='tab']:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-strong);
+  transform: none;
+}
+
+.viewer-structure-rail
+  [role='tablist']:has(> [data-testid='design-structure-assets-images'])
+  > [role='tab'][aria-selected='true'],
+.viewer-structure-rail
+  [data-testid='design-structure-assets-tabs']
+  > [role='tab'][aria-selected='true'] {
+  background: var(--bg);
+  color: var(--text-strong);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.viewer-structure-rail
+  [role='tablist']:has(> [data-testid='design-structure-assets-images'])
+  > [role='tab']:focus-visible,
+.viewer-structure-rail
+  [data-testid='design-structure-assets-tabs']
+  > [role='tab']:focus-visible {
+  outline: var(--stroke-thin) solid var(--blue);
+  outline-offset: var(--spacing-2);
+}
+
+.viewer-structure-rail div:has(> [data-testid='design-structure-asset-files']),
+.viewer-structure-rail div:has(> [data-testid='design-structure-asset-grid']),
+.viewer-structure-rail [data-testid='design-structure-assets-group'] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 0 var(--spacing-12);
+  border-bottom: 0;
+}
+
+.viewer-structure-rail div:has(+ [data-testid='design-structure-asset-files']),
+.viewer-structure-rail div:has(+ [data-testid='design-structure-asset-grid']),
+.viewer-structure-rail [data-testid='design-structure-assets-group-head'] {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  gap: var(--spacing-6);
+  margin-bottom: var(--spacing-8);
+  color: var(--text-strong);
+  font-size: var(--font-size-12);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.viewer-structure-rail
+  div:has(+ [data-testid='design-structure-asset-files'])
+  > span:first-child,
+.viewer-structure-rail
+  div:has(+ [data-testid='design-structure-asset-grid'])
+  > span:first-child,
+.viewer-structure-rail [data-testid='design-structure-assets-group-title'] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-structure-rail
+  div:has(+ [data-testid='design-structure-asset-files'])
+  > span:last-child,
+.viewer-structure-rail
+  div:has(+ [data-testid='design-structure-asset-grid'])
+  > span:last-child,
+.viewer-structure-rail [data-testid='design-structure-assets-count'] {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
+.viewer-structure-rail [data-testid='design-structure-asset-files'] {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  gap: var(--spacing-2);
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-'] {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  height: auto;
+  box-sizing: border-box;
+  gap: var(--spacing-8);
+  padding: var(--spacing-6) var(--spacing-8);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-13);
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: start;
+  white-space: normal;
+  transform: none;
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-']:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+  transform: none;
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-'][aria-current='true'] {
+  background: var(--bg-fill-secondary);
+  color: var(--text-strong);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 var(--stroke-thin) var(--border-strong);
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-']:focus-visible {
+  outline: var(--stroke-thin) solid var(--blue);
+  outline-offset: calc(-1 * var(--spacing-2));
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-']
+  > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-']
+  > span:first-of-type,
+.viewer-structure-rail [data-role='asset-name'] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-files']
+  > [data-testid^='design-structure-asset-']
+  > span:last-of-type,
+.viewer-structure-rail [data-role='asset-extension'] {
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--font-size-12);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.viewer-structure-rail [data-testid='design-structure-asset-grid'] {
+  width: 100%;
+  min-width: 0;
+  columns: 2;
+  column-gap: var(--spacing-10);
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-grid']
+  > [data-testid^='design-structure-asset-'] {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  box-sizing: border-box;
+  margin: 0 0 var(--spacing-10);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  box-shadow: none;
+  break-inside: avoid;
+  transform: none;
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-grid']
+  > [data-testid^='design-structure-asset-']
+  > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  box-sizing: border-box;
+  border: var(--stroke-thin) solid var(--border-soft);
+  border-radius: var(--radius-medium);
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-grid']
+  > [data-testid^='design-structure-asset-']:hover:not(:disabled)
+  > img {
+  border-color: var(--border-strong);
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-grid']
+  > [data-testid^='design-structure-asset-']:focus-visible
+  > img {
+  outline: var(--stroke-thin) solid var(--blue);
+  outline-offset: var(--spacing-2);
+}
+
+.viewer-structure-rail
+  [data-testid='design-structure-asset-grid']
+  > [data-testid^='design-structure-asset-'][aria-current='true'] {
+  box-shadow: 0 0 0 var(--stroke-thin) var(--border-strong);
+}
+
+.viewer-structure-rail [data-testid^='design-structure-reveal-asset'] {
+  appearance: none;
+  align-self: flex-start;
+  min-width: 0;
+  height: 28px;
+  margin: var(--spacing-4) 0 0;
+  padding: 0 var(--spacing-12);
+  border: var(--stroke-thin) solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-12);
+  font-weight: 500;
+  line-height: 1.25;
+  transform: none;
+}
+
+.viewer-structure-rail [data-testid^='design-structure-reveal-asset']:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-fill-tertiary);
+  color: var(--text-strong);
+  transform: none;
 }
 
 /* Comment mode armed from Edit stands its list up in this column instead of
@@ -323,12 +1049,19 @@
 }
 
 /* Edit tab, nothing selected. Deliberately quiet: it is an instruction to look
-   back at the canvas, not a panel in its own right. */
+   back at the canvas, not a panel in its own right. It fills the card below
+   the tab strip so the instruction sits at that card's visual centre instead
+   of clinging to the navigation above it. */
 .viewer-structure-edit-empty {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 4px 0;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  gap: var(--spacing-6);
+  padding: var(--spacing-20);
+  text-align: center;
 }
 .viewer-structure-edit-empty > strong {
   color: var(--text);
@@ -344,15 +1077,29 @@
 /* The toolbar paints over the rail's top edge when it renders inline, which
    is what makes the rail read as starting below it. */
 .viewer:has(> .viewer-structure-rail) > .viewer-body {
-  margin-inline-end: 300px;
+  margin-inline-end: var(--viewer-structure-rail-width);
+}
+.viewer:has(> .viewer-structure-rail) > .canvas-dock {
+  inset-inline-end: var(--viewer-structure-rail-width);
 }
 
 @media (max-width: 1100px) {
+  /* `:has()` still sees a hidden rail. Remove its glass edge with the rail,
+     then restore both only when the docked editor is actually present. */
+  .viewer:has(> .viewer-structure-rail:not(.viewer-structure-rail-comments))::after {
+    display: none;
+  }
+  .viewer:has(> .viewer-structure-rail:not(.viewer-structure-rail-comments):has(.manual-edit-right))::after {
+    display: block;
+  }
   .viewer-structure-rail {
     display: none;
   }
   .viewer:has(> .viewer-structure-rail) > .viewer-body {
     margin-inline-end: 0;
+  }
+  .viewer:has(> .viewer-structure-rail) > .canvas-dock {
+    inset-inline-end: 0;
   }
   /* …except while it is hosting the property inspector. The rail is the only
      place the inspector renders now, so hiding it here would leave edit mode

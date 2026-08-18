@@ -197,7 +197,7 @@ describe('FileViewer manual edit history regressions', () => {
     });
   });
 
-  it('uses the undone source snapshot for a follow-up edit after undo', async () => {
+  it('undoes manual edits with Command+Z from the host and iframe without stealing form undo', async () => {
     const initialSource = '<!doctype html><html><body><h1 data-od-id="hero" style="color: #111111">Hero</h1></body></html>';
     let persistedSource = initialSource;
     const savedSources: string[] = [];
@@ -243,11 +243,88 @@ describe('FileViewer manual edit history regressions', () => {
     await waitFor(() => expect(savedSources).toHaveLength(1));
     expect(savedSources[0]).toContain('rgb(239, 68, 68)');
 
+    await waitFor(() => expect(panelState.props?.canUndo).toBe(true));
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const framePostMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+
+    const inactiveFrame = screen.getByTestId('artifact-preview-frame-url-load') as HTMLIFrameElement;
     act(() => {
-      panelState.props?.onUndo();
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-undo-hotkey' },
+        source: inactiveFrame.contentWindow,
+      }));
+    });
+    expect(savedSources).toHaveLength(1);
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-text-session', id: 'hero', active: true },
+        source: frame.contentWindow,
+      }));
+    });
+    const changedTextUndo = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    window.dispatchEvent(changedTextUndo);
+    expect(changedTextUndo.defaultPrevented).toBe(true);
+    expect(framePostMessage).toHaveBeenCalledWith(
+      { type: 'od-edit-text-finish', commit: false },
+      '*',
+    );
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-text-session', id: 'hero', active: false, changed: true },
+        source: frame.contentWindow,
+      }));
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(savedSources).toHaveLength(1);
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-text-session', id: 'hero', active: true },
+        source: frame.contentWindow,
+      }));
+    });
+    framePostMessage.mockClear();
+    const activeTextUndo = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    window.dispatchEvent(activeTextUndo);
+    expect(activeTextUndo.defaultPrevented).toBe(true);
+    expect(savedSources).toHaveLength(1);
+    expect(framePostMessage).toHaveBeenCalledWith(
+      { type: 'od-edit-text-finish', commit: false },
+      '*',
+    );
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-text-session', id: 'hero', active: false, changed: false },
+        source: frame.contentWindow,
+      }));
     });
     await waitFor(() => expect(savedSources).toHaveLength(2));
     expect(savedSources[1]).toBe(initialSource);
+
+    const textarea = document.createElement('textarea');
+    document.body.appendChild(textarea);
+    textarea.focus();
+    const nativeUndo = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    textarea.dispatchEvent(nativeUndo);
+    expect(nativeUndo.defaultPrevented).toBe(false);
+    expect(savedSources).toHaveLength(2);
+    textarea.remove();
 
     act(() => {
       panelState.props?.onApplyPatch(
@@ -259,6 +336,212 @@ describe('FileViewer manual edit history regressions', () => {
 
     expect(savedSources[2]).toContain('background-color: rgb(249, 115, 22)');
     expect(savedSources[2]).not.toContain('rgb(239, 68, 68)');
+
+    await waitFor(() => expect(panelState.props?.canUndo).toBe(true));
+    const parameterControls = document.createElement('div');
+    parameterControls.setAttribute('data-manual-edit-history-controls', 'true');
+    const parameterSelect = document.createElement('select');
+    parameterControls.appendChild(parameterSelect);
+    document.body.appendChild(parameterControls);
+    parameterSelect.focus();
+    const parameterUndo = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    act(() => {
+      parameterSelect.dispatchEvent(parameterUndo);
+    });
+    expect(parameterUndo.defaultPrevented).toBe(true);
+    await waitFor(() => expect(savedSources).toHaveLength(4));
+    expect(savedSources[3]).toBe(initialSource);
+    parameterControls.remove();
+
+    act(() => {
+      panelState.props?.onApplyPatch(
+        { kind: 'set-style', id: 'hero', styles: { backgroundColor: '#f97316' } },
+        'Style: Hero',
+      );
+    });
+    await waitFor(() => expect(savedSources).toHaveLength(5));
+    await waitFor(() => expect(panelState.props?.canUndo).toBe(true));
+    const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const activeGeneration = activeFrame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-undo-hotkey', generation: activeGeneration },
+        source: activeFrame.contentWindow,
+      }));
+    });
+    await waitFor(() => expect(savedSources).toHaveLength(6));
+    expect(savedSources[5]).toBe(initialSource);
+  });
+
+  it('undoes the latest live style preview before older persisted history', async () => {
+    const initialSource = '<!doctype html><html><body><h1 data-od-id="hero" style="color: #111111">Hero</h1></body></html>';
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        savedSources.push(payload.content);
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        return new Response(initialSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+      />,
+    );
+
+    await enterManualEditMode();
+    await selectManualEditTarget();
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const postMessageSpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+
+    act(() => {
+      panelState.props?.onDraftChange({
+        ...panelState.props.draft,
+        styles: { ...panelState.props.draft.styles, color: '#ef4444' },
+      });
+      panelState.props?.onStyleChange?.('hero', { color: '#ef4444' }, 'Style: Hero');
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-text-session', id: 'hero', active: true },
+        source: frame.contentWindow,
+      }));
+    });
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(savedSources).toHaveLength(0);
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'od-edit-preview-style',
+        id: 'hero',
+        styles: expect.objectContaining({ color: '#111111' }),
+      }),
+      '*',
+    );
+    expect(postMessageSpy).not.toHaveBeenCalledWith(
+      { type: 'od-edit-text-finish', commit: false },
+      '*',
+    );
+    await waitFor(() => expect(panelState.props?.canUndo).toBe(false));
+  });
+
+  it('queues each undo shortcut pressed while a manual edit save is in flight', async () => {
+    const initialSource = '<!doctype html><html><body><h1 data-od-id="hero" style="color: #111111">Hero</h1></body></html>';
+    let persistedSource = initialSource;
+    let resolveSecondSave!: (value: Response) => void;
+    const secondSaveResponse = new Promise<Response>((resolve) => {
+      resolveSecondSave = resolve;
+    });
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = payload.content;
+        savedSources.push(payload.content);
+        if (savedSources.length === 2) return secondSaveResponse;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+      />,
+    );
+
+    await enterManualEditMode();
+    await selectManualEditTarget();
+    act(() => {
+      panelState.props?.onApplyPatch(
+        { kind: 'set-style', id: 'hero', styles: { color: '#ef4444' } },
+        'Style: Hero',
+      );
+    });
+    await waitFor(() => expect(savedSources).toHaveLength(1));
+    await waitFor(() => expect(panelState.props?.canUndo).toBe(true));
+
+    act(() => {
+      panelState.props?.onApplyPatch(
+        { kind: 'set-style', id: 'hero', styles: { backgroundColor: '#f97316' } },
+        'Style: Hero',
+      );
+    });
+    await waitFor(() => expect(savedSources).toHaveLength(2));
+
+    const firstUndo = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    const secondUndo = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    act(() => {
+      window.dispatchEvent(firstUndo);
+      window.dispatchEvent(secondUndo);
+    });
+    expect(firstUndo.defaultPrevented).toBe(true);
+    expect(secondUndo.defaultPrevented).toBe(true);
+
+    await act(async () => {
+      resolveSecondSave(new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await secondSaveResponse;
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(4));
+    expect(savedSources[2]).toBe(savedSources[0]);
+    expect(savedSources[3]).toBe(initialSource);
   });
 
   it('refreshes the manual edit canvas after non-style source patches', async () => {

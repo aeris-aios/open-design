@@ -127,14 +127,29 @@ describe('FileViewer manual edit regressions', () => {
 
   const FONT_SIZE_ROW = 'Font size';
 
-  // The bridge posts this once a free drag-to-reposition passes the 4px
-  // threshold and the pointer is released; the transform it carries is the
-  // element's new translate().
-  async function dropManualEditDrag(id: string, transform: string) {
+  // The bridge posts this once a structural drag resolves a valid component
+  // slot. The host persists a parent/sibling reorder immediately.
+  async function dropManualEditDrag(
+    id: string,
+    parentId: string,
+    beforeId: string | null = null,
+    generation?: string,
+    requestId = `test-move-${id}`,
+  ) {
     const frame = await previewFrame();
+    const resolvedGeneration = generation
+      ?? frame.srcdoc.match(/var generation = "([^"]+)"/)?.[1]
+      ?? '';
     act(() => {
       window.dispatchEvent(new MessageEvent('message', {
-        data: { type: 'od-edit-drag-commit', id, transform },
+        data: {
+          type: 'od-edit-drag-commit',
+          id,
+          parentId,
+          beforeId,
+          generation: resolvedGeneration,
+          requestId,
+        },
         source: frame.contentWindow,
       }));
     });
@@ -169,7 +184,7 @@ describe('FileViewer manual edit regressions', () => {
     expect(cancelManualEditPendingStyleSnapshot(otherTargetPending, 'cta', ['fontSize'])).toBe(otherTargetPending);
   });
 
-  it('opens edit mode with a clean canvas and no docked panel', async () => {
+  it('opens edit mode with page properties docked beside a clean canvas', async () => {
     const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
@@ -182,14 +197,17 @@ describe('FileViewer manual edit regressions', () => {
     );
 
     await enterManualEditMode();
-    // No panel auto-pops; the canvas stays clean.
-    expect(document.querySelector('.manual-edit-right')).toBeNull();
-    expect(screen.queryByText('PAGE')).toBeNull();
+    // Page properties occupy the existing rail instead of floating over the
+    // artboard, matching the Edit tab's default state.
+    await waitFor(() => {
+      expect(document.querySelector('.viewer-structure-rail .manual-edit-page-card')).not.toBeNull();
+    });
+    expect(screen.getByText('PAGE')).toBeTruthy();
 
-    // Hovering surfaces only the click affordance, still no panel.
+    // Hovering surfaces the click affordance without replacing page properties.
     await hoverManualEditTarget();
-    expect(document.querySelector('.manual-edit-right')).toBeNull();
-    expect(screen.queryByText('PAGE')).toBeNull();
+    expect(document.querySelector('.viewer-structure-rail .manual-edit-page-card')).not.toBeNull();
+    expect(screen.getByText('PAGE')).toBeTruthy();
     expect(screen.getByTestId('manual-edit-hover-open')).toBeTruthy();
   });
 
@@ -221,6 +239,7 @@ describe('FileViewer manual edit regressions', () => {
     await enterManualEditMode();
 
     const rail = await screen.findByTestId('viewer-structure-rail');
+    fireEvent.click(screen.getByTestId('design-structure-tab-structure'));
     await waitFor(() => expect(rail.textContent).toContain('cart'));
     expect(rail.textContent).toContain('index');
   });
@@ -244,7 +263,7 @@ describe('FileViewer manual edit regressions', () => {
     expect(document.querySelector('.manual-edit-page-card')).not.toBeNull();
   });
 
-  it('pins the inspector to a target only after clicking the hover affordance', async () => {
+  it('replaces page properties with a target inspector after clicking the hover affordance', async () => {
     const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
@@ -258,8 +277,8 @@ describe('FileViewer manual edit regressions', () => {
 
     await enterManualEditMode();
     await hoverManualEditTarget();
-    // No panel until the affordance is clicked.
-    expect(document.querySelector('.manual-edit-right')).toBeNull();
+    // Hover alone keeps the page card in place.
+    expect(document.querySelector('.viewer-structure-rail .manual-edit-page-card')).not.toBeNull();
 
     fireEvent.click(screen.getByTestId('manual-edit-hover-open'));
 
@@ -590,8 +609,308 @@ describe('FileViewer manual edit regressions', () => {
     }
   });
 
-  it('holds a dropped drag as a pending style and only persists it on save', async () => {
-    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+  it('persists a snapped drag as an HTML component reorder without a transform', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="page"><section data-od-id="source"><article data-od-id="card-a">A</article></section><section data-od-id="target"><article data-od-id="card-b">B</article></section></main></body></html>';
+    const savedBodies: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        savedBodies.push(String(init.body));
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onFileSaved = vi.fn(async () => {
+      throw new Error('File list refresh failed after the write');
+    });
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+        onFileSaved={onFileSaved}
+      />,
+    );
+
+    await enterManualEditMode();
+    const frame = await previewFrame();
+    const initialSrcDoc = frame.srcdoc;
+    const hostReplySpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+    await dropManualEditDrag('card-a', 'target', 'card-b');
+
+    await waitFor(() => {
+      expect(savedBodies.length).toBe(1);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'od-edit-drag-result',
+          requestId: 'test-move-card-a',
+          accepted: true,
+        }),
+        '*',
+      );
+    });
+    const payload = JSON.parse(savedBodies[0]!) as { content: string };
+    expect(payload.content).toContain(
+      '<section data-od-id="target"><article data-od-id="card-a">A</article><article data-od-id="card-b">B</article></section>',
+    );
+    expect(payload.content).not.toContain('translate(');
+    expect(onFileSaved).toHaveBeenCalledTimes(1);
+    // Structural saves rebuild from the authoritative source so generated
+    // paths are recalculated before another drag starts.
+    expect(await previewFrame()).toBe(frame);
+    expect(frame.srcdoc).not.toBe(initialSrcDoc);
+    expect(frame.srcdoc).toContain(
+      '<section data-od-id="target" data-od-source-path="path-0-1"><article data-od-id="card-a" data-od-source-path="path-0-1-0">A</article>',
+    );
+  });
+
+  it('persists a responsive corner resize without rebuilding the active iframe and resets that viewport rule', async () => {
+    const initialSource = '<!doctype html><html><body><main><section class="card" data-od-id="card">Card copy</section></main></body></html>';
+    let persistedSource = initialSource;
+    const savedBodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const body = String(init.body);
+        savedBodies.push(body);
+        persistedSource = (JSON.parse(body) as { content: string }).content;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(persistedSource, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    }));
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+      />,
+    );
+
+    await enterManualEditMode();
+    const frame = await previewFrame();
+    const initialSrcDoc = frame.srcdoc;
+    const hostReplySpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+    await selectManualEditTarget({
+      ...heroTarget(),
+      id: 'card',
+      kind: 'container',
+      label: 'Card',
+      tagName: 'section',
+      text: 'Card copy',
+      fields: { text: 'Card copy' },
+      attributes: { class: 'card', 'data-od-id': 'card' },
+      isLayoutContainer: true,
+      sizing: {
+        resizable: true,
+        boxSizing: 'border-box',
+        position: 'static',
+        containingBlockWidth: 800,
+        paddingBorderX: 0,
+        paddingBorderY: 0,
+        hasUnsupportedTransform: false,
+      },
+      outerHtml: '<section class="card" data-od-id="card">Card copy</section>',
+    });
+
+    const resizeGeneration = frame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od-edit-resize-commit',
+          id: 'card',
+          requestId: 'test-stale-resize-card',
+          generation: 'stale-generation',
+          viewport: 'desktop',
+          size: { widthPercent: 90, minHeight: 240 },
+        },
+      }));
+    });
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(0);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'od-edit-resize-result',
+          requestId: 'test-stale-resize-card',
+          accepted: false,
+        }),
+        '*',
+      );
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od-edit-resize-commit',
+          id: 'card',
+          requestId: 'test-resize-card',
+          generation: resizeGeneration,
+          viewport: 'desktop',
+          size: { widthPercent: 62.5, minHeight: 180 },
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(1);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'od-edit-resize-result',
+          requestId: 'test-resize-card',
+          accepted: true,
+        }),
+        '*',
+      );
+    });
+    const resizedSource = (JSON.parse(savedBodies[0]!) as { content: string }).content;
+    expect(resizedSource).toContain('style data-od-responsive-size');
+    expect(resizedSource).toContain('@media (min-width: 1024px)');
+    expect(resizedSource).toContain('width: 62.50% !important');
+    expect(resizedSource).toContain('min-height: 180px !important');
+    expect(resizedSource).toContain('class="card"');
+    expect(await previewFrame()).toBe(frame);
+    expect(frame.srcdoc).toBe(initialSrcDoc);
+    expect((await findStyleInput('Width')).value).toBe('62.50%');
+    expect((await findStyleInput('Height')).value).toBe('180');
+
+    fireEvent.click(screen.getByText('Reset'));
+    await waitFor(() => expect(savedBodies).toHaveLength(2));
+    const resetSource = (JSON.parse(savedBodies[1]!) as { content: string }).content;
+    expect(resetSource).not.toContain('data-od-responsive-size');
+    expect(resetSource).toContain('<section class="card" data-od-id="card">Card copy</section>');
+  });
+
+  it('refreshes generated paths between consecutive structural drags', async () => {
+    const source = '<!doctype html><html><body><main><article>A</article><article>B</article><article>C</article></main></body></html>';
+    const savedBodies: string[] = [];
+    let persistedSource = source;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        savedBodies.push(String(init.body));
+        persistedSource = (JSON.parse(String(init.body)) as { content: string }).content;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(persistedSource, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    await enterManualEditMode();
+    const frame = await previewFrame();
+    const hostReplySpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const generationFromFrame = () => (
+      frame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? ''
+    );
+    const firstGeneration = generationFromFrame();
+    expect(firstGeneration).not.toBe('');
+
+    act(() => {
+      for (const generation of ['stale-generation', '']) {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type: 'od-edit-drag-commit',
+            id: 'path-0-0',
+            transform: 'translate(120px, 40px)',
+            generation,
+          },
+        }));
+      }
+    });
+
+    await dropManualEditDrag('path-0-0', 'path-0', null, '', 'test-empty-generation');
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(0);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'test-empty-generation', accepted: false }),
+        '*',
+      );
+    });
+
+    await dropManualEditDrag('path-0-0', 'path-0', null, firstGeneration);
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(1);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'test-move-path-0-0', accepted: true }),
+        '*',
+      );
+      expect(frame.srcdoc).toMatch(
+        /<article[^>]*data-od-source-path="path-0-0"[^>]*>B<\/article>/,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    // A second message from the old document must be rejected even if its
+    // stale paths still happen to resolve to valid (but wrong) source nodes.
+    await dropManualEditDrag('path-0-2', 'path-0', 'path-0-1', firstGeneration, 'test-stale-move');
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(1);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'test-stale-move', accepted: false }),
+        '*',
+      );
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od-edit-text-commit',
+          id: 'path-0-0',
+          value: 'Wrong stale edit',
+          generation: firstGeneration,
+        },
+      }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(savedBodies).toHaveLength(1);
+
+    // The first save rebuilt the document, so C and B now use their current
+    // paths rather than the aliases from before A moved.
+    const secondGeneration = generationFromFrame();
+    expect(secondGeneration).not.toBe(firstGeneration);
+    await dropManualEditDrag('path-0-1', 'path-0', 'path-0-0', secondGeneration);
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(2);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'test-move-path-0-1', accepted: true }),
+        '*',
+      );
+    });
+
+    const payload = JSON.parse(savedBodies[1]!) as { content: string };
+    expect(payload.content).toContain('<main><article>C</article><article>B</article><article>A</article></main>');
+    expect(payload.content).not.toContain('data-od-id="path-');
+    expect(document.querySelector('.od-toast.tone-error')).toBeNull();
+  });
+
+  it('keeps an unselected structural drag out of the open panel draft', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main><aside data-od-id="side">Side</aside></body></html>';
     const savedBodies: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
@@ -615,35 +934,35 @@ describe('FileViewer manual edit regressions', () => {
     await enterManualEditMode();
     await selectManualEditTarget();
     await findStyleInput(FONT_SIZE_ROW);
-    // Nothing is dirty before the drag, so no Reset is offered.
+
+    // A structural commit for a different element saves the reorder but does
+    // not dirty the panel that is still showing `hero`.
+    await dropManualEditDrag('side', '__body__', 'hero');
+
     expect(screen.queryByText('Reset')).toBeNull();
-
-    await dropManualEditDrag('hero', 'translate(12px, 8px)');
-
-    // The drop is a pending edit like any inspector change: nothing on disk yet,
-    // but the panel is dirty so Reset/Save act on it.
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/api/projects/project-1/files',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    await waitFor(() => {
-      expect(screen.getByText('Reset')).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByText('Save'));
-
-    await waitFor(() => {
-      expect(savedBodies.length).toBe(1);
-    });
+    await waitFor(() => expect(savedBodies).toHaveLength(1));
     const payload = JSON.parse(savedBodies[0]!) as { content: string };
-    expect(payload.content).toContain('translate(12px, 8px)');
+    expect(payload.content.indexOf('data-od-id="side"')).toBeLessThan(
+      payload.content.indexOf('data-od-id="hero"'),
+    );
   });
 
-  it('keeps a drag on an unselected element out of the open panel draft', async () => {
+  it('saves a dirty inspector draft before allowing a structural drag', async () => {
     const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main><aside data-od-id="side">Side</aside></body></html>';
-    const fetchMock = vi.fn(async () =>
-      new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
-    );
+    const savedBodies: string[] = [];
+    let persistedSource = source;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        savedBodies.push(String(init.body));
+        persistedSource = (JSON.parse(String(init.body)) as { content: string }).content;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(persistedSource, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     render(
@@ -654,18 +973,143 @@ describe('FileViewer manual edit regressions', () => {
 
     await enterManualEditMode();
     await selectManualEditTarget();
-    await findStyleInput(FONT_SIZE_ROW);
+    fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Edited before drag' } });
+    const frame = await previewFrame();
+    const hostReplySpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const generation = frame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
 
-    // A drag commit for a different element must not dirty the panel that is
-    // showing `hero` — otherwise Save would write someone else's transform
-    // into this element's draft.
-    await dropManualEditDrag('side', 'translate(40px, 0px)');
+    await dropManualEditDrag('side', '__body__', 'hero', generation, 'dirty-draft-move');
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(1);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'dirty-draft-move', accepted: false }),
+        '*',
+      );
+    });
+    const contentPayload = JSON.parse(savedBodies[0]!) as { content: string };
+    expect(contentPayload.content).toContain('<main data-od-id="hero">Edited before drag</main><aside data-od-id="side">Side</aside>');
+    expect(screen.getByLabelText('Text')).toHaveValue('Edited before drag');
 
-    expect(screen.queryByText('Reset')).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/api/projects/project-1/files',
-      expect.objectContaining({ method: 'POST' }),
+    const retryGeneration = frame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    expect(retryGeneration).not.toBe(generation);
+    await dropManualEditDrag('side', '__body__', 'hero', retryGeneration, 'retry-dirty-draft-move');
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(2);
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'retry-dirty-draft-move', accepted: true }),
+        '*',
+      );
+    });
+    const movePayload = JSON.parse(savedBodies[1]!) as { content: string };
+    expect(movePayload.content).toContain('<aside data-od-id="side">Side</aside><main data-od-id="hero">Edited before drag</main>');
+  });
+
+  it('rebuilds from an externally changed file before another structural drag', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main><aside data-od-id="side">Side</aside></body></html>';
+    const externalSource = '<!doctype html><html><body><aside data-od-id="side">Side external</aside><main data-od-id="hero">Hero external</main></body></html>';
+    let persistedSource = source;
+    const savedBodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        savedBodies.push(String(init.body));
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(persistedSource, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    }));
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
     );
+
+    await enterManualEditMode();
+    await selectManualEditTarget();
+    const oldFrame = await previewFrame();
+    const oldGeneration = oldFrame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    const hostReplySpy = vi.spyOn(oldFrame.contentWindow!, 'postMessage');
+    persistedSource = externalSource;
+
+    await dropManualEditDrag('side', '__body__', 'hero', oldGeneration, 'external-conflict-move');
+    await waitFor(() => {
+      expect(hostReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'external-conflict-move', accepted: false }),
+        '*',
+      );
+      expect(savedBodies).toHaveLength(0);
+    });
+    const refreshedFrame = await previewFrame();
+    await waitFor(() => {
+      expect(refreshedFrame.srcdoc).toContain('Side external');
+      expect(refreshedFrame.srcdoc).toContain('Hero external');
+    });
+    const refreshedGeneration = refreshedFrame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    expect(refreshedGeneration).not.toBe(oldGeneration);
+    expect(document.querySelector('.manual-edit-target-card')).toBeNull();
+  });
+
+  it('mints a usable generation when an external conflict restores the frozen document', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main><aside data-od-id="side">Side</aside></body></html>';
+    let persistedSource = source;
+    const savedBodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        savedBodies.push(String(init.body));
+        persistedSource = (JSON.parse(String(init.body)) as { content: string }).content;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(persistedSource, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    }));
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    await enterManualEditMode();
+    await selectManualEditTarget();
+    const originalFrame = await previewFrame();
+    const originalGeneration = originalFrame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    const sizeInput = await findStyleInput(FONT_SIZE_ROW);
+    fireEvent.change(sizeInput, { target: { value: '18' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(savedBodies).toHaveLength(1));
+
+    // A style save updates sourceRef without replacing the frozen document.
+    // Simulate an external writer restoring exactly that frozen source.
+    persistedSource = source;
+    const oldReplySpy = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
+    await dropManualEditDrag('side', '__body__', 'hero', originalGeneration, 'same-frozen-conflict');
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(1);
+      expect(oldReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'same-frozen-conflict', accepted: false }),
+        '*',
+      );
+    });
+
+    const refreshedFrame = await previewFrame();
+    const refreshedGeneration = refreshedFrame.srcdoc.match(/var generation = "([^"]+)"/)?.[1] ?? '';
+    expect(refreshedGeneration).not.toBe(originalGeneration);
+
+    const refreshedReplySpy = vi.spyOn(refreshedFrame.contentWindow!, 'postMessage');
+    await dropManualEditDrag('side', '__body__', 'hero', refreshedGeneration, 'post-conflict-move');
+    await waitFor(() => {
+      expect(savedBodies).toHaveLength(2);
+      expect(refreshedReplySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'post-conflict-move', accepted: true }),
+        '*',
+      );
+    });
   });
 
   it('saves text typed in the inspector while an inline text session is active', async () => {
@@ -757,6 +1201,11 @@ describe('FileViewer manual edit regressions', () => {
     await waitFor(() => {
       expect(screen.getByText('Cannot remove the last rendered element in the document.')).toBeTruthy();
     });
+    const errorToast = screen.getByRole('alert');
+    expect(errorToast.classList.contains('manual-edit-error-toast')).toBe(true);
+    expect(errorToast.classList.contains('placement-top')).toBe(true);
+    expect(errorToast.classList.contains('tone-error')).toBe(true);
+    expect(document.querySelector('.manual-edit-panel .manual-edit-error')).toBeNull();
     expect((screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement).srcdoc).toContain('data-od-id="app-root"');
     expect(fetchMock).not.toHaveBeenCalledWith(
       '/api/projects/project-1/files',

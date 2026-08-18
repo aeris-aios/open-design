@@ -619,6 +619,24 @@ describe('PreviewDrawOverlay', () => {
     await waitFor(() => expect(container.querySelector('canvas')).toBeNull());
   });
 
+  it('does not consume undo shortcuts while draw mode is inactive', () => {
+    render(
+      <PreviewDrawOverlay active={false}>
+        <div style={{ width: 320, height: 200 }} />
+      </PreviewDrawOverlay>,
+    );
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it('accumulates multiple box selections and undoes them one at a time', () => {
     const { container, getByRole } = render(
       <PreviewDrawOverlay active>

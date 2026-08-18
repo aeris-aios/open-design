@@ -4,15 +4,17 @@
 // desktop/tablet/mobile viewport dropdown. Resizing the frame is a
 // responsiveness check for OUR generated artifact, not for someone else's live
 // website, so the control was removed from the browser only. The artifact
-// preview keeps its own switcher (`PreviewViewportControls` in FileViewer) —
-// the second case pins that so this guard cannot be satisfied by deleting both.
+// preview keeps its own desktop/mobile icon switcher (`PreviewViewportControls`
+// in FileViewer) — the second case pins that so this guard cannot be satisfied
+// by deleting both.
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installMockOpenDesignHost } from '@open-design/host/testing';
 
 import { DesignBrowserPanel } from '../../src/components/DesignBrowserPanel';
 import { FileViewer } from '../../src/components/FileViewer';
+import { REMIX_ICON_PATHS } from '../../src/components/remix-icon-paths';
 import type { ProjectFile } from '../../src/types';
 import { writeProjectTextFile } from '../../src/providers/registry';
 
@@ -102,6 +104,29 @@ describe('in-app browser viewport switcher', () => {
 
     await waitFor(() => {
       expect(container.querySelector('.viewer-viewport-switcher')).toBeTruthy();
+    });
+
+    const switcher = container.querySelector('.viewer-viewport-switcher');
+    const desktop = screen.getByRole('button', { name: 'Desktop' });
+    const mobile = screen.getByRole('button', { name: 'Mobile' });
+
+    expect(switcher?.querySelectorAll('.viewer-viewport-option')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Tablet/i })).toBeNull();
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(desktop.getAttribute('aria-pressed')).toBe('true');
+    expect(mobile.getAttribute('aria-pressed')).toBe('false');
+    expect(
+      desktop.querySelector('.viewer-viewport-device-icon path')?.getAttribute('d'),
+    ).toBe(REMIX_ICON_PATHS['computer-line']);
+    expect(
+      mobile.querySelector('.viewer-viewport-device-icon path')?.getAttribute('d'),
+    ).toBe(REMIX_ICON_PATHS['smartphone-line']);
+
+    fireEvent.click(mobile);
+
+    await waitFor(() => {
+      expect(desktop.getAttribute('aria-pressed')).toBe('false');
+      expect(mobile.getAttribute('aria-pressed')).toBe('true');
     });
   });
 });

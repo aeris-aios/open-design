@@ -1,7 +1,14 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type IframeHTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { CenteredLoader } from './Loading';
+import {
+  MANUAL_EDIT_FLOW_MAX_ZOOM,
+  MANUAL_EDIT_FLOW_MIN_ZOOM,
+  ManualEditFlowCanvas,
+  type ManualEditFlowInputBridge,
+  type ManualEditFlowViewport,
+} from './ManualEditFlowCanvas';
 import {
   APP_CHROME_FILE_ACTIONS_ID,
   APP_CHROME_FILE_ACTIONS_SELECTOR,
@@ -275,9 +282,20 @@ import {
   readManualEditAttributes,
   readManualEditFields,
   readManualEditOuterHtml,
+  readManualEditResponsiveSize,
   readManualEditStyles,
 } from '../edit-mode/source-patches';
-import { MANUAL_EDIT_STYLE_PROPS, type ManualEditBridgeMessage, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
+import {
+  MANUAL_EDIT_STYLE_PROPS,
+  type ManualEditBridgeMessage,
+  type ManualEditHistoryEntry,
+  type ManualEditPatch,
+  type ManualEditResponsiveSizePatch,
+  type ManualEditResponsiveSizeValues,
+  type ManualEditResponsiveViewport,
+  type ManualEditStyles,
+  type ManualEditTarget,
+} from '../edit-mode/types';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 import { DesignStructurePanel } from './design-files/DesignStructurePanel';
 import { type FileCategory, fileCategory, sectionLabelKey } from './design-files/fileCategories';
@@ -327,6 +345,29 @@ export type ManualEditPendingStyleSave = {
   version: number;
 };
 type PreviewViewportId = 'desktop' | 'tablet' | 'mobile';
+
+const MANUAL_EDIT_RESPONSIVE_SIZE_KEYS = [
+  'widthPercent',
+  'minHeight',
+  'leftPercent',
+  'topPx',
+] as const satisfies readonly (keyof ManualEditResponsiveSizeValues)[];
+
+function manualEditResponsiveSizesEqual(
+  left: ManualEditResponsiveSizeValues | null,
+  right: ManualEditResponsiveSizeValues | null,
+): boolean {
+  return MANUAL_EDIT_RESPONSIVE_SIZE_KEYS.every((key) => left?.[key] === right?.[key]);
+}
+
+function manualEditResponsiveResetPatch(
+  baseline: ManualEditResponsiveSizeValues | null,
+): ManualEditResponsiveSizePatch {
+  return MANUAL_EDIT_RESPONSIVE_SIZE_KEYS.reduce<ManualEditResponsiveSizePatch>((patch, key) => {
+    patch[key] = baseline?.[key] ?? null;
+    return patch;
+  }, {});
+}
 type PreviewCanvasSize = { width: number; height: number; scrollLeft?: number; scrollTop?: number };
 type CommentPreviewCanvasOptions = {
   boardMode: boolean;
@@ -335,6 +376,8 @@ type CommentPreviewCanvasOptions = {
 };
 type PreviewScaleOptions = {
   canvasPadding?: number;
+  /** Fit the artboard exactly to the available canvas, including scales above 1. */
+  fitToCanvas?: boolean;
 };
 type PreviewViewportPreset = {
   id: PreviewViewportId;
@@ -541,6 +584,10 @@ async function readPreviewAssetResponseBody(resp: Response): Promise<unknown> {
 
 /** Design width the desktop artboard renders at. */
 const DESKTOP_ARTBOARD_WIDTH = 1440;
+/** Shared width for the deck filmstrip's grid track and host-side fit calculation. */
+export const DECK_THUMBNAIL_RAIL_WIDTH = 194;
+const MANUAL_EDIT_DESKTOP_VERTICAL_INSET = 48;
+const MANUAL_EDIT_DESKTOP_FALLBACK_HEIGHT = 800;
 
 const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
   {
@@ -572,12 +619,19 @@ const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
   },
 ];
 
-/* Quarter steps down from 1:1. The dock's zoom exists to fit more of the
-   artboard into the pane it sits in, so the ladder runs below 100% rather than
-   past it — the old 50/75/100/125/150/200 run spent half its rungs magnifying
-   a preview that is already rendered at its own scale. One list, read by both
-   the dock menu and the toolbar's ⋯ mirror, so the two can't drift. */
+// The preview toolbar intentionally exposes only the two endpoint layouts.
+// Tablet geometry stays available internally for older cached sessions and
+// export calculations, but it is no longer a user-selectable viewport.
+const PREVIEW_VIEWPORT_OPTIONS = PREVIEW_VIEWPORT_PRESETS.filter(
+  (preset): preset is PreviewViewportPreset & { id: 'desktop' | 'mobile' } => preset.id !== 'tablet',
+);
+
+/* Older preview surfaces keep their compact ladder. The HTML canvas gesture
+   remains continuous from 10% to 200%, while its trigger exposes only these
+   fixed presets, mirrored in the ⋯ menu. */
 const PREVIEW_ZOOM_LEVELS = [25, 50, 75, 100];
+const HTML_PREVIEW_ZOOM_LEVELS = [25, 50, 75, 100];
+const ZOOM_MENU_BAR_GAP_PX = 4;
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -1055,78 +1109,73 @@ function PreviewViewportControls({
   t: TranslateFn;
   tabIndex?: number;
 }) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const listboxId = useId();
-  const activePreset =
-    PREVIEW_VIEWPORT_PRESETS.find((preset) => preset.id === viewport) ?? PREVIEW_VIEWPORT_PRESETS[0]!;
+  const switcherRef = useRef<HTMLDivElement | null>(null);
+  const optionRefs = useRef<Partial<Record<'desktop' | 'mobile', HTMLButtonElement | null>>>({});
+  const activeViewport = viewport === 'mobile' ? 'mobile' : 'desktop';
 
   useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(event.target as Node)) setOpen(false);
+    if (viewport === 'tablet') onViewport('desktop');
+  }, [onViewport, viewport]);
+
+  useLayoutEffect(() => {
+    const switcher = switcherRef.current;
+    const activeOption = optionRefs.current[activeViewport];
+    if (!switcher || !activeOption) {
+      switcher?.removeAttribute('data-has-active');
+      return;
+    }
+
+    const placeThumb = () => {
+      switcher.style.setProperty('--viewer-viewport-thumb-x', `${activeOption.offsetLeft}px`);
+      switcher.style.setProperty('--viewer-viewport-thumb-width', `${activeOption.offsetWidth}px`);
+      switcher.setAttribute('data-has-active', 'true');
     };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+
+    placeThumb();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(placeThumb);
+    observer.observe(switcher);
+    Object.values(optionRefs.current).forEach((option) => {
+      if (option) observer.observe(option);
+    });
+    return () => observer.disconnect();
+  }, [activeViewport]);
 
   return (
-    <div className="viewer-viewport-switcher" ref={menuRef}>
-      <button
-        type="button"
-        className={`viewer-action viewer-viewport-trigger${open ? '' : ' od-tooltip'}`}
-        aria-label={t('fileViewer.viewportAria')}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listboxId : undefined}
-        title={t(activePreset.titleKey)}
-        data-tooltip={open ? undefined : t(activePreset.titleKey)}
-        data-tooltip-placement="bottom"
-        tabIndex={tabIndex}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {/* Text-only trigger: the selected device reads from its label alone.
-            The device glyph stays in the menu items, where it disambiguates
-            the three options; on the closed trigger it only doubled the word
-            next to it. */}
-        <span>{t(activePreset.labelKey)}</span>
-        <RemixIcon name="arrow-down-s-line" size={14} />
-      </button>
-      {open ? (
-        <div className="viewer-viewport-menu" id={listboxId} role="listbox" aria-label={t('fileViewer.viewportAria')}>
-          {PREVIEW_VIEWPORT_PRESETS.map((preset) => {
-            const selected = viewport === preset.id;
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                className={`viewer-viewport-menu-item${selected ? ' active' : ''}`}
-                role="option"
-                aria-selected={selected}
-                title={t(preset.titleKey)}
-                onClick={() => {
-                  onViewport(preset.id);
-                  setOpen(false);
-                }}
-              >
-                <span className="viewer-viewport-menu-label">
-                  <RemixIcon name={previewViewportIcon(preset.id)} size={14} />
-                  <span>{t(preset.labelKey)}</span>
-                </span>
-                {selected ? <Icon name="check" size={13} /> : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+    <div
+      ref={switcherRef}
+      className="viewer-viewport-switcher"
+      role="group"
+      aria-label={t('fileViewer.viewportAria')}
+    >
+      <span className="viewer-viewport-thumb" aria-hidden="true" />
+      {PREVIEW_VIEWPORT_OPTIONS.map((preset) => {
+        const selected = viewport === preset.id || (viewport === 'tablet' && preset.id === 'desktop');
+        return (
+          <button
+            ref={(node) => {
+              optionRefs.current[preset.id] = node;
+            }}
+            key={preset.id}
+            type="button"
+            className={`viewer-viewport-option od-tooltip${selected ? ' active' : ''}`}
+            aria-label={t(preset.labelKey)}
+            aria-pressed={selected}
+            title={t(preset.titleKey)}
+            data-tooltip={t(preset.titleKey)}
+            data-tooltip-placement="bottom"
+            tabIndex={tabIndex}
+            onClick={() => onViewport(preset.id)}
+          >
+            <RemixIcon
+              name={previewViewportIcon(preset.id)}
+              size={15}
+              className="viewer-viewport-device-icon"
+            />
+            <span className="viewer-viewport-option-label">{t(preset.labelKey)}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1177,6 +1226,22 @@ export function commentPreviewCanvasSize(
   };
 }
 
+export function deckPreviewCanvasSize(
+  canvasSize: PreviewCanvasSize | undefined,
+  options: {
+    thumbnailRailVisible: boolean;
+    thumbnailRailCollapsed: boolean;
+  },
+): PreviewCanvasSize | undefined {
+  if (!canvasSize || !options.thumbnailRailVisible || options.thumbnailRailCollapsed) {
+    return canvasSize;
+  }
+  return {
+    ...canvasSize,
+    width: Math.max(1, canvasSize.width - DECK_THUMBNAIL_RAIL_WIDTH),
+  };
+}
+
 function usesStackedCommentSideDock(
   canvasSize: PreviewCanvasSize | undefined,
   options: CommentPreviewCanvasOptions,
@@ -1212,6 +1277,7 @@ export function effectivePreviewScale(
   const heightFit = preset.height && canvasSize.height
     ? Math.max(1, canvasSize.height - canvasPadding) / preset.height
     : Number.POSITIVE_INFINITY;
+  if (options?.fitToCanvas) return Math.min(widthFit, heightFit);
   return Math.min(previewScale, 1, widthFit, heightFit);
 }
 
@@ -1444,7 +1510,51 @@ function manualEditPreviewShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
 ): CSSProperties & Record<string, string | number> {
-  return previewScaleShellStyle(viewport, previewScale);
+  const style = previewScaleShellStyle(viewport, previewScale);
+  return {
+    ...style,
+    // Every edit artboard publishes one stable 100%-scale logical document
+    // height. Zoom then scales both axes together instead of clipping mobile
+    // and tablet pages to their compact preview preset.
+    height: 'var(--manual-edit-artboard-height)',
+  };
+}
+
+export function manualEditDesktopArtboardGeometry(
+  canvasHeight: number | undefined,
+  previewScale: number,
+  documentHeight?: number | null,
+  presetHeight?: number | null,
+): { logicalHeight: number; scaledHeight: number } {
+  const measuredHeight = documentHeight && Number.isFinite(documentHeight) && documentHeight > 0
+    ? Math.ceil(documentHeight)
+    : presetHeight && Number.isFinite(presetHeight) && presetHeight > 0
+      ? Math.ceil(presetHeight)
+      : canvasHeight && canvasHeight > MANUAL_EDIT_DESKTOP_VERTICAL_INSET
+        ? canvasHeight - MANUAL_EDIT_DESKTOP_VERTICAL_INSET
+        : MANUAL_EDIT_DESKTOP_FALLBACK_HEIGHT;
+  const logicalHeight = Math.max(1, measuredHeight);
+  return {
+    logicalHeight,
+    scaledHeight: logicalHeight * previewScale,
+  };
+}
+
+export function manualEditIframeWheelPoint(
+  frameRect: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
+  frameClientSize: { width: number; height: number },
+  point: { x: number; y: number },
+): { clientX: number; clientY: number } {
+  const scaleX = frameClientSize.width > 0 && frameRect.width > 0
+    ? frameRect.width / frameClientSize.width
+    : 1;
+  const scaleY = frameClientSize.height > 0 && frameRect.height > 0
+    ? frameRect.height / frameClientSize.height
+    : 1;
+  return {
+    clientX: frameRect.left + (point.x * scaleX),
+    clientY: frameRect.top + (point.y * scaleY),
+  };
 }
 
 function deploymentTimestamp(deployment: WebDeploymentInfo): number {
@@ -1695,6 +1805,8 @@ interface Props {
   projectId: string;
   projectKind: TrackingProjectKind;
   file: ProjectFile;
+  /** Visible project inventory used by the Edit rail's unified Assets view. */
+  projectFiles?: readonly ProjectFile[];
   liveHtml?: string;
   filesRefreshKey?: number;
   isDeck?: boolean;
@@ -1820,6 +1932,7 @@ export const FileViewer = memo(function FileViewer({
   projectId,
   projectKind,
   file,
+  projectFiles,
   liveHtml,
   filesRefreshKey = 0,
   isDeck,
@@ -1912,6 +2025,7 @@ export const FileViewer = memo(function FileViewer({
         projectId={projectId}
         projectKind={projectKind}
         file={file}
+        projectFiles={projectFiles}
         liveHtml={liveHtml}
         filesRefreshKey={filesRefreshKey}
         isDeck={rendererMatch.renderer.id === 'deck-html'}
@@ -3297,6 +3411,10 @@ function sourceLooksLikeDeckPreview(source: string | null | undefined): boolean 
   );
 }
 
+export function htmlHasManualEditNavigationAction(source: string | null | undefined): boolean {
+  return Boolean(source && /\bdata-od-action\s*=\s*['"]navigate['"]/i.test(source));
+}
+
 export function fileVersionPreviewOptions(
   projectId: string,
   fileName: string,
@@ -3355,10 +3473,29 @@ export function deckKeyboardShortcutForEvent(event: DeckKeyboardShortcutEvent): 
   return null;
 }
 
+type ManualEditUndoShortcutEvent = Pick<
+  KeyboardEvent,
+  'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'
+>;
+
+export function isManualEditUndoShortcut(event: ManualEditUndoShortcutEvent): boolean {
+  return (
+    (event.metaKey || event.ctrlKey)
+    && !event.altKey
+    && !event.shiftKey
+    && event.key.toLowerCase() === 'z'
+  );
+}
+
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+function isManualEditHistoryControl(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && target.closest('[data-manual-edit-history-controls="true"]') !== null;
 }
 
 function normalizeDeckVisualSource(source: string): string {
@@ -7394,6 +7531,307 @@ function DocumentPreviewViewer({
   );
 }
 
+/**
+ * Read-only asset renderer shown as a presentation layer above the HTML
+ * editor. The owning project preview stays mounted underneath, but the asset
+ * does not inherit its XYFlow pan or zoom state.
+ */
+function ManualEditAssetPreview({
+  projectId,
+  file,
+  refreshKey,
+  projectFiles,
+  onClose,
+}: {
+  projectId: string;
+  file: ProjectFile;
+  refreshKey: number;
+  projectFiles: readonly ProjectFile[];
+  onClose: () => void;
+}) {
+  const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+  const url = appendResourceQuery(
+    projectFileUrl(projectId, file.name, workspaceContext),
+    `v=${Math.round(file.mtime)}&fr=${refreshKey}`,
+  );
+  const download = (
+    <a
+      className="manual-edit-asset-download"
+      href={projectFileUrl(projectId, file.name, workspaceContext)}
+      download={file.name}
+    >
+      <Icon name="download" size={14} />
+      <span>{t('fileViewer.download')}</span>
+    </a>
+  );
+
+  let content: ReactNode;
+  if (file.kind === 'html') {
+    content = (
+      <ManualEditAssetHtml
+        projectId={projectId}
+        file={file}
+        projectFiles={projectFiles}
+        refreshKey={refreshKey}
+      />
+    );
+  } else if (file.kind === 'image') {
+    content = <img className="manual-edit-asset-media" src={url} alt={file.name} />;
+  } else if (file.kind === 'video') {
+    content = <video className="manual-edit-asset-media" src={url} controls playsInline preload="metadata" />;
+  } else if (file.kind === 'audio') {
+    content = (
+      <div className="manual-edit-asset-audio">
+        <Icon name="mic" size={28} />
+        <strong>{file.name}</strong>
+        <audio src={url} controls preload="metadata" />
+      </div>
+    );
+  } else if (file.kind === 'sketch' && isRenderableSketchJson(file)) {
+    content = (
+      <SketchPreview
+        projectId={projectId}
+        file={file}
+        className="manual-edit-asset-sketch"
+        workspaceContext={workspaceContext}
+      />
+    );
+  } else if (file.kind === 'sketch') {
+    content = <img className="manual-edit-asset-media" src={url} alt={file.name} />;
+  } else if (file.kind === 'text' || file.kind === 'code') {
+    content = <ManualEditAssetText projectId={projectId} file={file} refreshKey={refreshKey} />;
+  } else if (
+    file.kind === 'document'
+    || file.kind === 'presentation'
+    || file.kind === 'spreadsheet'
+  ) {
+    content = <ManualEditAssetDocument projectId={projectId} file={file} refreshKey={refreshKey} />;
+  } else if (file.kind === 'pdf') {
+    content = (
+      <ManualEditAssetFrame
+        src={url}
+        title={file.name}
+        sandbox="allow-downloads"
+      />
+    );
+  } else {
+    content = (
+      <div className="manual-edit-asset-empty">
+        <Icon name="file" size={32} />
+        <strong>{file.name}</strong>
+        <span>{t('fileViewer.binaryNote', { size: file.size })}</span>
+        {download}
+      </div>
+    );
+  }
+
+  return (
+    <section
+      className="manual-edit-asset-preview"
+      data-testid="manual-edit-asset-preview"
+      data-file-name={file.name}
+      aria-label={file.name}
+    >
+      <button
+        type="button"
+        className="manual-edit-asset-close"
+        data-testid="manual-edit-asset-close"
+        aria-label={t('common.close')}
+        title={t('common.close')}
+        onClick={onClose}
+      >
+        <RemixIcon name="close-line" size={16} />
+      </button>
+      <div className="manual-edit-asset-preview-body">{content}</div>
+    </section>
+  );
+}
+
+/** A structure-row hover is a peek, not a navigation or an asset inspection.
+ *  It deliberately has no close affordance, keyboard target, or Escape
+ *  listener; leaving the row restores the still-mounted editing canvas. */
+function ManualEditPageHoverPreview({
+  projectId,
+  file,
+  refreshKey,
+  projectFiles,
+}: {
+  projectId: string;
+  file: ProjectFile;
+  refreshKey: number;
+  projectFiles: readonly ProjectFile[];
+}) {
+  return (
+    <section
+      className="manual-edit-asset-preview manual-edit-page-hover-preview"
+      data-testid="manual-edit-page-hover-preview"
+      data-file-name={file.name}
+      aria-hidden="true"
+    >
+      <div className="manual-edit-asset-preview-body">
+        <ManualEditAssetHtml
+          projectId={projectId}
+          file={file}
+          projectFiles={projectFiles}
+          refreshKey={refreshKey}
+        />
+      </div>
+    </section>
+  );
+}
+
+function ManualEditAssetHtml({
+  projectId,
+  file,
+  projectFiles,
+  refreshKey,
+}: {
+  projectId: string;
+  file: ProjectFile;
+  projectFiles: readonly ProjectFile[];
+  refreshKey: number;
+}) {
+  const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  const [srcDoc, setSrcDoc] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setSrcDoc(undefined);
+    const paths = new Set(projectFiles.map((entry) => entry.name));
+    void (async () => {
+      const source = await fetchProjectFileText(projectId, file.name, {
+        cache: 'no-store',
+        cacheBustKey: `${Math.round(file.mtime)}-${refreshKey}`,
+        workspaceContext,
+      });
+      if (source === null || cancelled) {
+        if (!cancelled) setSrcDoc(null);
+        return;
+      }
+      const inlined = await inlineRelativeAssets(
+        source,
+        projectId,
+        file.name,
+        paths,
+        workspaceContext,
+      );
+      const rewritten = rewriteProjectAssetRefsToRawUrls(
+        inlined,
+        file.name,
+        paths,
+        (name) => projectRawUrl(projectId, name, workspaceContext),
+      );
+      if (!cancelled) setSrcDoc(rewritten);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [file.name, file.mtime, projectFiles, projectId, refreshKey, workspaceContext]);
+
+  if (srcDoc === undefined) return <CenteredLoader label={t('fileViewer.loading')} />;
+  if (srcDoc === null) return <div className="viewer-empty">{t('fileViewer.previewUnavailable')}</div>;
+  return (
+    <ManualEditAssetFrame
+      data-testid="manual-edit-asset-html-frame"
+      title={file.name}
+      sandbox="allow-scripts allow-downloads"
+      srcDoc={srcDoc}
+    />
+  );
+}
+
+function ManualEditAssetText({
+  projectId,
+  file,
+  refreshKey,
+}: {
+  projectId: string;
+  file: ProjectFile;
+  refreshKey: number;
+}) {
+  const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setText(null);
+    void fetchProjectFileText(projectId, file.name, {
+      cache: 'no-store',
+      cacheBustKey: `${Math.round(file.mtime)}-${refreshKey}`,
+      workspaceContext,
+    }).then((next) => {
+      if (!cancelled) setText(next ?? '');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, file.name, file.mtime, refreshKey, workspaceContext]);
+
+  if (text === null) return <CenteredLoader label={t('fileViewer.loading')} />;
+  const displayText = formatJsonFileTextForDisplay(file, text);
+  return <CodeWithLines text={displayText} />;
+}
+
+function ManualEditAssetFrame(props: Omit<IframeHTMLAttributes<HTMLIFrameElement>, 'ref'>) {
+  // Asset frames are intentionally read-only. Their sandboxed documents have
+  // opaque origins, so pointer input stays on the parent preview surface where
+  // XYFlow can handle pan and pinch consistently for HTML, PDF, and DOM media.
+  return <iframe {...props} className="manual-edit-asset-frame" tabIndex={-1} />;
+}
+
+function ManualEditAssetDocument({
+  projectId,
+  file,
+  refreshKey,
+}: {
+  projectId: string;
+  file: ProjectFile;
+  refreshKey: number;
+}) {
+  const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  const [preview, setPreview] = useState<ProjectFilePreview | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setPreview(undefined);
+    void fetchProjectFilePreview(projectId, file.name, workspaceContext, {
+      cache: 'no-store',
+      cacheBustKey: `${Math.round(file.mtime)}-${refreshKey}`,
+    }).then((next) => {
+      if (!cancelled) setPreview(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, file.name, file.mtime, refreshKey, workspaceContext]);
+
+  if (preview === undefined) return <CenteredLoader label={t('fileViewer.loading')} />;
+  if (preview === null) return <div className="viewer-empty">{t('fileViewer.previewUnavailable')}</div>;
+  return (
+    <article className="document-preview manual-edit-asset-document">
+      <h2>{preview.title}</h2>
+      {preview.sections.map((section, index) => (
+        <section key={`${section.title}-${index}`}>
+          <h3>{section.title}</h3>
+          {section.lines.map((line, lineIndex) => (
+            <p key={`${lineIndex}-${line}`}>{line}</p>
+          ))}
+        </section>
+      ))}
+    </article>
+  );
+}
+
 export function fileViewerSourceAuthorizationScopeKey(
   workspaceContextLoading: boolean,
   workspaceContext: WorkspaceCollabContext | null,
@@ -7432,6 +7870,7 @@ function HtmlViewer({
   projectId,
   projectKind,
   file: requestedFile,
+  projectFiles,
   liveHtml,
   filesRefreshKey: requestedFilesRefreshKey = 0,
   isDeck,
@@ -7469,6 +7908,7 @@ function HtmlViewer({
   projectId: string;
   projectKind: TrackingProjectKind;
   file: ProjectFile;
+  projectFiles?: readonly ProjectFile[];
   liveHtml?: string;
   filesRefreshKey?: number;
   isDeck: boolean;
@@ -7988,6 +8428,9 @@ function HtmlViewer({
   const [zoomMode, setZoomMode] = useState<'auto' | 'manual'>(
     () => htmlPreviewZoomState.get(fileViewportKey)?.zoomMode ?? 'auto',
   );
+  // Presentation is a fixed 1:1 reading surface. Authoring keeps its own
+  // remembered/auto-fit zoom and gets it back when the user returns to Edit.
+  const [canvasPresentMode, setCanvasPresentMode] = useState(true);
   const [previewViewport, setPreviewViewportState] = useState<PreviewViewportId>(
     () => htmlPreviewViewportState.get(fileViewportKey) ?? 'desktop',
   );
@@ -7997,6 +8440,7 @@ function HtmlViewer({
   }, [fileViewportKey]);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
+  const zoomMenuCloseTimerRef = useRef<number | null>(null);
   // The dock's zoom menu leaves the dock's DOM subtree when it opens (see the
   // note at its render site), so the trigger and the portaled popover are held
   // separately: the trigger to anchor it, the popover so the outside-click
@@ -8013,9 +8457,11 @@ function HtmlViewer({
       const trigger = zoomTriggerRef.current;
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
+      const bar = zoomMenuRef.current?.closest<HTMLElement>('.canvas-dock-inner');
+      const barTop = bar?.getBoundingClientRect().top ?? rect.top;
       setZoomMenuAnchor({
         left: Math.round(rect.left + rect.width / 2),
-        bottom: Math.round(window.innerHeight - rect.top + 6),
+        bottom: Math.round(window.innerHeight - barTop + ZOOM_MENU_BAR_GAP_PX),
       });
     };
     measure();
@@ -8029,10 +8475,38 @@ function HtmlViewer({
     };
   }, [zoomMenuOpen]);
   const zoomMenuFloatingStyle: CSSProperties | undefined = zoomMenuAnchor
-    ? { left: zoomMenuAnchor.left, bottom: zoomMenuAnchor.bottom }
+    ? ({
+        left: zoomMenuAnchor.left,
+        bottom: zoomMenuAnchor.bottom,
+        '--zoom-menu-anchor-bottom': `${zoomMenuAnchor.bottom}px`,
+      } as CSSProperties)
     : { visibility: 'hidden' };
   const zoomMenuFloatingHost = (node: ReactNode): ReactNode =>
     (typeof document === 'undefined' ? node : createPortal(node, document.body));
+  function cancelZoomMenuClose() {
+    if (zoomMenuCloseTimerRef.current === null) return;
+    window.clearTimeout(zoomMenuCloseTimerRef.current);
+    zoomMenuCloseTimerRef.current = null;
+  }
+  function closeZoomMenu() {
+    cancelZoomMenuClose();
+    setZoomMenuOpen(false);
+  }
+  function scheduleZoomMenuClose() {
+    cancelZoomMenuClose();
+    zoomMenuCloseTimerRef.current = window.setTimeout(() => {
+      zoomMenuCloseTimerRef.current = null;
+      setZoomMenuOpen(false);
+    }, 150);
+  }
+  function openZoomMenu() {
+    cancelZoomMenuClose();
+    if (!zoomMenuOpen) fireArtifactToolbarClick('zoom_level_dropdown');
+    setZoomMenuOpen(true);
+  }
+  useEffect(() => () => {
+    cancelZoomMenuClose();
+  }, []);
   // Single open-state for the unified chrome share/export/send popover; the
   // active tab is `unifiedActionTab`. External share/download requests below just
   // preselect the tab and open this one popover.
@@ -8462,10 +8936,73 @@ function HtmlViewer({
   // consistency is preserved by the flush on close.
   const [annotationFrozenSource, setAnnotationFrozenSource] = useState<string | null>(null);
   const [manualEditViewportWidth, setManualEditViewportWidth] = useState<number | null>(null);
+  const [manualEditDocumentHeight, setManualEditDocumentHeight] = useState<number | null>(null);
+  useEffect(() => {
+    setManualEditDocumentHeight(null);
+  }, [projectId, file.name, previewViewport, reloadKey]);
   const [commentPortalHost, setCommentPortalHost] = useState<HTMLElement | null>(null);
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
   const [commentComposerHost, setCommentComposerHost] = useState<HTMLDivElement | null>(null);
   const [commentPreviewCanvasNode, setCommentPreviewCanvasNode] = useState<HTMLDivElement | null>(null);
+  const manualEditCanvasRef = useRef<HTMLDivElement | null>(null);
+  const manualEditFlowInputBridgeRef = useRef<ManualEditFlowInputBridge | null>(null);
+  const manualEditFrameWheelQueueRef = useRef<((sample: {
+    clientX: number;
+    clientY: number;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    deltaX: number;
+    deltaY: number;
+  }) => void) | null>(null);
+  const manualEditFlowViewportRef = useRef<ManualEditFlowViewport>({ x: 0, y: 0, zoom: 1 });
+  const manualEditPreviewScaleRef = useRef(1);
+  const manualEditCommittedScaleRef = useRef(1);
+  const manualEditZoomGestureActiveRef = useRef(false);
+  const manualEditLogicalHeightRef = useRef(MANUAL_EDIT_DESKTOP_FALLBACK_HEIGHT);
+  const setManualEditCanvasRef = useCallback((node: HTMLDivElement | null) => {
+    manualEditCanvasRef.current = node;
+    if (!node) return;
+    const { x, y } = manualEditFlowViewportRef.current;
+    node.style.setProperty('--manual-edit-pan-x', `${x}px`);
+    node.style.setProperty('--manual-edit-pan-y', `${y}px`);
+  }, []);
+  const handleManualEditFlowViewportChange = useCallback((viewport: ManualEditFlowViewport) => {
+    const zoom = Math.min(
+      MANUAL_EDIT_FLOW_MAX_ZOOM,
+      Math.max(MANUAL_EDIT_FLOW_MIN_ZOOM, viewport.zoom),
+    );
+    const nextViewport = { ...viewport, zoom };
+    manualEditFlowViewportRef.current = nextViewport;
+    manualEditCanvasRef.current?.style.setProperty('--manual-edit-pan-x', `${nextViewport.x}px`);
+    manualEditCanvasRef.current?.style.setProperty('--manual-edit-pan-y', `${nextViewport.y}px`);
+    const zoomChanged = Math.abs(manualEditPreviewScaleRef.current - zoom) >= 0.0001;
+    if (zoomChanged) {
+      manualEditZoomGestureActiveRef.current = true;
+      manualEditPreviewScaleRef.current = zoom;
+      const canvas = manualEditCanvasRef.current;
+      // Width, inner transform and the artboard clip height must advance in the
+      // same paint. Leaving height on the last committed React render makes the
+      // bottom edge jump whenever a pinch sample changes direction or ends.
+      canvas?.parentElement?.style.setProperty('--preview-scale', String(zoom));
+      canvas?.style.setProperty(
+        '--manual-edit-scaled-artboard-height',
+        `${manualEditLogicalHeightRef.current * zoom}px`,
+      );
+    }
+  }, []);
+  const handleManualEditFlowViewportChangeEnd = useCallback((viewport: ManualEditFlowViewport) => {
+    const zoom = Math.min(
+      MANUAL_EDIT_FLOW_MAX_ZOOM,
+      Math.max(MANUAL_EDIT_FLOW_MIN_ZOOM, viewport.zoom),
+    );
+    manualEditZoomGestureActiveRef.current = false;
+    if (Math.abs(manualEditCommittedScaleRef.current - zoom) < 0.0001) return;
+    manualEditCommittedScaleRef.current = zoom;
+    const nextZoomPercent = zoom * 100;
+    setPreviewZoomCached(fileViewportKey, nextZoomPercent, 'manual');
+    setZoomMode('manual');
+    setZoom(nextZoomPercent);
+  }, [fileViewportKey]);
   // Seed from the cache instead of a cold `null` — see htmlPreviewContentWidthState
   // above. A stale seed still self-corrects once a fresh measurement lands.
   const previewMeasurementInteractionActive =
@@ -8917,13 +9454,21 @@ function HtmlViewer({
   const [manualEditPageStylesOpen, setManualEditPageStylesOpen] = useState(false);
   const [manualEditDraftDirty, setManualEditDraftDirty] = useState(false);
   const selectedManualEditTargetIdRef = useRef<string | null>(null);
+  const selectedManualEditTargetRef = useRef<ManualEditTarget | null>(null);
   const manualEditSelectionDraftRef = useRef<{ id: string; draft: ManualEditDraft } | null>(null);
+  const manualEditResponsiveSelectionBaselineRef = useRef<{
+    id: string;
+    viewport: ManualEditResponsiveViewport;
+    size: ManualEditResponsiveSizeValues | null;
+  } | null>(null);
+  const manualEditResponsiveViewportRef = useRef<ManualEditResponsiveViewport>(previewViewport);
   // Tracks the iframe's in-flight inline text edit. `finishManualEditTextSession`
   // posts the explicit finish and resolves only after the iframe acks AND the
   // resulting commit has been applied, so exit/dismiss/cancel never tear down
   // mid-round-trip and drop the final edit (the #3647 exit-path regression).
   const manualEditTextSessionIdRef = useRef<string | null>(null);
   const manualEditTextSessionStartSequenceRef = useRef<number | null>(null);
+  const manualEditTextSessionLastChangedRef = useRef<boolean | null>(null);
   const manualEditTextFinishRef = useRef<((acknowledged?: boolean, sessionId?: string) => void) | null>(null);
   const manualEditTextCommitInFlightRef = useRef<Promise<unknown> | null>(null);
   const manualEditTextCommitSequenceRef = useRef(0);
@@ -8935,12 +9480,21 @@ function HtmlViewer({
     sessionId: string;
   } | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualEditDraft>(() => emptyManualEditDraft());
+  const manualEditDraftRef = useRef(manualEditDraft);
+  manualEditDraftRef.current = manualEditDraft;
   const [manualEditHistory, setManualEditHistory] = useState<ManualEditHistoryEntry[]>([]);
   const [manualEditUndone, setManualEditUndone] = useState<ManualEditHistoryEntry[]>([]);
+  const manualEditHistoryRef = useRef<ManualEditHistoryEntry[]>([]);
+  const undoManualEditRef = useRef<() => Promise<void>>(async () => {});
+  const [manualEditUndoQueue, setManualEditUndoQueue] = useState(0);
   const [manualEditError, setManualEditError] = useState<string | null>(null);
   const [manualEditSaving, setManualEditSaving] = useState(false);
   const manualEditSavingRef = useRef(false);
+  const staleManualEditDragGenerationsRef = useRef<Set<string>>(new Set());
   const manualEditPendingStyleRef = useRef<ManualEditPendingStyleSave | null>(null);
+  const manualEditCanUndoRef = useRef(false);
+  manualEditHistoryRef.current = manualEditHistory;
+  manualEditCanUndoRef.current = manualEditHistory.length > 0 || manualEditPendingStyleRef.current !== null;
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualEditPreviewVersionRef = useRef(0);
   const sourceRef = useRef<string | null>(source);
@@ -9003,6 +9557,7 @@ function HtmlViewer({
     manualEditPendingStyleRef.current = null;
     manualEditTextSessionIdRef.current = null;
     manualEditTextSessionStartSequenceRef.current = null;
+    manualEditTextSessionLastChangedRef.current = null;
     manualEditTextFinishRef.current = null;
     manualEditTextCommitInFlightRef.current = null;
     manualEditTextFailedSessionIdsRef.current.clear();
@@ -9675,17 +10230,69 @@ function HtmlViewer({
     return sourceLooksLikeDeckPreview(s);
   }, [routingHtmlSource]);
   const effectiveDeck = isDeck || (!passiveLargeHtmlPreview && looksLikeDeck);
-  const previewZoomPercent = resolveDesktopPreviewZoomPercent({
+  // A deck is a single adaptive stage, never a cached phone/tablet artboard.
+  // Keep the preference untouched so leaving the deck restores the ordinary
+  // page (and Manual Edit) exactly as the user left it.
+  const renderedPreviewViewport: PreviewViewportId = effectiveDeck && !manualEditMode
+    ? 'desktop'
+    : previewViewport;
+  const renderedBoardPreviewCanvasSize = renderedPreviewViewport === previewViewport
+    ? boardPreviewCanvasSize
+    : commentPreviewCanvasSize(previewBodySize, {
+        boardMode: localCommentSideDockActive,
+        sidePanelCollapsed: commentSidePanelCollapsed,
+        viewport: renderedPreviewViewport,
+      });
+  const renderedBoardSideDockStacked = renderedPreviewViewport === previewViewport
+    ? boardSideDockStacked
+    : usesStackedCommentSideDock(previewBodySize, {
+        boardMode: localCommentSideDockActive,
+        sidePanelCollapsed: commentSidePanelCollapsed,
+        viewport: renderedPreviewViewport,
+      });
+  const authoringPreviewZoomPercent = resolveDesktopPreviewZoomPercent({
     zoomMode,
-    viewport: previewViewport,
+    viewport: renderedPreviewViewport,
     isDeck: effectiveDeck,
     manualZoomPercent: zoom,
-    canvasSize: boardPreviewCanvasSize,
+    canvasSize: renderedBoardPreviewCanvasSize,
     contentWidth: desktopPreviewContentWidthEntry?.overflow
       ? desktopPreviewContentWidth
       : null,
   });
+  const previewZoomPercent = canvasPresentMode ? 100 : authoringPreviewZoomPercent;
   const previewScale = previewZoomPercent / 100;
+  const manualEditArtboardPreset = PREVIEW_VIEWPORT_PRESETS.find(
+    (preset) => preset.id === previewViewport,
+  ) ?? PREVIEW_VIEWPORT_PRESETS[0]!;
+  const manualEditArtboardPresetWidth = manualEditArtboardPreset.width ?? DESKTOP_ARTBOARD_WIDTH;
+  const manualEditArtboardWidth = manualEditArtboardPresetWidth
+    + (previewViewport === 'desktop' ? 0 : 18);
+  const resolvedManualEditPreviewScale = Math.min(
+    MANUAL_EDIT_FLOW_MAX_ZOOM,
+    Math.max(MANUAL_EDIT_FLOW_MIN_ZOOM, previewScale),
+  );
+  const manualEditPreviewScale = manualEditZoomGestureActiveRef.current
+    ? manualEditPreviewScaleRef.current
+    : resolvedManualEditPreviewScale;
+  // Before the bridge reports the responsive document height, phone/tablet
+  // canvases start at their native compact viewport height. Desktop keeps its
+  // canvas-derived fallback. The bridge then replaces either value with the
+  // complete page height without changing the authored breakpoint width.
+  const manualEditArtboardGeometry = manualEditDesktopArtboardGeometry(
+    previewBodySize?.height,
+    manualEditPreviewScale,
+    manualEditDocumentHeight,
+    manualEditArtboardPreset.height,
+  );
+  manualEditLogicalHeightRef.current = manualEditArtboardGeometry.logicalHeight;
+  if (!manualEditZoomGestureActiveRef.current) {
+    manualEditPreviewScaleRef.current = manualEditPreviewScale;
+    manualEditCommittedScaleRef.current = manualEditPreviewScale;
+  }
+  if (!manualEditMode) {
+    manualEditFlowViewportRef.current.zoom = manualEditPreviewScale;
+  }
   previewContentMeasurementContextRef.current = {
     canvasWidth: boardPreviewCanvasSize?.width ?? 0,
     previewScale,
@@ -9711,19 +10318,11 @@ function HtmlViewer({
     scheduleDesktopPreviewContentMeasure,
     zoomMode,
   ]);
-  const previewZoomText = zoomPercentLabel(previewZoomPercent);
-  const zoomLevelActive = (level: number) => Math.abs(previewZoomPercent - level) < 0.001;
-  const overlayPreviewScale = effectivePreviewScale(
-    previewViewport,
-    previewScale,
-    boardPreviewCanvasSize,
-    boardPreviewScaleOptions,
-  );
-  const overlayPreviewTransform: PreviewOverlayTransform = {
-    scale: overlayPreviewScale,
-    offsetX: 0,
-    offsetY: 0,
-  };
+  const visiblePreviewZoomPercent = manualEditMode
+    ? manualEditPreviewScale * 100
+    : previewZoomPercent;
+  const previewZoomText = zoomPercentLabel(visiblePreviewZoomPercent);
+  const zoomLevelActive = (level: number) => Math.abs(visiblePreviewZoomPercent - level) < 0.001;
   const showDeckNavigation = effectiveDeck && (slideState === null || slideState.count > 0);
   const activeDeckSlideIndex =
     slideState?.active ??
@@ -9740,6 +10339,31 @@ function HtmlViewer({
   const showSpeakerNotesPanel = source !== null && effectiveDeck && mode === 'preview';
   const activeSpeakerNote = speakerNotes[activeDeckSlideIndex] ?? '';
   const deckSlideTotal = Math.max(deckSlideCount, speakerNotes.length, showDeckNavigation ? 1 : 0);
+  // The filmstrip is a sibling grid track, so the artboard fit must use the
+  // stage track rather than the full viewer body. Collapsing the filmstrip
+  // gives that width back without touching the iframe or its slide state.
+  const showDeckThumbnailRail = effectiveDeck && source !== null && deckSlideTotal > 0 && !manualEditMode;
+  const renderedPreviewCanvasSize = deckPreviewCanvasSize(renderedBoardPreviewCanvasSize, {
+    thumbnailRailVisible: showDeckThumbnailRail,
+    thumbnailRailCollapsed: deckThumbnailsCollapsed,
+  });
+  const renderedPreviewScaleOptions: PreviewScaleOptions | undefined =
+    effectiveDeck && !manualEditMode && canvasPresentMode
+      ? { ...boardPreviewScaleOptions, fitToCanvas: true }
+      : boardPreviewScaleOptions;
+  const overlayPreviewScale = manualEditMode
+    ? manualEditPreviewScale
+    : effectivePreviewScale(
+      renderedPreviewViewport,
+      previewScale,
+      renderedPreviewCanvasSize,
+      renderedPreviewScaleOptions,
+    );
+  const overlayPreviewTransform: PreviewOverlayTransform = {
+    scale: overlayPreviewScale,
+    offsetX: 0,
+    offsetY: 0,
+  };
   // Fire the deck_viewer surface_view once per opened artifact, the first time
   // its HTML is recognized as a slide deck and the slide chrome mounts. This is
   // the entry/denominator for the deck experience funnel. Keyed by
@@ -9873,7 +10497,12 @@ function HtmlViewer({
       : livePreviewSource;
   const manualEditPageStylesEnabled = typeof source === 'string' && isManualEditFullHtmlDocument(source);
   const urlModeBridge = hasUrlModeBridge(routingHtmlSource);
-  const manualEditRequiresSrcDoc = manualEditMode || manualEditSrcDocActive;
+  // Button actions are implemented by the allowlisted preview bridge. Keep a
+  // saved action on that transport after a cold reopen too; URL-load would
+  // otherwise render the data attributes but leave the button inert.
+  const manualEditRequiresSrcDoc = manualEditMode
+    || manualEditSrcDocActive
+    || htmlHasManualEditNavigationAction(routingHtmlSource);
   // When we URL-load the iframe directly, skip every in-host inlining /
   // srcDoc-rebuilding step. The browser does the asset resolution itself,
   // which is the whole point of the URL-load path.
@@ -10383,6 +11012,8 @@ function HtmlViewer({
     workspaceContext,
   ]);
 
+  const [srcDocTransportResetKey, setSrcDocTransportResetKey] = useState(0);
+  const [manualEditDocumentGenerationRevision, setManualEditDocumentGenerationRevision] = useState(0);
   const srcDocTransportGeneration = useMemo(
     () => nextPreviewTransportGeneration(),
     [
@@ -10391,6 +11022,7 @@ function HtmlViewer({
       projectId,
       file.name,
       reloadKey,
+      manualEditDocumentGenerationRevision,
       transportPreviewMeasurementDocumentEpoch,
       workspaceContext,
     ],
@@ -10416,6 +11048,7 @@ function HtmlViewer({
       editBridge: true,
       paletteBridge: false,
       previewFocusGuard: true,
+      hideScrollbars: true,
       previewObservability: true,
       // Embed the reload counter so the srcdoc string differs across reloads
       // even when the fetched HTML bytes are identical (issue #4650).
@@ -10441,6 +11074,29 @@ function HtmlViewer({
     frame: HTMLIFrameElement;
     generation: string;
   } | null>(null);
+  const manualEditBridgeViewportHeight = manualEditArtboardPreset.height
+    ?? (previewBodySize?.height && previewBodySize.height > MANUAL_EDIT_DESKTOP_VERTICAL_INSET
+      ? previewBodySize.height - MANUAL_EDIT_DESKTOP_VERTICAL_INSET
+      : MANUAL_EDIT_DESKTOP_FALLBACK_HEIGHT);
+  const postManualEditModeToFrame = useCallback((target: HTMLIFrameElement | null) => {
+    if (!workspaceActive) return;
+    target?.contentWindow?.postMessage({
+      type: 'od-edit-mode',
+      enabled: manualEditMode,
+      generation: srcDocTransportGeneration,
+      viewport: previewViewport,
+      viewportWidth: manualEditArtboardPresetWidth,
+      viewportHeight: manualEditBridgeViewportHeight,
+      expandDocument: true,
+    }, '*');
+  }, [
+    manualEditArtboardPresetWidth,
+    manualEditBridgeViewportHeight,
+    manualEditMode,
+    previewViewport,
+    srcDocTransportGeneration,
+    workspaceActive,
+  ]);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
     if (!workspaceActive) return;
     const win = target?.contentWindow;
@@ -10458,7 +11114,7 @@ function HtmlViewer({
       enabled: boardMode,
       mode: boardTool,
     }, '*');
-    win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
+    postManualEditModeToFrame(target);
     win.postMessage({
       type: 'od-edit-selected-target',
       id: manualEditMode ? selectedManualEditTarget?.id ?? null : null,
@@ -10470,6 +11126,7 @@ function HtmlViewer({
     inspectMode,
     manualEditMode,
     postAndConsumePreviewRuntimeState,
+    postManualEditModeToFrame,
     selectedManualEditTarget?.id,
     workspaceActive,
   ]);
@@ -10537,7 +11194,6 @@ function HtmlViewer({
     goToSlideRef.current(index);
   }, []);
   const lazySrcDocTransport = useMemo(() => buildLazySrcdocTransport(), []);
-  const [srcDocTransportResetKey, setSrcDocTransportResetKey] = useState(0);
   const [srcDocShellReady, setSrcDocShellReady] = useState(false);
   const srcDocRecoveryAttemptedGenerationRef = useRef<string | null>(null);
   const [srcDocRecoveryGeneration, setSrcDocRecoveryGeneration] = useState<string | null>(null);
@@ -11078,6 +11734,24 @@ function HtmlViewer({
 
   useEffect(() => {
     if (!workspaceActive) return;
+    function onMessage(ev: MessageEvent) {
+      if (!isActivePreviewIframeSource(ev.source)) return;
+      const data = ev.data as { type?: unknown; url?: unknown } | null;
+      if (data?.type !== 'od:preview-open-url' || typeof data.url !== 'string' || data.url.length > 8192) return;
+      try {
+        const url = new URL(data.url);
+        if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return;
+        window.open(url.href, '_blank', 'noopener,noreferrer');
+      } catch {
+        // Ignore malformed or unsafe destinations from sandboxed artifacts.
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [isActivePreviewIframeSource, workspaceActive]);
+
+  useEffect(() => {
+    if (!workspaceActive) return;
     if (!effectiveDeck) {
       setSlideState(null);
       return;
@@ -11123,7 +11797,7 @@ function HtmlViewer({
     ) {
       postAndConsumePreviewRuntimeState(target);
     }
-    win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
+    postManualEditModeToFrame(target);
     postSelectedManualEditTargetToIframe(manualEditMode ? selectedManualEditTarget?.id ?? null : null);
   }, [
     manualEditMode,
@@ -11131,6 +11805,7 @@ function HtmlViewer({
     srcDoc,
     useUrlLoadPreview,
     postAndConsumePreviewRuntimeState,
+    postManualEditModeToFrame,
     workspaceActive,
   ]);
 
@@ -11236,11 +11911,18 @@ function HtmlViewer({
     setManualEditTargets([]);
     setSelectedManualEditTarget(null);
     selectedManualEditTargetIdRef.current = null;
+    selectedManualEditTargetRef.current = null;
+    manualEditSelectionDraftRef.current = null;
+    manualEditResponsiveSelectionBaselineRef.current = null;
     setManualEditDraft(emptyManualEditDraft());
     setManualEditDraftDirty(false);
     setManualEditHistory([]);
     setManualEditUndone([]);
+    manualEditHistoryRef.current = [];
+    manualEditCanUndoRef.current = false;
+    setManualEditUndoQueue(0);
     setManualEditError(null);
+    staleManualEditDragGenerationsRef.current.clear();
     manualEditPendingStyleRef.current = null;
     clearManualEditStyleTimer();
   }, [file.name]);
@@ -11285,7 +11967,24 @@ function HtmlViewer({
 
   useEffect(() => {
     selectedManualEditTargetIdRef.current = selectedManualEditTarget?.id ?? null;
-  }, [selectedManualEditTarget?.id]);
+    selectedManualEditTargetRef.current = selectedManualEditTarget;
+  }, [selectedManualEditTarget]);
+
+  useEffect(() => {
+    const previousViewport = manualEditResponsiveViewportRef.current;
+    manualEditResponsiveViewportRef.current = previewViewport;
+    if (previousViewport === previewViewport || !manualEditMode || !selectedManualEditTarget) return;
+    const base = sourceRef.current ?? '';
+    const nextDraft = manualEditDraftForTarget(selectedManualEditTarget, base);
+    manualEditSelectionDraftRef.current = { id: selectedManualEditTarget.id, draft: nextDraft };
+    manualEditResponsiveSelectionBaselineRef.current = {
+      id: selectedManualEditTarget.id,
+      viewport: previewViewport,
+      size: readManualEditResponsiveSize(base, selectedManualEditTarget.id, previewViewport),
+    };
+    setManualEditDraft(nextDraft);
+    setManualEditDraftDirty(false);
+  }, [manualEditMode, previewViewport, selectedManualEditTarget]);
 
   useEffect(() => {
     if (!workspaceActive || !boardMode) {
@@ -11486,14 +12185,18 @@ function HtmlViewer({
       setManualEditPageStylesOpen(false);
       setManualEditDraftDirty(false);
       selectedManualEditTargetIdRef.current = null;
+      selectedManualEditTargetRef.current = null;
       manualEditSelectionDraftRef.current = null;
+      manualEditResponsiveSelectionBaselineRef.current = null;
       manualEditTextSessionIdRef.current = null;
       manualEditTextSessionStartSequenceRef.current = null;
+      manualEditTextSessionLastChangedRef.current = null;
       manualEditTextFinishRef.current = null;
       manualEditTextCommitInFlightRef.current = null;
       manualEditTextFailedSessionIdsRef.current.clear();
       manualEditTextLatestCommitRef.current = null;
       setManualEditError(null);
+      setManualEditDocumentHeight(null);
       manualEditPendingStyleRef.current = null;
       if (manualEditStyleTimerRef.current) {
         clearTimeout(manualEditStyleTimerRef.current);
@@ -11505,6 +12208,36 @@ function HtmlViewer({
       if (!isRetainedPreviewIframeSource(ev.source)) return;
       const data = ev.data as ManualEditBridgeMessage | null;
       if (!data?.type) return;
+      const messageGeneration = typeof (data as { generation?: unknown }).generation === 'string'
+        ? (data as { generation: string }).generation
+        : '';
+      const isGeneratedLocator = (value: unknown) => (
+        typeof value === 'string' && /^(?:source-path:)*path-\d+(?:-\d+)*$/.test(value)
+      );
+      const messageTargets = (data as { targets?: unknown }).targets;
+      const locatorCandidates: unknown[] = [
+        (data as { id?: unknown }).id,
+        (data as { parentId?: unknown }).parentId,
+        (data as { beforeId?: unknown }).beforeId,
+        (data as { anchorId?: unknown }).anchorId,
+        (data as { target?: { id?: unknown } }).target?.id,
+        ...(Array.isArray(messageTargets)
+          ? messageTargets.map((target) => (target as { id?: unknown })?.id)
+          : []),
+      ];
+      const requiresGeneration = data.type === 'od-edit-undo-hotkey'
+        || locatorCandidates.some(isGeneratedLocator);
+      const hasStaleGeneration = messageGeneration
+        ? messageGeneration !== expectedSrcDocTransportGenerationRef.current
+        : requiresGeneration;
+      // Drag and resize have optimistic iframe state and must send an explicit
+      // negative ACK from their own branches below. All other stale document
+      // messages can be discarded here before they affect selection/history.
+      if (
+        hasStaleGeneration
+        && data.type !== 'od-edit-drag-commit'
+        && data.type !== 'od-edit-resize-commit'
+      ) return;
       // A direct/automatic tab transition may make the viewer inactive before
       // its inline edit acknowledges the safe-exit request. Keep only those
       // commit/settlement messages live offscreen; ignore fresh interactions.
@@ -11513,6 +12246,41 @@ function HtmlViewer({
         && data.type !== 'od-edit-text-commit'
         && data.type !== 'od-edit-text-session'
       ) return;
+      if (data.type === 'od-edit-document-size') {
+        const measuredHeight = Number(data.height);
+        if (!Number.isFinite(measuredHeight) || measuredHeight < 1 || measuredHeight > 250_000) return;
+        const nextHeight = Math.ceil(measuredHeight);
+        setManualEditDocumentHeight((current) => (
+          current != null && Math.abs(current - nextHeight) <= 1 ? current : nextHeight
+        ));
+        return;
+      }
+      if (data.type === 'od-edit-canvas-wheel') {
+        const deltaScale = data.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : data.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? window.innerHeight
+            : 1;
+        manualEditFrameWheelQueueRef.current?.({
+          clientX: data.clientX,
+          clientY: data.clientY,
+          ctrlKey: data.ctrlKey,
+          metaKey: Boolean(data.metaKey),
+          deltaX: data.deltaX * deltaScale,
+          deltaY: data.deltaY * deltaScale,
+        });
+        return;
+      }
+      if (data.type === 'od-edit-undo-hotkey') {
+        if (
+          !isActivePreviewIframeSource(ev.source)
+          || !workspaceActive
+          || manualEditTextSessionIdRef.current
+          || (!manualEditCanUndoRef.current && !manualEditSavingRef.current)
+        ) return;
+        void undoManualEditRef.current();
+        return;
+      }
       if (data.type === 'od-edit-targets' && Array.isArray(data.targets)) {
         setManualEditTargets(data.targets);
         // Target broadcasts can be briefly empty while the iframe/save path is
@@ -11596,8 +12364,12 @@ function HtmlViewer({
         if (data.active) {
           manualEditTextSessionIdRef.current = sessionId;
           manualEditTextSessionStartSequenceRef.current = manualEditTextCommitSequenceRef.current;
+          manualEditTextSessionLastChangedRef.current = null;
           return;
         }
+        manualEditTextSessionLastChangedRef.current = typeof data.changed === 'boolean'
+          ? data.changed
+          : null;
         if (manualEditTextSessionIdRef.current === sessionId) {
           manualEditTextSessionIdRef.current = null;
           manualEditTextSessionStartSequenceRef.current = null;
@@ -11614,26 +12386,253 @@ function HtmlViewer({
         // save is never silently torn down.
         return;
       }
-      if (data.type === 'od-edit-drag-commit') {
-        // Free drag-to-reposition dropped: route the new translate() through
-        // the same pending-style pipeline the inspector uses, so the panel's
-        // Save persists it alongside every other edit in this session.
+      if (data.type === 'od-edit-resize-commit') {
         const id = String(data.id || '');
-        if (!id) return;
-        const transform = String(data.transform || '');
-        const dragStyles: Partial<ManualEditStyles> = { transform };
-        if (typeof data.display === 'string' && data.display) dragStyles.display = data.display;
-        void handleManualEditStyleChange(id, dragStyles, 'Move element');
-        if (selectedManualEditTargetIdRef.current === id) {
-          setManualEditDraft((current) => ({ ...current, styles: { ...current.styles, ...dragStyles } }));
-          setManualEditDraftDirty(true);
+        const requestId = String(data.requestId || '');
+        const replyTarget = ev.source as Window | null;
+        const replyToResize = (accepted: boolean, error?: string) => {
+          if (!requestId) return;
+          try {
+            replyTarget?.postMessage({
+              type: 'od-edit-resize-result',
+              requestId,
+              accepted,
+              ...(error ? { error } : {}),
+            }, '*');
+          } catch {
+            // The retained frame may have closed while the save was in flight.
+          }
+        };
+        const target = selectedManualEditTargetIdRef.current === id
+          ? selectedManualEditTargetRef.current
+          : null;
+        const hasSize = data.size && (
+          typeof data.size.widthPercent === 'number'
+          || typeof data.size.minHeight === 'number'
+        );
+        const resizeGenerationRejected = messageGeneration
+          ? messageGeneration !== expectedSrcDocTransportGenerationRef.current
+          : isGeneratedLocator(id);
+        const rejectionReason = resizeGenerationRejected
+          ? 'stale-document'
+          : !id
+          ? 'missing-target'
+          : !requestId
+            ? 'missing-request'
+            : data.viewport !== previewViewport
+              ? 'viewport-mismatch'
+              : target?.kind !== 'container'
+                ? 'target-not-resizable-container'
+                : target.sizing?.resizable === false
+                  ? 'target-resize-disabled'
+                  : !hasSize
+                    ? 'missing-size'
+                    : null;
+        if (rejectionReason) {
+          replyToResize(false, rejectionReason);
+          return;
         }
+        const baseline = manualEditResponsiveSelectionBaselineRef.current;
+        if (baseline?.id !== id || baseline.viewport !== data.viewport) {
+          manualEditResponsiveSelectionBaselineRef.current = {
+            id,
+            viewport: data.viewport,
+            size: readManualEditResponsiveSize(sourceRef.current ?? '', id, data.viewport),
+          };
+        }
+        // Resize is direct manipulation: its preview already lives in the
+        // retained iframe. Persist exactly one responsive patch, then ack so
+        // the bridge either keeps that rule or restores its pre-drag snapshot.
+        void (async () => {
+          try {
+            if (!(await flushManualEditStyleSave())) {
+              replyToResize(false, 'pending-style-save-failed');
+              return;
+            }
+            const accepted = await applyManualEdit(
+              {
+                id,
+                kind: 'set-responsive-size',
+                viewport: data.viewport,
+                size: data.size,
+              },
+              'Resize module',
+              { preservePreview: true },
+            );
+            if (accepted) {
+              const persisted = readManualEditResponsiveSize(
+                sourceRef.current ?? '',
+                id,
+                data.viewport,
+              );
+              const displayStyles: Partial<ManualEditStyles> = {};
+              if (persisted?.widthPercent != null) {
+                displayStyles.width = `${persisted.widthPercent.toFixed(2)}%`;
+              }
+              if (persisted?.minHeight != null) {
+                displayStyles.minHeight = `${Math.round(persisted.minHeight)}px`;
+              }
+              setManualEditTargets((current) => current.map((item) => item.id === id
+                ? { ...item, styles: { ...item.styles, ...displayStyles } }
+                : item));
+              setSelectedManualEditTarget((current) => current?.id === id
+                ? { ...current, styles: { ...current.styles, ...displayStyles } }
+                : current);
+              setManualEditDraft((current) => ({
+                ...current,
+                styles: { ...current.styles, ...displayStyles },
+                fullSource: sourceRef.current ?? current.fullSource,
+                responsiveViewport: data.viewport,
+                responsiveSize: persisted,
+              }));
+              setManualEditDraftDirty(true);
+            }
+            replyToResize(accepted, accepted ? undefined : 'responsive-size-save-rejected');
+          } catch {
+            replyToResize(false, 'responsive-size-save-failed');
+          }
+        })();
+        return;
+      }
+      if (data.type === 'od-edit-drag-commit') {
+        const id = String(data.id || '');
+        const parentId = String(data.parentId || '');
+        if (!id) return;
+        // Compatibility for an already-mounted iframe that still runs the
+        // pre-structure bridge during a hot update. Newly built bridges never
+        // send transform/display and therefore cannot enter this path.
+        if (!parentId) {
+          if (hasStaleGeneration) return;
+          const transform = typeof data.transform === 'string' ? data.transform : '';
+          if (!transform) return;
+          const legacyStyles: Partial<ManualEditStyles> = { transform };
+          if (typeof data.display === 'string' && data.display) legacyStyles.display = data.display;
+          void handleManualEditStyleChange(id, legacyStyles, 'Move element');
+          if (selectedManualEditTargetIdRef.current === id) {
+            setManualEditDraft((current) => ({
+              ...current,
+              styles: { ...current.styles, ...legacyStyles },
+            }));
+            setManualEditDraftDirty(true);
+          }
+          return;
+        }
+        const beforeId = typeof data.beforeId === 'string' && data.beforeId
+          ? data.beforeId
+          : null;
+        const placement = data.placement === 'left' || data.placement === 'right'
+          ? data.placement
+          : null;
+        const anchorId = typeof data.anchorId === 'string' && data.anchorId ? data.anchorId : null;
+        const groupId = typeof data.groupId === 'string' && data.groupId ? data.groupId : undefined;
+        const generation = typeof data.generation === 'string' ? data.generation : '';
+        const requestId = typeof data.requestId === 'string' ? data.requestId : '';
+        const replyTarget = ev.source as Window | null;
+        let dragReplied = false;
+        const replyToDrag = (accepted: boolean) => {
+          if (dragReplied) return;
+          dragReplied = true;
+          if (!requestId) return;
+          try {
+            replyTarget?.postMessage({ type: 'od-edit-drag-result', requestId, accepted }, '*');
+          } catch {
+            // The retained frame may have closed while the save was in flight.
+          }
+        };
+        // Canvas dragging is structural: preserve any pending inspector work,
+        // then persist the DOM reorder already previewed inside the iframe.
+        // Rebuild from the saved source after every successful move. Generated
+        // path aliases are positional, so retaining the old frame would let a
+        // second drag address a different sibling (or silently move the wrong
+        // element) after the first reorder.
+        void (async () => {
+          let moveAccepted = false;
+          try {
+            if (
+              !generation
+              || staleManualEditDragGenerationsRef.current.has(generation)
+              || generation !== expectedSrcDocTransportGenerationRef.current
+            ) {
+              replyToDrag(false);
+              return;
+            }
+            const sourceBeforePendingCommit = sourceRef.current;
+            if (!(await settlePendingManualEditCommit())) {
+              replyToDrag(false);
+              return;
+            }
+            // A completed inline edit rebuilt the document. The pointer's
+            // structural paths belong to the old version, so roll this visual
+            // drop back and let the user retry against the saved text.
+            if (sourceRef.current !== sourceBeforePendingCommit) {
+              replyToDrag(false);
+              return;
+            }
+            const selectedTarget = selectedManualEditTargetRef.current;
+            const pendingContent = selectedTarget
+              ? manualEditContentPatchForDraft(
+                selectedTarget,
+                manualEditDraftRef.current,
+                sourceRef.current ?? '',
+              )
+              : null;
+            if (pendingContent) {
+              const savedContent = await applyManualEdit(pendingContent.patch, pendingContent.label);
+              if (savedContent) setManualEditDraftDirty(false);
+              replyToDrag(false);
+              return;
+            }
+            if (!(await flushManualEditStyleSave())) {
+              replyToDrag(false);
+              return;
+            }
+            const movePatch: ManualEditPatch = placement && anchorId
+              ? { id, kind: 'move-element', parentId, beforeId, placement, anchorId, groupId }
+              : { id, kind: 'move-element', parentId, beforeId };
+            const usesGeneratedPath = [id, parentId, beforeId, placement ? anchorId : null]
+              .some(isGeneratedLocator);
+            const baseSource = sourceRef.current ?? '';
+            const preflight = applyManualEditPatch(baseSource, movePatch);
+            if (
+              usesGeneratedPath
+              && !preflight.ok
+              && /^(?:Target|Drop container|Drop sibling|Drop anchor) not found/.test(preflight.error ?? '')
+            ) {
+              resetManualEditSelectionAfterStructure(baseSource, true);
+              capturePreviewScrollPosition();
+              staleManualEditDragGenerationsRef.current.add(
+                expectedSrcDocTransportGenerationRef.current,
+              );
+              setManualEditDocumentGenerationRevision((revision) => revision + 1);
+              setManualEditFrozenSource(baseSource);
+              setSrcDocTransportResetKey((key) => key + 1);
+              replyToDrag(false);
+              return;
+            }
+            moveAccepted = await applyManualEdit(movePatch, 'Move element');
+            if (moveAccepted) {
+              staleManualEditDragGenerationsRef.current.add(generation);
+              resetManualEditSelectionAfterStructure(sourceRef.current ?? baseSource, true);
+            }
+            replyToDrag(moveAccepted);
+          } catch (error) {
+            replyToDrag(false);
+            if (moveAccepted) {
+              resetManualEditSelectionAfterStructure(sourceRef.current ?? source ?? '', false);
+              capturePreviewScrollPosition();
+              setManualEditDocumentGenerationRevision((revision) => revision + 1);
+              setManualEditFrozenSource(sourceRef.current ?? source ?? '');
+              setSrcDocTransportResetKey((key) => key + 1);
+            }
+            setManualEditError(error instanceof Error ? error.message : 'Could not move the element.');
+          }
+        })();
         return;
       }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [isRetainedPreviewIframeSource, manualEditMode, source, workspaceActive]);
+  }, [isActivePreviewIframeSource, isRetainedPreviewIframeSource, manualEditMode, previewViewport, source, workspaceActive]);
 
   function nextManualEditPreviewVersion(): number {
     manualEditPreviewVersionRef.current += 1;
@@ -11642,7 +12641,15 @@ function HtmlViewer({
 
   function inspectorManualEditStyles(target: ManualEditTarget, baseSource: string): ManualEditStyles {
     const inlineStyles = readManualEditStyles(baseSource, target.id);
-    return mergeManualEditInspectorStyles(inlineStyles, target.styles);
+    const merged = mergeManualEditInspectorStyles(inlineStyles, target.styles);
+    const responsiveSize = readManualEditResponsiveSize(baseSource, target.id, previewViewport);
+    if (responsiveSize?.widthPercent != null) {
+      merged.width = `${responsiveSize.widthPercent.toFixed(2)}%`;
+    }
+    if (responsiveSize?.minHeight != null) {
+      merged.minHeight = `${Math.round(responsiveSize.minHeight)}px`;
+    }
+    return merged;
   }
 
   function reconcileManualEditStyleSave(
@@ -11702,6 +12709,7 @@ function HtmlViewer({
       : styles;
     const pending: ManualEditPendingStyleSave = { id, styles: pendingStyles, label, version };
     manualEditPendingStyleRef.current = pending;
+    manualEditCanUndoRef.current = true;
     setManualEditError(null);
     previewStyleToIframe(id, styles, version);
   }
@@ -11728,6 +12736,7 @@ function HtmlViewer({
     if (!pending) return;
     clearManualEditStyleTimer();
     manualEditPendingStyleRef.current = null;
+    manualEditCanUndoRef.current = manualEditHistoryRef.current.length > 0;
     const base = sourceRef.current ?? '';
     const target = pending.id === '__body__'
       ? null
@@ -11745,7 +12754,7 @@ function HtmlViewer({
     if (!target || target.id === selectedManualEditTarget?.id) {
       setManualEditDraft((current) => ({
         ...current,
-        styles: target ? sourceStyles : current.styles,
+        styles: target || pending.id === '__body__' ? sourceStyles : current.styles,
         fullSource: base,
       }));
     }
@@ -11918,7 +12927,13 @@ function HtmlViewer({
     const base = sourceRef.current ?? '';
     const nextDraft = manualEditDraftForTarget(target, base);
     selectedManualEditTargetIdRef.current = target.id;
+    selectedManualEditTargetRef.current = target;
     manualEditSelectionDraftRef.current = { id: target.id, draft: nextDraft };
+    manualEditResponsiveSelectionBaselineRef.current = {
+      id: target.id,
+      viewport: previewViewport,
+      size: readManualEditResponsiveSize(base, target.id, previewViewport),
+    };
     setSelectedManualEditTarget(target);
     setManualEditDraft(nextDraft);
     setManualEditDraftDirty(false);
@@ -11927,16 +12942,38 @@ function HtmlViewer({
 
   function manualEditDraftForTarget(target: ManualEditTarget, base: string): ManualEditDraft {
     const fields = readManualEditFields(base, target.id);
+    const responsiveSize = readManualEditResponsiveSize(base, target.id, previewViewport);
     return {
       text: fields.text ?? target.fields.text ?? target.text,
       href: fields.href ?? target.fields.href ?? '',
+      target: fields.target === '_blank' || target.fields.target === '_blank' ? '_blank' : '_self',
       src: fields.src ?? target.fields.src ?? '',
       alt: fields.alt ?? target.fields.alt ?? '',
       styles: inspectorManualEditStyles(target, base),
       attributesText: JSON.stringify(readManualEditAttributes(base, target.id), null, 2),
       outerHtml: readManualEditOuterHtml(base, target.id) || target.outerHtml,
       fullSource: base,
+      responsiveViewport: previewViewport,
+      responsiveSize,
     };
+  }
+
+  function resetManualEditSelectionAfterStructure(baseSource: string, clearError: boolean): void {
+    manualEditPendingStyleRef.current = null;
+    clearManualEditStyleTimer();
+    selectedManualEditTargetIdRef.current = null;
+    selectedManualEditTargetRef.current = null;
+    manualEditSelectionDraftRef.current = null;
+    manualEditResponsiveSelectionBaselineRef.current = null;
+    manualEditTextSessionIdRef.current = null;
+    manualEditTextSessionStartSequenceRef.current = null;
+    manualEditTextSessionLastChangedRef.current = null;
+    setManualEditHoverTarget(null);
+    setSelectedManualEditTarget(null);
+    setManualEditDraft(emptyManualEditDraft(baseSource));
+    setManualEditDraftDirty(false);
+    if (clearError) setManualEditError(null);
+    postSelectedManualEditTargetToIframe(null);
   }
 
   async function clearManualEditTargetSelection() {
@@ -11949,8 +12986,10 @@ function HtmlViewer({
     cancelManualEditStyleDraft();
     selectedManualEditTargetIdRef.current = null;
     manualEditSelectionDraftRef.current = null;
+    manualEditResponsiveSelectionBaselineRef.current = null;
     manualEditTextSessionIdRef.current = null;
     manualEditTextSessionStartSequenceRef.current = null;
+    manualEditTextSessionLastChangedRef.current = null;
     setSelectedManualEditTarget(null);
     setManualEditDraft(emptyManualEditDraft(sourceRef.current ?? ''));
     setManualEditDraftDirty(false);
@@ -11991,6 +13030,24 @@ function HtmlViewer({
       const currentHref = fields.href ?? target.fields.href ?? '';
       if (draft.text !== currentText || draft.href !== currentHref) {
         return { patch: { id: target.id, kind: 'set-link', text: draft.text, href: draft.href }, label: t('manualEdit.applyContent') };
+      }
+      return null;
+    }
+    if (target.kind === 'action') {
+      const currentText = fields.text ?? target.fields.text ?? target.text;
+      const currentHref = fields.href ?? target.fields.href ?? '';
+      const currentTarget = fields.target === '_blank' || target.fields.target === '_blank' ? '_blank' : '_self';
+      if (draft.text !== currentText || draft.href !== currentHref || draft.target !== currentTarget) {
+        return {
+          patch: {
+            id: target.id,
+            kind: 'set-action',
+            text: draft.text,
+            href: draft.href,
+            target: draft.target,
+          },
+          label: t('manualEdit.applyContent'),
+        };
       }
       return null;
     }
@@ -12044,6 +13101,28 @@ function HtmlViewer({
       ? manualEditSelectionDraftRef.current.draft
       : manualEditDraftForTarget(selectedManualEditTarget, sourceRef.current ?? '');
     const base = sourceRef.current ?? '';
+    const responsiveBaseline = manualEditResponsiveSelectionBaselineRef.current;
+    const currentResponsiveSize = readManualEditResponsiveSize(
+      base,
+      selectedManualEditTarget.id,
+      previewViewport,
+    );
+    if (
+      responsiveBaseline?.id === selectedManualEditTarget.id
+      && responsiveBaseline.viewport === previewViewport
+      && !manualEditResponsiveSizesEqual(currentResponsiveSize, responsiveBaseline.size)
+    ) {
+      const ok = await applyManualEdit(
+        {
+          id: selectedManualEditTarget.id,
+          kind: 'set-responsive-size',
+          viewport: previewViewport,
+          size: manualEditResponsiveResetPatch(responsiveBaseline.size),
+        },
+        'Reset module size',
+      );
+      if (!ok) return;
+    }
     const currentOuterHtml = readManualEditOuterHtml(base, selectedManualEditTarget.id);
     if (snapshot.outerHtml && currentOuterHtml && snapshot.outerHtml !== currentOuterHtml) {
       const ok = await applyManualEdit(
@@ -12073,7 +13152,11 @@ function HtmlViewer({
     }
   }
 
-  async function applyManualEdit(patch: ManualEditPatch, label: string): Promise<boolean> {
+  async function applyManualEdit(
+    patch: ManualEditPatch,
+    label: string,
+    options: { preservePreview?: boolean } = {},
+  ): Promise<boolean> {
     if (manualEditSavingRef.current) return false;
     if (sourceRef.current == null) return false;
     manualEditSavingRef.current = true;
@@ -12114,25 +13197,30 @@ function HtmlViewer({
         afterSource: result.source,
         createdAt: Date.now(),
       };
-      // A committed content patch rewrites manualEditFrozenSource below, which
+      const preservePreview = options.preservePreview === true;
+      // A committed content patch normally rewrites manualEditFrozenSource below, which
       // rebuilds the preview srcDoc and reloads the iframe from the top.
       // Snapshot the scroll position first so the post-reload restore path
       // (the srcDoc effect + the bridge's od:preview-scroll-request round
       // trip) puts the user back where they were. The edit-entry snapshot has
       // usually expired by save time, and without a fresh one the new
       // document's initial 0/0 scroll report clobbers the last-known
-      // position (#92). set-style patches stream live via postMessage and
-      // never reload, so they don't need (or take) a snapshot.
-      if (patch.kind !== 'set-style') {
+      // position (#92). set-style patches and explicitly preserved direct
+      // manipulations are already reflected in the live DOM, so they don't
+      // reload or need a scroll snapshot.
+      if (patch.kind !== 'set-style' && !preservePreview) {
         capturePreviewScrollPosition();
       }
       setSource(result.source);
       sourceRef.current = result.source;
       setInlinedSource(null);
-      if (patch.kind !== 'set-style') {
+      if (patch.kind !== 'set-style' && !preservePreview) {
         setManualEditFrozenSource(result.source);
       }
-      setManualEditHistory((current) => [entry, ...current]);
+      const nextHistory = [entry, ...manualEditHistoryRef.current];
+      manualEditHistoryRef.current = nextHistory;
+      manualEditCanUndoRef.current = true;
+      setManualEditHistory(nextHistory);
       setManualEditUndone([]);
       setManualEditDraft((current) => ({ ...current, fullSource: result.source }));
       if (patch.kind === 'set-text') {
@@ -12145,6 +13233,21 @@ function HtmlViewer({
           ? { ...current, text: patch.text, fields: { ...current.fields, text: patch.text, href: patch.href } }
           : current);
         setManualEditDraft((current) => ({ ...current, text: patch.text, href: patch.href, fullSource: result.source }));
+      } else if (patch.kind === 'set-action') {
+        setSelectedManualEditTarget((current) => current?.id === patch.id
+          ? {
+              ...current,
+              text: patch.text,
+              fields: { ...current.fields, text: patch.text, href: patch.href, target: patch.target },
+            }
+          : current);
+        setManualEditDraft((current) => ({
+          ...current,
+          text: patch.text,
+          href: patch.href,
+          target: patch.target,
+          fullSource: result.source,
+        }));
       } else if (patch.kind === 'set-image') {
         setSelectedManualEditTarget((current) => current?.id === patch.id
           ? { ...current, fields: { ...current.fields, src: patch.src, alt: patch.alt } }
@@ -12157,6 +13260,7 @@ function HtmlViewer({
         }
         selectedManualEditTargetIdRef.current = null;
         manualEditSelectionDraftRef.current = null;
+        manualEditResponsiveSelectionBaselineRef.current = null;
         setSelectedManualEditTarget(null);
         setManualEditTargets((current) => current.filter((target) => target.id !== patch.id));
         setManualEditDraft(emptyManualEditDraft(result.source));
@@ -12167,6 +13271,7 @@ function HtmlViewer({
       }
       if (
         patch.kind !== 'remove-element' &&
+        patch.kind !== 'move-element' &&
         patch.kind !== 'set-token' &&
         patch.kind !== 'set-full-source' &&
         selectedManualEditTargetIdRef.current === patch.id
@@ -12177,7 +13282,12 @@ function HtmlViewer({
         reconcileManualEditStyleSave(patch.id, patch.styles, result.source);
       }
       setManualEditError(null);
-      await onFileSaved?.();
+      try {
+        await onFileSaved?.();
+      } catch {
+        // The authoritative write already succeeded. A best-effort file-list
+        // refresh must not turn a committed edit into a rejected canvas ACK.
+      }
       return true;
     } finally {
       manualEditSavingRef.current = false;
@@ -12195,8 +13305,18 @@ function HtmlViewer({
     setSource(persisted);
     sourceRef.current = persisted;
     setInlinedSource(null);
+    staleManualEditDragGenerationsRef.current.add(
+      expectedSrcDocTransportGenerationRef.current,
+    );
+    setManualEditDocumentGenerationRevision((revision) => revision + 1);
+    capturePreviewScrollPosition();
+    resetManualEditSelectionAfterStructure(persisted, false);
+    setManualEditFrozenSource(persisted);
+    setSrcDocTransportResetKey((key) => key + 1);
     setManualEditHistory([]);
     setManualEditUndone([]);
+    manualEditHistoryRef.current = [];
+    manualEditCanUndoRef.current = false;
     manualEditPendingStyleRef.current = null;
     setManualEditDraft((current) => ({ ...current, fullSource: persisted }));
     setManualEditError(message);
@@ -12213,7 +13333,7 @@ function HtmlViewer({
 
   async function undoManualEdit() {
     if (manualEditSavingRef.current) return;
-    const [latest, ...rest] = manualEditHistory;
+    const [latest, ...rest] = manualEditHistoryRef.current;
     if (!latest) return;
     manualEditSavingRef.current = true;
     setManualEditSaving(true);
@@ -12241,6 +13361,8 @@ function HtmlViewer({
       setInlinedSource(null);
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
+      manualEditHistoryRef.current = rest;
+      manualEditCanUndoRef.current = rest.length > 0;
       setManualEditUndone((current) => [latest, ...current]);
       setManualEditDraft((current) => ({ ...current, fullSource: latest.beforeSource }));
       await onFileSaved?.();
@@ -12249,6 +13371,37 @@ function HtmlViewer({
       setManualEditSaving(false);
     }
   }
+
+  async function requestManualEditUndo() {
+    // Inspector controls preview styles before they are committed. That live
+    // preview is newer than an inline text session that stayed open while the
+    // user moved into the inspector, so cancel it first.
+    if (manualEditPendingStyleRef.current) {
+      cancelManualEditStyleDraft();
+      return;
+    }
+    // The focused iframe keeps native character-level undo (the bridge never
+    // delegates it). If that inline session has blurred to non-editable host
+    // chrome, treat the whole uncommitted session as the newest edit step.
+    if (manualEditTextSessionIdRef.current) {
+      manualEditTextSessionLastChangedRef.current = null;
+      const ended = await finishManualEditTextSession(false);
+      // Cancelling text that actually changed is itself the newest undo step.
+      // If the user only clicked a text element without typing, do not consume
+      // their first shortcut on an invisible session cleanup: continue to the
+      // pending style or persisted history below.
+      if (!ended || manualEditTextSessionLastChangedRef.current !== false) return;
+    }
+    // If a save is already in flight, remember every command and apply it once
+    // that new step reaches the persisted history instead of dropping keys.
+    if (manualEditSavingRef.current) {
+      setManualEditUndoQueue((count) => count + 1);
+      return;
+    }
+    await undoManualEdit();
+  }
+
+  undoManualEditRef.current = requestManualEditUndo;
 
   async function redoManualEdit() {
     if (manualEditSavingRef.current) return;
@@ -12280,7 +13433,10 @@ function HtmlViewer({
       setInlinedSource(null);
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
-      setManualEditHistory((current) => [latest, ...current]);
+      const nextHistory = [latest, ...manualEditHistoryRef.current];
+      manualEditHistoryRef.current = nextHistory;
+      manualEditCanUndoRef.current = true;
+      setManualEditHistory(nextHistory);
       setManualEditDraft((current) => ({ ...current, fullSource: latest.afterSource }));
       await onFileSaved?.();
     } finally {
@@ -13232,6 +14388,14 @@ function HtmlViewer({
     capturePreviewScrollPosition();
     imageExportSnapshotDataUrlRef.current = null;
     setInlinedSource(null);
+    // Direct manipulations deliberately keep the entry snapshot mounted after
+    // save so the active iframe and its runtime state survive. An explicit
+    // Reload is the hand-off point to the newly persisted source: advance the
+    // frozen snapshot before rebuilding, otherwise the reload would mount the
+    // pre-resize HTML and make a successfully saved responsive rule disappear.
+    if (manualEditMode && source !== null) {
+      setManualEditFrozenSource(source);
+    }
     setReloadKey((key) => key + 1);
     if (!useUrlLoadPreview) {
       // Capture the current source so the fetch effect can restore it if
@@ -13345,9 +14509,8 @@ function HtmlViewer({
     setAgentToolsOpen(false);
   }
 
-  // The dock's arrow: the canvas with no tool armed. Mirrors the exit half of
-  // every activate*Tool below so a user can put the canvas back to plain
-  // without remembering which tool is currently on.
+  // The canvas with no authoring tool armed. Mirrors the exit half of every
+  // activate*Tool below so mode transitions can put the canvas back to plain.
   const noToolActive = !boardMode && !drawOverlayOpen && !manualEditMode;
 
   /* Which mode the canvas is in is its own state, not a reading of which tool
@@ -13365,16 +14528,23 @@ function HtmlViewer({
      name. The segment therefore always has exactly one tab lit — Present on
      arrival, Edit or Flow once asked for — instead of opening in a fourth,
      unnamed state that no tab could describe. */
-  const [canvasPresentMode, setCanvasPresentMode] = useState(true);
+  const canvasModeSegmentRef = useRef<HTMLDivElement | null>(null);
+  const canvasModeEditRef = useRef<HTMLButtonElement | null>(null);
+  const canvasModePresentRef = useRef<HTMLButtonElement | null>(null);
 
-  /* The pointer is not "on" until the user reaches for it. Reading its selected
-     state off `noToolActive` lit it up the instant the viewer opened, which
-     announces a tool the user chose rather than the absence of one — and it is
-     the absence of one. Arming anything else puts it back down. */
+  /* Present opens without a tool selected. Edit has two explicit pointer
+     tools: Select lets the iframe receive element clicks, while Hand gives
+     XYFlow the drag gesture for moving the whole canvas. */
   const [pointerToolSelected, setPointerToolSelected] = useState(false);
+  const pointerToolEntryRef = useRef<'select' | 'hand' | null>(null);
+  const previousManualEditModeRef = useRef(manualEditMode);
   useEffect(() => {
-    if (!noToolActive) setPointerToolSelected(false);
-  }, [noToolActive]);
+    const leftManualEdit = previousManualEditModeRef.current && !manualEditMode;
+    previousManualEditModeRef.current = manualEditMode;
+    if (leftManualEdit || (!manualEditMode && !noToolActive)) {
+      setPointerToolSelected(false);
+    }
+  }, [manualEditMode, noToolActive]);
 
   /* Arming a tool is a request to author, and Present is by definition the mode
      with nothing armed over the page — so it stands down, wherever the arming
@@ -13391,6 +14561,7 @@ function HtmlViewer({
   }, [noToolActive]);
 
   function enterCanvasPresentMode() {
+    setZoomMenuOpen(false);
     // Flag set from inside `clearCanvasTools`' success path: an unsaved manual
     // edit can refuse the flush, and folding the dock shut around an inspector
     // that is still open would strand it.
@@ -13567,12 +14738,16 @@ function HtmlViewer({
         setManualEditViewportWidth(previewBodyRef.current?.clientWidth ?? null);
         setManualEditSrcDocActive(true);
         setManualEditMode(true);
-        // Arming Edit is already the decision to edit — it should not cost a
-        // second click to reach something editable. Nothing is selected yet, so
-        // open the page-styles card: the same compact card clicking bare canvas
-        // gives, and the first element click swaps it for that element's
-        // inspector. Fragments have no page styles to show; the rail still lands
-        // on Edit for them (see `editSlotActive`) with its pick-an-element hint.
+        // A direct tool choice made from Present is carried into Edit. The
+        // ordinary Edit entry lands on Select, matching design-tool muscle
+        // memory: click an element first, choose Hand only to pan the canvas.
+        setPointerToolSelected(pointerToolEntryRef.current === 'hand');
+        pointerToolEntryRef.current = null;
+        // Keep page-level editing ready beside the initial hand tool. Once the
+        // hand is put down, the first element click swaps this card for that
+        // element's inspector. Fragments have no page styles to show; the rail
+        // still lands on Edit for them (see `editSlotActive`) with its
+        // pick-an-element hint.
         if (manualEditPageStylesEnabled) setManualEditPageStylesOpen(true);
         closeArtifactToolMenus();
       };
@@ -13601,6 +14776,201 @@ function HtmlViewer({
     closeArtifactToolMenus();
     void exitManualEditModeAfterFlush();
   }
+
+  function selectCanvasPointerTool(tool: 'select' | 'hand') {
+    if (manualEditMode) {
+      setPointerToolSelected(tool === 'hand');
+      return;
+    }
+    if (viewerOnly || !manualEditEntryAllowed) return;
+    pointerToolEntryRef.current = tool;
+    activateManualEditTool();
+  }
+
+  useEffect(() => {
+    if (!workspaceActive || mode !== 'preview' || source === null || inTabPresent) return;
+    const onCanvasToolShortcut = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (document.activeElement === iframeRef.current) return;
+      if (isEditableKeyboardTarget(event.target) || isEditableKeyboardTarget(document.activeElement)) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'v' && key !== 'h') return;
+      event.preventDefault();
+      selectCanvasPointerTool(key === 'h' ? 'hand' : 'select');
+    };
+    window.addEventListener('keydown', onCanvasToolShortcut);
+    return () => window.removeEventListener('keydown', onCanvasToolShortcut);
+  }, [
+    inTabPresent,
+    manualEditEntryAllowed,
+    manualEditMode,
+    mode,
+    source,
+    viewerOnly,
+    workspaceActive,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceActive || !manualEditMode || inTabPresent) return;
+    const onManualEditUndoShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || event.isComposing
+        || !isManualEditUndoShortcut(event)
+        || (
+          !manualEditCanUndoRef.current
+          && !manualEditSavingRef.current
+          && !manualEditTextSessionIdRef.current
+        )
+      ) return;
+      // Focus inside the preview iframe is handled by the injected edit bridge;
+      // host form controls retain their native character-level undo history.
+      if (document.activeElement === iframeRef.current) return;
+      const inspectorHistoryControlFocused = isManualEditHistoryControl(event.target)
+        || isManualEditHistoryControl(document.activeElement);
+      if (
+        !inspectorHistoryControlFocused
+        && (isEditableKeyboardTarget(event.target) || isEditableKeyboardTarget(document.activeElement))
+      ) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void undoManualEditRef.current();
+    };
+    window.addEventListener('keydown', onManualEditUndoShortcut);
+    return () => window.removeEventListener('keydown', onManualEditUndoShortcut);
+  }, [inTabPresent, manualEditMode, workspaceActive]);
+
+  useEffect(() => {
+    if (!manualEditMode) {
+      if (manualEditUndoQueue > 0) setManualEditUndoQueue(0);
+      return;
+    }
+    if (manualEditSaving || manualEditUndoQueue <= 0) return;
+    setManualEditUndoQueue((count) => Math.max(0, count - 1));
+    void undoManualEditRef.current();
+  }, [manualEditHistory, manualEditMode, manualEditSaving, manualEditUndoQueue]);
+
+  useEffect(() => {
+    if (!workspaceActive || !manualEditMode || inTabPresent) return;
+    const frame = iframeRef.current;
+    if (!frame) return;
+    let attachedDocument: Document | null = null;
+    let frameWheelAnimationFrame: number | null = null;
+    let pendingFrameWheel: {
+      clientX: number;
+      clientY: number;
+      ctrlKey: boolean;
+      metaKey: boolean;
+      deltaX: number;
+      deltaY: number;
+    } | null = null;
+    const flushFrameWheel = () => {
+      frameWheelAnimationFrame = null;
+      const pending = pendingFrameWheel;
+      pendingFrameWheel = null;
+      const bridge = manualEditFlowInputBridgeRef.current;
+      if (!pending || !bridge) return;
+      // Only zoom gestures need the pointer's outer-frame position to keep the
+      // anchor stable. A two-finger pan consumes deltas only, so avoid forcing
+      // iframe layout on the hottest path in Select mode.
+      const frameRect = pending.ctrlKey || pending.metaKey
+        ? frame.getBoundingClientRect()
+        : null;
+      const wheelPoint = frameRect
+        ? manualEditIframeWheelPoint(
+            frameRect,
+            { width: frame.clientWidth, height: frame.clientHeight },
+            { x: pending.clientX, y: pending.clientY },
+          )
+        : null;
+      bridge.wheel({
+        clientX: wheelPoint?.clientX ?? 0,
+        clientY: wheelPoint?.clientY ?? 0,
+        ctrlKey: pending.ctrlKey,
+        metaKey: pending.metaKey,
+        deltaX: pending.deltaX,
+        deltaY: pending.deltaY,
+      });
+    };
+    const queueFrameWheel = (sample: NonNullable<typeof pendingFrameWheel>) => {
+      if (
+        pendingFrameWheel
+        && pendingFrameWheel.ctrlKey === sample.ctrlKey
+        && pendingFrameWheel.metaKey === sample.metaKey
+      ) {
+        pendingFrameWheel = {
+          ...sample,
+          deltaX: pendingFrameWheel.deltaX + sample.deltaX,
+          deltaY: pendingFrameWheel.deltaY + sample.deltaY,
+        };
+      } else {
+        // A gesture does not normally switch between pan and zoom inside one
+        // frame. Preserve ordering if the modifier changes unexpectedly.
+        if (pendingFrameWheel) {
+          if (frameWheelAnimationFrame !== null) {
+            window.cancelAnimationFrame(frameWheelAnimationFrame);
+            frameWheelAnimationFrame = null;
+          }
+          flushFrameWheel();
+        }
+        pendingFrameWheel = sample;
+      }
+      if (frameWheelAnimationFrame !== null) return;
+      if (typeof window.requestAnimationFrame === 'function') {
+        frameWheelAnimationFrame = window.requestAnimationFrame(flushFrameWheel);
+      } else {
+        flushFrameWheel();
+      }
+    };
+    manualEditFrameWheelQueueRef.current = queueFrameWheel;
+    const detach = () => {
+      if (attachedDocument) {
+        attachedDocument.removeEventListener('keydown', onFrameKeyDown, true);
+        attachedDocument = null;
+      }
+      if (frameWheelAnimationFrame !== null) {
+        window.cancelAnimationFrame(frameWheelAnimationFrame);
+        frameWheelAnimationFrame = null;
+      }
+      pendingFrameWheel = null;
+    };
+    const onFrameKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      const activeElement = attachedDocument?.activeElement as HTMLElement | null;
+      const targetTag = target?.tagName;
+      const activeTag = activeElement?.tagName;
+      if (
+        targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || target?.isContentEditable
+        || activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' || activeElement?.isContentEditable
+      ) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'v' && key !== 'h') return;
+      event.preventDefault();
+      selectCanvasPointerTool(key === 'h' ? 'hand' : 'select');
+    };
+    const attach = () => {
+      detach();
+      try {
+        const frameDocument = frame.contentDocument;
+        if (!frameDocument) return;
+        attachedDocument = frameDocument;
+        frameDocument.addEventListener('keydown', onFrameKeyDown, true);
+      } catch {
+        // A cross-origin URL transport cannot be inspected. Edit normally uses
+        // the same-origin srcDoc transport, where this bridge is available.
+      }
+    };
+    frame.addEventListener('load', attach);
+    attach();
+    return () => {
+      frame.removeEventListener('load', attach);
+      detach();
+      if (manualEditFrameWheelQueueRef.current === queueFrameWheel) {
+        manualEditFrameWheelQueueRef.current = null;
+      }
+    };
+  }, [inTabPresent, manualEditMode, manualEditSrcDocActive, useUrlLoadPreview, workspaceActive]);
 
   // Page switches made from the structure rail hand Edit over to the page being
   // opened: the rail only exists inside Edit, so landing in plain preview reads
@@ -14573,26 +15943,98 @@ function HtmlViewer({
   // Edit mode splits a structure rail off the right edge: while you are
   // changing one element, the rest of the project is what you reach for next.
   // The file list loads only while the rail is on screen.
-  const [structureFiles, setStructureFiles] = useState<ProjectFile[]>([]);
+  const [fetchedStructureFiles, setFetchedStructureFiles] = useState<ProjectFile[]>([]);
+  const structureFiles = useMemo(
+    () => (projectFiles ? Array.from(projectFiles) : fetchedStructureFiles),
+    [fetchedStructureFiles, projectFiles],
+  );
+  const [canvasAssetPreviewName, setCanvasAssetPreviewName] = useState<string | null>(null);
+  const [canvasPageHoverPreviewName, setCanvasPageHoverPreviewName] = useState<string | null>(null);
+  const handleStructurePagePreviewChange = useCallback((previewFile: ProjectFile | null) => {
+    setCanvasPageHoverPreviewName(previewFile?.name ?? null);
+  }, []);
+  const canvasAssetTriggerRef = useRef<{
+    assetName: string;
+    element: HTMLElement | null;
+  } | null>(null);
+  const canvasAssetPreviewFile = useMemo(
+    () =>
+      canvasAssetPreviewName === null
+        ? null
+        : structureFiles.find((entry) => entry.name === canvasAssetPreviewName) ?? null,
+    [canvasAssetPreviewName, structureFiles],
+  );
+  const canvasAssetPreviewActive = canvasAssetPreviewFile !== null;
+  const canvasPageHoverPreviewFile = useMemo(
+    () =>
+      canvasPageHoverPreviewName === null
+        ? null
+        : structureFiles.find((entry) => entry.name === canvasPageHoverPreviewName) ?? null,
+    [canvasPageHoverPreviewName, structureFiles],
+  );
+  const renderedPageHoverPreviewFile =
+    canvasPageHoverPreviewFile?.name === file.name ? null : canvasPageHoverPreviewFile;
+  // Hover always wins temporarily. Hovering the current page reveals the
+  // original editing canvas; leaving restores any persistent Assets preview.
+  const renderedAssetPreviewFile =
+    canvasPageHoverPreviewName === null ? canvasAssetPreviewFile : null;
+  const canvasOverlayPreviewActive =
+    renderedPageHoverPreviewFile !== null || renderedAssetPreviewFile !== null;
+  const closeCanvasAssetPreview = useCallback(() => {
+    void requestManualEditSafeExitRef.current().then((ok) => {
+      if (!ok) return;
+      canvasAssetTriggerRef.current = null;
+      setCanvasAssetPreviewName(null);
+      setCommentRailActive(false);
+      setCanvasPresentMode(true);
+      const restoreFocus = () => canvasModePresentRef.current?.focus();
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(restoreFocus);
+      } else {
+        window.setTimeout(restoreFocus, 0);
+      }
+    });
+  }, []);
+  useEffect(() => {
+    if (!manualEditMode) {
+      canvasAssetTriggerRef.current = null;
+      setCanvasAssetPreviewName(null);
+      setCanvasPageHoverPreviewName(null);
+    }
+  }, [manualEditMode]);
+  useEffect(() => {
+    if (canvasAssetPreviewName && !canvasAssetPreviewFile) setCanvasAssetPreviewName(null);
+  }, [canvasAssetPreviewFile, canvasAssetPreviewName]);
+  useEffect(() => {
+    if (canvasPageHoverPreviewName && !canvasPageHoverPreviewFile) {
+      setCanvasPageHoverPreviewName(null);
+    }
+  }, [canvasPageHoverPreviewFile, canvasPageHoverPreviewName]);
   useEffect(() => {
     if (!manualEditMode) return;
+    if (projectFiles) return;
     let cancelled = false;
     void fetchProjectFiles(projectId, { workspaceContext })
       .then((files) => {
-        if (!cancelled) setStructureFiles(files);
+        if (!cancelled) {
+          setFetchedStructureFiles(
+            files.filter(
+              (entry) => entry.name !== '.live-artifacts' && !entry.name.startsWith('.live-artifacts/'),
+            ),
+          );
+        }
       })
       .catch(() => {
-        if (!cancelled) setStructureFiles([]);
+        if (!cancelled) setFetchedStructureFiles([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [manualEditMode, projectId, workspaceContext]);
+  }, [manualEditMode, projectId, workspaceContext, projectFiles, filesRefreshKey]);
 
   const showPreviewToolbarControls = mode === 'preview';
   // Independent of the rail's lazy per-slide documents so a collapsed rail
-  // (which unmounts DeckThumbnailRail entirely) still renders its toggle.
-  const showDeckThumbnailRail = effectiveDeck && source !== null && deckSlideTotal > 0 && !manualEditMode;
+  // still renders its toolbar toggle while the mounted rail animates away.
   const showDeckFloatingNav = effectiveDeck && deckSlideTotal > 0 && !manualEditMode && !inTabPresent;
   const deckNavTotal = Math.max(deckSlideTotal, activeDeckSlideIndex + 1, 1);
   const versioningAvailable = isHtmlVersionableFile(file);
@@ -14600,7 +16042,7 @@ function HtmlViewer({
     'comment-preview-layer',
     localCommentSideDockActive ? 'comment-preview-layer-with-side-dock' : '',
     localCommentSideDockActive && commentSidePanelCollapsed ? 'comment-preview-layer-dock-collapsed' : '',
-    boardSideDockStacked ? 'comment-preview-layer-side-dock-stacked' : '',
+    renderedBoardSideDockStacked ? 'comment-preview-layer-side-dock-stacked' : '',
     showDeckThumbnailRail ? 'comment-preview-layer-with-deck-rail' : '',
     showDeckThumbnailRail && deckThumbnailsCollapsed ? 'comment-preview-layer-deck-rail-collapsed' : '',
   ].filter(Boolean).join(' ');
@@ -14618,8 +16060,7 @@ function HtmlViewer({
       selectedTarget={selectedManualEditTarget}
       draft={manualEditDraft}
       history={manualEditHistory}
-      error={manualEditError}
-      canUndo={manualEditHistory.length > 0}
+      canUndo={manualEditHistory.length > 0 || manualEditPendingStyleRef.current !== null}
       canRedo={manualEditUndone.length > 0}
       busy={manualEditSaving}
       resetAvailable={manualEditResetAvailable}
@@ -14655,7 +16096,7 @@ function HtmlViewer({
         void resetManualEditPanelDraft();
       }}
       onUndo={() => {
-        void undoManualEdit();
+        void requestManualEditUndo();
       }}
       onRedo={() => {
         void redoManualEdit();
@@ -14710,6 +16151,7 @@ function HtmlViewer({
         files={structureFiles}
         liveArtifacts={[]}
         viewerOnly
+        activePageName={file.name}
         selected={STRUCTURE_RAIL_NO_SELECTION}
         onToggleSelect={structureRailNoop}
         onEnterDir={structureRailNoop}
@@ -14722,6 +16164,21 @@ function HtmlViewer({
           // Edit so the switch reads as a change of content, not of place.
           onOpenFileReplacing?.(name, file.name, { keepManualEdit: true });
         }}
+        onPreviewPageChange={handleStructurePagePreviewChange}
+        onPreviewAsset={(asset) => {
+          const activeElement = document.activeElement;
+          canvasAssetTriggerRef.current = {
+            assetName: asset.name,
+            element: activeElement instanceof HTMLElement ? activeElement : null,
+          };
+          if (asset.name === file.name && canvasAssetPreviewActive) {
+            closeCanvasAssetPreview();
+          } else if (asset.name !== file.name) {
+            setCanvasAssetPreviewName(asset.name);
+          }
+          clearManualEditHover();
+        }}
+        activeAssetName={canvasAssetPreviewFile?.name ?? file.name}
         onOpenLiveArtifact={structureRailNoop}
         /* The viewer always fills the Edit tab, because it always has the
            canvas the tab describes. With nothing selected that means its own
@@ -14756,13 +16213,12 @@ function HtmlViewer({
   const manualEditHoverClampSize: PreviewCanvasSize | undefined = manualEditHoverPreset?.width
     ? {
         width: manualEditHoverPreset.width * overlayPreviewScale,
-        height: manualEditHoverPreset.height
-          ? manualEditHoverPreset.height * overlayPreviewScale
-          : previewBodySize?.height ?? 800,
+        height: manualEditArtboardGeometry.scaledHeight,
       }
     : previewBodySize;
   const manualEditHoverAffordance =
     manualEditMode &&
+    !canvasAssetPreviewActive &&
     manualEditHoverTarget &&
     manualEditHoverTarget.id !== selectedManualEditTarget?.id ? (
       <button
@@ -15153,41 +16609,60 @@ function HtmlViewer({
     </section>
   ) : null;
 
-  // The prototype puts the canvas tools in a floating dock over the artboard
+  // The prototype puts canvas actions in a floating dock over the artboard
   // instead of the top-right corner, so the toolbar states what you are looking
-  // at and the dock states what you can do to it. Same controls, same testids —
-  // only the surface they live on moved. The overflow menu still mirrors every
-  // one of them for narrow widths.
-  /* Present is a viewing state, not an authoring one: the dock controls that
-     still describe something you can do are the pointer, the zoom, and the way
-     to full screen. The authoring half folds away rather than sitting there
-     greyed — and stays reachable the whole time from the toolbar's ⋯ menu,
-     which mirrors Mark / Comments. The mode segment unfolds it again.
+  // at and the dock states what you can do to it. The overflow menu mirrors the
+  // authoring actions for narrow widths.
+  /* Present is a viewing state, not an authoring one: its preview is fixed at
+     100%, so the zoom readout disappears and the authoring half folds away
+     rather than sitting there greyed. Full screen and the mode segment remain;
+     Mark / Comments stay reachable from the toolbar's ⋯ menu. The mode segment
+     unfolds the authoring half again.
 
      The folded half stays MOUNTED and is hidden by class, not by unmounting:
      the width transition needs both ends to exist, and a React unmount skips
      the exit half of it entirely. */
-  const canvasDockAuthoringVisible = !canvasPresentMode;
-  const canvasDock = showPreviewToolbarControls && mode === 'preview' && !inTabPresent ? (
+  const canvasDockAuthoringVisible = !canvasPresentMode && !canvasAssetPreviewActive;
+  /* One physical thumb travels between the two mode labels. Measuring the
+     selected tab keeps the motion correct in every locale instead of assuming
+     Edit and Present happen to have the same text width. This effect also keys
+     off the dock's mount conditions because a preview can appear after its
+     source finishes loading. */
+  useLayoutEffect(() => {
+    const segment = canvasModeSegmentRef.current;
+    const activeTab = manualEditMode
+      ? canvasModeEditRef.current
+      : canvasPresentMode
+        ? canvasModePresentRef.current
+        : null;
+    if (!segment || !activeTab) {
+      segment?.removeAttribute('data-has-active');
+      return;
+    }
+
+    const placeThumb = () => {
+      segment.style.setProperty('--canvas-mode-thumb-x', `${activeTab.offsetLeft}px`);
+      segment.style.setProperty('--canvas-mode-thumb-width', `${activeTab.offsetWidth}px`);
+      segment.setAttribute('data-has-active', 'true');
+    };
+
+    placeThumb();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(placeThumb);
+    observer.observe(segment);
+    observer.observe(activeTab);
+    return () => observer.disconnect();
+  }, [canvasPresentMode, inTabPresent, manualEditMode, mode, showPreviewToolbarControls, source]);
+  const canvasDock = showPreviewToolbarControls
+    && mode === 'preview'
+    && !inTabPresent
+    && !canvasAssetPreviewActive ? (
     <div className="canvas-dock" data-testid="canvas-dock">
       <div className="canvas-dock-inner">
-        <button
-          type="button"
-          className={`viewer-action viewer-action-icon od-tooltip${pointerToolSelected ? ' active' : ''}`}
-          data-testid="canvas-dock-select"
-          aria-pressed={pointerToolSelected}
-          title={t('fileViewer.selectTool')}
-          data-tooltip={t('fileViewer.selectTool')}
-          aria-label={t('fileViewer.selectTool')}
-          onClick={() => {
-            clearCanvasTools();
-            setPointerToolSelected(true);
-          }}
+        <div
+          className="canvas-dock-tools"
+          data-collapsed={canvasDockAuthoringVisible ? undefined : 'true'}
         >
-          <RemixIcon name="drag-move-line" size={15} />
-        </button>
-        <span className="canvas-dock-divider" aria-hidden />
-        <div className="canvas-dock-tools">
           <div
             className="canvas-dock-collapsible"
             data-collapsed={canvasDockAuthoringVisible ? undefined : 'true'}
@@ -15245,29 +16720,28 @@ function HtmlViewer({
               </button>
             </div>
           </div>
-          {source !== null && mode === 'preview' ? (
-            <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
-              {/* Stays live at 100%. It looks like a readout, but this menu is
-                  the ONLY way to change zoom on a wide pane — the ⋯ overflow
-                  copy appears only under the toolbar's 720px container query —
-                  so grey it out at 1:1 and the canvas can never leave 1:1
-                  again. `offers quarter-step zoom levels down from 1:1` is the
-                  spec that pins this. */}
+          {source !== null && mode === 'preview' && !canvasPresentMode ? (
+            <div
+              className="zoom-menu viewer-toolbar-zoom"
+              ref={zoomMenuRef}
+              onMouseEnter={openZoomMenu}
+              onMouseLeave={scheduleZoomMenuClose}
+              onFocus={openZoomMenu}
+              onBlur={scheduleZoomMenuClose}
+            >
+              {/* This is both a live pinch readout and the trigger for the
+                  fixed zoom presets. It stays interactive at every percentage
+                  so the user can always jump back to a known value. */}
               <button
                 ref={zoomTriggerRef}
                 type="button"
-                className="viewer-action zoom-trigger od-tooltip"
+                className="viewer-action zoom-trigger"
                 aria-haspopup="menu"
                 aria-expanded={zoomMenuOpen}
                 title={t('fileViewer.resetZoom')}
-                data-tooltip={t('fileViewer.resetZoom')}
-                data-tooltip-placement="bottom"
-                onClick={() => {
-                  fireArtifactToolbarClick('zoom_level_dropdown');
-                  setZoomMenuOpen((v) => !v);
-                }}
+                onClick={openZoomMenu}
               >
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{previewZoomText}</span>
+                <span className="zoom-trigger-value" style={{ fontVariantNumeric: 'tabular-nums' }}>{previewZoomText}</span>
               </button>
               {/* Portaled to the body on purpose. The dock strip scrolls
                   sideways when it outgrows the stage (`.canvas-dock-inner`,
@@ -15285,8 +16759,12 @@ function HtmlViewer({
                     className="zoom-menu-popover zoom-menu-popover--floating"
                     role="menu"
                     style={zoomMenuFloatingStyle}
+                    onMouseEnter={cancelZoomMenuClose}
+                    onMouseLeave={scheduleZoomMenuClose}
+                    onFocus={cancelZoomMenuClose}
+                    onBlur={scheduleZoomMenuClose}
                   >
-                    {PREVIEW_ZOOM_LEVELS.map((level) => (
+                    {HTML_PREVIEW_ZOOM_LEVELS.map((level) => (
                     <button
                       key={level}
                       type="button"
@@ -15296,7 +16774,7 @@ function HtmlViewer({
                         setPreviewZoomCached(fileViewportKey, level, 'manual');
                         setZoomMode('manual');
                         setZoom(level);
-                        setZoomMenuOpen(false);
+                        closeZoomMenu();
                       }}
                     >
                       <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
@@ -15311,6 +16789,11 @@ function HtmlViewer({
             </div>
           ) : null}
         </div>
+        <span className="sr-only" role="status" aria-live="polite" aria-keyshortcuts="V H">
+          {manualEditMode
+            ? pointerToolSelected ? t('sketch.tooltipHand') : t('fileViewer.selectTool')
+            : ''}
+        </span>
         {/* Full screen survives the fold. Present is exactly when a user
             reaches for it, and the dock is its only entry point — the ⋯ menu
             never mirrored it. */}
@@ -15322,7 +16805,7 @@ function HtmlViewer({
           title={t('fileViewer.presentFullscreen')}
           data-tooltip={t('fileViewer.presentFullscreen')}
           aria-label={t('fileViewer.presentFullscreen')}
-          disabled={source === null}
+          disabled={source === null || canvasAssetPreviewActive}
           onClick={() => {
             firePresentPopoverClick('fullscreen');
             presentFullscreen();
@@ -15366,18 +16849,20 @@ function HtmlViewer({
             Present, so only the same-file landing has to raise it by hand. */}
         <span className="canvas-dock-divider" aria-hidden />
         <div
+          ref={canvasModeSegmentRef}
           className="viewer-tabs viewer-mode-tabs canvas-mode-seg canvas-dock-mode-seg"
           role="tablist"
           aria-label="View mode"
         >
           <button
+            ref={canvasModeEditRef}
             type="button"
             role="tab"
             className={`viewer-tab ${manualEditMode ? 'active' : ''}`}
             data-testid="manual-edit-mode-toggle"
             aria-selected={manualEditMode}
             aria-pressed={manualEditMode}
-            disabled={viewerOnly || (!manualEditMode && !manualEditEntryAllowed)}
+            disabled={canvasAssetPreviewActive || viewerOnly || (!manualEditMode && !manualEditEntryAllowed)}
             title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
             onClick={() => {
               fireArtifactToolbarClick('preview');
@@ -15388,12 +16873,13 @@ function HtmlViewer({
             <span className="viewer-tab-label">{t('fileViewer.edit')}</span>
           </button>
           <button
+            ref={canvasModePresentRef}
             type="button"
             role="tab"
             className={`viewer-tab ${canvasPresentMode ? 'active' : ''}`}
             data-testid="canvas-dock-present"
             aria-selected={canvasPresentMode}
-            disabled={source === null}
+            disabled={source === null || canvasAssetPreviewActive}
             onClick={() => {
               firePresentPopoverClick('in_this_tab');
               enterCanvasPresentMode();
@@ -15436,7 +16922,7 @@ function HtmlViewer({
                 setDeckThumbnailsCollapsed((value) => !value);
               }}
             >
-              <Icon name="panel-left" size={15} />
+              <Icon name="layers" size={15} />
             </button>
           ) : null}
           <button
@@ -15461,7 +16947,7 @@ function HtmlViewer({
               interactive, so Edit makes the page a document you pick elements
               out of and Present makes it a prototype you click through. The
               fullscreen stage is still the dock's own button. */}
-          {showPreviewToolbarControls ? (
+          {showPreviewToolbarControls && !effectiveDeck ? (
             <span className="viewer-preview-toolbar-inline">
               <PreviewViewportControls
                 viewport={previewViewport}
@@ -15576,7 +17062,7 @@ function HtmlViewer({
                 {showPreviewToolbarControls ? (
                   <>
                     <div className="viewer-toolbar-more-separator" role="separator" />
-                    {PREVIEW_VIEWPORT_PRESETS.map((preset) => {
+                    {!effectiveDeck ? PREVIEW_VIEWPORT_OPTIONS.map((preset) => {
                       const selected = previewViewport === preset.id;
                       return (
                         <button
@@ -15595,10 +17081,12 @@ function HtmlViewer({
                           {selected ? <Icon name="check" size={13} /> : null}
                         </button>
                       );
-                    })}
+                    }) : null}
                     {showDeckNavigation ? (
                       <>
-                        <div className="viewer-toolbar-more-separator" role="separator" />
+                        {!effectiveDeck ? (
+                          <div className="viewer-toolbar-more-separator" role="separator" />
+                        ) : null}
                         <button
                           type="button"
                           className="viewer-toolbar-more-item"
@@ -15664,10 +17152,10 @@ function HtmlViewer({
                       <RemixIcon name="message-3-line" size={15} />
                       <span>{t('chat.tabComments')} ({visibleSideComments.length})</span>
                     </button>
-                    {source !== null && mode === 'preview' ? (
+                    {source !== null && mode === 'preview' && !canvasPresentMode ? (
                       <>
                         <div className="viewer-toolbar-more-separator" role="separator" />
-                        {PREVIEW_ZOOM_LEVELS.map((level) => (
+                        {HTML_PREVIEW_ZOOM_LEVELS.map((level) => (
                           <button
                             key={level}
                             type="button"
@@ -15737,29 +17225,27 @@ function HtmlViewer({
           ) : null}
           {rawCanShare || rawCanDownload ? (
             <div className="chrome-file-action-menus">
-              {/* Outside-click dismissal is scoped to the Share/Export pair —
+              {/* Outside-click dismissal is scoped to the Share/Download pair —
                   the handoff split button next door must count as "outside" so
                   opening it closes this popover (and vice versa via the
                   handoff button's own dismiss listener). */}
               <div className="share-menu chrome-share-menu chrome-share-menu--unified" ref={shareRef}>
-                {/* Share and Export are separate header intents again (the
+                {/* Share and Download are separate header intents again (the
                     0.18.0 unified tabs buried Export one level deep and export
                     reach halved); they still share one popover shell so
                     switching between them keeps the menu anchored in place.
-                    Both are glyph-only: the row already leads with 流程图 and
-                    历史记录, and two worded pills after them made this cluster
-                    the widest thing on the bar. Share sits first as the
-                    lighter intent; Export takes the trailing slot and keeps
+                    Both use icon + text pills so the intent is visible without
+                    waiting for a tooltip. Share sits first as the outlined,
+                    lighter intent; Download takes the trailing slot and keeps
                     the dark (primary) fill — it is the far more used of the
                     two (30-day: ~14k users exported successfully vs ~0.6k who
-                    attempted a deploy). Names survive as tooltip + aria-label,
-                    suppressed while the popover is open so the tooltip does
-                    not land on top of the menu it just opened. */}
+                    attempted a deploy). Tooltips are suppressed while the
+                    popover is open so they do not land on top of the menu. */}
                 {rawCanShare ? (
                   <button
                     type="button"
                     className={
-                      'chrome-action chrome-action-secondary chrome-action-icon chrome-action-unified' +
+                      'chrome-action chrome-action-secondary chrome-action-with-label chrome-action-pill chrome-action-unified' +
                       (deployMenuOpen && unifiedActionTab === 'share' ? '' : ' od-tooltip')
                     }
                     aria-haspopup="menu"
@@ -15776,30 +17262,32 @@ function HtmlViewer({
                     onClick={openShareMenu}
                   >
                     <RemixIcon name="share-forward-line" size={15} />
+                    <span>{shareMenuLabel}</span>
                   </button>
                 ) : null}
                 {rawCanDownload ? (
                   <button
                     type="button"
                     className={
-                      'chrome-action chrome-action-secondary chrome-action-icon chrome-action-unified chrome-action-dark' +
+                      'chrome-action chrome-action-secondary chrome-action-with-label chrome-action-pill chrome-action-unified chrome-action-dark' +
                       (deployMenuOpen && unifiedActionTab === 'export' ? '' : ' od-tooltip') +
                       (exportReadyNudge ? ' export-ready-nudge' : '')
                     }
                     aria-haspopup="menu"
                     aria-expanded={deployMenuOpen && unifiedActionTab === 'export'}
-                    aria-label={t('fileViewer.unifiedExportTab')}
+                    aria-label={t('fileViewer.download')}
                     disabled={viewerOnly}
                     data-tooltip={
                       deployMenuOpen && unifiedActionTab === 'export'
                         ? undefined
-                        : (viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.unifiedExportTab'))
+                        : (viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.download'))
                     }
                     data-tooltip-placement="bottom"
-                    title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.unifiedExportTab')}
+                    title={viewerOnly ? viewerOnlyDisabledTitle : t('fileViewer.download')}
                     onClick={openDownloadMenu}
                   >
                     <RemixIcon name="download-line" size={15} />
+                    <span>{t('fileViewer.download')}</span>
                   </button>
                 ) : null}
                 {deployMenuOpen && (rawCanShare || rawCanDownload) ? (
@@ -16260,7 +17748,7 @@ function HtmlViewer({
       </>) : null}
       {canvasDock}
       {structureRail}
-      <div className="viewer-body" ref={previewBodyRef}>
+      <div className="viewer-body viewer-body-canvas" ref={previewBodyRef}>
         {initialPreviewLoading || sourceModeLoading ? (
           initialPreviewLoading ? (
             <FileViewerLoadingSkeleton />
@@ -16269,12 +17757,36 @@ function HtmlViewer({
           )
         ) : mode === 'preview' ? (
           <div
-            className={`${manualEditMode ? 'manual-edit-workspace' : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
+            className={`${manualEditMode ? 'manual-edit-workspace' : commentPreviewLayoutClass} preview-viewport preview-viewport-${renderedPreviewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
+            data-authoring-preview-scale={authoringPreviewZoomPercent / 100}
             ref={manualEditMode ? undefined : setCommentComposerHostRef}
-            style={previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions)}
+            style={{
+              ...previewViewportStyle(
+                renderedPreviewViewport,
+                manualEditMode ? manualEditPreviewScale : previewScale,
+                manualEditMode ? undefined : renderedPreviewCanvasSize,
+                manualEditMode ? undefined : renderedPreviewScaleOptions,
+              ),
+              ...(showDeckThumbnailRail
+                ? { '--deck-thumbnail-rail-width': `${DECK_THUMBNAIL_RAIL_WIDTH}px` }
+                : {}),
+            }}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
           >
+            {manualEditMode ? (
+              <ManualEditFlowCanvas
+                initialViewport={manualEditFlowViewportRef.current}
+                zoom={manualEditPreviewScale}
+                artboardWidth={manualEditArtboardWidth}
+                initialInsetX={renderedPreviewViewport === 'desktop' ? 0 : 24}
+                initialInsetY={24}
+                onViewportChange={handleManualEditFlowViewportChange}
+                onViewportChangeEnd={handleManualEditFlowViewportChangeEnd}
+                interactive={pointerToolSelected}
+                inputBridgeRef={manualEditFlowInputBridgeRef}
+              />
+            ) : null}
             {/* The inspector used to render here, floating over the artboard.
                 It lives in the structure rail's Edit tab now — see
                 `structureRail` — so nothing covers the element being edited.
@@ -16282,13 +17794,14 @@ function HtmlViewer({
                 to an element of the page, so it has to share the page's
                 coordinate space — a centred canvas would otherwise slide out
                 from under a layer-anchored icon. */}
-            {showDeckThumbnailRail && !deckThumbnailsCollapsed ? (
+            {showDeckThumbnailRail ? (
               <DeckThumbnailRail
                 count={deckSlideTotal}
                 activeIndex={activeDeckSlideIndex}
                 labelTotal={deckNavTotal}
                 buildThumbSrcDoc={buildDeckThumbnailSrcDoc}
                 parsedDeck={parsedDeckThumbnails}
+                collapsed={deckThumbnailsCollapsed}
                 onSelect={(index) => {
                   fireDeckViewerClick('thumbnail_select', {
                     slide_index: index,
@@ -16299,17 +17812,31 @@ function HtmlViewer({
               />
             ) : null}
             <div
-              className={manualEditMode ? 'manual-edit-canvas' : 'comment-preview-canvas'}
+              className={manualEditMode
+                ? `manual-edit-canvas${pointerToolSelected ? ' manual-edit-canvas-panning' : ''}`
+                : 'comment-preview-canvas'}
               data-testid={manualEditMode ? undefined : 'comment-preview-canvas'}
-              ref={manualEditMode ? undefined : setCommentPreviewCanvasRef}
+              ref={manualEditMode ? setManualEditCanvasRef : setCommentPreviewCanvasRef}
+              style={manualEditMode
+                ? ({
+                    '--manual-edit-artboard-height': `${manualEditArtboardGeometry.logicalHeight}px`,
+                    '--manual-edit-scaled-artboard-height': `${manualEditArtboardGeometry.scaledHeight}px`,
+                  } as CSSProperties & Record<string, string | number>)
+                : undefined}
             >
               {manualEditHoverAffordance}
-              <div className={manualEditMode ? undefined : 'comment-frame-clip'} style={manualEditMode ? { height: '100%' } : undefined}>
+              <div
+                className={manualEditMode
+                  ? (canvasOverlayPreviewActive ? 'manual-edit-origin-preview-hidden' : undefined)
+                  : 'comment-frame-clip'}
+                style={manualEditMode ? { height: '100%' } : undefined}
+                aria-hidden={manualEditMode && canvasOverlayPreviewActive ? true : undefined}
+              >
                 <div
                   style={
                     manualEditMode
-                      ? manualEditPreviewShellStyle(previewViewport, previewScale)
-                      : previewScaleShellStyle(previewViewport, previewScale)
+                      ? manualEditPreviewShellStyle(renderedPreviewViewport, manualEditPreviewScale)
+                      : previewScaleShellStyle(renderedPreviewViewport, previewScale)
                   }
                 >
                   <PreviewDrawOverlay
@@ -16341,8 +17868,8 @@ function HtmlViewer({
                             : `artifact-preview-frame-retained-${file.name}`}
                           data-od-render-mode="url-load"
                           data-od-active={workspaceActive && useUrlLoadPreview ? 'true' : 'false'}
-                          aria-hidden={workspaceActive && useUrlLoadPreview ? undefined : true}
-                          tabIndex={workspaceActive && useUrlLoadPreview ? 0 : -1}
+                          aria-hidden={workspaceActive && useUrlLoadPreview && !canvasOverlayPreviewActive ? undefined : true}
+                          tabIndex={workspaceActive && useUrlLoadPreview && !canvasOverlayPreviewActive ? 0 : -1}
                           title={file.name}
                           data-od-powered={usePoweredPreview ? 'true' : undefined}
                           sandbox={urlFrameSandbox}
@@ -16384,8 +17911,8 @@ function HtmlViewer({
                             : `artifact-preview-frame-retained-${file.name}`}
                           data-od-render-mode="url-load"
                           data-od-active={workspaceActive && useUrlLoadPreview ? 'true' : 'false'}
-                          aria-hidden={workspaceActive && useUrlLoadPreview ? undefined : true}
-                          tabIndex={workspaceActive && useUrlLoadPreview ? 0 : -1}
+                          aria-hidden={workspaceActive && useUrlLoadPreview && !canvasOverlayPreviewActive ? undefined : true}
+                          tabIndex={workspaceActive && useUrlLoadPreview && !canvasOverlayPreviewActive ? 0 : -1}
                           title={file.name}
                           data-od-powered={usePoweredPreview ? 'true' : undefined}
                           sandbox={urlFrameSandbox}
@@ -16428,8 +17955,8 @@ function HtmlViewer({
                           : `artifact-preview-frame-srcdoc-retained-${file.name}`}
                         data-od-render-mode="srcdoc"
                         data-od-active={workspaceActive && !useUrlLoadPreview ? 'true' : 'false'}
-                        aria-hidden={workspaceActive && !useUrlLoadPreview ? undefined : true}
-                        tabIndex={workspaceActive && !useUrlLoadPreview ? 0 : -1}
+                        aria-hidden={workspaceActive && !useUrlLoadPreview && !canvasOverlayPreviewActive ? undefined : true}
+                        tabIndex={workspaceActive && !useUrlLoadPreview && !canvasOverlayPreviewActive ? 0 : -1}
                         title={file.name}
                         sandbox="allow-scripts allow-downloads"
                         srcDoc={srcDocTransportContent}
@@ -16595,6 +18122,20 @@ function HtmlViewer({
                     document.body,
                   )
                 : null}
+              {workspaceActive && manualEditMode && manualEditError && typeof document !== 'undefined'
+                ? createPortal(
+                    <Toast
+                      className="manual-edit-error-toast"
+                      message={manualEditError}
+                      tone="error"
+                      role="alert"
+                      placement="top"
+                      ttlMs={4000}
+                      onDismiss={() => setManualEditError(null)}
+                    />,
+                    document.body,
+                  )
+                : null}
               {workspaceActive && commentSavedToast ? (
                 <div className="comment-toast-anchor">
                   <Toast
@@ -16720,6 +18261,28 @@ function HtmlViewer({
                 </div>
               ) : null}
             </div>
+            {manualEditMode && renderedPageHoverPreviewFile ? (
+              <div className="manual-edit-asset-shell manual-edit-page-hover-shell">
+                <ManualEditPageHoverPreview
+                  key={`${renderedPageHoverPreviewFile.name}:${renderedPageHoverPreviewFile.mtime}:${filesRefreshKey}`}
+                  projectId={projectId}
+                  file={renderedPageHoverPreviewFile}
+                  refreshKey={filesRefreshKey}
+                  projectFiles={structureFiles}
+                />
+              </div>
+            ) : manualEditMode && renderedAssetPreviewFile ? (
+              <div className="manual-edit-asset-shell">
+                <ManualEditAssetPreview
+                  key={`${renderedAssetPreviewFile.name}:${renderedAssetPreviewFile.mtime}:${filesRefreshKey}`}
+                  projectId={projectId}
+                  file={renderedAssetPreviewFile}
+                  refreshKey={filesRefreshKey}
+                  projectFiles={structureFiles}
+                  onClose={closeCanvasAssetPreview}
+                />
+              </div>
+            ) : null}
             {boardImagePreviewModal}
             {/* The structure rail wins the list when comment mode was armed
                 from Edit: it is already holding that column open, so hosting

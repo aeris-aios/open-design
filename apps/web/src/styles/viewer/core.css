@@ -155,9 +155,8 @@
   }
 }
 
-/* Narrow pane: the mode switch drops to icon-only, the inline deck counter
-   steps aside, and the ⋮ overflow menu (hidden on wide panes) comes in as the
-   fallback home for anything the narrower breakpoints below take off the bar. */
+/* Narrow pane: the mode switch drops to icon-only and the inline deck counter
+   steps aside. Keep the overflow menu hidden at every width. */
 @container (max-width: 720px) {
   .viewer-mode-tabs .viewer-tab {
     width: 30px;
@@ -173,9 +172,6 @@
   }
   .viewer-deck-nav-inline {
     display: none;
-  }
-  .viewer-toolbar-more {
-    display: inline-flex;
   }
 }
 
@@ -551,8 +547,8 @@
   border: var(--stroke-thin, 1px) solid transparent;
   /* Reset the global `button` rule (primitives.css: height: 36px). A 36px
      segment plus the track's 2px padding made the switch 40px tall, so it stood
-     4px proud of every sibling control on the toolbar (`.viewer-action` /
-     `.viewer-viewport-trigger` are 36px). Sizing the segment at 32px lands the
+     4px proud of every sibling control on the toolbar (`.viewer-action` and
+     the viewport switch are 36px). Sizing the segment at 32px lands the
      track on exactly 36px and the row reads as one height. */
   height: 32px;
   padding: 3px 12px;
@@ -608,6 +604,21 @@
   position: relative;
   background: var(--bg);
   overflow: auto;
+}
+/* The canvas is a work surface behind the artifact, so give it the palette's
+   lightest neutral instead of letting it merge into a white page. */
+.viewer-body-canvas {
+  background: var(--bg-panel);
+}
+/* Keep the canvas scrollable while removing the duplicate host scrollbar.
+   The iframe document hides its own root scrollbar through the preview bridge. */
+.viewer-body-canvas,
+.viewer-body-canvas > .preview-viewport {
+  scrollbar-width: none;
+}
+.viewer-body-canvas::-webkit-scrollbar,
+.viewer-body-canvas > .preview-viewport::-webkit-scrollbar {
+  display: none;
 }
 /* Initial-load skeleton for the HTML preview, owned by FileViewer's source===null branch. */
 .viewer-loading {
@@ -1351,111 +1362,80 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  /* Auto width — hug the trigger's content instead of a fixed box. */
+  gap: 0;
   width: auto;
-}
-.viewer-viewport-trigger {
-  /* Auto width so the button hugs label + chevron. A fixed square hid the
-     label and left nothing but an empty chip when the glyph was missing. */
-  width: auto;
-  min-height: 26px;
-  justify-content: flex-start;
-  /* Label ↔ chevron gap. */
-  gap: 4px;
-  /* Symmetric now that nothing precedes the label; the chevron glyph carries
-     its own optical whitespace, so the right side stays 8px. */
-  padding: 4px 8px;
-  /* Capsule button. */
+  padding: 2px;
   border-radius: var(--radius-pill);
-  border-color: transparent;
-  background-color: transparent;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.2;
-  box-shadow: none;
-}
-.viewer-viewport-trigger > svg {
-  flex: 0 0 auto;
-}
-.viewer-viewport-trigger > span {
-  /* Size to the label text, don't stretch to fill the button. */
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-.viewer-viewport-trigger:hover:not(:disabled) {
-  border-color: transparent;
-  background-color: transparent;
-}
-.viewer-viewport-trigger[aria-expanded='true'] {
-  border-color: transparent;
-  background-color: var(--bg-subtle);
-  color: var(--text);
-}
-.viewer-viewport-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 80;
-  width: max-content;
-  min-width: 144px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2, 2px);
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-}
-/*
- * In the main preview toolbar the switcher sits at the LEFT edge of the bar, so a
- * right-anchored menu spills past the pane's left boundary. Anchor it to the button's
- * left edge here so it opens rightward into the open toolbar space and stays in bounds.
- * (The live-artifact toolbar keeps the default right anchor: its switcher sits on the right.)
- */
-.viewer-preview-toolbar-inline .viewer-viewport-menu {
-  right: auto;
-  left: 0;
-}
-.viewer-viewport-menu-item {
-  width: 100%;
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1;
-  text-align: left;
-}
-.viewer-viewport-menu-item:hover {
   background: var(--bg-subtle);
-  color: var(--text);
 }
-.viewer-viewport-menu-item.active {
-  /* No stroke on the selected row — the fill, darker text and checkmark
-     already mark it. The border stays transparent (keeps the reserved 1px
-     from the base rule so text doesn't shift). */
-  border-color: transparent;
-  background: color-mix(in srgb, var(--accent-tint) 82%, var(--bg-panel));
-  color: var(--accent-strong);
+.viewer-viewport-thumb {
+  position: absolute;
+  inset-block: 2px;
+  left: 0;
+  width: var(--viewer-viewport-thumb-width, 24px);
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(var(--viewer-viewport-thumb-x, 2px));
+  transition:
+    transform var(--duration-normal) var(--curve-easy-ease),
+    width var(--duration-normal) var(--curve-easy-ease),
+    opacity var(--duration-ultra-fast) var(--curve-easy-ease);
 }
-.viewer-viewport-menu-label {
-  min-width: 0;
+.viewer-viewport-switcher[data-has-active='true'] .viewer-viewport-thumb {
+  opacity: 1;
+}
+.viewer-viewport-option {
+  position: relative;
+  z-index: 1;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-soft);
+  box-shadow: none;
+  transition:
+    color var(--duration-ultra-fast) var(--curve-easy-ease),
+    gap var(--duration-normal) var(--curve-easy-ease),
+    padding var(--duration-normal) var(--curve-easy-ease);
 }
-.viewer-viewport-menu-label span {
+.viewer-viewport-option-label {
+  display: none;
   white-space: nowrap;
+}
+.viewer-viewport-option:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+}
+.viewer-viewport-option.active,
+.viewer-viewport-option.active:hover:not(:disabled) {
+  width: auto;
+  gap: var(--spacing-6);
+  padding-inline: var(--spacing-8);
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-strong);
+  box-shadow: none;
+}
+.viewer-viewport-option.active .viewer-viewport-option-label {
+  display: inline;
+}
+@media (prefers-reduced-motion: reduce) {
+  .viewer-viewport-thumb,
+  .viewer-viewport-option {
+    transition-duration: 0.01ms;
+  }
 }
 .live-artifact-preview-layer,
 .comment-preview-layer {
@@ -2423,7 +2403,7 @@
   text-decoration: underline;
 }
 /* Ink-filled pill: the same `--text-strong` fill the row's other primary action
-   (导出) wears, so "the dark one is the one that does something" holds across
+   (下载) wears, so "the dark one is the one that does something" holds across
    the surface. */
 .comment-side-selectbar .primary {
   display: inline-flex;

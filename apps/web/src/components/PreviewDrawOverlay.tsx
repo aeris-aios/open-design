@@ -302,6 +302,7 @@ export function PreviewDrawOverlay({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (!active) return;
       if (e.key === 'Escape') {
         onActiveChange?.(false);
         return;
@@ -314,7 +315,7 @@ export function PreviewDrawOverlay({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onActiveChange, sending]);
+  }, [active, onActiveChange, sending]);
 
   function syncHistoryState() {
     setHasInk(strokesRef.current.length > 0);
@@ -2005,7 +2006,6 @@ const previewDrawDockDockedStyle: CSSProperties = {
   transform: 'translateX(-50%)',
   maxWidth: 'min(760px, calc(100% - 144px))',
 };
-
 
 
 

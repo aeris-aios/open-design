@@ -68,6 +68,7 @@ describe('ManualEditPanel', () => {
     // One localized parameters list carries what the old hardcoded English
     // TYPOGRAPHY / SIZE / LAYOUT / BOX headers used to split apart.
     const parameters = sectionByTitle(PARAMETERS);
+    expect(parameters.closest('[data-manual-edit-history-controls="true"]')).not.toBeNull();
     for (const label of ['Text color', 'Background', 'Font', 'Font size', 'Weight', 'Line height', 'Letter spacing', 'Radius', 'Width', 'Height', 'Padding', 'Margin']) {
       expect(parameters.textContent).toContain(label);
     }
@@ -182,6 +183,46 @@ describe('ManualEditPanel', () => {
     });
 
     expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ text: 'Panel edited copy' }));
+  });
+
+  it('edits button text, navigation href, and new-tab behavior from the action inspector', () => {
+    const onDraftChange = vi.fn<OnDraftChange>();
+    renderPanel({
+      onDraftChange,
+      selectedTarget: {
+        ...target,
+        id: 'hero-cta',
+        kind: 'action',
+        label: 'Explore work',
+        tagName: 'button',
+        text: 'Explore work',
+        fields: { text: 'Explore work', href: '/work.html', target: '_self' },
+        outerHtml: '<button data-od-id="hero-cta">Explore work</button>',
+      },
+    });
+
+    const content = sectionByTitle('CONTENT');
+    const textArea = content.querySelector('textarea') as HTMLTextAreaElement | null;
+    const hrefInput = content.querySelector('input:not([type="checkbox"])') as HTMLInputElement | null;
+    const newTabInput = content.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    if (!textArea || !hrefInput || !newTabInput) throw new Error('Action inspector controls not found');
+
+    expect(content.textContent).toContain('Text');
+    expect(content.textContent).toContain('Href');
+    expect(content.textContent).toContain('Open in new tab');
+
+    act(() => {
+      textArea.value = 'Launch project';
+      Simulate.change(textArea);
+      hrefInput.value = '/launch.html';
+      Simulate.change(hrefInput);
+      newTabInput.checked = true;
+      Simulate.change(newTabInput);
+    });
+
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ text: 'Launch project' }));
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ href: '/launch.html' }));
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ target: '_blank' }));
   });
 
   it('normalizes font stacks and writes a usable font-family value', () => {
@@ -464,6 +505,20 @@ describe('ManualEditPanel', () => {
       expect.objectContaining({ backgroundColor: expect.any(String), fontFamily: expect.any(String) }),
       'Page styles',
     );
+  });
+
+  it('reflects page style values reset by the host undo history', () => {
+    renderPanel({
+      selectedTarget: null,
+      styles: { ...emptyManualEditStyles(), fontFamily: 'Georgia, serif' },
+    });
+    const pageFont = host.querySelector('.cc-row select') as HTMLSelectElement | null;
+    if (!pageFont) throw new Error('Font select not found');
+    expect(pageFont.closest('[data-manual-edit-history-controls="true"]')).not.toBeNull();
+    expect(pageFont.value).toBe('Georgia, serif');
+
+    renderPanel({ selectedTarget: null, styles: emptyManualEditStyles() });
+    expect((host.querySelector('.cc-row select') as HTMLSelectElement | null)?.value).toBe('');
   });
 
   it('disables layout controls for non-layout single targets', () => {
@@ -885,7 +940,6 @@ describe('ManualEditPanel', () => {
           selectedTarget={selectedTarget}
           draft={draft}
           history={[]}
-          error={null}
           canUndo={false}
           canRedo={false}
           resetAvailable={resetAvailable}

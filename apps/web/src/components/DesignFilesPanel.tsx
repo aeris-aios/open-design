@@ -31,6 +31,7 @@ import { FileSyncBadge } from '../collab/FileSyncBadge';
 import { Icon } from './Icon';
 import { LiveArtifactBadges } from './LiveArtifactBadges';
 import { RemixIcon } from './RemixIcon';
+import { SparklesCore } from './ui/SparklesCore';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -1336,6 +1337,20 @@ export function DesignFilesPanel({
               </div>
             ) : (
               <div className="df-empty" data-testid="design-files-empty">
+                <div
+                  className="df-empty-sparkles"
+                  data-testid="design-files-empty-sparkles"
+                  aria-hidden="true"
+                >
+                  <SparklesCore
+                    background="transparent"
+                    minSize={0.4}
+                    maxSize={1.1}
+                    particleDensity={140}
+                    particleColor="#848484"
+                    speed={0.3}
+                  />
+                </div>
                 <div className="df-empty-pill">
                   <span className="df-empty-title">
                     {t('designFiles.empty')}

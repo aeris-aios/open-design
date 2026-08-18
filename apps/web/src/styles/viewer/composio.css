@@ -3229,32 +3229,6 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   transform-origin: top right;
   animation: pop-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.chat-history-menu-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  /* No divider, no tinted band — the header shares one continuous surface
-     with the search field and list so the popover reads as a single clean
-     sheet, matching the app's other anchored menus. */
-  padding: 8px 8px 4px;
-}
-.chat-history-menu-title {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-.chat-history-menu-count {
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  margin-left: 6px;
-}
-.chat-history-menu-head .chat-history-new {
-  margin-left: auto;
-}
 .chat-history-search {
   display: flex;
   align-items: center;
@@ -3320,11 +3294,11 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
 .chat-history-new {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  height: 22px;
-  padding: 0 7px;
-  font-size: 12px;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--bg-subtle) 84%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
@@ -3335,8 +3309,9 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
     color 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .chat-history-new:hover {
-  background: var(--bg-muted);
-  border-color: color-mix(in srgb, var(--text-faint) 28%, var(--border));
+  /* Keep the resting surface stable on hover; only the icon ink strengthens. */
+  background: color-mix(in srgb, var(--bg-subtle) 84%, transparent);
+  border-color: color-mix(in srgb, var(--border) 74%, transparent);
   color: var(--text);
 }
 .chat-history-new:disabled {
@@ -3378,13 +3353,15 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   font-style: italic;
 }
 .chat-conv-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   min-height: 32px;
-  /* Roomier left inset so the title has breathing room from the card edge;
-     right keeps room for the hover delete button. */
-  padding: 4px 6px 4px 12px;
+  /* Title and trailing metadata align to the same 8px row inset. The delete
+     action overlays that trailing slot only on interaction, so its invisible
+     state never steals spacing from the time label. */
+  padding: var(--spacing-4) var(--spacing-8);
   border-radius: var(--radius);
   background: transparent;
   border: 1px solid transparent;
@@ -3435,6 +3412,7 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   line-height: 1;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .chat-conv-message-count {
   display: inline-flex;
@@ -3447,6 +3425,10 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   height: 10px;
 }
 .chat-conv-item-del {
+  position: absolute;
+  top: 50%;
+  right: var(--spacing-4);
+  transform: translateY(-50%);
   width: 20px;
   height: 20px;
   padding: 0;
@@ -3463,7 +3445,10 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
     background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
     color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.chat-conv-item:hover .chat-conv-item-del { opacity: 1; }
+.chat-conv-item:hover .chat-conv-item-meta,
+.chat-conv-item:focus-within .chat-conv-item-meta { opacity: 0; }
+.chat-conv-item:hover .chat-conv-item-del,
+.chat-conv-item:focus-within .chat-conv-item-del { opacity: 1; }
 .chat-conv-item-del:hover { background: var(--red-bg); color: var(--red); }
 
 /* ============================================================

@@ -1,32 +1,44 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { ProjectDesignTokenSuggestion, ProjectDesignTokenSuggestionProp } from '../providers/registry';
 import { useT } from '../i18n';
-import { emptyManualEditStyles, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
+import {
+  emptyManualEditStyles,
+  type ManualEditHistoryEntry,
+  type ManualEditPatch,
+  type ManualEditResponsiveSizeValues,
+  type ManualEditResponsiveViewport,
+  type ManualEditStyles,
+  type ManualEditTarget,
+} from '../edit-mode/types';
 import { Icon } from './Icon';
 
 export interface ManualEditDraft {
   text: string;
   href: string;
+  target: '_self' | '_blank';
   src: string;
   alt: string;
   styles: ManualEditStyles;
   attributesText: string;
   outerHtml: string;
   fullSource: string;
+  responsiveViewport: ManualEditResponsiveViewport | null;
+  responsiveSize: ManualEditResponsiveSizeValues | null;
 }
 
 export function emptyManualEditDraft(source = ''): ManualEditDraft {
   return {
-    text: '', href: '', src: '', alt: '',
+    text: '', href: '', target: '_self', src: '', alt: '',
     styles: emptyManualEditStyles(),
     attributesText: '{}', outerHtml: '', fullSource: source,
+    responsiveViewport: null,
+    responsiveSize: null,
   };
 }
 
 export function ManualEditPanel({
   selectedTarget,
   draft,
-  error,
   busy,
   resetAvailable = false,
   onDraftChange,
@@ -54,7 +66,6 @@ export function ManualEditPanel({
   selectedTarget: ManualEditTarget | null;
   draft: ManualEditDraft;
   history: ManualEditHistoryEntry[];
-  error: string | null;
   canUndo: boolean;
   canRedo: boolean;
   busy?: boolean;
@@ -233,6 +244,7 @@ export function ManualEditPanel({
               <StyleInspector
                 target={targetForInspector}
                 styles={draft.styles}
+                responsiveSize={draft.responsiveSize}
                 onChange={changeTargetStyle}
                 onApply={(styles) => applyTargetStyles(styles, `Style: ${targetForInspector.label}`)}
                 tokenSuggestions={tokenSuggestions}
@@ -244,6 +256,7 @@ export function ManualEditPanel({
           ) : !targetForInspector ? (
             <PageInspector
               enabled={pageStylesEnabled}
+              styles={draft.styles}
               onStyleChange={(styles) => {
                 const normalized = normalizeManualEditStyles(styles, { layoutEnabled: true });
                 if (!normalized.ok) {
@@ -252,6 +265,10 @@ export function ManualEditPanel({
                   return;
                 }
                 onError('');
+                onDraftChange({
+                  ...draft,
+                  styles: { ...draft.styles, ...normalized.styles },
+                });
                 onStyleChange?.('__body__', normalized.styles, 'Page styles');
               }}
             />
@@ -351,7 +368,6 @@ export function ManualEditPanel({
             </div>
           </div>
 
-          {error ? <div className="manual-edit-error">{error}</div> : null}
         </div>
       </section>
     </aside>
@@ -401,6 +417,34 @@ function ContentInspector({
       </div>
     );
   }
+  if (target.kind === 'action') {
+    return (
+      <div className="cc-inspector manual-edit-content-inspector">
+        <Section title={t('manualEdit.sectionContent')}>
+          <label className="manual-edit-field">
+            <span>{t('manualEdit.text')}</span>
+            <textarea value={draft.text} rows={3} onChange={(event) => update({ text: event.currentTarget.value })} />
+          </label>
+          <label className="manual-edit-field compact">
+            <span>{t('manualEdit.href')}</span>
+            <input
+              value={draft.href}
+              placeholder="#section · page.html · https://…"
+              onChange={(event) => update({ href: event.currentTarget.value })}
+            />
+          </label>
+          <label className="manual-edit-action-target">
+            <input
+              type="checkbox"
+              checked={draft.target === '_blank'}
+              onChange={(event) => update({ target: event.currentTarget.checked ? '_blank' : '_self' })}
+            />
+            <span>{t('common.openInNewTab')}</span>
+          </label>
+        </Section>
+      </div>
+    );
+  }
   if (target.kind === 'text' || target.kind === 'token') {
     return (
       <div className="cc-inspector manual-edit-content-inspector">
@@ -437,7 +481,7 @@ function readableManualEditTargetName(target: ManualEditTarget): string {
   );
   if (explicit) return explicit;
 
-  if (target.kind === 'text' || target.kind === 'link' || target.kind === 'token') {
+  if (target.kind === 'text' || target.kind === 'link' || target.kind === 'action' || target.kind === 'token') {
     const textName = readableContentName(target.text || target.fields.text || target.label);
     if (textName) return textName;
   }
@@ -462,6 +506,7 @@ function readableManualEditTargetName(target: ManualEditTarget): string {
   if (target.kind === 'container') return 'Container';
   if (target.kind === 'image') return 'Image';
   if (target.kind === 'link') return 'Link';
+  if (target.kind === 'action') return 'Button';
   return 'Text';
 }
 
@@ -522,41 +567,37 @@ function looksGeneratedIdentifier(value: string): boolean {
 
 function PageInspector({
   enabled,
+  styles,
   onStyleChange,
 }: {
   enabled: boolean;
+  styles: ManualEditStyles;
   onStyleChange: (styles: Partial<ManualEditStyles>) => void;
 }) {
   const t = useT();
-  const [bg, setBg] = useState('');
-  const [font, setFont] = useState('');
-  const [size, setSize] = useState('');
   const update = (next: { bg?: string; font?: string; size?: string }) => {
     if ('bg' in next) {
       const value = next.bg ?? '';
-      setBg(value);
       onStyleChange({ backgroundColor: value });
     }
     if ('font' in next) {
       const value = next.font ?? '';
-      setFont(value);
       onStyleChange({ fontFamily: value });
     }
     if ('size' in next) {
       const value = next.size ?? '';
-      setSize(value);
       onStyleChange({ fontSize: value });
     }
   };
 
   return (
-    <div className="cc-inspector">
+    <div className="cc-inspector" data-manual-edit-history-controls="true">
       <Section title={t('manualEdit.sectionPage')}>
         {enabled ? (
           <>
-            <ColorRow label={t('manualEdit.pageBackground')} value={bg} onChange={(value) => update({ bg: value })} />
-            <FontRow label={t('manualEdit.fontFamily')} value={font} onChange={(value) => update({ font: value })} />
-            <UnitRow label={t('manualEdit.pageBaseSize')} value={size} onChange={(value) => update({ size: value })} unit="px" autoUnit />
+            <ColorRow label={t('manualEdit.pageBackground')} value={styles.backgroundColor} onChange={(value) => update({ bg: value })} />
+            <FontRow label={t('manualEdit.fontFamily')} value={styles.fontFamily} onChange={(value) => update({ font: value })} />
+            <UnitRow label={t('manualEdit.pageBaseSize')} value={styles.fontSize} onChange={(value) => update({ size: value })} unit="px" autoUnit />
           </>
         ) : (
           <p className="cc-section-hint">{t('manualEdit.pageStylesHtmlOnly')}</p>
@@ -757,11 +798,12 @@ const COLOR_SUGGESTION_PROPS: ReadonlySet<ProjectDesignTokenSuggestionProp> = ne
 ]);
 
 function StyleInspector({
-  target, styles, onChange, onApply,
+  target, styles, responsiveSize, onChange, onApply,
   tokenSuggestions = [], tokenSuggestionsLoading = false, onApplyTokenSuggestion, onInspectValueSelect,
 }: {
   target: ManualEditTarget;
   styles: ManualEditStyles;
+  responsiveSize?: ManualEditResponsiveSizeValues | null;
   onChange: (key: keyof ManualEditStyles, value: string) => void;
   onApply: (styles: Partial<ManualEditStyles>) => void;
   tokenSuggestions?: ProjectDesignTokenSuggestion[];
@@ -774,7 +816,10 @@ function StyleInspector({
   const summary = target.computedSummary;
   const layoutDisabled = !target.isLayoutContainer;
   const widthPlaceholder = styles.width ? '' : `${Math.round(target.rect.width)}px`;
-  const heightPlaceholder = styles.height ? '' : `${Math.round(target.rect.height)}px`;
+  const responsiveHeightKey: keyof ManualEditStyles =
+    target.kind === 'container' && responsiveSize?.minHeight != null ? 'minHeight' : 'height';
+  const responsiveHeightValue = styles[responsiveHeightKey];
+  const heightPlaceholder = responsiveHeightValue ? '' : `${Math.round(target.rect.height)}px`;
 
   // Which field is focused → drives the reference-values strip below the list.
   const [activeField, setActiveField] = useState<{ key: keyof ManualEditStyles; label: string } | null>(null);
@@ -795,7 +840,7 @@ function StyleInspector({
   const activeIsColor = activeProp ? COLOR_SUGGESTION_PROPS.has(activeProp) : false;
 
   return (
-    <div className="cc-inspector">
+    <div className="cc-inspector" data-manual-edit-history-controls="true">
       <Section title={t('manualEdit.parameters')}>
         <ColorRow label={t('manualEdit.textColor')} value={styles.color} placeholder={summary?.color} onChange={(v) => u('color', v)} onFocus={() => activate('color', t('manualEdit.textColor'))} />
         <ColorRow label={t('manualEdit.background')} value={styles.backgroundColor} placeholder={summary?.backgroundColor} onChange={(v) => u('backgroundColor', v)} onFocus={() => activate('backgroundColor', t('manualEdit.background'))} />
@@ -827,7 +872,7 @@ function StyleInspector({
         <DropdownRow label={t('manualEdit.borderStyle')} value={styles.borderStyle} onChange={(v) => u('borderStyle', v)} options={borderStyleOptions(t)} />
         <PairRow>
           <UnitRow label={t('manualEdit.width')} value={styles.width} placeholder={widthPlaceholder} onChange={(v) => u('width', v)} unit="px" autoUnit onFocus={() => activate('width', t('manualEdit.width'))} />
-          <UnitRow label={t('manualEdit.height')} value={styles.height} placeholder={heightPlaceholder} onChange={(v) => u('height', v)} unit="px" autoUnit onFocus={() => activate('height', t('manualEdit.height'))} />
+          <UnitRow label={t('manualEdit.height')} value={responsiveHeightValue} placeholder={heightPlaceholder} onChange={(v) => u(responsiveHeightKey, v)} unit="px" autoUnit onFocus={() => activate(responsiveHeightKey, t('manualEdit.height'))} />
         </PairRow>
 
         <QuadRow label={t('manualEdit.padding')} axes={{

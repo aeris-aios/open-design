@@ -409,4 +409,21 @@ describe('FileViewer version download actions', () => {
     expect(Number(cssValue(cssRule(css, '.viewer-modal-backdrop.file-version-export-backdrop.modal-backdrop'), 'z-index'))).toBeGreaterThan(panelZ);
     expect(Number(cssValue(cssRule(css, '.od-toast.file-version-export-toast.placement-top'), 'z-index'))).toBeGreaterThan(panelZ);
   });
+
+  it('places version history below the merged file toolbar without hiding its actions', () => {
+    const css = readExpandedIndexCss();
+    const panelRule = cssRule(css, '.artifact-version-panel');
+    const workspacePanelRule = cssRule(css, 'body:has(.ws-tabs-shell) .artifact-version-panel');
+
+    expect(panelRule).toContain('top: var(--artifact-version-panel-top);');
+    expect(cssValue(workspacePanelRule, '--artifact-version-panel-top')).toBe(
+      'calc(44px + 44px + var(--spacing-8))',
+    );
+    expect(panelRule).toContain(
+      '100dvh - var(--artifact-version-panel-top) - var(--spacing-16)',
+    );
+    expect(css).not.toContain(
+      'body:has(.artifact-version-panel) .ws-tabs-file-actions',
+    );
+  });
 });
