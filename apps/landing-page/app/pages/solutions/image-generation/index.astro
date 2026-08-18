@@ -246,14 +246,17 @@ const jsonLd = [
           <span>{pageCopy.dialogTitle}</span>
           <h2 data-prompt-title></h2>
         </div>
-        <button type="button" data-prompt-close aria-label={pageCopy.close}>×</button>
+        <button class="ig-dialog-close" type="button" data-prompt-close aria-label={pageCopy.close}>
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5.5 5.5 14.5 14.5M14.5 5.5 5.5 14.5"></path>
+          </svg>
+        </button>
       </div>
       <div class="ig-dialog-meta">
         <span data-prompt-model></span>
         <span data-prompt-aspect></span>
       </div>
       <pre><code data-prompt-body></code></pre>
-      <button class="btn btn-primary" type="button" data-prompt-close>{pageCopy.close}</button>
     </dialog>
 
     <script is:inline id="image-generation-prompts" type="application/json" set:html={promptPayload}></script>
