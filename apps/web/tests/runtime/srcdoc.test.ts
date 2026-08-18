@@ -116,6 +116,90 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain("data.type === 'od:srcdoc-transport-ready-probe'");
     expect(srcdoc).toContain('announceReady(data.probeId)');
     expect(srcdoc).toContain('message.probeId = probeId');
+    expect(srcdoc).toContain('data-od-srcdoc-transport-body-complete="generation-42"');
+    expect(srcdoc).toContain('var bodyComplete = false');
+    expect(srcdoc).toContain('new MutationObserver(function(records)');
+    expect(srcdoc).toContain('message.bodyComplete = bodyComplete');
+    expect(srcdoc).not.toContain("document.querySelector('template[data-od-srcdoc-transport-body-complete]')");
+    expect(srcdoc).toContain('message.documentReadyState = document.readyState');
+    expect(srcdoc).toContain('message.bodyChildCount = document.body ? document.body.children.length : 0');
+  });
+
+  it('keeps parser completion latched after authored code removes the completed body', async () => {
+    const messages: Array<Record<string, unknown>> = [];
+    const generation = 'generation-remove-body';
+    const srcdoc = buildSrcdoc(
+      `<html><head></head><body><main>Ready</main><script>
+        window.addEventListener('DOMContentLoaded', function(){ document.body.remove(); });
+      </script></body></html>`,
+      { transportActivationGeneration: generation },
+    );
+    const dom = new JSDOM(srcdoc, {
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        Object.defineProperty(window, 'parent', {
+          value: { postMessage: (message: Record<string, unknown>) => messages.push(message) },
+        });
+      },
+    });
+    await new Promise<void>((resolve) => dom.window.addEventListener('load', () => resolve()));
+    await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve));
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'od:srcdoc-transport-ready-probe',
+        generation,
+        probeId: 'probe-after-body-removal',
+      },
+    }));
+
+    expect(dom.window.document.body).toBeNull();
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'od:srcdoc-transport-activated',
+      generation,
+      probeId: 'probe-after-body-removal',
+      bodyComplete: true,
+    }));
+    dom.window.close();
+  });
+
+  it('does not accept an authored lookalike before a truncated injected tail', async () => {
+    const messages: Array<Record<string, unknown>> = [];
+    const generation = 'generation-truncated-tail';
+    const completeSrcdoc = buildSrcdoc(
+      '<html><head></head><body><template data-od-srcdoc-transport-body-complete></template><main>Partial</main></body></html>',
+      { transportActivationGeneration: generation },
+    );
+    const injectedMarker = `<template data-od-srcdoc-transport-body-complete="${generation}"></template>`;
+    const markerIndex = completeSrcdoc.indexOf(injectedMarker);
+    expect(markerIndex).toBeGreaterThan(-1);
+    const srcdoc = completeSrcdoc.slice(0, markerIndex);
+    const dom = new JSDOM(srcdoc, {
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        Object.defineProperty(window, 'parent', {
+          value: { postMessage: (message: Record<string, unknown>) => messages.push(message) },
+        });
+      },
+    });
+    await new Promise<void>((resolve) => dom.window.addEventListener('load', () => resolve()));
+    await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve));
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'od:srcdoc-transport-ready-probe',
+        generation,
+        probeId: 'probe-truncated-tail',
+      },
+    }));
+
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'od:srcdoc-transport-activated',
+      generation,
+      probeId: 'probe-truncated-tail',
+      bodyComplete: false,
+    }));
+    dom.window.close();
   });
 
   it('paints an opaque background before drawing so empty rasters never flatten to black', () => {
