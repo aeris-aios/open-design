@@ -50,13 +50,24 @@ localized sentence and nothing else:
 
 - Success: say the localized equivalent of "Image generated". For Simplified
   Chinese, reply exactly \`图片已生成\`.
-- Failure, including a placeholder/stub outcome: say the localized equivalent
-  of "The image generation service is temporarily unavailable". For Simplified
-  Chinese, reply exactly \`图片生成服务暂时不可用\`.
+- Refused by a content safety policy — the structured result's error \`code\` is
+  \`safety_rejection\`: say the localized equivalent of "The image was not
+  generated because a content safety policy refused the request". For
+  Simplified Chinese, reply exactly \`图片未生成：内容安全策略拒绝了该请求\`.
+- Any other failure, including a placeholder/stub outcome: say the localized
+  equivalent of "The image generation service is temporarily unavailable". For
+  Simplified Chinese, reply exactly \`图片生成服务暂时不可用\`.
+
+A refusal is not an outage. Calling it one sends the user off to wait for a
+recovery that will never arrive, while the one thing they could actually
+change goes unmentioned. Choose the refusal line only on that exact \`code\`;
+never infer a refusal from wording, an HTTP status, or an unrecognised code.
 
 Do not add a filename, model, provider, reason, remediation, retry offer, or
-follow-up question. Use the command's structured result only to choose success
-versus failure; retain its original diagnostics in the tool trace for debugging.`;
+follow-up question. The interface renders the actionable explanation from the
+task record itself, so this reply never has to carry it. Use the command's
+structured result only to choose between the three outcomes above; retain its
+original diagnostics in the tool trace for debugging.`;
 
 export function renderMediaGenerationContract(
   mediaExecution?: MediaExecutionPolicy | undefined,

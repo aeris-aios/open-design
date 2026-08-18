@@ -432,6 +432,29 @@ describe('composeSystemPrompt', () => {
       );
     });
 
+    // The refusal branch has to reach the prompt the DAEMON composes, not just
+    // the copy in packages/contracts. A content-safety refusal described as an
+    // outage sends the user off to wait for a recovery that never comes, while
+    // the one thing they could change goes unmentioned.
+    it('gives a content-safety refusal its own sentence in both prompts', () => {
+      for (const metadata of [
+        { kind: 'image', imageModel: 'vela/gpt-image-2' },
+        { kind: 'prototype' },
+      ]) {
+        const prompt = composeSystemPrompt({
+          agentId: 'amr',
+          locale: 'zh-CN',
+          metadata: metadata as any,
+        });
+        expect(prompt).toContain('safety_rejection');
+        expect(prompt).toContain('reply exactly `图片未生成：内容安全策略拒绝了该请求`');
+        // The generic outage line must survive for every other failure.
+        expect(prompt).toContain('reply exactly `图片生成服务暂时不可用`');
+        // And the refusal must be keyed on the exact code, never guessed.
+        expect(prompt).toContain('never infer a refusal from wording');
+      }
+    });
+
     it('prioritizes question forms over native tool calls when clarifying', () => {
       const prompt = composeSystemPrompt({ agentId: 'amr' });
       expect(prompt).toContain('## Structured clarification on any turn');

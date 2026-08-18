@@ -7,6 +7,9 @@ export type MediaTaskStatus =
   | 'failed'
   | 'interrupted';
 
+/** What a content-safety policy objected to, when the supplier proved it. */
+export type MediaTaskErrorSubject = 'prompt' | 'input_image' | 'output_image';
+
 export interface MediaTaskError {
   message: string;
   status?: number;
@@ -17,7 +20,7 @@ export interface MediaTaskError {
    * "not applicable" — a client must then name both the prompt and the
    * reference images rather than blame one of them.
    */
-  subject?: 'prompt' | 'input_image' | 'output_image';
+  subject?: MediaTaskErrorSubject;
   /**
    * Whether repeating the identical request could plausibly behave
    * differently. Undefined means the producer did not say; only an explicit
@@ -322,6 +325,29 @@ function parseArray(json: string | null): string[] {
     : [];
 }
 
+/**
+ * Subjects a content-safety refusal may name. Validated on read as well as on
+ * write: the value crosses a JSON column, so a row written by a newer daemon
+ * (or hand-edited) must not smuggle an unknown subject back into the API
+ * response.
+ */
+const MEDIA_TASK_ERROR_SUBJECTS = ['prompt', 'input_image', 'output_image'] as const;
+
+function isMediaTaskErrorSubject(value: unknown): value is MediaTaskErrorSubject {
+  return (
+    typeof value === 'string'
+    && (MEDIA_TASK_ERROR_SUBJECTS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Rebuild a persisted error. Every field the write path stores has to be
+ * reconstructed here or it silently disappears the moment a task is read back
+ * from SQLite -- which is every daemon restart and every cache rehydration,
+ * not an edge case. `subject` and `retryable` were lost that way: a refusal
+ * survived until the process bounced, then reappeared as a bare failure with
+ * no attribution and no retry verdict.
+ */
 function normalizeError(value: unknown): MediaTaskError | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const obj = value as Record<string, unknown>;
@@ -330,6 +356,11 @@ function normalizeError(value: unknown): MediaTaskError | null {
   const error: MediaTaskError = { message };
   if (typeof obj.status === 'number') error.status = obj.status;
   if (typeof obj.code === 'string') error.code = obj.code;
+  if (isMediaTaskErrorSubject(obj.subject)) error.subject = obj.subject;
+  // Only an explicit boolean survives: absent must stay absent, because
+  // "the producer did not say" and "the producer said retrying is pointless"
+  // are different answers to a client.
+  if (typeof obj.retryable === 'boolean') error.retryable = obj.retryable;
   return error;
 }
 
