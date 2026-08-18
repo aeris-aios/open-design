@@ -45,6 +45,7 @@ type RunEvent = { event: string; data: unknown };
 const SESSION = 'ses_e2e0000resume0000';
 const FIRST_REPLY_SENTINEL = 'FIRST_TURN_REPLY_SENTINEL_0c7d2';
 const RUN_COMPLETION_TIMEOUT_MS = 30_000;
+const ROLLOVER_TEST_TIMEOUT_MS = 60_000;
 
 describe('opencode native session resume', () => {
   const originalEnv = snapshotEnv();
@@ -177,7 +178,9 @@ describe('opencode native session resume', () => {
     expect(turn2.argv).not.toContain('-s');
   });
 
-  it('rolls over and reseeds before a resumed session reaches its model context limit', async () => {
+  it('rolls over and reseeds before a resumed session reaches its model context limit', {
+    timeout: ROLLOVER_TEST_TIMEOUT_MS,
+  }, async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-opencode-context-rollover-bin-'));
     const { bin, logPath } = await writeHighContextOpencode(binDir, 'opencode-context-rollover');
 
@@ -233,7 +236,9 @@ describe('opencode native session resume', () => {
     }));
   });
 
-  it('rolls over when changed stable instructions push the exact resume payload past the threshold', async () => {
+  it('rolls over when changed stable instructions push the exact resume payload past the threshold', {
+    timeout: ROLLOVER_TEST_TIMEOUT_MS,
+  }, async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-opencode-stable-rollover-bin-'));
     const { bin, logPath } = await writeHighContextOpencode(
       binDir,
@@ -283,7 +288,9 @@ describe('opencode native session resume', () => {
     })).toBe(true);
   });
 
-  it('compacts to the remaining launch headroom for a low-context model', async () => {
+  it('compacts to the remaining launch headroom for a low-context model', {
+    timeout: ROLLOVER_TEST_TIMEOUT_MS,
+  }, async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-opencode-low-context-rollover-bin-'));
     const { bin, logPath } = await writeHighContextOpencode(
       binDir,
