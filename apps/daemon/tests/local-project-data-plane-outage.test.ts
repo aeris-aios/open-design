@@ -45,6 +45,7 @@ describe('local project data plane during Workspace authority outage', () => {
 
   it('keeps preview, files, comments, runs, and routines usable when Vela returns 503', async () => {
     const projectId = `local-outage-${randomUUID()}`;
+    const mirrorProjectId = `readonly-mirror-outage-${randomUUID()}`;
     const conversationId = `conversation-${randomUUID()}`;
     const workspaceId = `workspace-${randomUUID()}`;
     const memberId = `member-${randomUUID()}`;
@@ -103,10 +104,37 @@ describe('local project data plane during Workspace authority outage', () => {
       cloudTombstonedAt: null,
       syncState: 'local_only',
     });
+    // This is the exact durable row shape written by
+    // `materializePulledTeamMirror` for somebody else's shared project. A null
+    // creator means the current member is a viewer, not an unattributed owner.
+    insertProject(db, {
+      id: mirrorProjectId,
+      name: 'Read-only mirror outage fixture',
+      createdAt: now,
+      updatedAt: now,
+    });
+    ensureWorkspaceProject(db, {
+      projectId: mirrorProjectId,
+      workspaceId,
+      visibility: 'team',
+      resourceState: 'active',
+      createdByWorkspaceMemberId: null,
+      updatedByWorkspaceMemberId: memberId,
+      resourceHubResourceId: `hub-${mirrorProjectId}`,
+      cloudTombstonedAt: null,
+      syncState: 'synced',
+    });
     await mkdir(projectDir, { recursive: true });
     await writeFile(
       path.join(projectDir, 'index.html'),
       '<!doctype html><title>Offline preview</title><h1 data-od-id="hero">Hero</h1>',
+      'utf8',
+    );
+    const mirrorProjectDir = path.join(dataDir, 'projects', mirrorProjectId);
+    await mkdir(mirrorProjectDir, { recursive: true });
+    await writeFile(
+      path.join(mirrorProjectDir, 'index.html'),
+      '<!doctype html><title>Read-only mirror</title><h1>Owner content</h1>',
       'utf8',
     );
     const directoryRequestsAfterStartup = workspaceDirectoryRequests;
@@ -150,6 +178,42 @@ describe('local project data plane during Workspace authority outage', () => {
     });
     expect(write.status).toBe(200);
     expect(workspaceDirectoryRequests, 'file write').toBe(directoryRequestsAfterStartup);
+
+    const mirrorRead = await fetch(
+      `${daemon.url}/api/projects/${mirrorProjectId}/raw/index.html`,
+      { headers: staleHeaders },
+    );
+    expect(mirrorRead.status).toBe(200);
+    expect(await mirrorRead.text()).toContain('Owner content');
+
+    const mirrorWrite = await fetch(
+      `${daemon.url}/api/projects/${mirrorProjectId}/files`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...staleHeaders },
+        body: JSON.stringify({ name: 'must-not-write.txt', content: 'denied' }),
+      },
+    );
+    expect(mirrorWrite.status).toBe(403);
+    await expect(mirrorWrite.json()).resolves.toMatchObject({
+      error: { code: 'WORKSPACE_PROJECT_PERMISSION_DENIED' },
+    });
+
+    const mirrorRun = await fetch(`${daemon.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...staleHeaders },
+      body: JSON.stringify({
+        projectId: mirrorProjectId,
+        agentId: 'claude',
+        message: 'must not run against a read-only mirror',
+      }),
+    });
+    expect(mirrorRun.status).toBe(403);
+    await expect(mirrorRun.json()).resolves.toMatchObject({
+      error: { code: 'WORKSPACE_PROJECT_PERMISSION_DENIED' },
+    });
+    expect(workspaceDirectoryRequests, 'read-only mirror access')
+      .toBe(directoryRequestsAfterStartup);
 
     const run = await fetch(`${daemon.url}/api/runs`, {
       method: 'POST',

@@ -365,6 +365,49 @@ describe('createAuthorizeProjectRequest', () => {
     },
   );
 
+  it.each(['rename', 'delete', 'duplicate', 'writeFiles'] as const)(
+    'keeps a materialized member mirror read-only for %s during an authority outage',
+    async (capability) => {
+      const row = {
+        workspaceId: 'workspace-a',
+        visibility: 'team',
+        resourceState: 'active',
+        // The durable shape written by `materializePulledTeamMirror` when the
+        // viewer is not the project owner.
+        createdByWorkspaceMemberId: null,
+      };
+      const verify = vi.fn(async () => ({
+        ok: false as const,
+        status: 503 as const,
+        code: 'WORKSPACE_AUTHORITY_UNAVAILABLE',
+        message: 'workspace authority is temporarily unavailable',
+        retryable: true,
+      }));
+      const sendApiError = vi.fn();
+      const authorize = createAuthorizeProjectRequest({
+        db: {},
+        getWorkspaceProject: () => row,
+        getWorkspaceProjectByProjectId: () => row,
+        verifyWorkspaceRequestAuthority: verify,
+        sendApiError,
+      });
+
+      await expect(authorize(
+        request({ workspaceId: 'workspace-a', memberId: 'mirror-viewer' }),
+        response(),
+        'project-a',
+        { mode: 'write', capability },
+      )).resolves.toBe(false);
+      expect(verify).not.toHaveBeenCalled();
+      expect(sendApiError).toHaveBeenLastCalledWith(
+        expect.anything(),
+        403,
+        'WORKSPACE_PROJECT_PERMISSION_DENIED',
+        expect.any(String),
+      );
+    },
+  );
+
   it('preserves shared-project comments for active Team viewers', async () => {
     const row = {
       workspaceId: 'workspace-a',

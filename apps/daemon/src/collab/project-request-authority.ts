@@ -146,9 +146,24 @@ export async function enforceLocalProjectDataPlaneRequest(input: {
     );
   }
 
-  // An explicit browser/tool identity must still match the persisted creator.
-  // Headerless Personal projects retain CLI compatibility; Team projects need
-  // the locally persisted creator pair, but never a Vela round-trip.
+  // A Team project is single-writer. Pulled member mirrors deliberately persist
+  // a null creator, so null means "no local writer", not "unattributed local
+  // project". Keep those mirrors read-only from the durable row even when Vela
+  // is unavailable; only an exact persisted creator/member match may write.
+  if (
+    row.visibility === 'team'
+    && row.createdByWorkspaceMemberId !== claimed?.workspaceMemberId
+  ) {
+    return deny(
+      403,
+      'WORKSPACE_PROJECT_PERMISSION_DENIED',
+      'workspace project mutation is not allowed',
+    );
+  }
+
+  // An explicit browser/tool identity must still match the persisted creator
+  // for attributed Personal projects. Headerless Personal projects retain CLI
+  // compatibility.
   if (
     claimed
     && row.createdByWorkspaceMemberId
