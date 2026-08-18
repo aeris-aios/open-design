@@ -740,8 +740,8 @@ describe('FileViewer preview scale', () => {
       expect(document.querySelector('.viewer-loading')).toBeNull();
       expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
     });
-    expect(rawReads[0]?.url).toContain('workspaceId=ws-1');
-    expect(rawReads[0]?.url).toContain('workspaceMemberId=wm-1');
+    expect(rawReads[0]?.url).not.toContain('workspaceId=');
+    expect(rawReads[0]?.url).not.toContain('workspaceMemberId=');
     expect(rawReads[0]?.init?.headers).toMatchObject({
       'x-od-workspace-id': 'ws-1',
       'x-od-workspace-member-id': 'wm-1',
@@ -1856,7 +1856,7 @@ describe('FileViewer SVG artifacts', () => {
     ))).toBe(false);
   });
 
-  it('keeps browser-owned URL preview navigation authorized by query scope', () => {
+  it('keeps browser-owned URL preview navigation server-authorized by project id', () => {
     const file = baseFile({
       name: 'team-page.html',
       path: 'team-page.html',
@@ -1885,8 +1885,9 @@ describe('FileViewer SVG artifacts', () => {
 
     expect(markup).toContain('data-od-render-mode="url-load" data-od-active="true"');
     expect(markup).toContain(
-      'src="/api/projects/project-1/raw/team-page.html?workspaceId=ws-1&amp;workspaceMemberId=wm-1&amp;v=1710000000',
+      'src="/api/projects/project-1/raw/team-page.html?v=1710000000',
     );
+    expect(markup).not.toContain('workspaceMemberId=');
   });
 
   it('routes brand extraction stop requests from the preview iframe', async () => {
@@ -2716,6 +2717,7 @@ describe('FileViewer SVG artifacts', () => {
           type: 'od:srcdoc-transport-activated',
           generation: readinessProbe!.generation,
           probeId: readinessProbe!.probeId,
+          bodyComplete: true,
         },
       }));
     });
@@ -4199,7 +4201,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
   });
 
-  it('rebuilds deck thumbnail resource URLs when the project workspace changes', async () => {
+  it('keeps deck thumbnail resource URLs independent of shell Workspace changes', async () => {
     const file = baseFile({
       name: 'deck.html',
       path: 'deck.html',
@@ -4238,8 +4240,9 @@ describe('FileViewer SVG artifacts', () => {
 
     const thumbnail = container.querySelector('.deck-thumbnail-frame iframe') as HTMLIFrameElement | null;
     expect(thumbnail).toBeTruthy();
-    expect(thumbnail!.srcdoc).toContain('workspaceId=ws-1');
-    expect(thumbnail!.srcdoc).toContain('workspaceMemberId=wm-1');
+    expect(thumbnail!.srcdoc).not.toContain('workspaceId=');
+    expect(thumbnail!.srcdoc).not.toContain('workspaceMemberId=');
+    const originalSrcDoc = thumbnail!.srcdoc;
 
     rerender(
       <CollabProvider value={projectWorkspaceCollabValue(workspaceB)}>
@@ -4249,9 +4252,9 @@ describe('FileViewer SVG artifacts', () => {
 
     await waitFor(() => {
       const updated = container.querySelector('.deck-thumbnail-frame iframe') as HTMLIFrameElement | null;
-      expect(updated?.srcdoc).toContain('workspaceId=ws-2');
-      expect(updated?.srcdoc).toContain('workspaceMemberId=wm-2');
-      expect(updated?.srcdoc).not.toContain('workspaceId=ws-1');
+      expect(updated?.srcdoc).toBe(originalSrcDoc);
+      expect(updated?.srcdoc).not.toContain('workspaceId=');
+      expect(updated?.srcdoc).not.toContain('workspaceMemberId=');
     });
   });
 
@@ -5517,6 +5520,68 @@ describe('FileViewer SVG artifacts', () => {
     );
   });
 
+  it('exposes Stop sharing when publication persistence and compensation both fail', async () => {
+    const context = teamWorkspaceContext();
+    const publicUrl =
+      'https://hub.example.test/api/v1/public/snapshots/manual-revoke-slug/files/index.html';
+    const unpublishBodies: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/workspace/context')) {
+          return new Response(JSON.stringify({ context }), { status: 200 });
+        }
+        if (url.includes('publish-public')) {
+          const method = (init?.method ?? 'GET').toUpperCase();
+          if (method === 'GET') {
+            return new Response(JSON.stringify({ publication: null }), { status: 200 });
+          }
+          if (method === 'DELETE') {
+            unpublishBodies.push(JSON.parse(String(init?.body)));
+            return new Response(
+              JSON.stringify({ ok: true, slug: 'manual-revoke-slug', fileName: 'index.html' }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
+                message: `The public link remains active at ${publicUrl}.`,
+                data: {
+                  projectId: 'project-1',
+                  url: publicUrl,
+                  slug: 'manual-revoke-slug',
+                  fileName: 'index.html',
+                },
+              },
+            }),
+            { status: 502 },
+          );
+        }
+        return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+      }),
+    );
+
+    renderWithProjectWorkspace(
+      <FileViewer projectId="project-1" projectKind="prototype" file={publicPublishFile()}
+        liveHtml="<html><body><h1>Hello</h1></body></html>"
+      />,
+      context,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /share/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Get a share link/i }));
+
+    expect(await screen.findByText(publicUrl)).toBeTruthy();
+    const stopSharing = screen.getByRole('button', { name: /Stop sharing/i });
+    fireEvent.click(stopSharing);
+
+    await waitFor(() => expect(unpublishBodies).toEqual([{ slug: 'manual-revoke-slug' }]));
+    expect(await screen.findByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+  });
+
   // Reading the help must never publish. The publish row's trailing "?" carries
   // the reach + single-file limitation copy, i.e. exactly what a user wants to
   // read BEFORE committing — but it used to be nested inside the same
@@ -6003,6 +6068,12 @@ describe('FileViewer SVG artifacts', () => {
       'slides.html',
       '<section class="slide">A</section><section class="slide">B</section>',
     ).deck).toBe(true);
+
+    expect(fileVersionPreviewOptions(
+      'project-1',
+      'prototype.html',
+      '<main><h1 data-screen-label="Hero title">Prototype</h1></main>',
+    ).deck).toBe(false);
   });
 
   it('routes history deck arrow keys to the preview unless a text input is focused', async () => {
@@ -7285,15 +7356,8 @@ describe('FileViewer tweaks toolbar', () => {
     expect(frame.srcdoc).toContain('img.src = "logos/mark.png"');
     expect(frame.srcdoc).not.toContain('/api/projects/project-1/raw/?workspaceId=');
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        '/api/projects/project-1/preview-url?file=brand.html&workspaceId=ws-1&workspaceMemberId=wm-1',
-      ),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'x-od-workspace-id': 'ws-1',
-          'x-od-workspace-member-id': 'wm-1',
-        }),
-      }),
+      '/api/projects/project-1/preview-url?file=brand.html',
+      { cache: 'no-store' },
     );
 
     rerender(renderViewer(urlLoadHtml));
@@ -7361,6 +7425,7 @@ describe('FileViewer tweaks toolbar', () => {
             type: 'od:srcdoc-transport-activated',
             generation: initialGeneration,
             probeId: initialProbe!.probeId,
+            bodyComplete: true,
           },
         }));
       });
@@ -7798,6 +7863,7 @@ describe('FileViewer tweaks toolbar', () => {
           type: 'od:srcdoc-transport-activated',
           generation: probe.generation,
           probeId: probe.probeId,
+          bodyComplete: true,
         },
       }));
     });
@@ -8107,7 +8173,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(srcDocFrame.srcdoc).toContain('data-od-selection-bridge');
   });
 
-  it('does not expose unscoped relative assets while a team srcDoc preview is materializing', async () => {
+  it('does not expose unresolved relative assets while a team srcDoc preview is materializing', async () => {
     const filesResponse = deferredResponse();
     const projectId = 'scoped-assets-project';
     const fontPath = 'fonts/inter-variable-400.woff2';
@@ -8162,8 +8228,9 @@ describe('FileViewer tweaks toolbar', () => {
       await waitFor(() => {
         const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
         expect(frame.srcdoc).toContain(
-          `/api/projects/${projectId}/raw/${fontPath}?workspaceId=ws-1&workspaceMemberId=wm-1`,
+          `/api/projects/${projectId}/raw/${fontPath}`,
         );
+        expect(frame.srcdoc).not.toContain('workspaceMemberId=');
         expect(frame.srcdoc).not.toContain('../../fonts/inter-variable-400.woff2');
       });
     } finally {
@@ -8171,7 +8238,7 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
-  it('materializes Team deck relative assets into scoped raw URLs before showing srcDoc', async () => {
+  it('materializes Team deck relative assets into server-authorized raw URLs before showing srcDoc', async () => {
     const filesResponse = deferredResponse();
     const projectId = 'scoped-deck-assets-project';
     const deckPath = 'system/deck.html';
@@ -8224,9 +8291,9 @@ describe('FileViewer tweaks toolbar', () => {
       await waitFor(() => {
         const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
         expect(frame.srcdoc).toContain(
-          `/api/projects/${projectId}/raw/${imagePath}?workspaceId=ws-1`,
+          `/api/projects/${projectId}/raw/${imagePath}`,
         );
-        expect(frame.srcdoc).toContain('workspaceMemberId=wm-1');
+        expect(frame.srcdoc).not.toContain('workspaceMemberId=');
         expect(frame.srcdoc).not.toContain('../images/hero.png');
       });
     } finally {
