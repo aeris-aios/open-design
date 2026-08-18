@@ -70,6 +70,8 @@ const ENTRY_PAGE_BY_SOURCE: Record<TrackingAmrEntrySource, TrackingPageName> = {
   chat_error_upgrade: 'chat_panel',
   chat_balance_gate_upgrade: 'chat_panel',
   home_balance_gate_upgrade: 'home',
+  home_go_upsell_modal: 'home',
+  home_go_badge: 'home',
   chat_low_balance_warn_recharge: 'chat_panel',
   home_low_balance_warn_recharge: 'home',
   chat_balance_gate_sign_in: 'chat_panel',

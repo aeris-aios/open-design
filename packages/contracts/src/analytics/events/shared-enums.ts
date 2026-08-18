@@ -89,12 +89,17 @@ export type TrackingAmrEntrySource =
   | 'avatar_amr_upgrade'
   | 'avatar_amr_agent_card'
   | 'artifact_success_upgrade'
-  | 'home_artifact_upgrade';
+  | 'home_artifact_upgrade'
+  // Go plan launch modal on the workbench home (marketing touchpoint #3).
+  // Kept separate so the campaign's handoffs are separable from the
+  // balance-gate ones that also start on home.
+  | 'home_go_upsell_modal'
+  | 'home_go_badge';
 
 // `deepseek_v4_flash` is the finished 8/6-8/13 free week; `deepseek_v4_pro`
 // is the 8/13-8/27 two-model window that follows it. Both stay declared so
 // the finished campaign's rows keep a valid id in the warehouse.
-export type TrackingCampaignId = 'deepseek_v4_flash' | 'deepseek_v4_pro';
+export type TrackingCampaignId = 'deepseek_v4_flash' | 'deepseek_v4_pro' | 'go_plan_launch';
 export type TrackingCampaignUserState = 'paid' | 'unpaid';
 export type TrackingCampaignConversionSource =
   | 'deepseek_unpaid_modal'

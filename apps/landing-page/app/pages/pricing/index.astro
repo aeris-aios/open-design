@@ -726,9 +726,26 @@ const jsonLd = [
       // inside the authenticated dashboard.
       const inboundParams = new URLSearchParams(window.location.search);
       const inboundWorkspaceId = inboundParams.get('workspaceId')?.trim();
+      /* 入口归因参数（od_*）由营销点位在跳转本页时带上，这里必须原样转发到
+         Cloud——它只从 URL 收归因，参数在这一跳丢掉，整条链路就只能算到
+         "到达 Pricing"，算不出这个入口带来多少付费（需求文档 T-04）。
+         白名单在 vela 的 openDesignAmrEntrySourceValues，两边要对齐。 */
+      const OD_ATTRIBUTION_PARAMS = [
+        'od_origin',
+        'od_entry_id',
+        'od_entry_source',
+        'od_entry_at',
+        'od_campaign_id',
+        'od_conversion_source',
+      ];
+      const inboundParams = new URLSearchParams(window.location.search);
       const scopedBillingPlanUrl = () => {
         const target = new URL(billingPlanUrl);
         if (inboundWorkspaceId) target.searchParams.set('workspaceId', inboundWorkspaceId);
+        for (const key of OD_ATTRIBUTION_PARAMS) {
+          const value = inboundParams.get(key);
+          if (value) target.searchParams.set(key, value);
+        }
         // od_campaign_id is intentionally NOT forwarded from the inbound URL:
         // campaign membership is re-decided by campaignEligible on this click and
         // written only through __odAttributedUrl so a closed window cannot
