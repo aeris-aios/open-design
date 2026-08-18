@@ -894,17 +894,17 @@ button.att-d:hover { border-color: var(--border-strong); }
    所以里面一律脱框,层级只靠【缩进】和状态点的列对齐来表达。
    例外只有终端输出:那是代码,得有底色才读得出是"机器打出来的",但它也只留底
    色,不要边框。 */
-/* Thinking 不画框。
+/* Thinking 不是模块,是两样东西。
    ------------------------------------------------------------
-   它就一两句话 —— 套一张卡等于给一句话建了个房子,而它旁边的开场白、总结都是
-   裸文字,唯独它带框,反倒像是另一类东西。去框之后它读起来就是"它先想了想",
-   本来就该是这个分量。
-   没有框,hover 就没地方上底色了:给 summary 一个负外边距,静止时文字和正文
-   左对齐,悬停时才浮出一小块圆角底 —— 底色只在需要的那一刻存在。 */
-.fold.mod-think { border: 0; background: none; }
-.fold.mod-think > summary { padding: 4px 8px; margin-inline: -8px; border-radius: var(--radius-sm); }
-.fold.mod-think[open] > summary { border-bottom: 0; }
-.fold.mod-think > .body { padding: 0 0 2px; }
+   ① 进行中的一行:发出去之后、第一个字落地之前,面板空着,这一行是唯一能说明
+      "它没死"的东西。内容一落地它就让位。
+   ② 事后的一段纯文字:收进「已完成 N 个任务」里,和动作行交替 —— 文字说
+      "为什么这么做",动作行说"于是做了什么"。
+   都不需要框,也不需要展开收起:它本来就是几句话,套个可折叠模块等于给一句话
+   建了个房子。过程里本来就该有纯文字,不是所有东西都得装进模块。 */
+.thinking-live { display: flex; align-items: center; gap: 7px; font-size: var(--t-mini); color: var(--text-muted); }
+.thinking-live .ms { margin-left: auto; font-family: var(--mono); font-size: var(--t-cap); color: var(--text-soft); }
+.think { margin: 0; font-size: var(--t-mini); line-height: var(--lh-body); color: var(--text-muted); overflow-wrap: anywhere; }
 
 /* 展开时给卡头一条分隔线:它是这张卡的标题,不是列表的第一行。 */
 .fold[open] > summary { border-bottom: 1px solid var(--border-soft); }
@@ -2330,48 +2330,41 @@ button.att-d:hover { border-color: var(--border-strong); }
     <div class="stage-h"><span class="no">02</span><h2>理解</h2><p>发出去到开跑之间,不能留静默空窗</p></div>
     <div class="grid">
 
-      <article class="cmp" data-od-id="cmp-thinking">
+      <article class="cmp mod-w2" data-od-id="cmp-thinking">
         <div class="cmp-h"><span class="no">3</span><span class="nm">Thinking</span></div>
         <div class="cmp-meta">
-          <div><b>出现时机</b> 用户发送消息后</div>
-          <div><b>默认状态</b> 展开,结束后自动收起</div>
+          <div><b>出现时机</b> 发出之后、第一个字落地之前</div>
+          <div><b>默认状态</b> 一行状态,不是一个模块</div>
         </div>
         <div class="cmp-b">
           <div class="st">
-            <div class="st-l mod-def"><span>生成中 · 绿点呼吸 + Thinking 流光,内容流式追加</span><i></i></div>
+            <div class="st-l mod-def"><span>进行中 · 面板还空着,这一行是唯一"它没死"的证据</span><i></i></div>
             <div class="st-b">
-              <details class="fold mod-think" open>
-                <summary><span class="breath"></span><span class="shimmer">Thinking</span><span class="ms">3s</span></summary>
-                <div class="body mod-scroll">
-                  先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。<br>
-                  设置页要和它共用同一套间距与卡片圆角,否则两屏放一起会明显不是一个产品。<br>
-                  接下来确认要不要把商品卡抽成可复用组件<span class="caret"></span>
-                </div>
-              </details>
+              <div class="thinking-live"><span class="breath"></span><span class="shimmer">Thinking</span><span class="ms">3s</span></div>
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>结束 · 自动收起为一行摘要</span><i></i></div>
+            <div class="st-l"><span>内容开始落地 · 这一行让位给开场白,不再占地方</span><i></i></div>
             <div class="st-b">
-              <details class="fold mod-think">
-                <summary><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-                <div class="body">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。</div>
-              </details>
+              <div class="say">好,先把列表页搭起来,再拿同一张商品卡去做设置页。</div>
             </div>
           </div>
           <div class="st">
-            <div class="st-l"><span>手动展开 · 此后不再自动收起</span><i></i></div>
+            <div class="st-l"><span>跑完 · 收进过程里,是一段纯文字,没有标题也没有展开收起</span><i></i></div>
             <div class="st-b">
-              <details class="fold mod-think" open>
-                <summary><span>Thinking</span><span class="ms">12s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-                <div class="body">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。设置页要和它共用同一套间距与卡片圆角。</div>
-              </details>
+              <details class="fold" open><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>已完成 2 个任务</span><span class="ms mod-num">41 秒</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                <div class="body mod-stack">
+                  <p class="think">先判断这一屏属于哪种页面类型 —— 从截图里的搜索条和商品网格看,是商品列表页。设置页要和它共用同一套间距与卡片圆角,否则两屏放一起会明显不是一个产品。</p>
+                  <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">读 <code>tokens.css</code></span><span class="ms">0.3s</span></div>
+                  <p class="think">token 里圆角只有 8 和 12 两档,商品卡用 12 —— 那设置页的分组卡也跟着 12,不另开一档。</p>
+                  <div class="tool"><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="nm">写 <code>settings.html</code></span><span class="ms">1.4s</span></div>
+                </div></details>
             </div>
           </div>
         </div>
         <div class="cmp-ops">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
-          <span><b>展开收起</b> — 点标题行。生成中默认展开,结束后自动收起为一行摘要;手动展开过就不再自动收起。<b>展示</b>思考过程与耗时。</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5l3 2"/></svg>
+          <span><b>它是一行状态,不是一个模块</b> —— 唯一非它不可的时刻是【发出去之后、第一个字出来之前】:那时面板空着,这一行是唯一能说明"它没死"的东西。内容一落地它就该让位,再占一行就是拿噪音挡住你要读的东西。<b>跑完之后不在流水里单独出现</b>,收进「已完成 N 个任务」里。<b>在那里它是一段纯文字</b> —— 没有标题、没有 ⌄、没有耗时角标:它本来就是几句话,套个可折叠模块等于给一句话建了个房子。过程里本来就该有纯文字,不是所有东西都得装进模块。<b>和动作行交替出现</b>:文字说"为什么这么做",动作行说"于是做了什么",一读到底。</span>
         </div>
       </article>
 
