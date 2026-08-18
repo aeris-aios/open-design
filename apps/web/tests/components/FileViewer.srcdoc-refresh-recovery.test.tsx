@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FileViewer } from '../../src/components/FileViewer';
+import {
+  clearExceptionTrackingContext,
+  setExceptionTrackingContext,
+} from '../../src/analytics/error-tracking';
 import type { ProjectFile } from '../../src/types';
 
 function htmlFile(overrides: Partial<ProjectFile> = {}): ProjectFile {
@@ -41,8 +45,17 @@ function transportGeneration(frame: HTMLIFrameElement): string {
   return generation;
 }
 
+beforeEach(() => {
+  setExceptionTrackingContext({
+    apiKey: 'phc_preview_test',
+    host: 'https://posthog.test',
+    distinctId: 'preview-test-user',
+  });
+});
+
 afterEach(() => {
   cleanup();
+  clearExceptionTrackingContext();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -139,6 +152,7 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
           type: 'od:srcdoc-transport-activated',
           generation: transportGeneration(refreshedFrame),
           probeId: probe!.probeId,
+          bodyComplete: true,
         },
       }));
       vi.runAllTimers();
@@ -185,6 +199,7 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
           type: 'od:srcdoc-transport-activated',
           generation: firstProbe!.generation,
           probeId: firstProbe!.probeId,
+          bodyComplete: true,
         },
       }));
       vi.runAllTimers();
@@ -225,6 +240,86 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
     const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     expect(recoveredFrame).not.toBe(abortedFrame);
     expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
+  });
+
+  it('recovers when a partial head bridge answers the probe before the body completed', () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (
+      input: RequestInfo | URL,
+      _init?: RequestInit,
+    ) => new Response('', {
+      status: String(input).includes('/i/v0/e/') ? 200 : 404,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlFile()}
+        filesRefreshKey={0}
+        liveHtml={srcDocHtml('partial-document')}
+      />,
+    );
+
+    const partialFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(partialFrame.contentWindow!, 'postMessage');
+    act(() => {
+      vi.advanceTimersByTime(1_500);
+    });
+    const probe = postMessage.mock.calls.find(
+      ([message]) => (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe',
+    )?.[0] as { generation?: string; probeId?: string } | undefined;
+    expect(probe?.probeId).toBeTruthy();
+
+    act(() => {
+      // Chromium can leave the head bridge alive after aborting the rest of
+      // about:srcdoc. It can answer the challenge, but it has not observed the
+      // body-end marker and therefore must remain provisional.
+      window.dispatchEvent(new MessageEvent('message', {
+        source: partialFrame.contentWindow,
+        data: {
+          type: 'od:srcdoc-transport-activated',
+          generation: probe!.generation,
+          probeId: probe!.probeId,
+          bodyComplete: false,
+          documentReadyState: 'loading',
+          bodyPresent: true,
+          bodyChildCount: 2,
+          documentElementChildCount: 2,
+        },
+      }));
+    });
+
+    const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(recoveredFrame).not.toBe(partialFrame);
+    expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
+
+    const postHogCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes('/i/v0/e/'));
+    expect(postHogCalls).toHaveLength(1);
+    const [, postHogInit] = postHogCalls[0]!;
+    expect(postHogInit).toBeDefined();
+    const payload = JSON.parse(
+      String(postHogInit?.body),
+    ) as { event?: string; properties?: Record<string, unknown> };
+    expect(payload).toMatchObject({
+      event: 'client_preview_white_screen',
+      properties: {
+        reason: 'srcdoc_transport_unverified',
+        transport_signal: 'body_incomplete',
+        transport_stage: 'head_bridge_alive_body_tail_missing',
+        activation_acknowledged: true,
+        body_complete: false,
+        frame_ready_state: 'loading',
+        frame_body_present: true,
+        frame_body_child_count: 2,
+        frame_document_element_child_count: 2,
+        recovery_attempted: true,
+        recovery_path: 'lazy_shell_remount',
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain('partial-document');
   });
 
   it('revalidates an early activation acknowledgement after the frame load completes', () => {

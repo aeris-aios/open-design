@@ -2717,6 +2717,7 @@ describe('FileViewer SVG artifacts', () => {
           type: 'od:srcdoc-transport-activated',
           generation: readinessProbe!.generation,
           probeId: readinessProbe!.probeId,
+          bodyComplete: true,
         },
       }));
     });
@@ -7362,6 +7363,7 @@ describe('FileViewer tweaks toolbar', () => {
             type: 'od:srcdoc-transport-activated',
             generation: initialGeneration,
             probeId: initialProbe!.probeId,
+            bodyComplete: true,
           },
         }));
       });
@@ -7799,6 +7801,7 @@ describe('FileViewer tweaks toolbar', () => {
           type: 'od:srcdoc-transport-activated',
           generation: probe.generation,
           probeId: probe.probeId,
+          bodyComplete: true,
         },
       }));
     });

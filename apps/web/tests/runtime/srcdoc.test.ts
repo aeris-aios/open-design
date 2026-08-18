@@ -116,6 +116,10 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain("data.type === 'od:srcdoc-transport-ready-probe'");
     expect(srcdoc).toContain('announceReady(data.probeId)');
     expect(srcdoc).toContain('message.probeId = probeId');
+    expect(srcdoc).toContain('data-od-srcdoc-transport-body-complete');
+    expect(srcdoc).toContain('message.bodyComplete = bodyComplete');
+    expect(srcdoc).toContain('message.documentReadyState = document.readyState');
+    expect(srcdoc).toContain('message.bodyChildCount = document.body ? document.body.children.length : 0');
   });
 
   it('paints an opaque background before drawing so empty rasters never flatten to black', () => {

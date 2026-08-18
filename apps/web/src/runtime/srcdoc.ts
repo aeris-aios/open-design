@@ -544,6 +544,12 @@ function injectSrcdocTransportActivationBridge(doc: string, generation: string):
       if (window.parent && window.parent !== window) {
         var message = { type: 'od:srcdoc-transport-activated', generation: generation };
         if (typeof probeId === 'string' && probeId) message.probeId = probeId;
+        var bodyComplete = !!document.querySelector('template[data-od-srcdoc-transport-body-complete]');
+        message.bodyComplete = bodyComplete;
+        message.documentReadyState = document.readyState;
+        message.bodyPresent = !!document.body;
+        message.bodyChildCount = document.body ? document.body.children.length : 0;
+        message.documentElementChildCount = document.documentElement ? document.documentElement.children.length : 0;
         window.parent.postMessage(message, '*');
       }
     } catch (_) { /* sandboxed parent */ }
@@ -567,7 +573,13 @@ function injectSrcdocTransportActivationBridge(doc: string, generation: string):
   // missing-ACK recovery indistinguishable from a genuinely aborted
   // `about:srcdoc` navigation. Placing the bridge first also runs it before an
   // authored meta CSP can disable later inline scripts.
-  return injectAfterHeadOpen(doc, script);
+  // The inert tail marker distinguishes a fully parsed artifact from the
+  // half-document Chromium can leave behind after aborting about:srcdoc. The
+  // head bridge remains alive in that state and can answer a host probe, but
+  // it cannot see a marker the parser never reached. A template is used so the
+  // witness executes no script and remains compatible with authored CSPs.
+  const bodyCompleteMarker = '<template data-od-srcdoc-transport-body-complete></template>';
+  return injectBeforeBodyEnd(injectAfterHeadOpen(doc, script), bodyCompleteMarker);
 }
 
 function injectSnapshotBridge(doc: string): string {

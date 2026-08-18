@@ -13,9 +13,9 @@
 //
 // It is intentionally pure and synchronous (DOMParser only) so it memoizes on
 // the source string and is unit-testable. Decks it cannot faithfully render
-// statically (external layout CSS, viewport-unit slides, script-built content)
-// report `renderable: false` with a reason, and the caller keeps the old
-// iframe thumbnail for that deck.
+// statically (external layout CSS or script-built content) report
+// `renderable: false` with a reason, and the caller keeps the old iframe
+// thumbnail for that deck.
 
 import DOMPurify from 'dompurify';
 
@@ -143,11 +143,24 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
   // and each `var(--slide-bg)` resolves to transparent, painting nothing over
   // the near-black thumbnail host (black thumbnails). Comments are inert, so
   // removing them changes only which selectors the rewrites can see.
-  const rawStyle = stripCssComments(
+  const styleWithImports = stripCssComments(
     Array.from(doc.querySelectorAll('style'))
       .map((el) => el.textContent || '')
       .join('\n'),
   );
+  if (!styleWithImports.trim()) return unrenderable('no-styles');
+
+  // Constructable stylesheets ignore @import, so leaving an approved webfont
+  // import in styleText silently changes typography and line wrapping in the
+  // shadow thumbnail. Lift approved font imports into the host alongside
+  // <link> fonts; any other import may contain layout CSS we cannot reproduce
+  // safely, so use the isolated iframe fallback instead.
+  const imported = extractStylesheetImports(styleWithImports);
+  if (imported.unsafe) return unrenderable('external-stylesheet');
+  for (const href of imported.fontLinks) {
+    if (!fontLinks.includes(href)) fontLinks.push(href);
+  }
+  const rawStyle = imported.css;
   if (!rawStyle.trim()) return unrenderable('no-styles');
 
   const designSize = resolveDesignSize(doc, rawStyle);
@@ -309,6 +322,52 @@ function matchPxLength(body: string, prop: 'width' | 'height'): number | null {
 // and deck CSS effectively never puts comment markers inside string values.
 function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+interface StylesheetImportExtraction {
+  css: string;
+  fontLinks: string[];
+  unsafe: boolean;
+}
+
+// CSS imports may contain semicolons inside a quoted URL (Google Fonts uses
+// this for axis tuples), so the URL alternatives consume their quoted or
+// parenthesized payload before matching the statement terminator.
+const CSS_IMPORT_RE = /@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^'"\s][^)]*))\s*\)|"([^"]*)"|'([^']*)')\s*[^;]*;/gi;
+
+function extractStylesheetImports(css: string): StylesheetImportExtraction {
+  const fontLinks: string[] = [];
+  let unsafe = false;
+  const stripped = css.replace(
+    CSS_IMPORT_RE,
+    (
+      _statement,
+      doubleQuotedUrl?: string,
+      singleQuotedUrl?: string,
+      bareUrl?: string,
+      doubleQuotedHref?: string,
+      singleQuotedHref?: string,
+    ) => {
+      const href = [
+        doubleQuotedUrl,
+        singleQuotedUrl,
+        bareUrl,
+        doubleQuotedHref,
+        singleQuotedHref,
+      ].find((value): value is string => typeof value === 'string')?.trim() ?? '';
+      if (!href || !isApprovedFontHref(href)) {
+        unsafe = true;
+        return '';
+      }
+      if (!fontLinks.includes(href)) fontLinks.push(href);
+      return '';
+    },
+  );
+  // A malformed or unsupported @import form must not leak into the app-origin
+  // shadow stylesheet. Falling back is safer and more faithful than pretending
+  // the imported layout rules do not exist.
+  if (/@import\b/i.test(stripped)) unsafe = true;
+  return { css: stripped, fontLinks, unsafe };
 }
 
 // Rewrite `:root`/`html` to `:host`, so document-level variables inherit into
