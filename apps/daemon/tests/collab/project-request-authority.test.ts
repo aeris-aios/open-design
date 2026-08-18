@@ -381,7 +381,7 @@ describe('createAuthorizeProjectRequest', () => {
         status: 503 as const,
         code: 'WORKSPACE_AUTHORITY_UNAVAILABLE',
         message: 'workspace authority is temporarily unavailable',
-        retryable: true,
+        retryable: true as const,
       }));
       const sendApiError = vi.fn();
       const authorize = createAuthorizeProjectRequest({
