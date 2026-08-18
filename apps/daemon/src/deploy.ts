@@ -813,7 +813,8 @@ function cloudflarePagesDnsConflictError(selection: CloudflarePagesDeploySelecti
       dnsRecordId: conflicting.id,
       dnsOwnership: 'external',
     },
-   'CF_DNS_RECORD_CONFLICT');
+    'CF_DNS_RECORD_CONFLICT',
+  );
 }
 
 async function maybeReuseCloudflarePagesCnameAfterDuplicate({ err, config, selection, targetHost, marker }: { err: unknown; config: DeployConfig; selection: CloudflarePagesDeploySelection; targetHost: string; marker: string }) {
@@ -902,7 +903,8 @@ async function ensureCloudflarePagesDomain(config: DeployConfig, hostname: strin
           errorCode: 'cloudflare_domain_already_bound',
           domainStatus: 'conflict',
         },
-       'CF_DOMAIN_ALREADY_BOUND');
+        'CF_DOMAIN_ALREADY_BOUND',
+      );
     }
     throw cloudflareError(json, resp.status, 'Cloudflare Pages custom domain setup failed.');
   }
@@ -1917,7 +1919,14 @@ function cloudflareError(json: JsonObject, status: number, fallback: string) {
     json?.message ||
     fallback ||
     `Cloudflare request failed (${status}).`;
-  return new DeployError(message, status, json, 'PROVIDER_ERROR');
+  // Deliberately NO structured code: this is the catch-all for any Cloudflare
+  // API rejection, where the provider's HTTP status IS the signal. The client
+  // (apps/web/src/providers/registry.ts) only falls back to `HTTP_${status}`
+  // when the envelope code is generic, so stamping one code here would fold
+  // auth (403), quota (429) and upstream faults (5xx) into a single bucket —
+  // the opposite of what this file's specific codes are for. Add a code here
+  // only for a failure whose CAUSE is known, not merely its status.
+  return new DeployError(message, status, json);
 }
 
 function isCloudflareAlreadyExists(body: unknown) {
@@ -1942,7 +1951,9 @@ function vercelError(json: JsonObject, status: number) {
   if (code === 'forbidden' || /permission/i.test(message)) {
     return new DeployError("You don't have permission to create a project.", status, json, 'PROVIDER_FORBIDDEN');
   }
-  return new DeployError(message, status, json, 'PROVIDER_ERROR');
+  // Catch-all — no structured code, so the client keeps bucketing by the real
+  // provider status. See cloudflareError above.
+  return new DeployError(message, status, json);
 }
 
 function deploymentUrl(json: JsonObject | null | undefined) {

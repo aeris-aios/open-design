@@ -9,6 +9,10 @@ export interface RegisterDeployRoutesDeps extends RouteDeps<'db' | 'http' | 'pat
 export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps) {
   const { db } = ctx;
   const { sendApiError } = ctx.http;
+  const { PROJECTS_DIR } = ctx.paths;
+  const { randomUUID } = ctx.ids;
+  const { getProject } = ctx.projectStore;
+  const { VERCEL_PROVIDER_ID, CLOUDFLARE_PAGES_PROVIDER_ID, isDeployProviderId, publicDeployConfigForProvider, readDeployConfig, writeDeployConfig, listCloudflarePagesZones, DeployError, listDeployments, publicDeployments, getDeployment, buildDeployFileSet, cloudflarePagesProjectNameForDeploy, deployToCloudflarePages, deployToVercel, upsertDeployment, publicDeployment, cloudflarePagesDeploymentMetadata, prepareDeployPreflight } = ctx.deploy;
 
   /**
    * A DeployError now carries a specific `code` (MISSING_REFERENCES,
@@ -17,14 +21,17 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
    * code into `artifact_deploy_result.error_code`, so without this every
    * distinct cause — missing token, non-HTML file, unresolved asset reference,
    * oversized asset — collapsed into one opaque HTTP_400 bucket.
+   *
+   * Provider transport failures deliberately arrive WITHOUT a code (see
+   * cloudflareError / vercelError in apps/daemon/src/deploy.ts): they fall back
+   * to the generic envelope code so the client keeps bucketing them by the real
+   * provider status (HTTP_403 / HTTP_429 / HTTP_502) instead of collapsing
+   * auth, quota and upstream faults into one.
    */
   const deployErrorCodeFor = (err: any, status: number): string =>
     (err instanceof DeployError && err.code) ||
     (status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST');
-  const { PROJECTS_DIR } = ctx.paths;
-  const { randomUUID } = ctx.ids;
-  const { getProject } = ctx.projectStore;
-  const { VERCEL_PROVIDER_ID, CLOUDFLARE_PAGES_PROVIDER_ID, isDeployProviderId, publicDeployConfigForProvider, readDeployConfig, writeDeployConfig, listCloudflarePagesZones, DeployError, listDeployments, publicDeployments, getDeployment, buildDeployFileSet, cloudflarePagesProjectNameForDeploy, deployToCloudflarePages, deployToVercel, upsertDeployment, publicDeployment, cloudflarePagesDeploymentMetadata, prepareDeployPreflight } = ctx.deploy;
+
   // ---- Deploy --------------------------------------------------------------
 
   app.get('/api/deploy/config', async (req, res) => {
@@ -54,7 +61,7 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
       const body = await writeDeployConfig(providerId, input);
       res.json(body);
     } catch (err: any) {
-      sendApiError(res, 400, 'BAD_REQUEST', String(err?.message || err));
+      sendApiError(res, 400, deployErrorCodeFor(err, 400), String(err?.message || err));
     }
   });
 
