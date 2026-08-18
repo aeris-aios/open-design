@@ -2044,8 +2044,9 @@ body { background: var(--bg-subtle); overflow: auto; }
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>执行计划 · 4 步</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">复刻列表页 · 抽共享组件 · 做设置页 · 接跳转</div></details>
 
-        <details class="fold"><summary><svg class="memo-ic" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="15" height="15"><path d="M6.5 3h11a1.5 1.5 0 011.5 1.5v16.2a.8.8 0 01-1.26.65L12 17.4l-5.74 3.95A.8.8 0 015 20.7V4.5A1.5 1.5 0 016.5 3z"/></svg><span>已记住 3 条偏好</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
-          <div class="body">商品卡做成共享组件 · 圆角统一 12px · 不要暖色背景</div></details>
+        <!-- 「已记住 N 条偏好」不放在这一屏:执行中整屏讲的是 agent 正在做什么,
+             记住偏好不是这一轮的一个步骤,夹在计划和第 1 步中间会被读成流程的一环。
+             它是这一轮攒下来的东西,放在「跑完」那一屏和结论一起给。 -->
 
         <details class="fold"><summary><span class="mk is-ok"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span>复刻商品列表页</span><span class="ms">18.2s</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="11" height="11"><path d="M6 9l6 6 6-6"/></svg></span></summary>
           <div class="body">读取截图 · 建栅格 · 落 12 张商品卡</div></details>
