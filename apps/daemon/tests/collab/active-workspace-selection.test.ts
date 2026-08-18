@@ -165,6 +165,17 @@ describe('observed active team workspace snapshot', () => {
 });
 
 describe('active workspace selection generation', () => {
+  it('restores the last selection after the store is recreated', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
+    roots.push(root);
+    const firstRun = createActiveWorkspaceSelectionStore(root);
+
+    await firstRun.set('workspace-last-used');
+
+    const restarted = createActiveWorkspaceSelectionStore(root);
+    expect(restarted.get()).toBe('workspace-last-used');
+  });
+
   it('notifies subscribers after persisted selection changes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'od-workspace-selection-'));
     roots.push(root);

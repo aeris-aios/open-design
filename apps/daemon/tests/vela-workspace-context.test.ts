@@ -20,8 +20,8 @@ import {
   readVelaLoginStatus,
 } from '../src/integrations/vela.js';
 
-// A well-formed body as B's GET /api/v1/workspaces/current returns it — a team
-// member on a BYOK provider (workspace features stay on regardless of provider).
+// A well-formed rich workspace-context body, as returned inside flows such as
+// invite continuation — a team member on a BYOK provider.
 const B_TEAM_CONTEXT = {
   userId: 'auth-user-1',
   appUserId: 'app-user-1',
@@ -904,7 +904,9 @@ describe('createWorkspaceDirectoryAuthorityBroker', () => {
 
 describe('createVelaWorkspaceContextProvider', () => {
   it('adds the signed-in user name and profile image to the workspace identity', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      items: [B_DIRECTORY_ITEM],
+    })) as unknown as typeof fetch;
     const provider = createVelaWorkspaceContextProvider({
       fetch: fetchImpl,
       readSession: () => ({
@@ -916,6 +918,7 @@ describe('createVelaWorkspaceContextProvider', () => {
           image: 'https://example.com/elian.png',
         },
       }),
+      getActiveWorkspaceId: () => 'ws-team-1',
     });
 
     await expect(provider.current({})).resolves.toMatchObject({
@@ -924,17 +927,20 @@ describe('createVelaWorkspaceContextProvider', () => {
     });
   });
 
-  it('fetches B with the vela session bearer token and maps the result', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, B_TEAM_CONTEXT)) as unknown as typeof fetch;
+  it('fetches the membership directory with the vela session bearer token', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      items: [B_DIRECTORY_ITEM],
+    })) as unknown as typeof fetch;
     const provider = createVelaWorkspaceContextProvider({
       fetch: fetchImpl,
       readSession: () => SESSION,
+      getActiveWorkspaceId: () => 'ws-team-1',
     });
     const context = await provider.current({});
     expect(context?.workspaceMemberId).toBe('wm-1');
     expect(context?.teamId).toBe('ws-team-1');
     const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(String(url)).toBe('https://vela.example/api/v1/workspaces/current');
+    expect(String(url)).toBe('https://vela.example/api/v1/workspaces');
     expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer ck-1' });
   });
 
@@ -984,20 +990,11 @@ describe('createVelaWorkspaceContextProvider', () => {
   });
 });
 
-// B-line explicit-workspace handoff: the client must not perceive (or write)
-// B's account-level Active Workspace. The provider serves the LOCALLY selected
-// workspace — enriched from B when B agrees, synthesized from the workspace
-// directory when it does not — and only falls back to B's current when the
-// client has no selection at all. A fresh account (no current anywhere) picks
-// a LOCAL default (personal first) without ever PUTting server state.
+// B-line explicit-workspace handoff: the client does not perceive or write B's
+// account-level Active Workspace. The provider resolves its LOCALLY selected
+// workspace exclusively through the authenticated membership directory. A
+// client with no saved selection picks and persists a local bootstrap default.
 describe('createVelaWorkspaceContextProvider explicit local scope', () => {
-  const B_PERSONAL_CONTEXT = {
-    ...B_TEAM_CONTEXT,
-    workspaceId: 'ws-personal-1',
-    workspaceType: 'personal',
-    workspaceMemberId: 'wm-p1',
-    role: 'owner',
-  };
   const DIRECTORY = {
     items: [
       {
@@ -1021,28 +1018,21 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     ],
   };
 
-  function scriptedFetch(handlers: {
-    current?: () => Response;
-    directory?: () => Response;
-    put?: () => Response;
-  }) {
+  function scriptedFetch(handlers: { directory?: () => Response }) {
     const calls: Array<{ url: string; method: string }> = [];
     const fetchImpl = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
       const u = String(url);
       calls.push({ url: u, method });
-      if (u.includes('/workspaces/current') && method === 'GET' && handlers.current) return handlers.current();
       if (u.endsWith('/api/v1/workspaces') && method === 'GET' && handlers.directory) return handlers.directory();
-      if (u.includes('/workspaces/current') && method === 'PUT' && handlers.put) return handlers.put();
       throw new Error(`unexpected fetch ${method} ${u}`);
     }) as unknown as typeof fetch;
     return { fetchImpl, calls };
   }
 
-  it('picks a LOCAL default (personal first) with no server write when B has no current', async () => {
+  it('picks a LOCAL bootstrap default (personal first) with no server write', async () => {
     vi.stubEnv('OD_VELA_WEB_URL', 'https://web.example.com/console');
     const { fetchImpl, calls } = scriptedFetch({
-      current: () => jsonResponse(403, { error: 'missing_principal' }),
       directory: () => jsonResponse(200, DIRECTORY),
     });
     const selected: string[] = [];
@@ -1064,14 +1054,29 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     expect(calls.some((c) => c.method === 'PUT')).toBe(false);
   });
 
-  it('keeps Personal workspace actions stable from a synthesized context to a rich refresh', async () => {
+  it('restores the saved local workspace after recreating the provider', async () => {
+    let localSelection: string | null = 'ws-team-1';
+    const { fetchImpl, calls } = scriptedFetch({
+      directory: () => jsonResponse(200, DIRECTORY),
+    });
+    const createProvider = () => createVelaWorkspaceContextProvider({
+      fetch: fetchImpl,
+      readSession: () => SESSION,
+      getActiveWorkspaceId: () => localSelection,
+      setLocalSelection: (workspaceId) => {
+        localSelection = workspaceId;
+      },
+    });
+
+    expect((await createProvider().current({}))?.workspaceId).toBe('ws-team-1');
+    expect((await createProvider().current({}))?.workspaceId).toBe('ws-team-1');
+    expect(localSelection).toBe('ws-team-1');
+    expect(calls.every((call) => call.url.endsWith('/api/v1/workspaces'))).toBe(true);
+  });
+
+  it('keeps Personal workspace actions stable across directory refreshes', async () => {
     vi.stubEnv('OD_VELA_WEB_URL', 'https://web.example.com/console');
-    let currentRead = 0;
     const { fetchImpl } = scriptedFetch({
-      // First read disagrees with OD's Personal pin and forces directory
-      // synthesis. The next read models the rich response after switching away
-      // and back, when B's account-level current finally matches the local pin.
-      current: () => jsonResponse(200, currentRead++ === 0 ? B_TEAM_CONTEXT : B_PERSONAL_CONTEXT),
       directory: () => jsonResponse(200, DIRECTORY),
     });
     const provider = createVelaWorkspaceContextProvider({
@@ -1090,9 +1095,8 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     expect(refreshed?.workspaceSettingsUrl).toBe(initial?.workspaceSettingsUrl);
   });
 
-  it('serves the local selection and ignores a mismatched server current', async () => {
+  it('serves the local selection regardless of directory ordering', async () => {
     const { fetchImpl } = scriptedFetch({
-      current: () => jsonResponse(200, B_PERSONAL_CONTEXT),
       directory: () => jsonResponse(200, DIRECTORY),
     });
     const provider = createVelaWorkspaceContextProvider({
@@ -1101,17 +1105,15 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
       getActiveWorkspaceId: () => 'ws-team-1',
     });
     const context = await provider.current({});
-    // Another device switched B's Active Workspace to personal; this daemon's
-    // pinned scope must not follow it.
     expect(context?.workspaceId).toBe('ws-team-1');
     expect(context?.workspaceType).toBe('team');
     expect(context?.teamId).toBe('ws-team-1');
     expect(context?.workspaceMemberId).toBe('wm-1');
   });
 
-  it('enriches from B when the server current matches the local selection', async () => {
+  it('derives the selected context entirely from the membership directory', async () => {
     const { fetchImpl } = scriptedFetch({
-      current: () => jsonResponse(200, B_TEAM_CONTEXT),
+      directory: () => jsonResponse(200, DIRECTORY),
     });
     const provider = createVelaWorkspaceContextProvider({
       fetch: fetchImpl,
@@ -1120,20 +1122,19 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     });
     const context = await provider.current({});
     expect(context?.workspaceId).toBe('ws-team-1');
-    // Rich billing data only B carries — proof the mapped body was used.
-    expect(context?.planId).toBe('team-pro');
+    expect(context?.workspaceName).toBe('Team');
+    expect(context?.planId).toBeNull();
   });
 
-  it('does not bootstrap on 401 (signed out is not a missing principal)', async () => {
+  it('does not bootstrap when the directory returns 401', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(401, { error: 'unauthenticated' })) as unknown as typeof fetch;
     const provider = createVelaWorkspaceContextProvider({ fetch: fetchImpl, readSession: () => SESSION });
     expect(await provider.current({})).toBeNull();
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
   });
 
-  it('cools down after a failed default pick instead of hammering the directory', async () => {
+  it('keeps an empty directory unselected and retries on the next read', async () => {
     const { fetchImpl, calls } = scriptedFetch({
-      current: () => jsonResponse(403, { error: 'missing_principal' }),
       directory: () => jsonResponse(200, { items: [] }),
     });
     const provider = createVelaWorkspaceContextProvider({
@@ -1143,7 +1144,7 @@ describe('createVelaWorkspaceContextProvider explicit local scope', () => {
     expect(await provider.current({})).toBeNull();
     expect(await provider.current({})).toBeNull();
     const directoryCalls = calls.filter((c) => c.url.endsWith('/api/v1/workspaces'));
-    expect(directoryCalls.length).toBe(1);
+    expect(directoryCalls.length).toBe(2);
   });
 });
 
@@ -1211,11 +1212,10 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
     };
   }
 
-  function scriptedFetch(handlers: { current?: () => Response; directory?: () => Response }) {
+  function scriptedFetch(handlers: { directory?: () => Response }) {
     const fetchImpl = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
       const u = String(url);
-      if (u.includes('/workspaces/current') && method === 'GET' && handlers.current) return handlers.current();
       if (u.endsWith('/api/v1/workspaces') && method === 'GET' && handlers.directory) return handlers.directory();
       throw new Error(`unexpected fetch ${method} ${u}`);
     }) as unknown as typeof fetch;
@@ -1225,9 +1225,6 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
   it('RED→GREEN: clears the pin and falls back to personal when the workspace vanished from the directory', async () => {
     const pin = statefulPin('ws-team-1');
     const fetchImpl = scriptedFetch({
-      // B also refuses this pinned scope now (not a 401 — the vela session
-      // itself is still fine, just this workspace is no longer usable).
-      current: () => jsonResponse(403, { error: 'membership_not_found' }),
       directory: () => jsonResponse(200, DIRECTORY_WITHOUT_TEAM),
     });
     const provider = createVelaWorkspaceContextProvider({
@@ -1254,7 +1251,6 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
   it('RED→GREEN: clears the pin when the membership is listed but no longer active', async () => {
     const pin = statefulPin('ws-team-1');
     const fetchImpl = scriptedFetch({
-      current: () => jsonResponse(403, { error: 'membership_not_found' }),
       directory: () => jsonResponse(200, DIRECTORY_TEAM_MEMBER_REMOVED),
     });
     const provider = createVelaWorkspaceContextProvider({
@@ -1277,9 +1273,6 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
     const fetchImpl = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
       const u = String(url);
-      if (u.includes('/workspaces/current') && method === 'GET') {
-        return jsonResponse(403, { error: 'membership_not_found' });
-      }
       if (u.endsWith('/api/v1/workspaces') && method === 'GET') {
         throw new Error('network down');
       }
@@ -1308,7 +1301,6 @@ describe('createVelaWorkspaceContextProvider — stale pin recovery', () => {
   it('does NOT clear the pin when the directory request itself returns a non-2xx', async () => {
     const pin = statefulPin('ws-team-1');
     const fetchImpl = scriptedFetch({
-      current: () => jsonResponse(403, { error: 'membership_not_found' }),
       directory: () => jsonResponse(500, { error: 'internal' }),
     });
     const provider = createVelaWorkspaceContextProvider({

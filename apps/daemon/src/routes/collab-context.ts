@@ -173,9 +173,8 @@ export interface RegisterCollabContextRoutesDeps {
     context: WorkspaceCollabContext,
   ) => Promise<CollabCloudMemberDirectoryEntry[]>;
   /**
-   * Legacy local selection store retained for compatibility wiring. Data-plane
-   * routes do not read or mutate it; each tab carries its exact Workspace and
-   * member identity on the request.
+   * Client-local restart default. Data-plane routes never use it as authority;
+   * each tab continues to carry its exact Workspace and member identity.
    */
   activeWorkspace?: {
     get(): string | null;
@@ -549,7 +548,21 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       fetchWorkspaceDirectory: async () => directory,
       configuredEnv: configuredEnv(),
     });
-    const activeWorkspaceId = claimed.ok ? claimed.context.workspaceId : null;
+    const savedWorkspaceId = deps.activeWorkspace?.get()?.trim() || null;
+    const savedWorkspaceIsVisible = Boolean(
+      savedWorkspaceId
+      && items.some(
+        (item) =>
+          item.workspaceId === savedWorkspaceId
+          && item.memberStatus === 'active'
+          && item.lifecycleState !== 'deleted',
+      ),
+    );
+    if (savedWorkspaceId && !savedWorkspaceIsVisible) {
+      await deps.activeWorkspace?.clear().catch(() => undefined);
+    }
+    let activeWorkspaceId = savedWorkspaceIsVisible ? savedWorkspaceId : null;
+    if (claimed.ok) activeWorkspaceId = claimed.context.workspaceId;
     const body: WorkspaceDirectoryResponse = { items, activeWorkspaceId };
     res.json(body);
   });
@@ -588,8 +601,8 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
     // Matching on the id alone would let a listed-but-removed membership (or a
     // deleted workspace) through, and this entry is also what gets synthesized
     // into the response below — so an unfiltered match could describe a
-    // workspace the caller no longer holds. Same predicate the provider's own
-    // `resolvePinnedWorkspace` uses.
+    // workspace the caller no longer holds. This matches the context provider's
+    // directory-selection predicate.
     const selected = directory.find(
       (item) =>
         item.workspaceId === workspaceId &&
@@ -601,9 +614,10 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       return res.status(404).json({ error: 'workspace_not_visible' });
     }
 
-    // Choosing a workspace is tab-local. The membership directory above is the
-    // authorization; neither this compatibility endpoint nor any data-plane
-    // route writes a daemon-global active Workspace.
+    // The membership directory above is the authorization. Persist the choice
+    // only as this client's next-start default; data-plane routes continue to
+    // require the exact Workspace/member pair on every request, so another tab
+    // already operating in a different workspace keeps its own scope.
     //
     // This used to PUT B's account-level active workspace first and fail the
     // user's click (502) when that write did not take. That row is keyed by app
@@ -628,6 +642,16 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       return res.status(404).json({ error: 'workspace_no_longer_available' });
     }
     const resolved = context ?? workspaceContextFromDirectoryItem(selected, configuredEnv());
+    try {
+      await deps.activeWorkspace?.set(workspaceId);
+    } catch {
+      return sendApiError(
+        res,
+        500,
+        'INTERNAL_ERROR',
+        'failed to persist the selected workspace',
+      );
+    }
     // Warm this exact workspace's cold caches before responding, but never
     // await them — a slow upstream must not delay the tab-local selection.
     deps.onWorkspaceSwitched?.(workspaceId);

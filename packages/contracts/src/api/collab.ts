@@ -258,11 +258,11 @@ export interface WorkspaceBillingRecovery {
 }
 
 /**
- * The one shared workspace context every team surface consumes. A faithful mirror
- * of B's `CurrentWorkspaceContext` (vela packages/shared/src/workspace-context.ts,
- * shipped in powerformer/vela#615) so the daemon's `/api/workspace/context` proxy
- * is a straight field pass-through and no C surface re-derives role/plan/permission
- * judgements. `context` is null off-team (personal, signed out, or B unavailable).
+ * The one shared workspace context every workspace surface consumes. In
+ * production the daemon resolves it from its local selection plus B's
+ * authenticated membership directory; richer flows such as invite continuation
+ * may populate the optional billing/display fields from a workspace-context
+ * payload. `context` is null when signed out or B is unavailable.
  */
 export interface WorkspaceCollabContext {
   workspaceId: string;
@@ -292,8 +292,8 @@ export interface WorkspaceCollabContext {
   teamName?: string;
   /**
    * B's display name for THIS workspace, whatever its type. Mirrors the
-   * `workspaceName` on B's CurrentWorkspaceContext, which is required there and
-   * is populated for personal workspaces too — vela derives "«owner»'s
+   * `workspaceName` in B's membership directory/context payloads and is
+   * populated for personal workspaces too — vela derives "«owner»'s
    * workspace" for an unnamed one, and an owner may rename it outright.
    *
    * Distinct from `teamName` on purpose: `teamName` is the TEAM switcher's
@@ -311,9 +311,9 @@ export interface WorkspaceCollabContext {
 }
 
 /**
- * GET /api/workspace/context. The daemon's single B-integration point: in
- * production it proxies B's context for the caller; `context` is null when there
- * is no team-workspace context (personal, signed out, or B unavailable).
+ * GET /api/workspace/context. The daemon resolves the locally selected entry
+ * through B's authenticated membership directory; `context` is null when the
+ * caller is signed out or the directory is unavailable.
  */
 export interface WorkspaceContextResponse {
   context: WorkspaceCollabContext | null;
@@ -335,16 +335,19 @@ export interface WorkspaceDirectoryItem {
 export interface WorkspaceDirectoryResponse {
   items: WorkspaceDirectoryItem[];
   /**
-   * @deprecated Compatibility echo of the request-side selection claim.
-   * It is not a daemon-global active Workspace and must not scope resources.
+   * Last workspace deliberately selected by this client, when it is still a
+   * visible membership. This is a restart bootstrap hint only; it must never
+   * scope data-plane requests, which continue to carry an exact Workspace and
+   * member identity.
    */
   activeWorkspaceId: string | null;
 }
 
 /**
  * PUT /api/workspace/active.
- * Verifies and resolves this tab's exact Workspace/member selection; it does
- * not mutate a daemon-global selection used to scope resources.
+ * Verifies and resolves this tab's exact Workspace/member selection, then
+ * persists the Workspace id as this client's next-start bootstrap hint. It
+ * does not create implicit data-plane authority.
  */
 export interface WorkspaceActiveRequest {
   workspaceId: string;
@@ -352,7 +355,7 @@ export interface WorkspaceActiveRequest {
 }
 
 export interface WorkspaceActiveResponse {
-  /** Compatibility echo of the verified tab-selected Workspace id. */
+  /** The verified Workspace id persisted as the client's restart default. */
   activeWorkspaceId: string;
   context: WorkspaceCollabContext;
 }
