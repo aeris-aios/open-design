@@ -1203,11 +1203,15 @@ button.att-d:hover { border-color: var(--border-strong); }
   background: var(--brand-text); border: none;
   font-size: var(--t-cap); font-weight: 500; line-height: 1.6; color: var(--bg);
 }
-.vd { display: block; margin-top: 2px; font-size: var(--t-cap); line-height: var(--lh-row); color: var(--text-muted); }
+/* 方向名底下【不挂一句描述】。
+   「大留白、细字重,一屏只讲一件事」这种话是在把图上看得见的东西翻译成文字 ——
+   四张都写就是四段要读的句子,横在图和图之间,挑图这个动作反倒被文字打断。
+   这张卡存在的理由恰恰是"抽象词说不清,所以给你看图";再补描述等于承认图没说清。
+   名字留着,是因为选完之后「已确认」那条陈述要有个词可写。 */
 
 /* 预览位与附件缩略图同一处理:一块纯灰压住图片该占的范围,不画内容。
    这是占位不是效果图 —— 真正的"内置精选预览图"到位后换掉 .mini 即可,
-   外框、勾选圈、标题描述都不用动。
+   外框、勾选圈、方向名都不用动。
    代价说明白:四张现在长得一样,这份稿子里没法判断"能不能比出风格差异",
    那要等真图。能判断的是版式、勾选、推荐位和"帮我决定"的出口。 */
 
@@ -1952,7 +1956,7 @@ body { background: var(--bg-subtle); overflow: auto; }
    构件墙里看不出来。Queue 和输入框钉在底部,不随流水滚走。 */
 .panel {
   display: flex; flex-direction: column;
-  height: 1073px;  /* 七屏里最高的那屏(挑风格,929 内容 + 144 头尾)所需;谁的内容都不用滚,矮的那屏靠 margin-top:auto 贴底 */
+  height: 997px;  /* 七屏各自所需里的最大值(挑风格 853 内容 + 144 头尾);谁的内容都不用滚,矮的那屏靠 margin-top:auto 贴底 */
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--bg); overflow: hidden;
 }
@@ -2342,19 +2346,19 @@ body { background: var(--bg-subtle); overflow: auto; }
                 <div class="opts mod-visual">
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span><span class="vd">大留白、细字重,一屏只讲一件事</span></span>
+                    <span class="vmeta"><span class="vt">克制留白<span class="vrec">推荐</span></span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">编辑杂志</span><span class="vd">粗标题压顶、大图叙事,像一本刊物</span></span>
+                    <span class="vmeta"><span class="vt">编辑杂志</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">活泼消费</span><span class="vd">圆角卡片网格,块头大、上手快</span></span>
+                    <span class="vmeta"><span class="vt">活泼消费</span></span>
                   </button>
                   <button class="vopt" type="button">
                     <span class="vpv"><span class="pick"><svg class="ck" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><span class="mini"></span></span>
-                    <span class="vmeta"><span class="vt">数据密集</span><span class="vd">细行密排,一屏塞得下更多信息</span></span>
+                    <span class="vmeta"><span class="vt">数据密集</span></span>
                   </button>
                 </div>
                 <div class="foot">
