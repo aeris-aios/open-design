@@ -27,6 +27,7 @@ export const WIN_PREBUNDLE_RUNTIME_DEPENDENCIES = {
   "blake3-wasm": "2.1.5",
   "hyperframes": "0.8.1",
   "node-pty": "1.1.0",
+  "sharp": "0.35.3",
 } as const;
 
 export const WIN_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES = [

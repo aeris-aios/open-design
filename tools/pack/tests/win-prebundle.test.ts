@@ -95,6 +95,7 @@ describe("win standalone prebundle policy", () => {
       "blake3-wasm": "2.1.5",
       "hyperframes": "0.8.1",
       "node-pty": "1.1.0",
+      "sharp": "0.35.3",
     });
     expect(WIN_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-cli.mjs");
     expect(WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-sidecar.mjs");
