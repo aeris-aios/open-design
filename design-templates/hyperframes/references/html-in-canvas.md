@@ -12,7 +12,7 @@ The HTML-in-Canvas API (`drawElementImage`) lets you capture live, rendered DOM 
 >
 > HyperFrames enables this flag automatically during rendering (`--enable-features=CanvasDrawElement`), so rendered videos work without manual setup. The flag is only needed for live preview in the Studio.
 
-When this skill runs inside Open Design, the daemon invokes its pinned HyperFrames runtime, which inherits the auto-enable. You do **not** need to add browser flags or pass extra CLI args from the agent.
+When this skill runs inside OpenDesign, the daemon invokes its pinned HyperFrames runtime, which inherits the auto-enable. You do **not** need to add browser flags or pass extra CLI args from the agent.
 
 ## How it works
 
@@ -148,4 +148,4 @@ HyperFrames enables the Chrome flag automatically during rendering. Inside Open 
   --output my-video.mp4
 ```
 
-For Docker renders, the flag is also enabled automatically inside the container. Open Design's daemon-managed render inherits the same default — you don't need to thread anything through.
+For Docker renders, the flag is also enabled automatically inside the container. OpenDesign's daemon-managed render inherits the same default — you don't need to thread anything through.

@@ -670,7 +670,7 @@ export async function createProject(
   );
   try {
     // `randomUUID` falls back to `crypto.getRandomValues` / `Math.random`
-    // when `crypto.randomUUID` is unavailable. Open Design served over
+    // when `crypto.randomUUID` is unavailable. OpenDesign served over
     // plain HTTP on a LAN IP (Docker / unRAID self-hosting) is a
     // non-secure context, where `crypto.randomUUID` is undefined and
     // calling it directly throws — the surrounding try/catch then turns
@@ -704,7 +704,7 @@ export async function createProject(
       }
       if (await isLocalDaemonProxyFailure(resp)) {
         throw new ProjectCreateError(
-          'Could not reach the local Open Design service',
+          'Could not reach the local OpenDesign service',
           null,
           null,
           true,
