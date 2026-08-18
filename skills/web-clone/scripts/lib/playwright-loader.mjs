@@ -4,20 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import { systemChromium } from "./system-browser.mjs";
 
-<<<<<<< HEAD
-// Resolve Playwright from wherever it can actually be found:
-//   1. relative to this script (covers a checkout that has its own dep);
-//   2. relative to the process cwd (covers `npm i -D playwright` in the
-//      project — the normal fix inside Open Design, where these scripts are
-//      staged under `.od-skills/<plugin>/scripts/` but run from the project
-//      root);
-//   3. OD_PLAYWRIGHT_PATH — an explicit package-dir escape hatch.
-=======
 // Reuse an already-provided Playwright runtime when one is available: explicit
 // package paths first, then dependencies visible from the script or process
 // cwd. Product runs otherwise fall back to the zero-dependency CDP adapter, so
 // a web-clone task never mutates the user's project or downloads a browser.
->>>>>>> 3c183acf7 (fix web clone browser startup without project installs (#7000))
 export function loadPlaywright() {
   const requireFromScript = createRequire(import.meta.url);
   const requireFromCwd = createRequire(path.join(process.cwd(), "noop.js"));
