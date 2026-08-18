@@ -439,6 +439,46 @@ describe('parseDeckThumbnails', () => {
     expect(parsed.styleText).not.toContain('@import');
   });
 
+  it.each([
+    ['quoted content', `.deck-stage::after { content: "@import url('https://fonts.googleapis.com/css2?family=Fake');"; }`],
+    ['a quoted custom property', `.deck-stage { --example: "@import url('https://fonts.googleapis.com/css2?family=Fake');"; }`],
+  ])('does not treat @import text inside %s as a stylesheet import', (_case, declaration) => {
+    const deck = frameworkDeck(1).replace(
+      '.deck-stage { width: 1920px; height: 1080px; background: var(--bg); }',
+      `${declaration}\n.deck-stage { width: 1920px; height: 1080px; background: var(--bg); }`,
+    );
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.fontLinks).toEqual([]);
+    expect(parsed.styleText).toContain('@import url');
+    expect(parsed.styleText).toContain('.deck-stage { width: 1920px');
+  });
+
+  it('lifts a top-level import with a directly quoted URL', () => {
+    const fontHref = 'https://fonts.googleapis.com/css2?family=Inter';
+    const deck = frameworkDeck(1).replace('<style>', `<style>@import "${fontHref}" screen;`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(true);
+    expect(parsed.fontLinks).toContain(fontHref);
+    expect(parsed.styleText).not.toContain('@import');
+  });
+
+  it.each([
+    ['a malformed import', '@import url("https://fonts.googleapis.com/css2?family=Inter";'],
+    ['a non-font import', '@import url("https://cdn.example.com/layout.css");'],
+  ])('falls back for %s', (_case, importRule) => {
+    const deck = frameworkDeck(1).replace('<style>', `<style>${importRule}`);
+
+    const parsed = parseDeckThumbnails(deck);
+
+    expect(parsed.renderable).toBe(false);
+    expect(parsed.reason).toBe('external-stylesheet');
+  });
+
   it('falls back when a slide-nested style imports unapproved CSS', () => {
     const deck = [
       '<!doctype html><html><head><style>.deck-stage { width: 1920px; height: 1080px; }</style></head><body>',
