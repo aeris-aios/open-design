@@ -202,11 +202,20 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
 }
 
 const VIEWPORT_UNIT_TOKEN_RE = /(-?\d*\.?\d+)\s*(vw|vh|vmin|vmax|svw|svh|lvw|lvh|dvw|dvh)\b/gi;
-const VIEWPORT_MEDIA_QUERY_RE =
-  /@media\s+[^{}]*(?:\b(?:min|max)-(?:width|height)\b|\b(?:width|height|orientation|aspect-ratio)\s*:)[^{}]*\{/i;
+const MEDIA_QUERY_PRELUDE_RE = /@media\s+([^{}]*)\{/gi;
+const VIEWPORT_MEDIA_FEATURE_PATTERNS = [
+  /\b(?:min|max)-(?:width|height)\b/i,
+  /\b(?:width|height|orientation|aspect-ratio)\b\s*:/i,
+  /\b(?:width|height|aspect-ratio)\b\s*(?:[<>]=?|=)/i,
+  /(?:[<>]=?|=)\s*\b(?:width|height|aspect-ratio)\b/i,
+] as const;
 
 function hasViewportMediaQuery(css: string): boolean {
-  return VIEWPORT_MEDIA_QUERY_RE.test(css);
+  for (const match of css.matchAll(MEDIA_QUERY_PRELUDE_RE)) {
+    const prelude = match[1] ?? '';
+    if (VIEWPORT_MEDIA_FEATURE_PATTERNS.some((pattern) => pattern.test(prelude))) return true;
+  }
+  return false;
 }
 
 // Replace each `<n><viewport-unit>` with `calc(<n> * <k>px)` where `k` is the
