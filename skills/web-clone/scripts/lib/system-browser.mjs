@@ -111,6 +111,20 @@ function responseView(page, entry) {
   };
 }
 
+export function fullPageScreenshotClip(metrics, viewport) {
+  const content = metrics.cssContentSize || metrics.contentSize || {};
+  return {
+    x: 0,
+    y: 0,
+    // On Linux, a non-overlay vertical scrollbar reduces cssContentSize.width
+    // even though the requested browser viewport is unchanged. Preserve the
+    // requested viewport while still capturing genuine horizontal overflow.
+    width: Math.max(1, viewport.width, content.width || 0),
+    height: Math.max(1, viewport.height, content.height || 0),
+    scale: 1,
+  };
+}
+
 class CdpPage {
   static async create(browser, target, options = {}) {
     const page = new CdpPage(browser, target, options);
@@ -320,14 +334,7 @@ class CdpPage {
     const params = { format: "png", fromSurface: true, captureBeyondViewport: true };
     if (fullPage) {
       const metrics = await this.connection.send("Page.getLayoutMetrics");
-      const content = metrics.cssContentSize || metrics.contentSize;
-      params.clip = {
-        x: 0,
-        y: 0,
-        width: Math.max(1, content?.width || this.viewport.width),
-        height: Math.max(1, content?.height || this.viewport.height),
-        scale: 1,
-      };
+      params.clip = fullPageScreenshotClip(metrics, this.viewport);
     } else {
       params.clip = { x: 0, y: 0, width: this.viewport.width, height: this.viewport.height, scale: 1 };
     }

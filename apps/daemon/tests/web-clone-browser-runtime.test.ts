@@ -144,6 +144,24 @@ describe('Website Clone main-path browser runtime', () => {
     expect(localPlaywrightLaunch).not.toHaveBeenCalled();
   });
 
+  it('keeps full-page screenshots at the requested viewport width with Linux scrollbars', async () => {
+    const systemBrowser = await import(pathToFileURL(systemBrowserPath).href) as {
+      fullPageScreenshotClip: (
+        metrics: { cssContentSize: { height: number; width: number } },
+        viewport: { height: number; width: number },
+      ) => { height: number; width: number };
+    };
+
+    expect(systemBrowser.fullPageScreenshotClip(
+      { cssContentSize: { width: 1425, height: 2100 } },
+      { width: 1440, height: 900 },
+    )).toMatchObject({ width: 1440, height: 2100 });
+    expect(systemBrowser.fullPageScreenshotClip(
+      { cssContentSize: { width: 1600, height: 700 } },
+      { width: 1440, height: 900 },
+    )).toMatchObject({ width: 1600, height: 900 });
+  });
+
   it('forbids project-local Playwright installation and documents navigation timeout separately', () => {
     const skill = readFileSync(skillPath, 'utf8');
     const recon = readFileSync(reconPath, 'utf8');
