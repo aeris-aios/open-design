@@ -90,12 +90,17 @@ async function restartExistingDesktop(input: {
   paths: PackagedNamespacePaths;
   reason: "headless-owner" | "stale-sidecar" | "superseded-version";
 }): Promise<boolean> {
-  const result = await input.control.stop(APP_KEYS.DESKTOP, { graceMs: 5_000 });
+  const results = [
+    await input.control.stop(APP_KEYS.DESKTOP, { graceMs: 15_000 }),
+    await input.control.stop(APP_KEYS.WEB),
+    await input.control.stop(APP_KEYS.DAEMON),
+  ];
+  const [result] = results;
   await writeLauncherAfterQuitLog(
     input.paths,
     `inspect-found-existing namespace=${input.namespace} shutdown=${result.stopped ? "exited" : "failed"} reason=${input.reason} pid=${result.pid ?? "unknown"} forced=${result.forced}`,
   );
-  return result.stopped;
+  return results.every((candidate) => candidate.stopped);
 }
 
 function incomingVersionSupersedesExisting(
@@ -193,11 +198,18 @@ export async function inspectExistingDesktopForLauncher(
       return await restart("superseded-version");
     }
     if (status.windowVisible === false) return await restart("headless-owner");
-    await desktop.call(
-      "show",
-      options.deeplinkUrl == null ? {} : { deeplinkUrl: options.deeplinkUrl },
-      { timeoutMs: 800 },
-    );
+    try {
+      await desktop.call(
+        "show",
+        options.deeplinkUrl == null ? {} : { deeplinkUrl: options.deeplinkUrl },
+        { timeoutMs: 800 },
+      );
+    } catch (error) {
+      const message = `inspect-found-existing namespace=${namespace} focus=failed error=${error instanceof Error ? error.message : String(error)}`;
+      await writeLauncherAfterQuitLog(options.paths, message);
+      logger.warn(`[open-design launcher] ${message}`);
+      return { action: "exit", reason: "existing-focus-failed" };
+    }
     await writeLauncherAfterQuitLog(options.paths, `inspect-found-existing namespace=${namespace} focus=accepted`);
     return { action: "exit", reason: "existing-focused" };
   } catch (error) {

@@ -21,7 +21,7 @@ import {
   spawnLoggedProcess,
 } from "@open-design/platform";
 import type { ToolPackConfig } from "../config.js";
-import { createToolPackControl } from "../control.js";
+import { createToolPackControl, stopToolPackServices } from "../control.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
@@ -344,7 +344,7 @@ export async function installPackedMacDmg(config: ToolPackConfig): Promise<MacIn
 export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStartResult> {
   const target = await resolvePackedMacStartTarget(config);
   const control = createToolPackControl(config);
-  await control.stop(APP_KEYS.DESKTOP);
+  await stopToolPackServices(control);
   const logPath = desktopLogPath(config);
   const launchConfigPath = await writeLaunchPackagedConfig(config, target.appPath);
   await mkdir(dirname(logPath), { recursive: true });
@@ -413,15 +413,18 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
 }
 
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
-  const stopped = await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
-  const pids = stopped.pid == null ? [] : [stopped.pid];
-  if (stopped.stopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
+  const stopped = await stopToolPackServices(createToolPackControl(config));
+  const pids = [...new Set(stopped.flatMap((result) => result.pid == null ? [] : [result.pid]))];
+  const remainingPids = [...new Set(stopped.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
+  const stoppedPids = [...new Set(stopped.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
+  const allStopped = stopped.every((result) => result.stopped);
+  if (allStopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   return {
-    gracefulRequested: stopped.pid != null,
+    gracefulRequested: pids.length > 0,
     namespace: config.namespace,
-    remainingPids: stopped.stopped ? [] : pids,
-    status: stopped.pid == null ? "not-running" : stopped.stopped ? "stopped" : "partial",
-    stoppedPids: stopped.stopped ? pids : [],
+    remainingPids,
+    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
+    stoppedPids,
   };
 }
 

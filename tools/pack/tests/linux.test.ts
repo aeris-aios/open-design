@@ -19,7 +19,8 @@ const controlCall = vi.hoisted(() => vi.fn<() => Promise<unknown>>(async () => {
 }));
 const requestJsonIpc = controlCall;
 
-vi.mock("../src/control.js", () => ({
+vi.mock("../src/control.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/control.js")>(),
   createToolPackControl: () => ({
     connect: async () => ({ call: async () => controlCall() }),
     stop: async () => ({ code: null, pid: null, signal: null, stopped: true }),

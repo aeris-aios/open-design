@@ -6,8 +6,12 @@ import {
   releaseChannelFromVersion,
 } from "@open-design/release";
 import {
+  OPEN_DESIGN_SERVICES as APP_KEYS,
+} from "@open-design/contracts/runtime/sidecars";
+import {
   accessControlPlane,
   type SidecarControlAccess,
+  type SidecarConvergeResult,
   type SidecarControlScope,
 } from "@open-design/sidecar/control";
 
@@ -51,4 +55,14 @@ export function createToolPackControl(
     runtimeRoot: join(namespaceRoot, "runtime"),
     scope,
   });
+}
+
+export async function stopToolPackServices(
+  control: SidecarControlAccess,
+): Promise<SidecarConvergeResult[]> {
+  const results: SidecarConvergeResult[] = [];
+  results.push(await control.stop(APP_KEYS.DESKTOP, { graceMs: 15_000 }));
+  results.push(await control.stop(APP_KEYS.WEB));
+  results.push(await control.stop(APP_KEYS.DAEMON));
+  return results;
 }

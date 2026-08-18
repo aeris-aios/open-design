@@ -24,7 +24,7 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "../config.js";
-import { createToolPackControl } from "../control.js";
+import { createToolPackControl, stopToolPackServices } from "../control.js";
 import { resolveToolPackLauncherLayout } from "../launcher-layout.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
@@ -264,7 +264,7 @@ async function resolveStartTarget(config: ToolPackConfig): Promise<{ configPath:
 export async function startPackedWinApp(config: ToolPackConfig, options: { waitForStatus?: boolean } = {}): Promise<WinStartResult> {
   const target = await resolveStartTarget(config);
   const control = controlForConfig(config);
-  await control.stop(APP_KEYS.DESKTOP);
+  await stopToolPackServices(control);
   const logPath = desktopLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
@@ -295,15 +295,18 @@ async function findManagedDesktopProcessTree(config: ToolPackConfig): Promise<nu
 }
 
 export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
-  const stopped = await controlForConfig(config).stop(APP_KEYS.DESKTOP);
-  const pids = stopped.pid == null ? [] : [stopped.pid];
-  if (stopped.stopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
+  const stopped = await stopToolPackServices(controlForConfig(config));
+  const pids = [...new Set(stopped.flatMap((result) => result.pid == null ? [] : [result.pid]))];
+  const remainingPids = [...new Set(stopped.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
+  const stoppedPids = [...new Set(stopped.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
+  const allStopped = stopped.every((result) => result.stopped);
+  if (allStopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   return {
-    gracefulRequested: stopped.pid != null,
+    gracefulRequested: pids.length > 0,
     namespace: config.namespace,
-    remainingPids: stopped.stopped ? [] : pids,
-    status: stopped.pid == null ? "not-running" : stopped.stopped ? "stopped" : "partial",
-    stoppedPids: stopped.stopped ? pids : [],
+    remainingPids,
+    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
+    stoppedPids,
   };
 }
 

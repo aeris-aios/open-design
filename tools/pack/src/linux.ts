@@ -23,7 +23,7 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "./config.js";
-import { createToolPackControl } from "./control.js";
+import { createToolPackControl, stopToolPackServices } from "./control.js";
 import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
 import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources.js";
 import { copyOptionalVelaCliBinary } from "./vela-cli.js";
@@ -956,7 +956,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
 
   // Resolve and converge the exact live generation before clearing its product
   // identity. Clearing first would make control fall back to cold generation 0.
-  await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
+  await stopToolPackServices(createToolPackControl(config));
   await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
 
   // --appimage-extract-and-run bypasses FUSE-mounted SquashFS, which is too slow
@@ -1012,15 +1012,18 @@ async function teardownOrphanedStart(rootPid: number): Promise<void> {
 }
 
 export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const result = await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
-  const pids = result.pid == null ? [] : [result.pid];
-  if (result.stopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
+  const results = await stopToolPackServices(createToolPackControl(config));
+  const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
+  const remainingPids = [...new Set(results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
+  const stoppedPids = [...new Set(results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
+  const allStopped = results.every((result) => result.stopped);
+  if (allStopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   return {
-    gracefulRequested: result.pid != null,
+    gracefulRequested: pids.length > 0,
     namespace: config.namespace,
-    remainingPids: result.stopped ? [] : pids,
-    status: result.pid == null ? "not-running" : result.stopped ? "stopped" : "partial",
-    stoppedPids: result.stopped ? pids : [],
+    remainingPids,
+    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
+    stoppedPids,
   };
 }
 
@@ -1310,7 +1313,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   }
 
   const nodeCommand = (await pathExists(nodePath)) ? nodePath : process.execPath;
-  await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
+  await stopToolPackServices(createToolPackControl(config));
   const logPath = headlessLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
@@ -1372,18 +1375,21 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
 }
 
 export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const result = await createToolPackControl(config).stop(APP_KEYS.DESKTOP);
-  const pids = result.pid == null ? [] : [result.pid];
-  if (result.stopped) {
+  const results = await stopToolPackServices(createToolPackControl(config));
+  const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
+  const remainingPids = [...new Set(results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
+  const stoppedPids = [...new Set(results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
+  const allStopped = results.every((result) => result.stopped);
+  if (allStopped) {
     await rm(headlessIdentityPath(config), { force: true }).catch(() => undefined);
     await rm(webIdentityPath(config), { force: true }).catch(() => undefined);
   }
   return {
-    gracefulRequested: result.pid != null,
+    gracefulRequested: pids.length > 0,
     namespace: config.namespace,
-    remainingPids: result.stopped ? [] : pids,
-    status: result.pid == null ? "not-running" : result.stopped ? "stopped" : "partial",
-    stoppedPids: result.stopped ? pids : [],
+    remainingPids,
+    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
+    stoppedPids,
   };
 }
 

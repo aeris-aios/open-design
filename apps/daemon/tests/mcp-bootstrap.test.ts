@@ -110,14 +110,11 @@ describe("ensureMcpDaemonUrl", () => {
 
   it("spawns once and waits for the sidecar-discovered daemon", async () => {
     const spawnBootstrap = vi.fn(async () => undefined);
-    const resolveDaemonUrl = vi
+    const discoverTargetDaemonUrl = vi
       .fn()
-      .mockResolvedValueOnce("http://127.0.0.1:7456")
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce("http://127.0.0.1:61234");
-    const probeDaemon = vi
-      .fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    const probeDaemon = vi.fn(async () => true);
 
     await expect(ensureMcpDaemonUrl({
       env: {
@@ -125,13 +122,14 @@ describe("ensureMcpDaemonUrl", () => {
         OD_MCP_BOOTSTRAP_ARGS:
           '["-g","-j","/Applications/Open Design.app","--args","--headless"]',
       },
+      discoverTargetDaemonUrl,
       probeDaemon,
-      resolveDaemonUrl,
       sleep: async () => undefined,
       spawnBootstrap,
       timeoutMs: 1_000,
     })).resolves.toBe("http://127.0.0.1:61234");
 
     expect(spawnBootstrap).toHaveBeenCalledTimes(1);
+    expect(discoverTargetDaemonUrl).toHaveBeenCalledTimes(2);
   });
 });

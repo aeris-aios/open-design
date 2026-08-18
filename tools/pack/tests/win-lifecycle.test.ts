@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ToolPackConfig } from "../src/config.js";
 
 const requestJsonIpc = vi.hoisted(() => vi.fn());
-const stopControl = vi.hoisted(() => vi.fn<() => Promise<{
+const stopControl = vi.hoisted(() => vi.fn<(service?: string, options?: { graceMs?: number }) => Promise<{
   code: number | null;
   pid: number | null;
   signal: NodeJS.Signals | null;
@@ -22,8 +22,9 @@ const resolveWinRegisteredPaths = vi.hoisted(() =>
   vi.fn<typeof import("../src/win/registry.js").resolveWinRegisteredPaths>(async (_config, paths) => paths),
 );
 
-vi.mock("../src/control.js", () => {
+vi.mock("../src/control.js", async (importOriginal) => {
   return {
+    ...await importOriginal<typeof import("../src/control.js")>(),
     createToolPackControl: () => ({
       connect: async (service: string) => ({
         call: async (method: string, input: unknown) => requestJsonIpc(service, { ...input as object, type: method }),
@@ -321,7 +322,12 @@ describe("stopPackedWinApp", () => {
     const config = createConfig(root);
     try {
       stopControl.mockReset();
-      stopControl.mockResolvedValue({ code: 0, pid: 4242, signal: null, stopped: true });
+      stopControl.mockImplementation(async (service) => ({
+        code: 0,
+        pid: service === "daemon" ? 4242 : null,
+        signal: null,
+        stopped: true,
+      }));
 
       await expect(stopPackedWinApp(config)).resolves.toEqual({
         gracefulRequested: true,
@@ -330,7 +336,11 @@ describe("stopPackedWinApp", () => {
         status: "stopped",
         stoppedPids: [4242],
       });
-      expect(stopControl).toHaveBeenCalledWith("desktop");
+      expect(stopControl.mock.calls).toEqual([
+        ["desktop", { graceMs: 15_000 }],
+        ["web"],
+        ["daemon"],
+      ]);
     } finally {
       await rm(root, { force: true, recursive: true });
     }

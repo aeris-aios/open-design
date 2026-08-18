@@ -88,7 +88,7 @@ async function readCurrentDescriptor(
   try {
     descriptor = normalizePrivateReadyDescriptor(raw);
   } catch (error) {
-    throw new SidecarControlError("peer-unavailable", "sidecar peer descriptor is invalid", {
+    throw new SidecarControlError("peer-mismatch", "sidecar peer descriptor is invalid", {
       cause: error,
     });
   }
@@ -97,7 +97,10 @@ async function readCurrentDescriptor(
     || !sameControlRoots(descriptor.roots, roots)
     || (projection != null && !sameControlProjection(descriptor.projection, projection))
   ) {
-    throw peerUnavailable(identity);
+    throw new SidecarControlError(
+      "peer-mismatch",
+      "sidecar peer is unavailable because its descriptor does not match the requested control fencing",
+    );
   }
   return descriptor;
 }
@@ -394,8 +397,11 @@ export function bootstrapControlPlane({
     let descriptor: PrivateReadyDescriptor;
     try {
       descriptor = await readCurrentDescriptor(identity, roots);
-    } catch {
-      return { forced: false, pid: null, stopped: true };
+    } catch (error) {
+      if (error instanceof SidecarControlError && error.code === "peer-unavailable") {
+        return { forced: false, pid: null, stopped: true };
+      }
+      throw error;
     }
     const graceMs = normalizeTimeout(options.graceMs, 5_000, "graceMs");
     await createClient(descriptor).requestStop().catch(() => undefined);

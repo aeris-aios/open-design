@@ -47,6 +47,7 @@
       daemonWorkspacePaths = [
         "packages/release"
         "packages/contracts"
+        "packages/host"
         "packages/registry-protocol"
         "packages/agui-adapter"
         "packages/plugin-runtime"

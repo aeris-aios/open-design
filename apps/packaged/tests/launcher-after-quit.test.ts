@@ -37,8 +37,12 @@ function control(input: {
   daemonUrl?: string | null;
   webUrl?: string | null;
   stopped?: boolean;
+  showError?: Error;
 } = {}): { control: SidecarControlPlane; show: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> } {
-  const show = vi.fn(async () => ({ accepted: true as const }));
+  const show = vi.fn(async () => {
+    if (input.showError != null) throw input.showError;
+    return { accepted: true as const };
+  });
   const stop = vi.fn(async () => ({ forced: false, pid: 1234, stopped: input.stopped ?? true }));
   const connect = vi.fn(async (service: string) => ({
     call: async (method: string) => {
@@ -94,6 +98,21 @@ describe("packaged launcher convergence", () => {
     }
   });
 
+  it("exits without launching a duplicate stack when healthy desktop focus fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-existing-desktop-focus-failed-"));
+    const fake = control({ showError: new Error("focus rejected") });
+    try {
+      await expect(inspectExistingDesktopForLauncher("release-beta", {
+        control: fake.control,
+        incomingVersion: "0.19.4-beta.9",
+        paths: paths(root),
+      })).resolves.toEqual({ action: "exit", reason: "existing-focus-failed" });
+      expect(fake.show).toHaveBeenCalledOnce();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("converges a stale service set through the atomic control owner", async () => {
     const root = await mkdtemp(join(tmpdir(), "od-stale-desktop-"));
     const fake = control({ webUrl: null });
@@ -103,7 +122,11 @@ describe("packaged launcher convergence", () => {
         incomingVersion: "0.19.4-beta.9",
         paths: paths(root),
       })).resolves.toEqual({ action: "continue", reason: "stale-sidecar" });
-      expect(fake.stop).toHaveBeenCalledWith("desktop", { graceMs: 5_000 });
+      expect(fake.stop.mock.calls).toEqual([
+        ["desktop", { graceMs: 15_000 }],
+        ["web"],
+        ["daemon"],
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -118,7 +141,7 @@ describe("packaged launcher convergence", () => {
         incomingVersion: "0.19.4-beta.30",
         paths: paths(root),
       })).resolves.toEqual({ action: "continue", reason: "superseded-version" });
-      expect(fake.stop).toHaveBeenCalledOnce();
+      expect(fake.stop.mock.calls.map(([service]) => service)).toEqual(["desktop", "web", "daemon"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

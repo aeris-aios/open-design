@@ -11,7 +11,7 @@ import type { ToolPackConfig } from "../src/config.js";
 import { resolveMacPaths } from "../src/mac/paths.js";
 
 const requestJsonIpc = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
-const stopControl = vi.fn<() => Promise<{ code: number | null; pid: number | null; signal: NodeJS.Signals | null; stopped: boolean }>>(
+const stopControl = vi.fn<(service?: string, options?: { graceMs?: number }) => Promise<{ code: number | null; pid: number | null; signal: NodeJS.Signals | null; stopped: boolean }>>(
   async () => ({ code: 0, pid: null, signal: null, stopped: true }),
 );
 const collectProcessTreePids = vi.fn(
@@ -28,7 +28,8 @@ const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => 
   }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
 });
 
-vi.mock("../src/control.js", () => ({
+vi.mock("../src/control.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/control.js")>(),
   createToolPackControl: () => ({
     connect: async () => ({ call: requestJsonIpc }),
     stop: stopControl,
@@ -246,7 +247,12 @@ describe("stopPackedMacApp", () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
     const config = makeConfig(root);
     try {
-      stopControl.mockResolvedValue({ code: 0, pid: 4242, signal: null, stopped: true });
+      stopControl.mockImplementation(async (service) => ({
+        code: 0,
+        pid: service === "daemon" ? 4242 : null,
+        signal: null,
+        stopped: true,
+      }));
 
       await expect(stopPackedMacApp(config)).resolves.toMatchObject({
         gracefulRequested: true,
@@ -255,7 +261,11 @@ describe("stopPackedMacApp", () => {
         status: "stopped",
         stoppedPids: [4242],
       });
-      expect(stopControl).toHaveBeenCalledWith("desktop");
+      expect(stopControl.mock.calls).toEqual([
+        ["desktop", { graceMs: 15_000 }],
+        ["web"],
+        ["daemon"],
+      ]);
     } finally {
       await rm(root, { force: true, recursive: true });
     }

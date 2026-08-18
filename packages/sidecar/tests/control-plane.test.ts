@@ -416,6 +416,25 @@ describe("independent sidecar controller and body", () => {
     });
   });
 
+  it("does not report a fenced descriptor as already stopped", async () => {
+    const { roots, scope } = await createFixture();
+    const launch = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    const restoreLaunch = installPrivateLaunchForTest(launch);
+    cleanups.push(restoreLaunch);
+    const body = await attachDemoBody(() => undefined);
+    cleanups.push(() => body.close());
+
+    const mismatchedRoots = { ...roots, dataRoot: `${roots.dataRoot}-other` };
+    const mismatchedController = createDemoController(scope, mismatchedRoots);
+    await expect(mismatchedController.stop("daemon")).rejects.toMatchObject({ code: "peer-mismatch" });
+    await expect(createDemoController(scope, roots).connect("daemon")).resolves.toBeDefined();
+  });
+
   it("does not attach a controller with a different caller-owned projection", async () => {
     const { roots, scope } = await createFixture();
     const launch = createPrivateLaunchForTest({
