@@ -742,7 +742,9 @@ import { TranscriptExportLockedError } from './transcript-export.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerTerminalRoutes } from './routes/terminal.js';
+import { registerBrowserSessionRoutes } from './routes/browser-sessions.js';
 import { createTerminalService } from './terminals.js';
+import { createBrowserSessionService } from './browser-sessions.js';
 import { registerSocialShareRoutes } from './routes/social-share.js';
 import { registerOpenDesignPublicMetadataRoutes } from './routes/open-design-public-metadata.js';
 import { registerWhatsNewRoutes } from './routes/whats-new.js';
@@ -7109,6 +7111,7 @@ export async function startServer({
   // Interactive Terminal sessions (node-pty). In-memory, process-local, and
   // killed on daemon shutdown — see shutdownDaemonRuns below.
   const terminalService = createTerminalService();
+  const browserSessionService = createBrowserSessionService();
 
   // Tracks runs whose finalized assistant message has already been forwarded
   // to Langfuse so repeated message updates only emit one final trace per run.
@@ -7946,6 +7949,13 @@ export async function startServer({
     projectStore: projectStoreDeps,
     projectFiles: projectFileDeps,
     terminals: terminalService,
+    authorizeProjectRequest,
+  });
+  registerBrowserSessionRoutes(app, {
+    db,
+    http: httpDeps,
+    projectStore: projectStoreDeps,
+    browserSessions: browserSessionService,
     authorizeProjectRequest,
   });
   registerImportRoutes(app, {
@@ -14989,6 +14999,7 @@ export async function startServer({
       daemonShuttingDown = true;
       await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
       await terminalService.shutdownActive();
+      await browserSessionService.shutdownActive();
       await design.analytics.shutdown();
     };
     let server;
