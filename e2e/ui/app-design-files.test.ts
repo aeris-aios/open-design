@@ -381,12 +381,12 @@ async function selectComposerSessionMode(page: Page, modeTitle: 'Ask mode' | 'Pl
 }
 
 async function openDesignFile(page: Page, fileName: string) {
-  const preview = page.getByTestId('artifact-preview-frame');
-  if (await preview.isVisible()) return;
-
   const fileTab = page.getByRole('tab', { name: new RegExp(fileName.replace(/\./g, '\\.'), 'i') });
   if (await fileTab.isVisible()) {
-    await fileTab.click();
+    if (await fileTab.getAttribute('aria-selected') !== 'true') {
+      await fileTab.click();
+    }
+    await expect(fileTab).toHaveAttribute('aria-selected', 'true');
     return;
   }
 
