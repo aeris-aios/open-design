@@ -367,7 +367,7 @@ describe('FileViewer image export', () => {
     expect(exportOptions).not.toHaveProperty('height');
   });
 
-  it('keeps deck exports on the renderer defaults when mobile preview is selected', async () => {
+  it('hides the viewport switcher for decks and keeps exports on the renderer defaults', async () => {
     isOpenDesignHostAvailableMock.mockReturnValue(true);
     exportProjectImageDataUrlMock.mockResolvedValueOnce({
       ok: true,
@@ -383,7 +383,9 @@ describe('FileViewer image export', () => {
       '<html><body><div class="deck"><section class="slide">Cover</section></div></body></html>',
       'srcdoc',
     );
-    fireEvent.click(screen.getByRole('button', { name: /mobile/i }));
+    // Decks render on a fixed canvas, so the desktop/mobile preview toggle is
+    // withheld entirely instead of being a no-op.
+    expect(screen.queryByRole('button', { name: /mobile/i })).toBeNull();
     await openImageExportDialog();
     await clickSave();
 
