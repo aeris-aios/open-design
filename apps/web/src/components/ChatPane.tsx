@@ -820,6 +820,61 @@ interface QueuedSendUpdate {
 // Gap left above the anchored user message when it is pinned to the top.
 const ANCHOR_TOP_PADDING = 12;
 
+/**
+ * Fold an OD Next logical task into ONE conversation turn.
+ *
+ * A Full Plan turn runs as several physical Runs (request -> production). The
+ * user asked once, and the daemon-issued continuation carries no prompt of its
+ * own, so rendering each Run as its own message shows an answer nobody asked
+ * for — with its own author line and its own "finished" affordances mid-turn.
+ *
+ * The daemon stays the single writer of one message per Run; only the view is
+ * folded. Every continuation's content, events and produced files are appended
+ * to the turn's first message in Run order, so nothing is dropped and nothing
+ * is duplicated.
+ */
+export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
+  if (!messages.some((message) => (message.strategyTaskRunIndex ?? 0) > 0)) {
+    return messages;
+  }
+  const folded: ChatMessage[] = [];
+  const turnHeadIndexByTask = new Map<string, number>();
+  for (const message of messages) {
+    const taskId = message.strategyTaskExecutionId;
+    const runIndex = message.strategyTaskRunIndex ?? 0;
+    if (message.role !== 'assistant' || !taskId) {
+      folded.push(message);
+      continue;
+    }
+    if (runIndex === 0 || !turnHeadIndexByTask.has(taskId)) {
+      turnHeadIndexByTask.set(taskId, folded.length);
+      folded.push(message);
+      continue;
+    }
+    const headIndex = turnHeadIndexByTask.get(taskId)!;
+    const head = folded[headIndex]!;
+    const headContent = head.content ?? '';
+    const tailContent = message.content ?? '';
+    folded[headIndex] = {
+      ...head,
+      content: tailContent
+        ? `${headContent}${headContent && !headContent.endsWith('\n') ? '\n\n' : ''}${tailContent}`
+        : headContent,
+      events: [...(head.events ?? []), ...(message.events ?? [])],
+      producedFiles: [...(head.producedFiles ?? []), ...(message.producedFiles ?? [])],
+      // The turn's status is the latest Run's: the earlier Runs finishing is an
+      // internal step, not the turn ending.
+      runId: message.runId ?? head.runId,
+      runStatus: message.runStatus ?? head.runStatus,
+      ...(message.endedAt ? { endedAt: message.endedAt } : {}),
+      ...(message.resultDeliveryState
+        ? { resultDeliveryState: message.resultDeliveryState }
+        : {}),
+    };
+  }
+  return folded;
+}
+
 function shouldHideEmptyBrandAssistantMessage(message: ChatMessage, metadata?: ProjectMetadata): boolean {
   if (metadata?.importedFrom !== 'brand-extraction' && metadata?.kind !== 'brand') return false;
   if (message.role !== 'assistant') return false;
@@ -1012,7 +1067,9 @@ export function ChatPane({
   const { t, locale } = useI18n();
   const analytics = useAnalytics();
   const displayMessages = useMemo(
-    () => messages.filter((message) => !shouldHideEmptyBrandAssistantMessage(message, projectMetadata)),
+    () => foldStrategyTaskTurns(
+      messages.filter((message) => !shouldHideEmptyBrandAssistantMessage(message, projectMetadata)),
+    ),
     [messages, projectMetadata],
   );
   const amrProfile = config?.agentCliEnv?.amr?.[AMR_PROFILE_ENV_KEY] ?? null;
