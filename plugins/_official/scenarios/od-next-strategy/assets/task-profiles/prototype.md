@@ -13,13 +13,13 @@ in the shared Design Spec.
 ## Artifact contract
 
 The canonical deliverable is editable prototype source with a stable runnable
-entry. The runnable entry is a root-level `index.html` that opens directly in
-a browser; prefer one self-contained html file, and add sibling assets only
-when the plan names them. Do not scaffold an application framework, package
-manager workspace, or dependency install — a prototype is static source, not
-an app build. Required deliverables name the source entry and any
-user-requested derived package. Buttons, navigation, forms, and primary
-controls implement the declared flow rather than acting as decoration.
+entry. Open Design resolves that entry by looking for a root `index.html`,
+then a single root-level html file, then a single file matching the project
+kind; a delivery in which none of those resolves is rejected as an invalid
+canonical deliverable, so lay the files out accordingly. Required deliverables
+name the source entry and any user-requested derived package. Buttons,
+navigation, forms, and primary controls implement the declared flow rather
+than acting as decoration.
 
 ## Build Requirements
 
