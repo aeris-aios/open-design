@@ -1099,6 +1099,71 @@ describe('OD Next planning coordinator', () => {
     });
   });
 
+  it('accepts a form-only first turn by inferring the clarification runtime state', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    // The observed field failure: the agent renders a direction statement plus
+    // exactly one discovery form but omits every machine-protocol block. The
+    // turn has exactly one valid protocol meaning, so it must be accepted.
+    const question = '<question-form id="scope">{"questions":[{"id":"surface","label":"Surface?"}]}</question-form>';
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol(`我们先对齐几个关键问题。
+${question}`),
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('awaiting_clarification');
+    expect(result.reasonCodes).toEqual(['od_next_protocol_runtime_state_inferred']);
+    expect(result.task.outcome).toBe('clarification_required');
+    const persisted = getStrategyTaskExecution(db, 'task-1');
+    expect(persisted?.outcome).toBe('clarification_required');
+    expect(persisted?.blockedContext).toBeUndefined();
+  });
+
+  it('keeps ambiguous protocol-less turns fail-closed instead of inferring', () => {
+    // Two forms: not inferable.
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const form = (id: string) => `<question-form id="${id}">{"questions":[{"id":"q","label":"Q?"}]}</question-form>`;
+    const two = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol(`${form('a')}
+${form('b')}`),
+      updatedAt: 120,
+    });
+    expect(two.action).toBe('blocked');
+    expect(two.reasonCodes).toEqual(['od_next_protocol_runtime_state_missing']);
+
+    // A recovered plan block without runtime state: ambiguous intent, no inference.
+    createStrategyTaskExecution(db, {
+      taskExecutionId: 'task-plan-no-state',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      snapshotId: snapshot.snapshotId,
+      selectedAgentId: AGENT_ID,
+      initialRunId: 'run-plan-no-state',
+      ...strategyTaskCreateIdentityFixture(),
+      createdAt: 200,
+    });
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-plan-no-state', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 201,
+    });
+    const withPlan = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-plan-no-state', runId: 'run-plan-no-state',
+      protocol: protocol(`${form('c')}
+${block('open-design-plan-contract', planContract(snapshot))}`),
+      executionPreflight: executionPassed,
+      updatedAt: 202,
+    });
+    expect(withPlan.action).toBe('blocked');
+    expect(withPlan.reasonCodes).toContain('od_next_protocol_runtime_state_missing');
+  });
+
   it('persists blocked attribution so a blocked task can be diagnosed from the store', () => {
     prepareStrategyRequest(db, {
       taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,

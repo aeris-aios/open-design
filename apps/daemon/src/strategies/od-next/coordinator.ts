@@ -4,6 +4,7 @@ import type {
 } from '@open-design/contracts';
 import {
   AppliedStrategyBindingV2Schema,
+  OD_NEXT_RUNTIME_STATE_SCHEMA,
   composeOdNextStrategyContinuationV2,
 } from '@open-design/contracts';
 import type Database from 'better-sqlite3';
@@ -283,21 +284,30 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
 
   const parsed = input.parsed;
   const protocolCodes = uniqueReasonCodes(parsed.issues.map((issue) => issue.code));
+  let state = parsed.runtimeState;
   if (protocolCodes.length > 0) {
-    const plan = parsed.planContract ?? parsed.repairPlanContract;
-    const bindingCodes = plan ? validatePlanBinding(db, current, plan) : [];
-    const repair = tryBeginSerializationRepair(db, current, input, parsed, protocolCodes);
-    if (repair) return repair;
-    return blockTask(
-      db,
-      current,
-      parsed.visibleText,
-      [...protocolCodes, ...bindingCodes],
-      input.updatedAt,
-    );
+    const inferred = inferClarificationRuntimeState(current, parsed);
+    if (inferred) {
+      console.info('[od-next-task] runtime state inferred', {
+        taskExecutionId: current.taskExecutionId,
+        runId: input.runId,
+        outcome: inferred.outcome,
+      });
+      state = inferred;
+    } else {
+      const plan = parsed.planContract ?? parsed.repairPlanContract;
+      const bindingCodes = plan ? validatePlanBinding(db, current, plan) : [];
+      const repair = tryBeginSerializationRepair(db, current, input, parsed, protocolCodes);
+      if (repair) return repair;
+      return blockTask(
+        db,
+        current,
+        parsed.visibleText,
+        [...protocolCodes, ...bindingCodes],
+        input.updatedAt,
+      );
+    }
   }
-
-  const state = parsed.runtimeState;
   if (!state) {
     return blockTask(
       db,
@@ -341,6 +351,45 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
     ...(parsed.planContract
       ? { decisionSummary: parsed.planContract.decisionSummary }
       : {}),
+  };
+}
+
+/**
+ * Deterministically recover the one runtime state a compliant clarification
+ * turn could have declared. A first Full-Plan request turn that renders
+ * exactly one question form and no machine block has exactly one valid
+ * protocol meaning — outcome clarification_required with an unlocked
+ * execution mode — so the daemon accepts it instead of dead-ending the task,
+ * and stamps the inference into the state's reasonCodes for attribution.
+ * Anything ambiguous (a recovered plan block, extra or missing forms, a later
+ * stage, a spent clarification budget) stays fail-closed.
+ */
+function inferClarificationRuntimeState(
+  current: StrategyTaskExecutionRecord,
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']>,
+): StrategyRuntimeStateV2 | null {
+  const issueCodes = [...new Set(parsed.issues.map((issue) => issue.code))];
+  if (
+    issueCodes.length !== 1
+    || issueCodes[0] !== 'od_next_protocol_runtime_state_missing'
+  ) return null;
+  if (
+    current.route !== 'full_plan'
+    || current.inputStage !== 'request'
+    || current.clarificationCount > 0
+    || parsed.planContract
+    || parsed.repairPlanContract
+    || parsed.runtimeState
+    || parsed.repairRuntimeState
+  ) return null;
+  if (countRenderableQuestionForms(parsed.visibleText) !== 1) return null;
+  return {
+    schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
+    route: 'full_plan',
+    inputStage: 'request',
+    outcome: 'clarification_required',
+    executionMode: null,
+    reasonCodes: ['od_next_protocol_runtime_state_inferred'],
   };
 }
 
