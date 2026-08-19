@@ -4,8 +4,8 @@ import {
   OD_NEXT_BUNDLE_ECHO_GUARD_V2,
   OdNextRuntimeCapabilitySnapshotV1Schema,
   executionProfileFromStreamFormat,
+  type OdNextPromptBundleHeadV2,
   type OdNextPromptBundleRecipeIdentityV2,
-  type OdNextPromptBundleV2,
   type OdNextStrategyRequestRecipeV2,
 } from '@open-design/contracts';
 
@@ -101,11 +101,12 @@ export interface OdNextInitialPromptMeta {
 interface DaemonSystemPromptResult {
   prompt: string;
   /**
-   * Structured cache-stable head of the canonical Bundle. Null when the run has
-   * no verified OD Next recipe, which the Bundle path treats as fatal rather
-   * than falling back to an untyped Markdown payload.
+   * Structured cache-stable head of the canonical Bundle
+   * (`open_design_core_system_prompt`, `session_skills`, `active_stages`). Null
+   * when the run has no verified OD Next recipe, which the Bundle path treats
+   * as fatal rather than falling back to an untyped Markdown payload.
    */
-  odNextBundleSystemPrompt?: OdNextPromptBundleV2['systemPrompt'] | null;
+  odNextBundleHead?: OdNextPromptBundleHeadV2 | null;
   odNextRecipeIdentity?: OdNextPromptBundleRecipeIdentityV2 | null;
   odNextRuntimeFacts?: string | null;
   odNextStableContextPrompt?: string | null;
@@ -316,7 +317,7 @@ export function createOdNextInitialPromptBundleService(
       ? latchConversationIntentSignals(deps.db, conversationId, freshIntentSignals)
       : freshIntentSignals;
     const {
-      odNextBundleSystemPrompt,
+      odNextBundleHead,
       odNextRecipeIdentity,
       odNextRuntimeFacts,
       odNextStableContextPrompt,
@@ -361,8 +362,8 @@ export function createOdNextInitialPromptBundleService(
       : null;
     const formOverride = formId
       ? formId === 'discovery' || formId === 'task-type'
-        ? `The <user_prompt> contains submitted answers for the ${formId} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
-        : `The <user_prompt> contains submitted answers for the ${formId} form. Treat them as the active user turn and do not replay the answered form.`
+        ? `The <user_first_prompt> contains submitted answers for the ${formId} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
+        : `The <user_first_prompt> contains submitted answers for the ${formId} form. Treat them as the active user turn and do not replay the answered form.`
       : '';
     const titleGenerationRecord = record(titleGeneration);
     const titleGenerationDirective = titleGenerationRecord?.enabled === true
@@ -414,7 +415,7 @@ export function createOdNextInitialPromptBundleService(
     // The Bundle is a tree, so the recipe head, the frozen Skill roster, the
     // Skill bodies, and the attachment identities are four separate slots
     // instead of one '---'-joined blob.
-    if (!odNextBundleSystemPrompt || !odNextRecipeIdentity) {
+    if (!odNextBundleHead || !odNextRecipeIdentity) {
       throw new TypeError(
         'OD Next request Bundle requires a verified strategy recipe; refusing to compose an untyped payload.',
       );
@@ -437,7 +438,7 @@ export function createOdNextInitialPromptBundleService(
       commentAttachmentReferences: '',
       imageReferences: '',
       odNextRequestBundle: {
-        systemPrompt: odNextBundleSystemPrompt,
+        head: odNextBundleHead,
         recipeIdentity: odNextRecipeIdentity,
         runtimeFacts: odNextRuntimeFacts ?? '',
         taskType: loadedTaskInputs.taskType,

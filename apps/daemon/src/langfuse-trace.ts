@@ -22,7 +22,10 @@ import {
   SAFE_RUN_QUALITY_V1_SCHEMA,
   SafeRunQualityV1Schema,
   type SafeObservationManifestEntryV1,
+  type SafeObservationStreamTailV1,
   type SafeObservationTextV1,
+  type SafeRunDiagnosticsV1,
+  type SafeRunProcessOutcomeV1,
   type SafeRunQualityV1,
 } from '@open-design/contracts';
 
@@ -37,10 +40,16 @@ import {
 import {
   buildPromptStackFlatMetadata,
   promptStackWithoutContent,
+  redactLocalPaths as redactPromptStackLocalPaths,
   structuredPromptStackInput,
   type PromptTelemetrySection,
   type PromptStackTelemetry,
 } from './prompt-telemetry.js';
+import {
+  STDERR_TAIL_MAX_BYTES,
+  type RunDiagnosticsAnalytics,
+  type StreamTailSummary,
+} from './run-diagnostics.js';
 import {
   canonicalizeToolAnalyticsName,
   type RunTelemetryTimestamps,
@@ -1573,6 +1582,121 @@ function safeQualityText(
   };
 }
 
+/**
+ * Project one already-capped process-stream tail into transport-safe text.
+ *
+ * `collectStreamTailSummary` has already applied `redactSecrets` plus the
+ * 20-line / 4 KiB cap, so this stage only adds the stricter Prompt-stack local
+ * path masking (`redactLocalPaths`, which also covers /tmp, /private/var,
+ * /opt, /Volumes, UNC and file:// forms the trace-level masker misses) before
+ * handing the value to `safeQualityText`. Absolute paths are routine in a
+ * runtime stderr tail, so the wider rule set is the correct one here.
+ *
+ * `includeTail` is the consent gate. When it is false the caller still gets
+ * the structural facts (line count, truncation) with an explicit limitation
+ * instead of silently losing the stream.
+ */
+function safeStreamTail(
+  summary: StreamTailSummary | undefined,
+  options: { includeTail: boolean; omissionLimitation: string },
+): SafeObservationStreamTailV1 | undefined {
+  if (!summary) return undefined;
+  const tail = options.includeTail
+    ? safeQualityText(
+        redactPromptStackLocalPaths(summary.tail),
+        STDERR_TAIL_MAX_BYTES,
+      )
+    : undefined;
+  return {
+    ...(tail ? { tail } : {}),
+    lineCount: summary.lineCount,
+    truncated: summary.truncated || (tail?.truncated ?? false),
+    ...(tail
+      ? {}
+      : {
+          limitations: [
+            options.includeTail
+              ? 'stream_tail_empty_after_redaction'
+              : options.omissionLimitation,
+          ],
+        }),
+  };
+}
+
+/**
+ * Keep only bounded diagnostic facts. Booleans and enum/bucket identifiers
+ * pass through; anything free-form is dropped rather than redacted, because
+ * this record is not a text channel.
+ */
+function safeRunDiagnostics(
+  diagnostics: RunDiagnosticsAnalytics | undefined,
+): SafeRunDiagnosticsV1 | undefined {
+  if (!diagnostics) return undefined;
+  const safe: SafeRunDiagnosticsV1 = {};
+  for (const [key, value] of Object.entries(diagnostics)) {
+    if (Object.keys(safe).length >= 64) break;
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) continue;
+    if (typeof value === 'boolean') {
+      safe[key] = value;
+      continue;
+    }
+    const identifier = safeQualityIdentifier(value);
+    if (identifier) safe[key] = identifier;
+  }
+  return Object.keys(safe).length > 0 ? safe : undefined;
+}
+
+/**
+ * Terminal process evidence for one Run: exit code, fatal signal, stream tails
+ * and host close diagnostics.
+ *
+ * Failure *classification* answers "what kind of failure"; this answers "what
+ * the process actually did". The single-Run trace always carried both, so any
+ * producer that replaces it must carry both too.
+ */
+function safeRunProcessOutcome(input: {
+  wantsContent: boolean;
+  exitCode?: number | null;
+  signal?: string | null;
+  stderr?: StreamTailSummary;
+  stdout?: StreamTailSummary;
+  diagnostics?: RunDiagnosticsAnalytics;
+}): SafeRunProcessOutcomeV1 | undefined {
+  // stderr is a diagnostic channel and follows the same rule as the run error
+  // message: redacted, capped, and reported whenever telemetry runs at all.
+  // stdout is the agent's own output stream, so it follows the rule for model
+  // output and needs content consent.
+  const stderr = safeStreamTail(input.stderr, {
+    includeTail: true,
+    omissionLimitation: 'stderr_tail_unavailable',
+  });
+  const stdout = safeStreamTail(input.stdout, {
+    includeTail: input.wantsContent,
+    omissionLimitation: 'stdout_tail_requires_content_consent',
+  });
+  const diagnostics = safeRunDiagnostics(input.diagnostics);
+  const exitCode = typeof input.exitCode === 'number' && Number.isInteger(input.exitCode)
+    ? input.exitCode
+    : undefined;
+  const signal = safeQualityIdentifier(input.signal);
+  if (
+    exitCode === undefined &&
+    signal === undefined &&
+    !stderr &&
+    !stdout &&
+    !diagnostics
+  ) {
+    return undefined;
+  }
+  return {
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(signal !== undefined ? { signal } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(stdout ? { stdout } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+  };
+}
+
 function safeQualityIdentifier(value: unknown): string | undefined {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
     ? value
@@ -1604,6 +1728,11 @@ export function buildSafeRunQualityProjectionV1(input: {
   artifactManifest?: readonly ArtifactManifestEntry[];
   inputTextSnapshotManifest?: readonly InputTextSnapshotManifestEntry[];
   manifestCompleteness?: ObjectManifestCompleteness;
+  exitCode?: number | null;
+  signal?: string | null;
+  stderr?: StreamTailSummary;
+  stdout?: StreamTailSummary;
+  diagnostics?: RunDiagnosticsAnalytics;
 }): SafeRunQualityV1 | undefined {
   const wantsContent = input.prefs.metrics === true && input.prefs.content === true;
   const output = wantsContent
@@ -1663,9 +1792,18 @@ export function buildSafeRunQualityProjectionV1(input: {
     input.artifactManifest !== undefined ||
     input.inputTextSnapshotManifest !== undefined
   );
+  const processOutcome = safeRunProcessOutcome({
+    wantsContent,
+    ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
+    ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    ...(input.stderr ? { stderr: input.stderr } : {}),
+    ...(input.stdout ? { stdout: input.stdout } : {}),
+    ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
+  });
   return SafeRunQualityV1Schema.parse({
     schema: SAFE_RUN_QUALITY_V1_SCHEMA,
     ...(output || error ? { result: { ...(output ? { output } : {}), ...(error ? { error } : {}) } } : {}),
+    ...(processOutcome ? { process: processOutcome } : {}),
     ...(tools && tools.length > 0 ? { tools } : {}),
     ...(hasManifests
       ? {

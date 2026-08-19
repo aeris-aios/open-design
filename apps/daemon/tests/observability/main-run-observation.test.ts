@@ -37,6 +37,87 @@ describe('buildStructuredMainRunObservationV1', () => {
     expect(unsafe.attributes).not.toHaveProperty('agentId');
   });
 
+  it('carries the failed-Run process outcome the single-Run trace used to report', () => {
+    const quality = buildSafeRunQualityProjectionV1({
+      prefs: { metrics: true, content: true, artifactManifest: false },
+      errorMessage: 'agent exited',
+      exitCode: 1,
+      signal: null,
+      stderr: {
+        tail: 'HTTP 401 at /opt/od/agent from /Users/alice/.config/od/creds.json',
+        lineCount: 7,
+        truncated: true,
+      },
+      stdout: { tail: 'partial model output', lineCount: 2, truncated: false },
+      diagnostics: {
+        diagnostic_source: 'stderr',
+        stderr_present: true,
+        stderr_line_count_bucket: '6_20',
+        stdout_present: true,
+        stdout_line_count_bucket: '1_5',
+        rpc_close_reason: 'exit_nonzero',
+        first_token_seen: false,
+        user_visible_output_seen: true,
+        tool_call_seen: false,
+        tool_result_sent: false,
+        approval_requested: false,
+        artifact_write_seen: false,
+        live_artifact_seen: false,
+        resume_auto_reseeded: false,
+      },
+    });
+    expect(quality?.process?.exitCode).toBe(1);
+    expect(quality?.process?.signal).toBeUndefined();
+    expect(quality?.process?.stderr?.lineCount).toBe(7);
+    expect(quality?.process?.stderr?.truncated).toBe(true);
+    expect(quality?.process?.stderr?.tail?.redacted).toBe(true);
+    // Both the trace-level and the wider Prompt-stack path rules run, so a
+    // home directory and an /opt path are masked before transport.
+    expect(quality?.process?.stderr?.tail?.text).not.toContain('/Users/alice');
+    expect(quality?.process?.stderr?.tail?.text).not.toContain('/opt/od/agent');
+    expect(quality?.process?.stderr?.tail?.text).toContain('HTTP 401');
+    expect(quality?.process?.stdout?.tail?.text).toBe('partial model output');
+    expect(quality?.process?.diagnostics).toMatchObject({
+      diagnostic_source: 'stderr',
+      rpc_close_reason: 'exit_nonzero',
+      stderr_present: true,
+    });
+  });
+
+  it('reports a terminating signal and withholds the stdout tail without content consent', () => {
+    const quality = buildSafeRunQualityProjectionV1({
+      prefs: { metrics: true, content: false, artifactManifest: false },
+      errorCode: 'AGENT_EXECUTION_FAILED',
+      exitCode: null,
+      signal: 'SIGTERM',
+      stderr: { tail: 'inactivity timeout', lineCount: 1, truncated: false },
+      stdout: { tail: 'model said something', lineCount: 3, truncated: false },
+      diagnostics: { rpc_close_reason: 'signal', stderr_present: true } as never,
+    });
+    expect(quality?.process?.signal).toBe('SIGTERM');
+    expect(quality?.process?.exitCode).toBeUndefined();
+    // stderr is a diagnostic channel and follows the run error message rule.
+    expect(quality?.process?.stderr?.tail?.text).toBe('inactivity timeout');
+    // stdout is the agent's own output, so it needs content consent; the
+    // structural facts still survive with an explicit reason.
+    expect(quality?.process?.stdout?.tail).toBeUndefined();
+    expect(quality?.process?.stdout?.lineCount).toBe(3);
+    expect(quality?.process?.stdout?.limitations)
+      .toEqual(['stdout_tail_requires_content_consent']);
+  });
+
+  it('drops unbounded diagnostic values instead of shipping them as text', () => {
+    const quality = buildSafeRunQualityProjectionV1({
+      prefs: { metrics: true, content: true, artifactManifest: false },
+      errorCode: 'AGENT_EXECUTION_FAILED',
+      diagnostics: {
+        rpc_close_reason: 'exit_nonzero',
+        free_text: 'failed while reading /Users/alice/secret',
+      } as never,
+    });
+    expect(quality?.process?.diagnostics).toEqual({ rpc_close_reason: 'exit_nonzero' });
+  });
+
   it('reuses the single-Run safe projection for output, errors, tools, and manifests', () => {
     const quality = buildSafeRunQualityProjectionV1({
       prefs: { metrics: true, content: true, artifactManifest: true },

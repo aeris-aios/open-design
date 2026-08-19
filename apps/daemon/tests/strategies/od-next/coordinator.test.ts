@@ -1074,6 +1074,68 @@ describe('OD Next planning coordinator', () => {
     });
   });
 
+  it('attributes a production block that delivered no resolvable entry', () => {
+    // Every other blocking path persists a `blockedContext`; this one did not,
+    // so the most common production block reached the client with no reason
+    // codes at all and could only be rendered as an anonymous failure.
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    beginAutomaticSimpleProduction(db, {
+      task: planned.task, sourceRunId: 'run-request', nextRunId: 'run-production',
+      updatedAt: 130,
+    });
+    const blocked = completeAutomaticSimpleProduction(db, {
+      runId: 'run-production', physicalStatus: 'succeeded', deliverableValid: false,
+      updatedAt: 140,
+    });
+    expect(blocked).toMatchObject({ outcome: 'blocked' });
+    expect(blocked?.blockedContext?.reasonCodes)
+      .toEqual(['od_next_canonical_deliverable_invalid']);
+  });
+
+  it('names a production block for the process failure, not the delivery', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    beginAutomaticSimpleProduction(db, {
+      task: planned.task, sourceRunId: 'run-request', nextRunId: 'run-production',
+      updatedAt: 130,
+    });
+    const failed = completeAutomaticSimpleProduction(db, {
+      runId: 'run-production', physicalStatus: 'failed', deliverableValid: false,
+      updatedAt: 140,
+    });
+    expect(failed?.blockedContext?.reasonCodes).toEqual([
+      'od_next_physical_run_not_succeeded',
+      'od_next_canonical_deliverable_invalid',
+    ]);
+  });
+
   it('blocks a continuation when native-session continuity cannot be proved', () => {
     prepareStrategyRequest(db, {
       taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
@@ -1220,6 +1282,57 @@ ${block('open-design-plan-contract', planContract(snapshot))}`),
     expect(persisted?.inputStage).toBe('request');
     // One Request Turn: Direct Edit never claims a production Run.
     expect(persisted?.runs).toHaveLength(1);
+  });
+
+  it('recovers a Direct Edit completion the agent delivered but never declared', () => {
+    // The observed field failure: the agent writes the canonical deliverable
+    // correctly, Open Design's own validator resolves it, and then the agent
+    // answers in prose without emitting a single machine block. Refusing that
+    // turn stranded a finished artifact behind a generic failure card, and no
+    // repair could rescue it — `tryBeginSerializationRepair` needs a recovered
+    // Plan Contract to anchor on, and this turn produces none.
+    prepareStrategyIntake(db, {
+      taskExecutionId: 'task-1',
+      intake: intakePassed,
+      execution: executionPassed,
+    });
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol('已创建 index.html，点击按钮会显示 Hello。'),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: true },
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(result.reasonCodes).toEqual(['od_next_protocol_runtime_state_inferred']);
+    expect(result.task.outcome).toBe('completed');
+    expect(result.task.route).toBe('direct_edit');
+    expect(result.task.executionMode).toBe('simple');
+    const persisted = getStrategyTaskExecution(db, 'task-1');
+    expect(persisted?.outcome).toBe('completed');
+    expect(persisted?.blockedContext).toBeUndefined();
+  });
+
+  it('refuses to infer a Direct Edit completion without verified physical delivery', () => {
+    // The inference may only ever accept evidence Open Design resolved itself.
+    // An undeclared turn that delivered nothing must still block, so a silent
+    // no-op can never be laundered into a completed task.
+    prepareStrategyIntake(db, {
+      taskExecutionId: 'task-1',
+      intake: intakePassed,
+      execution: executionPassed,
+    });
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol('我已经完成了。'),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: false },
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('blocked');
+    expect(result.reasonCodes).toEqual(['od_next_protocol_runtime_state_missing']);
+    expect(getStrategyTaskExecution(db, 'task-1')?.outcome).toBe('blocked');
   });
 
   it('adopts a Full Plan declaration on an unrouted first turn', () => {

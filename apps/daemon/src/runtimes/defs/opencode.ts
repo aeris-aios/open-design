@@ -2,6 +2,7 @@ import { DEFAULT_MODEL_OPTION } from './shared.js';
 import {
   OPENCODE_PERMISSION_CAPABILITY,
   appendOpenCodePermissionBypass,
+  appendOpenCodeWorkspaceDir,
 } from '../opencode-permissions.js';
 import { getRememberedLiveModels } from '../models.js';
 import type { RuntimeAgentDef, RuntimeModelOption } from '../types.js';
@@ -141,6 +142,7 @@ export const opencodeAgentDef = {
         'json',
       ];
       appendOpenCodePermissionBypass(args, 'opencode');
+      appendOpenCodeWorkspaceDir(args, runtimeContext.cwd);
       // Capture-style resume: OpenCode mints its own session id (reported on
       // the stream as `sessionID`, e.g. `ses_...`). On a follow-up turn the
       // daemon continues that session with `-s <id>` instead of re-sending the

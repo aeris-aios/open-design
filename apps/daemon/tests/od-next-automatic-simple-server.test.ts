@@ -1274,23 +1274,26 @@ describe('OD Next automatic production through the real server', () => {
     );
     expect(invocations[0]?.argv).not.toContain('resume');
     expect(invocations[0]?.stdin).toMatch(/^<open_design_prompt_bundle/);
-    expect(invocations[0]?.stdin).toContain('<system_prompt>');
-    expect(invocations[0]?.stdin).toContain('<user_prompt>');
-    expect(invocations[0]?.stdin).toContain('<task_config>');
+    expect(invocations[0]?.stdin).toContain('<open_design_core_system_prompt>');
+    expect(invocations[0]?.stdin).toContain('<user_first_prompt>');
+    expect(invocations[0]?.stdin).toContain('<task_metadata>');
     expect(invocations[0]?.stdin).toContain('<context>');
+    // The rejected wrapper and the pre-PRD tag names must not come back.
+    expect(invocations[0]?.stdin).not.toContain('<system_prompt>');
+    expect(invocations[0]?.stdin).not.toContain('<task_config>');
+    expect(invocations[0]?.stdin).not.toContain('<user_prompt>');
     // The Bundle is a tree: each spec slot is its own element, not a '---'
     // section inside one blob, and the user's words come last.
     for (const nested of [
-      '<core_system_prompt>',
       '<execution_boundary>',
       '<core_strategy>',
+      '<output_contract>',
+      '<echo_guard>',
       '<session_skills>',
       '<task_type_skill skill_name="prototype">',
       '<active_stages>',
       '<stage name="discovery">',
       '<atom name="discovery-question-form">',
-      '<output_contract>',
-      '<echo_guard>',
       '<task_type>',
       '<attachments>',
       '<recipe_identity ',
@@ -1300,14 +1303,14 @@ describe('OD Next automatic production through the real server', () => {
     }
     expect(invocations[0]!.stdin).not.toContain('\n\n---\n\n');
     expect(invocations[0]!.stdin).not.toContain('## Active stage:');
-    expect(invocations[0]!.stdin.lastIndexOf('<user_prompt>'))
+    expect(invocations[0]!.stdin.lastIndexOf('<user_first_prompt>'))
       .toBeGreaterThan(invocations[0]!.stdin.lastIndexOf('</context>'));
-    // Drift 2, proved on the real payload: system_prompt is the shared cache
-    // prefix, so no per-task or per-run value may appear inside it.
+    // Drift 2, proved on the real payload: the head through active_stages is
+    // the shared cache prefix, so no per-task or per-run value may appear in it.
     const firstStdin = invocations[0]!.stdin;
     const systemPromptSlice = firstStdin.slice(
-      firstStdin.indexOf('  <system_prompt>'),
-      firstStdin.indexOf('  </system_prompt>'),
+      firstStdin.indexOf('  <open_design_core_system_prompt>'),
+      firstStdin.indexOf('  </active_stages>'),
     );
     expect(systemPromptSlice.length).toBeGreaterThan(0);
     for (const perTaskValue of [
@@ -1529,7 +1532,7 @@ describe('OD Next automatic production through the real server', () => {
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(invocations).toHaveLength(3);
     const bundle = parseOdNextPromptBundleV2(invocations[0]!.stdin);
-    expect(bundle.userPrompt).toBe(repeatedQuery);
+    expect(bundle.userFirstPrompt).toBe(repeatedQuery);
     expect(bundle.context.priorTranscript).toContain(priorTranscript);
     // No separator arithmetic: the contract is addressable as its own node.
     const researchContract = bundle.context.researchCommandContract ?? '';

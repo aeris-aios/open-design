@@ -600,6 +600,72 @@ export type SafeObservationManifestEntryV1 = z.infer<
   typeof SafeObservationManifestEntryV1Schema
 >;
 
+/**
+ * Bounded process-stream tail for one failed Run.
+ *
+ * The tail is optional so a producer can still report the observed line count
+ * and truncation flag when consent does not permit shipping the text itself.
+ * Every tail that IS shipped must already be redacted and byte-capped by its
+ * producer; the schema only enforces the shape.
+ */
+export const SafeObservationStreamTailV1Schema = z.object({
+  tail: SafeObservationTextV1Schema.optional(),
+  lineCount: nonNegativeIntegerSchema,
+  truncated: z.boolean(),
+  limitations: limitationListSchema.optional(),
+}).strict().superRefine((stream, context) => {
+  if (stream.tail === undefined && (stream.limitations?.length ?? 0) === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['limitations'],
+      message: 'A stream summary without its tail text requires a limitation.',
+    });
+  }
+});
+export type SafeObservationStreamTailV1 = z.infer<
+  typeof SafeObservationStreamTailV1Schema
+>;
+
+const safeDiagnosticKeySchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
+
+/**
+ * Host-derived close/diagnostic facts for one Run.
+ *
+ * Values are deliberately restricted to booleans and bounded identifiers
+ * (buckets, enum codes). Free text never enters this record — a producer that
+ * wants to ship text must route it through `SafeObservationTextV1` so the
+ * redaction and truncation rules apply.
+ */
+export const SafeRunDiagnosticsV1Schema = z.record(
+  safeDiagnosticKeySchema,
+  z.union([z.boolean(), safeQualityIdentifierSchema]),
+).superRefine((diagnostics, context) => {
+  if (Object.keys(diagnostics).length > 64) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Run diagnostics must stay bounded to 64 fields.',
+    });
+  }
+});
+export type SafeRunDiagnosticsV1 = z.infer<typeof SafeRunDiagnosticsV1Schema>;
+
+/**
+ * Terminal process outcome for one Run: how the child exited and what it wrote
+ * to its diagnostic streams.
+ *
+ * This is the evidence a failed Run needs and that failure *classification*
+ * alone cannot supply — an exit code, a fatal signal, and the stderr tail that
+ * explains both.
+ */
+export const SafeRunProcessOutcomeV1Schema = z.object({
+  exitCode: z.number().int().optional(),
+  signal: safeQualityIdentifierSchema.optional(),
+  stderr: SafeObservationStreamTailV1Schema.optional(),
+  stdout: SafeObservationStreamTailV1Schema.optional(),
+  diagnostics: SafeRunDiagnosticsV1Schema.optional(),
+}).strict();
+export type SafeRunProcessOutcomeV1 = z.infer<typeof SafeRunProcessOutcomeV1Schema>;
+
 export const SafeRunQualityV1Schema = z.object({
   schema: z.literal(SAFE_RUN_QUALITY_V1_SCHEMA),
   result: z.object({
@@ -613,6 +679,7 @@ export const SafeRunQualityV1Schema = z.object({
     artifacts: z.array(SafeObservationManifestEntryV1Schema).max(50),
     inputTextSnapshots: z.array(SafeObservationManifestEntryV1Schema).max(50),
   }).strict().optional(),
+  process: SafeRunProcessOutcomeV1Schema.optional(),
 }).strict();
 export type SafeRunQualityV1 = z.infer<typeof SafeRunQualityV1Schema>;
 

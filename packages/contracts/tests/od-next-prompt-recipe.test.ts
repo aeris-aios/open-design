@@ -46,6 +46,22 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
 };
 
 describe('OD Next V2 prompt recipe', () => {
+  it('tells the request stage the canonical-deliverable rule that judges a Direct Edit completion', () => {
+    // A Direct Edit turn declares `outcome: completed` on the REQUEST stage and
+    // is then judged by `validateRunDeliverable` — the same entry-resolution
+    // ladder the production prompt spells out. Shipping that rule only in the
+    // production continuation left Direct Edit agents graded on a contract they
+    // were never given, which surfaced as a terminal
+    // `od_next_canonical_deliverable_invalid` with no repair path.
+    const prompt = composeOdNextStrategyRequestPromptV2(recipe);
+    expect(prompt).toContain('Direct Edit remains the only route allowed to perform Build work on the request stage.');
+    expect(prompt).toContain('canonical-deliverable check that gates production already applies');
+    expect(prompt).toContain('it looks for a root `index.html`, then a single root-level html file, then a single file matching the project kind');
+    // Writing outside the project directory yields `no_artifact`, which reads
+    // to the agent as "I finished" and to Open Design as "nothing delivered".
+    expect(prompt).toContain('Write every deliverable inside the project directory');
+  });
+
   it('composes a versioned request golden with one Task Skill and ordered planning/Build sections', () => {
     const prompt = composeOdNextStrategyRequestPromptV2(recipe);
     const headings = prompt.split('\n').filter((line) => line.startsWith('#'));

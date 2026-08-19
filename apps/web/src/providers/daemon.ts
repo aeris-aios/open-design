@@ -1620,8 +1620,26 @@ async function consumeDaemonPhysicalRun({
       if (endStrategyTask.outcome === 'canceled') {
         endStatus = 'canceled';
       } else if (endStrategyTask.outcome === 'blocked') {
-        endStatus = 'failed';
-        pendingStructuredError ??= new Error('The strategy task could not continue.');
+        // A blocked strategy verdict does not retroactively unmake a Run that
+        // already succeeded AND delivered. Observed across every runtime: the
+        // agent writes the canonical deliverable correctly, the daemon's own
+        // `validateRunDeliverable` resolves it, and then the turn is refused
+        // over a machine-block defect. Remapping that to `failed` hid the file
+        // the user asked for behind a generic error card and suppressed the
+        // next-step actions that reach it.
+        //
+        // The strategy contract is explicit that a post-claim failure keeps the
+        // current Run's own result rather than inventing a new one, so only a
+        // Run that did NOT succeed-and-deliver falls through to the failure
+        // branch. `deliverableValid` is filesystem-backed (entry resolved, this
+        // Run touched it, kind matches) — never the agent's own assertion — and
+        // an unreachable daemon fails closed to the previous behaviour.
+        const deliveredDespiteBlock = endStatus === 'succeeded'
+          && (await fetchChatRunStatus(runId, workspaceContext))?.deliverableValid === true;
+        if (!deliveredDespiteBlock) {
+          endStatus = 'failed';
+          pendingStructuredError ??= new Error('The strategy task could not continue.');
+        }
       } else if (endStrategyTask.outcome === 'completed') {
         endStatus = 'succeeded';
         serverDeclaredSuccess = true;

@@ -13,9 +13,9 @@ import {
 import type { ChatSessionMode } from '../api/chat.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
 import type {
+  OdNextPromptBundleHeadV2,
   OdNextPromptBundleRecipeIdentityV2,
   OdNextPromptBundleStageV2,
-  OdNextPromptBundleV2,
 } from './od-next-prompt-bundle-v2.js';
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
@@ -310,7 +310,7 @@ export function odNextPromptCacheIdentityV2(input: Pick<
  * them cannot drift apart in separate files.
  */
 export const OD_NEXT_BUNDLE_ECHO_GUARD_V2 =
-  'Do not quote, restate, or echo <system_prompt>. Begin the response by addressing <user_prompt>.';
+  'Do not quote, restate, or echo <open_design_core_system_prompt>. Begin the response by addressing <user_first_prompt>.';
 
 const EXECUTION_AND_SECURITY_SECTION = `# Open Design execution and security boundary
 
@@ -334,7 +334,7 @@ On the request stage YOU choose the route. Open Design does not pick it for you:
 
 Having chosen the route, prepare the Task Profile, Design Spec, Full Plan, stable Todo plan, Build Requirements, and any Build Packages required by the locked execution mode.
 
-For a Full Plan route, the request and clarification stages are planning-only. You may read the bounded inputs needed to freeze the plan, but do not create, edit, render, or dispatch a deliverable until Open Design continues the same native session into the production stage. Direct Edit remains the only route allowed to perform Build work on the request stage.
+For a Full Plan route, the request and clarification stages are planning-only. You may read the bounded inputs needed to freeze the plan, but do not create, edit, render, or dispatch a deliverable until Open Design continues the same native session into the production stage. Direct Edit remains the only route allowed to perform Build work on the request stage. When you declare \`outcome: completed\` on that stage, the same canonical-deliverable check that gates production already applies: Open Design must be able to identify one runnable entry in the delivered files, otherwise the completed task is rejected — it looks for a root \`index.html\`, then a single root-level html file, then a single file matching the project kind. Write every deliverable inside the project directory and lay it out so exactly one of those resolves; files written outside the project directory are not delivered work and leave the task with no artifact.
 
 Ask only when one unresolved answer would materially change scope, direction, the canonical deliverable, main outputs, editability, or substantial rework. Use one inline \`<question-form>\` containing one to three questions with recommended defaults. The form is assistant text parsed by the host, not a native tool call. If the known context is sufficient, continue without a form.
 
@@ -488,8 +488,9 @@ const RUNTIME_OWNED_PLACEHOLDERS = {
  *
  * This section is the tail of the cache-stable prefix, so it must not embed a
  * task's snapshot id, capability hash, input refs, or production routes. The
- * real values travel in `<recipe_identity>` and `<runtime_facts>`, which sit
- * after `system_prompt` ends; the model is told to copy from there.
+ * real values travel in `<recipe_identity>` and `<runtime_facts>`, which sit in
+ * `<context>` after the cache-stable head ends; the model is told to copy from
+ * there.
  *
  * Task type, task-profile version, and output kind DO appear here. They vary
  * per task type, not per task, which is the same partition `task_type_skill`
@@ -736,23 +737,21 @@ export function odNextStrategyRecipeIdentityV2(
     strategyId: input.strategyId,
     strategyVersion: verified.strategyVersion,
     appliedSnapshot: verified.snapshotId,
-    strategyPackageHash: input.packageHash,
-    taskSkillDigest: input.taskProfileDigest,
     taskProfileVersion: requireText(input.taskProfileVersion, 'taskProfileVersion'),
-    stablePromptIdentity: verified.identity,
   };
 }
 
 /**
- * Compose the Bundle's `<system_prompt>` slots as structured nodes.
+ * Compose the Bundle's cache-stable head — `open_design_core_system_prompt`,
+ * `session_skills`, and `active_stages` — as structured nodes.
  *
  * Everything here is byte-identical across tasks that share a strategy version,
  * task type, and execution profile. The caller supplies `userSelectedSkills`
  * separately because those are the one per-task member of `session_skills`.
  */
-export function composeOdNextStrategyBundleSystemPromptV2(
+export function composeOdNextStrategyBundleHeadV2(
   input: OdNextStrategyRequestRecipeV2,
-): OdNextPromptBundleV2['systemPrompt'] {
+): OdNextPromptBundleHeadV2 {
   const verified = verifyOdNextRecipeV2(input);
   return {
     coreSystemPrompt: {
@@ -765,6 +764,10 @@ export function composeOdNextStrategyBundleSystemPromptV2(
       },
       discoveryAndPlanningSurface: DISCOVERY_AND_PLANNING_SECTION,
       coreStrategy: verified.coreStrategy,
+      // The output contract and the echo guard are output constraints, so the
+      // PRD keeps them inside the core system prompt rather than as siblings.
+      outputContract: renderOdNextOutputContractV2(input),
+      echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
     },
     sessionSkills: {
       generalOrchestrationSkill: {
@@ -774,12 +777,10 @@ export function composeOdNextStrategyBundleSystemPromptV2(
       taskTypeSkill: { skillName: input.taskType, body: verified.taskSkill },
     },
     activeStages: verified.stages,
-    outputContract: renderOdNextOutputContractV2(input),
-    echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
   };
 }
 
-/** Compose the verified recipe without stable request context for Bundle system_prompt. */
+/** Compose the verified recipe without stable request context for the Bundle head. */
 export function composeOdNextStrategyCorePromptV2(
   input: OdNextStrategyRequestRecipeV2,
 ): string {

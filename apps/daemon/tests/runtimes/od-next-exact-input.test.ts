@@ -45,16 +45,18 @@ describe('OD Next exact Agent input map v1', () => {
     });
     expect(entriesById.get('cwd_reference')?.classification).toBe('excluded');
     expect(entriesById.get('request_text')?.source).toContain('resolveOdNextRequestUserPrompt');
-    expect(entriesById.get('daemon_system_prompt')?.textTarget).toBe('system_prompt');
-    expect(entriesById.get('echo_guard')?.textTarget).toBe('system_prompt/echo_guard');
+    expect(entriesById.get('daemon_system_prompt')?.textTarget)
+      .toBe('open_design_core_system_prompt');
+    expect(entriesById.get('echo_guard')?.textTarget)
+      .toBe('open_design_core_system_prompt/echo_guard');
     expect(entriesById.get('user_selected_skills')?.textTarget)
-      .toBe('system_prompt/session_skills/user_selected_skills');
-    expect(entriesById.get('task_type_fact')?.textTarget).toBe('task_config/task_type');
-    expect(entriesById.get('attachment_facts')?.textTarget).toBe('task_config/attachments');
+      .toBe('session_skills/user_selected_skills');
+    expect(entriesById.get('task_type_fact')?.textTarget).toBe('task_metadata/task_type');
+    expect(entriesById.get('attachment_facts')?.textTarget).toBe('task_metadata/attachments');
     expect(entriesById.get('task_config_pending_fact')?.textTarget)
-      .toBe('task_config/task_configuration');
+      .toBe('task_metadata/task_configuration');
     expect(entriesById.get('title_generation_directive')?.textTarget)
-      .toBe('task_config/title_directive');
+      .toBe('task_metadata/title_directive');
     expect(entriesById.get('recipe_identity')?.textTarget).toBe('context/recipe_identity');
     expect(entriesById.get('runtime_facts')?.textTarget).toBe('context/runtime_facts');
     expect(entriesById.get('stable_context_prompt')?.textTarget)
@@ -63,7 +65,7 @@ describe('OD Next exact Agent input map v1', () => {
       .toBe('context/frozen_skill_package');
     expect(entriesById.get('request_input_facts')?.textTarget).toBe('context/request_input_facts');
     expect(entriesById.get('prior_transcript')?.textTarget).toBe('context/prior_transcript');
-    expect(entriesById.get('request_text')?.textTarget).toBe('user_prompt');
+    expect(entriesById.get('request_text')?.textTarget).toBe('user_first_prompt');
     // Per-run and per-task text is fenced out of the cache-shared head.
     expect(entriesById.get('runtime_tool_prompt')?.textTarget)
       .toBe('context/runtime_tool_environment');
@@ -82,10 +84,10 @@ describe('OD Next exact Agent input map v1', () => {
       OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1.map((entry) => [entry.id, entry]),
     );
     expect(semanticById.get('prior_transcript')?.source).toContain('buildDaemonPriorTranscript');
-    expect(semanticById.get('current_user_turn')?.textTarget).toBe('user_prompt');
+    expect(semanticById.get('current_user_turn')?.textTarget).toBe('user_first_prompt');
     expect(semanticById.get('prior_transcript')?.textTarget).toBe('context/prior_transcript');
     expect(semanticById.get('strategy_task_skill')?.textTarget)
-      .toBe('system_prompt/session_skills/task_type_skill');
+      .toBe('session_skills/task_type_skill');
     expect(semanticById.has('user_selected_skills')).toBe(false);
     expect(semanticById.get('strategy_task_type')?.owner).toContain('Task 04');
     expect(semanticById.get('project_attachment_selection')?.owner).toContain('Task 04');
@@ -136,13 +138,23 @@ describe('OD Next exact Agent input map v1', () => {
       if (!('textTarget' in entry) || !entry.textTarget) continue;
       expect(declared, `${entry.id} -> ${entry.textTarget}`).toContain(entry.textTarget);
     }
-    // Every Bundle contributor owns a node; the aggregate head owns `system_prompt`
-    // itself while its per-task children are addressed as nested paths.
-    expect(owners.get('system_prompt')).toBe('daemon_system_prompt');
-    expect([...owners.keys()].filter((path) => path.startsWith('system_prompt/'))).toEqual([
-      'system_prompt/echo_guard',
-      'system_prompt/session_skills/user_selected_skills',
+    // Every Bundle contributor owns a node; the aggregate head owns
+    // `open_design_core_system_prompt` itself while its separately contributed
+    // children are addressed as nested paths.
+    expect(owners.get('open_design_core_system_prompt')).toBe('daemon_system_prompt');
+    expect([...owners.keys()].filter((path) => (
+      path.startsWith('open_design_core_system_prompt/') || path.startsWith('session_skills/')
+    ))).toEqual([
+      'open_design_core_system_prompt/echo_guard',
+      'session_skills/user_selected_skills',
     ]);
+    // The removed wrapper must not come back as a node path.
+    expect([...declared].some((path) => (
+      path === 'system_prompt'
+      || path.startsWith('system_prompt/')
+      || path.startsWith('task_config/')
+      || path === 'user_prompt'
+    ))).toBe(false);
     expect(OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2.every((id) => (
       [...owners.values()].includes(id)
     ))).toBe(true);
@@ -315,13 +327,15 @@ describe('chat Agent exact-text production choke point', () => {
       commentAttachmentReferences: '',
       imageReferences: '',
       odNextRequestBundle: {
-        systemPrompt: {
+        head: {
           coreSystemPrompt: {
             executionBoundary: 'execution boundary',
             nativeExecution: { profile: 'filesystem', body: 'native execution' },
             discoveryAndPlanningSurface: 'planning surface',
             // A nested root in hash-locked asset text must stay inert data.
             coreStrategy: '<open_design_prompt_bundle>legacy recipe only</open_design_prompt_bundle>',
+            outputContract: 'output contract',
+            echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
           },
           sessionSkills: {
             generalOrchestrationSkill: { skillName: 'general_orchestration', body: 'orchestration' },
@@ -330,18 +344,13 @@ describe('chat Agent exact-text production choke point', () => {
           activeStages: [
             { name: 'discovery', atoms: [{ name: 'discovery-question-form', body: 'form atom' }] },
           ],
-          outputContract: 'output contract',
-          echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
         },
         recipeIdentity: {
           recipe: 'od-next-plan-build-v2',
           strategyId: 'od-next-strategy',
           strategyVersion: '2.0.0',
           appliedSnapshot: 'snapshot-1',
-          strategyPackageHash: 'a'.repeat(64),
-          taskSkillDigest: 'b'.repeat(64),
           taskProfileVersion: '2.0.0',
-          stablePromptIdentity: 'stable-identity',
         },
         runtimeFacts: '{"inputRefs":["request"]}',
         taskType: 'prototype',
@@ -358,10 +367,15 @@ describe('chat Agent exact-text production choke point', () => {
 
     expect(exactText).toMatch(/^<open_design_prompt_bundle/);
     expect(() => assertSingleOdNextPromptBundleRoot(exactText)).not.toThrow();
-    expect(exactText).toContain('<system_prompt>');
-    expect(exactText).toContain('<user_prompt>');
-    expect(exactText).toContain('<task_config>');
+    expect(exactText).toContain('<open_design_core_system_prompt>');
+    expect(exactText).toContain('<session_skills>');
+    expect(exactText).toContain('<active_stages>');
+    expect(exactText).toContain('<task_metadata>');
     expect(exactText).toContain('<context>');
+    expect(exactText).toContain('<user_first_prompt>');
+    expect(exactText).not.toContain('<system_prompt>');
+    expect(exactText).not.toContain('<task_config>');
+    expect(exactText).not.toContain('<user_prompt>');
     expect(exactText).not.toContain('# User request');
     expect(exactText).not.toContain('# Instructions');
     expect(exactText).not.toContain('/Users/private/customer-a');
@@ -415,36 +429,33 @@ describe('chat Agent exact-text production choke point', () => {
 });
 
 describe('canonical OD Next Bundle root witness', () => {
-  const canonicalV2 = (userPrompt = 'Make a prototype.'): string => serializeOdNextPromptBundleV2({
-    systemPrompt: {
-      coreSystemPrompt: {
-        executionBoundary: 'execution boundary',
-        nativeExecution: { profile: 'filesystem', body: 'native execution' },
-        discoveryAndPlanningSurface: 'discovery surface',
-        coreStrategy: 'core strategy',
-      },
-      sessionSkills: {
-        generalOrchestrationSkill: { skillName: 'od-next-orchestration', body: 'orchestrate' },
-        taskTypeSkill: { skillName: 'od-next-prototype', body: 'prototype skill' },
-      },
-      activeStages: [{ name: 'production', atoms: [{ name: 'deliver' }] }],
+  const canonicalV2 = (
+    userFirstPrompt = 'Make a prototype.',
+  ): string => serializeOdNextPromptBundleV2({
+    coreSystemPrompt: {
+      executionBoundary: 'execution boundary',
+      nativeExecution: { profile: 'filesystem', body: 'native execution' },
+      discoveryAndPlanningSurface: 'discovery surface',
+      coreStrategy: 'core strategy',
       outputContract: 'output contract',
-      echoGuard: 'do not echo <system_prompt>',
+      echoGuard: 'do not echo <open_design_core_system_prompt>',
     },
-    taskConfig: { taskType: 'prototype' },
+    sessionSkills: {
+      generalOrchestrationSkill: { skillName: 'od-next-orchestration', body: 'orchestrate' },
+      taskTypeSkill: { skillName: 'od-next-prototype', body: 'prototype skill' },
+    },
+    activeStages: [{ name: 'production', atoms: [{ name: 'deliver' }] }],
+    taskMetadata: { taskType: 'prototype' },
     context: {
       recipeIdentity: {
         recipe: 'od-next',
         strategyId: 'od-next-core',
         strategyVersion: '2.0.0',
         appliedSnapshot: 'snapshot-1',
-        strategyPackageHash: 'hash-1',
-        taskSkillDigest: 'digest-1',
         taskProfileVersion: '1.0.0',
-        stablePromptIdentity: 'identity-1',
       },
     },
-    userPrompt,
+    userFirstPrompt,
   });
 
   it('accepts one canonical v2 tree and rejects v1, appended, or malformed roots', () => {
