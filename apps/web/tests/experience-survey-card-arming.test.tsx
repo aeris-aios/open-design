@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 
 // The card's arming rule is the whole product decision of this survey: ask
-// once per user, after a delivered artifact, but never on top of someone
-// writing their next prompt. None of that is visible in the trigger module —
-// the delay, the typing bail-out, the consent gate and the retire-on-shown
-// rule all live in the component — so they are pinned here.
+// once per user, after a delivered artifact. None of that is visible in the
+// trigger module — the delay, the consent gate and the retire-on-shown rule
+// all live in the component — so they are pinned here.
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,12 +20,6 @@ import {
 function deliverArtifact() {
   act(() => {
     notifyArtifactDelivered();
-  });
-}
-
-function typeSomething() {
-  act(() => {
-    document.body.dispatchEvent(new Event('beforeinput', { bubbles: true }));
   });
 }
 
@@ -61,28 +54,18 @@ describe('experience survey card arming', () => {
     expect(card()).not.toBeNull();
   });
 
-  it('drops the chance when the user starts typing during the delay', () => {
+  it('still shows the card when the user types straight through the delay', () => {
     render(<ExperienceSurvey metricsConsent />);
 
     deliverArtifact();
-    typeSomething();
+    act(() => {
+      document.body.dispatchEvent(new Event('beforeinput', { bubbles: true }));
+    });
     passTheDelay();
 
-    expect(card()).toBeNull();
-  });
-
-  it('takes the next delivery after a dropped one', () => {
-    render(<ExperienceSurvey metricsConsent />);
-
-    deliverArtifact();
-    typeSomething();
-    passTheDelay();
-    expect(card()).toBeNull();
-
-    // The user stopped typing and ran one more turn. A dropped chance must not
-    // be a permanent one, or an iterating user is never asked at all.
-    deliverArtifact();
-    passTheDelay();
+    // An earlier revision called the arm off here. It was removed: a survey
+    // asked once per user cannot afford to skip the one moment it has, and the
+    // users who type immediately after a delivery are the engaged ones.
     expect(card()).not.toBeNull();
   });
 

@@ -62,15 +62,15 @@ describe('experience survey delivery trigger', () => {
     expect(deliveredCount()).toBe(SURVEY_MIN_DELIVERIES);
   });
 
-  it('keeps arming on later deliveries so a dropped chance is not the last one', () => {
+  it('keeps arming on later deliveries so a lost arm is not the last chance', () => {
     const listener = listen();
 
     notifyArtifactDelivered();
     notifyArtifactDelivered();
     notifyArtifactDelivered();
 
-    // Every delivery is a fresh chance, because the component drops the ones
-    // the user types over. Arming is not the same as showing.
+    // Arming is not showing: an arm can be lost to a navigation mid-delay, so
+    // every delivery has to offer the component another one.
     expect(listener).toHaveBeenCalledTimes(3);
   });
 

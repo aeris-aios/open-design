@@ -140,21 +140,19 @@ export function ExperienceSurvey({
   }, []);
 
   // Arm on a delivered artifact. The delay gives the user a beat to look at
-  // what the run just produced before anything else asks for attention.
+  // what the run just produced before anything else asks for attention. Once
+  // armed, the card is shown — nothing the user does during the delay calls it
+  // off, because the survey is asked once per user and dropping a chance is
+  // how a user ends up never being asked at all.
   useEffect(() => {
     if (!metricsConsent) return;
     let armTimer: number | null = null;
     let modalWatcher: MutationObserver | null = null;
-    let typingWatcher: (() => void) | null = null;
 
     const clearArm = () => {
       if (armTimer !== null) {
         window.clearTimeout(armTimer);
         armTimer = null;
-      }
-      if (typingWatcher) {
-        document.removeEventListener('beforeinput', typingWatcher, true);
-        typingWatcher = null;
       }
     };
 
@@ -181,25 +179,10 @@ export function ExperienceSurvey({
 
     const unsubscribe = onArtifactDelivered(() => {
       if (isSurveyRetired() || exposedRef.current || armTimer !== null) return;
-      // Unlike an export, a delivery is usually the middle of a session rather
-      // than the end of one: the common next move is to type the follow-up
-      // prompt. Sliding a card into the corner at that moment interrupts the
-      // one thing the user is trying to do, so typing during the delay drops
-      // this chance and waits for the next delivery. That is affordable
-      // precisely because deliveries repeat (~13 per user per 30 days) — and
-      // the delivery that finally lands the card is the one after which the
-      // user stopped, which is the honest moment to ask. It costs nothing in
-      // frequency either: a dropped chance is one the user never saw, and the
-      // survey retires the moment it is shown.
-      //
-      // `beforeinput` rather than `keydown`, because an IME is how a large
-      // share of this product's users write a prompt: composing Chinese emits
-      // `keydown` with `key === 'Process'`, which no printable-character test
-      // recognizes. `beforeinput` fires for IME composition, plain typing and
-      // paste alike, and stays quiet for arrow keys, scrolling and shortcuts —
-      // exactly the line we want.
-      typingWatcher = () => clearArm();
-      document.addEventListener('beforeinput', typingWatcher, true);
+      // The delay is the only thing between the artifact landing and the card
+      // arriving. It is short on purpose: long enough that the two do not
+      // animate on top of each other, short enough that the card still reads
+      // as being about the run that just finished.
       armTimer = window.setTimeout(() => {
         clearArm();
         reveal();

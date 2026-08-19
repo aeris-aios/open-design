@@ -22,10 +22,6 @@
 // The first delivery counts. Holding out for a second run would buy an opinion
 // formed on more than one artifact, but it would cost the answers of everyone
 // who produces once and leaves — and those are the users we understand least.
-// Asking early is affordable because the card is not an interruption: the
-// component waits out a delay and drops the chance entirely if the user starts
-// typing, so an early ask that lands badly costs a dropped chance, not a
-// derailed session.
 //
 // Frequency rule: exactly one ask per user, ever. The card retires the moment
 // it is SHOWN, not when it is answered or closed — ignoring a prompt is how
@@ -33,8 +29,10 @@
 // single question into a recurring one. So a user sees this card at most once,
 // whatever they do with it.
 //
-// That is also why a chance dropped by the typing bail-out is retried on the
-// next delivery: a card the user never saw did not spend their one ask.
+// Listeners still fire on every delivery rather than only the qualifying one.
+// Arming is not showing: an arm can be lost to a navigation mid-delay, and the
+// cheapest way to make sure the one ask actually happens is to let the next
+// delivery re-arm.
 
 const RETIRED_KEY = 'open-design:experience-survey:v1:retired';
 const DELIVERY_COUNT_KEY = 'open-design:experience-survey:v1:deliveries';
