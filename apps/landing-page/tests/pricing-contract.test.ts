@@ -32,6 +32,14 @@ const PRICING_INDIVIDUAL_PATH = new URL(
   "../app/_components/pricing-individual-plans.astro",
   import.meta.url,
 );
+const GO_PLAN_MIMO_LOGO_PATH = new URL(
+  "../public/pricing-e-final/assets/mimo-logo-user-CWOWEwG5.png",
+  import.meta.url,
+);
+const GO_PLAN_ZHIPU_LOGO_PATH = new URL(
+  "../public/pricing-e-final/assets/zai-logo-official-Byn-xbrp.png",
+  import.meta.url,
+);
 const CAMPAIGN_PATH = new URL(
   "../app/_lib/pricing-campaign-content.ts",
   import.meta.url,
@@ -89,6 +97,49 @@ function assertPlanContract(value: unknown): asserts value is PricingContract {
 }
 
 describe("pricing contract", () => {
+  it("keeps the reviewed individual-plan visuals aligned with the demo", async () => {
+    const [plans, mimoLogo, zhipuLogo] = await Promise.all([
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
+      readFile(GO_PLAN_MIMO_LOGO_PATH),
+      readFile(GO_PLAN_ZHIPU_LOGO_PATH),
+    ]);
+
+    assert.ok(mimoLogo.byteLength > 0);
+    assert.ok(zhipuLogo.byteLength > 0);
+    assert.match(plans, /unpkg\.com\/@lobehub\/icons-static-svg@latest\/icons/);
+    assert.match(plans, /mimo-logo-user-CWOWEwG5\.png/);
+    assert.match(plans, /zai-logo-official-Byn-xbrp\.png/);
+    assert.match(plans, /model-logo-(?:mimo|zhipu|nanobanana)/);
+    assert.match(
+      plans,
+      /\.discount-corner-badge\s*\{[^}]*border:\s*0;/s,
+    );
+    assert.match(
+      plans,
+      /\.plan-go \.plan-model-module\.unlimited-module,[\s\S]*?background:\s*#f7f8f3;/,
+    );
+    assert.match(
+      plans,
+      /\.plan-go \.plan-model-module\.unavailable-model-module\s*\{[^}]*background:\s*transparent;/s,
+    );
+    assert.match(
+      plans,
+      /\.plan-max \.plan-model-module li\.model-with-status em\.unlimited,[\s\S]*?background:\s*rgba\(120, 234, 87, 0\.14\);/,
+    );
+    assert.match(plans, /data-usage-module/);
+    assert.match(plans, /new IntersectionObserver/);
+    assert.match(plans, /threshold:\s*0\.22/);
+    assert.match(
+      plans,
+      /\.individual-usage-meter i\s*\{[^}]*background:\s*#dcfac7;/s,
+    );
+    assert.match(
+      plans,
+      /\.individual-usage-meter b\s*\{[^}]*left:\s*clamp\(4px, calc\(2\.5769% - 10px\), 16px\);/s,
+    );
+    assert.doesNotMatch(plans, /--usage-label/);
+  });
+
   it("replaces the Free entry card with the localized Go offer", async () => {
     const [page, individualPlans] = await Promise.all([
       readFile(PRICING_PAGE_PATH, "utf8"),

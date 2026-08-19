@@ -29,32 +29,36 @@ type ModelCategory = 'popular' | 'flagship' | 'image';
 interface ModelItem {
   name: string;
   icon: string;
+  iconClass?: string;
 }
 
+const LOBE_ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-svg@latest/icons';
+const DEMO_ASSET_BASE = '/pricing-e-final/assets';
+
 const popularModels: ModelItem[] = [
-  { name: 'DeepSeek V4 Flash', icon: '/agent-icons/deepseek.svg' },
-  { name: 'GLM-5.2', icon: '/agents/zhipu.svg' },
-  { name: 'Kimi K2.7 Code', icon: '/agent-icons/kimi.svg' },
-  { name: 'DeepSeek V4 Pro', icon: '/agent-icons/deepseek.svg' },
-  { name: 'MiniMax M2.7', icon: '/agents/minimax.svg' },
-  { name: 'Kimi K2.6', icon: '/agent-icons/kimi.svg' },
-  { name: 'MiMo V2.5 Pro', icon: '/agent-icons/mimo.svg' },
-  { name: 'GLM-5.1', icon: '/agents/zhipu.svg' },
+  { name: 'DeepSeek V4 Flash', icon: `${LOBE_ICON_BASE}/deepseek.svg` },
+  { name: 'GLM-5.2', icon: `${DEMO_ASSET_BASE}/zai-logo-official-Byn-xbrp.png`, iconClass: 'model-logo-zhipu' },
+  { name: 'Kimi K2.7 Code', icon: `${LOBE_ICON_BASE}/kimi.svg`, iconClass: 'model-logo-kimi' },
+  { name: 'DeepSeek V4 Pro', icon: `${LOBE_ICON_BASE}/deepseek.svg` },
+  { name: 'MiniMax M2.7', icon: `${LOBE_ICON_BASE}/minimax.svg` },
+  { name: 'Kimi K2.6', icon: `${LOBE_ICON_BASE}/kimi.svg`, iconClass: 'model-logo-kimi' },
+  { name: 'MiMo V2.5 Pro', icon: `${DEMO_ASSET_BASE}/mimo-logo-user-CWOWEwG5.png`, iconClass: 'model-logo-mimo' },
+  { name: 'GLM-5.1', icon: `${DEMO_ASSET_BASE}/zai-logo-official-Byn-xbrp.png`, iconClass: 'model-logo-zhipu' },
 ];
 
 const flagshipModels: ModelItem[] = [
-  { name: 'Claude Fable 5', icon: '/agents/anthropic.svg' },
-  { name: 'Kimi-K3', icon: '/agent-icons/kimi.svg' },
-  { name: 'GPT-5.6-Sol', icon: '/agents/openai.svg' },
-  { name: 'Claude Opus 5', icon: '/agents/anthropic.svg' },
-  { name: 'GPT-5.5-Pro', icon: '/agents/openai.svg' },
-  { name: 'Claude Opus 4.7', icon: '/agents/anthropic.svg' },
-  { name: 'Claude Opus 4.8', icon: '/agents/anthropic.svg' },
-  { name: 'Claude Sonnet 5', icon: '/agents/anthropic.svg' },
-  { name: 'Claude Opus 4.6', icon: '/agents/anthropic.svg' },
-  { name: 'Claude Sonnet 4.6', icon: '/agents/anthropic.svg' },
-  { name: 'GPT-5.5', icon: '/agents/openai.svg' },
-  { name: 'Grok-4.5', icon: '/agents/xai.svg' },
+  { name: 'Claude Fable 5', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'Kimi-K3', icon: `${LOBE_ICON_BASE}/kimi.svg`, iconClass: 'model-logo-kimi' },
+  { name: 'GPT-5.6-Sol', icon: `${LOBE_ICON_BASE}/openai.svg` },
+  { name: 'Claude Opus 5', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'GPT-5.5-Pro', icon: `${LOBE_ICON_BASE}/openai.svg` },
+  { name: 'Claude Opus 4.7', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'Claude Opus 4.8', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'Claude Sonnet 5', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'Claude Opus 4.6', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'Claude Sonnet 4.6', icon: `${LOBE_ICON_BASE}/claude.svg` },
+  { name: 'GPT-5.5', icon: `${LOBE_ICON_BASE}/openai.svg` },
+  { name: 'Grok-4.5', icon: `${LOBE_ICON_BASE}/grok.svg` },
 ];
 
 const plusFlagshipModels = flagshipModels.filter(
@@ -62,9 +66,9 @@ const plusFlagshipModels = flagshipModels.filter(
 );
 
 const imageModels: ModelItem[] = [
-  { name: 'Seedream 5 Lite / Pro', icon: '/model-icons/bytedance.svg' },
-  { name: 'Nano Banana 2', icon: '/agents/gemini.svg' },
-  { name: 'GPT Image 2', icon: '/agents/openai.svg' },
+  { name: 'Seedream 5 Lite / Pro', icon: `${LOBE_ICON_BASE}/jimeng.svg` },
+  { name: 'Nano Banana 2', icon: `${LOBE_ICON_BASE}/nanobanana.svg`, iconClass: 'model-logo-nanobanana' },
+  { name: 'GPT Image 2', icon: `${LOBE_ICON_BASE}/openai.svg` },
 ];
 
 const unlimitedByTier: Record<TierId, Set<string>> = {
@@ -277,15 +281,16 @@ const cardData = [
   })),
 ];
 
+const popularModel = (name: string) => popularModels.find((model) => model.name === name)!;
 const usageRows = [
-  { name: 'DeepSeek V4 Flash', icon: '/agent-icons/deepseek.svg', value: 13000 },
-  { name: 'MiMo V2.5 Pro', icon: '/agent-icons/mimo.svg', value: 11000 },
-  { name: 'DeepSeek V4 Pro', icon: '/agent-icons/deepseek.svg', value: 4300 },
-  { name: 'MiniMax M2.7', icon: '/agents/minimax.svg', value: 2800 },
-  { name: 'Kimi K2.6', icon: '/agent-icons/kimi.svg', value: 1000 },
-  { name: 'Kimi K2.7 Code', icon: '/agent-icons/kimi.svg', value: 900 },
-  { name: 'GLM-5.2', icon: '/agents/zhipu.svg', value: 670 },
-  { name: 'GLM-5.1', icon: '/agents/zhipu.svg', value: 670 },
+  { ...popularModel('DeepSeek V4 Flash'), value: 13000 },
+  { ...popularModel('MiMo V2.5 Pro'), value: 11000 },
+  { ...popularModel('DeepSeek V4 Pro'), value: 4300 },
+  { ...popularModel('MiniMax M2.7'), value: 2800 },
+  { ...popularModel('Kimi K2.6'), value: 1000 },
+  { ...popularModel('Kimi K2.7 Code'), value: 900 },
+  { ...popularModel('GLM-5.2'), value: 670 },
+  { ...popularModel('GLM-5.1'), value: 670 },
 ];
 
 const comparisonPopular = [
@@ -416,7 +421,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       const popularStatus = popularAccessStatus(model.name, tier);
                       return (
                         <li class="model-with-status">
-                          <span class="model-logo"><img src={model.icon} alt="" /></span>
+                          <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
                           <span>{model.name}</span>
                           <em class={popularStatus.kind}>{popularStatus.text}</em>
                         </li>
@@ -436,7 +441,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   <ul>
                     {flagship.map((model) => (
                       <li>
-                        <span class="model-logo"><img src={model.icon} alt="" /></span><span>{model.name}</span>
+                        <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span><span>{model.name}</span>
                       </li>
                     ))}
                   </ul>
@@ -450,7 +455,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   <ul>
                     {imageModels.map((model) => (
                       <li class="model-with-status">
-                        <span class="model-logo"><img src={model.icon} alt="" /></span>
+                        <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
                         <span>{model.name}</span>
                         {tier !== 'go' && <em class="multimodal-status">UP TO {imageResolution}</em>}
                       </li>
@@ -483,7 +488,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     </div>
   </div>
 
-  <section class="individual-usage-module is-visible" aria-labelledby="individual-usage-title">
+  <section class="individual-usage-module" aria-labelledby="individual-usage-title" data-usage-module>
     <div class="individual-usage-heading">
       <div>
         <h2 id="individual-usage-title">{isZh ? '热门模型无限使用' : 'Unlimited popular models'}</h2>
@@ -495,11 +500,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
         {usageRows.map((row, index) => (
           <div class="individual-usage-row" role="row">
             <div class="individual-usage-model" role="cell">
-              <span class="model-logo"><img src={row.icon} alt="" /></span><strong>{row.name}</strong>
+              <span class:list={['model-logo', row.iconClass]}><img src={row.icon} alt="" loading="lazy" /></span><strong>{row.name}</strong>
             </div>
             <div class="individual-usage-meter" role="cell">
               <i style={`--usage-width:${(row.value / 13000) * 100}%;--usage-delay:${index * 0.045}s`}></i>
-              <b style={`--usage-label:${Math.min((row.value / 13000) * 100, 96)}%`}>{row.value.toLocaleString('en-US')}</b>
+              <b>{row.value.toLocaleString('en-US')}</b>
             </div>
           </div>
         ))}
@@ -551,7 +556,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       <small>{categoryCopy[category].count}</small>
                     </th>
                   )}
-                  <td class="model-name-cell"><span class="model-logo"><img src={model.icon} alt="" /></span><span>{model.name}</span></td>
+                  <td class="model-name-cell"><span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span><span>{model.name}</span></td>
                   {(['go', 'plus', 'pro', 'max'] as TierId[]).map((tier) => {
                     const status = accessStatus(category, model.name, tier);
                     return <td><span class={`model-access-status ${status.kind}`}><i class:list={['status-icon', { infinity: status.kind === 'unlimited', check: status.kind === 'more-ample' }]}>{status.kind === 'unlimited' ? '∞' : ''}</i>{status.text}</span></td>;
@@ -718,17 +723,17 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .discount-corner-badge {
     flex: none;
-    padding: 5px 7px;
+    padding: 4px 6px;
     color: var(--pricing-ink);
     font-size: 8px;
-    font-weight: 750;
+    font-weight: 700;
     line-height: 1;
     letter-spacing: 0.035em;
     text-transform: uppercase;
     white-space: nowrap;
     background: var(--pricing-accent);
-    border: 1px solid #8ec52a;
-    border-radius: 6px;
+    border: 0;
+    border-radius: 4px;
   }
 
   .plan-top p {
@@ -879,6 +884,16 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
       linear-gradient(135deg, rgba(120, 234, 87, 0.2), rgba(120, 234, 87, 0.07));
   }
 
+  .plan-go .plan-model-module.unlimited-module,
+  .plan-plus .plan-model-module.unlimited-module {
+    background: #f7f8f3;
+  }
+
+  .plan-go .plan-model-module.unlimited-module h4,
+  .plan-plus .plan-model-module.unlimited-module h4 {
+    color: #30332d;
+  }
+
   .plan-model-module.recommended-model-module {
     background: rgba(120, 234, 87, 0.18);
   }
@@ -887,6 +902,10 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   .plan-model-module.unavailable-model-module {
     opacity: 0.62;
     background: #f1f2ee;
+  }
+
+  .plan-go .plan-model-module.unavailable-model-module {
+    background: transparent;
   }
 
   .plan-model-module header {
@@ -988,6 +1007,25 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     height: 12px;
     object-fit: contain;
     filter: brightness(0) invert(1);
+  }
+
+  .model-logo-mimo img {
+    width: 17px;
+    height: 15px;
+    object-fit: contain;
+    object-position: center;
+  }
+
+  .model-logo-zhipu img {
+    width: 18px;
+    height: 18px;
+    object-fit: cover;
+    filter: none;
+  }
+
+  .model-logo-nanobanana img {
+    width: 15px;
+    height: 15px;
   }
 
   .plan-model-module li.model-with-status em {
@@ -1107,7 +1145,15 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   }
   .plan-max .model-module-toggle:hover:not(:disabled) { color: var(--pricing-accent); }
   .plan-max .model-logo { background: #f3f5f0; }
-  .plan-max .model-logo img { filter: none; }
+  .plan-max .model-logo img,
+  .plan-max .model-logo-mimo img { filter: none; }
+  .plan-max .plan-model-module li.model-with-status em.unlimited,
+  .plan-max .plan-model-module li.model-with-status em.multimodal-status,
+  .plan-max .plan-benefit-list .bonus-benefit > span {
+    color: #91dc7b;
+    background: rgba(120, 234, 87, 0.14);
+    border: 1px solid rgba(120, 234, 87, 0.14);
+  }
   .plan-max .plan-benefit-list li > b { color: var(--pricing-accent); }
 
   .demo-individual-pricing[data-benefits-expanded='false'] .plan-benefit-list li:nth-child(n + 4) {
@@ -1263,12 +1309,17 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     background: #dcfac7;
     border-radius: 6px;
     transform-origin: left;
-    animation: usage-meter-in 0.78s var(--usage-delay) cubic-bezier(0.16, 1, 0.3, 1) both;
+    opacity: 1;
+    transform: scaleX(0);
+  }
+
+  .individual-usage-module.is-visible .individual-usage-meter i {
+    animation: usage-meter-in 0.78s var(--usage-delay) cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   .individual-usage-meter b {
     position: absolute;
-    left: var(--usage-label);
+    left: clamp(4px, calc(2.5769% - 10px), 16px);
     z-index: 1;
     width: max-content;
     color: #287b1d;
@@ -1276,7 +1327,6 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     line-height: 1;
-    transform: translateX(calc(-100% - 12px));
   }
 
   .individual-usage-axis {
@@ -1611,7 +1661,10 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   @media (prefers-reduced-motion: reduce) {
     .pricing-card,
-    .individual-usage-meter i { animation: none; }
+    .individual-usage-meter i {
+      animation: none;
+      transform: none;
+    }
     .pricing-card-cta { transition: none; }
   }
 </style>
@@ -1632,6 +1685,20 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
           : `${document.documentElement.lang.startsWith('zh') ? `查看全部 ${total} 个` : `View all ${total}`}`;
       });
     });
+
+    const usageModule = root.querySelector<HTMLElement>('[data-usage-module]');
+    if (usageModule) {
+      if (!('IntersectionObserver' in window)) {
+        usageModule.classList.add('is-visible');
+      } else {
+        const observer = new IntersectionObserver(([entry]) => {
+          if (!entry?.isIntersecting) return;
+          usageModule.classList.add('is-visible');
+          observer.disconnect();
+        }, { threshold: 0.22 });
+        observer.observe(usageModule);
+      }
+    }
 
     const benefitsToggle = root.querySelector<HTMLButtonElement>('[data-benefits-toggle]');
     benefitsToggle?.addEventListener('click', () => {
