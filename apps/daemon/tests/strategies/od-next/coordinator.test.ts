@@ -1313,6 +1313,75 @@ ${block('open-design-plan-contract', planContract(snapshot))}`),
     expect(persisted?.blockedContext).toBeUndefined();
   });
 
+  it('recovers a production completion the agent delivered but never declared', () => {
+    // Production is only entered from a locked Full Plan and its schema admits
+    // no non-terminal outcome, so a production turn that ran the frozen plan,
+    // delivered a canonical entry Open Design resolved itself, and then answered
+    // in prose has exactly one thing it could have declared. Refusing it
+    // discarded a finished deliverable already sitting in the project.
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    beginAutomaticSimpleProduction(db, {
+      task: planned.task, sourceRunId: 'run-request', nextRunId: 'run-production',
+      updatedAt: 130,
+    });
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-production',
+      protocol: protocol('三个页面已生成，入口是 index.html。'),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: true },
+      executionPreflight: executionPassed,
+      updatedAt: 140,
+    });
+    expect(result.reasonCodes).toEqual(['od_next_protocol_runtime_state_inferred']);
+    expect(result.task.outcome).toBe('completed');
+    expect(result.task.inputStage).toBe('production');
+    expect(getStrategyTaskExecution(db, 'task-1')?.blockedContext).toBeUndefined();
+  });
+
+  it('refuses to infer a production completion that delivered nothing', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const planned = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    beginAutomaticSimpleProduction(db, {
+      task: planned.task, sourceRunId: 'run-request', nextRunId: 'run-production',
+      updatedAt: 130,
+    });
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-production',
+      protocol: protocol('已完成。'),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: false },
+      executionPreflight: executionPassed,
+      updatedAt: 140,
+    });
+    expect(result.action).toBe('blocked');
+    expect(result.reasonCodes).toEqual(['od_next_protocol_runtime_state_missing']);
+  });
+
   it('refuses to infer a Direct Edit completion without verified physical delivery', () => {
     // The inference may only ever accept evidence Open Design resolved itself.
     // An undeclared turn that delivered nothing must still block, so a silent

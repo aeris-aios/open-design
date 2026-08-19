@@ -14,7 +14,9 @@ import {
   type ClaudeChildToolRuntimeFact,
 } from '../runtimes/claude-child-evidence.js';
 import {
+  adaptOpenCodeChildRuntimeFactV1,
   adaptOpenCodeTaskCandidateV1,
+  type OpenCodeChildRuntimeFact,
   type OpenCodeTaskTerminalCandidate,
 } from '../runtimes/opencode-child-evidence.js';
 import {
@@ -24,6 +26,11 @@ import {
 
 const MAX_MAIN_TOOL_OBSERVATIONS_PER_RUN = 256;
 const SAFE_TOOL_NAME_RE = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
+const CHILD_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'failed',
+  'canceled',
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -186,7 +193,7 @@ export function adaptMainRunToolObservationsV1(input: {
   }));
 }
 
-export function adaptRuntimeChildObservationsV1(input: {
+export interface AdaptRuntimeChildObservationsInput {
   events: ReadonlyArray<{ event: string; data: unknown }>;
   taskExecutionId: string;
   runId: string;
@@ -199,8 +206,70 @@ export function adaptRuntimeChildObservationsV1(input: {
   includeChildTools?: boolean;
   /** Exporter-only hierarchy: task Run -> native Agent tool -> Child Agent. */
   mainToolObservationIds?: ReadonlySet<string>;
-}) {
-  return input.events.flatMap((record) => {
+}
+
+/**
+ * Adapt the post-run OpenCode child facts ahead of the main pass, and keep only
+ * the children whose sanitized export yielded a complete running -> terminal
+ * pair on one observation id.
+ *
+ * Half a lifecycle is worse than none: it contributes an observation id that
+ * `evaluateRuntimeEvidenceGraphV1` rejects with `child_started_missing`, while
+ * the L1 candidate it replaced is no longer there to carry the bounded
+ * childInjected Prompt. So a missing, unrelated, or malformed export leaves
+ * that child entirely on the L1 candidate path.
+ */
+function verifiedOpenCodeChildren(input: AdaptRuntimeChildObservationsInput): {
+  byEventIndex: ReadonlyMap<number, NormalizedAgentObservationV1>;
+  supersededChildSessionIds: ReadonlySet<string>;
+} {
+  const adapted = new Map<
+    number,
+    { observation: NormalizedAgentObservationV1; childSessionId: string }
+  >();
+  const statusesByChild = new Map<string, Set<string>>();
+  input.events.forEach((record, index) => {
+    if (record.event !== 'agent' || !isRecord(record.data)) return;
+    const diagnostic = record.data;
+    if (diagnostic.type !== 'diagnostic') return;
+    if (diagnostic.name !== 'opencode_child_runtime_fact') return;
+    const childSessionId = typeof diagnostic.childSessionId === 'string'
+      ? diagnostic.childSessionId
+      : undefined;
+    if (!childSessionId) return;
+    try {
+      const observation = adaptOpenCodeChildRuntimeFactV1({
+        fact: diagnostic as unknown as OpenCodeChildRuntimeFact,
+        ...input,
+      });
+      adapted.set(index, { observation, childSessionId });
+      const statuses = statusesByChild.get(childSessionId) ?? new Set<string>();
+      statuses.add(observation.status);
+      statusesByChild.set(childSessionId, statuses);
+    } catch {
+      // Adapter version drift or a truncated fact. Absent evidence keeps the
+      // caller's gate failing closed on the L1 candidate.
+    }
+  });
+
+  const supersededChildSessionIds = new Set<string>();
+  for (const [childSessionId, statuses] of statusesByChild) {
+    if (!statuses.has('running')) continue;
+    if (![...statuses].some((status) => CHILD_TERMINAL_STATUSES.has(status))) continue;
+    supersededChildSessionIds.add(childSessionId);
+  }
+
+  const byEventIndex = new Map<number, NormalizedAgentObservationV1>();
+  for (const [index, entry] of adapted) {
+    if (!supersededChildSessionIds.has(entry.childSessionId)) continue;
+    byEventIndex.set(index, entry.observation);
+  }
+  return { byEventIndex, supersededChildSessionIds };
+}
+
+export function adaptRuntimeChildObservationsV1(input: AdaptRuntimeChildObservationsInput) {
+  const openCodeChildren = verifiedOpenCodeChildren(input);
+  return input.events.flatMap((record, index) => {
     if (record.event !== 'agent' || !record.data || typeof record.data !== 'object') {
       return [];
     }
@@ -211,11 +280,19 @@ export function adaptRuntimeChildObservationsV1(input: {
         const parsed = NormalizedAgentObservationV1Schema.safeParse(diagnostic.observation);
         return parsed.success ? [parsed.data] : [];
       }
+      if (diagnostic.name === 'opencode_child_runtime_fact') {
+        const verified = openCodeChildren.byEventIndex.get(index);
+        return verified ? [verified] : [];
+      }
       if (diagnostic.name === 'opencode_child_task_candidate') {
-        return [adaptOpenCodeTaskCandidateV1({
-          candidate: diagnostic as unknown as OpenCodeTaskTerminalCandidate,
-          ...input,
-        })];
+        const candidate = diagnostic as unknown as OpenCodeTaskTerminalCandidate;
+        // The verified export already covers this child on its own observation
+        // id. Emitting both would leave a terminal-only L1 id in the same graph
+        // and drop the whole Run back below L2.
+        if (openCodeChildren.supersededChildSessionIds.has(candidate.childSessionId)) {
+          return [];
+        }
+        return [adaptOpenCodeTaskCandidateV1({ candidate, ...input })];
       }
       if (diagnostic.name === 'vela_opencode_child_agent_lifecycle') {
         return [adaptVelaChildRuntimeFactV1({

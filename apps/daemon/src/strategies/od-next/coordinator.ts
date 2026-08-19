@@ -335,7 +335,8 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   let state = parsed.runtimeState;
   if (protocolCodes.length > 0) {
     const inferred = inferClarificationRuntimeState(current, parsed)
-      ?? inferDirectEditCompletionRuntimeState(current, parsed, input.completionEvidence);
+      ?? inferDirectEditCompletionRuntimeState(current, parsed, input.completionEvidence)
+      ?? inferProductionCompletionRuntimeState(current, parsed, input.completionEvidence);
     if (inferred) {
       console.info('[od-next-task] runtime state inferred', {
         taskExecutionId: current.taskExecutionId,
@@ -443,10 +444,18 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
  * the request stage is planning-only, so build output there is a violation to
  * report, never a completion to infer.
  */
-export function odNextTurnMayInferDirectEditCompletion(
-  task: { route: string | null; inputStage: string; clarificationCount: number },
+/**
+ * Did the turn answer in prose only — no machine block of any kind, and nothing
+ * to ask?
+ *
+ * The shared precondition for every completion inference below. A turn that
+ * emitted a malformed block, a recoverable anchor, or a question form is
+ * saying something the host must not overwrite; only total silence leaves the
+ * declaration genuinely absent.
+ */
+function turnDeclaredNothing(
   parsed: ReturnType<OdNextMachineProtocolStream['finish']> | null | undefined,
-): boolean {
+): parsed is ReturnType<OdNextMachineProtocolStream['finish']> {
   if (!parsed) return false;
   const issueCodes = [...new Set(parsed.issues.map((issue) => issue.code))];
   if (
@@ -454,16 +463,47 @@ export function odNextTurnMayInferDirectEditCompletion(
     || issueCodes[0] !== 'od_next_protocol_runtime_state_missing'
   ) return false;
   if (
-    task.route !== null
-    || task.inputStage !== 'request'
-    || task.clarificationCount > 0
-    || parsed.planContract
+    parsed.planContract
     || parsed.repairPlanContract
     || parsed.runtimeState
     || parsed.repairRuntimeState
   ) return false;
   // A question form means the agent wanted to ask, not to finish.
   return countRenderableQuestionForms(parsed.visibleText) === 0;
+}
+
+export function odNextTurnMayInferDirectEditCompletion(
+  task: { route: string | null; inputStage: string; clarificationCount: number },
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']> | null | undefined,
+): boolean {
+  if (!turnDeclaredNothing(parsed)) return false;
+  return task.route === null
+    && task.inputStage === 'request'
+    && task.clarificationCount === 0;
+}
+
+/**
+ * Is this an undeclared PRODUCTION completion?
+ *
+ * Production is only ever entered from a locked Full Plan, and its schema
+ * admits no non-terminal outcome — `StrategyRuntimeStateV2` refuses a
+ * production state that is not a task-chain terminal. So a production turn that
+ * ran the frozen plan, delivered a canonical entry Open Design resolved itself,
+ * and then answered in prose has exactly one thing it could have declared.
+ *
+ * Refusing it discarded a finished multi-page deliverable that was already
+ * sitting in the project, and the blocked verdict then latched OD Next off for
+ * the whole daemon. The route and execution mode are read from the locked task,
+ * never guessed.
+ */
+export function odNextTurnMayInferProductionCompletion(
+  task: { route: string | null; inputStage: string; executionMode: string | null },
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']> | null | undefined,
+): boolean {
+  if (!turnDeclaredNothing(parsed)) return false;
+  return task.inputStage === 'production'
+    && task.route === 'full_plan'
+    && task.executionMode !== null;
 }
 
 /**
@@ -487,6 +527,29 @@ export function odNextTurnMayInferDirectEditCompletion(
  * unresolved canonical deliverable all decline the inference and let the turn
  * block as before.
  */
+function inferProductionCompletionRuntimeState(
+  current: StrategyTaskExecutionRecord,
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']>,
+  completionEvidence: {
+    physicalStatus: 'succeeded' | 'failed' | 'canceled';
+    deliverableValid: boolean;
+  } | undefined,
+): StrategyRuntimeStateV2 | null {
+  if (!odNextTurnMayInferProductionCompletion(current, parsed)) return null;
+  if (
+    completionEvidence?.physicalStatus !== 'succeeded'
+    || completionEvidence.deliverableValid !== true
+  ) return null;
+  return {
+    schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
+    route: 'full_plan',
+    inputStage: 'production',
+    outcome: 'completed',
+    executionMode: current.executionMode,
+    reasonCodes: ['od_next_protocol_runtime_state_inferred'],
+  };
+}
+
 function inferDirectEditCompletionRuntimeState(
   current: StrategyTaskExecutionRecord,
   parsed: ReturnType<OdNextMachineProtocolStream['finish']>,

@@ -6,19 +6,28 @@ import {
   evaluateRuntimeEvidenceGraphV1,
   normalizeAgentObservationV1,
 } from '@open-design/contracts';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { adaptRuntimeChildObservationsV1 } from '../../src/observability/runtime-child-observations.js';
 import { safeTaskObservationRuntimeVersions } from '../../src/observability/task-observation-aggregation.js';
 import {
   OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
   adaptOpenCodeChildRuntimeFactV1,
+  collectOpenCodeChildEvidenceFacts,
   collectOpenCodeChildRuntimeFacts,
   createOpenCodeRootTaskEvidenceCollector,
+  createOpenCodeSanitizedExportLoader,
   OPENCODE_CHILD_EVIDENCE_CLI_VERSION,
   verifyOpenCodeChildExport,
+  type OpenCodeChildRuntimeFact,
   type OpenCodeTaskTerminalCandidate,
 } from '../../src/runtimes/opencode-child-evidence.js';
 import { createJsonEventStreamHandler } from '../../src/runtimes/json-event-stream.js';
+
+const execAgentFileMock = vi.hoisted(() => vi.fn());
+vi.mock('../../src/runtimes/invocation.js', () => ({
+  execAgentFile: execAgentFileMock,
+}));
 
 const fixturePath = fileURLToPath(new URL(
   '../fixtures/od-next-runtime-capabilities/opencode-1.18.18.synthetic.json',
@@ -53,7 +62,55 @@ function collectCandidate(overrides: Record<string, unknown> = {}): OpenCodeTask
   return candidates;
 }
 
+const ADAPT_INPUT = {
+  taskExecutionId: 'task-1',
+  runId: 'run-1',
+  taskRunIndex: 0,
+  taskRunObservationId: 'task-run:task-1:run-1',
+  stage: 'production',
+} as const;
+
+const L1_OBSERVATION_ID = 'opencode-child-candidate:run-1:ses_child_synthetic';
+const L2_OBSERVATION_ID = 'opencode-child:run-1:ses_child_synthetic';
+
+function diagnosticEvent(
+  name: string,
+  payload: Record<string, unknown>,
+): { event: string; data: unknown } {
+  return { event: 'agent', data: { type: 'diagnostic', name, ...payload } };
+}
+
+/** Rebuild the Run event stream exactly as the daemon publishes it. */
+function runEvents(
+  candidate: OpenCodeTaskTerminalCandidate,
+  facts: readonly OpenCodeChildRuntimeFact[] = [],
+): Array<{ event: string; data: unknown }> {
+  return [
+    diagnosticEvent('opencode_child_task_candidate', { ...candidate }),
+    ...facts.map((fact) => diagnosticEvent('opencode_child_runtime_fact', { ...fact })),
+  ];
+}
+
+function taskRunParent(status: 'running' | 'completed') {
+  return normalizeAgentObservationV1({
+    identity: {
+      observationId: ADAPT_INPUT.taskRunObservationId,
+      taskExecutionId: ADAPT_INPUT.taskExecutionId,
+      runId: ADAPT_INPUT.runId,
+      taskRunIndex: ADAPT_INPUT.taskRunIndex,
+    },
+    kind: 'task_run',
+    stage: 'production',
+    status,
+    limitations: ['synthetic_contract_parent'],
+  });
+}
+
 describe('native OpenCode child evidence', () => {
+  beforeEach(() => {
+    execAgentFileMock.mockReset();
+  });
+
   it('replays local success, recovered failure, and resume seeds without promoting production evidence', () => {
     const seed = JSON.parse(readFileSync(sanitizedRealSeedPath, 'utf8')) as {
       fixtureKind: string;
@@ -582,6 +639,201 @@ describe('native OpenCode child evidence', () => {
     });
     const graph = evaluateRuntimeEvidenceGraphV1([parent, ...observations]);
     expect(graph).toMatchObject({ valid: true, evidenceLevel: 'L2', countedTurnIds: [] });
+  });
+
+  it('promotes the verified export to a paired L2 child lifecycle under the task Run', async () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const facts = await collectOpenCodeChildEvidenceFacts({
+      candidates: [candidate!],
+      loadSanitizedExport: async () => data.sanitizedChildExport,
+    });
+    const observations = adaptRuntimeChildObservationsV1({
+      events: runEvents(candidate!, facts),
+      ...ADAPT_INPUT,
+    });
+
+    // One child, one observation id, both halves of the lifecycle in replay
+    // order — the exact shape `child_started_missing` was firing on.
+    expect(observations.map((observation) => ([
+      observation.identity.observationId,
+      observation.status,
+    ]))).toEqual([
+      [L2_OBSERVATION_ID, 'running'],
+      [L2_OBSERVATION_ID, 'completed'],
+    ]);
+    expect(observations.every((observation) => (
+      observation.kind === 'child_agent'
+      && observation.identity.parentObservationId === ADAPT_INPUT.taskRunObservationId
+      && observation.identity.runtimeSessionId === 'ses_child_synthetic'
+    ))).toBe(true);
+    // The bounded childInjected Prompt the L1 candidate already provided must
+    // survive the upgrade rather than being traded away for the export.
+    expect(observations[1]?.prompt.childInjected).toMatchObject({
+      availability: 'partial',
+      source: 'runtime',
+      bytes: 35,
+    });
+    expect(observations[1]?.usage).toMatchObject({
+      availability: 'complete',
+      accountingMode: 'additive',
+    });
+
+    const graph = evaluateRuntimeEvidenceGraphV1([
+      taskRunParent('running'),
+      ...observations,
+      taskRunParent('completed'),
+    ]);
+    expect(graph).toMatchObject({
+      valid: true,
+      evidenceLevel: 'L2',
+      issues: [],
+      childObservationIds: [L2_OBSERVATION_ID],
+    });
+  });
+
+  it('keeps the unchanged L1 candidate when the child export is unavailable', async () => {
+    const [candidate] = collectCandidate();
+    const facts = await collectOpenCodeChildEvidenceFacts({
+      candidates: [candidate!],
+      loadSanitizedExport: async () => { throw new Error('export unavailable'); },
+    });
+    expect(facts).toEqual([]);
+
+    const observations = adaptRuntimeChildObservationsV1({
+      events: runEvents(candidate!, facts),
+      ...ADAPT_INPUT,
+    });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]).toMatchObject({
+      identity: {
+        observationId: L1_OBSERVATION_ID,
+        parentObservationId: ADAPT_INPUT.taskRunObservationId,
+      },
+      kind: 'child_agent',
+      status: 'completed',
+      attributes: { evidenceLevel: 'L1' },
+    });
+    expect(observations[0]?.prompt.childInjected).toMatchObject({
+      availability: 'exact',
+      bytes: 35,
+    });
+
+    const graph = evaluateRuntimeEvidenceGraphV1([taskRunParent('running'), ...observations]);
+    expect(graph.evidenceLevel).not.toBe('L2');
+    expect(graph.issues).toContainEqual({
+      code: 'child_started_missing',
+      observationId: L1_OBSERVATION_ID,
+    });
+  });
+
+  it('falls back to the L1 candidate when the export yields only half a lifecycle', async () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const { startedAtMs: _startedAtMs, ...withoutStart } = candidate!;
+    const facts = await collectOpenCodeChildEvidenceFacts({
+      candidates: [withoutStart],
+      loadSanitizedExport: async () => data.sanitizedChildExport,
+    });
+    expect(facts.map((fact) => fact.state)).toEqual(['completed']);
+
+    // A terminal-only L2 id would fail the graph on `child_started_missing`
+    // while displacing the candidate that still carries the Prompt, so the
+    // half lifecycle is dropped whole.
+    const observations = adaptRuntimeChildObservationsV1({
+      events: runEvents(candidate!, facts),
+      ...ADAPT_INPUT,
+    });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.identity.observationId).toBe(L1_OBSERVATION_ID);
+  });
+
+  it('absorbs malformed child facts instead of throwing into the parent Run', async () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    const facts = await collectOpenCodeChildEvidenceFacts({
+      candidates: [candidate!],
+      loadSanitizedExport: async () => data.sanitizedChildExport,
+    });
+    const events = [
+      diagnosticEvent('opencode_child_task_candidate', { ...candidate! }),
+      // Adapter drift, a truncated fact, and an unparseable payload.
+      ...facts.map((fact) => diagnosticEvent('opencode_child_runtime_fact', {
+        ...fact,
+        adapterVersion: 'od-opencode-child-evidence/v9',
+      })),
+      diagnosticEvent('opencode_child_runtime_fact', { childSessionId: 'ses_child_synthetic' }),
+      diagnosticEvent('opencode_child_runtime_fact', {}),
+    ];
+
+    let observations: ReturnType<typeof adaptRuntimeChildObservationsV1> = [];
+    expect(() => {
+      observations = adaptRuntimeChildObservationsV1({ events, ...ADAPT_INPUT });
+    }).not.toThrow();
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.identity.observationId).toBe(L1_OBSERVATION_ID);
+  });
+
+  it('requests each child exactly once and stops at the shared wall-clock budget', async () => {
+    const data = fixture();
+    const [candidate] = collectCandidate();
+    // A resumed native Task reports the same child session under a new tool
+    // call id; its export is identical and must not be read twice.
+    const resumed = { ...candidate!, toolCallId: 'call_task_resume' };
+    const loader = vi.fn(async () => data.sanitizedChildExport);
+    await expect(collectOpenCodeChildEvidenceFacts({
+      candidates: [candidate!, resumed],
+      loadSanitizedExport: loader,
+    })).resolves.toHaveLength(2);
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    let clock = 0;
+    const budgeted = vi.fn(async () => data.sanitizedChildExport);
+    await expect(collectOpenCodeChildEvidenceFacts({
+      candidates: [candidate!, { ...candidate!, childSessionId: 'ses_child_second' }],
+      loadSanitizedExport: budgeted,
+      totalBudgetMs: 5,
+      now: () => (clock += 10),
+    })).resolves.toEqual([]);
+    expect(budgeted).not.toHaveBeenCalled();
+  });
+
+  it('reads one child through the sanitized OpenCode export without running plugins', async () => {
+    const data = fixture();
+    execAgentFileMock.mockResolvedValue({
+      stdout: JSON.stringify(data.sanitizedChildExport),
+      stderr: 'Exporting session: ses_child_synthetic',
+    });
+    const load = createOpenCodeSanitizedExportLoader({
+      launchPath: '/opt/open-design/opencode',
+      env: { XDG_DATA_HOME: '/run/od/share' },
+    });
+
+    await expect(load('ses_child_synthetic')).resolves.toMatchObject({
+      info: { id: 'ses_child_synthetic', parentID: 'ses_root_synthetic' },
+    });
+    expect(execAgentFileMock).toHaveBeenCalledWith(
+      '/opt/open-design/opencode',
+      ['export', 'ses_child_synthetic', '--sanitize', '--pure'],
+      expect.objectContaining({
+        env: { XDG_DATA_HOME: '/run/od/share' },
+        timeout: expect.any(Number),
+        maxBuffer: expect.any(Number),
+      }),
+    );
+
+    // An id that is not shaped like a native session id never reaches argv.
+    await expect(load('--version')).rejects.toThrow(/Unsupported OpenCode child session id/u);
+    await expect(load('../../etc/passwd')).rejects.toThrow(/Unsupported OpenCode child session id/u);
+    expect(execAgentFileMock).toHaveBeenCalledTimes(1);
+
+    // A non-JSON export degrades through the collector, never into the Run.
+    execAgentFileMock.mockResolvedValue({ stdout: 'Session not found', stderr: '' });
+    const [candidate] = collectCandidate();
+    await expect(collectOpenCodeChildEvidenceFacts({
+      candidates: [candidate!],
+      loadSanitizedExport: load,
+    })).resolves.toEqual([]);
   });
 
   it('labels the fixture contract-only so it cannot become production evidence', () => {

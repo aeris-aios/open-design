@@ -21,6 +21,7 @@ import {
   finalizeStrategyPlanningResult,
   type OdNextCoordinatorResult,
   odNextTurnMayInferDirectEditCompletion,
+  odNextTurnMayInferProductionCompletion,
 } from './coordinator.js';
 import type { OdNextMachineProtocolStream } from './protocol.js';
 import type { OdNextExecutionPreflightInput } from './resolver.js';
@@ -28,6 +29,7 @@ import {
   evaluateOdNextComplexEligibility,
   evaluateOdNextComplexProduction,
   type OdNextComplexRuntimeEvidence,
+  ownsOdNextNativeBuildPackageBindings,
 } from './complex-production.js';
 import { createOdNextNativeBuildPackageBindings } from './native-build-package.js';
 
@@ -392,7 +394,7 @@ export function prepareAutomaticStrategyContinuation<
   // continuation text and remain fail-closed until their own native handle
   // owner is wired; never teach Codex/OpenCode a Claude tool shape.
   const nativeBuildPackageBindings = complexPlanCandidate
-    && input.task.selectedAgentId === 'claude'
+    && ownsOdNextNativeBuildPackageBindings(input.task.selectedAgentId)
     ? createOdNextNativeBuildPackageBindings({
         taskExecutionId: input.task.taskExecutionId,
         taskRunIndex: input.task.runs.length,
@@ -612,4 +614,4 @@ export function blockAutomaticContinuation(db: SqliteDb, input: {
   });
 }
 
-export { odNextTurnMayInferDirectEditCompletion };
+export { odNextTurnMayInferDirectEditCompletion, odNextTurnMayInferProductionCompletion };

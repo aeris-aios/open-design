@@ -11,11 +11,27 @@ import {
   buildSafeChildPromptTelemetry,
   type SafeChildPromptInput,
 } from '../prompt-telemetry.js';
+import { execAgentFile } from './invocation.js';
 
 export const OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION =
   'od-opencode-child-evidence/v1' as const;
 
 export const OPENCODE_CHILD_EVIDENCE_CLI_VERSION = '1.18.18' as const;
+
+// The post-run export runs on the Run's close path, so every dimension of it is
+// bounded: one child cannot stall the close with a hung CLI, a corrupt session
+// cannot exhaust memory through stdout, and a Run that spawned an unbounded
+// number of native Tasks cannot turn close into an unbounded fan-out. Exhausting
+// any bound degrades to the L1 candidate rather than delaying the Run.
+export const OPENCODE_CHILD_EXPORT_TIMEOUT_MS = 10_000;
+export const OPENCODE_CHILD_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
+export const OPENCODE_CHILD_EXPORT_TOTAL_BUDGET_MS = 20_000;
+export const OPENCODE_MAX_RETAINED_CHILD_CANDIDATES = 64;
+
+// Child ids reach `opencode export` as argv. Only an id shaped like a native
+// OpenCode session id is forwarded, so a hostile or corrupt stream value can
+// never be read as a flag, a path, or a second argument.
+const OPENCODE_CHILD_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
 type RecordValue = Record<string, unknown>;
 
@@ -55,6 +71,13 @@ export interface OpenCodeChildRuntimeFact extends Omit<OpenCodeTaskTerminalCandi
 export interface OpenCodeRootTaskEvidenceCollector {
   observe(value: unknown): void;
   coverage(streamComplete: boolean): ChildEvidenceCoverageV1;
+  /**
+   * Terminal candidates retained for the post-run sanitized-export upgrade.
+   * The root JSON stream is the only place the child id, its parent binding,
+   * and the native Task time window appear together, and it is gone by the time
+   * the export can be read.
+   */
+  candidates(): readonly OpenCodeTaskTerminalCandidate[];
 }
 
 function isRecord(value: unknown): value is RecordValue {
@@ -117,6 +140,7 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
   const emitted = new Set<string>();
   const knownChildIds = new Set<string>();
   const knownTaskToolCallIds = new Set<string>();
+  const retained: OpenCodeTaskTerminalCandidate[] = [];
   let rootSessionId = input.rootSessionId;
 
   function observe(value: unknown): void {
@@ -164,26 +188,30 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
       : undefined;
 
     emitted.add(toolCallId);
+    const candidate: OpenCodeTaskTerminalCandidate = {
+      adapterVersion: OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
+      cliVersion: input.cliVersion,
+      rootSessionId,
+      childSessionId,
+      toolCallId,
+      state: terminal,
+      observedAtMs: now(),
+      ...(startedAtMs === undefined ? {} : { startedAtMs }),
+      ...(endedAtMs === undefined ? {} : { endedAtMs }),
+      ...(prompt
+        ? {
+            promptHash: prompt.hash,
+            promptBytes: prompt.bytes,
+            promptSafePayload: prompt.safePayload,
+          }
+        : {}),
+      ...(providerId && modelId ? { model: { providerId, modelId } } : {}),
+    };
+    // Retained before the callback so a throwing observer still leaves the
+    // post-run export path with the candidate it needs.
+    if (retained.length < OPENCODE_MAX_RETAINED_CHILD_CANDIDATES) retained.push(candidate);
     try {
-      input.onCandidate({
-        adapterVersion: OPENCODE_CHILD_EVIDENCE_ADAPTER_VERSION,
-        cliVersion: input.cliVersion,
-        rootSessionId,
-        childSessionId,
-        toolCallId,
-        state: terminal,
-        observedAtMs: now(),
-        ...(startedAtMs === undefined ? {} : { startedAtMs }),
-        ...(endedAtMs === undefined ? {} : { endedAtMs }),
-        ...(prompt
-          ? {
-              promptHash: prompt.hash,
-              promptBytes: prompt.bytes,
-              promptSafePayload: prompt.safePayload,
-            }
-          : {}),
-        ...(providerId && modelId ? { model: { providerId, modelId } } : {}),
-      });
+      input.onCandidate(candidate);
     } catch {
       // Evidence is a side channel. Observer failures must not affect the
       // existing main OpenCode parser or Run outcome.
@@ -227,7 +255,11 @@ export function createOpenCodeRootTaskEvidenceCollector(input: {
     };
   }
 
-  return { observe, coverage };
+  function candidates(): readonly OpenCodeTaskTerminalCandidate[] {
+    return retained;
+  }
+
+  return { observe, coverage, candidates };
 }
 
 function addUsageValue(
@@ -334,6 +366,79 @@ export async function collectOpenCodeChildRuntimeFacts(input: {
   } catch {
     return [];
   }
+}
+
+/**
+ * Read one child session through `opencode export <id> --sanitize`, the only
+ * OpenCode surface that emits a child transcript together with the `parentID`
+ * the two-sided verification needs, and with transcript and file bytes already
+ * redacted by the CLI itself.
+ *
+ * `--pure` keeps a user-installed OpenCode plugin from executing inside the
+ * evidence path, and `execAgentFile` supplies a neutral working directory so
+ * the bun-based CLI cannot drop a lockfile into the user's project (see
+ * `invocation.ts`). The env must be the one the Run was spawned with: it
+ * carries the `XDG_DATA_HOME` / `HOME` that decide which session store the
+ * spawned CLI actually wrote to.
+ */
+export function createOpenCodeSanitizedExportLoader(input: {
+  launchPath: string;
+  env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  maxBytes?: number;
+}): (childSessionId: string) => Promise<unknown> {
+  return async (childSessionId: string) => {
+    if (!OPENCODE_CHILD_SESSION_ID.test(childSessionId)) {
+      throw new TypeError(`Unsupported OpenCode child session id: ${childSessionId}`);
+    }
+    const { stdout } = await execAgentFile(
+      input.launchPath,
+      ['export', childSessionId, '--sanitize', '--pure'],
+      {
+        env: input.env,
+        timeout: input.timeoutMs ?? OPENCODE_CHILD_EXPORT_TIMEOUT_MS,
+        maxBuffer: input.maxBytes ?? OPENCODE_CHILD_EXPORT_MAX_BYTES,
+      },
+    );
+    // `opencode export` writes its progress line to stderr, so stdout is the
+    // session document alone.
+    return JSON.parse(typeof stdout === 'string' ? stdout : String(stdout));
+  };
+}
+
+/**
+ * Resolve every observed candidate against its own sanitized export.
+ *
+ * A child whose export is missing, unrelated, or malformed contributes no
+ * facts at all, so the caller keeps that child's L1 candidate instead of
+ * publishing a half-built lifecycle that would fail the evidence graph on
+ * `child_started_missing`. Exports run one at a time under a shared wall-clock
+ * budget: this executes on the Run's close path, where added latency is
+ * user-visible, and a Run that outruns the budget degrades to L1 rather than
+ * holding the close open.
+ */
+export async function collectOpenCodeChildEvidenceFacts(input: {
+  candidates: readonly OpenCodeTaskTerminalCandidate[];
+  loadSanitizedExport: (childSessionId: string) => Promise<unknown>;
+  totalBudgetMs?: number;
+  now?: () => number;
+}): Promise<OpenCodeChildRuntimeFact[]> {
+  const now = input.now ?? Date.now;
+  const deadline = now() + (input.totalBudgetMs ?? OPENCODE_CHILD_EXPORT_TOTAL_BUDGET_MS);
+  const requested = new Set<string>();
+  const facts: OpenCodeChildRuntimeFact[] = [];
+  for (const candidate of input.candidates) {
+    if (now() >= deadline) break;
+    // One child session can back several native Task calls (a resumed Task
+    // reuses the same child). Its export is identical, so read it once.
+    if (requested.has(candidate.childSessionId)) continue;
+    requested.add(candidate.childSessionId);
+    facts.push(...await collectOpenCodeChildRuntimeFacts({
+      candidate,
+      loadSanitizedExport: input.loadSanitizedExport,
+    }));
+  }
+  return facts;
 }
 
 export interface AdaptOpenCodeChildFactInput {

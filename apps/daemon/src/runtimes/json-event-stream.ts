@@ -997,5 +997,13 @@ export function createJsonEventStreamHandler(
     return openCodeChildEvidence?.coverage(streamComplete);
   }
 
-  return { feed, flush, childEvidenceCoverage };
+  // The terminal candidates are the only carrier of the child id, its parent
+  // binding, and the native Task time window. The close handler needs them
+  // after the stream is gone in order to request each child's sanitized
+  // export, so they are read back here rather than re-derived.
+  function childEvidenceCandidates(): readonly OpenCodeTaskTerminalCandidate[] {
+    return openCodeChildEvidence?.candidates() ?? [];
+  }
+
+  return { feed, flush, childEvidenceCoverage, childEvidenceCandidates };
 }

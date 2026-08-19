@@ -1,6 +1,7 @@
 import {
   NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
   NormalizedAgentObservationV1Schema,
+  type ChildEvidenceCoverageV1,
   type NormalizedAgentObservationV1,
   type RuntimeObservationEvidenceLevelV1,
   type StrategyInputStageV2,
@@ -15,6 +16,13 @@ export const VELA_CHILD_EVIDENCE_EXTENSION =
 export const VELA_CHILD_EVIDENCE_SCHEMA_VERSION = 1 as const;
 export const VELA_CHILD_EVIDENCE_ADAPTER_VERSION =
   'od-vela-opencode-child-evidence/v1' as const;
+
+/**
+ * Coverage `source` discriminator for this runtime, alongside the sibling
+ * runtimes' `opencode_json_event_stream` and `claude_stream_json`. Downstream
+ * aggregation reads it to attribute a coverage gap to the producing runtime.
+ */
+export const VELA_CHILD_EVIDENCE_COVERAGE_SOURCE = 'vela_opencode_acp' as const;
 
 /**
  * Review pin for the candidate wire fixture. It is deliberately not a
@@ -113,6 +121,16 @@ export interface VelaChildEvidenceObserveResult {
   reason?: VelaChildEvidenceRejectionReason;
 }
 
+export interface VelaChildEvidenceCoverageInput {
+  /**
+   * `true` only when the ACP prompt turn resolved without a fatal protocol or
+   * transport error and without an abort. A turn that ended any other way may
+   * have dropped child terminals that were still in flight, so it can never
+   * claim complete coverage.
+   */
+  sessionComplete: boolean;
+}
+
 export interface VelaChildEvidenceConsumer {
   negotiate(initializeResult: unknown): VelaChildEvidenceNegotiation;
   observe(input: {
@@ -121,6 +139,14 @@ export interface VelaChildEvidenceConsumer {
     update: unknown;
   }): VelaChildEvidenceObserveResult;
   getNegotiation(): VelaChildEvidenceNegotiation;
+  /**
+   * Provider-neutral child-evidence coverage for this ACP run. Without it the
+   * daemon has nothing to publish as `child_evidence_coverage_v1`, and task
+   * aggregation falls back to `child_lifecycle_unavailable_not_zero` for every
+   * AMR task — which cannot distinguish a run that provably had no Child
+   * agents from a run nobody was observing.
+   */
+  childEvidenceCoverage(input: VelaChildEvidenceCoverageInput): ChildEvidenceCoverageV1;
 }
 
 function isRecord(value: unknown): value is RecordValue {
@@ -486,6 +512,74 @@ export function createVelaChildEvidenceConsumer(input: {
   const childBindings = new Map<string, { rootSessionId: string; toolCallId: string; terminal?: string }>();
   const toolBindings = new Map<string, string>();
   const evidenceSignatures = new Map<string, string>();
+  const rejectionCounts = new Map<VelaChildEvidenceRejectionReason, number>();
+
+  /**
+   * Every rejected frame is a hole in the child graph, so the reason has to
+   * survive past the per-run diagnostic emit cap in the ACP session. Coverage
+   * reads these counts; without them a run that dropped a malformed or
+   * out-of-order child frame would be indistinguishable from a run that
+   * genuinely had no Child agents.
+   */
+  function reject(
+    reason: VelaChildEvidenceRejectionReason,
+  ): VelaChildEvidenceObserveResult {
+    rejectionCounts.set(reason, (rejectionCounts.get(reason) ?? 0) + 1);
+    return { handled: true, accepted: false, reason };
+  }
+
+  /**
+   * One limitation is recorded for every reason this ACP run could have missed
+   * a Child agent. `complete` is therefore reserved for a negotiated producer,
+   * a cleanly closed turn, no still-open child, and no rejected frame — the
+   * only state in which `knownChildCount === 0` is a real observation rather
+   * than a blind spot.
+   */
+  function childEvidenceCoverage(
+    { sessionComplete }: VelaChildEvidenceCoverageInput,
+  ): ChildEvidenceCoverageV1 {
+    const limitations: string[] = [];
+    const diagnostics = new Map<string, number>();
+    const note = (code: string, count: number): void => {
+      limitations.push(`vela_${code}`);
+      diagnostics.set(code, (diagnostics.get(code) ?? 0) + count);
+    };
+    if (!negotiation.supported) {
+      // The common AMR case: the installed Vela never advertised the
+      // extension, so no child frame could ever be consumed. Claiming
+      // `complete` here would assert "this run provably had no Child agents"
+      // when the daemon simply had no producer to observe.
+      note(
+        negotiation.advertised
+          ? 'child_evidence_schema_unsupported'
+          : 'child_evidence_capability_not_negotiated',
+        1,
+      );
+    }
+    const openChildCount = [...childBindings.values()]
+      .filter((binding) => !binding.terminal).length;
+    if (openChildCount > 0) note('child_terminal_unobserved', openChildCount);
+    if (!sessionComplete) note('child_stream_incomplete', 1);
+    for (const [reason, count] of rejectionCounts) {
+      note(`child_evidence_rejected_${reason}`, count);
+    }
+    const knownChildCount = childBindings.size;
+    const complete = limitations.length === 0;
+    return {
+      availability: complete
+        ? 'complete'
+        : knownChildCount > 0
+          ? 'partial'
+          : 'unavailable',
+      source: VELA_CHILD_EVIDENCE_COVERAGE_SOURCE,
+      knownChildCount,
+      explicitZero: complete && knownChildCount === 0,
+      limitations,
+      diagnosticCounts: [...diagnostics.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([code, count]) => ({ code, count })),
+    };
+  }
 
   return {
     negotiate(initializeResult) {
@@ -495,66 +589,65 @@ export function createVelaChildEvidenceConsumer(input: {
     getNegotiation() {
       return negotiation;
     },
+    childEvidenceCoverage,
     observe({ expectedAcpSessionId, envelopeAcpSessionId, update }) {
       if (!isRecord(update) || update.sessionUpdate !== 'child_agent_lifecycle') {
         return { handled: false, accepted: false };
       }
       if (!negotiation.supported) {
-        return {
-          handled: true,
-          accepted: false,
-          reason: negotiation.advertised
+        return reject(
+          negotiation.advertised
             ? 'unsupported_schema_version'
             : 'capability_not_negotiated',
-        };
+        );
       }
       if (
         !expectedAcpSessionId ||
         envelopeAcpSessionId !== expectedAcpSessionId
       ) {
-        return { handled: true, accepted: false, reason: 'acp_session_mismatch' };
+        return reject('acp_session_mismatch');
       }
       const parsedFact = parseWireFact(update, now);
-      if (!parsedFact) return { handled: true, accepted: false, reason: 'invalid_wire_shape' };
+      if (!parsedFact) return reject('invalid_wire_shape');
       const producerVersion = observableProducerVersion(negotiation.producerVersion);
       const fact: VelaChildRuntimeFact = {
         ...parsedFact,
         ...(producerVersion ? { producerVersion } : {}),
       };
       if (fact.childSessionId === fact.rootSessionId) {
-        return { handled: true, accepted: false, reason: 'parent_cycle' };
+        return reject('parent_cycle');
       }
       const evidenceSignature = factSignature(fact);
       const knownEvidence = evidenceSignatures.get(fact.evidenceId);
       if (knownEvidence) {
         return knownEvidence === evidenceSignature
           ? { handled: true, accepted: false }
-          : { handled: true, accepted: false, reason: 'evidence_id_conflict' };
+          : reject('evidence_id_conflict');
       }
       const childBinding = childBindings.get(fact.childSessionId);
       if (fact.phase === 'end' && !childBinding) {
-        return { handled: true, accepted: false, reason: 'status_regression' };
+        return reject('status_regression');
       }
       if (childBinding?.rootSessionId !== undefined && childBinding.rootSessionId !== fact.rootSessionId) {
-        return { handled: true, accepted: false, reason: 'parent_conflict' };
+        return reject('parent_conflict');
       }
       if (rootSessionId && fact.rootSessionId !== rootSessionId) {
-        return { handled: true, accepted: false, reason: 'root_session_conflict' };
+        return reject('root_session_conflict');
       }
       if (childBinding?.toolCallId !== undefined && childBinding.toolCallId !== fact.toolCallId) {
-        return { handled: true, accepted: false, reason: 'tool_call_rebound' };
+        return reject('tool_call_rebound');
       }
       const toolChild = toolBindings.get(fact.toolCallId);
       if (toolChild && toolChild !== fact.childSessionId) {
-        return { handled: true, accepted: false, reason: 'tool_call_rebound' };
+        return reject('tool_call_rebound');
       }
       if (fact.phase === 'start' && childBinding) {
-        return { handled: true, accepted: false, reason: 'status_regression' };
+        return reject('status_regression');
       }
       if (childBinding?.terminal) {
-        return childBinding.terminal === fact.state
-          ? { handled: true, accepted: false, reason: 'status_regression' }
-          : { handled: true, accepted: false, reason: 'terminal_conflict' };
+        return reject(
+          childBinding.terminal === fact.state ? 'status_regression' : 'terminal_conflict',
+        );
       }
 
       rootSessionId ??= fact.rootSessionId;
