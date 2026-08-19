@@ -10431,7 +10431,18 @@ function HtmlViewer({
     generation: string;
     deadline: number;
   } | null>(null);
-  const srcDocRecoveryAttemptedGenerationRef = useRef<string | null>(null);
+  const srcDocTransportActivationEpochRef = useRef(0);
+  const previousSrcDocTransportWorkspaceActiveRef = useRef(false);
+  const srcDocRecoveryAttemptRef = useRef<{
+    generation: string;
+    activationEpoch: number;
+  } | null>(null);
+  useEffect(() => {
+    if (workspaceActive && !previousSrcDocTransportWorkspaceActiveRef.current) {
+      srcDocTransportActivationEpochRef.current += 1;
+    }
+    previousSrcDocTransportWorkspaceActiveRef.current = workspaceActive;
+  }, [workspaceActive]);
   const clearSrcDocTransportTimeouts = useCallback(() => {
     for (const timeout of srcDocTransportTimeoutsRef.current) {
       window.clearTimeout(timeout);
@@ -10454,7 +10465,7 @@ function HtmlViewer({
     cancelPendingSrcDocTransport();
     readySrcDocTransportRef.current = null;
     verifiedSrcDocTransportRef.current = null;
-    srcDocRecoveryAttemptedGenerationRef.current = null;
+    srcDocRecoveryAttemptRef.current = null;
     srcDocNavigationCommittedRef.current = null;
     srcDocContentReadyRef.current = null;
   }, [cancelPendingSrcDocTransport]);
@@ -10602,8 +10613,13 @@ function HtmlViewer({
     const frame = srcDocPreviewIframeRef.current;
     const verified = verifiedSrcDocTransportRef.current;
     if (frame && verified?.frame === frame && verified.generation === generation) return;
-    if (srcDocRecoveryAttemptedGenerationRef.current === generation) return;
-    srcDocRecoveryAttemptedGenerationRef.current = generation;
+    const recoveryAttempt = srcDocRecoveryAttemptRef.current;
+    const activationEpoch = srcDocTransportActivationEpochRef.current;
+    if (
+      recoveryAttempt?.generation === generation
+      && recoveryAttempt.activationEpoch === activationEpoch
+    ) return;
+    srcDocRecoveryAttemptRef.current = { generation, activationEpoch };
     const ready = readySrcDocTransportRef.current;
     cancelPendingSrcDocTransport();
     reportPreviewTransportRecovery({
@@ -10629,6 +10645,31 @@ function HtmlViewer({
     setSrcDocRecoveryGeneration(generation);
     setSrcDocTransportResetKey((key) => key + 1);
   }, [cancelPendingSrcDocTransport, file.kind, file.name, handoffArtifactKind, projectId]);
+  useEffect(() => {
+    if (!workspaceActive || mode !== 'preview' || useUrlLoadPreview || !srcDoc) return;
+    const generation = srcDocTransportGeneration;
+    const previousAttempt = srcDocRecoveryAttemptRef.current;
+    if (
+      previousAttempt?.generation !== generation
+      || previousAttempt.activationEpoch === srcDocTransportActivationEpochRef.current
+    ) return;
+    const frame = srcDocPreviewIframeRef.current;
+    const verified = verifiedSrcDocTransportRef.current;
+    if (frame && verified?.frame === frame && verified.generation === generation) return;
+    // A previous visible activation already consumed its one recovery, but the
+    // replacement navigation was interrupted while this retained viewer was
+    // hidden. Treat returning to the file/project as a new bounded navigation
+    // epoch and replace the still-unverified shell immediately. Waiting for a
+    // second probe timeout leaves the user staring at the aborted white frame.
+    recoverUnacknowledgedSrcDocTransport(generation, 'reactivation_unverified');
+  }, [
+    mode,
+    recoverUnacknowledgedSrcDocTransport,
+    srcDoc,
+    srcDocTransportGeneration,
+    useUrlLoadPreview,
+    workspaceActive,
+  ]);
   const probeSrcDocTransport = useCallback((
     generation: string,
     recoverOnFailure: boolean,
@@ -10742,8 +10783,8 @@ function HtmlViewer({
     // Chromium destroys the failed frame before Electron can resolve its
     // name, challenge the one active srcdoc frame instead. A healthy frame
     // acknowledges without mutation; the existing bounded recovery path can
-    // replace at most one shell per generation, so an unscoped host signal
-    // cannot create a reload loop or disturb a verified preview.
+    // replace at most one shell per visible activation, so an unscoped host
+    // signal cannot create a reload loop or disturb a verified preview.
     probeSrcDocTransport(generation, true);
   }, [mode, probeSrcDocTransport, recoverUnacknowledgedSrcDocTransport, useUrlLoadPreview]);
   useEffect(() => {
@@ -10930,8 +10971,10 @@ function HtmlViewer({
   // automatically. Chromium can
   // commit that shell even when it aborts a large direct srcDoc navigation,
   // after which the existing ready handshake safely document.write's the
-  // latest HTML. One fallback per generation avoids a loop when an authored
-  // document is fundamentally unable to execute scripts.
+  // latest HTML. One fallback per visible activation avoids a loop when an
+  // authored document is fundamentally unable to execute scripts, while a
+  // later file/project reactivation can recover a replacement that was itself
+  // interrupted while retained in the background.
   useEffect(() => {
     if (!workspaceActive || mode !== 'preview' || useUrlLoadPreview || !srcDoc) return;
     const generation = srcDocTransportGeneration;

@@ -7870,7 +7870,7 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
-  it('revalidates a recovered generation after reactivation without repeating recovery', () => {
+  it('allows one fresh recovery when an unverified generation is reactivated', () => {
     vi.useFakeTimers();
     try {
       const renderViewer = (workspaceActive: boolean) => (
@@ -7896,7 +7896,10 @@ describe('FileViewer tweaks toolbar', () => {
 
       rerender(renderViewer(false));
       rerender(renderViewer(true));
-      const postMessage = vi.spyOn(recoveredFrame.contentWindow!, 'postMessage');
+      const reactivatedFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(reactivatedFrame).not.toBe(recoveredFrame);
+      expect(safetyEventMock).toHaveBeenCalledTimes(2);
+      const postMessage = vi.spyOn(reactivatedFrame.contentWindow!, 'postMessage');
       act(() => {
         vi.advanceTimersByTime(1_500);
       });
@@ -7910,8 +7913,8 @@ describe('FileViewer tweaks toolbar', () => {
       act(() => {
         vi.advanceTimersByTime(1_500);
       });
-      expect(screen.getByTestId('artifact-preview-frame')).toBe(recoveredFrame);
-      expect(safetyEventMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(reactivatedFrame);
+      expect(safetyEventMock).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

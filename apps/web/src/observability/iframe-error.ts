@@ -41,7 +41,8 @@ export interface PreviewIframeReportOptions {
 export type PreviewTransportRecoverySignal =
   | 'body_incomplete'
   | 'host_navigation_abort'
-  | 'probe_timeout';
+  | 'probe_timeout'
+  | 'reactivation_unverified';
 
 export interface PreviewTransportDocumentState {
   readyState?: string;
@@ -207,13 +208,23 @@ export function reportPreviewIframeMessage(
 export function reportPreviewTransportRecovery(
   options: PreviewTransportRecoveryOptions,
 ): void {
-  const transportStage = options.signal === 'body_incomplete'
-    ? 'head_bridge_alive_body_tail_missing'
-    : options.signal === 'host_navigation_abort'
-      ? 'active_blob_navigation_aborted'
-      : options.activationAcknowledged
+  let transportStage: string;
+  switch (options.signal) {
+    case 'body_incomplete':
+      transportStage = 'head_bridge_alive_body_tail_missing';
+      break;
+    case 'host_navigation_abort':
+      transportStage = 'active_blob_navigation_aborted';
+      break;
+    case 'reactivation_unverified':
+      transportStage = 'retained_frame_unverified_on_reactivation';
+      break;
+    case 'probe_timeout':
+      transportStage = options.activationAcknowledged
         ? 'head_bridge_lost_after_eager_ack'
         : 'no_head_bridge_ack';
+      break;
+  }
   reportSafetyEvent('client_preview_white_screen', {
     surface: options.surface,
     render_mode: options.renderMode,
