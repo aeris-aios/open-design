@@ -185,7 +185,15 @@ export function evaluateOdNextComplexChildEvidence(input: {
   }
 
   const graph = evaluateRuntimeEvidenceGraphV1(observations);
-  if (!graph.valid || (graph.evidenceLevel !== 'L2' && graph.evidenceLevel !== 'L3')) {
+  // Say which of the two it is. The daemon-owned resolver always brackets the
+  // Child list with a running/completed root pair, so the empty-set branch
+  // above is unreachable in production and a Run that observed no Child at all
+  // still arrives here with two valid observations. Reporting that as
+  // malformed evidence sends whoever debugs it looking for a corrupt payload,
+  // when the honest finding is that nothing was ever observed.
+  if (graph.valid && childObservations.length === 0) {
+    reasonCodes.push('od_next_complex_child_evidence_missing');
+  } else if (!graph.valid || (graph.evidenceLevel !== 'L2' && graph.evidenceLevel !== 'L3')) {
     reasonCodes.push('od_next_complex_child_evidence_invalid');
     if (graph.issues.some((issue) => (
       issue.code === 'child_started_missing' || issue.code === 'status_regression'

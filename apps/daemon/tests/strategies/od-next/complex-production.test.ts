@@ -348,6 +348,31 @@ describe('OD Next complex production enforcement', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it('reports a Run that observed no Child as missing evidence, not malformed evidence', () => {
+    // The daemon-owned resolver always brackets the Child list with a
+    // running/completed root pair, so a Run whose Children were never observed
+    // still reaches the graph check with two perfectly valid observations. It
+    // used to be reported as `..._invalid`, which sent whoever debugged it
+    // hunting a corrupt payload — the codex collector had simply never run, so
+    // there was nothing malformed to find and nothing observed either.
+    const capability = capabilitySnapshot();
+    const plan = planContract(snapshot, capability, true);
+    expect(evaluateOdNextComplexChildEvidence({
+      plan,
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      observations: [
+        observation({ id: ROOT_OBSERVATION_ID, status: 'running' }),
+        observation({ id: ROOT_OBSERVATION_ID, status: 'completed' }),
+      ],
+      taskRunObservationId: ROOT_OBSERVATION_ID,
+    })).toEqual({
+      eligible: false,
+      reasonCodes: ['od_next_complex_child_evidence_missing'],
+    });
+  });
+
   it('accepts structured serial and parallel package lifecycles without parsing prose', () => {
     const capability = capabilitySnapshot();
     for (const dependent of [true, false]) {
