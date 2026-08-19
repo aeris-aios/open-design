@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
   NormalizedAgentObservationV1Schema,
+  SAFE_RUN_QUALITY_V1_SCHEMA,
+  SafeRunProcessOutcomeV1Schema,
+  SafeRunQualityV1Schema,
   normalizeAgentObservationV1,
 } from '../src/index.js';
 
@@ -534,5 +537,56 @@ describe('NormalizedAgentObservationV1', () => {
       explicitZero: true,
       knownChildCount: 0,
     });
+  });
+});
+
+describe('SafeRunProcessOutcomeV1Schema', () => {
+  it('accepts the terminal process evidence a failed Run reports', () => {
+    const parsed = SafeRunProcessOutcomeV1Schema.parse({
+      exitCode: 1,
+      signal: 'SIGTERM',
+      stderr: {
+        tail: { text: 'HTTP 401 Unauthorized', redacted: true, truncated: false },
+        lineCount: 3,
+        truncated: false,
+      },
+      diagnostics: { rpc_close_reason: 'exit_nonzero', stderr_present: true },
+    });
+    expect(parsed.exitCode).toBe(1);
+    expect(parsed.stderr?.tail?.text).toBe('HTTP 401 Unauthorized');
+    expect(parsed.diagnostics).toEqual({
+      rpc_close_reason: 'exit_nonzero',
+      stderr_present: true,
+    });
+  });
+
+  it('requires a limitation when a stream summary withholds its tail text', () => {
+    expect(() => SafeRunProcessOutcomeV1Schema.parse({
+      stdout: { lineCount: 4, truncated: false },
+    })).toThrow();
+    expect(SafeRunProcessOutcomeV1Schema.parse({
+      stdout: {
+        lineCount: 4,
+        truncated: false,
+        limitations: ['stdout_tail_requires_content_consent'],
+      },
+    }).stdout?.lineCount).toBe(4);
+  });
+
+  it('rejects free text and unbounded keys in the diagnostics record', () => {
+    expect(() => SafeRunProcessOutcomeV1Schema.parse({
+      diagnostics: { rpc_close_reason: 'failed while reading /Users/alice/secret file' },
+    })).toThrow();
+    expect(() => SafeRunProcessOutcomeV1Schema.parse({
+      diagnostics: { 'Not A Key': true },
+    })).toThrow();
+  });
+
+  it('keeps the process outcome on the run quality projection', () => {
+    const quality = SafeRunQualityV1Schema.parse({
+      schema: SAFE_RUN_QUALITY_V1_SCHEMA,
+      process: { exitCode: 0 },
+    });
+    expect(quality.process?.exitCode).toBe(0);
   });
 });

@@ -1115,12 +1115,35 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     terminalTrigger: run.terminalTrigger ?? null,
     events: run.events,
   });
+  // Terminal process evidence. The single-Run trace reported the stderr and
+  // stdout tails only for a non-succeeded Run, and always reported the derived
+  // close diagnostics; the Task hierarchy must report at least the same.
+  const stderr = status === 'succeeded'
+    ? undefined
+    : collectStderrTailSummary(run.events);
+  const stdout = status === 'succeeded'
+    ? undefined
+    : collectStdoutTailSummary(run.events);
+  const diagnostics = summarizeRunDiagnosticsForAnalytics({
+    events: run.events,
+    exitCode: run.exitCode ?? null,
+    signal: run.signal ?? null,
+    cancelRequested: status === 'canceled',
+    firstTokenSeen: Boolean(run.analyticsTelemetry?.firstTokenAt),
+  });
   return buildSafeRunQualityProjectionV1({
     prefs: opts.prefs,
     messageOutput: messageContent,
     ...(error ? { errorMessage: error } : {}),
     ...(errorCode ? { errorCode } : {}),
     ...(failure ? { failure } : {}),
+    ...(run.exitCode !== undefined && run.exitCode !== null
+      ? { exitCode: run.exitCode }
+      : {}),
+    ...(run.signal ? { signal: run.signal } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(stdout ? { stdout } : {}),
+    diagnostics,
     tools: collectToolCalls(run.events, run.createdAt, run.updatedAt),
     attachmentManifest: manifests.attachmentManifest,
     artifactManifest: manifests.artifactManifest,
