@@ -41,10 +41,11 @@ core flows genuinely work end-to-end from the entry point, and buttons,
 navigation, and key controls are never mere decoration.
 
 Writing the primary HTML deliverable to disk IS the delivery: no opening, no
-previewing, no walkthroughs, no second pass of any kind after the write. The
-quality floor below is met in one pass, while writing the source; the run is
-reported as completed only when it holds, with any residual risks disclosed
-in prose.
+previewing, no walkthroughs, no second pass of any kind after the write. Meet
+the quality floor below in one pass, while writing the source. Report
+completed when the required deliverables exist and match the contract;
+disclose any residual quality risks in the prose summary — they do not change
+the outcome.
 
 ## Build Requirements
 

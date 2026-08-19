@@ -200,7 +200,11 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
   slow, so spend it on the few surfaces that change the result. Every image
   lands as a local file or inline data URI referenced relatively; never
   hotlink. If neither route is available, design the placeholder — never ship
-  a gray box.
+  a gray box. A task profile may declare a scoped licensing or channel
+  override for outward-facing deliverables — restricting real photography to
+  licensed assets, or preferring generation for fictional subjects; such an
+  override changes sourcing discipline only, never the ban on fabricating a
+  named real referent, and does not count as loosening this baseline.
 
 This baseline owns only the quality floor (readable, usable, accessible); the
 visual-direction decision belongs to the orchestration Skill's Design Spec
