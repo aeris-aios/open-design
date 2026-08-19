@@ -27,7 +27,7 @@ import {
   linkSnapshotToProject,
 } from '../src/plugins/snapshots.js';
 import { createAuthorizeProjectRequest } from '../src/collab/project-request-authority.js';
-import { resolveOptionalWorkspaceRequestAuthority } from '../src/collab/workspace-resource-mutation.js';
+import { resolveOptionalLocalWorkspaceRequestAuthority } from '../src/collab/workspace-resource-mutation.js';
 import { createEnforceWorkspaceProjectMutation } from '../src/routes/project/index.js';
 import { workspaceContextFromDirectoryItem } from '../src/collab/vela-workspace-context.js';
 import { registerRunRoutes } from '../src/routes/runs.js';
@@ -236,7 +236,6 @@ function createRunsServiceStub() {
         clientRequestId: null,
         requestFingerprint: null,
         workspaceScope: null,
-        designSystemScope: null,
         message: null,
         currentPrompt: null,
         createdAt: Date.now(),
@@ -266,7 +265,6 @@ function createRunsServiceStub() {
         clientRequestId: meta.clientRequestId,
         requestFingerprint: meta.requestFingerprint,
         workspaceScope: meta.workspaceScope,
-        designSystemScope: meta.designSystemScope,
         odNextTaskInputSnapshot: meta.odNextTaskInputSnapshot ?? null,
         status: 'queued',
         createdAt: Date.now(),
@@ -471,10 +469,7 @@ async function startServer(opts?: {
       authorizePluginRequest: opts?.authorizePluginRequest ?? (
         opts?.authorizePluginWithWorkspaceAuthority
           ? async (req: any, res: any) => {
-              const authority = await resolveOptionalWorkspaceRequestAuthority(
-                req,
-                verifyWorkspaceRequestAuthority,
-              );
+              const authority = resolveOptionalLocalWorkspaceRequestAuthority(req);
               if (!authority.ok) {
                 sendApiError(
                   res,
@@ -530,7 +525,6 @@ async function startServer(opts?: {
       }),
     amrWorkspaceScope: {
       isSignedIn: opts?.isAmrSignedIn ?? (() => false),
-      verifyWorkspaceRequestAuthority,
     },
     authorizeProjectRequest: createAuthorizeProjectRequest({
       db,
@@ -756,7 +750,7 @@ describe('POST /api/runs — workspace mutation gate', () => {
   );
 
   it.each(['/api/runs', '/api/chat'])(
-    'reuses one fresh exact Workspace authority witness for project and plugin gates through %s',
+    'keeps project and local plugin gates off the remote Workspace directory through %s',
     async (route) => {
       const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
         ok: true,
@@ -791,12 +785,12 @@ describe('POST /api/runs — workspace mutation gate', () => {
       });
 
       expect(response.status).toBe(202);
-      expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(1);
+      expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
     },
   );
 
   it.each(['/api/runs', '/api/chat'])(
-    'still performs one fresh project mutation check when no plugin is requested through %s',
+    'keeps project-only run creation off the remote Workspace directory through %s',
     async (route) => {
       const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
         ok: true,
@@ -829,12 +823,12 @@ describe('POST /api/runs — workspace mutation gate', () => {
       });
 
       expect(response.status).toBe(202);
-      expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(1);
+      expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
     },
   );
 
   it.each(['/api/runs', '/api/chat'])(
-    'fails closed on a rejected authority witness before plugin resolution through %s',
+    'continues local run creation when the remote Workspace directory is unavailable through %s',
     async (route) => {
       const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
         ok: false,
@@ -863,20 +857,14 @@ describe('POST /api/runs — workspace mutation gate', () => {
         }),
       });
 
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toMatchObject({
-        error: {
-          code: 'WORKSPACE_AUTHORITY_UNAVAILABLE',
-          retryable: true,
-        },
-      });
-      expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(1);
-      expect(createdRunCount).toBe(0);
+      expect(response.status).toBe(202);
+      expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
+      expect(createdRunCount).toBe(1);
     },
   );
 
   it.each(['/api/runs', '/api/chat'])(
-    'does not reuse a prior request witness after Workspace membership changes through %s',
+    'does not let stale remote membership state interrupt local run creation through %s',
     async (route) => {
       let memberStatus: 'active' | 'removed' = 'active';
       const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
@@ -912,16 +900,12 @@ describe('POST /api/runs — workspace mutation gate', () => {
 
       expect((await create()).status).toBe(202);
       memberStatus = 'removed';
-      const removedResponse = await create();
-      expect(removedResponse.status).toBe(403);
-      await expect(removedResponse.json()).resolves.toMatchObject({
-        error: { code: 'WORKSPACE_PROJECT_PERMISSION_DENIED' },
-      });
-      expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(2);
+      expect((await create()).status).toBe(202);
+      expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
     },
   );
 
-  it('does not share a fresh authority witness between concurrent run requests', async () => {
+  it('authorizes concurrent local runs from persisted bindings without a remote witness', async () => {
     const pending: Array<{
       memberId: string;
       resolve: (value: any) => void;
@@ -966,29 +950,13 @@ describe('POST /api/runs — workspace mutation gate', () => {
 
     const ownerRequest = create(OWNER_MEMBER_ID, 'owner');
     const memberRequest = create('member-concurrent-run', 'member');
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
-    for (const entry of pending) {
-      entry.resolve({
-        ok: true,
-        context: workspaceContextFromDirectoryItem({
-          workspaceId: WORKSPACE_ID,
-          workspaceName: 'Team',
-          workspaceType: 'team',
-          workspaceMemberId: entry.memberId,
-          role: entry.memberId === OWNER_MEMBER_ID ? 'owner' : 'member',
-          memberStatus: 'active',
-          lifecycleState: 'active',
-        }),
-      });
-    }
-
     const [ownerResponse, memberResponse] = await Promise.all([
       ownerRequest,
       memberRequest,
     ]);
     expect(ownerResponse.status).toBe(202);
     expect(memberResponse.status).toBe(403);
-    expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(2);
+    expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
   });
 
   it.each(['/api/runs', '/api/chat'])(
@@ -1221,7 +1189,7 @@ describe('POST /api/runs — workspace mutation gate', () => {
   });
 
   it.each(['/api/runs', '/api/chat'])(
-    'ignores client-forged run scopes for an unbound project through %s',
+    'ignores a client-forged workspace scope for an unbound project through %s',
     async (route) => {
       const baseUrl = await startServer();
       const response = await fetch(`${baseUrl}${route}`, {
@@ -1238,12 +1206,6 @@ describe('POST /api/runs — workspace mutation gate', () => {
             workspaceMemberId: 'forged-member',
             source: 'persisted_project_binding',
           },
-          designSystemScope: {
-            schemaVersion: 1,
-            kind: 'local',
-            projectId: UNBOUND_PROJECT,
-            designSystemId: 'user:forged',
-          },
         }),
       });
 
@@ -1253,26 +1215,21 @@ describe('POST /api/runs — workspace mutation gate', () => {
       expect(statusResponse.status).toBe(200);
       const run = await statusResponse.json() as Record<string, unknown>;
       expect(run.workspaceScope).toBeNull();
-      expect(run).not.toHaveProperty('designSystemScope');
     },
   );
 
-  it('verifies AMR adoption before any plugin resolution side effects', async () => {
-    const loadPluginRegistryView = vi.fn(async () => ({}));
+  it('keeps an untyped historical AMR run account-scoped during a directory outage', async () => {
+    const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      code: 'WORKSPACE_DIRECTORY_UNAVAILABLE',
+      message: 'workspace directory temporarily unavailable',
+    }));
     const baseUrl = await startServer({
       isAmrSignedIn: () => true,
-      loadPluginRegistryView,
-      verifyWorkspaceRequestAuthority: async () => ({
-        ok: false,
-        status: 503,
-        code: 'WORKSPACE_DIRECTORY_UNAVAILABLE',
-        message: 'workspace directory temporarily unavailable',
-      }),
+      verifyWorkspaceRequestAuthority,
     });
     const db = openDatabase(tempDir!);
-    const beforeSnapshotCount = (db.prepare(
-      'SELECT COUNT(*) AS count FROM applied_plugin_snapshots',
-    ).get() as { count: number }).count;
 
     const response = await fetch(`${baseUrl}/api/runs`, {
       method: 'POST',
@@ -1283,21 +1240,13 @@ describe('POST /api/runs — workspace mutation gate', () => {
       body: JSON.stringify({
         projectId: UNBOUND_PROJECT,
         agentId: 'amr',
-        pluginId: 'must-not-resolve-before-adoption',
-        message: 'must verify the historical project first',
+        message: 'local send must survive the outage',
       }),
     });
 
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: 'WORKSPACE_DIRECTORY_UNAVAILABLE' },
-    });
-    expect(loadPluginRegistryView).not.toHaveBeenCalled();
-    expect(createdRunCount).toBe(0);
+    expect(response.status).toBe(202);
+    expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
     expect(getWorkspaceProjectByProjectId(db, UNBOUND_PROJECT)).toBeUndefined();
-    expect((db.prepare(
-      'SELECT COUNT(*) AS count FROM applied_plugin_snapshots',
-    ).get() as { count: number }).count).toBe(beforeSnapshotCount);
   });
 
   it('authorizes the final run plugin before loading the scoped registry', async () => {
@@ -1332,7 +1281,7 @@ describe('POST /api/runs — workspace mutation gate', () => {
     expect(calls).toEqual(['plugin', 'registry']);
   });
 
-  it('adopts an exact historical project scope before authorizing its chat plugin', async () => {
+  it('adopts an explicitly Personal local scope before authorizing its chat plugin', async () => {
     const calls: string[] = [];
     const baseUrl = await startServer({
       isAmrSignedIn: () => true,
@@ -1362,6 +1311,7 @@ describe('POST /api/runs — workspace mutation gate', () => {
       headers: {
         'Content-Type': 'application/json',
         ...workspaceHeaders(OWNER_MEMBER_ID, 'owner'),
+        'x-od-workspace-type': 'personal',
       },
       body: JSON.stringify({
         projectId: UNBOUND_PROJECT,
@@ -1372,7 +1322,7 @@ describe('POST /api/runs — workspace mutation gate', () => {
     });
 
     expect(response.status).toBe(202);
-    expect(calls).toEqual(['adoption', 'plugin']);
+    expect(calls).toEqual(['plugin']);
     expect(getWorkspaceProjectByProjectId(openDatabase(tempDir!), UNBOUND_PROJECT))
       .toMatchObject({
         workspaceId: WORKSPACE_ID,
@@ -1570,7 +1520,7 @@ describe('Workspace-bound run lifecycle authority', () => {
     }
   });
 
-  it('does not bypass exact Workspace authority for AMR run status, events, or cancel', async () => {
+  it('keeps persisted local AMR run status, events, and cancel available offline', async () => {
     const baseUrl = await startServer();
     const createResponse = await fetch(`${baseUrl}/api/runs`, {
       method: 'POST',
@@ -1593,10 +1543,7 @@ describe('Workspace-bound run lifecycle authority', () => {
       [`/api/runs/${runId}/cancel`, 'POST'],
     ] as const) {
       const response = await fetch(`${baseUrl}${path}`, { method });
-      expect(response.status).toBe(400);
-      await expect(response.json()).resolves.toMatchObject({
-        error: { code: 'WORKSPACE_CONTEXT_REQUIRED' },
-      });
+      expect(response.status).toBe(200);
     }
 
     const exactHeaders = workspaceHeaders(OWNER_MEMBER_ID, 'owner');
@@ -1639,11 +1586,11 @@ describe('Workspace-bound run lifecycle authority', () => {
     });
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: 'WORKSPACE_CONTEXT_REQUIRED' },
+      error: { code: 'WORKSPACE_CONTEXT_INCOMPLETE' },
     });
   });
 
-  it('fails closed when a historical run record has no reliable agentId', async () => {
+  it('keeps a persisted historical run available without relying on runtime identity', async () => {
     const baseUrl = await startServer();
     const createResponse = await fetch(`${baseUrl}/api/runs`, {
       method: 'POST',
@@ -1660,10 +1607,7 @@ describe('Workspace-bound run lifecycle authority', () => {
     const { runId } = (await createResponse.json()) as { runId: string };
 
     const response = await fetch(`${baseUrl}/api/runs/${runId}`);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: 'WORKSPACE_CONTEXT_REQUIRED' },
-    });
+    expect(response.status).toBe(200);
   });
 
   it.each([
@@ -1759,7 +1703,7 @@ describe('POST /api/runs — delegates membership and balance eligibility to Vel
 
 describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () => {
   it.each(['/api/runs', '/api/chat'])(
-    'transactionally binds an unbound historical project to the exact verified Personal Workspace through %s',
+    'transactionally binds an unbound historical project to the exact local Personal Workspace through %s',
     async (route) => {
     const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
       ok: true,
@@ -1793,7 +1737,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
     });
 
       expect(response.status).toBe(202);
-      expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(1);
+      expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
       expect(
         getWorkspaceProjectByProjectId(openDatabase(tempDir!), UNBOUND_PROJECT),
       ).toMatchObject({
@@ -1804,7 +1748,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
     },
   );
 
-  it('keeps an adopted Personal project runnable only by the verified adopting member', async () => {
+  it('keeps an adopted Personal project runnable only by its persisted creator', async () => {
     const verifyWorkspaceRequestAuthority = vi.fn(async (req: any) => {
       const memberId = req.get('x-od-workspace-member-id');
       return {
@@ -1855,6 +1799,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
     await expect(foreignResponse.json()).resolves.toMatchObject({
       error: { code: 'WORKSPACE_PROJECT_PERMISSION_DENIED' },
     });
+    expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
   });
 
   it.each(['/api/runs', '/api/chat'])(
@@ -1925,7 +1870,7 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
     ).toBeUndefined();
   });
 
-  it('fails closed without binding when the exact Personal authority is unavailable', async () => {
+  it('adopts an explicitly Personal project locally when Workspace authority is unavailable', async () => {
     const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
       ok: false,
       status: 503,
@@ -1948,18 +1893,19 @@ describe('POST /api/runs — one-time Personal adoption for signed-in AMR', () =
       body: JSON.stringify({
         projectId: UNBOUND_PROJECT,
         agentId: 'amr',
-        message: 'do not guess',
+        message: 'keep local send available',
       }),
     });
 
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: 'WORKSPACE_AUTHORITY_UNAVAILABLE' },
-    });
-    expect(verifyWorkspaceRequestAuthority).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(202);
+    expect(verifyWorkspaceRequestAuthority).not.toHaveBeenCalled();
     expect(
       getWorkspaceProjectByProjectId(openDatabase(tempDir!), UNBOUND_PROJECT),
-    ).toBeUndefined();
+    ).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      visibility: 'personal',
+      createdByWorkspaceMemberId: OWNER_MEMBER_ID,
+    });
   });
 
   it.each(['/api/runs', '/api/chat'])(

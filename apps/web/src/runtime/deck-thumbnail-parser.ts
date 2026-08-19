@@ -13,9 +13,9 @@
 //
 // It is intentionally pure and synchronous (DOMParser only) so it memoizes on
 // the source string and is unit-testable. Decks it cannot faithfully render
-// statically (external layout CSS, viewport-unit slides, script-built content)
-// report `renderable: false` with a reason, and the caller keeps the old
-// iframe thumbnail for that deck.
+// statically (external layout CSS or script-built content) report
+// `renderable: false` with a reason, and the caller keeps the old iframe
+// thumbnail for that deck.
 
 import DOMPurify from 'dompurify';
 
@@ -30,6 +30,7 @@ export type DeckThumbnailFallbackReason =
   | 'no-dom-parser'
   | 'no-slides'
   | 'no-styles'
+  | 'viewport-media-query'
   | 'external-stylesheet';
 
 /** One reconstructed wrapper element between the shadow root and the slide. */
@@ -143,12 +144,32 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
   // and each `var(--slide-bg)` resolves to transparent, painting nothing over
   // the near-black thumbnail host (black thumbnails). Comments are inert, so
   // removing them changes only which selectors the rewrites can see.
-  const rawStyle = stripCssComments(
-    Array.from(doc.querySelectorAll('style'))
-      .map((el) => el.textContent || '')
-      .join('\n'),
-  );
+  const styleBlocks = Array.from(doc.querySelectorAll('style')).map((el) => el.textContent || '');
+  const styleWithImports = styleBlocks.join('\n');
+  if (!styleWithImports.trim()) return unrenderable('no-styles');
+
+  // Constructable stylesheets ignore @import, so leaving an approved webfont
+  // import in styleText silently changes typography and line wrapping in the
+  // shadow thumbnail. Lift approved font imports into the host alongside
+  // <link> fonts; any other import may contain layout CSS we cannot reproduce
+  // safely, so use the isolated iframe fallback instead.
+  const importedBlocks = styleBlocks.map(extractStylesheetImports);
+  if (importedBlocks.some((imported) => imported.unsafe)) {
+    return unrenderable('external-stylesheet');
+  }
+  for (const imported of importedBlocks) {
+    for (const href of imported.fontLinks) {
+      if (!fontLinks.includes(href)) fontLinks.push(href);
+    }
+  }
+  const rawStyle = stripCssComments(importedBlocks.map((imported) => imported.css).join('\n'));
   if (!rawStyle.trim()) return unrenderable('no-styles');
+  // A shadow-root thumbnail's @media rules evaluate against the Open Design
+  // host window, not the preview iframe. A deck can therefore take its desktop
+  // branch in the rail while the visible preview takes its mobile branch. Keep
+  // these decks on the isolated iframe fallback, whose viewport is explicitly
+  // matched to the live preview by DeckThumbnailRail.
+  if (hasViewportMediaQuery(rawStyle)) return unrenderable('viewport-media-query');
 
   const designSize = resolveDesignSize(doc, rawStyle);
 
@@ -181,6 +202,21 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
 }
 
 const VIEWPORT_UNIT_TOKEN_RE = /(-?\d*\.?\d+)\s*(vw|vh|vmin|vmax|svw|svh|lvw|lvh|dvw|dvh)\b/gi;
+const MEDIA_QUERY_PRELUDE_RE = /@media\s+([^{}]*)\{/gi;
+const VIEWPORT_MEDIA_FEATURE_PATTERNS = [
+  /\b(?:min|max)-(?:width|height)\b/i,
+  /\b(?:width|height|orientation|aspect-ratio)\b\s*:/i,
+  /\b(?:width|height|aspect-ratio)\b\s*(?:[<>]=?|=)/i,
+  /(?:[<>]=?|=)\s*\b(?:width|height|aspect-ratio)\b/i,
+] as const;
+
+function hasViewportMediaQuery(css: string): boolean {
+  for (const match of css.matchAll(MEDIA_QUERY_PRELUDE_RE)) {
+    const prelude = match[1] ?? '';
+    if (VIEWPORT_MEDIA_FEATURE_PATTERNS.some((pattern) => pattern.test(prelude))) return true;
+  }
+  return false;
+}
 
 // Replace each `<n><viewport-unit>` with `calc(<n> * <k>px)` where `k` is the
 // design canvas dimension / 100. Works inside `clamp()`/`min()`/`max()` and
@@ -309,6 +345,139 @@ function matchPxLength(body: string, prop: 'width' | 'height'): number | null {
 // and deck CSS effectively never puts comment markers inside string values.
 function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+interface StylesheetImportExtraction {
+  css: string;
+  fontLinks: string[];
+  unsafe: boolean;
+}
+
+const CSS_IMPORT_HREF_RE =
+  /^@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^'"\s][^)]*))\s*\)|"([^"]*)"|'([^']*)')/i;
+
+function isCssIdentifierChar(char: string | undefined): boolean {
+  return !!char && /[\w-]/.test(char);
+}
+
+function findCssImportEnd(css: string, start: number): number | null {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let inComment = false;
+  let parenDepth = 0;
+
+  for (let i = start + '@import'.length; i < css.length; i += 1) {
+    const char = css[i]!;
+    const next = css[i + 1];
+    if (inComment) {
+      if (char === '*' && next === '/') {
+        inComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      inComment = true;
+      i += 1;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '(') {
+      parenDepth += 1;
+    } else if (char === ')') {
+      if (parenDepth === 0) return null;
+      parenDepth -= 1;
+    } else if (char === ';' && parenDepth === 0) {
+      return i + 1;
+    } else if (char === '{' && parenDepth === 0) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function extractStylesheetImports(css: string): StylesheetImportExtraction {
+  const fontLinks: string[] = [];
+  let unsafe = false;
+  const chunks: string[] = [];
+  let chunkStart = 0;
+  let braceDepth = 0;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let inComment = false;
+  let importPreludeOpen = true;
+
+  for (let i = 0; i < css.length; i += 1) {
+    const char = css[i]!;
+    const next = css[i + 1];
+    if (inComment) {
+      if (char === '*' && next === '/') {
+        inComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      inComment = true;
+      i += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      if (braceDepth === 0) importPreludeOpen = false;
+      continue;
+    }
+    if (char === '{') {
+      braceDepth += 1;
+      continue;
+    }
+    if (char === '}') {
+      braceDepth = Math.max(0, braceDepth - 1);
+      continue;
+    }
+    if (
+      char !== '@' ||
+      css.slice(i, i + '@import'.length).toLowerCase() !== '@import' ||
+      isCssIdentifierChar(css[i + '@import'.length])
+    ) {
+      if (braceDepth === 0 && !/\s/.test(char)) importPreludeOpen = false;
+      continue;
+    }
+
+    if (braceDepth !== 0 || !importPreludeOpen) {
+      unsafe = true;
+      continue;
+    }
+    const end = findCssImportEnd(css, i);
+    if (end === null) {
+      unsafe = true;
+      continue;
+    }
+    const statement = css.slice(i, end);
+    const match = CSS_IMPORT_HREF_RE.exec(statement);
+    const href = match?.slice(1).find((value): value is string => typeof value === 'string')?.trim() ?? '';
+    const condition = match ? statement.slice(match[0].length, -1).trim() : '';
+    if (!href || condition || !isApprovedFontHref(href)) unsafe = true;
+    else if (!fontLinks.includes(href)) fontLinks.push(href);
+
+    chunks.push(css.slice(chunkStart, i));
+    chunkStart = end;
+    i = end - 1;
+  }
+
+  chunks.push(css.slice(chunkStart));
+  return { css: chunks.join(''), fontLinks, unsafe };
 }
 
 // Rewrite `:root`/`html` to `:host`, so document-level variables inherit into

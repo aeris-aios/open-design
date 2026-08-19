@@ -67,8 +67,6 @@ export interface OdNextStrategyStableRequestContextV2 {
   designSystemComponentsManifest?: string | undefined;
   designSystemFixtureHtml?: string | undefined;
   designSystemPullIndex?: string | undefined;
-  designSystemIntentIndex?: string | undefined;
-  designSystemRuntimeIssue?: string | undefined;
   designSystemImportMode?: 'normalized' | 'hybrid' | 'verbatim' | undefined;
   craftBody?: string | undefined;
   craftSections?: string[] | undefined;
@@ -452,9 +450,6 @@ export function composeOdNextStrategyStableRequestContextV2(
     ...(context.designSystemImportMode
       ? { importMode: context.designSystemImportMode }
       : {}),
-    ...(context.designSystemRuntimeIssue?.trim()
-      ? { runtimeIssue: context.designSystemRuntimeIssue.trim() }
-      : {}),
   };
   if (Object.keys(designSystemIdentity).length > 0) {
     factualStructured('active-design-system-identity', designSystemIdentity);
@@ -468,7 +463,6 @@ export function composeOdNextStrategyStableRequestContextV2(
   );
   factualText('active-design-system-fixture', context.designSystemFixtureHtml);
   factualText('active-design-system-pull-index', context.designSystemPullIndex);
-  factualText('active-design-system-intent-index', context.designSystemIntentIndex);
   instructionStructured('active-craft-sections', context.craftSections);
   instructionText('active-craft-guidance', context.craftBody);
 

@@ -202,8 +202,6 @@ export interface ComposeInput {
   designSystemComponentsManifest?: string | undefined;
   designSystemFixtureHtml?: string | undefined;
   designSystemPullIndex?: string | undefined;
-  designSystemIntentIndex?: string | undefined;
-  designSystemRuntimeIssue?: string | undefined;
   designSystemImportMode?: 'normalized' | 'hybrid' | 'verbatim' | undefined;
   craftBody?: string | undefined;
   craftSections?: string[] | undefined;
@@ -284,8 +282,6 @@ export function composeSystemPrompt({
   designSystemComponentsManifest,
   designSystemFixtureHtml,
   designSystemPullIndex,
-  designSystemIntentIndex,
-  designSystemRuntimeIssue,
   designSystemImportMode,
   craftBody,
   craftSections,
@@ -317,8 +313,6 @@ export function composeSystemPrompt({
       designSystemComponentsManifest,
       designSystemFixtureHtml,
       designSystemPullIndex,
-      designSystemIntentIndex,
-      designSystemRuntimeIssue,
       designSystemImportMode,
       craftBody,
       craftSections,

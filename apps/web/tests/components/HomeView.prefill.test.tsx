@@ -573,7 +573,7 @@ describe('HomeView prompt handoff', () => {
     });
 
     await waitFor(() => expect(submit.disabled).toBe(false));
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
   });
 
   it('keeps creation types actionable while an expired plugin cache refreshes after a project round trip', async () => {
@@ -995,7 +995,7 @@ describe('HomeView prompt handoff', () => {
     }));
   });
 
-  it('hands the Home rail UI Mockup chip entirely to OD Next on submit', async () => {
+  it('hands the Home rail Prototype chip entirely to OD Next on submit', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -1024,7 +1024,7 @@ describe('HomeView prompt handoff', () => {
     await pickHomeTemplate('prototype');
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
@@ -1078,16 +1078,25 @@ describe('HomeView prompt handoff', () => {
   });
 
   it.each([
-    ['wireframe', { kind: 'prototype', fidelity: 'wireframe' }],
-    ['mobile', {
-      kind: 'prototype',
-      platform: 'auto',
-      platformTargets: ['mobile-ios', 'mobile-android'],
-    }],
-  ] as const)('keeps the %s route on the ordinary legacy default-plugin path', async (
-    chipId,
-    expectedMetadata,
-  ) => {
+    {
+      subtype: 'mobile',
+      prompt: 'Design a mobile checkout flow.',
+      metadata: {
+        kind: 'prototype',
+        platform: 'auto',
+        platformTargets: ['mobile-ios', 'mobile-android'],
+      },
+    },
+    {
+      subtype: 'wireframe',
+      prompt: 'Sketch a low-fidelity account setup flow.',
+      metadata: { kind: 'prototype', fidelity: 'wireframe' },
+    },
+  ])('keeps $subtype as a nested Prototype scene while preserving its project metadata', async ({
+    subtype,
+    prompt,
+    metadata,
+  }) => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -1095,7 +1104,7 @@ describe('HomeView prompt handoff', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')) {
+      if (typeof url === 'string' && url.includes('/apply-local')) {
         return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -1117,8 +1126,18 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    await pickHomeTemplate(chipId);
-    await setPromptAndSettle(`Create a ${chipId} concept.`);
+    await pickHomeTemplate('prototype');
+    const subtypeChip = await screen.findByTestId(`home-hero-subtype-${subtype}`);
+    fireEvent.click(subtypeChip);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
+      expect(subtypeChip.getAttribute('aria-selected')).toBe('true');
+      expect(JSON.parse(window.localStorage.getItem('open-design:home-composer:chip') ?? '{}'))
+        .toMatchObject({ chipId: 'prototype', prototypeSubtypeId: subtype });
+    });
+
+    await setPromptAndSettle(prompt);
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -1129,8 +1148,10 @@ describe('HomeView prompt handoff', () => {
       pluginId: 'example-web-prototype',
       appliedPluginSnapshotId: 'snap-web-prototype',
       projectKind: 'prototype',
-      projectMetadata: expect.objectContaining(expectedMetadata),
+      projectMetadata: expect.objectContaining(metadata),
     })));
+    // A nested Prototype scene is NOT the automatic OD Next Prototype route:
+    // Mobile and Wireframe must keep the ordinary applied-plugin payload.
     expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('automaticStrategyTaskProfile');
     expect(onSubmit.mock.calls[0]?.[0]).toHaveProperty('pluginInputs');
   });
@@ -1230,7 +1251,7 @@ describe('HomeView prompt handoff', () => {
     await pickHomeTemplate('prototype');
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
     // Round-4 skin: the unset trigger reads "Design system" (the field name)
     // instead of the "No design system" placeholder.
@@ -1363,7 +1384,7 @@ describe('HomeView prompt handoff', () => {
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
     ))).toBe(false);
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     // The design-system picker is now the persistent control below the composer.
     expect(
       screen.getByTestId('home-hero-design-system-trigger').textContent,
@@ -1655,7 +1676,7 @@ describe('HomeView prompt handoff', () => {
     await pickHomeTemplate('prototype');
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')

@@ -155,6 +155,64 @@ describe('chat run service shutdown', () => {
     vi.useRealTimers();
   });
 
+  it('uses runtime usage attribution when the adapter has no message lifecycle', () => {
+    const runs = createRuns();
+    const run = runs.create({
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      agentId: 'deepseek-harness',
+    }) as any;
+    run.model = 'default';
+    runs.emit(run, 'agent', {
+      type: 'usage',
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    runs.finish(run, 'succeeded', 0, null);
+
+    const diagnostics = runs.statusBody(run).executionDiagnostics;
+    expect(diagnostics?.environment).toMatchObject({
+      requestedModel: { state: 'available', value: 'default' },
+      provider: { state: 'available', value: 'deepseek-official' },
+      resolvedModel: { state: 'available', value: 'deepseek-v4-flash' },
+    });
+    expect(diagnostics?.assistantMessages.count).toMatchObject({
+      state: 'not_collected',
+      missingReason: 'assistant_message_lifecycle_not_exposed_by_runtime',
+    });
+  });
+
+  it('keeps lifecycle attribution ahead of the usage fallback', () => {
+    const runs = createRuns();
+    const run = runs.create({
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      agentId: 'amr',
+    }) as any;
+    runs.emit(run, 'agent', {
+      type: 'usage',
+      provider: 'usage-provider',
+      model: 'usage-model',
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    runs.emit(run, 'agent', {
+      type: 'diagnostic',
+      name: 'assistant_message_lifecycle',
+      phase: 'end',
+      status: 'completed',
+      assistantMessageIndex: 1,
+      provider: 'lifecycle-provider',
+      model: 'lifecycle-model',
+    });
+    runs.finish(run, 'succeeded', 0, null);
+
+    expect(runs.statusBody(run).executionDiagnostics?.environment).toMatchObject({
+      provider: { state: 'available', value: 'lifecycle-provider' },
+      resolvedModel: { state: 'available', value: 'lifecycle-model' },
+    });
+  });
+
   it('keeps model-step percentiles unavailable until the documented sample minimum', () => {
     const runs = createRuns();
     const run = runs.create({ projectId: 'project-1', conversationId: 'conv-1', agentId: 'amr' }) as any;
@@ -1151,23 +1209,7 @@ describe('run event log persistence', () => {
         schemaVersion: 1,
         projectId: 'p1',
         workspaceId: 'workspace-a',
-        workspaceMemberId: 'member-a',
         source: 'persisted_project_binding',
-      },
-      designSystemScope: {
-        schemaVersion: 1,
-        kind: 'workspace-resource',
-        projectId: 'p1',
-        designSystemId: 'user:brand-a',
-        workspaceId: 'workspace-a',
-        workspaceMemberId: 'member-a',
-        bindingResourceId: 'user:brand-a',
-        visibility: 'personal',
-        bindingResourceState: 'active',
-        bindingVersion: 1,
-        bindingCreatedAt: 50,
-        bindingUpdatedAt: 100,
-        bindingCreatedByWorkspaceMemberId: 'member-a',
       },
     });
     const statePath = path.join(tmpDir, run.id, 'state.json');
@@ -1181,14 +1223,7 @@ describe('run event log persistence', () => {
         schemaVersion: 1,
         projectId: 'p1',
         workspaceId: 'workspace-a',
-        workspaceMemberId: 'member-a',
         source: 'persisted_project_binding',
-      },
-      designSystemScope: {
-        kind: 'workspace-resource',
-        designSystemId: 'user:brand-a',
-        bindingResourceId: 'user:brand-a',
-        visibility: 'personal',
       },
     });
 

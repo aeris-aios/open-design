@@ -47,7 +47,6 @@ import {
   type StableSectionHashes,
 } from './prompts/stable-sections.js';
 import { emittedRenderableQuestionForm } from './question-form-detect.js';
-import { runHadFailedDesignSystemWrapper } from './runtimes/run-artifacts.js';
 import { resolveProjectRoot } from './project-root.js';
 import { OPEN_DESIGN_PLUGIN_ID } from './mcp-observability.js';
 import {
@@ -325,7 +324,6 @@ import {
   createUserDesignSystem,
   deleteUserDesignSystem,
   digestDesignSystemContext,
-  isDesignTokenChannelEnabled,
   isTeamSyncedUserDesignSystem,
   LEGACY_DESIGN_SYSTEM_ARTIFACTS,
   linkUserDesignSystemProject,
@@ -338,7 +336,6 @@ import {
   readUserDesignSystemFile,
   readUserDesignSystemFileBytes,
   resolveDesignSystemAssets,
-  resolveDesignSystemRuntimePromptContext,
   stripPrefixAndValidateId,
   syncUserDesignSystemAssetsFromFiles,
   updateUserDesignSystem,
@@ -350,10 +347,6 @@ import {
   deleteWorkspaceOwnedDesignSystem as removeWorkspaceOwnedDesignSystem,
 } from './design-systems/workspace-owned-create.js';
 import { createDesignSystemGenerationJobStore } from './design-systems/generation-jobs.js';
-import {
-  pinRunDesignSystemScope,
-  resolvePinnedRunDesignSystemScope,
-} from './design-systems/run-scope.js';
 import { createDesignSystemServerServices } from './design-systems/server-services.js';
 import {
   designSystemIdFromWorkspaceTeamBinding,
@@ -584,6 +577,7 @@ import { loadCraftSections, resolveCraftRequirements } from './craft.js';
 import { skillCwdAliasSegment, stageActiveSkill } from './cwd-aliases.js';
 import { buildDesktopArtifactExportInput, buildDesktopPdfExportInput } from './pdf-export.js';
 import { generateMedia } from './media/index.js';
+import { resolveHyperFramesCliPath } from './media/hyperframes-runtime.js';
 import { listElevenLabsVoiceOptions } from './integrations/elevenlabs-voices.js';
 import { searchResearch, ResearchError } from './research/index.js';
 import { openBrowser } from './browser/index.js';
@@ -815,7 +809,9 @@ import { registerChatRoutes } from './routes/chat.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerStrategyRolloutRoutes } from './routes/strategy-rollout.js';
 import { registerTerminalRoutes } from './routes/terminal.js';
+import { registerBrowserSessionRoutes } from './routes/browser-sessions.js';
 import { createTerminalService } from './terminals.js';
+import { createBrowserSessionService } from './browser-sessions.js';
 import { registerSocialShareRoutes } from './routes/social-share.js';
 import { registerOpenDesignPublicMetadataRoutes } from './routes/open-design-public-metadata.js';
 import { registerWhatsNewRoutes } from './routes/whats-new.js';
@@ -836,20 +832,18 @@ import {
 import { registerTeamResourceRoutes } from './routes/team-resources.js';
 import { registerTeamResourceShareRoutes } from './routes/team-resource-share.js';
 import { createCollabRuntime } from './collab/runtime.js';
+import { createSqlitePublicFilePublicationStore } from './collab/public-file-publication-store.js';
 import {
   createActiveWorkspaceSelectionStore,
 } from './collab/active-workspace-selection.js';
 import {
   headerValue,
-  isWorkspaceResourceLocked,
-  resolveOptionalWorkspaceRequestAuthority,
-  type WorkspaceRequestAuthorityResult,
+  resolveOptionalLocalWorkspaceRequestAuthority,
   workspaceResourceContext,
   workspaceResourceContextFromRequest,
 } from './collab/workspace-resource-mutation.js';
 import {
   createAuthorizeProjectRequest,
-  resolveBoundProjectWorkspaceReadAuthority,
 } from './collab/project-request-authority.js';
 import { withLastKnownWorkspaceContext } from './collab/workspace-context.js';
 import {
@@ -1756,6 +1750,7 @@ export function createAgentRuntimeToolPrompt(
     '',
     `- Daemon URL: \`${daemonUrl}\` (also available as \`OD_DAEMON_URL\`).`,
     '- `OD_NODE_BIN` is the absolute path to the Node-compatible runtime that started the daemon; packaged desktop installs provide this even when the user has no system `node` on PATH.',
+    '- `OD_HYPERFRAMES_BIN` is the absolute path to Open Design\'s pinned HyperFrames CLI. Run lightweight commands through `OD_NODE_BIN`; use `"$OD_NODE_BIN" "$OD_BIN" media scaffold` for composition setup and never use a user-level `npx` cache.',
     '- `OD_BIN` is the absolute path to the OpenDesign CLI script. On POSIX shells run wrappers with `"$OD_NODE_BIN" "$OD_BIN" tools ...`; do not call bare `od`, which may resolve to the system octal-dump command on Unix-like systems.',
     '- On PowerShell use `& $env:OD_NODE_BIN $env:OD_BIN tools ...`; on cmd.exe use `"%OD_NODE_BIN%" "%OD_BIN%" tools ...`.',
     tokenLine,
@@ -1765,16 +1760,19 @@ export function createAgentRuntimeToolPrompt(
 
 export function createOpenDesignToolEnv({
   daemonUrl,
+  hyperFramesBin = resolveHyperFramesCliPath(),
   projectDir,
   projectId,
 }: {
   daemonUrl: string;
+  hyperFramesBin?: string;
   projectDir?: string | null;
   projectId?: string | null;
 }): NodeJS.ProcessEnv {
   return {
     OD_BIN,
     OD_DATA_DIR: RUNTIME_DATA_DIR,
+    OD_HYPERFRAMES_BIN: hyperFramesBin,
     OD_NODE_BIN,
     OD_DAEMON_URL: daemonUrl,
     ...(typeof projectId === 'string' && projectId && projectDir
@@ -3473,9 +3471,6 @@ export async function startServer({
           configuredEnv: configuredAmrEnv(),
         })
       : undefined;
-  const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
-    verifyWorkspaceRequestAuthority,
-  );
   // Project-creation writes must be authorized by AMR in production, while
   // local/dev and explicitly anonymous clients keep their legacy behavior.
   // Keep this separate from read-side directory fetches so an unconfigured
@@ -3640,12 +3635,12 @@ export async function startServer({
   const workspaceContext = withLastKnownWorkspaceContext(
     createWorkspaceContextProviderFromEnv(process.env, {
       configuredEnv: configuredAmrEnv,
+      fetchWorkspaceDirectory,
       getActiveWorkspaceId: () => activeWorkspace.get(),
-      setLocalSelection: (workspaceId: string) => activeWorkspace.set(workspaceId),
-      // Only called after the membership directory CONFIRMS the pinned
-      // workspace is gone (removed member / deleted workspace) — never on a
-      // mere B outage. See resolvePinnedWorkspace in vela-workspace-context.ts.
-      clearLocalSelection: () => activeWorkspace.clear(),
+      // The expected value keeps a directory-derived bootstrap/recovery write
+      // from overwriting a newer user switch queued by another tab.
+      replaceLocalSelection: (expectedWorkspaceId, workspaceId) =>
+        activeWorkspace.replaceIf(expectedWorkspaceId, workspaceId),
     }),
   );
   const workspaceExactContextCache = createWorkspaceExactContextCache({
@@ -4369,6 +4364,8 @@ export async function startServer({
             resourceState: row.resourceState ?? null,
             createdByWorkspaceMemberId: row.createdByWorkspaceMemberId ?? null,
             resourceHubResourceId: row.resourceHubResourceId ?? null,
+            materializationPending:
+              projectIsUnmaterializedSharedPlaceholder(row.id),
           })),
       getLocalBinding: (projectId): LocalTeamProjectBinding | null => {
         const row = getWorkspaceProjectByProjectId(db, projectId) as any;
@@ -4380,6 +4377,8 @@ export async function startServer({
           resourceState: row.resourceState ?? null,
           createdByWorkspaceMemberId: row.createdByWorkspaceMemberId ?? null,
           resourceHubResourceId: row.resourceHubResourceId ?? null,
+          materializationPending:
+            projectIsUnmaterializedSharedPlaceholder(projectId),
         };
       },
       getLocalProjectMetadata: (projectId) => {
@@ -4626,13 +4625,9 @@ export async function startServer({
     projectId,
     { fresh: false },
   );
-  const resolveProjectCommentWorkspaceContextWith = async (
+  const resolveLocalProjectCommentWorkspaceContext = async (
     req: any,
     projectId: string,
-    verify: (
-      req: any,
-      projectId?: string,
-    ) => ReturnType<typeof verifyProjectWorkspaceContextForRequest>,
   ) => {
     const binding = getWorkspaceProjectByProjectId(db, projectId);
     if (revokedTeamProjectMirrors.has(projectId)) {
@@ -4654,26 +4649,80 @@ export async function startServer({
         message: 'workspace project read is not allowed',
       };
     }
-    const verified = await verify(req, projectId);
-    if (!verified.ok) return verified;
-    return { ok: true as const, context: verified.context };
+    const local = resolveOptionalLocalWorkspaceRequestAuthority(req);
+    if (!local.ok) return local;
+    if (local.context) {
+      if (
+        local.context.workspaceId !== binding.workspaceId
+        || (
+          binding.visibility !== 'team'
+          && binding.createdByWorkspaceMemberId
+          && local.context.workspaceMemberId
+            !== binding.createdByWorkspaceMemberId
+        )
+      ) {
+        return {
+          ok: false as const,
+          status: 403 as const,
+          code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
+          message: 'workspace project access is not allowed',
+        };
+      }
+      return {
+        ok: true as const,
+        context: {
+          ...local.context,
+          workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
+          ...(binding.visibility === 'team'
+            ? { teamId: binding.workspaceId }
+            : { teamId: null }),
+        },
+      };
+    }
+    const persistedMemberId = binding.createdByWorkspaceMemberId?.trim()
+      || 'local-user';
+    return {
+      ok: true as const,
+      context: workspaceContextFromDirectoryItem({
+        workspaceId: binding.workspaceId,
+        workspaceName: binding.workspaceId,
+        workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
+        workspaceMemberId: persistedMemberId,
+        role: 'member',
+        memberStatus: 'active',
+        lifecycleState: 'active',
+      }, configuredAmrEnv()),
+    };
   };
   const resolveProjectCommentWorkspaceContext = (
     req: any,
     projectId: string,
-  ) => resolveProjectCommentWorkspaceContextWith(
-    req,
-    projectId,
-    verifiedWorkspaceContextForRequest,
-  );
+  ) => resolveLocalProjectCommentWorkspaceContext(req, projectId);
   const resolveProjectCommentReadWorkspaceContext = (
     req: any,
     projectId: string,
-  ) => resolveProjectCommentWorkspaceContextWith(
-    req,
-    projectId,
-    verifiedWorkspaceReadContextForRequest,
-  );
+  ) => resolveLocalProjectCommentWorkspaceContext(req, projectId);
+  const resolveFreshProjectCommentWorkspaceContext = async (
+    req: any,
+    projectId: string,
+  ) => {
+    const binding = getWorkspaceProjectByProjectId(db, projectId);
+    if (
+      revokedTeamProjectMirrors.has(projectId)
+      || binding?.resourceState === 'deleted'
+    ) {
+      return {
+        ok: false as const,
+        status: 403 as const,
+        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
+        message: 'workspace project read is not allowed',
+      };
+    }
+    if (!binding?.workspaceId) {
+      return { ok: true as const, context: null };
+    }
+    return verifiedWorkspaceContextForRequest(req, projectId);
+  };
   const verifiedTeamMirrorScope = async (
     scope: TeamMirrorPullScope,
   ): Promise<boolean> => {
@@ -4709,6 +4758,7 @@ export async function startServer({
   ): Promise<void> => {};
   const collabSyncRoutes = registerCollabSyncRoutes(app, {
     collab,
+    publicFilePublicationStore: createSqlitePublicFilePublicationStore(db),
     verifyWorkspaceRequest: verifiedWorkspaceContextForRequest,
     verifyWorkspaceReadRequest: verifiedWorkspaceReadContextForRequest,
     verifyWorkspaceScope: verifiedTeamMirrorScope,
@@ -4753,6 +4803,8 @@ export async function startServer({
         });
       },
       materializeTeamMirror: (input, scope) => materializePulledTeamMirror(db, input, scope),
+      materializeTeamPlaceholder: (input, scope) =>
+        materializePulledTeamMirror(db, input, scope, undefined, { placeholder: true }),
       materializeAuthorizedTeamMirror: (input, scope, receipt) =>
         materializePulledTeamMirror(db, input, scope, receipt),
     },
@@ -7403,6 +7455,7 @@ export async function startServer({
   // Interactive Terminal sessions (node-pty). In-memory, process-local, and
   // killed on daemon shutdown — see shutdownDaemonRuns below.
   const terminalService = createTerminalService();
+  const browserSessionService = createBrowserSessionService();
 
   // Tracks runs whose finalized assistant message has already been forwarded
   // so repeated message updates only enter the reporter once. Terminal
@@ -7636,122 +7689,51 @@ export async function startServer({
     stageProjectDirsForDelete,
     validateLinkedDirs,
   };
-  const resolveProjectWorkspaceAuthority = async (
-    projectId: string,
-    options: { fresh: boolean },
-  ): Promise<WorkspaceRequestAuthorityResult | null> => {
-    const binding = getWorkspaceProjectByProjectId(db, projectId);
-    if (!binding?.workspaceId) return null;
-
-    if (process.env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() === 'vela') {
-      const readDirectory = options.fresh
-        ? fetchFreshMutationWorkspaceDirectory
-        : fetchWorkspaceDirectory;
-      const directory = await readDirectory().catch(() => ({
-        ok: false as const,
-        items: [],
-      }));
-      return resolveBoundProjectWorkspaceReadAuthority(
-        binding.workspaceId,
-        directory,
-        configuredAmrEnv(),
-      );
-    }
-
-    return {
-      ok: true,
-      context: workspaceContextFromDirectoryItem({
-        workspaceId: binding.workspaceId,
-        workspaceName: binding.workspaceId,
-        workspaceType: 'personal',
-        workspaceMemberId:
-          binding.createdByWorkspaceMemberId ?? 'local-user',
-        role: 'owner',
-        memberStatus: 'active',
-        lifecycleState: 'active',
-      }, configuredAmrEnv()),
-    };
-  };
   const authorizeProjectRequest = createAuthorizeProjectRequest({
     db,
     getWorkspaceProject,
     getWorkspaceProjectByProjectId,
     isProjectRevoked: (_db, projectId) =>
       revokedTeamProjectMirrors.has(projectId),
-    verifyWorkspaceReadAuthority,
-    resolveWorkspaceReadAuthority: async (projectId) => {
-      const authority = await resolveProjectWorkspaceAuthority(
-        projectId,
-        { fresh: false },
-      );
-      return authority ?? {
-        ok: false,
-        status: 403,
-        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
-        message: 'workspace project access is not allowed',
-      };
-    },
-    verifyWorkspaceRequestAuthority,
+    isProjectUnmaterializedPlaceholder: (_db, projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     sendApiError,
   });
+  // Legacy registrars still receive the historical bound mutation-gate shape,
+  // but production delegates it to the same central authorizer as newer route
+  // modules. This keeps placeholder stamps authoritative across Figma import,
+  // library/import helpers, runs/chat, and every project/file mutation route.
+  const enforceAuthoritativeProjectMutation = createEnforceWorkspaceProjectMutation(
+    verifyWorkspaceRequestAuthority,
+    undefined,
+    authorizeProjectRequest,
+  );
   const authorizeProjectToolRequest = async (
     res,
     projectId,
     options,
   ) => {
-    const resolvedAuthority = await resolveProjectWorkspaceAuthority(
-      projectId,
-      { fresh: true },
-    );
-    if (!resolvedAuthority) return { workspace: null };
-    if (!resolvedAuthority.ok) {
-      if (resolvedAuthority.retryable) {
-        sendApiError(
-          res,
-          resolvedAuthority.status,
-          resolvedAuthority.code,
-          resolvedAuthority.message,
-          { retryable: true },
-        );
-      } else {
-        sendApiError(
-          res,
-          resolvedAuthority.status,
-          resolvedAuthority.code,
-          resolvedAuthority.message,
-        );
-      }
-      return null;
-    }
-    const authority = resolvedAuthority.context;
-    const scopedAuthorize = createAuthorizeProjectRequest({
-      db,
-      getWorkspaceProject,
-      getWorkspaceProjectByProjectId,
-      isProjectRevoked: (_db, id) =>
-        revokedTeamProjectMirrors.has(id),
-      verifyWorkspaceRequestAuthority: async () => ({
-        ok: true,
-        context: authority,
-      }),
-      sendApiError,
-    });
-    const request = {
+    const binding = getWorkspaceProjectByProjectId(db, projectId);
+    const localRequest = {
       query: {},
       get(name) {
         const normalized = name.toLowerCase();
-        if (normalized === 'x-od-workspace-id') return authority.workspaceId;
+        if (normalized === 'x-od-workspace-id') return binding?.workspaceId ?? undefined;
         if (normalized === 'x-od-workspace-member-id') {
-          return authority.workspaceMemberId;
+          return binding?.workspaceId
+            ? binding.createdByWorkspaceMemberId ?? 'local-user'
+            : undefined;
         }
         return undefined;
       },
     };
-    if (!await scopedAuthorize(request, res, projectId, options)) return null;
+    if (!await authorizeProjectRequest(localRequest, res, projectId, options)) return null;
+    if (!binding?.workspaceId) return { workspace: null };
     return {
       workspace: {
-        workspaceId: authority.workspaceId,
-        workspaceMemberId: authority.workspaceMemberId,
+        workspaceId: binding.workspaceId,
+        workspaceMemberId:
+          binding.createdByWorkspaceMemberId ?? 'local-user',
       },
     };
   };
@@ -8047,6 +8029,8 @@ export async function startServer({
     authorizeProjectRequest,
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
+    isProjectUnmaterializedPlaceholder: (projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     fetchWorkspaceDirectory,
     configuredEnv: configuredAmrEnv,
     fetchProjectCreationWorkspaceDirectory,
@@ -8138,6 +8122,7 @@ export async function startServer({
     // status change, tombstone) to the cross-daemon relay.
     resolveWorkspaceContext: resolveProjectCommentWorkspaceContext,
     resolveReadWorkspaceContext: resolveProjectCommentReadWorkspaceContext,
+    resolveFreshWorkspaceContext: resolveFreshProjectCommentWorkspaceContext,
     resolveProjectOwnerMemberId: async (projectId, context) => {
       if (!context || context.workspaceType !== 'team') return null;
       return resolveSharedProjectOwner(projectId, {
@@ -8246,6 +8231,13 @@ export async function startServer({
     terminals: terminalService,
     authorizeProjectRequest,
   });
+  registerBrowserSessionRoutes(app, {
+    db,
+    http: httpDeps,
+    projectStore: projectStoreDeps,
+    browserSessions: browserSessionService,
+    authorizeProjectRequest,
+  });
   registerImportRoutes(app, {
     db,
     http: httpDeps,
@@ -8270,14 +8262,6 @@ export async function startServer({
   // principal check `unshare` already enforces. Anything not teamSynced is
   // the caller's own, so it stays unrestricted.
   //
-  // Spec 9.2: on top of that existing rule, a workspace the caller's own
-  // request marks as locked/deleted (billing lapse, deletion in progress)
-  // blocks mutation unconditionally — the one real gap design system had
-  // that project/plugin already closed via `enforceWorkspaceResourceMutation`.
-  // Reuses that module's own `workspaceResourceContextFromRequest`/
-  // `isWorkspaceResourceLocked` rather than re-deriving the header contract
-  // here.
-  //
   // Hoisted out of `registerDesignSystemRoutes`'s deps (recvqb6mfyqXLD) so
   // `registerStaticResourceRoutes`'s design-system LIST route can decorate
   // every teamSynced entry with the same verdict — any detail surface a
@@ -8290,10 +8274,6 @@ export async function startServer({
     id: string,
     req: any,
   ): Promise<boolean> => {
-    const requestCtx = workspaceResourceContextFromRequest(req);
-    if (requestCtx && requestCtx !== 'missing' && isWorkspaceResourceLocked(requestCtx)) {
-      return false;
-    }
     const synced = await isTeamSyncedUserDesignSystem(root, id);
     if (!synced) return true;
     const resolution = await resolveTeamResourceScope(req);
@@ -8486,28 +8466,8 @@ export async function startServer({
   registerDesignSystemToolRoutes(app, {
     auth: authDeps,
     http: httpDeps,
-    paths: {
-      ...pathDeps,
-      resolveUserDesignSystemsRoot: (grant, designSystemId) => {
-        if (!designSystemId.startsWith('user:')) {
-          return { ok: true, root: USER_DESIGN_SYSTEMS_DIR };
-        }
-        const resolved = resolvePinnedRunDesignSystemScope({
-          db,
-          scope: grant.designSystemScope,
-          designSystemId,
-          userRoot: USER_DESIGN_SYSTEMS_DIR,
-        });
-        return resolved.ok
-          ? { ok: true, root: resolved.root }
-          : resolved;
-      },
-    },
+    paths: pathDeps,
     projects: { getProject: (id: string) => getProject(db, id) },
-    runs: { getRun: (id: string) => design.runs.get(id) },
-    features: {
-      isDesignSystemRuntimeEnabled: () => isDesignTokenChannelEnabled(process.env),
-    },
   });
   app.use('/artifacts', express.static(ARTIFACTS_DIR));
   app.use(
@@ -8576,6 +8536,8 @@ export async function startServer({
     authorizeProjectRequest,
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
+    isProjectUnmaterializedPlaceholder: (projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     projectFiles: projectFileDeps,
     documents: { buildDocumentPreview },
     artifacts: artifactDeps,
@@ -8598,7 +8560,6 @@ export async function startServer({
     projectFiles: projectFileDeps,
     conversations: conversationDeps,
     research: researchDeps,
-    fetchWorkspaceDirectory,
     authorizeProjectRequest,
     authorizeProjectToolRequest,
   });
@@ -9111,6 +9072,8 @@ export async function startServer({
     projectStore: projectStoreDeps,
     authorizeProjectRequest,
     authorizeProjectToolRequest,
+    isProjectUnmaterializedPlaceholder: (projectId) =>
+      projectIsUnmaterializedSharedPlaceholder(projectId),
     projectFiles: projectFileDeps,
     verifyWorkspaceRequestAuthority,
   });
@@ -9130,8 +9093,6 @@ export async function startServer({
     freeformDeckSignal,
     mediaHintSignal,
     platformHintSignal,
-    workspaceScope,
-    designSystemScope,
     frozenSkillPackage,
     odNextSyntheticCanary = false,
     odNextAutomaticAdmission = false,
@@ -9141,13 +9102,17 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getProject(db, projectId)
         : null;
+    const projectWorkspaceBinding =
+      typeof projectId === 'string' && projectId
+        ? getWorkspaceProjectByProjectId(db, projectId)
+        : null;
     const projectWorkspaceId =
-      typeof workspaceScope?.workspaceId === 'string'
-        ? workspaceScope.workspaceId.trim()
+      typeof projectWorkspaceBinding?.workspaceId === 'string'
+        ? projectWorkspaceBinding.workspaceId.trim()
         : '';
     const projectCreatorMemberId =
-      typeof workspaceScope?.workspaceMemberId === 'string'
-        ? workspaceScope.workspaceMemberId.trim()
+      typeof projectWorkspaceBinding?.createdByWorkspaceMemberId === 'string'
+        ? projectWorkspaceBinding.createdByWorkspaceMemberId.trim()
         : '';
     const metadata = project?.metadata;
     const localCatalogScope = (value) => {
@@ -9263,11 +9228,18 @@ export async function startServer({
           allowAppDefault: project === null,
         });
     const effectiveDesignSystemId = designSystemSelection.id;
+    const projectResourceScope =
+      typeof projectId === 'string' && projectId
+        ? getWorkspaceProjectByProjectId(db, projectId)
+        : null;
     const skillResourceScope = skillCatalogScope ?? (
-      projectWorkspaceId
+      projectResourceScope?.workspaceId
         ? {
-            workspaceId: projectWorkspaceId,
-            workspaceMemberId: projectCreatorMemberId || null,
+            workspaceId: String(projectResourceScope.workspaceId),
+            workspaceMemberId:
+              typeof projectResourceScope.createdByWorkspaceMemberId === 'string'
+                ? projectResourceScope.createdByWorkspaceMemberId
+                : null,
           }
         : null
     );
@@ -9529,83 +9501,23 @@ export async function startServer({
     let designSystemComponentsManifest;
     let designSystemFixtureHtml;
     let designSystemPullIndex;
-    let designSystemIntentIndex;
-    let designSystemRuntimeIssue;
     let designSystemImportMode;
     let designSystemCraftApplies = [];
     let designSystemCraftExemptions = [];
     let activeDesignSystemId = null;
     let designSystemDigest = null;
     if (effectiveDesignSystemId) {
-      const userDesignSystem = effectiveDesignSystemId.startsWith('user:');
-      // A run with a captured scope must resolve that exact resource even if
-      // the project was later rebound. A legacy, unbound run without a
-      // catalog provenance remains local. Projects created during Workspace
-      // identity transitions intentionally use their immutable local catalog
-      // provenance instead: it identifies a local record, not Workspace
-      // membership or billing authority.
-      const localCatalogDesignSystemRun =
-        designSystemScope?.kind === 'local' && Boolean(designSystemCatalogScope);
-      const usePinnedDesignSystemScope = userDesignSystem
-        && !localCatalogDesignSystemRun
-        && (
-          designSystemScope !== null && designSystemScope !== undefined
-          || (!designSystemCatalogScope && !projectWorkspaceId)
-        );
-      const effectivePinnedScope = usePinnedDesignSystemScope
-        ? designSystemScope
-          ?? (
-            !projectWorkspaceId
-              ? {
-                  schemaVersion: 1,
-                  kind: 'local',
-                  projectId: typeof projectId === 'string' ? projectId : '',
-                  designSystemId: effectiveDesignSystemId,
-                }
-              : null
-          )
-        : null;
-      const pinnedResolution = usePinnedDesignSystemScope
-        ? resolvePinnedRunDesignSystemScope({
-            db,
-            scope: effectivePinnedScope,
-            designSystemId: effectiveDesignSystemId,
-            userRoot: USER_DESIGN_SYSTEMS_DIR,
-          })
-        : null;
-      const designSystemListOptions = usePinnedDesignSystemScope
-        ? pinnedResolution?.ok && pinnedResolution.visibility === 'team'
-          ? {
-              workspaceId: pinnedResolution.workspaceId,
-              workspaceMemberId: pinnedResolution.workspaceMemberId,
-              exactTeam: true,
-            }
-          : pinnedResolution?.ok && pinnedResolution.visibility === 'personal'
-            ? {
-                workspaceId: pinnedResolution.workspaceId,
-                workspaceMemberId: pinnedResolution.workspaceMemberId,
-                exactPersonal: true,
-              }
-            : {}
-        : designSystemWorkspaceId
-          ? {
-              workspaceId: designSystemWorkspaceId,
-              workspaceMemberId: designSystemMemberId || null,
-            }
-          : {};
-      const designSystemVisibleForRun = (system) => {
-        if (!usePinnedDesignSystemScope) return designSystemVisibleToRun(system);
-        if (system?.source === 'built-in') return true;
-        if (!pinnedResolution?.ok) return false;
-        return pinnedResolution.visibility === 'team'
-          ? system.teamSynced === true
-          : system.teamSynced !== true;
-      };
+      const designSystemListOptions = designSystemWorkspaceId
+        ? {
+            workspaceId: designSystemWorkspaceId,
+            workspaceMemberId: designSystemMemberId || null,
+          }
+        : {};
       let systems = await listAllDesignSystems(designSystemListOptions);
       let summary = systems.find(
         (system) =>
           system.id === effectiveDesignSystemId
-          && designSystemVisibleForRun(system),
+          && designSystemVisibleToRun(system),
       );
       if (summary?.source === 'user' && summary.teamSynced !== true) {
         await ensureUserDesignSystemWorkspaceProject(db, effectiveDesignSystemId);
@@ -9613,7 +9525,7 @@ export async function startServer({
         summary = systems.find(
           (system) =>
             system.id === effectiveDesignSystemId
-            && designSystemVisibleForRun(system),
+            && designSystemVisibleToRun(system),
         );
       }
       const editingOwnDraftDesignSystem =
@@ -9639,36 +9551,18 @@ export async function startServer({
         // from real disk fixtures (see `tests/design-system-assets.test.ts`).
         const resourceBinding = projectDesignSystemBinding(summary);
         const scopedUserDesignSystemsRoot =
-          usePinnedDesignSystemScope && pinnedResolution?.ok
-            ? pinnedResolution.root
-            : designSystemWorkspaceId && resourceBinding?.visibility === 'team'
-              ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, designSystemWorkspaceId)
-              : USER_DESIGN_SYSTEMS_DIR;
+          designSystemWorkspaceId && resourceBinding?.visibility === 'team'
+            ? teamResourceWorkspaceRoot(USER_DESIGN_SYSTEMS_DIR, designSystemWorkspaceId)
+            : USER_DESIGN_SYSTEMS_DIR;
         const assets = await resolveDesignSystemAssets(
-          effectiveDesignSystemId,
-          DESIGN_SYSTEMS_DIR,
-          scopedUserDesignSystemsRoot,
-        );
-        const runtimePromptContext = await resolveDesignSystemRuntimePromptContext(
           effectiveDesignSystemId,
           DESIGN_SYSTEMS_DIR,
           scopedUserDesignSystemsRoot,
         );
         designSystemUsageMd = assets.usageMd;
         designSystemTokensCss = assets.tokensCss;
-        // A package has exactly one component-selection authority. Legacy
-        // packages keep the derived manifest / fixture prompt path. Once a
-        // package declares the structured runtime, valid or not, that legacy
-        // evidence must not compete with the intent resolver or mask a broken
-        // runtime as a usable component map.
-        if (runtimePromptContext.mode === 'legacy') {
-          designSystemComponentsManifest = assets.componentsManifest;
-          designSystemFixtureHtml = assets.fixtureHtml;
-        } else if (runtimePromptContext.mode === 'structured') {
-          designSystemIntentIndex = runtimePromptContext.intentIndex;
-        } else {
-          designSystemRuntimeIssue = runtimePromptContext.issue;
-        }
+        designSystemComponentsManifest = assets.componentsManifest;
+        designSystemFixtureHtml = assets.fixtureHtml;
         designSystemPullIndex = assets.pullIndex;
         designSystemImportMode = assets.importMode;
         designSystemCraftApplies = Array.isArray(assets.craftApplies) ? assets.craftApplies : [];
@@ -9684,8 +9578,6 @@ export async function startServer({
             componentsManifest: designSystemComponentsManifest,
             fixtureHtml: designSystemFixtureHtml,
             pullIndex: designSystemPullIndex,
-            intentIndex: designSystemIntentIndex,
-            runtimeIssue: designSystemRuntimeIssue,
             importMode: designSystemImportMode,
           });
         }
@@ -9897,8 +9789,6 @@ export async function startServer({
       designSystemComponentsManifest,
       designSystemFixtureHtml,
       designSystemPullIndex,
-      designSystemIntentIndex,
-      designSystemRuntimeIssue,
       designSystemImportMode,
       craftBody,
       craftSections,
@@ -9954,8 +9844,6 @@ export async function startServer({
           designSystemComponentsManifest,
           designSystemFixtureHtml,
           designSystemPullIndex,
-          designSystemIntentIndex,
-          designSystemRuntimeIssue,
           designSystemImportMode,
           craftBody,
           craftSections,
@@ -10039,8 +9927,6 @@ export async function startServer({
               designSystemComponentsManifest,
               designSystemFixtureHtml,
               designSystemPullIndex,
-              designSystemIntentIndex,
-              designSystemRuntimeIssue,
               designSystemImportMode,
             ]
               .filter((part) => typeof part === 'string' && part.trim().length > 0)
@@ -10294,49 +10180,13 @@ export async function startServer({
     // step. HTTP-created runs already carry the scope captured by the request
     // authorization transaction. Internal runs pin here. Retries reuse the
     // existing property and therefore never consult a later project rebind.
-    let runScopeChanged = false;
     if (!Object.prototype.hasOwnProperty.call(run, 'workspaceScope')) {
       run.workspaceScope =
         typeof projectId === 'string' && projectId
           ? pinRunWorkspaceScopeForProject(db, projectId)
           : null;
-      runScopeChanged = true;
+      design.runs.persistState(run);
     }
-    if (!Object.prototype.hasOwnProperty.call(run, 'designSystemScope')) {
-      const scopeProject =
-        typeof projectId === 'string' && projectId
-          ? getProject(db, projectId)
-          : null;
-      let scopePluginDesignSystemId = null;
-      if (run?.appliedPluginSnapshotId) {
-        try {
-          scopePluginDesignSystemId = designSystemIdFromPluginSnapshot(
-            getSnapshot(db, run.appliedPluginSnapshotId),
-          );
-        } catch {
-          scopePluginDesignSystemId = null;
-        }
-      }
-      const scopeSelection = scopeProject?.metadata?.intent === 'web-clone'
-        ? { id: null }
-        : resolveEffectiveDesignSystemSelection({
-            requestDesignSystemId: designSystemId,
-            pluginDesignSystemId: scopePluginDesignSystemId,
-            projectDesignSystemId: scopeProject?.designSystemId,
-            allowAppDefault: false,
-          });
-      run.designSystemScope =
-        typeof projectId === 'string' && projectId
-          ? pinRunDesignSystemScope({
-              db,
-              projectId,
-              designSystemId: scopeSelection.id,
-              workspaceScope: run.workspaceScope,
-            })
-          : null;
-      runScopeChanged = true;
-    }
-    if (runScopeChanged) design.runs.persistState(run);
     // Stash the original user prompt + per-turn config so the
     // langfuse-bridge report path can include them without reaching back
     // into chatBody across the createChatRunService boundary. Each field
@@ -10609,26 +10459,12 @@ export async function startServer({
         };
       }
     }
-    const toolWorkspaceId = typeof run.workspaceScope?.workspaceId === 'string'
-      ? run.workspaceScope.workspaceId.trim()
-      : '';
-    const toolWorkspaceMemberId =
-      typeof run.workspaceScope?.workspaceMemberId === 'string'
-        ? run.workspaceScope.workspaceMemberId.trim()
-        : '';
     const inactivityTimeoutMs = resolveChatRunInactivityTimeoutMs(def.inactivityTimeoutMs);
     const toolTokenTtlMs = resolveChatToolTokenTtlMs(inactivityTimeoutMs);
     const toolTokenGrant = cwd && typeof projectId === 'string' && projectId
       ? toolTokenRegistry.mint({
           runId,
           projectId,
-          ...(toolWorkspaceId ? { workspaceId: toolWorkspaceId } : {}),
-          ...(toolWorkspaceMemberId
-            ? { workspaceMemberId: toolWorkspaceMemberId }
-            : {}),
-          ...(run.designSystemScope
-            ? { designSystemScope: run.designSystemScope }
-            : {}),
           allowedEndpoints: CHAT_TOOL_ENDPOINTS,
           allowedOperations: CHAT_TOOL_OPERATIONS,
           ttlMs: toolTokenTtlMs,
@@ -10806,8 +10642,6 @@ export async function startServer({
         freeformDeckSignal: intentSignals.deck,
         mediaHintSignal: intentSignals.media,
         platformHintSignal: intentSignals.platform,
-        workspaceScope: run.workspaceScope,
-        designSystemScope: run.designSystemScope,
         frozenSkillPackage: undefined,
       });
     const {
@@ -13968,6 +13802,19 @@ export async function startServer({
             agentStderrTail,
           ].join('\n');
           clearInactivityWatchdog();
+          // A parsed terminal Claude result has stronger provenance than text
+          // sniffing across the combined stdout/stderr tail. In particular,
+          // Claude can log `apiKeySource: none` alongside an upstream
+          // `Prompt is too long` result; letting the broad auth diagnostic see
+          // that tail first sends users to /login instead of reducing context.
+          // Only accept the stable code emitted by claude-stream for this
+          // terminal result shape; other Claude errors keep the existing
+          // diagnostic/service fallback behavior.
+          const structuredCode =
+            (ev as any).terminal === true &&
+            (ev as any).code === 'AGENT_PROMPT_TOO_LARGE'
+              ? 'AGENT_PROMPT_TOO_LARGE'
+              : null;
           // Claude surfaces a connection drop / reset as an in-stream `error`
           // frame (assistant `error:"unknown"` + the raw SDK string), which
           // would otherwise reach the UI verbatim as a non-retryable
@@ -13975,25 +13822,33 @@ export async function startServer({
           // child-exit so this path emits the specific class
           // (AGENT_CONNECTION_DROPPED) — retryable, with copy the web can
           // localize and triage can count by code.
-          const diagnostic = diagnoseClaudeCliFailure({
-            agentId: def.id,
-            exitCode: 1,
-            stderrTail: agentStderrTail,
-            stdoutTail: failureText,
-            env: spawnedAgentEnv,
-            resolvedBin: agentLaunch.selectedPath,
-          });
-          const serviceCode = classifyAgentServiceFailure(failureText);
-          agentStreamError = diagnostic?.message
-            ?? rewriteKnownAgentStreamError(agentId, message, failureText);
+          const diagnostic = structuredCode
+            ? null
+            : diagnoseClaudeCliFailure({
+                agentId: def.id,
+                exitCode: 1,
+                stderrTail: agentStderrTail,
+                stdoutTail: failureText,
+                env: spawnedAgentEnv,
+                resolvedBin: agentLaunch.selectedPath,
+              });
+          const serviceCode = structuredCode
+            ? null
+            : classifyAgentServiceFailure(failureText);
+          agentStreamError = structuredCode
+            ? message
+            : diagnostic?.message
+              ?? rewriteKnownAgentStreamError(agentId, message, failureText);
           agentStreamErrorObservedBeforeCancellation = true;
           run.runtimeFailureObservedBeforeCancellation = true;
           send('error', createSseErrorPayload(
-            diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
+            structuredCode ?? diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
             agentStreamError,
             {
-              retryable: diagnostic?.retryable
-                ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
+              retryable: structuredCode
+                ? false
+                : diagnostic?.retryable
+                  ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
               ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
             },
           ));
@@ -14778,29 +14633,6 @@ export async function startServer({
           runArtifactSideEffects.artifactWriteSeen ||
           runArtifactSideEffects.liveArtifactSeen,
       });
-      // Codex reports shell failures as ordinary command_execution items and
-      // can still close the overall turn with code 0. For a structured DS run,
-      // a failed read/resolve/validate wrapper followed by zero artifacts is a
-      // failed delivery, not a successful text-only turn. Resolve the
-      // filesystem diff before finalizing so the run cannot surface as green
-      // merely because the agent explained why it stopped. A later successful
-      // retry that produced an artifact remains a normal success.
-      if (
-        status === 'succeeded'
-        && runHadFailedDesignSystemWrapper(run.events)
-        && !emittedRenderableQuestionForm(clarifyingQuestionText)
-      ) {
-        const artifactOutcome = await resolveRunArtifactOutcomeBeforeFinishAsync();
-        if (!artifactOutcome || artifactOutcome.artifactCount <= 0) {
-          markRpcCloseReason('design_system_wrapper_failed');
-          send('error', createSseErrorPayload(
-            'AGENT_EXECUTION_FAILED',
-            'The agent could not access the active design-system runtime and produced no deliverable. Retry after checking the local agent tool environment.',
-            { retryable: true },
-          ));
-          return finishWithRetryDecision('failed', code, signal);
-        }
-      }
       // Skip the close-handler failure emit when the run is already
       // terminal: the inactivity watchdog (failForInactivity) finishes the
       // run — sending its error and clearing run.clients/eventsLogStream —
@@ -15513,10 +15345,7 @@ export async function startServer({
       loadPluginRegistryView,
       renderPluginBriefTemplate,
       authorizePluginRequest: async (req, res, pluginId) => {
-        const authority = await resolveOptionalWorkspaceRequestAuthority(
-          req,
-          verifyWorkspaceRequestAuthority,
-        );
+        const authority = resolveOptionalLocalWorkspaceRequestAuthority(req);
         if (!authority.ok) {
           sendApiError(
             res,
@@ -15571,7 +15400,6 @@ export async function startServer({
           agentCliEnvForAgent(appConfig.agentCliEnv, 'amr'),
         ).loggedIn;
       },
-      verifyWorkspaceRequestAuthority,
     },
     authorizeProjectRequest,
   });
@@ -16038,7 +15866,6 @@ export async function startServer({
     db,
     paths: { RUNTIME_DATA_DIR },
     routines: { routineService },
-    fetchWorkspaceDirectory,
   });
 
   // proxy routes (anthropic / openai / azure / google / ollama) live
@@ -16100,6 +15927,7 @@ export async function startServer({
       clearTerminalTelemetryFallbackTimers();
       await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
       await terminalService.shutdownActive();
+      await browserSessionService.shutdownActive();
       await design.analytics.shutdown();
     };
     let server;
