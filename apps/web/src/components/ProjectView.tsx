@@ -58,7 +58,10 @@ import {
 } from '../analytics/run-task';
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
-import { resolveQuestionFormStrategyTaskExecutionId } from '../runtime/strategy-question-continuation';
+import {
+  resolveQuestionFormStrategyTaskExecutionId,
+  strategyBlockedMessageFields,
+} from '../runtime/strategy-question-continuation';
 import {
   hasCurrentAutomaticScenarioBinding,
   type AmrWalletSnapshot,
@@ -5270,11 +5273,15 @@ export function ProjectView({
           continue;
         }
         if (status.strategyTask?.taskExecutionId) {
+          // A blocked verdict is stamped alongside the task handle so the
+          // turn's question form stays terminated after a reload.
+          const blockedFields = strategyBlockedMessageFields(status.strategyTask);
           updateMessageById(
             message.id,
             (prev) => ({
               ...prev,
               strategyTaskExecutionId: status.strategyTask!.taskExecutionId,
+              ...(blockedFields ?? {}),
             }),
             true,
           );
@@ -5707,6 +5714,15 @@ export function ProjectView({
           publishRunFinishedEvent: shouldPublishRunFinishedEvent,
           onArtifactPaths: (paths) => {
             authoritativeReattachArtifactPaths = paths;
+          },
+          onStrategyTaskSettled: (strategyTask) => {
+            const blockedFields = strategyBlockedMessageFields(strategyTask);
+            if (!blockedFields) return;
+            updateMessageById(
+              message.id,
+              (prev) => ({ ...prev, ...blockedFields }),
+              true,
+            );
           },
           onRunCreated: (nextRunId, strategyTask) => {
             activeReattachRunId = nextRunId;
@@ -8044,6 +8060,16 @@ export function ProjectView({
             ? { taskExecutionId: meta.strategyTaskExecutionId }
             : {}),
           ...(runAnalyticsHints ? { analyticsHints: runAnalyticsHints } : {}),
+          onStrategyTaskSettled: (strategyTask) => {
+            const blockedFields = strategyBlockedMessageFields(strategyTask);
+            if (!blockedFields) return;
+            latestAssistantMsg = { ...latestAssistantMsg, ...blockedFields };
+            updateMessageById(
+              assistantId,
+              (prev) => ({ ...prev, ...blockedFields }),
+              true,
+            );
+          },
           onRunCreated: (runId, strategyTask) => {
             // A successor boundary must include the final predecessor delta
             // and buffered text event even when the 250ms UI batch has not

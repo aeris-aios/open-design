@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatRunStatusResponse } from '@open-design/contracts';
-import { resolveQuestionFormStrategyTaskExecutionId } from '../../src/runtime/strategy-question-continuation';
+import type { ChatRunStatusResponse, StrategyTaskProjectionV2 } from '@open-design/contracts';
+import {
+  resolveQuestionFormStrategyTaskExecutionId,
+  strategyBlockedMessageFields,
+} from '../../src/runtime/strategy-question-continuation';
 
 describe('question-form strategy continuation handle recovery', () => {
   it('recovers the task handle from status during the same-render projection race', async () => {
@@ -38,5 +41,64 @@ describe('question-form strategy continuation handle recovery', () => {
 
     expect(taskExecutionId).toBeUndefined();
     expect(submit).toHaveBeenCalledWith(undefined);
+  });
+});
+
+function blockedProjection(
+  overrides: Partial<StrategyTaskProjectionV2> = {},
+): StrategyTaskProjectionV2 {
+  return {
+    taskExecutionId: 'task-1',
+    strategy: {
+      id: 'od-next-strategy',
+      version: '2.0.0',
+      packageHash: 'a'.repeat(64),
+      snapshotId: 'snapshot-1',
+    },
+    inputStage: 'request',
+    outcome: 'blocked',
+    route: 'full_plan',
+    executionMode: null,
+    activeRunId: 'run-1',
+    terminal: true,
+    ...overrides,
+  } as StrategyTaskProjectionV2;
+}
+
+describe('strategyBlockedMessageFields', () => {
+  it('derives message termination fields from a blocked terminal projection', () => {
+    expect(strategyBlockedMessageFields(blockedProjection({
+      blockedContext: {
+        reasonCodes: ['od_next_machine_protocol_missing'],
+        visibleText: ' 这轮回复没有携带机器协议块。 ',
+      },
+    }))).toEqual({
+      strategyTaskBlocked: true,
+      strategyTaskBlockedText: '这轮回复没有携带机器协议块。',
+    });
+  });
+
+  it('keeps the blocked flag with a null text when the gate left no visible text', () => {
+    expect(strategyBlockedMessageFields(blockedProjection({
+      blockedContext: {
+        reasonCodes: ['od_next_native_session_continuity_unproven'],
+        visibleText: null,
+      },
+    }))).toEqual({ strategyTaskBlocked: true, strategyTaskBlockedText: null });
+    expect(strategyBlockedMessageFields(blockedProjection())).toEqual({
+      strategyTaskBlocked: true,
+      strategyTaskBlockedText: null,
+    });
+  });
+
+  it('returns null for non-blocked or absent projections', () => {
+    expect(strategyBlockedMessageFields(undefined)).toBeNull();
+    expect(strategyBlockedMessageFields(blockedProjection({
+      outcome: 'completed',
+    }))).toBeNull();
+    expect(strategyBlockedMessageFields(blockedProjection({
+      outcome: 'running',
+      terminal: false,
+    }))).toBeNull();
   });
 });

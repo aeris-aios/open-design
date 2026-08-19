@@ -368,6 +368,9 @@ export interface DaemonStreamOptions {
   taskExecutionId?: string;
   /** Called for the initial Run and every daemon-projected successor Run. */
   onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2) => void;
+  /** Called once the daemon projects the logical strategy task as terminal
+   *  (completed / blocked / canceled), with the terminal projection. */
+  onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
 }
 
 export interface DaemonReattachOptions {
@@ -388,6 +391,9 @@ export interface DaemonReattachOptions {
   publishRunFinishedEvent?: boolean;
   /** Called when reattach discovers a newer active Run in the same task. */
   onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2) => void;
+  /** Called once the daemon projects the logical strategy task as terminal
+   *  (completed / blocked / canceled), with the terminal projection. */
+  onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
 }
 
 export const RUNS_CHANGED_EVENT = 'open-design:runs-changed';
@@ -740,6 +746,7 @@ export async function streamViaDaemon({
   onRunEventId,
   analyticsHints,
   taskExecutionId,
+  onStrategyTaskSettled,
 }: DaemonStreamOptions): Promise<void> {
   const emitRunStatus = (status: ChatRunStatus) => {
     onRunStatus?.(status);
@@ -854,6 +861,7 @@ export async function streamViaDaemon({
       workspaceContext,
       publishRunFinishedEvent: true,
       onRunCreated,
+      onStrategyTaskSettled,
     });
   } catch (err) {
     if ((err as Error).name === 'AbortError') return;
@@ -1290,6 +1298,7 @@ async function consumeDaemonPhysicalRun({
   conversationId,
   workspaceContext,
   publishRunFinishedEvent,
+  onStrategyTaskSettled,
 }: DaemonReattachOptions): Promise<DaemonPhysicalRunResult | void> {
   let acc = '';
   let stderrBuf = '';
@@ -1562,6 +1571,10 @@ async function consumeDaemonPhysicalRun({
     }
 
     if (endStrategyTask?.terminal) {
+      // Surface the terminal projection before the status/error handlers run,
+      // so a blocked verdict (with its gate attribution) is stamped onto the
+      // assistant message ahead of the failure finalization it triggers.
+      onStrategyTaskSettled?.(endStrategyTask);
       if (endStrategyTask.outcome === 'canceled') {
         endStatus = 'canceled';
       } else if (endStrategyTask.outcome === 'blocked') {
