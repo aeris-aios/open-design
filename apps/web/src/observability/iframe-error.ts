@@ -40,6 +40,7 @@ export interface PreviewIframeReportOptions {
 
 export type PreviewTransportRecoverySignal =
   | 'body_incomplete'
+  | 'host_navigation_abort'
   | 'probe_timeout';
 
 export interface PreviewTransportDocumentState {
@@ -208,9 +209,11 @@ export function reportPreviewTransportRecovery(
 ): void {
   const transportStage = options.signal === 'body_incomplete'
     ? 'head_bridge_alive_body_tail_missing'
-    : options.activationAcknowledged
-      ? 'head_bridge_lost_after_eager_ack'
-      : 'no_head_bridge_ack';
+    : options.signal === 'host_navigation_abort'
+      ? 'active_blob_navigation_aborted'
+      : options.activationAcknowledged
+        ? 'head_bridge_lost_after_eager_ack'
+        : 'no_head_bridge_ack';
   reportSafetyEvent('client_preview_white_screen', {
     surface: options.surface,
     render_mode: options.renderMode,

@@ -51,6 +51,10 @@ const PREVIEW_NAVIGATION_FAILURE_IPC_CHANNEL = "od:preview-navigation-failed";
 const ABORTED_NAVIGATION_ERROR_CODE = -3;
 let previewNavigationFailureEventSequence = 0;
 
+function isPreviewTransportNavigationUrl(url: string): boolean {
+  return url === "about:srcdoc" || url.startsWith("blob:od://app/");
+}
+
 export function previewNavigationFailureFromDidFailLoad(input: {
   errorCode: number;
   eventId: number;
@@ -62,7 +66,7 @@ export function previewNavigationFailureFromDidFailLoad(input: {
   if (
     input.isMainFrame
     || input.errorCode !== ABORTED_NAVIGATION_ERROR_CODE
-    || input.validatedUrl !== "about:srcdoc"
+    || !isPreviewTransportNavigationUrl(input.validatedUrl)
   ) return null;
   return {
     errorCode: input.errorCode,
@@ -2306,7 +2310,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     frame.on("dom-ready", () => rememberPreviewFrameName(frame));
   });
   window.webContents.on("did-start-navigation", (details) => {
-    if (details.isMainFrame || details.url !== "about:srcdoc") return;
+    if (details.isMainFrame || !isPreviewTransportNavigationUrl(details.url)) return;
     // `did-fail-load` can arrive after Chromium has destroyed the frame, at
     // which point webFrameMain.fromId() and frame-created/dom-ready are too
     // late to recover its name. Snapshot the identity when navigation starts.

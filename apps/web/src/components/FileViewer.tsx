@@ -10693,9 +10693,11 @@ function HtmlViewer({
   const handleHostPreviewNavigationFailure = useCallback((
     failure: OpenDesignHostPreviewNavigationFailure,
   ) => {
+    const aboutSrcDocFailure = failure.validatedUrl === 'about:srcdoc';
+    const localBlobFailure = failure.validatedUrl.startsWith('blob:od://app/');
     if (
       failure.errorCode !== -3
-      || failure.validatedUrl !== 'about:srcdoc'
+      || (!aboutSrcDocFailure && !localBlobFailure)
       || !Number.isSafeInteger(failure.eventId)
       || !Number.isFinite(failure.occurredAtMs)
       || Date.now() - failure.occurredAtMs > SRC_DOC_PREVIEW_FAILURE_FRESHNESS_MS
@@ -10724,6 +10726,18 @@ function HtmlViewer({
       // HTML -> white -> HTML flash we are trying to prevent.
       return;
     }
+    if (
+      localBlobFailure
+      && failure.frameName === frame.name
+      && frame.getAttribute('src') === failure.validatedUrl
+    ) {
+      // Unlike an eager about:srcdoc acknowledgement, an exact failure for
+      // the active Open Design Blob URL identifies the navigation that owns
+      // this frame. Recover immediately instead of adding the fixed 1.5s
+      // probe timeout to every affected file-tab activation.
+      recoverUnacknowledgedSrcDocTransport(generation, 'host_navigation_abort');
+      return;
+    }
     // An independently unverified document is challenged immediately. When
     // Chromium destroys the failed frame before Electron can resolve its
     // name, challenge the one active srcdoc frame instead. A healthy frame
@@ -10731,7 +10745,7 @@ function HtmlViewer({
     // replace at most one shell per generation, so an unscoped host signal
     // cannot create a reload loop or disturb a verified preview.
     probeSrcDocTransport(generation, true);
-  }, [mode, probeSrcDocTransport, useUrlLoadPreview]);
+  }, [mode, probeSrcDocTransport, recoverUnacknowledgedSrcDocTransport, useUrlLoadPreview]);
   useEffect(() => {
     const unsubscribe = subscribeHostPreviewNavigationFailure(
       handleHostPreviewNavigationFailure,
@@ -10921,7 +10935,6 @@ function HtmlViewer({
   useEffect(() => {
     if (!workspaceActive || mode !== 'preview' || useUrlLoadPreview || !srcDoc) return;
     const generation = srcDocTransportGeneration;
-    if (srcDocRecoveryAttemptedGenerationRef.current === generation) return;
     const timeout = window.setTimeout(() => {
       const frame = srcDocPreviewIframeRef.current;
       const verified = verifiedSrcDocTransportRef.current;

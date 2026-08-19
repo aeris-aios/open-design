@@ -7870,7 +7870,7 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
-  it('does not repeat a srcDoc recovery for the same content generation after reactivation', () => {
+  it('revalidates a recovered generation after reactivation without repeating recovery', () => {
     vi.useFakeTimers();
     try {
       const renderViewer = (workspaceActive: boolean) => (
@@ -7905,7 +7905,13 @@ describe('FileViewer tweaks toolbar', () => {
         ([message]) => (
           (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe'
         ),
-      )).toHaveLength(0);
+      )).toHaveLength(1);
+
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(recoveredFrame);
+      expect(safetyEventMock).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -8035,6 +8041,53 @@ describe('FileViewer tweaks toolbar', () => {
         vi.advanceTimersByTime(1_500);
       });
       expect(screen.getByTestId('artifact-preview-frame')).not.toBe(frame);
+      expect(safetyEventMock).toHaveBeenCalledTimes(1);
+    } finally {
+      restoreHost();
+      vi.useRealTimers();
+    }
+  });
+
+  it('immediately recovers an exact active Open Design blob navigation abort', () => {
+    vi.useFakeTimers();
+    let navigationFailureListener: OpenDesignHostPreviewNavigationFailureListener | null = null;
+    const restoreHost = installMockOpenDesignHost({
+      host: {
+        preview: {
+          subscribeNavigationFailure: (listener) => {
+            navigationFailureListener = listener;
+            return () => undefined;
+          },
+        },
+      },
+    });
+    try {
+      render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'blob-deck.html', path: 'blob-deck.html' })}
+          liveHtml={'<!doctype html><html><body><main>Deck</main><script>location.reload()</script></body></html>'}
+          workspaceActive
+        />,
+      );
+      const failedFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const failedUrl = 'blob:od://app/failed-preview-document';
+      failedFrame.setAttribute('src', failedUrl);
+
+      act(() => {
+        navigationFailureListener?.({
+          errorCode: -3,
+          eventId: 1,
+          frameName: failedFrame.name,
+          occurredAtMs: Date.now(),
+          validatedUrl: failedUrl,
+        });
+      });
+
+      const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(recoveredFrame).not.toBe(failedFrame);
+      expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
       expect(safetyEventMock).toHaveBeenCalledTimes(1);
     } finally {
       restoreHost();
