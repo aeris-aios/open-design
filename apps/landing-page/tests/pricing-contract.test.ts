@@ -221,6 +221,19 @@ describe("pricing contract", () => {
     assert.doesNotMatch(individualPlans, />UP TO \{imageResolution\}<\/em>/);
   });
 
+  it("reveals the localized popular-model allowance from the comparison help control", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.match(
+      individualPlans,
+      /<details class="model-group-help">\s*<summary aria-label=\{P\.aboutPopularAllowance\}>\?<\/summary>\s*<span class="model-group-help-copy">\{P\.usageAllowanceNote\}<\/span>\s*<\/details>/s,
+    );
+    assert.doesNotMatch(
+      individualPlans,
+      /<button[^>]*class="model-group-help"/,
+    );
+  });
+
   it("keeps the Max wordmark readable on its dark card", async () => {
     const [individualPlans, logo] = await Promise.all([
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),

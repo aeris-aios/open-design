@@ -82,6 +82,19 @@ test('Go banner suppresses DeepSeek while audience classification is pending', (
   );
 });
 
+test('DeepSeek visibility and impressions follow Go banner ownership changes', () => {
+  assert.match(
+    home,
+    /const goOwns =\s*document\.documentElement\.classList\.contains\('go-banner-active'\) \|\|\s*document\.documentElement\.classList\.contains\('go-banner-pending'\);/,
+  );
+  assert.match(home, /const visible = active && !dismissed && !goOwns;/);
+  assert.match(
+    home,
+    /window\.addEventListener\('go-banner:state-change', updateCampaignVisibility\);/,
+  );
+  assert.match(banner, /new Event\('go-banner:state-change'\)/);
+});
+
 test('Go banner uses the confirmed short copy and links to localized Pricing', () => {
   for (const locale of Object.keys(expectedGoBannerDetails) as Array<
     keyof typeof expectedGoBannerDetails

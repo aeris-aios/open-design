@@ -371,7 +371,10 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
         const updateCampaignVisibility = () => {
           const now = Date.now();
           const active = now >= startAt && now < endAt;
-          const visible = active && !dismissed;
+          const goOwns =
+            document.documentElement.classList.contains('go-banner-active') ||
+            document.documentElement.classList.contains('go-banner-pending');
+          const visible = active && !dismissed && !goOwns;
           if (banner) banner.hidden = !visible;
           document.documentElement.classList.toggle('home-campaign-banner-active', visible);
           if (!active || !countdown) return active;
@@ -387,9 +390,13 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
           }
           return active;
         };
+        window.addEventListener('go-banner:state-change', updateCampaignVisibility);
         updateCampaignVisibility();
         const campaignTimer = window.setInterval(updateCampaignVisibility, 1000);
-        window.addEventListener('pagehide', () => window.clearInterval(campaignTimer), { once: true });
+        window.addEventListener('pagehide', () => {
+          window.clearInterval(campaignTimer);
+          window.removeEventListener('go-banner:state-change', updateCampaignVisibility);
+        }, { once: true });
         campaignLink?.addEventListener('click', (event) => {
           const eligible = Date.now() >= startAt && Date.now() < endAt;
           const attribution = eligible

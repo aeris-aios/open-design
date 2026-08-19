@@ -156,7 +156,11 @@ const apiOrigin =
     try {
       if (window.localStorage.getItem(dismissKey) === '1') return;
     } catch (error) {}
+    const announceOwnershipChange = () => {
+      window.dispatchEvent(new Event('go-banner:state-change'));
+    };
     document.documentElement.classList.add('go-banner-pending');
+    announceOwnershipChange();
 
     const track = (name, extra) => {
       try {
@@ -172,10 +176,12 @@ const apiOrigin =
     const hide = () => {
       banner.setAttribute('hidden', '');
       document.documentElement.classList.remove('go-banner-active', 'go-banner-pending');
+      announceOwnershipChange();
     };
     const show = () => {
       banner.removeAttribute('hidden');
       document.documentElement.classList.add('go-banner-active');
+      announceOwnershipChange();
       track('surface_view');
     };
 
@@ -191,6 +197,7 @@ const apiOrigin =
     const apiOrigin = (banner.getAttribute('data-api-origin') || '').replace(/\/$/, '');
     if (!apiOrigin) {
       document.documentElement.classList.remove('go-banner-pending');
+      announceOwnershipChange();
       return;
     }
     fetch(apiOrigin + '/api/auth/get-session', {
@@ -222,6 +229,7 @@ const apiOrigin =
       .catch(() => {
         // A failed entitlement probe cannot safely classify a signed-in visitor.
       })
-      .finally(() => document.documentElement.classList.remove('go-banner-pending'));
+      .finally(() => document.documentElement.classList.remove('go-banner-pending'))
+      .then(announceOwnershipChange);
   })();
 </script>

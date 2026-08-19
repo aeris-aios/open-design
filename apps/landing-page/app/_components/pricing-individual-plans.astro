@@ -516,7 +516,12 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                     <th class="model-group-cell" rowspan={models.length} scope="rowgroup">
                       <span class="model-group-title">
                         <span>{categoryCopy[category].title}</span>
-                        {category === 'popular' && <button type="button" class="model-group-help" aria-label={P.aboutPopularAllowance}>?</button>}
+                        {category === 'popular' && (
+                          <details class="model-group-help">
+                            <summary aria-label={P.aboutPopularAllowance}>?</summary>
+                            <span class="model-group-help-copy">{P.usageAllowanceNote}</span>
+                          </details>
+                        )}
                       </span>
                       <small>{categoryCopy[category].count}</small>
                     </th>
@@ -1457,21 +1462,55 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   }
 
   .model-group-help {
-    display: flex;
+    position: relative;
     flex: 0 0 17px;
+    width: 17px;
+    height: 17px;
+    align-items: center;
+    margin-top: 2px;
+  }
+
+  .model-group-help summary {
+    display: flex;
     align-items: center;
     justify-content: center;
     width: 17px;
     height: 17px;
-    margin-top: 2px;
     padding: 0;
     color: #555a52;
     font-size: 10px;
     line-height: 1;
+    list-style: none;
     cursor: help;
     background: transparent;
     border: 1px solid #777c74;
     border-radius: 50%;
+  }
+
+  .model-group-help summary::-webkit-details-marker { display: none; }
+  .model-group-help summary::marker { content: ''; }
+  .model-group-help summary:focus-visible {
+    outline: 2px solid #1f7e16;
+    outline-offset: 2px;
+  }
+
+  .model-group-help-copy {
+    position: absolute;
+    z-index: 4;
+    top: 25px;
+    left: 0;
+    display: block;
+    width: 280px;
+    padding: 10px 12px;
+    color: #30342e;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.5;
+    text-align: left;
+    background: #fff;
+    border: 1px solid rgba(65, 72, 61, 0.16);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(28, 35, 24, 0.12);
   }
 
   .model-name-cell {
