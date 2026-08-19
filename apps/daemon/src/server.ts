@@ -18,7 +18,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import {
+  composeOdNextStrategyBundleSystemPromptV2,
   composeOdNextStrategyCorePromptV2,
+  odNextStrategyRecipeIdentityV2,
+  renderOdNextRuntimeFactsV2,
   composeOdNextStrategyStableRequestContextV2,
   executionProfileFromStreamFormat,
   PLUGIN_SHARE_ACTION_PLUGIN_IDS,
@@ -509,7 +512,7 @@ import {
 import {
   InvalidFrozenSkillPackageError,
   materializeFrozenSkillPackage,
-  renderFrozenSkillBundleContext,
+  renderFrozenSkillRosterContext,
 } from './strategies/od-next/frozen-skill-package.js';
 import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
@@ -9989,6 +9992,19 @@ export async function startServer({
     const prompt = odNextStrategyRecipe
       ? composeOdNextStrategyCorePromptV2(odNextStrategyRecipe)
       : composeSystemPrompt(systemPromptInputs);
+    // OD Next sends a canonical XML tree, not this Markdown string. The tree's
+    // cache-stable head, its per-task identity, and the runtime-owned planning
+    // facts are three separate products of the same verified recipe, so they are
+    // composed here together and placed in different bundle slots downstream.
+    const odNextBundleSystemPrompt = odNextStrategyRecipe
+      ? composeOdNextStrategyBundleSystemPromptV2(odNextStrategyRecipe)
+      : null;
+    const odNextRecipeIdentity = odNextStrategyRecipe
+      ? odNextStrategyRecipeIdentityV2(odNextStrategyRecipe)
+      : null;
+    const odNextRuntimeFacts = odNextStrategyRecipe
+      ? renderOdNextRuntimeFactsV2(odNextStrategyRecipe, odNextStableRequestContext ?? {})
+      : '';
     // The chat handler also needs to know where the active skill lives
     // on disk so it can stage a per-project copy of its side files
     // before spawning the agent. Returning that here avoids a second
@@ -9997,6 +10013,9 @@ export async function startServer({
     // orchestrator gate so prompt and orchestrator stay in lockstep.
     return {
       prompt,
+      odNextBundleSystemPrompt,
+      odNextRecipeIdentity,
+      odNextRuntimeFacts,
       odNextStableContextPrompt: odNextStableRequestContext
         ? composeOdNextStrategyStableRequestContextV2(odNextStableRequestContext)
         : '',
@@ -11340,7 +11359,7 @@ export async function startServer({
     const requestInputPendingFact = isOdNextRequestStage
       ? [
           strategyTaskAtStart?.frozenSkillPackage
-            ? renderFrozenSkillBundleContext(strategyTaskAtStart.frozenSkillPackage)
+            ? renderFrozenSkillRosterContext(strategyTaskAtStart.frozenSkillPackage)
             : JSON.stringify({
                 schema: 'open-design.od-next-frozen-skill-package/v1',
                 state: 'missing',
@@ -11371,17 +11390,6 @@ export async function startServer({
       projectAttachmentReferences: attachmentHint,
       commentAttachmentReferences: commentHint,
       imageReferences: promptImagePaths.map((p) => `@${p}`).join(' '),
-      ...(isOdNextRequestStage
-        ? {
-            odNextRequestBundle: {
-              stableContext: odNextStableContextPrompt ?? '',
-              priorTranscript:
-                typeof priorTranscript === 'string' ? priorTranscript : '',
-              taskConfigPendingFact,
-              requestInputPendingFact,
-            },
-          }
-        : {}),
       strategyInputStage: strategyTaskAtStart?.inputStage ?? null,
         });
     const {

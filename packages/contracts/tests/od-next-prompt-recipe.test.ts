@@ -3,6 +3,7 @@ import {
   composeOdNextStrategyCorePromptV2,
   composeOdNextStrategyContinuationV2,
   composeOdNextStrategyRequestPromptV2,
+  renderOdNextRuntimeFactsV2,
   composeOdNextStrategyStableRequestContextV2,
   odNextPromptCacheIdentityV2,
   type OdNextStrategyRequestRecipeV2,
@@ -37,10 +38,10 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
   coreStrategy: '# Core\n\nKeep route and execution facts locked.',
   generalOrchestration: '# Orchestration\n\nPrepare a Design Spec and Full Plan, then Build.',
   taskSkill: '# Prototype\n\nProduce the declared editable prototype.',
-  activeStageBlocks: [
-    '## Active stage: discovery\n\n### discovery-question-form',
-    '## Active stage: plan\n\n### direction-picker\n\n### todo-write',
-    '## Active stage: generate\n\n### file-write\n\n### live-artifact',
+  activeStages: [
+    { name: 'discovery', atoms: [{ name: 'discovery-question-form' }] },
+    { name: 'plan', atoms: [{ name: 'direction-picker' }, { name: 'todo-write' }] },
+    { name: 'generate', atoms: [{ name: 'file-write' }, { name: 'live-artifact' }] },
   ],
 };
 
@@ -95,19 +96,34 @@ describe('OD Next V2 prompt recipe', () => {
       },
     });
     const contract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);
+    // The example carries only per-task-type values; every per-task value is a
+    // placeholder the Agent copies from <runtime_facts>.
     expect(OpenDesignPlanContractV2Schema.parse(contract)).toMatchObject({
       taskProfile: {
         taskProfileVersion: '2.0.0',
         canonicalDeliverable: { kind: 'prototype' },
       },
       runManifest: {
-        capabilitySnapshotHash: B,
-        inputRefs: ['request'],
-        productionRoutes: ['html'],
+        capabilitySnapshotHash: '0'.repeat(64),
+        inputRefs: ['copy-input-refs-from-runtime-facts'],
+        productionRoutes: ['copy-production-route-from-runtime-facts'],
       },
     });
-    expect(prompt).toContain('"allowedProductionRoutes": [');
-    expect(prompt).toContain('"prototype-html"');
+    expect(contract).not.toMatchObject({ runManifest: { capabilitySnapshotHash: B } });
+    // The real facts live in the separately rendered runtime-facts block.
+    const facts = renderOdNextRuntimeFactsV2({
+      ...recipe,
+      planningFacts: {
+        capabilitySnapshotHash: B,
+        inputRefs: ['request'],
+        productionRoutes: ['html', 'prototype-html'],
+        outputKinds: ['prototype', 'html'],
+      },
+    });
+    expect(facts).toContain(`"capabilitySnapshotHash": "${B}"`);
+    expect(facts).toContain('"allowedProductionRoutes": [');
+    expect(facts).toContain('"prototype-html"');
+    expect(facts).toContain(`"appliedSnapshot": "${recipe.snapshotId}"`);
   });
 
   it('renders real stable request facts through the shared recipe owner', () => {
@@ -218,25 +234,37 @@ describe('OD Next V2 prompt recipe', () => {
     expect(prompt).not.toMatch(/\bscreenshots?\b|\bbrowser\b|\bDOM\b/);
   });
 
-  it('fails closed when stage blocks are incomplete or smuggle post-Build quality work', () => {
+  it('fails closed when stages are incomplete or smuggle post-Build quality work', () => {
     expect(() => composeOdNextStrategyRequestPromptV2({
       ...recipe,
-      activeStageBlocks: recipe.activeStageBlocks.slice(0, 2),
+      activeStages: recipe.activeStages.slice(0, 2),
     })).toThrow(/exactly discovery, plan, and generate/i);
     expect(() => composeOdNextStrategyRequestPromptV2({
       ...recipe,
-      activeStageBlocks: [
-        ...recipe.activeStageBlocks.slice(0, 2),
-        `${recipe.activeStageBlocks[2]}\n\n## Verification\n\nReview the finished artifact.`,
+      activeStages: [
+        recipe.activeStages[0]!,
+        { name: 'plan', atoms: [{ name: 'direction-picker' }] },
+        recipe.activeStages[2]!,
       ],
-    })).toThrow(/forbidden/i);
+    })).toThrow(/must declare exactly direction-picker, todo-write/i);
     expect(() => composeOdNextStrategyRequestPromptV2({
       ...recipe,
-      activeStageBlocks: [
-        `${recipe.activeStageBlocks[0]}\n\n### hidden-subsection`,
-        ...recipe.activeStageBlocks.slice(1),
+      activeStages: [recipe.activeStages[1]!, recipe.activeStages[0]!, recipe.activeStages[2]!],
+    })).toThrow(/must describe the discovery stage/i);
+    expect(() => composeOdNextStrategyRequestPromptV2({
+      ...recipe,
+      activeStages: [
+        recipe.activeStages[0]!,
+        recipe.activeStages[1]!,
+        {
+          name: 'generate',
+          atoms: [
+            { name: 'file-write', body: '## Verification\n\nReview the finished artifact.' },
+            { name: 'live-artifact' },
+          ],
+        },
       ],
-    })).toThrow(/unexpected atom subsection heading/i);
+    })).toThrow(/forbidden/i);
     const forbiddenContamination = [
       'Review the finished output in a browser.',
       'Inspect the DOM after generation.',
@@ -252,9 +280,13 @@ describe('OD Next V2 prompt recipe', () => {
     for (const contamination of forbiddenContamination) {
       expect(() => composeOdNextStrategyRequestPromptV2({
         ...recipe,
-        activeStageBlocks: [
-          ...recipe.activeStageBlocks.slice(0, 2),
-          `${recipe.activeStageBlocks[2]}\n\n${contamination}`,
+        activeStages: [
+          recipe.activeStages[0]!,
+          recipe.activeStages[1]!,
+          {
+            name: 'generate',
+            atoms: [{ name: 'file-write', body: contamination }, { name: 'live-artifact' }],
+          },
         ],
       })).toThrow(/forbidden/i);
     }

@@ -1,7 +1,9 @@
 import {
   OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1,
   OD_NEXT_TASK_CONFIGURATION_SCHEMA_V1,
+  serializeOdNextAttachmentFactsV1,
   serializeOdNextRequestInputFactsV1,
+  serializeOdNextWorkspaceInputFactsV1,
   serializeOdNextTaskConfigurationV1,
   type MediaExecutionPolicy,
   type OdNextAttachmentFactV1,
@@ -59,6 +61,9 @@ type SnapshotManifest = {
 export interface LoadedOdNextTaskInputSnapshot {
   taskConfigText: string;
   requestInputText: string;
+  taskType: string;
+  attachmentFactsText: string;
+  workspaceInputFactsText: string;
   attachmentReferences: string[];
   attachmentPaths: string[];
   imagePaths: string[];
@@ -753,6 +758,9 @@ export function loadOdNextTaskInputSnapshot(
   return {
     taskConfigText: serializeOdNextTaskConfigurationV1(manifest.taskConfiguration),
     requestInputText: serializeOdNextRequestInputFactsV1(manifest.requestInputFacts),
+    taskType: manifest.taskConfiguration.taskType,
+    attachmentFactsText: serializeOdNextAttachmentFactsV1(manifest.requestInputFacts),
+    workspaceInputFactsText: serializeOdNextWorkspaceInputFactsV1(manifest.requestInputFacts),
     attachmentReferences: manifest.requestInputFacts.attachments.map((fact) => fact.reference),
     attachmentPaths,
     imagePaths,

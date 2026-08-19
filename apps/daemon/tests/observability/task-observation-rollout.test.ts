@@ -172,7 +172,7 @@ function seedCompletedTask(db: Database.Database): void {
 function syntheticRun() {
   const promptBundleIdentity = {
     kind: 'bundle' as const,
-    schema: 'open-design.od-next-prompt-bundle/v1' as const,
+    schema: 'open-design.od-next-prompt-bundle/v2' as const,
     text: TEST_PROMPT_BUNDLE,
     utf8Bytes: Buffer.byteLength(TEST_PROMPT_BUNDLE, 'utf8'),
     sha256: createHash('sha256').update(TEST_PROMPT_BUNDLE, 'utf8').digest('hex'),
@@ -666,7 +666,7 @@ describe('task observation rollout', () => {
       schema: 'open-design.od-next-exact-send-prompt/v1',
       boundary: 'hostComposed',
       kind: 'bundle',
-      promptSchema: 'open-design.od-next-prompt-bundle/v1',
+      promptSchema: 'open-design.od-next-prompt-bundle/v2',
       stage: 'request',
       sha256: mapping.finalText.sha256,
       utf8Bytes: mapping.finalText.utf8Bytes,

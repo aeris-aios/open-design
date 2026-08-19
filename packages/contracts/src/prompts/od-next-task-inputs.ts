@@ -89,3 +89,37 @@ export function serializeOdNextRequestInputFactsV1(
 ): string {
   return canonicalJson(value);
 }
+
+/**
+ * Attachment identities only, for the Bundle's `task_config/attachments` slot.
+ *
+ * Returns '' when there is no attachment, so the slot is omitted rather than
+ * emitted empty. Carries reference, media type, byte count and digest — never
+ * attachment bodies and never an absolute path.
+ */
+export function serializeOdNextAttachmentFactsV1(
+  value: OdNextRequestInputFactsV1,
+): string {
+  if (value.attachments.length === 0) return '';
+  return canonicalJson({
+    schema: value.schema,
+    attachmentTransport: value.attachmentTransport,
+    attachments: value.attachments,
+  });
+}
+
+/**
+ * Every request input fact except attachments, for the Bundle's
+ * `context/request_input_facts` slot. Attachments are a sibling slot, so
+ * emitting them here too would duplicate them in the payload.
+ */
+export function serializeOdNextWorkspaceInputFactsV1(
+  value: OdNextRequestInputFactsV1,
+): string {
+  return canonicalJson({
+    schema: value.schema,
+    comments: value.comments,
+    mcp: value.mcp,
+    workspace: value.workspace,
+  });
+}

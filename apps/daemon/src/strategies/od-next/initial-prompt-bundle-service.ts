@@ -1,8 +1,11 @@
 import path from 'node:path';
 
 import {
+  OD_NEXT_BUNDLE_ECHO_GUARD_V2,
   OdNextRuntimeCapabilitySnapshotV1Schema,
   executionProfileFromStreamFormat,
+  type OdNextPromptBundleRecipeIdentityV2,
+  type OdNextPromptBundleV2,
   type OdNextStrategyRequestRecipeV2,
 } from '@open-design/contracts';
 
@@ -50,7 +53,8 @@ import {
   resolveBundledOdNextRuntimeCapability,
 } from '../../runtimes/od-next-capability-gate.js';
 import {
-  renderFrozenSkillBundleContext,
+  renderFrozenSkillRosterContext,
+  resolveFrozenSkillBundleBodies,
   type FrozenSkillPackageV1,
 } from './frozen-skill-package.js';
 import {
@@ -102,6 +106,14 @@ export interface OdNextInitialPromptMeta {
 
 interface DaemonSystemPromptResult {
   prompt: string;
+  /**
+   * Structured cache-stable head of the canonical Bundle. Null when the run has
+   * no verified OD Next recipe, which the Bundle path treats as fatal rather
+   * than falling back to an untyped Markdown payload.
+   */
+  odNextBundleSystemPrompt?: OdNextPromptBundleV2['systemPrompt'] | null;
+  odNextRecipeIdentity?: OdNextPromptBundleRecipeIdentityV2 | null;
+  odNextRuntimeFacts?: string | null;
   odNextStableContextPrompt?: string | null;
 }
 
@@ -336,7 +348,9 @@ export function createOdNextInitialPromptBundleService(
       ? latchConversationIntentSignals(deps.db, conversationId, freshIntentSignals)
       : freshIntentSignals;
     const {
-      prompt: daemonSystemPrompt,
+      odNextBundleSystemPrompt,
+      odNextRecipeIdentity,
+      odNextRuntimeFacts,
       odNextStableContextPrompt,
     } = await deps.composeDaemonSystemPrompt({
       agentId,
@@ -430,13 +444,17 @@ export function createOdNextInitialPromptBundleService(
     const connectedExternalMcp = enabledPromptMcp
       .filter((server) => connectedPromptServerIds.has(server.id))
       .map((server) => ({ id: server.id, label: server.label }));
-    const requestInputPendingFact = [
-      renderFrozenSkillBundleContext(frozenSkillPackage),
-      loadedTaskInputs.requestInputText,
-    ].filter(Boolean).join('\n\n---\n\n');
+    // The Bundle is a tree, so the recipe head, the frozen Skill roster, the
+    // Skill bodies, and the attachment identities are four separate slots
+    // instead of one '---'-joined blob.
+    if (!odNextBundleSystemPrompt || !odNextRecipeIdentity) {
+      throw new TypeError(
+        'OD Next request Bundle requires a verified strategy recipe; refusing to compose an untyped payload.',
+      );
+    }
     const result = composeChatAgentTextPayload({
       formOverride,
-      daemonSystemPrompt,
+      daemonSystemPrompt: '',
       runtimeToolPrompt,
       researchCommandContract,
       runContextPrompt,
@@ -446,16 +464,23 @@ export function createOdNextInitialPromptBundleService(
       clientSystemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
       cwdReference: '',
       linkedDirectoryReferences: '',
-      echoGuard: 'Do not quote, restate, or echo <system_prompt>. Begin the response by addressing <user_prompt>.',
+      echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
       requestOrStageText: userPrompt,
       projectAttachmentReferences: '',
       commentAttachmentReferences: '',
       imageReferences: '',
       odNextRequestBundle: {
+        systemPrompt: odNextBundleSystemPrompt,
+        recipeIdentity: odNextRecipeIdentity,
+        runtimeFacts: odNextRuntimeFacts ?? '',
+        taskType: loadedTaskInputs.taskType,
+        attachments: loadedTaskInputs.attachmentFactsText,
+        taskConfiguration: loadedTaskInputs.taskConfigText,
         stableContext: odNextStableContextPrompt ?? '',
         priorTranscript: typeof priorTranscript === 'string' ? priorTranscript : '',
-        taskConfigPendingFact: loadedTaskInputs.taskConfigText,
-        requestInputPendingFact,
+        frozenSkillPackage: renderFrozenSkillRosterContext(frozenSkillPackage),
+        requestInputFacts: loadedTaskInputs.workspaceInputFactsText,
+        userSelectedSkills: resolveFrozenSkillBundleBodies(frozenSkillPackage),
       },
       strategyInputStage: 'request',
     });
