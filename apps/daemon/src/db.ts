@@ -2533,12 +2533,26 @@ export function latestCompletedAssistantMessageId(
 ): string | null {
   const row = db
     .prepare(
+      // `excludeMessageId` keeps the caller's in-flight placeholder — which the
+      // stored session has never seen — from counting as advancement. When that
+      // placeholder IS the stored cursor (a daemon-internal restart re-entering
+      // with the same message), the session did produce it, so the exclusion
+      // must not apply: that is what `resumableMessageId` is for, and the
+      // exclusion used to consume the row before the admission could.
+      // Advancement detection is unaffected — any later `succeeded` message
+      // still wins on `position DESC` and still fails the cursor comparison.
       `SELECT id FROM messages
-        WHERE conversation_id = ? AND role = 'assistant' AND id != ?
+        WHERE conversation_id = ? AND role = 'assistant'
+          AND (id != ? OR id = ?)
           AND (run_status = 'succeeded' OR id = ?)
         ORDER BY position DESC LIMIT 1`,
     )
-    .get(conversationId, excludeMessageId, resumableMessageId) as DbRow | undefined;
+    .get(
+      conversationId,
+      excludeMessageId,
+      resumableMessageId,
+      resumableMessageId,
+    ) as DbRow | undefined;
   return row && typeof row.id === 'string' ? row.id : null;
 }
 
