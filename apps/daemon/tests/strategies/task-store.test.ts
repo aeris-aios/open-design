@@ -8,6 +8,7 @@ import {
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
   OD_NEXT_REQUEST_TURN_SCHEMA_V1,
+  serializeCanonicalXml,
   serializeOdNextPromptBundleV1,
   type AppliedPluginSnapshot,
   type OpenDesignPlanContractV2,
@@ -35,6 +36,22 @@ import {
 } from './strategy-task-test-fixtures.js';
 
 const AGENT_ID = 'codex';
+
+// A bundle written by the pre-reshape v2 composer: the same schema id today's
+// composer stamps, wrapped in the `system_prompt` element that the reshape
+// replaced with `open_design_core_system_prompt`.
+const STALE_V2_PROMPT_BUNDLE = serializeCanonicalXml({
+  kind: 'element',
+  tag: 'open_design_prompt_bundle',
+  attributes: [['schema', OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2]],
+  children: [
+    {
+      kind: 'element',
+      tag: 'system_prompt',
+      children: [{ kind: 'text', tag: 'core_system_prompt', text: 'stale' }],
+    },
+  ],
+});
 
 // A row persisted before the v2 composer landed, byte-for-byte.
 const LEGACY_PROMPT_BUNDLE = serializeOdNextPromptBundleV1({
@@ -1191,6 +1208,57 @@ describe('durable strategy task store', () => {
       activeRunId: 'run-request',
       revision: 0,
     });
+  });
+
+  it('keeps one unreadable Prompt Bundle from cancelling every sibling Run terminal', async () => {
+    // Reshaping the v2 bundle's child tags kept the schema id
+    // `open-design.od-next-prompt-bundle/v2`, so rows written by the previous
+    // v2 composer still carry today's label over a layout its parser cannot
+    // read. That is one Run's corrupt record, but the startup loop called
+    // `reconcileStrategyTaskRunTerminal` unguarded, so the TypeError escaped
+    // `reconcileDurableRunTerminals` outright and every OTHER Run on that boot
+    // silently lost its analytics replay and Langfuse delivery.
+    const poisoned = createTask(db, snapshot, 'run-poisoned', 'task-poisoned');
+    const healthy = createTask(db, snapshot, 'run-healthy', 'task-healthy');
+    db.prepare(
+      `UPDATE strategy_task_runs
+       SET final_text_kind = 'bundle', final_text_schema = ?, final_text = ?
+       WHERE run_id = 'run-poisoned'`,
+    ).run(OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2, STALE_V2_PROMPT_BUNDLE);
+    closeDatabase();
+
+    for (const runId of ['run-poisoned', 'run-healthy']) {
+      const runDir = path.join(tempDir, 'runs', runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+        schemaVersion: 1,
+        id: runId,
+        projectId: 'project-1',
+        conversationId: 'conversation-1',
+        agentId: AGENT_ID,
+        status: 'canceled',
+        createdAt: 100,
+        updatedAt: 200,
+        langfuseCompletedAt: 200,
+      }));
+    }
+
+    db = openDatabase(tempDir, { dataDir: tempDir });
+    await expect(reconcileDurableRunTerminals({
+      analytics: { capture: vi.fn() },
+      appVersion: '0.19.2',
+      db,
+      reportLangfuse: vi.fn(),
+      runsLogDir: path.join(tempDir, 'runs'),
+    })).resolves.toMatchObject({ strategyTasksReconciled: 1 });
+
+    expect(getStrategyTaskExecution(db, healthy.taskExecutionId)).toMatchObject({
+      outcome: 'canceled',
+      terminalRunId: 'run-healthy',
+    });
+    // The corrupt record stays unreadable and unreconciled — that is its own
+    // Run's problem, and it no longer costs its siblings theirs.
+    expect(() => getStrategyTaskExecution(db, poisoned.taskExecutionId)).toThrow();
   });
 
   it.each([

@@ -231,6 +231,30 @@ function reconcileMessages(
   return rows.length;
 }
 
+/**
+ * Reconcile one Run's strategy-task terminal, absorbing any failure to read
+ * that single record.
+ *
+ * Startup reconciliation owes EVERY Run its terminal obligation: message
+ * repair, analytics replay, and Langfuse delivery. A task row whose persisted
+ * Prompt Bundle can no longer be parsed is one Run's problem, and must never
+ * cancel the obligation owed to its siblings — `strategyTaskTurnsForRunIds`
+ * already holds this invariant for the message list. Returns whether the
+ * record was reconciled; an unreadable record counts as not reconciled rather
+ * than as a batch-ending error.
+ */
+function reconcileStrategyTaskRunTerminalIsolated(
+  db: Parameters<typeof reconcileStrategyTaskRunTerminal>[0],
+  input: Parameters<typeof reconcileStrategyTaskRunTerminal>[1],
+): boolean {
+  try {
+    return reconcileStrategyTaskRunTerminal(db, input);
+  } catch (error) {
+    console.warn('[runs] strategy task terminal reconciliation skipped', input.runId, error);
+    return false;
+  }
+}
+
 export async function reconcileDurableRunTerminals(
   options: ReconciliationOptions,
 ): Promise<RunTerminalReconciliationResult> {
@@ -282,7 +306,7 @@ export async function reconcileDurableRunTerminals(
   result.messagesReconciled = reconcileMessages(options.db, statesByRunId, now);
   for (const { state } of states) {
     if (state.status !== 'failed' && state.status !== 'canceled') continue;
-    if (reconcileStrategyTaskRunTerminal(options.db, {
+    if (reconcileStrategyTaskRunTerminalIsolated(options.db, {
       runId: state.id,
       status: state.status,
       updatedAt: state.updatedAt,
