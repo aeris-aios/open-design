@@ -25,6 +25,158 @@ const DISCORD = 'https://discord.gg/mHAjSMV6gz';
 const FEISHU = 'https://od.kokiai.net/community/website';
 const X_PROFILE = 'https://x.com/OpenDesignHQ';
 
+type CommunityEntryCopy = {
+  cta: string;
+  benefits: readonly [string, string, string];
+};
+
+const COMMUNITY_ENTRY_COPY = {
+  en: {
+    cta: 'Join Discord',
+    benefits: [
+      'Model × design scenario arenas',
+      'Weekly Hackathon: credits + promotion',
+      'Super Thursday: weekly prize draws',
+    ],
+  },
+  zh: {
+    cta: '加入飞书社群',
+    benefits: [
+      '模型 × 设计场景竞技场',
+      'Weekly Hackathon：Credits + 流量扶持',
+      'Super Thursday：每周抽奖',
+    ],
+  },
+  'zh-tw': {
+    cta: '加入飛書社群',
+    benefits: [
+      '模型 × 設計場景競技場',
+      'Weekly Hackathon：Credits + 流量扶持',
+      'Super Thursday：每週抽獎',
+    ],
+  },
+  ja: {
+    cta: 'Discordに参加',
+    benefits: [
+      'モデル × デザインシーンのアリーナ',
+      'Weekly Hackathon：クレジット＋露出支援',
+      'Super Thursday：毎週抽選',
+    ],
+  },
+  ko: {
+    cta: 'Discord 참여',
+    benefits: [
+      '모델 × 디자인 시나리오 아레나',
+      'Weekly Hackathon: 크레딧 + 홍보 지원',
+      'Super Thursday: 매주 추첨',
+    ],
+  },
+  de: {
+    cta: 'Discord beitreten',
+    benefits: [
+      'Arenen für Modelle × Designszenarien',
+      'Weekly Hackathon: Credits + Reichweite',
+      'Super Thursday: wöchentliche Verlosung',
+    ],
+  },
+  fr: {
+    cta: 'Rejoindre Discord',
+    benefits: [
+      'Arènes modèles × scénarios de design',
+      'Weekly Hackathon : crédits + mise en avant',
+      'Super Thursday : tirage hebdomadaire',
+    ],
+  },
+  ru: {
+    cta: 'Вступить в Discord',
+    benefits: [
+      'Арены: модели × дизайн-сценарии',
+      'Weekly Hackathon: кредиты + продвижение',
+      'Super Thursday: еженедельный розыгрыш',
+    ],
+  },
+  es: {
+    cta: 'Unirse a Discord',
+    benefits: [
+      'Arenas de modelos × escenarios de diseño',
+      'Weekly Hackathon: créditos + promoción',
+      'Super Thursday: sorteo semanal',
+    ],
+  },
+  'pt-br': {
+    cta: 'Entrar no Discord',
+    benefits: [
+      'Arenas de modelos × cenários de design',
+      'Weekly Hackathon: créditos + divulgação',
+      'Super Thursday: sorteio semanal',
+    ],
+  },
+  it: {
+    cta: 'Unisciti a Discord',
+    benefits: [
+      'Arene modelli × scenari di design',
+      'Weekly Hackathon: crediti + promozione',
+      'Super Thursday: estrazione settimanale',
+    ],
+  },
+  vi: {
+    cta: 'Tham gia Discord',
+    benefits: [
+      'Đấu trường mô hình × bối cảnh thiết kế',
+      'Weekly Hackathon: credit + hỗ trợ quảng bá',
+      'Super Thursday: quay thưởng hằng tuần',
+    ],
+  },
+  pl: {
+    cta: 'Dołącz do Discorda',
+    benefits: [
+      'Areny modeli × scenariuszy projektowych',
+      'Weekly Hackathon: kredyty + promocja',
+      'Super Thursday: cotygodniowe losowanie',
+    ],
+  },
+  id: {
+    cta: 'Gabung Discord',
+    benefits: [
+      'Arena model × skenario desain',
+      'Weekly Hackathon: kredit + dukungan promosi',
+      'Super Thursday: undian mingguan',
+    ],
+  },
+  nl: {
+    cta: 'Word lid van Discord',
+    benefits: [
+      'Arena’s voor modellen × ontwerpscenario’s',
+      'Weekly Hackathon: credits + promotie',
+      'Super Thursday: wekelijkse loting',
+    ],
+  },
+  ar: {
+    cta: 'انضم إلى Discord',
+    benefits: [
+      'ساحات النماذج × سيناريوهات التصميم',
+      'Weekly Hackathon: أرصدة + دعم الترويج',
+      'Super Thursday: سحب أسبوعي',
+    ],
+  },
+  tr: {
+    cta: "Discord'a katıl",
+    benefits: [
+      'Model × tasarım senaryosu arenaları',
+      'Weekly Hackathon: kredi + tanıtım desteği',
+      'Super Thursday: haftalık çekiliş',
+    ],
+  },
+  uk: {
+    cta: 'Приєднатися до Discord',
+    benefits: [
+      'Арени: моделі × дизайн-сценарії',
+      'Weekly Hackathon: кредити + промопідтримка',
+      'Super Thursday: щотижневий розіграш',
+    ],
+  },
+} as const satisfies Record<LandingLocaleCode, CommunityEntryCopy>;
+
 // OpenDesign Cloud endpoints for the header account module.
 // Production defaults; overridable at build time via PUBLIC_* env so a
 // preview/staging build can point at a non-prod cloud. These are surfaced to
@@ -179,26 +331,7 @@ export function Header({
   const homeBrandHref = brandHref === '/' ? href('/') : brandHref;
   const productMenuCopy = getHeaderProductMenuCopy(locale);
   const usesFeishuCommunity = locale === 'zh' || locale === 'zh-tw';
-  const communityCtaLabel =
-    locale === 'zh' ? '加入飞书社群' : locale === 'zh-tw' ? '加入飛書社群' : 'Join Discord';
-  const communityBenefits =
-    locale === 'zh'
-      ? [
-          '模型 × 设计场景竞技场',
-          'Weekly Hackathon：Credits + 流量扶持',
-          'Super Thursday：每周抽奖',
-        ]
-      : locale === 'zh-tw'
-        ? [
-            '模型 × 設計場景競技場',
-            'Weekly Hackathon：Credits + 流量扶持',
-            'Super Thursday：每週抽獎',
-          ]
-        : [
-            'Model × design scenario arenas',
-            'Weekly Hackathon: credits + promotion',
-            'Super Thursday prize draws',
-          ];
+  const communityCopy = COMMUNITY_ENTRY_COPY[locale];
 
   return (
     <header className='nav' data-od-id='nav'>
@@ -553,11 +686,11 @@ export function Header({
                 <path d='M4 4.75h12v8.5H9l-3.8 2.5v-2.5H4z' />
                 <path d='M7 8h6M7 10.5h4' />
               </svg>
-              {communityCtaLabel}
+              {communityCopy.cta}
             </a>
             <div className='nav-community-benefits-card'>
               <ul>
-                {communityBenefits.map((benefit) => (
+                {communityCopy.benefits.map((benefit) => (
                   <li key={benefit}>
                     <span className='nav-community-benefits-dot' aria-hidden='true' />
                     <span>{benefit}</span>
