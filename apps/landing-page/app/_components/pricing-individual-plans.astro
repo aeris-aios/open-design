@@ -8,6 +8,7 @@ import {
 } from '../_lib/pricing';
 import {
   CREDIT_BONUS_PCT,
+  fillTemplate,
   getPricingContent,
   type PlanTierId,
 } from '../_lib/pricing-content';
@@ -15,9 +16,9 @@ import { getCatalogCounts } from '../_lib/catalog';
 import { localeFromPath } from '../i18n';
 
 const locale = localeFromPath(Astro.url.pathname);
-const isZh = locale === 'zh' || locale === 'zh-tw';
 const content = getPricingContent(locale);
 const L = content.labels;
+const P = content.personal;
 const tiers = PRICING_SNAPSHOT.tiers;
 const catalogCounts = await getCatalogCounts(locale);
 const skillsCount = catalogCounts.skills.toLocaleString('en-US');
@@ -32,33 +33,32 @@ interface ModelItem {
   iconClass?: string;
 }
 
-const LOBE_ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-svg@latest/icons';
 const DEMO_ASSET_BASE = '/pricing-e-final/assets';
 
 const popularModels: ModelItem[] = [
-  { name: 'DeepSeek V4 Flash', icon: `${LOBE_ICON_BASE}/deepseek.svg` },
+  { name: 'DeepSeek V4 Flash', icon: '/agents/deepseek.svg' },
   { name: 'GLM-5.2', icon: `${DEMO_ASSET_BASE}/zai-logo-official-Byn-xbrp.png`, iconClass: 'model-logo-zhipu' },
-  { name: 'Kimi K2.7 Code', icon: `${LOBE_ICON_BASE}/kimi.svg`, iconClass: 'model-logo-kimi' },
-  { name: 'DeepSeek V4 Pro', icon: `${LOBE_ICON_BASE}/deepseek.svg` },
-  { name: 'MiniMax M2.7', icon: `${LOBE_ICON_BASE}/minimax.svg` },
-  { name: 'Kimi K2.6', icon: `${LOBE_ICON_BASE}/kimi.svg`, iconClass: 'model-logo-kimi' },
+  { name: 'Kimi K2.7 Code', icon: '/agents/moonshot.svg', iconClass: 'model-logo-kimi' },
+  { name: 'DeepSeek V4 Pro', icon: '/agents/deepseek.svg' },
+  { name: 'MiniMax M2.7', icon: '/agents/minimax.svg' },
+  { name: 'Kimi K2.6', icon: '/agents/moonshot.svg', iconClass: 'model-logo-kimi' },
   { name: 'MiMo V2.5 Pro', icon: `${DEMO_ASSET_BASE}/mimo-logo-user-CWOWEwG5.png`, iconClass: 'model-logo-mimo' },
   { name: 'GLM-5.1', icon: `${DEMO_ASSET_BASE}/zai-logo-official-Byn-xbrp.png`, iconClass: 'model-logo-zhipu' },
 ];
 
 const flagshipModels: ModelItem[] = [
-  { name: 'Claude Fable 5', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'Kimi-K3', icon: `${LOBE_ICON_BASE}/kimi.svg`, iconClass: 'model-logo-kimi' },
-  { name: 'GPT-5.6-Sol', icon: `${LOBE_ICON_BASE}/openai.svg` },
-  { name: 'Claude Opus 5', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'GPT-5.5-Pro', icon: `${LOBE_ICON_BASE}/openai.svg` },
-  { name: 'Claude Opus 4.7', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'Claude Opus 4.8', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'Claude Sonnet 5', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'Claude Opus 4.6', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'Claude Sonnet 4.6', icon: `${LOBE_ICON_BASE}/claude.svg` },
-  { name: 'GPT-5.5', icon: `${LOBE_ICON_BASE}/openai.svg` },
-  { name: 'Grok-4.5', icon: `${LOBE_ICON_BASE}/grok.svg` },
+  { name: 'Claude Fable 5', icon: '/agents/anthropic.svg' },
+  { name: 'Kimi-K3', icon: '/agents/moonshot.svg', iconClass: 'model-logo-kimi' },
+  { name: 'GPT-5.6-Sol', icon: '/agents/openai.svg' },
+  { name: 'Claude Opus 5', icon: '/agents/anthropic.svg' },
+  { name: 'GPT-5.5-Pro', icon: '/agents/openai.svg' },
+  { name: 'Claude Opus 4.7', icon: '/agents/anthropic.svg' },
+  { name: 'Claude Opus 4.8', icon: '/agents/anthropic.svg' },
+  { name: 'Claude Sonnet 5', icon: '/agents/anthropic.svg' },
+  { name: 'Claude Opus 4.6', icon: '/agents/anthropic.svg' },
+  { name: 'Claude Sonnet 4.6', icon: '/agents/anthropic.svg' },
+  { name: 'GPT-5.5', icon: '/agents/openai.svg' },
+  { name: 'Grok-4.5', icon: '/agents/xai.svg' },
 ];
 
 const plusFlagshipModels = flagshipModels.filter(
@@ -66,9 +66,9 @@ const plusFlagshipModels = flagshipModels.filter(
 );
 
 const imageModels: ModelItem[] = [
-  { name: 'Seedream 5 Lite / Pro', icon: `${LOBE_ICON_BASE}/jimeng.svg` },
-  { name: 'Nano Banana 2', icon: `${LOBE_ICON_BASE}/nanobanana.svg`, iconClass: 'model-logo-nanobanana' },
-  { name: 'GPT Image 2', icon: `${LOBE_ICON_BASE}/openai.svg` },
+  { name: 'Seedream 5 Lite / Pro', icon: '/model-icons/bytedance.svg' },
+  { name: 'Nano Banana 2', icon: '/agents/gemini.svg', iconClass: 'model-logo-nanobanana' },
+  { name: 'GPT Image 2', icon: '/agents/openai.svg' },
 ];
 
 const unlimitedByTier: Record<TierId, Set<string>> = {
@@ -105,115 +105,55 @@ const popularOrderForTier = (tier: TierId) => {
   );
 };
 
-const tierTaglines: Record<TierId, string> = isZh
-  ? {
-      go: '轻量需求 · 轻松交付',
-      plus: '日常设计 · 持续交付',
-      pro: '复杂项目 · 高效生产',
-      max: '重度创作 · 稳定高产',
-    }
-  : {
-      go: 'Light needs · Easy delivery',
-      plus: 'Everyday design · Continuous delivery',
-      pro: 'Complex projects · Efficient production',
-      max: 'High-volume creation · Consistent output',
-    };
+const renderCatalogLabel = (label: string) => fillTemplate(label, {
+  skillsCount,
+  systemsCount,
+});
 
-const tierBenefits: Record<TierId, string[]> = isZh
-  ? {
-      go: [
-        '3 个热门模型无限使用',
-        '2 个并发任务',
-        '支持 5 个自定义域名',
-        '自带 API Key',
-        '零配置专业设计 Agent',
-        `${skillsCount}+ Skills 工作流`,
-        `${systemsCount}+ Design Systems`,
-        '邮件支持',
-      ],
-      plus: [
-        '$20 模型额度 / 月',
-        '加赠：4 个热门模型无限使用',
-        '支持 10 个自定义域名',
-        '2 个并发任务',
-        '自带 API Key',
-        '零配置专业设计 Agent',
-        `${skillsCount}+ Skills 工作流`,
-        `${systemsCount}+ Design Systems`,
-        '邮件支持',
-      ],
-      pro: [
-        '$120 模型额度 / 月',
-        '加赠：5 个热门模型无限使用',
-        '支持 40 个自定义域名',
-        '5 个并发任务',
-        '自带 API Key',
-        '零配置专业设计 Agent',
-        `${skillsCount}+ Skills 工作流`,
-        `${systemsCount}+ Design Systems`,
-        '优先邮件支持',
-      ],
-      max: [
-        '$300 模型额度 / 月',
-        '加赠：8 个热门模型无限使用',
-        '自定义域名无限量',
-        '10 个并发任务',
-        '自带 API Key',
-        '零配置专业设计 Agent',
-        `${skillsCount}+ Skills 工作流`,
-        `${systemsCount}+ Design Systems`,
-        '高峰优先算力 · 更低时延',
-        '专属客户成功',
-        '创作者 / 开发者支持',
-      ],
-    }
-  : {
-      go: [
-        '3 popular models unlimited',
-        '2 concurrent tasks',
-        '5 custom domains',
-        'Bring your own API key',
-        'Zero-setup professional design Agent',
-        `${skillsCount}+ Skills workflows`,
-        `${systemsCount}+ Design Systems`,
-        'Email support',
-      ],
-      plus: [
-        '$20 model credits / mo',
-        'Bonus: 4 popular models unlimited',
-        '10 custom domains',
-        '2 concurrent tasks',
-        'Bring your own API key',
-        'Zero-config professional design agent',
-        `${skillsCount}+ Skills workflows`,
-        `${systemsCount}+ Design Systems`,
-        'Email support',
-      ],
-      pro: [
-        '$120 model credits / mo',
-        'Bonus: 5 popular models unlimited',
-        '40 custom domains',
-        '5 concurrent tasks',
-        'Bring your own API key',
-        'Zero-config professional design agent',
-        `${skillsCount}+ Skills workflows`,
-        `${systemsCount}+ Design Systems`,
-        'Priority email support',
-      ],
-      max: [
-        '$300 model credits / mo',
-        'Bonus: 8 popular models unlimited',
-        'Unlimited custom domains',
-        '10 concurrent tasks',
-        'Bring your own API key',
-        'Zero-config professional design agent',
-        `${skillsCount}+ Skills workflows`,
-        `${systemsCount}+ Design Systems`,
-        'Peak-time priority compute · lower latency',
-        'Dedicated customer success',
-        'Creator / developer support',
-      ],
-    };
+const tierCopy = {
+  go: content.go,
+  ...content.plans,
+};
+const tierTaglines: Record<TierId, string> = {
+  go: content.go.tagline,
+  plus: content.plans.plus.tagline,
+  pro: content.plans.pro.tagline,
+  max: content.plans.max.tagline,
+};
+
+const customDomainsByTier: Record<PlanTierId, number | null> = {
+  plus: 10,
+  pro: 40,
+  max: null,
+};
+const paidTierBenefits = (tier: PlanTierId) => {
+  const config = tiers.find((candidate) => candidate.tier === tier)!;
+  const plan = content.plans[tier];
+  const customDomains = customDomainsByTier[tier];
+  return [
+    fillTemplate(L.creditBenefit, { amount: formatUsd(config.monthly.grantUsd) }),
+    fillTemplate(P.unlimitedPopularModels, { count: String(unlimitedByTier[tier].size) }),
+    customDomains == null
+      ? P.unlimitedCustomDomains
+      : fillTemplate(P.customDomains, { count: String(customDomains) }),
+    plan.concurrency,
+    P.bringYourOwnApiKey,
+    ...plan.features,
+    ...(tier === 'max' ? [P.creatorDeveloperSupport] : []),
+  ].map(renderCatalogLabel);
+};
+const tierBenefits: Record<TierId, string[]> = {
+  go: [
+    content.go.allowance,
+    P.goConcurrency,
+    fillTemplate(P.customDomains, { count: '5' }),
+    ...content.go.features,
+    ...content.plans.plus.features.slice(1),
+  ].map(renderCatalogLabel),
+  plus: paidTierBenefits('plus'),
+  pro: paidTierBenefits('pro'),
+  max: paidTierBenefits('max'),
+};
 
 function individualView(tier: PlanTierConfig) {
   const yearlyEquivalent = Math.round(tier.yearly.priceUsd / 12);
@@ -227,16 +167,19 @@ function individualView(tier: PlanTierConfig) {
       strike: formatUsd(tier.monthly.priceUsd),
       discount: introDiscount,
       saving: formatUsd(tier.monthly.priceUsd - tier.monthly.introPriceUsd),
-      billed: isZh
-        ? `次月起 ${formatUsd(tier.monthly.priceUsd)}`
-        : `Then ${formatUsd(tier.monthly.priceUsd)}`,
+      billed: fillTemplate(L.monthlyRenewal, {
+        amountUsd: formatUsd(tier.monthly.priceUsd),
+      }),
     },
     yearly: {
       amount: formatUsd(yearlyEquivalent).replace('$', ''),
       strike: formatUsd(tier.monthly.priceUsd),
       discount: tier.yearly.discountPct,
       saving: formatUsd(yearlySave),
-      billed: formatUsd(tier.yearly.priceUsd),
+      billed: fillTemplate(L.yearlySubline, {
+        totalUsd: formatUsd(tier.yearly.priceUsd),
+        savingsUsd: formatUsd(yearlySave),
+      }),
     },
   };
 }
@@ -255,16 +198,19 @@ const goView = {
     strike: formatUsd(GO_PLAN.monthly.priceUsd),
     discount: goMonthlyDiscount,
     saving: formatUsd(GO_PLAN.monthly.priceUsd - GO_PLAN.monthly.introPriceUsd),
-    billed: isZh
-      ? `次月起 ${formatUsd(GO_PLAN.monthly.priceUsd)}`
-      : `Then ${formatUsd(GO_PLAN.monthly.priceUsd)}`,
+    billed: fillTemplate(L.monthlyRenewal, {
+      amountUsd: formatUsd(GO_PLAN.monthly.priceUsd),
+    }),
   },
   yearly: {
     amount: formatUsd(goYearlyEquivalent).replace('$', ''),
     strike: formatUsd(GO_PLAN.monthly.priceUsd),
     discount: goYearlyDiscount,
     saving: formatUsd(goYearlySave),
-    billed: formatUsd(GO_PLAN.yearly.priceUsd),
+    billed: fillTemplate(L.yearlySubline, {
+      totalUsd: formatUsd(GO_PLAN.yearly.priceUsd),
+      savingsUsd: formatUsd(goYearlySave),
+    }),
   },
 };
 
@@ -321,37 +267,42 @@ const comparisonFlagship = [
 
 const categoryCopy: Record<ModelCategory, { title: string; count: string }> = {
   popular: {
-    title: isZh ? '热门模型' : 'Popular models',
-    count: isZh ? '8 个模型' : '8 models',
+    title: P.popularModels,
+    count: fillTemplate(P.modelCount, { count: '8' }),
   },
   flagship: {
-    title: isZh ? '旗舰模型' : 'Flagship models',
-    count: isZh ? '12 个模型' : '12 models',
+    title: P.flagshipModels,
+    count: fillTemplate(P.modelCount, { count: '12' }),
   },
   image: {
-    title: isZh ? '图片模型' : 'Image models',
-    count: isZh ? '3 个模型' : '3 models',
+    title: P.imageModels,
+    count: fillTemplate(P.modelCount, { count: '3' }),
   },
 };
 
 function popularAccessStatus(modelName: string, tier: TierId) {
   if (unlimitedByTier[tier].has(modelName)) {
-    return { kind: 'unlimited', text: isZh ? '无限量' : 'Unlimited' };
+    return { kind: 'unlimited', text: P.unlimited };
   }
-  if (tier === 'go') return { kind: 'ample', text: isZh ? '充裕额度' : 'Ample' };
-  return { kind: 'more-ample', text: isZh ? '更充裕' : 'More ample' };
+  if (tier === 'go') return { kind: 'ample', text: P.ample };
+  return { kind: 'more-ample', text: P.moreAmple };
 }
 
 function accessStatus(category: ModelCategory, modelName: string, tier: TierId) {
   if (category === 'image') {
-    if (tier === 'go') return { kind: 'unavailable', text: isZh ? '不支持' : 'Not available' };
-    return { kind: 'resolution', text: `Up to ${tier === 'plus' ? '1K' : tier === 'pro' ? '2K' : '4K'}` };
+    if (tier === 'go') return { kind: 'unavailable', text: P.notAvailable };
+    return {
+      kind: 'resolution',
+      text: fillTemplate(P.upToResolution, {
+        resolution: tier === 'plus' ? '1K' : tier === 'pro' ? '2K' : '4K',
+      }),
+    };
   }
   if (category === 'flagship') {
     const unavailable = tier === 'go' || (tier === 'plus' && ['Claude Fable 5', 'Claude Opus 5', 'GPT-5.5-Pro'].includes(modelName));
     return unavailable
-      ? { kind: 'unavailable', text: isZh ? '不支持' : 'Not available' }
-      : { kind: 'included', text: isZh ? '已包含' : 'Included' };
+      ? { kind: 'unavailable', text: P.notAvailable }
+      : { kind: 'included', text: P.included };
   }
   return popularAccessStatus(modelName, tier);
 }
@@ -359,7 +310,15 @@ function accessStatus(category: ModelCategory, modelName: string, tier: TierId) 
 const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-Max, GPT-5.3-Codex, Gemini 3 Flash, GPT-5.4 mini, GPT-5.6-Luna, Kimi-K2.5, GLM-5';
 ---
 
-<section class="demo-individual-pricing" data-demo-pricing data-benefits-expanded="false">
+<section
+  class="demo-individual-pricing"
+  data-demo-pricing
+  data-benefits-expanded="false"
+  data-view-all-label={P.viewAll}
+  data-show-less-label={P.showLess}
+  data-view-more-benefits-label={P.viewMoreBenefits}
+  data-show-fewer-benefits-label={P.showFewerBenefits}
+>
   <div class="benefits-summary-stage">
     <div class="four-tier-grid decision-grid">
       {cardData.map(({ tier, logo, view }) => {
@@ -369,8 +328,8 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
         const bonusPct = tier === 'go' ? null : CREDIT_BONUS_PCT[tier];
         return (
           <article class:list={['pricing-card', 'decision-card', 'compact-tier-card', `plan-${tier}`, { 'new-plan-card recommended': tier === 'pro' || tier === 'max' }]} data-tier={tier}>
-            {tier === 'pro' && <div class="new-plan-ribbon"><span>{isZh ? '最受欢迎' : 'MOST POPULAR'}</span></div>}
-            {tier === 'max' && <div class="new-plan-ribbon"><span>{isZh ? '最低单位价格' : 'LOWEST UNIT PRICE'}</span></div>}
+            {tier === 'pro' && <div class="new-plan-ribbon"><span>{P.mostPopular}</span></div>}
+            {tier === 'max' && <div class="new-plan-ribbon"><span>{P.lowestUnitPrice}</span></div>}
 
             <header class="plan-top">
               <div class="plan-title-row">
@@ -386,8 +345,8 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   )}
                 </div>
                 <div class="plan-badges">
-                  <span class="discount-corner-badge" data-when="monthly">{view.monthly.discount}% OFF</span>
-                  <span class="discount-corner-badge" data-when="yearly">{view.yearly.discount}% OFF</span>
+                  <span class="discount-corner-badge" data-when="monthly">{fillTemplate(L.firstMonthTag, { pct: String(view.monthly.discount) })}</span>
+                  <span class="discount-corner-badge" data-when="yearly">{fillTemplate(L.yearlyDiscountTag, { pct: String(view.yearly.discount) })}</span>
                 </div>
               </div>
               <p>{tierTaglines[tier]}</p>
@@ -397,24 +356,27 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
               <span>$</span><strong class="rolling-price-number">{view.monthly.amount}</strong><small>{L.perMonth}</small><del>{view.monthly.strike}</del>
             </div>
             <div class="compact-price-detail" data-when="monthly">
-              <span class="price-savings-note">{isZh ? '省' : 'Save'} {view.monthly.saving}</span>
+              <span class="price-savings-note">{fillTemplate(P.saveAmount, { amount: view.monthly.saving })}</span>
               <small>{view.monthly.billed}</small>
             </div>
             <div class="price" data-when="yearly">
               <span>$</span><strong class="rolling-price-number">{view.yearly.amount}</strong><small>{L.perMonth}</small><del>{view.yearly.strike}</del>
             </div>
             <div class="compact-price-detail" data-when="yearly">
-              <span class="price-savings-note">{isZh ? '省' : 'Save'} {view.yearly.saving}</span>
-              <small>{isZh ? `年付 ${view.yearly.billed}` : `Billed ${view.yearly.billed}/year`}</small>
+              <span class="price-savings-note">{fillTemplate(P.saveAmount, { amount: view.yearly.saving })}</span>
+              <small>{view.yearly.billed}</small>
             </div>
 
-            <a class="pricing-card-cta" href={cloudSubscribeUrl(tier, 'yearly')} data-pricing-cta data-tier={tier}>Subscribe</a>
+            <a class="pricing-card-cta" href={cloudSubscribeUrl(tier, 'yearly')} data-pricing-cta data-tier={tier}>
+              <span data-when="monthly">{tierCopy[tier].ctaLabel} · {L.monthly}</span>
+              <span data-when="yearly">{tierCopy[tier].ctaLabel} · {L.yearly}</span>
+            </a>
 
             <div class="plan-feature-details">
               <div class="plan-model-modules">
                 <section class="plan-model-module unlimited-module" data-model-module>
                   <header>
-                    <h4>{unlimitedByTier[tier].size} {isZh ? '个热门模型无限使用' : 'popular models unlimited'}</h4>
+                    <h4>{fillTemplate(P.unlimitedPopularModels, { count: String(unlimitedByTier[tier].size) })}</h4>
                   </header>
                   <ul>
                     {popular.map((model) => {
@@ -429,14 +391,14 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                     })}
                   </ul>
                   <button type="button" class="model-module-toggle" aria-expanded="false" data-module-toggle data-total={popular.length}>
-                    <span>{isZh ? `查看全部 ${popular.length} 个` : `View all ${popular.length}`}</span><span class="toggle-symbol">+</span>
+                    <span>{fillTemplate(P.viewAll, { count: String(popular.length) })}</span><span class="toggle-symbol">+</span>
                   </button>
                 </section>
 
                 <section class:list={['plan-model-module', { 'unavailable-model-module': tier === 'go', 'recommended-model-module': tier === 'pro' || tier === 'max' }]} data-model-module>
                   <header>
-                    <h4>{tier === 'go' ? (isZh ? '旗舰模型' : 'Flagship models') : `${flagship.length}+ ${isZh ? '个旗舰模型' : 'flagship models'}`}</h4>
-                    {tier === 'go' && <span>{isZh ? '不可用' : 'No access'}</span>}
+                    <h4>{tier === 'go' ? P.flagshipModels : `${fillTemplate(P.modelCount, { count: `${flagship.length}+` })} · ${P.flagshipModels}`}</h4>
+                    {tier === 'go' && <span>{P.noAccess}</span>}
                   </header>
                   <ul>
                     {flagship.map((model) => (
@@ -446,18 +408,18 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                     ))}
                   </ul>
                   <button type="button" class="model-module-toggle" aria-expanded="false" data-module-toggle data-total={flagship.length}>
-                    <span>{isZh ? `查看全部 ${flagship.length} 个` : `View all ${flagship.length}`}</span><span class="toggle-symbol">+</span>
+                    <span>{fillTemplate(P.viewAll, { count: String(flagship.length) })}</span><span class="toggle-symbol">+</span>
                   </button>
                 </section>
 
                 <section class:list={['plan-model-module', 'multimodal-model-module', { 'unavailable-model-module': tier === 'go', 'recommended-model-module': tier === 'pro' || tier === 'max' }]}>
-                  <header><h4>{isZh ? '图片模型' : 'Image models'}</h4><span>{tier === 'go' ? (isZh ? '不可用' : 'No access') : isZh ? '3 个模型' : '3 models'}</span></header>
+                  <header><h4>{P.imageModels}</h4><span>{tier === 'go' ? P.noAccess : fillTemplate(P.modelCount, { count: '3' })}</span></header>
                   <ul>
                     {imageModels.map((model) => (
                       <li class="model-with-status">
                         <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
                         <span>{model.name}</span>
-                        {tier !== 'go' && <em class="multimodal-status">UP TO {imageResolution}</em>}
+                        {tier !== 'go' && <em class="multimodal-status">{fillTemplate(P.upToResolution, { resolution: imageResolution })}</em>}
                       </li>
                     ))}
                   </ul>
@@ -472,7 +434,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       {benefit}
                       {bonusPct != null && index === 0 && (
                         <span class="bonus-benefit">
-                          <span>{isZh ? `限时额外 +${bonusPct}%` : `Limited +${bonusPct}% bonus`}</span>
+                          <span>{fillTemplate(L.creditBonus, { pct: String(bonusPct) })}</span>
                         </span>
                       )}
                     </span>
@@ -486,7 +448,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     </div>
     <div class="shared-benefits-toggle-wrap">
       <button type="button" class="shared-benefits-toggle" aria-expanded="false" data-benefits-toggle>
-        <span>{isZh ? '查看更多权益' : 'View more benefits'}</span><span class="shared-benefits-chevron" aria-hidden="true"></span>
+        <span>{P.viewMoreBenefits}</span><span class="shared-benefits-chevron" aria-hidden="true"></span>
       </button>
     </div>
   </div>
@@ -494,12 +456,12 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   <section class="individual-usage-module" aria-labelledby="individual-usage-title" data-usage-module>
     <div class="individual-usage-heading">
       <div>
-        <h2 id="individual-usage-title">{isZh ? '热门模型无限使用' : 'Unlimited popular models'}</h2>
-        <p>{isZh ? '每 5 小时预估可用次数' : 'Estimated requests every 5 hours'}</p>
+        <h2 id="individual-usage-title">{P.usageTitle}</h2>
+        <p>{P.estimatedRequests}</p>
       </div>
     </div>
     <div class="individual-usage-surface">
-      <div class="individual-usage-chart" role="table" aria-label={isZh ? '模型每 5 小时预估请求数' : 'Estimated model requests every 5 hours'}>
+      <div class="individual-usage-chart" role="table" aria-label={P.estimatedRequestsAria}>
         {usageRows.map((row, index) => (
           <div class="individual-usage-row" role="row">
             <div class="individual-usage-model" role="cell">
@@ -517,27 +479,27 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
       </div>
     </div>
     <div class="individual-usage-note">
-      <p>{isZh ? '热门模型提供充足额度，大致相当于每 5 小时 $16 · 每周 $40 · 每月 $80。实际用量因模型和上下文长度而异。' : 'Popular models include ample allowance, roughly equivalent to $16 every 5 hours · $40 weekly · $80 monthly. Actual usage varies by model and context length.'}</p>
-      <p>{isZh ? 'DeepSeek V4 Flash / Pro 按非高峰价格估算；高峰时段（北京时间 09:00–12:00、14:00–18:00）单位消耗 ×2。' : 'DeepSeek V4 Flash / Pro estimates use off-peak pricing; unit usage counts ×2 during peak hours (Beijing time 09:00–12:00 and 14:00–18:00).'}</p>
-      <p>{isZh ? '各模型的预估次数可能随模型价格与用户使用与反馈情况调整。' : 'Estimated request counts by model may change with model pricing, usage patterns, and user feedback.'}</p>
+      <p>{P.usageAllowanceNote}</p>
+      <p>{P.usagePeakNote}</p>
+      <p>{P.usageEstimatesNote}</p>
     </div>
   </section>
 
   <section class="all-models-comparison" aria-labelledby="all-models-title">
-    <div class="all-models-heading"><h2 id="all-models-title">{isZh ? '对比各套餐的全部模型' : 'Compare every model across plans'}</h2></div>
+    <div class="all-models-heading"><h2 id="all-models-title">{P.comparisonTitle}</h2></div>
     <div class="model-compare-shell">
       <div class="model-compare-scroll">
         <table class="model-compare-table">
           <thead>
             <tr>
-              <th class="category-column">{isZh ? '分类' : 'Category'}</th>
-              <th class="model-column">{isZh ? '模型' : 'Model'}</th>
+              <th class="category-column">{P.category}</th>
+              <th class="model-column">{P.model}</th>
               {(['go', 'plus', 'pro', 'max'] as TierId[]).map((tier) => (
                 <th>
                   {tier === 'go' ? (
                     <svg class="comparison-wordmark plan-go-wordmark" viewBox="0 0 88 49" role="img" aria-label="go"><path d="M1 2.5h63c12 0 21.5 9.8 21.5 22S76 46.5 64 46.5H1" /><path d="M29 17c-2.4-3.6-6.4-5.5-11.4-5.5C8.8 11.5 2 17 2 24.5s6.8 13 15.6 13c5.7 0 10-2.3 12.3-6.5v-7H17.5" /><ellipse cx="50.5" cy="24.5" rx="12.5" ry="13" /></svg>
                   ) : <img src={`/pricing/plan-${tier}.svg`} alt={tier} />}
-                  <small>{isZh ? ({ go: '轻量使用', plus: '独立创作', pro: '最受欢迎', max: '高频生产' }[tier]) : ({ go: 'Light use', plus: 'Independent', pro: 'Most popular', max: 'High volume' }[tier])}</small>
+                  <small>{P.tierUse[tier]}</small>
                 </th>
               ))}
             </tr>
@@ -554,7 +516,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                     <th class="model-group-cell" rowspan={models.length} scope="rowgroup">
                       <span class="model-group-title">
                         <span>{categoryCopy[category].title}</span>
-                        {category === 'popular' && <button type="button" class="model-group-help" aria-label={isZh ? '查看热门模型额度说明' : 'About popular model allowance'}>?</button>}
+                        {category === 'popular' && <button type="button" class="model-group-help" aria-label={P.aboutPopularAllowance}>?</button>}
                       </span>
                       <small>{categoryCopy[category].count}</small>
                     </th>
@@ -571,9 +533,9 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
         </table>
       </div>
       <div class="other-models-note">
-        <h3>{isZh ? '其他可用模型' : 'Other available models'}</h3>
+        <h3>{P.otherModelsTitle}</h3>
         <p class="other-models-list">{otherModels}</p>
-        <p>{isZh ? '旗舰及其他模型均按用量扣除每月模型额度，费用取决于模型和任务。Plus、Pro 和 Max 可在应用内任选。' : 'Flagship and other models use monthly credits and are billed by usage. Cost varies by model and task. Available to Plus, Pro, and Max in the app.'}</p>
+        <p>{P.otherModelsDescription}</p>
       </div>
     </div>
   </section>
@@ -1674,6 +1636,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
 <script>
   document.querySelectorAll<HTMLElement>('[data-demo-pricing]').forEach((root) => {
+    const fillCount = (template: string, count: string) => template.replace('{count}', count);
     root.querySelectorAll<HTMLButtonElement>('[data-module-toggle]').forEach((button) => {
       button.addEventListener('click', () => {
         const module = button.closest<HTMLElement>('[data-model-module]');
@@ -1684,8 +1647,8 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
         const label = button.querySelector('span');
         const total = button.dataset.total ?? '';
         if (label) label.textContent = expanded
-          ? `${document.documentElement.lang.startsWith('zh') ? '收起' : 'Show less'}`
-          : `${document.documentElement.lang.startsWith('zh') ? `查看全部 ${total} 个` : `View all ${total}`}`;
+          ? root.dataset.showLessLabel ?? ''
+          : fillCount(root.dataset.viewAllLabel ?? '', total);
       });
     });
 
@@ -1709,9 +1672,9 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
       benefitsToggle.setAttribute('aria-expanded', String(expanded));
       root.dataset.benefitsExpanded = String(expanded);
       const label = benefitsToggle.querySelector('span');
-      if (label) label.textContent = document.documentElement.lang.startsWith('zh')
-        ? expanded ? '收起权益' : '查看更多权益'
-        : expanded ? 'Show fewer benefits' : 'View more benefits';
+      if (label) label.textContent = expanded
+        ? root.dataset.showFewerBenefitsLabel ?? ''
+        : root.dataset.viewMoreBenefitsLabel ?? '';
     });
   });
 </script>

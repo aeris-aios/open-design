@@ -17,7 +17,10 @@ import {
   PRICING_LOCALES,
   TEAM_PRICING_CONTENT_BY_LOCALE,
 } from "../app/_lib/pricing-team-content.ts";
-import { PREMIUM_MODELS } from "../app/_lib/pricing-content.ts";
+import {
+  PREMIUM_MODELS,
+  getPricingContent,
+} from "../app/_lib/pricing-content.ts";
 import { LANDING_LOCALES } from "../app/i18n.ts";
 import { DEEPSEEK_V4_PRO_CAMPAIGN } from "../app/_lib/deepseek-v4-pro-campaign.ts";
 
@@ -40,6 +43,16 @@ const GO_PLAN_ZHIPU_LOGO_PATH = new URL(
   "../public/pricing-e-final/assets/zai-logo-official-Byn-xbrp.png",
   import.meta.url,
 );
+const FIRST_PARTY_MODEL_ICON_PATHS = [
+  "../public/agents/anthropic.svg",
+  "../public/agents/deepseek.svg",
+  "../public/agents/gemini.svg",
+  "../public/agents/minimax.svg",
+  "../public/agents/moonshot.svg",
+  "../public/agents/openai.svg",
+  "../public/agents/xai.svg",
+  "../public/model-icons/bytedance.svg",
+].map((path) => new URL(path, import.meta.url));
 const CAMPAIGN_PATH = new URL(
   "../app/_lib/pricing-campaign-content.ts",
   import.meta.url,
@@ -106,7 +119,6 @@ describe("pricing contract", () => {
 
     assert.ok(mimoLogo.byteLength > 0);
     assert.ok(zhipuLogo.byteLength > 0);
-    assert.match(plans, /unpkg\.com\/@lobehub\/icons-static-svg@latest\/icons/);
     assert.match(plans, /mimo-logo-user-CWOWEwG5\.png/);
     assert.match(plans, /zai-logo-official-Byn-xbrp\.png/);
     assert.match(plans, /model-logo-(?:mimo|zhipu|nanobanana)/);
@@ -134,7 +146,7 @@ describe("pricing contract", () => {
       plans,
       /class="shared-benefits-toggle" aria-expanded="false" data-benefits-toggle/,
     );
-    assert.match(plans, /isZh \? '查看更多权益' : 'View more benefits'/);
+    assert.match(plans, /data-view-more-benefits-label=\{P\.viewMoreBenefits\}/);
     assert.doesNotMatch(plans, /'is-expanded': tier === 'go'/);
     assert.match(
       plans,
@@ -145,6 +157,28 @@ describe("pricing contract", () => {
       /\.individual-usage-meter b\s*\{[^}]*left:\s*clamp\(4px, calc\(2\.5769% - 10px\), 16px\);/s,
     );
     assert.doesNotMatch(plans, /--usage-label/);
+  });
+
+  it("serves the model comparison icons from first-party assets", async () => {
+    const [individualPlans, ...icons] = await Promise.all([
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
+      ...FIRST_PARTY_MODEL_ICON_PATHS.map((path) => readFile(path)),
+    ]);
+
+    for (const icon of icons) assert.ok(icon.byteLength > 0);
+    assert.doesNotMatch(individualPlans, /unpkg\.com|@latest/);
+    for (const asset of [
+      "/agents/anthropic.svg",
+      "/agents/deepseek.svg",
+      "/agents/gemini.svg",
+      "/agents/minimax.svg",
+      "/agents/moonshot.svg",
+      "/agents/openai.svg",
+      "/agents/xai.svg",
+      "/model-icons/bytedance.svg",
+    ]) {
+      assert.ok(individualPlans.includes(asset), asset);
+    }
   });
 
   it("replaces the Free entry card with the localized Go offer", async () => {
@@ -170,6 +204,21 @@ describe("pricing contract", () => {
     assert.match(page, /price: String\(GO_PLAN\.monthly\.priceUsd\)/);
     assert.match(individualPlans, /DeepSeek V4 Flash/);
     assert.match(individualPlans, /GLM-5\.1/);
+  });
+
+  it("renders the live Personal comparison from localized pricing content", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.equal(getPricingContent("zh").go.ctaLabel, "订阅 Go");
+    assert.equal(getPricingContent("ja").plans.pro.ctaLabel, "Pro にアップグレード");
+    assert.equal(getPricingContent("de").personal.upToResolution, "Bis zu {resolution}");
+    assert.equal(getPricingContent("fr").personal.viewMoreBenefits, "Voir plus d’avantages");
+    assert.match(individualPlans, /const P = content\.personal;/);
+    assert.match(individualPlans, /ctaLabel/);
+    assert.match(individualPlans, /P\.upToResolution/);
+    assert.doesNotMatch(individualPlans, /const isZh\s*=/);
+    assert.doesNotMatch(individualPlans, />Subscribe<\/a>/);
+    assert.doesNotMatch(individualPlans, />UP TO \{imageResolution\}<\/em>/);
   });
 
   it("keeps the Max wordmark readable on its dark card", async () => {
@@ -213,8 +262,11 @@ describe("pricing contract", () => {
     assert.match(individualPlans, /const catalogCounts = await getCatalogCounts\(locale\);/);
     assert.match(individualPlans, /const skillsCount = catalogCounts\.skills\.toLocaleString\('en-US'\);/);
     assert.match(individualPlans, /const systemsCount = catalogCounts\.systems\.toLocaleString\('en-US'\);/);
-    assert.match(individualPlans, /\$\{skillsCount\}\+ Skills/);
-    assert.match(individualPlans, /\$\{systemsCount\}\+ Design Systems/);
+    assert.match(
+      individualPlans,
+      /const renderCatalogLabel = \(label: string\) => fillTemplate\(label, \{\s*skillsCount,\s*systemsCount,/s,
+    );
+    assert.match(individualPlans, /\]\.map\(renderCatalogLabel\)/);
     assert.doesNotMatch(individualPlans, /162\+ Skills|151\+ Design Systems/);
   });
 

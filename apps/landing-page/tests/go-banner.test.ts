@@ -51,9 +51,12 @@ test('Go banner keeps its sticky height in flow without double-offsetting the mo
   assert.match(banner, /\.go-banner\s*\{[^}]*position:\s*sticky;/s);
   assert.match(
     banner,
-    /html\.go-banner-active\)\s*\{\s*--home-campaign-banner-height:\s*0px !important;/,
+    /html\.go-banner-active\),\s*:global\(html\.go-banner-pending\)\s*\{\s*--home-campaign-banner-height:\s*0px !important;/,
   );
-  assert.match(banner, /html\.go-banner-active \.site-chrome\)\s*\{\s*top:\s*48px;/);
+  assert.match(
+    banner,
+    /html\.go-banner-active \.site-chrome\),\s*:global\(html\.go-banner-pending \.site-chrome\)\s*\{\s*top:\s*48px;/,
+  );
   assert.doesNotMatch(banner, /html\.go-banner-active \.hero[^}]*padding-top/);
   assert.match(home, /\.hero\s*\{\s*padding-top:\s*calc\(92px \+ var\(--home-campaign-banner-height\)\);/);
 });
@@ -67,6 +70,16 @@ test('Go banner classifies signed-out and unpaid visitors during the fixed windo
   assert.match(banner, /tier === 'free' \|\| tier === 'none'/);
   assert.doesNotMatch(banner, /data-campaign-review-param|campaignPreview|previewEndAt/);
   assert.match(banner, /A failed entitlement probe cannot safely classify a signed-in visitor/);
+});
+
+test('Go banner suppresses DeepSeek while audience classification is pending', () => {
+  assert.match(banner, /document\.documentElement\.classList\.add\('go-banner-pending'\)/);
+  assert.match(banner, /html\.go-banner-pending \.home-campaign-banner/);
+  assert.match(banner, /html\.go-banner-pending \.site-chrome/);
+  assert.match(
+    banner,
+    /\.finally\(\(\) => document\.documentElement\.classList\.remove\('go-banner-pending'\)\)/,
+  );
 });
 
 test('Go banner uses the confirmed short copy and links to localized Pricing', () => {

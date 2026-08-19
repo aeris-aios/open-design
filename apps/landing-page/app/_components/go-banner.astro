@@ -118,9 +118,12 @@ const apiOrigin =
   }
   .go-banner__close:hover { color: #11120f; }
   .go-banner__close:focus-visible { outline: 3px solid rgb(17 18 15 / 28%); outline-offset: 1px; }
-  :global(html.go-banner-active) { --home-campaign-banner-height: 0px !important; }
-  :global(html.go-banner-active .home-campaign-banner) { display: none !important; }
-  :global(html.go-banner-active .site-chrome) { top: 48px; }
+  :global(html.go-banner-active),
+  :global(html.go-banner-pending) { --home-campaign-banner-height: 0px !important; }
+  :global(html.go-banner-active .home-campaign-banner),
+  :global(html.go-banner-pending .home-campaign-banner) { display: none !important; }
+  :global(html.go-banner-active .site-chrome),
+  :global(html.go-banner-pending .site-chrome) { top: 48px; }
   @media (max-width: 760px) {
     .go-banner {
       justify-content: flex-start;
@@ -153,6 +156,7 @@ const apiOrigin =
     try {
       if (window.localStorage.getItem(dismissKey) === '1') return;
     } catch (error) {}
+    document.documentElement.classList.add('go-banner-pending');
 
     const track = (name, extra) => {
       try {
@@ -167,7 +171,7 @@ const apiOrigin =
 
     const hide = () => {
       banner.setAttribute('hidden', '');
-      document.documentElement.classList.remove('go-banner-active');
+      document.documentElement.classList.remove('go-banner-active', 'go-banner-pending');
     };
     const show = () => {
       banner.removeAttribute('hidden');
@@ -185,7 +189,10 @@ const apiOrigin =
     });
 
     const apiOrigin = (banner.getAttribute('data-api-origin') || '').replace(/\/$/, '');
-    if (!apiOrigin) return;
+    if (!apiOrigin) {
+      document.documentElement.classList.remove('go-banner-pending');
+      return;
+    }
     fetch(apiOrigin + '/api/auth/get-session', {
       credentials: 'include',
       headers: { Accept: 'application/json' },
@@ -214,6 +221,7 @@ const apiOrigin =
       })
       .catch(() => {
         // A failed entitlement probe cannot safely classify a signed-in visitor.
-      });
+      })
+      .finally(() => document.documentElement.classList.remove('go-banner-pending'));
   })();
 </script>
