@@ -18,10 +18,8 @@ import {
   notifyArtifactDelivered,
 } from '../src/components/experience-survey-trigger';
 
-/** Puts the user one delivery short of qualifying, then delivers. */
-function deliverUntilArmed() {
+function deliverArtifact() {
   act(() => {
-    notifyArtifactDelivered();
     notifyArtifactDelivered();
   });
 }
@@ -51,10 +49,10 @@ afterEach(() => {
 });
 
 describe('experience survey card arming', () => {
-  it('shows the card once a second delivery survives the delay', () => {
+  it('shows the card once a delivery survives the delay', () => {
     render(<ExperienceSurvey metricsConsent />);
 
-    deliverUntilArmed();
+    deliverArtifact();
     // Still nothing: the delay exists so the user gets a beat with the
     // artifact before the card asks for attention.
     expect(card()).toBeNull();
@@ -66,7 +64,7 @@ describe('experience survey card arming', () => {
   it('drops the chance when the user starts typing during the delay', () => {
     render(<ExperienceSurvey metricsConsent />);
 
-    deliverUntilArmed();
+    deliverArtifact();
     typeSomething();
     passTheDelay();
 
@@ -76,14 +74,14 @@ describe('experience survey card arming', () => {
   it('takes the next delivery after a dropped one', () => {
     render(<ExperienceSurvey metricsConsent />);
 
-    deliverUntilArmed();
+    deliverArtifact();
     typeSomething();
     passTheDelay();
     expect(card()).toBeNull();
 
     // The user stopped typing and ran one more turn. A dropped chance must not
     // be a permanent one, or an iterating user is never asked at all.
-    act(() => { notifyArtifactDelivered(); });
+    deliverArtifact();
     passTheDelay();
     expect(card()).not.toBeNull();
   });
@@ -91,7 +89,7 @@ describe('experience survey card arming', () => {
   it('never arms without metrics consent', () => {
     render(<ExperienceSurvey metricsConsent={false} />);
 
-    deliverUntilArmed();
+    deliverArtifact();
     passTheDelay();
 
     expect(card()).toBeNull();

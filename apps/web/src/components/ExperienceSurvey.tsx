@@ -1,7 +1,7 @@
-// Experience survey (NPS). Armed by a delivered artifact — the second design
-// run that actually produces one — rendered globally from App.tsx so it
-// survives the project → home navigation, and retired permanently the moment
-// the user answers or closes it.
+// Experience survey (NPS). Armed by a delivered artifact — any design run that
+// actually produces one — rendered globally from App.tsx so it survives the
+// project → home navigation, and retired permanently the moment the user
+// answers or closes it.
 //
 // Two questions. The score is the metric and costs one tap; the follow-up asks
 // what to fix first and can be skipped. Anything longer was cut deliberately —

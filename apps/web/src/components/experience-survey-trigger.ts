@@ -14,19 +14,18 @@
 // it, got something, and left without exporting are exactly the ones worth
 // hearing from.
 //
-// Two qualifications:
+// One qualification: the run delivered. A run that only answered in text,
+// stopped to ask a clarifying question, or failed is not a product anyone can
+// judge. `resolveDesignDeliveryOutcome` already draws that line; this module
+// trusts its `delivered` verdict rather than re-deriving one.
 //
-//   1. The run delivered. A run that only answered in text, stopped to ask a
-//      clarifying question, or failed is not a product someone can judge.
-//      `resolveDesignDeliveryOutcome` already draws that line; this module
-//      trusts its `delivered` verdict rather than re-deriving one.
-//
-//   2. It is at least the user's SURVEY_MIN_DELIVERIES-th delivery. The first
-//      delivery measures a first impression, not an experience, and it lands
-//      at the one moment the user most wants to look at what they just got.
-//      Waiting for the second costs almost no reach — a user who produces one
-//      artifact almost always produces another (30-day average: ~13 each) —
-//      and buys an opinion formed on more than a single run.
+// The first delivery counts. Holding out for a second run would buy an opinion
+// formed on more than one artifact, but it would cost the answers of everyone
+// who produces once and leaves — and those are the users we understand least.
+// Asking early is affordable because the card is not an interruption: the
+// component waits out a delay and drops the chance entirely if the user starts
+// typing, so an early ask that lands badly costs a dropped chance, not a
+// derailed session.
 //
 // Frequency rule: once the user answers or closes the card, it never comes
 // back. A single dismissal is treated as a real answer to "do you want to be
@@ -35,8 +34,15 @@
 const RETIRED_KEY = 'open-design:experience-survey:v1:retired';
 const DELIVERY_COUNT_KEY = 'open-design:experience-survey:v1:deliveries';
 
-/** Deliveries a user must reach before the card may be armed. See note above. */
-export const SURVEY_MIN_DELIVERIES = 2;
+/**
+ * Deliveries a user must reach before the card may be armed. One, today: the
+ * threshold survives as the seam this policy is actually made of, and as the
+ * reason the counter below still earns its keep — a store that reads but
+ * cannot write leaves the count at zero, which reads as "not yet qualified".
+ * That matters because a store that cannot write cannot record a dismissal
+ * either, so without the counter the card would come back forever.
+ */
+export const SURVEY_MIN_DELIVERIES = 1;
 
 /** Breathing room after the artifact lands before the card animates in. */
 export const SURVEY_DELAY_MS = 3_000;
@@ -100,8 +106,8 @@ function recordDelivery(): number {
 
 /**
  * Called by the run path once a design run is confirmed delivered. Counts the
- * delivery first — the count has to advance on the first one too, or the
- * second can never arrive — and only then arms the card.
+ * delivery before checking the threshold, so the count is always the number of
+ * deliveries seen, not the number that happened to qualify.
  */
 export function notifyArtifactDelivered(): void {
   if (isSurveyRetired()) return;

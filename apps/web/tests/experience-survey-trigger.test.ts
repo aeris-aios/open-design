@@ -1,8 +1,8 @@
-// The survey's whole value is that it is asked once, at a defensible moment.
-// Both halves of that are enforced here rather than in the component: the
-// component can only render what the trigger arms, so an off-by-one in the
-// delivery count or a leak past `retired` is invisible until the card shows up
-// on someone's first run — or never shows up at all.
+// The survey's whole value is that it is asked once, after real work. Both
+// halves are enforced here rather than in the component: the component can
+// only render what the trigger arms, so a leak past `retired` or a count that
+// silently stops advancing is invisible until the card either follows a user
+// around forever or never shows up at all.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -53,14 +53,11 @@ afterEach(() => {
 });
 
 describe('experience survey delivery trigger', () => {
-  it('stays silent on the first delivery and arms on the second', () => {
+  it('arms on the very first delivery', () => {
     const listener = listen();
 
     notifyArtifactDelivered();
-    expect(listener).not.toHaveBeenCalled();
-    expect(deliveredCount()).toBe(1);
 
-    notifyArtifactDelivered();
     expect(listener).toHaveBeenCalledTimes(1);
     expect(deliveredCount()).toBe(SURVEY_MIN_DELIVERIES);
   });
@@ -71,10 +68,9 @@ describe('experience survey delivery trigger', () => {
     notifyArtifactDelivered();
     notifyArtifactDelivered();
     notifyArtifactDelivered();
-    notifyArtifactDelivered();
 
-    // Three arms from four deliveries: every delivery from the second on is a
-    // fresh chance, because the component drops the ones the user types over.
+    // Every delivery is a fresh chance, because the component drops the ones
+    // the user types over. Arming is not the same as showing.
     expect(listener).toHaveBeenCalledTimes(3);
   });
 
@@ -83,12 +79,13 @@ describe('experience survey delivery trigger', () => {
     useStorage(storage);
     notifyArtifactDelivered();
 
-    // Same store, new page load.
+    // Same store, new page load. The count is what makes an unwritable store
+    // read as "not yet qualified", so it has to survive the reload even though
+    // today's threshold is met on the first delivery.
     useStorage(storage);
-    const listener = listen();
     notifyArtifactDelivered();
 
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(deliveredCount()).toBe(2);
   });
 
   it('never arms again once retired, and stops counting', () => {
@@ -105,8 +102,9 @@ describe('experience survey delivery trigger', () => {
   });
 
   it('never arms when the store is unwritable', () => {
-    // Fail-closed: a count that cannot advance must read as "not yet
-    // qualified", never as "qualified every time".
+    // Fail-closed, and the reason the count still exists: a store that cannot
+    // write cannot record a dismissal either, so a card shown here would come
+    // back after every run with no way for the user to stop it.
     useStorage({
       getItem: () => null,
       setItem: () => { throw new Error('QuotaExceededError'); },
@@ -122,16 +120,17 @@ describe('experience survey delivery trigger', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
-  it('treats a corrupted count as zero rather than qualifying on it', () => {
+  it('restarts the count from zero when the stored value is corrupted', () => {
     const storage = createStorageStub();
     storage.setItem('open-design:experience-survey:v1:deliveries', 'not-a-number');
     useStorage(storage);
     const listener = listen();
 
     notifyArtifactDelivered();
-    expect(listener).not.toHaveBeenCalled();
 
-    notifyArtifactDelivered();
+    // Garbage in the store must not poison the count into NaN, which would
+    // compare false against the threshold forever.
     expect(listener).toHaveBeenCalledTimes(1);
+    expect(deliveredCount()).toBe(1);
   });
 });
