@@ -667,6 +667,19 @@ const StrategyTaskProjectionIdentityV2Schema = z.object({
   snapshotId: z.string().min(1),
 }).strict();
 
+/**
+ * Client-facing attribution for a blocked task projection: the protocol gate's
+ * reason codes plus the agent-visible text of the rejected turn (null when the
+ * turn had no visible text). Mirrors the daemon task store's persisted
+ * `blockedContext`; present only when the projected outcome is `blocked`, so
+ * the UI can terminate the turn's form interaction and explain why.
+ */
+const StrategyTaskBlockedContextV2Schema = z.object({
+  reasonCodes: z.array(z.string().min(1)).min(1),
+  visibleText: z.string().nullable(),
+}).strict();
+export type StrategyTaskBlockedContextV2 = z.infer<typeof StrategyTaskBlockedContextV2Schema>;
+
 export const StrategyTaskProjectionV2Schema = z.object({
   taskExecutionId: z.string().min(1),
   strategy: StrategyTaskProjectionIdentityV2Schema,
@@ -677,6 +690,7 @@ export const StrategyTaskProjectionV2Schema = z.object({
   activeRunId: z.string().min(1),
   nextRunId: z.string().min(1).optional(),
   terminal: z.boolean(),
+  blockedContext: StrategyTaskBlockedContextV2Schema.optional(),
 }).strict().superRefine((value, context) => {
   const isTerminalOutcome = ['completed', 'blocked', 'canceled'].includes(value.outcome);
   if (value.terminal !== isTerminalOutcome) {

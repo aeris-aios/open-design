@@ -68,6 +68,17 @@ export function projectStrategyTask(
     activeRunId: task.activeRunId ?? task.terminalRunId ?? task.latestRunId,
     ...(!terminal && nextRunId ? { nextRunId } : {}),
     terminal,
+    // A blocked outcome is a sticky terminal verdict: project its persisted
+    // attribution so clients can terminate form interaction and explain why,
+    // instead of letting the next clarification submit 409 blindly.
+    ...(task.outcome === 'blocked' && task.blockedContext
+      ? {
+          blockedContext: {
+            reasonCodes: [...task.blockedContext.reasonCodes],
+            visibleText: task.blockedContext.visibleText,
+          },
+        }
+      : {}),
   };
 }
 
