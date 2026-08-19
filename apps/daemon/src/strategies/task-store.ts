@@ -79,6 +79,7 @@ export interface StrategyTaskExecutionRecord {
   inputStage: StrategyInputStageV2;
   outcome: StrategyTaskOutcome;
   executionMode: StrategyExecutionModeV2 | null;
+  blockedContext?: StrategyTaskBlockedContext;
   planContract?: OpenDesignPlanContractV2;
   planContractHash?: string;
   clarificationCount: 0 | 1;
@@ -108,6 +109,16 @@ export interface CreateStrategyTaskExecutionInput {
   createdAt?: number;
 }
 
+/**
+ * Durable attribution for a blocked strategy task: the exact gate reason codes
+ * plus the agent-visible text of the turn that was rejected. Every blocked
+ * outcome must be diagnosable from the store alone, without live logs.
+ */
+export interface StrategyTaskBlockedContext {
+  reasonCodes: string[];
+  visibleText: string | null;
+}
+
 export interface StrategyTaskTransitionState {
   route: StrategyRouteV2;
   inputStage: StrategyInputStageV2;
@@ -125,6 +136,10 @@ export interface CompareAndTransitionStrategyTaskInput {
     finalText: string;
   };
   planContract?: OpenDesignPlanContractV2;
+  blockedContext?: {
+    reasonCodes: readonly string[];
+    visibleText?: string | null;
+  };
   updatedAt?: number;
 }
 
@@ -186,6 +201,8 @@ export function migrateStrategyTaskStore(db: SqliteDb): void {
       prompt_bundle_utf8_bytes INTEGER,
       prompt_bundle_sha256 TEXT,
       frozen_input_identity_json TEXT,
+      blocked_reason_codes_json TEXT,
+      blocked_visible_text TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -220,6 +237,8 @@ export function migrateStrategyTaskStore(db: SqliteDb): void {
   addColumnIfMissing(db, 'strategy_task_executions', 'prompt_bundle_utf8_bytes INTEGER');
   addColumnIfMissing(db, 'strategy_task_executions', 'prompt_bundle_sha256 TEXT');
   addColumnIfMissing(db, 'strategy_task_executions', 'frozen_input_identity_json TEXT');
+  addColumnIfMissing(db, 'strategy_task_executions', 'blocked_reason_codes_json TEXT');
+  addColumnIfMissing(db, 'strategy_task_executions', 'blocked_visible_text TEXT');
   addColumnIfMissing(db, 'strategy_task_runs', 'final_text_kind TEXT');
   addColumnIfMissing(db, 'strategy_task_runs', 'final_text_schema TEXT');
   addColumnIfMissing(db, 'strategy_task_runs', 'final_text TEXT');
@@ -459,11 +478,21 @@ export function compareAndTransitionStrategyTaskExecution(
       );
     }
 
+    if (input.blockedContext && next.outcome !== 'blocked') {
+      throw new InvalidStrategyTaskTransitionError(
+        'Blocked attribution is only valid when transitioning to blocked.',
+      );
+    }
+    const blockedContext = next.outcome === 'blocked'
+      ? normalizeBlockedContext(input.blockedContext)
+      : null;
+
     const result = db.prepare(`
       UPDATE strategy_task_executions
          SET revision = revision + 1,
              route = ?, input_stage = ?, outcome = ?, execution_mode = ?,
              plan_contract_json = ?, plan_contract_hash = ?,
+             blocked_reason_codes_json = ?, blocked_visible_text = ?,
              clarification_count = ?, plan_contract_repair_attempts = ?,
              latest_run_id = ?, updated_at = ?
        WHERE task_execution_id = ? AND revision = ?
@@ -474,6 +503,8 @@ export function compareAndTransitionStrategyTaskExecution(
       next.executionMode,
       plan.json,
       plan.hash,
+      blockedContext ? JSON.stringify(blockedContext.reasonCodes) : null,
+      blockedContext ? blockedContext.visibleText : null,
       clarificationCount,
       repairAttempts,
       nextRunId,
@@ -587,7 +618,8 @@ export function reconcileStrategyTaskRunTerminal(
       }
       const result = db.prepare(`
         UPDATE strategy_task_executions
-           SET revision = revision + 1, outcome = ?, updated_at = ?
+           SET revision = revision + 1, outcome = ?, updated_at = ?,
+               blocked_reason_codes_json = ?, blocked_visible_text = NULL
          WHERE task_execution_id = ? AND revision = ?
            AND latest_run_id = ? AND outcome = 'running'
       `).run(
@@ -596,6 +628,9 @@ export function reconcileStrategyTaskRunTerminal(
           current.updatedAt,
           normalizeTimestamp(input.updatedAt ?? Date.now(), 'updatedAt'),
         ),
+        input.status === 'canceled'
+          ? null
+          : JSON.stringify(['od_next_physical_run_interrupted']),
         current.taskExecutionId,
         current.revision,
         input.runId,
@@ -664,6 +699,11 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
   const outcome = parseOutcome(row['outcome']);
   const executionMode = parseNullableExecutionMode(row['execution_mode']);
   validateStoredState({ route, inputStage, outcome, executionMode });
+  const blockedContext = parseStoredBlockedContext(
+    row['blocked_reason_codes_json'],
+    row['blocked_visible_text'],
+    outcome,
+  );
   const plan = parseStoredPlanContract(row['plan_contract_json'], row['plan_contract_hash']);
   if (
     (inputStage === 'production' || outcome === 'plan_ready')
@@ -819,6 +859,7 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     inputStage,
     outcome,
     executionMode,
+    ...(blockedContext ? { blockedContext } : {}),
     ...(plan.contract ? { planContract: plan.contract } : {}),
     ...(plan.hash ? { planContractHash: plan.hash } : {}),
     clarificationCount,
@@ -833,6 +874,57 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     frozenInputIdentity,
     createdAt,
     updatedAt,
+  };
+}
+
+function normalizeBlockedContext(
+  input: CompareAndTransitionStrategyTaskInput['blockedContext'],
+): StrategyTaskBlockedContext | null {
+  if (!input) return null;
+  const reasonCodes = [...new Set(
+    input.reasonCodes.filter((code) => typeof code === 'string' && code.length > 0),
+  )];
+  if (reasonCodes.length === 0) return null;
+  const visibleText = typeof input.visibleText === 'string' && input.visibleText.trim().length > 0
+    ? input.visibleText
+    : null;
+  return { reasonCodes, visibleText };
+}
+
+function parseStoredBlockedContext(
+  reasonCodesJson: unknown,
+  visibleText: unknown,
+  outcome: StrategyTaskOutcome,
+): StrategyTaskBlockedContext | null {
+  if (reasonCodesJson == null) return null;
+  if (outcome !== 'blocked') {
+    throw new InvalidStrategyTaskRecordError(
+      'Blocked attribution is only valid on blocked strategy tasks.',
+    );
+  }
+  const raw = requireStoredString(reasonCodesJson, 'blocked_reason_codes_json');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new InvalidStrategyTaskRecordError(
+      'Persisted blocked reason codes must be valid JSON.',
+    );
+  }
+  if (
+    !Array.isArray(parsed)
+    || parsed.length === 0
+    || !parsed.every((code) => typeof code === 'string' && code.length > 0)
+  ) {
+    throw new InvalidStrategyTaskRecordError(
+      'Persisted blocked reason codes must be a non-empty string array.',
+    );
+  }
+  return {
+    reasonCodes: parsed,
+    visibleText: visibleText == null
+      ? null
+      : requireStoredString(visibleText, 'blocked_visible_text'),
   };
 }
 

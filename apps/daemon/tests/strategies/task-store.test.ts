@@ -1100,4 +1100,39 @@ describe('durable strategy task store', () => {
       expect(fs.readdirSync(path.join(tempDir, 'runs'))).toEqual([`run-${physicalStatus}`]);
     },
   );
+
+  it('persists blocked attribution when startup reconciliation interrupts a running Run', async () => {
+    const task = createTask(db, snapshot, 'run-interrupted');
+    closeDatabase();
+
+    const runDir = path.join(tempDir, 'runs', 'run-interrupted');
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: 'run-interrupted',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      agentId: AGENT_ID,
+      status: 'running',
+      createdAt: 100,
+      updatedAt: 200,
+      langfuseCompletedAt: 200,
+    }));
+
+    db = openDatabase(tempDir, { dataDir: tempDir });
+    await reconcileDurableRunTerminals({
+      analytics: { capture: vi.fn() },
+      appVersion: '0.18.2',
+      db,
+      reportLangfuse: vi.fn(),
+      runsLogDir: path.join(tempDir, 'runs'),
+    });
+
+    const persisted = getStrategyTaskExecution(db, task.taskExecutionId);
+    expect(persisted?.outcome).toBe('blocked');
+    expect(persisted?.blockedContext).toEqual({
+      reasonCodes: ['od_next_physical_run_interrupted'],
+      visibleText: null,
+    });
+  });
 });

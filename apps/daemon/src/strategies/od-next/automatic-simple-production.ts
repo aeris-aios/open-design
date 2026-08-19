@@ -552,6 +552,12 @@ export function blockAutomaticContinuation(db: SqliteDb, input: {
   const current = getStrategyTaskExecutionByRunId(db, input.runId);
   if (!current) return null;
   if (current.latestRunId !== input.runId || current.outcome !== 'running') return current;
+  console.warn('[od-next-task] blocked', {
+    taskExecutionId: current.taskExecutionId,
+    runId: input.runId,
+    inputStage: current.inputStage,
+    reasonCodes: ['od_next_native_session_continuity_unproven'],
+  });
   return compareAndTransitionStrategyTaskExecution(db, {
     taskExecutionId: current.taskExecutionId,
     expectedRevision: current.revision,
@@ -560,6 +566,10 @@ export function blockAutomaticContinuation(db: SqliteDb, input: {
       inputStage: current.inputStage,
       outcome: 'blocked',
       executionMode: current.executionMode,
+    },
+    blockedContext: {
+      reasonCodes: ['od_next_native_session_continuity_unproven'],
+      visibleText: null,
     },
     ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
   });

@@ -580,6 +580,13 @@ function blockTask(
       ['od_next_route_not_locked'],
     );
   }
+  const blockedReasonCodes = uniqueReasonCodes(reasonCodes);
+  console.warn('[od-next-task] blocked', {
+    taskExecutionId: current.taskExecutionId,
+    runId: current.latestRunId,
+    inputStage: current.inputStage,
+    reasonCodes: blockedReasonCodes,
+  });
   const task = compareAndTransitionStrategyTaskExecution(db, {
     taskExecutionId: current.taskExecutionId,
     expectedRevision: current.revision,
@@ -589,12 +596,16 @@ function blockTask(
       outcome: 'blocked',
       executionMode: current.executionMode,
     },
+    blockedContext: {
+      reasonCodes: blockedReasonCodes,
+      visibleText: visibleText.length > 0 ? visibleText : null,
+    },
     ...(updatedAt === undefined ? {} : { updatedAt }),
   });
   return {
     action: 'blocked',
     task,
     visibleText,
-    reasonCodes: uniqueReasonCodes(reasonCodes),
+    reasonCodes: blockedReasonCodes,
   };
 }

@@ -1093,5 +1093,32 @@ describe('OD Next planning coordinator', () => {
       runId: 'run-clarification', updatedAt: 140,
     });
     expect(blocked).toMatchObject({ outcome: 'blocked', terminalRunId: 'run-clarification' });
+    expect(blocked?.blockedContext).toEqual({
+      reasonCodes: ['od_next_native_session_continuity_unproven'],
+      visibleText: null,
+    });
+  });
+
+  it('persists blocked attribution so a blocked task can be diagnosed from the store', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    // Mirrors the observed field failure: a visible-only reply without any
+    // machine-protocol block must block AND leave queryable attribution.
+    const visible = '这轮回复没有携带机器协议块，只有普通文本。';
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol(visible),
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('blocked');
+    expect(result.reasonCodes.length).toBeGreaterThan(0);
+    const persisted = getStrategyTaskExecution(db, 'task-1');
+    expect(persisted?.outcome).toBe('blocked');
+    expect(persisted?.blockedContext).toEqual({
+      reasonCodes: result.reasonCodes,
+      visibleText: visible,
+    });
   });
 });
