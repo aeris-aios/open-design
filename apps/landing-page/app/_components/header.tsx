@@ -183,7 +183,7 @@ const COMMUNITY_ENTRY_COPY = {
 // the runtime via `data-*` on `.nav-account` because the auth logic lives in
 // `header-enhancer.astro`'s `<script is:inline>` (NOT processed by Vite, so it
 // cannot read `import.meta.env` itself).
-const env = import.meta.env as Record<string, string | undefined>;
+const env = (import.meta.env ?? {}) as Record<string, string | undefined>;
 const CLOUD_API_BASE =
   env.PUBLIC_CLOUD_API_BASE ?? env.PUBLIC_AMR_API_BASE ?? 'https://amr-api.open-design.ai';
 const CLOUD_CONSOLE_URL =
@@ -346,7 +346,7 @@ export function Header({
           />
         </a>
         {/*
-          Mobile / tablet hamburger. Hidden by CSS at ≥1100px (the desktop
+          Mobile / tablet hamburger. Hidden by CSS at ≥1367px (the desktop
           breakpoint where the full nav fits). At narrower widths it toggles
           `.is-open` on the parent <header> via a small handler in
           `header-enhancer.astro` — when open, the `<nav>` element below

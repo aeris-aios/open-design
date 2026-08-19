@@ -684,14 +684,14 @@ body::before {
   gap: 24px;
 }
 /*
- * Desktop bar layout (≥1081px, above the hamburger breakpoint): three
+ * Desktop bar layout (≥1367px, above the hamburger breakpoint): three
  * equal-flanked columns — brand logo pinned flush-left, the nav links
  * centred, and the action cluster (download / star / locale) flush-right.
  * The two 1fr side tracks are symmetric, which keeps the centre column
  * optically centred regardless of how wide either side gets. Mobile keeps
  * the base flex layout untouched.
  */
-@media (min-width: 1081px) {
+@media (min-width: 1367px) {
   .nav-inner {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
@@ -715,13 +715,6 @@ body::before {
   .nav-links a {
     white-space: nowrap;
   }
-}
-/* Mid-band desktop (hamburger ends at 1081px): the longest locales need
- * tighter link spacing to hold a single row. The hover bridge width must
- * track the gap so sweeping between triggers keeps a dropdown open. */
-@media (min-width: 1081px) and (max-width: 1366px) {
-  .nav-links { gap: 22px; }
-  .nav-links li.has-dropdown:not(:last-child)::after { width: 22px; }
 }
 .brand {
   display: inline-flex;
@@ -917,7 +910,7 @@ body::before {
  * hides the frost behind itself, so the bar still reads as a clean bar.
  * Desktop only: the mobile nav is a vertical drawer, not a hover panel.
  */
-@media (min-width: 1081px) {
+@media (min-width: 1367px) {
   .site-chrome::after {
     content: '';
     position: absolute;
@@ -1028,7 +1021,7 @@ body::before {
    where a centering transform would shift them sideways. The Product li goes
    static so the wide panel positions against `.container` and centers on it —
    anchored to the li it overflows narrow desktops. */
-@media (min-width: 1081px) {
+@media (min-width: 1367px) {
   .nav-links li.nav-item-mega { position: static; }
   /* With the li static, absolutely-positioned descendants resolve against
      `.container` (the nearest positioned ancestor), so the shared
@@ -1116,7 +1109,7 @@ a.nav-mega-col-head.is-active {
 }
 
 /*
- * Hamburger toggle. Hidden at desktop widths (≥1080px). At narrower
+ * Hamburger toggle. Hidden at desktop widths (≥1367px). At narrower
  * viewports it replaces the inline nav-links and toggles a panel
  * underneath the header bar via a small handler in `header-enhancer`.
  */
@@ -5660,6 +5653,7 @@ footer .container {
 /* ---------- responsive ----------
  *
  * Breakpoint ladder:
+ *   1366  — crowded translated headers use the compact hamburger drawer.
  *   1280  — desktop chrome shrinks (drop side rails, slimmer container).
  *   1200  — topbar mid label crowds first, hide it.
  *   1080  — small desktop / large laptop. Smaller hero/section heads.
@@ -5679,25 +5673,22 @@ footer .container {
 @media (max-width: 1200px) {
   .topbar-inner .mid { display: none; }
 }
-/* nav: between 1080 and 1180 the brand tail + nav links + 2 CTAs + dot
- * crowd the row. Drop the brand sub-meta first, then tighten link spacing,
- * so the Star CTA never has to compress. */
-@media (max-width: 1180px) {
+/* The full translated navigation plus community, locale, Star, and Download
+ * actions does not fit safely in the condensed 1280px capsule. Keep a compact
+ * row through 1366px and resume the complete desktop header at 1367px. */
+@media (max-width: 1366px) {
   .nav-inner { gap: 18px; }
   .brand-meta { display: none; }
-  /* Link gap for this band already comes from the 1081–1366px rule next to
-     the desktop grid layout (22px — translated labels need the tighter
-     spacing); restating a larger gap here would override it. */
 }
 
-/* nav: at ≤1080px there's no clean way to fit Product · Skills · Systems ·
+/* nav: at ≤1366px there's no clean way to fit Product · Skills · Systems ·
  * Templates · Craft · Blog · Contact + Download + Star + dot in one row,
  * so swap to a hamburger panel. Star CTA stays visible in the bar (it's
  * the social-proof CTA); Download moves into the panel. The Product
  * submenu flattens from a hover-popup to an always-expanded inline list,
  * since hover doesn't translate to touch.
  */
-@media (max-width: 1080px) {
+@media (max-width: 1366px) {
   .nav-toggle { display: inline-flex; }
   .brand { white-space: nowrap; }
   /* Hide Download from the bar (Star stays). */
@@ -6021,7 +6012,7 @@ footer .container {
   .foot-bottom { flex-direction: column; align-items: flex-start; gap: 12px; }
   .foot-bottom .right { flex-wrap: wrap; gap: 12px 20px; }
   /* nav — at ≤880px tighten padding; nav-links stay reachable through
-   * the hamburger panel introduced at ≤1080px. Brand meta and Download
+   * the hamburger panel introduced at ≤1366px. Brand meta and Download
    * stay hidden; Star CTA still pings in the bar. */
   .nav { padding: 16px 0; }
   .brand-meta { display: none; }
