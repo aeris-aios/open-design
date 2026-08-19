@@ -132,11 +132,8 @@ describe('the modal never re-opens for a seen campaign (no URL override left)', 
   });
 });
 
-describe('unpaid upgrade path carries telemetry consent', () => {
-  it('forwards metricsConsent and stamps od_device_id on the plans URL', () => {
-    // The other two campaign touchpoints (workbench badge, model-switcher
-    // upgrade) already record the AMR entry with metricsConsent and attach
-    // the consent-gated device id; the modal must match.
+describe('unpaid Go path opens public Pricing', () => {
+  it('opens the locale-neutral comparison page', () => {
     const open = vi.fn();
     vi.stubGlobal('open', open);
     render(
@@ -148,16 +145,15 @@ describe('unpaid upgrade path carries telemetry consent', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Upgrade and use' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View Go plan' }));
 
     expect(open).toHaveBeenCalledTimes(1);
     const url = new URL(String(open.mock.calls[0]?.[0]));
-    expect(url.searchParams.get('od_campaign_id')).toBe('deepseek_v4_pro');
-    expect(url.searchParams.get('od_conversion_source')).toBe('deepseek_unpaid_modal');
-    expect(url.searchParams.get('od_device_id')).toBe('install-abc123');
+    expect(url.origin + url.pathname).toBe('https://open-design.ai/pricing/');
+    expect(url.search).toBe('');
   });
 
-  it('omits od_device_id without metrics consent', () => {
+  it('keeps the same target without metrics consent', () => {
     const open = vi.fn();
     vi.stubGlobal('open', open);
     render(
@@ -169,13 +165,26 @@ describe('unpaid upgrade path carries telemetry consent', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Upgrade and use' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View Go plan' }));
 
     expect(open).toHaveBeenCalledTimes(1);
     const url = new URL(String(open.mock.calls[0]?.[0]));
     expect(url.searchParams.get('od_device_id')).toBeNull();
-    // Attribution itself is consent-independent.
-    expect(url.searchParams.get('od_campaign_id')).toBe('deepseek_v4_pro');
+    expect(url.origin + url.pathname).toBe('https://open-design.ai/pricing/');
+  });
+
+  it('uses an independent frequency key from the paid DeepSeek campaign', () => {
+    vi.stubGlobal('open', vi.fn());
+    render(<DeepSeekV4FlashCampaign audience="unpaid" active />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'View Go plan' }));
+
+    expect(window.localStorage.getItem(
+      'open-design:campaign-seen:go-plan-launch-2026',
+    )).toBe('1');
+    expect(window.localStorage.getItem(
+      'open-design:campaign-seen:deepseek-v4-dual-unlimited-2026',
+    )).toBeNull();
   });
 });
 

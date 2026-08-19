@@ -24,27 +24,23 @@ const campaignModalSource = readFileSync(
 );
 
 describe('DeepSeek V4 Flash workbench campaign entry', () => {
-  it('shows a top-right pricing badge for explicit campaign audiences', () => {
+  it('reuses the top-right campaign slot for Go and DeepSeek audiences', () => {
     expect(entryShellSource).toContain('deepseek-campaign-pricing-badge');
+    expect(entryShellSource).toContain("topRightCampaignKind === 'go'");
+    expect(entryShellSource).toContain('goPlanCopy.workbenchBadge');
     expect(entryShellSource).toContain("t('campaign.deepseekV4Flash.workbenchBadge')");
     expect(entryShellSource).toContain("t('campaign.deepseekV4Flash.workbenchBadgeAria')");
-    expect(entryShellSource).toContain('deepSeekV4FlashCampaignAudience !== \'unknown\'');
+    expect(entryShellSource).toContain("subscriptionAudience === 'unpaid'");
   });
 
-  // The badge lands where the modal's CTA lands: the console's plan surface,
-  // scoped to the caller's workspace. Both are in-product entry points for a
-  // signed-in user, so sending one to the console (where they can actually
-  // subscribe) and the other to the marketing site splits the same funnel
-  // across two destinations — and the marketing URL was additionally pinned to
-  // `/zh/`, so every non-Chinese user landed on a Chinese page.
-  it('opens the console plan surface, matching the modal CTA', () => {
-    expect(entryShellSource).toContain('amrPlansUrlForWorkspace');
+  it('sends both Go and paid DeepSeek badges to public Pricing', () => {
+    expect(entryShellSource).not.toContain('amrPlansUrlForWorkspace');
+    expect(entryShellSource).toContain('GO_PLAN_PRICING_URL');
     expect(entryShellSource).toContain("'deepseek_workbench_badge'");
     expect(entryShellSource).toContain("'noopener,noreferrer'");
-    // No hardcoded marketing URL, and no locale pinned into a link shown to
-    // all 19 locales.
+    // The public URL is locale-neutral; no language is pinned into a link
+    // shown to every locale.
     expect(entryShellSource).not.toContain('open-design.ai/zh/pricing');
-    expect(entryShellSource).not.toContain('DEEPSEEK_CAMPAIGN_PRICING_URL');
   });
 
   it('uses a restrained green campaign treatment from shared brand tokens', () => {
@@ -59,6 +55,7 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     expect(entryLayoutStyles).toContain('.entry-deepseek-campaign-badge::before');
     expect(entryLayoutStyles).toContain('background: var(--brand-text)');
     expect(entryLayoutStyles).toContain('.entry-deepseek-campaign-badge svg');
+    expect(entryLayoutStyles).toContain('.entry-go-campaign-new');
     expect(badgeRule).not.toContain('color: var(--green)');
     expect(badgeRule).not.toContain('background: transparent');
   });
@@ -85,7 +82,7 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     // Leaving home closes the dialog WITHOUT marking it seen; the open
     // effect must therefore re-run on the activity flip, not only on the
     // audience settling.
-    expect(campaignModalSource).toMatch(/\}, \[active, audience\]\);/);
+    expect(campaignModalSource).toMatch(/\}, \[active, activeCampaignId, audience\]\);/);
     expect(campaignModalSource).toMatch(
       /if \(!active \|\| !modalOpen \|\| audience === 'unknown'/,
     );
@@ -127,9 +124,10 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     expect(modelSwitcherSource).toContain('const campaignNeedsUpgrade = false;');
   });
 
-  it('tracks campaign discovery surfaces without replacing model-selection events', () => {
+  it('keeps existing DeepSeek analytics while the Go pass stays UI-only', () => {
     expect(entryShellSource).toContain('trackDeepSeekCampaignBadgeSurfaceView');
     expect(entryShellSource).toContain('trackDeepSeekCampaignBadgeClick');
+    expect(entryShellSource).toContain("window.open(GO_PLAN_PRICING_URL, '_blank', 'noopener,noreferrer')");
     expect(modelSwitcherSource).toContain('trackDeepSeekCampaignModelBenefitSurfaceView');
     expect(modelSwitcherSource).toContain('trackExecutionSettingsPopoverClick');
   });
