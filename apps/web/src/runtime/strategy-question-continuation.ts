@@ -1,4 +1,7 @@
-import type { ChatRunStatusResponse } from '@open-design/contracts';
+import type {
+  ChatRunStatusResponse,
+  StrategyTaskProjectionV2,
+} from '@open-design/contracts';
 
 type FetchRunStatus = (runId: string) => Promise<ChatRunStatusResponse | null>;
 
@@ -22,4 +25,29 @@ export async function resolveQuestionFormStrategyTaskExecutionId(input: {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Message fields persisting a terminal `blocked` strategy-task verdict.
+ *
+ * A blocked outcome is sticky: the daemon rejects every further continuation
+ * of the task with 409 STRATEGY_TASK_STATE_MISMATCH, so the turn's question
+ * form must stop accepting submissions. Every surface that observes a task
+ * projection (run-status probe, SSE end, reattach) derives the same message
+ * stamp through this helper: the blocked flag plus the gate's agent-visible
+ * text (trimmed; null when the gate left none, so the UI falls back to its
+ * generic localized notice).
+ *
+ * Returns null for anything that is not a blocked terminal projection —
+ * callers then leave the message untouched.
+ */
+export function strategyBlockedMessageFields(
+  strategyTask: StrategyTaskProjectionV2 | undefined,
+): { strategyTaskBlocked: true; strategyTaskBlockedText: string | null } | null {
+  if (!strategyTask?.terminal || strategyTask.outcome !== 'blocked') return null;
+  const visibleText = strategyTask.blockedContext?.visibleText?.trim();
+  return {
+    strategyTaskBlocked: true,
+    strategyTaskBlockedText: visibleText ? visibleText : null,
+  };
 }

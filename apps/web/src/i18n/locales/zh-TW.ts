@@ -117,6 +117,7 @@ export const zhTW: Dict = {
   "chat.runError.title.signInRequired": "需要登入",
   "chat.runError.title.rateLimited": "已達用量上限",
   "chat.runError.title.modelWindowLimit": "高峰期繁忙",
+  "chat.runError.title.strategyTaskHalted": "任務已被品質門攔下",
   "chat.runError.title.generic": "任務執行失敗",
   "chat.runError.title.artifactMissing": "未產生檔案產物",
   "chat.runError.signInMessage.amr":
@@ -158,6 +159,7 @@ export const zhTW: Dict = {
   "chat.runError.sessionExpiredMessage": "要恢復的工作階段已過期，已為你重置。重試即可開始一次全新執行。",
   "chat.runError.gitBashMissingMessage": "在 Windows 上執行此智能體需要 Git Bash，但找不到。請安裝 Git for Windows 後重試。",
   "chat.runError.cpuUnsupportedMessage": "此智能體的執行時需要此裝置處理器不支援的指令集（AVX2），因此無法啟動。請將 OpenDesign 更新到最新版本，新版本附帶相容的執行時。",
+  "chat.runError.strategyTaskStateMismatchMessage": "該任務已被策略品質門攔下，本輪表單無法繼續提交。請重試請求或重新發起一次任務。",
   "common.cancel": "取消",
   "chat.selectFromLibrary": "從資源庫匯入",
   "chat.importFigma": "從 Figma 匯入",
@@ -3797,6 +3799,7 @@ export const zhTW: Dict = {
   "questions.tabLabel": "問題",
   "questions.banner": "方便問你幾個簡短的問題嗎？",
   "questions.bannerAnswered": "已回答這些問題",
+  "questions.strategyBlockedNotice": "該任務已被策略品質門攔下，此表單無法再提交。請重新發起一次請求以繼續。",
   "questions.continue": "繼續",
   "questions.generating": "正在產生問題…",
   "questions.skipAll": "全部略過",

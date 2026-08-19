@@ -548,6 +548,15 @@ function AssistantMessageImpl({
   nextStepVariant = 'default',
 }: Props) {
   const t = useT();
+  // A blocked strategy task is a sticky terminal verdict: the daemon rejects
+  // every further continuation with 409 STRATEGY_TASK_STATE_MISMATCH, so the
+  // turn's question forms must stop accepting submissions and explain why.
+  // Prefer the gate's persisted agent-visible text; fall back to the generic
+  // localized notice.
+  const strategyBlockedNotice =
+    message.strategyTaskBlocked === true
+      ? message.strategyTaskBlockedText?.trim() || t("questions.strategyBlockedNotice")
+      : null;
   // Thinking text renders markdown too — its file links must route in-app
   // exactly like prose links (ProseBlock builds the same handler itself).
   const thinkingLinkClick = useMemo(
@@ -921,7 +930,10 @@ function AssistantMessageImpl({
                 nextUserContent={nextUserContent}
                 suppressDirectionForms={suppressDirectionForms}
                 onSubmitQuestionForm={onSubmitQuestionForm}
-                questionFormSubmitDisabled={questionFormSubmitDisabled}
+                questionFormSubmitDisabled={
+                  questionFormSubmitDisabled || strategyBlockedNotice !== null
+                }
+                strategyBlockedNotice={strategyBlockedNotice}
                 visualStyleContext={visualStyleContextForProjectKind(projectKind)}
                 projectId={projectId}
                 conversationId={conversationId}
@@ -2481,6 +2493,7 @@ function ProseBlock({
   suppressDirectionForms,
   onSubmitQuestionForm,
   questionFormSubmitDisabled,
+  strategyBlockedNotice = null,
   visualStyleContext,
   projectId,
   conversationId,
@@ -2505,6 +2518,8 @@ function ProseBlock({
   projectResolvedDir?: string | null;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled: boolean;
+  /** Localized blocked-task notice; non-null terminates form interaction. */
+  strategyBlockedNotice?: string | null;
   visualStyleContext?: VisualStyleContext;
   onRequestOpenFile?: (name: string) => void;
   onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
@@ -2624,6 +2639,7 @@ function ProseBlock({
             interactive={isLastAssistant}
             onSubmit={onSubmitQuestionForm}
             submitDisabled={questionFormSubmitDisabled}
+            strategyBlockedNotice={strategyBlockedNotice}
             visualStyleContext={visualStyleContext}
           />
         );
@@ -2656,6 +2672,7 @@ function FormBlock({
   interactive,
   onSubmit,
   submitDisabled,
+  strategyBlockedNotice = null,
   visualStyleContext,
 }: {
   form: QuestionForm;
@@ -2666,6 +2683,8 @@ function FormBlock({
   interactive: boolean;
   onSubmit?: QuestionFormSubmitHandler;
   submitDisabled: boolean;
+  /** Localized blocked-task notice rendered under the disabled form. */
+  strategyBlockedNotice?: string | null;
   visualStyleContext?: VisualStyleContext;
 }) {
   const t = useT();
@@ -3049,6 +3068,15 @@ function FormBlock({
         visualStyleContext={visualStyleContext}
         autoContinueAfterTimeout
       />
+      {strategyBlockedNotice ? (
+        <div
+          className="qf-blocked-notice"
+          role="status"
+          data-testid="question-form-blocked-notice"
+        >
+          {strategyBlockedNotice}
+        </div>
+      ) : null}
       {uploadError ? (
         <div className="qf-upload-error" role="alert">
           {uploadError}

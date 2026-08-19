@@ -910,6 +910,16 @@ export interface ChatMessage {
   strategyTaskPrefixLength?: number;
   /** Number of leading normalized events owned by completed predecessor Runs. */
   strategyTaskPrefixEventCount?: number;
+  /**
+   * True once the daemon's OD Next protocol gate settled this turn's strategy
+   * task as `blocked` — a sticky terminal verdict. Question forms rendered by
+   * this turn must stop accepting submissions (the daemon rejects any further
+   * continuation with 409 STRATEGY_TASK_STATE_MISMATCH).
+   */
+  strategyTaskBlocked?: boolean;
+  /** Agent-visible text persisted with the blocked verdict; preferred notice
+   *  copy when present (null when the gate left no visible text). */
+  strategyTaskBlockedText?: string | null;
   /** Analytics-only task lineage persisted with the message so retries,
    *  resumes and clarification answers survive reloads without splitting one
    *  user intent into unrelated failures. */

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { strategyPackageHashFromDigests } from '@open-design/plugin-runtime';
+import { StrategyTaskProjectionV2Schema } from '@open-design/contracts';
 import type { AppliedPluginSnapshot, OpenDesignPlanContractV2 } from '@open-design/contracts';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -1208,5 +1209,52 @@ ${block('open-design-plan-contract', planContract(snapshot))}`),
       reasonCodes: result.reasonCodes,
       visibleText: visible,
     });
+  });
+
+  it('projects blocked attribution to clients so the UI can terminate form interaction', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const visible = '这轮回复没有携带机器协议块，只有普通文本。';
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol(visible),
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('blocked');
+    const persisted = getStrategyTaskExecution(db, 'task-1');
+    const projection = projectStrategyTask(persisted!, 'run-request');
+    expect(projection.terminal).toBe(true);
+    expect(projection.outcome).toBe('blocked');
+    // The run-status / SSE projection must carry the persisted gate verdict so
+    // the web client can disable the clarification form and explain why.
+    expect(projection.blockedContext).toEqual({
+      reasonCodes: result.reasonCodes,
+      visibleText: visible,
+    });
+    // And the wire contract must accept + preserve that attribution.
+    expect(StrategyTaskProjectionV2Schema.parse(projection).blockedContext).toEqual(
+      projection.blockedContext,
+    );
+  });
+
+  it('projects no blocked attribution on a non-blocked task', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const waiting = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol([
+        '<question-form id="scope">{"questions":[{"id":"surface","label":"Surface?"}]}</question-form>',
+        block('open-design-runtime-state', runtimeState({ outcome: 'clarification_required' })),
+      ].join('\n')),
+      updatedAt: 120,
+    });
+    expect(waiting.task.outcome).toBe('clarification_required');
+    const projection = projectStrategyTask(waiting.task, 'run-request');
+    expect(projection.terminal).toBe(false);
+    expect(projection.blockedContext).toBeUndefined();
   });
 });
