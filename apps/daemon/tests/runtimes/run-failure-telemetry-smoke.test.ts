@@ -664,6 +664,19 @@ async function startLangfuseIngestion(): Promise<{
     if (!trace) return null;
     return { trace, span, taskExecutionId: span.body.metadata.taskExecutionId };
   };
+  /**
+   * Summarize everything ingestion actually received.
+   *
+   * A bare "timed out" tells you nothing about whether the daemon delivered a
+   * different representation, delivered nothing at all, or delivered the right
+   * span under a different Run — so every timeout carries this instead.
+   */
+  const describeReceived = (): string => JSON.stringify(events().map((item) => ({
+    type: item.type,
+    id: item.body.id,
+    name: item.body.name,
+    runId: item.body.metadata?.runId,
+  })));
   return {
     url: `http://127.0.0.1:${address.port}`,
     batches,
@@ -678,7 +691,10 @@ async function startLangfuseIngestion(): Promise<{
         if (found) return found;
         await delay(50);
       }
-      throw new Error(`timed out waiting for the task observation owning run ${runId}`);
+      throw new Error(
+        `timed out waiting for the task observation owning run ${runId}; `
+        + `ingestion received ${describeReceived()}`,
+      );
     },
     // Compatibility single-Run trace, still used by Runs the OD Next rollout
     // does not own (for example a runtime outside its capability gate).
@@ -689,7 +705,10 @@ async function startLangfuseIngestion(): Promise<{
         if (found) return found;
         await delay(50);
       }
-      throw new Error(`timed out waiting for the single-Run trace ${runId}`);
+      throw new Error(
+        `timed out waiting for the single-Run trace ${runId}; `
+        + `ingestion received ${describeReceived()}`,
+      );
     },
   };
 }
