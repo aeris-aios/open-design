@@ -195,6 +195,35 @@ describe('web-clone example-card tracking', () => {
     });
   });
 
+  it('keeps a manually dismissed Website-clone scaffold empty across a remount', async () => {
+    writeHomeGuideStage('done');
+    stubPlugins();
+    const firstMount = renderHome('zh-CN');
+
+    await pickHomeTemplate('web-clone');
+    await waitFor(() => {
+      expect(homeHeroPromptText()).toBe('想要复刻的网站链接：');
+    });
+
+    setHomeHeroPrompt('');
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-input').textContent).toBe('');
+    });
+
+    await pickHomeTemplate('prototype');
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-input').textContent).toBe('');
+    });
+
+    firstMount.unmount();
+    renderHome('zh-CN');
+    await pickHomeTemplate('web-clone');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-input').textContent).toBe('');
+    });
+  });
+
   it('cleans up a Website-clone scaffold leaked into another persisted type by the old behavior', async () => {
     writeHomeGuideStage('done');
     stubPlugins();

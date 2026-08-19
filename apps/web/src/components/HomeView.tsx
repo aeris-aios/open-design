@@ -350,6 +350,14 @@ const HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY = 'open-design:home-composer:design-
 // on remount (see `pendingChipRestore` below), the same way a cross-surface
 // "use this plugin" hand-off resolves `pendingPluginUseHandoff`.
 const HOME_COMPOSER_CHIP_KEY = 'open-design:home-composer:chip';
+// A user can remove Website clone's automatic URL scaffold without replacing
+// it. Remember that opt-out independently from the active type chip: switching
+// to another type rewrites HOME_COMPOSER_CHIP_KEY, but must not make the
+// scaffold eligible to reappear after a remount/reload. The marker is scoped to
+// the current composer draft and is cleared with the rest of that draft after a
+// successful run.
+const HOME_COMPOSER_WEB_CLONE_SEED_DISMISSED_KEY =
+  'open-design:home-composer:web-clone-seed-dismissed';
 
 interface HomeComposerChipDraft {
   chipId: string | null;
@@ -448,6 +456,7 @@ function clearHomeComposerDraft(): void {
   writeHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY, null);
   writeHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_KEY, null);
   writeHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY, null);
+  writeHomeComposerDraft(HOME_COMPOSER_WEB_CLONE_SEED_DISMISSED_KEY, null);
   writeHomeComposerChipDraft(null);
 }
 
@@ -656,6 +665,7 @@ export function HomeView({
     prompt: string;
     designSystemId: string | null;
     designSystemCatalogScope: LocalCatalogScope | null;
+    webClonePromptSeedDismissed: boolean;
   } | null>(null);
   if (restoredDraftRef.current === null) {
     restoredDraftRef.current = {
@@ -664,6 +674,8 @@ export function HomeView({
       designSystemCatalogScope: readLocalCatalogScopeDraft(
         HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY,
       ),
+      webClonePromptSeedDismissed:
+        readHomeComposerDraft(HOME_COMPOSER_WEB_CLONE_SEED_DISMISSED_KEY) === '1',
     };
   }
   const restoredDraft = restoredDraftRef.current;
@@ -712,6 +724,9 @@ export function HomeView({
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
   const [prompt, setPrompt] = useState(() => restoredPrompt);
+  const webClonePromptSeedDismissedRef = useRef(
+    restoredDraft.webClonePromptSeedDismissed,
+  );
   // Treat a restored non-empty prompt as user-edited so the plugin/skill
   // replacement guard still asks before clobbering it. The Website-clone
   // scaffold is mode UI, not a user draft; the exact-text fallback migrates
@@ -2081,6 +2096,19 @@ export function HomeView({
   }
 
   function handlePromptChange(nextPrompt: string) {
+    // This handler only runs for real editor changes. If the user empties a
+    // Website-clone draft, treat that as an explicit dismissal of the automatic
+    // URL scaffold and persist it across tab switches, remounts, and reloads.
+    // Programmatic cleanup uses setPrompt directly and therefore cannot set the
+    // dismissal marker accidentally.
+    if (
+      active?.chipId === 'web-clone'
+      && prompt.trim().length > 0
+      && nextPrompt.trim().length === 0
+    ) {
+      webClonePromptSeedDismissedRef.current = true;
+      writeHomeComposerDraft(HOME_COMPOSER_WEB_CLONE_SEED_DISMISSED_KEY, '1');
+    }
     setPrompt(nextPrompt);
     setPromptEditedByUser(true);
     if (active?.promptSeedKind) {
@@ -2566,7 +2594,9 @@ export function HomeView({
         // gets the localized "clone this site: <url>" scaffold instead of
         // staying blank. A non-empty draft is the user's — leave it alone.
         const promptSeed =
-          chip.id === 'web-clone' && prompt.trim().length === 0
+          chip.id === 'web-clone'
+          && prompt.trim().length === 0
+          && !webClonePromptSeedDismissedRef.current
             ? t('homeHero.chip.webClonePromptSeed')
             : null;
         if (chip.group === 'create') {
