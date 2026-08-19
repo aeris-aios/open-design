@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { Variants } from 'motion/react';
+import { Button } from '@open-design/components';
 import { useT } from '../i18n';
 import styles from './ExperienceSurvey.module.css';
 import {
@@ -24,6 +25,11 @@ export interface ExperienceSurveyAnswers {
   recommendation: number;
   /** Index into the improvement options, in the order rendered. */
   improvement?: number;
+  /**
+   * Set when the respondent picked "Other". Empty string means they picked it
+   * and typed nothing, which still says none of the listed choices fit.
+   */
+  improvementOther?: string;
 }
 
 interface Props {
@@ -72,6 +78,15 @@ const IMPROVEMENT_KEYS = [
   'experienceSurvey.improvement.regression',
 ] as const;
 
+/**
+ * "Other" sits after the eight choices and behaves differently: instead of
+ * finishing the survey it opens a text field. The eight are what users already
+ * tell us most often, so most people never reach for this — but the ones who
+ * do are the ones whose problem we have not named yet, and they are worth the
+ * extra tap.
+ */
+const OTHER_INDEX = IMPROVEMENT_KEYS.length;
+
 type Step = 'recommendation' | 'improvement' | 'thanks';
 
 const STEP_ORDER: Step[] = ['recommendation', 'improvement'];
@@ -99,6 +114,7 @@ export function ExperienceSurvey({
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState<Step>('recommendation');
   const [picked, setPicked] = useState<number | null>(null);
+  const [otherText, setOtherText] = useState('');
   const answersRef = useRef<Partial<ExperienceSurveyAnswers>>({});
   const bodyRef = useRef<HTMLDivElement | null>(null);
   // Tallest step seen so far. The card is pinned to the bottom-right corner,
@@ -238,6 +254,17 @@ export function ExperienceSurvey({
     if (step !== 'thanks') onDismiss?.(answersRef.current);
   }, [onDismiss, step]);
 
+  /** Opens the free-text field rather than finishing the survey. */
+  const pickOther = useCallback(() => {
+    if (picked !== null) return;
+    setPicked(OTHER_INDEX);
+  }, [picked]);
+
+  const submitOther = useCallback(() => {
+    answersRef.current.improvementOther = otherText.trim();
+    finish();
+  }, [finish, otherText]);
+
   /** Lights the tapped choice, then advances — the tap needs a receipt. */
   const pick = useCallback(
     (value: number, apply: (value: number) => void, next: Step | 'finish') => {
@@ -325,12 +352,37 @@ export function ExperienceSurvey({
               {t(key)}
             </button>
           ))}
+          <button
+            type="button"
+            className={`${styles.option} ${picked === OTHER_INDEX ? styles.picked : ''}`}
+            onClick={pickOther}
+          >
+            {t('experienceSurvey.improvement.other')}
+          </button>
         </div>
+        {picked === OTHER_INDEX ? (
+          <textarea
+            className={styles.textarea}
+            value={otherText}
+            onChange={(event) => setOtherText(event.target.value)}
+            placeholder={t('experienceSurvey.otherPlaceholder')}
+            autoFocus
+          />
+        ) : null}
         <div className={styles.foot}>
           {counter}
-          <button type="button" className={styles.skip} onClick={finish}>
-            {t('experienceSurvey.skip')}
-          </button>
+          {/* Once "Other" is picked the question is already answered, so Skip
+              would only be a second way to submit. Submit replaces it, and an
+              empty field still reports "none of these fit". */}
+          {picked === OTHER_INDEX ? (
+            <Button variant="primary" className={styles.submit} onClick={submitOther}>
+              {t('experienceSurvey.submit')}
+            </Button>
+          ) : (
+            <button type="button" className={styles.skip} onClick={finish}>
+              {t('experienceSurvey.skip')}
+            </button>
+          )}
         </div>
       </>
     );

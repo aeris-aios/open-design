@@ -113,3 +113,38 @@ describe('experience survey response reporting', () => {
     expect(sent.props().trigger).toBe(EXPERIENCE_SURVEY_TRIGGER);
   });
 });
+
+describe('experience survey "other" answer', () => {
+  it('reports the typed text as the improvement response', () => {
+    // PostHog's open-choice convention: the response IS the free text, not the
+    // word "Other" with the text tucked somewhere else.
+    const t = capture();
+    trackExperienceSurveySent(t.track, {
+      recommendation: 4,
+      improvementOther: '导出的 PDF 字体全变了',
+    });
+
+    expect(t.props()[`$survey_response_${ids.improvement}`]).toBe('导出的 PDF 字体全变了');
+  });
+
+  it('still reports the choice when "other" is picked but nothing is typed', () => {
+    // "None of these fit" is an answer. Dropping it would turn those people
+    // into non-responders and quietly overstate the listed choices.
+    const t = capture();
+    trackExperienceSurveySent(t.track, { recommendation: 4, improvementOther: '   ' });
+
+    expect(t.props()[`$survey_response_${ids.improvement}`]).toBe('Other');
+    expect(t.props().$survey_questions).toHaveLength(2);
+  });
+
+  it('prefers the typed text over a stale choice index', () => {
+    const t = capture();
+    trackExperienceSurveySent(t.track, {
+      recommendation: 4,
+      improvement: 0,
+      improvementOther: 'PDF fonts break on export',
+    });
+
+    expect(t.props()[`$survey_response_${ids.improvement}`]).toBe('PDF fonts break on export');
+  });
+});
