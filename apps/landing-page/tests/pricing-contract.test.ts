@@ -28,6 +28,10 @@ const PRICING_PAGE_PATH = new URL(
   "../app/pages/pricing/index.astro",
   import.meta.url,
 );
+const PRICING_INDIVIDUAL_PATH = new URL(
+  "../app/_components/pricing-individual-plans.astro",
+  import.meta.url,
+);
 const CAMPAIGN_PATH = new URL(
   "../app/_lib/pricing-campaign-content.ts",
   import.meta.url,
@@ -86,36 +90,74 @@ function assertPlanContract(value: unknown): asserts value is PricingContract {
 
 describe("pricing contract", () => {
   it("replaces the Free entry card with the localized Go offer", async () => {
-    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+    const [page, individualPlans] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
+    ]);
 
     assert.doesNotMatch(page, /data-tier="free"/);
-    assert.match(page, /data-tier="go"/);
-    assert.match(page, /class="pr-go-wordmark"[^>]*>go<\/span>/);
+    assert.match(page, /<PricingIndividualPlans \/>/);
+    assert.doesNotMatch(page, /\{false && \(/);
+    assert.doesNotMatch(page, /<section class="pr-grid"/);
+    assert.match(individualPlans, /tier:\s*'go' as const/);
+    assert.match(individualPlans, /data-pricing-cta data-tier=\{tier\}/);
     assert.deepEqual(GO_PLAN, {
       tier: "go",
       monthly: { priceUsd: 10, introPriceUsd: 5 },
       yearly: { priceUsd: 60 },
     });
-    assert.match(page, /GO_PLAN\.monthly\.introPriceUsd/);
-    assert.match(page, /GO_PLAN\.monthly\.priceUsd/);
-    assert.match(page, /GO_PLAN\.yearly\.priceUsd/);
+    assert.match(individualPlans, /GO_PLAN\.monthly\.introPriceUsd/);
+    assert.match(individualPlans, /GO_PLAN\.monthly\.priceUsd/);
+    assert.match(individualPlans, /GO_PLAN\.yearly\.priceUsd/);
     assert.match(page, /price: String\(GO_PLAN\.monthly\.priceUsd\)/);
-    assert.match(page, /content\.go\.allowance/);
-    assert.match(page, /DeepSeek V4 Flash/);
-    assert.match(page, /GLM-5\.1/);
+    assert.match(individualPlans, /DeepSeek V4 Flash/);
+    assert.match(individualPlans, /GLM-5\.1/);
   });
 
   it("keeps the Max wordmark readable on its dark card", async () => {
-    const [page, logo] = await Promise.all([
-      readFile(PRICING_PAGE_PATH, "utf8"),
+    const [individualPlans, logo] = await Promise.all([
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
       readFile(MAX_LOGO_PATH, "utf8"),
     ]);
 
     assert.match(logo, /stroke="#202020"/);
     assert.match(
-      page,
-      /\.pr-card\[data-tier='max'\] \.pr-tier-logo\s*\{[^}]*filter:\s*brightness\(0\) invert\(1\);/s,
+      individualPlans,
+      /\.plan-max \.plan-wordmark-image\s*\{[^}]*filter:\s*invert\(1\) brightness\(1\.08\);/s,
     );
+  });
+
+  it("uses one popular-model entitlement decision in cards and the comparison table", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.match(
+      individualPlans,
+      /if \(unlimitedByTier\[tier\]\.has\(modelName\)\) \{\s*return \{ kind: 'unlimited'/s,
+    );
+    assert.match(
+      individualPlans,
+      /const popularStatus = popularAccessStatus\(model\.name, tier\);/,
+    );
+    assert.match(
+      individualPlans,
+      /return popularAccessStatus\(modelName, tier\);/,
+    );
+    assert.doesNotMatch(
+      individualPlans,
+      /<em class="unlimited-status">\{isZh \? '\u65e0\u9650\u91cf' : 'Unlimited'\}<\/em>/,
+    );
+  });
+
+  it("derives live Personal benefit totals from the catalog", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.match(individualPlans, /import \{ getCatalogCounts \} from '\.\.\/_lib\/catalog';/);
+    assert.match(individualPlans, /const catalogCounts = await getCatalogCounts\(locale\);/);
+    assert.match(individualPlans, /const skillsCount = catalogCounts\.skills\.toLocaleString\('en-US'\);/);
+    assert.match(individualPlans, /const systemsCount = catalogCounts\.systems\.toLocaleString\('en-US'\);/);
+    assert.match(individualPlans, /\$\{skillsCount\}\+ Skills/);
+    assert.match(individualPlans, /\$\{systemsCount\}\+ Design Systems/);
+    assert.doesNotMatch(individualPlans, /162\+ Skills|151\+ Design Systems/);
   });
 
   it("keeps the DeepSeek plan benefits without a Pricing campaign banner", async () => {
@@ -210,7 +252,7 @@ describe("pricing contract", () => {
     );
   });
 
-  it("aligns the highlighted campaign checkmark with the benefit list below", async () => {
+  it("aligns the highlighted campaign checkmark with the Team benefit list", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
     assert.match(
@@ -219,11 +261,6 @@ describe("pricing contract", () => {
       "the campaign date note must render on its own line below the model benefit",
     );
     assert.match(page, /\.pr-campaign-model-benefit::before\s*\{\s*left:\s*8px;\s*\}/);
-    assert.match(
-      page,
-      /\.pr-feat\.pr-campaign-model-benefit::before\s*\{[\s\S]*left:\s*8px;[\s\S]*top:\s*18px;[\s\S]*transform:\s*translateY\(-50%\);/,
-      "the personal campaign checkmark must share the benefit x-axis and align with the title line",
-    );
     assert.match(
       page,
       /\.pr-team-feature-list li\.pr-campaign-model-benefit::before\s*\{[\s\S]*left:\s*8px;[\s\S]*top:\s*18px;[\s\S]*transform:\s*translateY\(-50%\);/,
@@ -482,11 +519,14 @@ describe("pricing contract", () => {
   });
 
   it("keeps the pricing controls on the Vela-aligned custom UI", async () => {
-    const page = await readFile(PRICING_PAGE_PATH, "utf8");
+    const [page, individualPlans] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
+    ]);
 
-    // Pricing grids are nested inside audience panels, so the generic global
-    // `section { padding: 130px 0 }` rule must be cancelled on the grid itself.
-    assert.match(page, /\.pr-grid\s*\{[^}]*padding:\s*0;/s);
+    // The live Personal surface is nested inside an audience panel, so the
+    // generic global section padding must be cancelled on the component root.
+    assert.match(individualPlans, /\.demo-individual-pricing\s*\{[^}]*padding:\s*0 !important;/s);
 
     // Creator/Team and billing interval share one compact row above the cards.
     assert.match(page, /class="pr-audience-toggle"[^>]*role="tablist"/);

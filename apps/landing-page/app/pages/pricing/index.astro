@@ -3,17 +3,15 @@
  * /pricing/ — subscription pricing page (localized).
  *
  * Card LAYOUT + COPY mirror the vela subscription modal (`pricing-plans.tsx`).
- * Plus/Pro/Max and Team NUMBERS come from `PRICING_SNAPSHOT` at build time and
- * are reconciled from `PLANS_JSON_URL` by the inline script. Go's confirmed
- * launch prices come from the colocated `GO_PLAN` source shared with SEO and
- * tests. The localized TEXT comes from app/_lib/pricing-content.ts and
- * app/_lib/pricing-team-content.ts.
+ * Plus/Pro/Max and Team NUMBERS come from `PRICING_SNAPSHOT` at build time.
+ * Go's confirmed launch prices come from the colocated `GO_PLAN` source shared
+ * with SEO and tests. The localized TEXT comes from
+ * app/_lib/pricing-content.ts and app/_lib/pricing-team-content.ts.
  */
 import Layout from '../../_components/sub-page-layout.astro';
 import PricingIndividualPlans from '../../_components/pricing-individual-plans.astro';
 import {
   PRICING_SNAPSHOT,
-  PLANS_JSON_URL,
   CLOUD_CONSOLE_URL,
   GO_PLAN,
   cloudSubscribeUrl,
@@ -25,11 +23,6 @@ import {
 import {
   getPricingContent,
   fillTemplate,
-  PREMIUM_MODELS,
-  IMAGE_MODELS,
-  VIDEO_MODELS,
-  CREDIT_BONUS_PCT,
-  type PlanTierId,
 } from '../../_lib/pricing-content';
 import { getTeamPricingContent } from '../../_lib/pricing-team-content';
 import EnterpriseLeadForm from '../../_components/enterprise-lead-form.astro';
@@ -38,7 +31,6 @@ import {
   getFaqTitle,
   getEnterprise,
 } from '../../_lib/pricing-extras-content';
-import { getCatalogCounts } from '../../_lib/catalog';
 import { localeFromPath, localizedHref } from '../../i18n';
 import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 import { getPricingCampaignContent } from '../../_lib/pricing-campaign-content';
@@ -49,11 +41,6 @@ const href = (path: string) => localizedHref(path, locale);
 const content = getPricingContent(locale);
 const teamContent = getTeamPricingContent(locale);
 const L = content.labels;
-const catalogCounts = await getCatalogCounts(locale);
-const catalogLabelVars = {
-  skillsCount: catalogCounts.skills.toLocaleString('en-US'),
-  systemsCount: catalogCounts.systems.toLocaleString('en-US'),
-};
 
 // Footer line with the cloud-console link injected into the localized
 // template. Brand/URL only — safe to render as HTML.
@@ -109,89 +96,11 @@ function teamView(tier: TeamPlanTierConfig, interval: 'monthly' | 'yearly') {
 
 const initialTeamView = teamView(initialTeamTier, 'yearly');
 
-const renderCatalogLabel = (label: string) => fillTemplate(label, catalogLabelVars);
 const deepSeekCampaign = getPricingCampaignContent(locale);
 const comingSoonLabel = L.comingSoon
   .trim()
   .replace(/^[（(]\s*/, '')
   .replace(/\s*[）)]$/, '');
-const POPULAR_MODELS = [
-  { name: 'DeepSeek V4 Flash', icon: '/agent-icons/deepseek.svg' },
-  { name: 'MiMo V2.5 Pro', icon: '/agent-icons/mimo.svg' },
-  { name: 'DeepSeek V4 Pro', icon: '/agent-icons/deepseek.svg' },
-  { name: 'MiniMax M2.7', icon: '/agents/minimax.svg' },
-  { name: 'Kimi K2.7 Code', icon: '/agent-icons/kimi.svg' },
-  { name: 'Kimi K2.6', icon: '/agent-icons/kimi.svg' },
-  { name: 'GLM-5.2', icon: '/agent-icons/amr.svg' },
-  { name: 'GLM-5.1', icon: '/agent-icons/amr.svg' },
-] as const;
-const goIntroPct = Math.round(
-  (1 - GO_PLAN.monthly.introPriceUsd / GO_PLAN.monthly.priceUsd) * 100,
-);
-const goYearlyMonthly = GO_PLAN.yearly.priceUsd / 12;
-const goYearlyDiscountPct = Math.round(
-  (1 - goYearlyMonthly / GO_PLAN.monthly.priceUsd) * 100,
-);
-const goMonthlySave = GO_PLAN.monthly.priceUsd * 12 - GO_PLAN.yearly.priceUsd;
-const goView = {
-  monthly: {
-    amount: usd(GO_PLAN.monthly.introPriceUsd),
-    strike: usd(GO_PLAN.monthly.priceUsd),
-    tag: fillTemplate(L.firstMonthTag, { pct: String(goIntroPct) }),
-    subline: fillTemplate(L.monthlyRenewal, {
-      amountUsd: usd(GO_PLAN.monthly.priceUsd),
-    }),
-    saveCta: fillTemplate(L.yearlySaveCta, {
-      savingsUsd: usd(goMonthlySave),
-    }),
-  },
-  yearly: {
-    amount: usd(goYearlyMonthly),
-    strike: usd(GO_PLAN.monthly.priceUsd),
-    tag: fillTemplate(L.yearlyDiscountTag, {
-      pct: String(goYearlyDiscountPct),
-    }),
-    subline: fillTemplate(L.yearlySubline, {
-      totalUsd: usd(GO_PLAN.yearly.priceUsd),
-      savingsUsd: usd(goMonthlySave),
-    }),
-  },
-};
-
-// Vela's grant already includes the advertised Pro/Max uplift. The percentage
-// is a presentation badge only; applying it again would inflate $120/$300 to
-// $144/$450.
-function effectiveCreditUsd(t: PlanTierConfig): number {
-  return t.monthly.grantUsd;
-}
-
-// Build-time display values per tier (the inline script recomputes these from
-// the public plans.json using the same formulas + the same label templates).
-function view(t: PlanTierConfig) {
-  const introPct = Math.round((1 - t.monthly.introPriceUsd / t.monthly.priceUsd) * 100);
-  const yearlyEquiv = Math.round(t.yearly.priceUsd / 12);
-  const yearlySave = t.monthly.priceUsd * 12 - t.yearly.priceUsd;
-  return {
-    monthly: {
-      amount: usd(t.monthly.introPriceUsd),
-      strike: usd(t.monthly.priceUsd),
-      tag: fillTemplate(L.firstMonthTag, { pct: String(introPct) }),
-      subline: fillTemplate(L.monthlyRenewal, { amountUsd: usd(t.monthly.priceUsd) }),
-      saveCta: fillTemplate(L.yearlySaveCta, { savingsUsd: usd(yearlySave) }),
-    },
-    yearly: {
-      amount: usd(yearlyEquiv),
-      strike: usd(t.monthly.priceUsd),
-      tag: fillTemplate(L.yearlyDiscountTag, { pct: String(t.yearly.discountPct) }),
-      subline: fillTemplate(L.yearlySubline, {
-        totalUsd: usd(t.yearly.priceUsd),
-        savingsUsd: usd(yearlySave),
-      }),
-    },
-    credits: fillTemplate(L.creditBenefit, { amount: usd(effectiveCreditUsd(t)) }),
-    bonusPct: CREDIT_BONUS_PCT[t.tier as PlanTierId],
-  };
-}
 
 const absUrl = (path: string) => new URL(href(path), SITE).toString();
 const jsonLd = [
@@ -318,205 +227,6 @@ const jsonLd = [
       data-audience-panel="creator"
     >
     <PricingIndividualPlans />
-    {false && (
-    <section class="pr-grid" aria-label={teamContent.creatorTab}>
-      <article class="pr-card" data-tier="go">
-        <header class="pr-head">
-          <span class="pr-go-wordmark" aria-label="OpenDesign Go">go</span>
-          <p class="pr-tagline">{content.go.tagline}</p>
-        </header>
-
-        <div class="pr-price">
-          <div class="pr-when" data-when="monthly">
-            <div class="pr-price-row">
-              <span class="pr-amount">{goView.monthly.amount}</span>
-              <s class="pr-strike">{goView.monthly.strike}</s>
-              <span class="pr-per">{L.perMonth}</span>
-              <span class="pr-tag">{goView.monthly.tag}</span>
-            </div>
-            <p class="pr-subline">
-              {goView.monthly.subline}
-              <button type="button" class="pr-yearly-nudge" data-goto-yearly>
-                <span>{goView.monthly.saveCta}</span>
-                <span class="pr-yearly-nudge-arrow" aria-hidden="true">→</span>
-              </button>
-            </p>
-          </div>
-          <div class="pr-when" data-when="yearly">
-            <div class="pr-price-row">
-              <span class="pr-amount">{goView.yearly.amount}</span>
-              <s class="pr-strike">{goView.yearly.strike}</s>
-              <span class="pr-per">{L.perMonth}</span>
-              <span class="pr-tag">{goView.yearly.tag}</span>
-            </div>
-            <p class="pr-subline">{goView.yearly.subline}</p>
-          </div>
-        </div>
-
-        <a
-          class="btn btn-primary pr-cta"
-          href={cloudSubscribeUrl('go', 'yearly')}
-          data-pricing-cta
-          data-tier="go"
-        >
-          <span data-when="monthly">{content.go.ctaLabel} · {L.monthly}</span>
-          <span data-when="yearly">{content.go.ctaLabel} · {L.yearly}</span>
-        </a>
-
-        <ul class="pr-feats">
-          <li class="pr-feat pr-feat-strong">{content.go.allowance}</li>
-          {content.go.features.map((f) => (
-            <li class="pr-feat">{renderCatalogLabel(f)}</li>
-          ))}
-        </ul>
-
-        <div class="pr-models">
-          <p class="pr-models-head">{content.go.allowance}</p>
-          <ul class="pr-model-list">
-            {POPULAR_MODELS.map((model) => (
-              <li>
-                <span class="pr-model-logo" aria-hidden="true">
-                  <img src={model.icon} alt="" width="14" height="14" loading="lazy" decoding="async" />
-                </span>
-                <span>{model.name}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </article>
-
-      {tiers.map((t) => {
-        const v = view(t);
-        const plan = content.plans[t.tier as PlanTierId];
-        return (
-          <article class="pr-card" data-tier={t.tier} data-recommended={t.recommended ? 'true' : undefined}>
-            {t.recommended && <span class="pr-recommended-ribbon">{L.recommended}</span>}
-            <header class="pr-head">
-              <img
-                class="pr-tier-logo"
-                src={`/pricing/plan-${t.tier}.svg`}
-                alt={t.tier.charAt(0).toUpperCase() + t.tier.slice(1)}
-                height={22}
-                loading="lazy"
-                decoding="async"
-              />
-              <p class="pr-tagline">{plan.tagline}</p>
-            </header>
-
-            <div class="pr-price">
-              <div class="pr-when" data-when="monthly">
-                <div class="pr-price-row">
-                  <span class="pr-amount" data-od-amount>{v.monthly.amount}</span>
-                  <s class="pr-strike" data-od-strike>{v.monthly.strike}</s>
-                  <span class="pr-per">{L.perMonth}</span>
-                  <span class="pr-tag" data-od-tag>{v.monthly.tag}</span>
-                </div>
-                <p class="pr-subline">
-                  <span data-od-subline>{v.monthly.subline}</span>
-                  <button type="button" class="pr-yearly-nudge" data-goto-yearly>
-                    <span data-od-yearly-cta>{v.monthly.saveCta}</span>
-                    <span class="pr-yearly-nudge-arrow" aria-hidden="true">→</span>
-                  </button>
-                </p>
-              </div>
-              <div class="pr-when" data-when="yearly">
-                <div class="pr-price-row">
-                  <span class="pr-amount" data-od-amount>{v.yearly.amount}</span>
-                  <s class="pr-strike" data-od-strike>{v.yearly.strike}</s>
-                  <span class="pr-per">{L.perMonth}</span>
-                  <span class="pr-tag" data-od-tag>{v.yearly.tag}</span>
-                </div>
-                <p class="pr-subline" data-od-subline>{v.yearly.subline}</p>
-              </div>
-            </div>
-
-            <a
-              class={t.recommended ? 'btn btn-primary pr-cta' : 'btn btn-ghost pr-cta'}
-              href={cloudSubscribeUrl(t.tier, 'yearly')}
-              data-pricing-cta
-              data-tier={t.tier}
-            >
-              {/* CTA carries the selected billing interval (mirrors the vela
-                  modal's "升级 Plus · 年付"); the interval CSS swaps the spans. */}
-              <span data-when="monthly">{plan.ctaLabel} · {L.monthly}</span>
-              <span data-when="yearly">{plan.ctaLabel} · {L.yearly}</span>
-            </a>
-
-            {/* Fully-expanded benefits — credit + concurrency lead the list,
-                then every included benefit; no "includes all <tier>" heading. */}
-            <ul class="pr-feats">
-              {deepSeekCampaign.modelBenefits.map((benefit) => (
-                <li class="pr-feat pr-campaign-model-benefit" data-pricing-campaign-surface hidden>
-                  <div>
-                    <strong>{benefit}</strong>
-                    <small>{deepSeekCampaign.paidBenefitNote}</small>
-                  </div>
-                </li>
-              ))}
-              <li class="pr-feat pr-feat-lead pr-feat-strong">
-                <span data-od-credit>{v.credits}</span>
-                {v.bonusPct != null && (
-                  <span class="pr-bonus">
-                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <rect x="3" y="8" width="18" height="4" rx="1" />
-                      <path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7" />
-                      <path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5" />
-                    </svg>
-                    {fillTemplate(L.creditBonus, { pct: String(v.bonusPct) })}
-                  </span>
-                )}
-              </li>
-              <li class="pr-feat pr-feat-multimodal">{L.multimodalBenefit}</li>
-              <li class="pr-feat pr-feat-strong">{plan.concurrency}</li>
-              {plan.features.map((f) => (
-                <li class="pr-feat">{renderCatalogLabel(f)}</li>
-              ))}
-            </ul>
-
-            <div class="pr-models">
-              <p class="pr-models-head">{L.topTextModels}</p>
-              <ul class="pr-model-list">
-                {PREMIUM_MODELS.map((m) => (
-                  <li>
-                    <span class="pr-model-logo" aria-hidden="true">
-                      <img src={m.icon} alt="" width="14" height="14" loading="lazy" decoding="async" />
-                    </span>
-                    <span>{m.name}</span>
-                  </li>
-                ))}
-              </ul>
-              <p class="pr-models-head">{L.topImageModels}</p>
-              <ul class="pr-model-list">
-                {IMAGE_MODELS.map((m) => (
-                  <li>
-                    <span class="pr-model-logo" aria-hidden="true">
-                      <img src={m.icon} alt="" width="14" height="14" loading="lazy" decoding="async" />
-                    </span>
-                    <span>{m.name}</span>
-                  </li>
-                ))}
-              </ul>
-              {/* Hosted video has no server-owned entitlement/billing path yet,
-                  so the roster is shown greyed-out behind a coming-soon tag
-                  rather than as an included benefit. */}
-              <p class="pr-models-head">{L.topVideoModels}<span class="pr-soon-tag">{L.comingSoon}</span></p>
-              <ul class="pr-model-list is-soon">
-                {VIDEO_MODELS.map((m) => (
-                  <li>
-                    <span class="pr-model-logo" aria-hidden="true">
-                      <img src={m.icon} alt="" width="14" height="14" loading="lazy" decoding="async" />
-                    </span>
-                    <span>{m.name}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </article>
-        );
-      })}
-    </section>
-    )}
-
     <section class="pr-multimodal" aria-labelledby="pr-multimodal-title">
       <div class="pr-multimodal-copy">
         <span class="pr-multimodal-kicker">OpenDesign Cloud</span>
@@ -720,7 +430,7 @@ const jsonLd = [
     </div>
   </div>
 
-  <script is:inline define:vars={{ plansUrl: PLANS_JSON_URL, labels: L, billingPlanUrl: CLOUD_CONSOLE_URL, teamTiers, teamCopy: teamContent }}>
+  <script is:inline define:vars={{ labels: L, billingPlanUrl: CLOUD_CONSOLE_URL, teamTiers, teamCopy: teamContent }}>
     (() => {
       const root = document.querySelector('[data-pricing-root]');
       if (!root) return;
@@ -1084,39 +794,6 @@ const jsonLd = [
       });
       updateTeamPlan();
 
-      // ── Pricing contract reconciliation ──────────────────────────────────
-      // Same formulas + same label templates as the build-time render, applied
-      // to the published JSON contract. Falls back to the baked snapshot.
-      fetch(plansUrl, { headers: { Accept: 'application/json' } })
-        .then((r) => {
-          const contentType = r.headers.get('content-type') || '';
-          return r.ok && contentType.includes('application/json') ? r.json() : null;
-        })
-        .then((data) => {
-          if (!data || !Array.isArray(data.tiers)) return;
-          for (const t of data.tiers) {
-            if (!t || typeof t.tier !== 'string' || !t.monthly || !t.yearly) continue;
-            const card = '[data-tier="' + t.tier + '"]';
-            const introPct = Math.round((1 - t.monthly.introPriceUsd / t.monthly.priceUsd) * 100);
-            const yearlyEquiv = Math.round(t.yearly.priceUsd / 12);
-            const yearlySave = t.monthly.priceUsd * 12 - t.yearly.priceUsd;
-
-            set(card, '[data-when="monthly"] [data-od-amount]', usd(t.monthly.introPriceUsd));
-            set(card, '[data-when="monthly"] [data-od-strike]', usd(t.monthly.priceUsd));
-            set(card, '[data-when="monthly"] [data-od-tag]', fill(labels.firstMonthTag, { pct: String(introPct) }));
-            set(card, '[data-when="monthly"] [data-od-subline]', fill(labels.monthlyRenewal, { amountUsd: usd(t.monthly.priceUsd) }));
-            set(card, '[data-when="monthly"] [data-od-yearly-cta]', fill(labels.yearlySaveCta, { savingsUsd: usd(yearlySave) }));
-
-            set(card, '[data-when="yearly"] [data-od-amount]', usd(yearlyEquiv));
-            set(card, '[data-when="yearly"] [data-od-strike]', usd(t.monthly.priceUsd));
-            set(card, '[data-when="yearly"] [data-od-tag]', fill(labels.yearlyDiscountTag, { pct: String(t.yearly.discountPct) }));
-            set(card, '[data-when="yearly"] [data-od-subline]', fill(labels.yearlySubline, { totalUsd: usd(t.yearly.priceUsd), savingsUsd: usd(yearlySave) }));
-
-            set(card, '[data-od-credit]', fill(labels.creditBenefit, { amount: usd(t.monthly.grantUsd) }));
-          }
-        })
-        .catch(() => {});
-
       // CTA analytics + cross-product payment attribution. A new entry id is
       // minted at this conversion click, not at campaign impression.
       root.addEventListener('click', (event) => {
@@ -1372,243 +1049,6 @@ const jsonLd = [
   /* ---- Interval-conditional visibility ---- */
   [data-pricing-root][data-interval='monthly'] [data-when='yearly'] { display: none !important; }
   [data-pricing-root][data-interval='yearly'] [data-when='monthly'] { display: none !important; }
-
-  /* ---- Grid ---- */
-  .pr-grid {
-    padding: 0;
-    margin-top: 28px;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    max-width: 1280px;
-    margin-inline: auto;
-    align-items: stretch;
-  }
-  @media (max-width: 1080px) {
-    .pr-grid { grid-template-columns: repeat(2, 1fr); max-width: 760px; }
-  }
-  @media (max-width: 640px) {
-    .pr-grid { grid-template-columns: 1fr; max-width: 460px; }
-  }
-
-  .pr-card {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
-    border-radius: 18px;
-    padding: 28px 24px 26px;
-    background: var(--surface, rgba(255, 255, 255, 0.55));
-    transition: border-color 200ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms;
-  }
-  .pr-card[data-recommended='true'] {
-    border-color: var(--ink);
-    padding-top: 48px;
-    box-shadow: 0 0 0 1px var(--ink), 0 22px 48px -30px rgba(0, 0, 0, 0.5);
-  }
-  .pr-recommended-ribbon {
-    position: absolute;
-    inset: 0 0 auto;
-    display: grid;
-    place-items: center;
-    min-height: 28px;
-    border-radius: 17px 17px 0 0;
-    color: #173707;
-    background: #8eea63;
-    font-size: .7rem;
-    font-weight: 750;
-    letter-spacing: .03em;
-  }
-  .pr-card[data-tier='max'] {
-    --ink: #f6f7f2;
-    --ink-soft: #a9ada3;
-    --line: rgb(255 255 255 / 14%);
-    color: #f6f7f2;
-    border-color: #10120e;
-    background: #10120e;
-  }
-  .pr-card[data-tier='max'] .pr-tier-logo {
-    filter: brightness(0) invert(1);
-  }
-  .pr-card[data-tier='max'] .pr-cta {
-    color: #122a08;
-    border-color: #8eea63;
-    background: #8eea63;
-  }
-  .pr-go-wordmark {
-    display: block;
-    width: max-content;
-    height: 22px;
-    padding-inline: 2px;
-    color: var(--ink, #20211e);
-    font-size: 1.45rem;
-    font-weight: 760;
-    line-height: 20px;
-    letter-spacing: -.08em;
-    text-transform: uppercase;
-    border-block: 2px solid currentColor;
-  }
-  /* ---- Head ---- */
-  /* Plan wordmark logo — kept 1:1 with the cloud subscription modal's
-     plan-<tier>-vip.svg assets (copied to public/pricing/). */
-  .pr-tier-logo {
-    height: 22px;
-    width: auto;
-    display: block;
-  }
-  .pr-tagline {
-    font-size: 0.82rem;
-    line-height: 1.5;
-    color: var(--ink-soft, #777);
-    margin: 8px 0 0;
-    min-height: 2.4em;
-  }
-
-  /* ---- Price ---- */
-  .pr-price { margin: 18px 0 0; min-height: 74px; }
-  .pr-price-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
-  .pr-amount {
-    font-family: var(--serif, Georgia, serif);
-    font-weight: 600;
-    font-size: 2.5rem;
-    line-height: 1;
-    letter-spacing: -0.02em;
-    color: var(--ink);
-  }
-  .pr-strike { font-size: 1rem; color: var(--ink-soft, #aaa); text-decoration: line-through; }
-  .pr-per { font-size: 0.9rem; color: var(--ink-soft, #777); }
-  .pr-tag {
-    font-size: 0.72rem;
-    font-weight: 700;
-    padding: 0.16rem 0.5rem;
-    border-radius: 6px;
-    background: var(--brand, #2bd200);
-    color: #0d3300;
-    white-space: nowrap;
-  }
-  .pr-subline { margin: 8px 0 0; font-size: 0.8rem; color: var(--ink-soft, #777); }
-  .pr-yearly-nudge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    margin-left: 8px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    font: inherit;
-    color: inherit;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: color 0.2s cubic-bezier(0.23, 1, 0.32, 1);
-  }
-  .pr-yearly-nudge [data-od-yearly-cta] { text-decoration: underline; text-underline-offset: 2px; }
-  .pr-yearly-nudge:hover { color: var(--ink, #1a1a1a); }
-  .pr-yearly-nudge:focus-visible { outline: 2px solid var(--brand, #2bd200); outline-offset: 2px; border-radius: 4px; }
-  .pr-yearly-nudge-arrow { transition: transform 0.2s cubic-bezier(0.23, 1, 0.32, 1); }
-  .pr-yearly-nudge:hover .pr-yearly-nudge-arrow { transform: translateX(2px); }
-
-  /* ---- CTA ---- */
-  .pr-cta { margin-top: 18px; width: 100%; justify-content: center; text-align: center; }
-
-  /* ---- Features (fully expanded; credit + concurrency lead the list) ---- */
-  .pr-feats {
-    list-style: none;
-    margin: 22px 0 0;
-    padding: 18px 0 0;
-    border-top: 1px solid var(--line, rgba(0, 0, 0, 0.08));
-    display: flex;
-    flex-direction: column;
-    gap: 11px;
-  }
-  .pr-feat {
-    position: relative;
-    padding-left: 22px;
-    font-size: 0.86rem;
-    line-height: 1.45;
-    color: var(--ink, #1a1a1a);
-  }
-  .pr-feat::before {
-    content: '✓';
-    position: absolute;
-    left: 0;
-    top: 0;
-    font-weight: 700;
-    color: var(--olive, #218c00);
-  }
-  /* The highlighted row extends 8px left of the regular list. Put the check
-     back on the shared x-axis, then center it against the first (DeepSeek)
-     text line instead of the two-line card as a whole. */
-  .pr-feat.pr-campaign-model-benefit::before {
-    left: 8px;
-    top: 18px;
-    line-height: 1;
-    transform: translateY(-50%);
-  }
-  /* Lead rows (credit + concurrency) read bold on paid tiers, mirroring the
-     vela modal's core-benefit emphasis. */
-  .pr-feat-strong { font-weight: 600; }
-  .pr-feat-multimodal { font-weight: 600; }
-  /* The credit lead row carries an inline bonus badge. */
-  .pr-feat-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-  .pr-bonus {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 0.1rem 0.42rem;
-    border-radius: 999px;
-    font-size: 0.68rem;
-    font-weight: 700;
-    line-height: 1;
-    white-space: nowrap;
-    color: #0d3300;
-    background: color-mix(in srgb, var(--brand, #2bd200) 20%, transparent);
-    border: 1px solid color-mix(in srgb, var(--brand, #2bd200) 45%, transparent);
-  }
-  /* ---- Model lists ---- */
-  .pr-models { margin-top: 22px; }
-  .pr-models-head {
-    margin: 18px 0 10px;
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-soft, #999);
-  }
-  .pr-models-head:first-child { margin-top: 0; }
-  .pr-model-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
-  .pr-model-list li {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    min-width: 0;
-    font-size: 0.85rem;
-    line-height: 1.35;
-    color: var(--ink, #2a2a2a);
-  }
-  .pr-model-logo {
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 20px;
-    width: 20px;
-    height: 20px;
-    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-    border-radius: 6px;
-    color: currentColor;
-    background: color-mix(in srgb, currentColor 3%, transparent);
-  }
-  .pr-model-logo img {
-    display: block;
-    width: 13px;
-    height: 13px;
-    color: inherit;
-  }
-  /* Models outside the Free trial pool render greyed-out. */
-  .pr-model-list li.is-unavailable { color: var(--ink-soft, #aaa); }
-  .pr-model-list li.is-unavailable .pr-model-logo { opacity: 0.55; }
-  /* Roster for a modality that is not purchasable yet. `--ink-soft` sits too
-     close to `--ink` to read as unavailable, so mute against the surface. */
-  .pr-model-list.is-soon li { color: color-mix(in srgb, var(--ink, #262626) 48%, transparent); }
-  .pr-model-list.is-soon .pr-model-logo { opacity: 0.5; }
 
   /* ---- Shared hosted multimodal benefit ---- */
   .pr-multimodal {

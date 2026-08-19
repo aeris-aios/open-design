@@ -1,5 +1,6 @@
 ---
 import {
+  GO_PLAN,
   PRICING_SNAPSHOT,
   cloudSubscribeUrl,
   formatUsd,
@@ -10,6 +11,7 @@ import {
   getPricingContent,
   type PlanTierId,
 } from '../_lib/pricing-content';
+import { getCatalogCounts } from '../_lib/catalog';
 import { localeFromPath } from '../i18n';
 
 const locale = localeFromPath(Astro.url.pathname);
@@ -17,6 +19,9 @@ const isZh = locale === 'zh' || locale === 'zh-tw';
 const content = getPricingContent(locale);
 const L = content.labels;
 const tiers = PRICING_SNAPSHOT.tiers;
+const catalogCounts = await getCatalogCounts(locale);
+const skillsCount = catalogCounts.skills.toLocaleString('en-US');
+const systemsCount = catalogCounts.systems.toLocaleString('en-US');
 
 type TierId = 'go' | PlanTierId;
 type ModelCategory = 'popular' | 'flagship' | 'image';
@@ -118,8 +123,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '支持 5 个自定义域名',
         '自带 API Key',
         '零配置专业设计 Agent',
-        '162+ Skills 工作流',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills 工作流`,
+        `${systemsCount}+ Design Systems`,
         '邮件支持',
       ],
       plus: [
@@ -129,8 +134,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '2 个并发任务',
         '自带 API Key',
         '零配置专业设计 Agent',
-        '162+ Skills 工作流',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills 工作流`,
+        `${systemsCount}+ Design Systems`,
         '邮件支持',
       ],
       pro: [
@@ -140,8 +145,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '5 个并发任务',
         '自带 API Key',
         '零配置专业设计 Agent',
-        '162+ Skills 工作流',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills 工作流`,
+        `${systemsCount}+ Design Systems`,
         '优先邮件支持',
       ],
       max: [
@@ -151,8 +156,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '10 个并发任务',
         '自带 API Key',
         '零配置专业设计 Agent',
-        '162+ Skills 工作流',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills 工作流`,
+        `${systemsCount}+ Design Systems`,
         '高峰优先算力 · 更低时延',
         '专属客户成功',
         '创作者 / 开发者支持',
@@ -165,8 +170,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '5 custom domains',
         'Bring your own API key',
         'Zero-setup professional design Agent',
-        '162+ Skills workflows',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills workflows`,
+        `${systemsCount}+ Design Systems`,
         'Email support',
       ],
       plus: [
@@ -176,8 +181,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '2 concurrent tasks',
         'Bring your own API key',
         'Zero-config professional design agent',
-        '162+ Skills workflows',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills workflows`,
+        `${systemsCount}+ Design Systems`,
         'Email support',
       ],
       pro: [
@@ -187,8 +192,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '5 concurrent tasks',
         'Bring your own API key',
         'Zero-config professional design agent',
-        '162+ Skills workflows',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills workflows`,
+        `${systemsCount}+ Design Systems`,
         'Priority email support',
       ],
       max: [
@@ -198,8 +203,8 @@ const tierBenefits: Record<TierId, string[]> = isZh
         '10 concurrent tasks',
         'Bring your own API key',
         'Zero-config professional design agent',
-        '162+ Skills workflows',
-        '151+ Design Systems',
+        `${skillsCount}+ Skills workflows`,
+        `${systemsCount}+ Design Systems`,
         'Peak-time priority compute · lower latency',
         'Dedicated customer success',
         'Creator / developer support',
@@ -232,14 +237,38 @@ function individualView(tier: PlanTierConfig) {
   };
 }
 
+const goYearlyEquivalent = Math.round(GO_PLAN.yearly.priceUsd / 12);
+const goMonthlyDiscount = Math.round(
+  (1 - GO_PLAN.monthly.introPriceUsd / GO_PLAN.monthly.priceUsd) * 100,
+);
+const goYearlyDiscount = Math.round(
+  (1 - goYearlyEquivalent / GO_PLAN.monthly.priceUsd) * 100,
+);
+const goYearlySave = GO_PLAN.monthly.priceUsd * 12 - GO_PLAN.yearly.priceUsd;
+const goView = {
+  monthly: {
+    amount: formatUsd(GO_PLAN.monthly.introPriceUsd).replace('$', ''),
+    strike: formatUsd(GO_PLAN.monthly.priceUsd),
+    discount: goMonthlyDiscount,
+    saving: formatUsd(GO_PLAN.monthly.priceUsd - GO_PLAN.monthly.introPriceUsd),
+    billed: isZh
+      ? `次月起 ${formatUsd(GO_PLAN.monthly.priceUsd)}`
+      : `Then ${formatUsd(GO_PLAN.monthly.priceUsd)}`,
+  },
+  yearly: {
+    amount: formatUsd(goYearlyEquivalent).replace('$', ''),
+    strike: formatUsd(GO_PLAN.monthly.priceUsd),
+    discount: goYearlyDiscount,
+    saving: formatUsd(goYearlySave),
+    billed: formatUsd(GO_PLAN.yearly.priceUsd),
+  },
+};
+
 const cardData = [
   {
     tier: 'go' as const,
     logo: null,
-    view: {
-      monthly: { amount: '5', strike: '$10', discount: 50, saving: '$5', billed: isZh ? '次月起 $10' : 'Then $10' },
-      yearly: { amount: '5', strike: '$10', discount: 50, saving: '$60', billed: '$60' },
-    },
+    view: goView,
   },
   ...tiers.map((tier) => ({
     tier: tier.tier as PlanTierId,
@@ -300,6 +329,14 @@ const categoryCopy: Record<ModelCategory, { title: string; count: string }> = {
   },
 };
 
+function popularAccessStatus(modelName: string, tier: TierId) {
+  if (unlimitedByTier[tier].has(modelName)) {
+    return { kind: 'unlimited', text: isZh ? '无限量' : 'Unlimited' };
+  }
+  if (tier === 'go') return { kind: 'ample', text: isZh ? '充裕额度' : 'Ample' };
+  return { kind: 'more-ample', text: isZh ? '更充裕' : 'More ample' };
+}
+
 function accessStatus(category: ModelCategory, modelName: string, tier: TierId) {
   if (category === 'image') {
     if (tier === 'go') return { kind: 'unavailable', text: isZh ? '不支持' : 'Not available' };
@@ -311,11 +348,7 @@ function accessStatus(category: ModelCategory, modelName: string, tier: TierId) 
       ? { kind: 'unavailable', text: isZh ? '不支持' : 'Not available' }
       : { kind: 'included', text: isZh ? '已包含' : 'Included' };
   }
-  if (tier === 'max' || (tier === 'pro' && unlimitedByTier.pro.has(modelName))) {
-    return { kind: 'unlimited', text: isZh ? '无限量' : 'Unlimited' };
-  }
-  if (tier === 'go') return { kind: 'ample', text: isZh ? '充裕额度' : 'Ample' };
-  return { kind: 'more-ample', text: isZh ? '更充裕' : 'More ample' };
+  return popularAccessStatus(modelName, tier);
 }
 
 const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-Max, GPT-5.3-Codex, Gemini 3 Flash, GPT-5.4 mini, GPT-5.6-Luna, Kimi-K2.5, GLM-5';
@@ -379,13 +412,16 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                     <h4>{unlimitedByTier[tier].size} {isZh ? '个热门模型无限使用' : 'popular models unlimited'}</h4>
                   </header>
                   <ul>
-                    {popular.map((model) => (
-                      <li class="model-with-status">
-                        <span class="model-logo"><img src={model.icon} alt="" /></span>
-                        <span>{model.name}</span>
-                        <em class="unlimited-status">{isZh ? '无限量' : 'Unlimited'}</em>
-                      </li>
-                    ))}
+                    {popular.map((model) => {
+                      const popularStatus = popularAccessStatus(model.name, tier);
+                      return (
+                        <li class="model-with-status">
+                          <span class="model-logo"><img src={model.icon} alt="" /></span>
+                          <span>{model.name}</span>
+                          <em class={popularStatus.kind}>{popularStatus.text}</em>
+                        </li>
+                      );
+                    })}
                   </ul>
                   <button type="button" class="model-module-toggle" aria-expanded="false" data-module-toggle data-total={popular.length}>
                     <span>{isZh ? `查看全部 ${popular.length} 个` : `View all ${popular.length}`}</span><span class="toggle-symbol">+</span>
@@ -971,6 +1007,12 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   .plan-model-module li.model-with-status em.multimodal-status {
     color: #287b1d;
     background: #dcfac7;
+  }
+
+  .plan-model-module li.model-with-status em.ample,
+  .plan-model-module li.model-with-status em.more-ample {
+    color: #5f655c;
+    background: rgba(95, 101, 92, 0.1);
   }
 
   .model-module-toggle {
