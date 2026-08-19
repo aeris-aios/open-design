@@ -951,12 +951,31 @@ export async function collectCodexChildEvidence(
         recordDiagnostic('child_turn_not_observed');
         continue;
       }
-      if (ownTurns.length > 1) {
-        limitations.add('codex_child_turn_ambiguous');
-        recordDiagnostic('child_turn_ambiguous');
-        continue;
+      // Attribute each parent activity to the Child turn it happened in.
+      //
+      // A Codex sub-agent is re-invoked by its parent, and every invocation
+      // opens another turn in the Child's own rollout, so `started` followed by
+      // N-1 `interacted` is the ordinary shape of one delegated package rather
+      // than an ambiguity — rejecting it discarded every Child of a real
+      // complex Run. Terminals still have to be read per turn: handing the
+      // whole session's activity list to each one would let a single parent
+      // record terminate them all and stamp them with one `endedAtMs`.
+      const orderedTurns = [...ownTurns].sort((a, b) => (
+        (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0)
+      ));
+      const activitiesByTurn = new Map<string, ChildActivity[]>();
+      for (const activity of activities) {
+        const owner = [...orderedTurns].reverse().find((candidate) => (
+          candidate.startedAtMs !== undefined
+          && activity.atMs !== undefined
+          && activity.atMs >= candidate.startedAtMs - 2_000
+        )) ?? orderedTurns[0];
+        if (!owner) continue;
+        const bucket = activitiesByTurn.get(owner.turnId) ?? [];
+        bucket.push(activity);
+        activitiesByTurn.set(owner.turnId, bucket);
       }
-      for (const turn of ownTurns) {
+      for (const turn of orderedTurns) {
         const visitKey = `${childSessionId}\u0000${turn.turnId}`;
         if (visitedSessionTurns.has(visitKey)) {
           limitations.add('codex_child_turn_duplicate_rejected');
@@ -975,7 +994,10 @@ export async function collectCodexChildEvidence(
         ];
         const usage = normalizedUsage(usageValues, turnLimitations);
         const prompt = normalizedPrompt(turn.promptIdentities);
-        const terminal = terminalFromEvidence({ turn, activities });
+        const terminal = terminalFromEvidence({
+          turn,
+          activities: activitiesByTurn.get(turn.turnId) ?? [],
+        });
         if (terminal.conflict) recordDiagnostic('child_terminal_status_conflict');
         const startedTiming = runningTiming(turn.startedAtMs);
         const completedTiming = terminalTiming(
