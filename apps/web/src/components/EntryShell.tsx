@@ -21,7 +21,6 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   defaultScenarioPluginIdForProjectMetadata,
   type AmrWalletSnapshot,
@@ -84,6 +83,7 @@ import type {
   DesignSystemSummary,
   ExecMode,
   Project,
+  ProjectKind,
   ProjectMetadata,
   ProjectTemplate,
   PromptTemplateSummary,
@@ -96,7 +96,10 @@ import { DesignsTab } from './DesignsTab';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
-import { ProjectSearchModal } from './ProjectSearchModal';
+import {
+  buildProjectSearchCatalog,
+  ProjectSearchModal,
+} from './ProjectSearchModal';
 import {
   CloudSignInTip,
   RailAccountRecoveryTip,
@@ -109,7 +112,9 @@ import {
 import { LibrarySection } from './LibrarySection';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
+import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
+import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
 import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalanceDialog';
 import {
   amrBalanceGateScopeForWorkspaceContext,
@@ -118,6 +123,10 @@ import {
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
+import {
+  amrPlansUrlForProfile,
+  amrPlansUrlForWorkspace,
+} from '../runtime/amr-guidance';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { EntryBlankState } from './EntryBlankState';
 import { RecentProjectsStrip } from './RecentProjectsStrip';
@@ -219,8 +228,10 @@ import {
   notifyAmrLoginStatusChanged,
 } from './amrLoginPolling';
 import { closeAmrActivationWindowBestEffort } from './AmrLoginPill';
+import { isMacPlatform } from '../utils/platform';
 import { smoothScrollToTop } from '../utils/smoothScrollToTop';
 import { summarizeProjectNameFromPrompt } from '../utils/projectName';
+import { deepSeekHarnessNeedsSetup } from '../utils/visibleAgents';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import {
   providerModelsCacheKey,
@@ -235,9 +246,6 @@ import {
 import { enterpriseUrl } from './enterpriseUrl';
 import { resolveByokModelPreference } from './byok/validation';
 import onboardingSourceStyles from './OnboardingModelSource.module.css';
-
-const DEEPSEEK_CAMPAIGN_PRICING_URL =
-  'https://open-design.ai/zh/pricing/?source=desktop_campaign_badge';
 
 // Persist the entry nav-rail open/collapsed state so it survives both a
 // home -> project -> home navigation (EntryShell unmounts on the project
@@ -784,6 +792,7 @@ export function EntryShell({
     sharedFallbackName: t('recentProjects.sharedProjectFallbackName'),
     isShared: isSharedProject,
   });
+  const projectSearchProjects = buildProjectSearchCatalog(draftProjectsList, allProjectsList);
   const homeProjectsList = useMemo(
     () => reconcileSharedProjectCatalogFields({
       projects,
@@ -924,10 +933,9 @@ export function EntryShell({
     teamProjects.projects,
   ]);
   // Open handler for the "全部项目" grid. A project already in the member's local
-  // list opens directly; a team-shared project the member has not pulled yet is
-  // first pulled + registered on the daemon (materialize content + insert a local
-  // project record) so it can open read-only — the member is not the owner, so
-  // the useProjectCollab single-writer path keeps it read-only.
+  // list opens directly. A remote Team project first creates an authority-bound
+  // placeholder, then ProjectView opens while the daemon materializes content in
+  // the background. The placeholder stamp keeps every content writer fail-closed.
   const [pullingProjectId, setPullingProjectId] = useState<string | null>(null);
   async function handleOpenAllProjects(id: string): Promise<boolean> {
     // The grid already reconciled the local row with the authoritative team
@@ -994,22 +1002,34 @@ export function EntryShell({
       await open();
       return true;
     }
-    // The pull materializes the whole project before it can open; surface it
-    // on the card (spinner overlay) and swallow re-clicks meanwhile —
-    // otherwise the first click reads as dead for the entire download.
+    // Keep the card busy only for the short authority/bootstrap round trip, not
+    // for the full content transfer. PUT is idempotent, so the sidecar may safely
+    // replay it after a reused keep-alive socket resets. A paired older daemon
+    // has no bootstrap route; retain the former blocking POST fallback for that
+    // compatibility case.
     if (pullingProjectId) return false;
     const pullRead = beginWorkspaceScopedRead(workspaceContextRef.current);
     if (!pullRead.context) return false;
     setPullingProjectId(id);
     try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(id)}/collab/pull`, {
-        method: 'POST',
+      const collabRoute = `/api/projects/${encodeURIComponent(id)}/collab`;
+      let response = await fetch(`${collabRoute}/bootstrap`, {
+        method: 'PUT',
         headers: workspaceProjectHeaders(pullRead.context),
       });
+      if (response.status === 404 || response.status === 405) {
+        response = await fetch(`${collabRoute}/pull`, {
+          method: 'POST',
+          headers: workspaceProjectHeaders(pullRead.context),
+        });
+      }
       if (!pullRead.isStillCurrent(workspaceContextRef.current)) return false;
       if (!response.ok) return false;
       invalidateProjectFilesCache(id, pullRead.context);
-      await Promise.resolve(onProjectsRefresh?.());
+      // The exact route bootstrap and ambient list refresh are independent.
+      // Navigation may read the newly committed placeholder immediately while
+      // the shell refreshes its catalog in parallel.
+      void Promise.resolve(onProjectsRefresh?.());
     } catch {
       return false;
     } finally {
@@ -1066,12 +1086,38 @@ export function EntryShell({
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
 
   // ⌘K / Ctrl+K opens the project search palette — same as clicking the rail
-  // search box.
+  // search box. ⌘B / Ctrl+B toggles the nav rail — same as the pinned Home
+  // tab's sidebar toggle.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.isComposing
+        || (
+          target instanceof Element
+          && target.closest(
+            'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+          )
+        )
+      ) {
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
         event.preventDefault();
         setProjectSearchOpen(true);
+        return;
+      }
+      const primary = isMacPlatform()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      if (
+        primary &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === 'b' || event.key === 'B')
+      ) {
+        event.preventDefault();
+        setRailOpen((v) => !v);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -1128,8 +1174,8 @@ export function EntryShell({
     trackDeepSeekCampaignBadgeSurfaceView(analytics.track, {
       page_name: 'home',
       area: 'campaign_badge',
-      element: 'deepseek_v4_flash',
-      campaign_id: 'deepseek_v4_flash',
+      element: 'deepseek_v4_pro',
+      campaign_id: 'deepseek_v4_pro',
       user_state: deepSeekV4FlashCampaignAudience,
     });
   }, [analytics.track, deepSeekV4FlashCampaignAudience, view]);
@@ -1139,7 +1185,7 @@ export function EntryShell({
       page_name: 'home',
       area: 'campaign_badge',
       element: 'open_pricing',
-      campaign_id: 'deepseek_v4_flash',
+      campaign_id: 'deepseek_v4_pro',
       user_state: deepSeekV4FlashCampaignAudience,
     });
     const attribution = recordAmrEntry(
@@ -1148,7 +1194,7 @@ export function EntryShell({
       new Date(),
       {
         metricsConsent: config.telemetry?.metrics === true,
-        campaignId: 'deepseek_v4_flash',
+        campaignId: 'deepseek_v4_pro',
         conversionSource: 'deepseek_workbench_badge',
       },
     );
@@ -1157,8 +1203,17 @@ export function EntryShell({
       resolvedDeviceId: getResolvedDeviceId(),
       installationId: config.installationId,
     });
+    // The same destination the modal's CTA opens: the console's plan surface,
+    // scoped to this workspace. Both are in-product entries for a signed-in
+    // user, so pointing one at the console (where a subscription can actually
+    // be started) and the other at the marketing site would split one funnel
+    // across two destinations — and the marketing link was pinned to `/zh/`,
+    // landing every non-Chinese user on a Chinese page.
+    const plansUrl =
+      amrPlansUrlForWorkspace(undefined, workspaceContext?.workspaceId)
+      ?? amrPlansUrlForProfile(undefined);
     window.open(
-      attributedAmrUrl(DEEPSEEK_CAMPAIGN_PRICING_URL, attribution, deviceId),
+      attributedAmrUrl(plansUrl, attribution, deviceId),
       '_blank',
       'noopener,noreferrer',
     );
@@ -1167,6 +1222,7 @@ export function EntryShell({
     config.installationId,
     config.telemetry?.metrics,
     deepSeekV4FlashCampaignAudience,
+    workspaceContext?.workspaceId,
   ]);
   // 产品拍板 D5: the campaign modal's paid 立即使用 performs the REAL switch —
   // daemon execution mode + Cloud agent (amr) + DeepSeek V4 Flash — through
@@ -1211,9 +1267,10 @@ export function EntryShell({
   function usePluginFromLibrary(
     record: InstalledPluginRecord,
     action: PluginUseAction = 'use',
+    homeType?: { chipId: string; projectKind: ProjectKind },
   ) {
     setHomePromptHandoff(
-      createPluginUseHandoff(Date.now(), record.id, { action }),
+      createPluginUseHandoff(Date.now(), record.id, { action, ...homeType }),
     );
     changeView('home');
   }
@@ -1321,7 +1378,7 @@ export function EntryShell({
       navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
       return 'blocked' as const;
     }
-    // Open Design Cloud pre-run balance gate: hard blocks (empty wallet or
+    // OpenDesign Cloud pre-run balance gate: hard blocks (empty wallet or
     // signed out) and the soft low-balance reminder both fire BEFORE the
     // project is created, so the dialog appears right here on the home page
     // and the composer keeps its draft. In-project sends are gated separately
@@ -1492,7 +1549,7 @@ export function EntryShell({
    * Onboarding is where a signed-out user signs IN, so the workspace context
    * the shell resolved before it is stale by definition. Without this the rail
    * came back in its signed-out shape — no workspace switcher, no 草稿 / 全部项目
-   * / Workspace 设置, and the "sign in to Open Design Cloud" callout still in
+   * / Workspace 设置, and the "sign in to OpenDesign Cloud" callout still in
    * the bottom-left corner (#140) — until a focus or the 30s poll happened to
    * re-read it. `CloudSignInTip` fires the same three after its own sign-in.
    *
@@ -1517,11 +1574,11 @@ export function EntryShell({
   // reachable through either the account menu or the signed-out rail item.
   //
   // The updater host has no topbar to live in any more (the rail toggle is the
-  // pinned Home tab in the workspace tabs bar), so the rail owns it: it renders
-  // in a right-aligned strip just above the account row, falling back to the
-  // rail footer in the signed-out shell. `EntryNavRail` decides which — the
-  // shell only supplies the host, which renders nothing until the real updater
-  // reports a downloaded, unopened installer.
+  // pinned Home tab in the workspace tabs bar), so the rail owns it: it rides
+  // the floating account row immediately after the avatar chip, falling back
+  // to the rail footer in the signed-out shell. `EntryNavRail` decides which —
+  // the shell only supplies the host, which renders nothing until the real
+  // updater reports a downloaded, unopened installer.
   const updaterSlot = (
     <UpdaterPopup
       allowSilentUpdates={config.allowSilentUpdates}
@@ -1602,6 +1659,20 @@ export function EntryShell({
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
+          topRightSlot={
+            view === 'home' && deepSeekV4FlashCampaignAudience !== 'unknown' ? (
+              <button
+                type="button"
+                className="entry-deepseek-campaign-badge"
+                onClick={openDeepSeekCampaignPricing}
+                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
+                data-testid="deepseek-campaign-pricing-badge"
+              >
+                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
+                <Icon name="arrow-right" size={13} />
+              </button>
+            ) : null
+          }
           context={railWorkspaceContext}
           billing={workspaceBilling}
           balanceUsd={workspaceBalanceUsd}
@@ -1618,10 +1689,9 @@ export function EntryShell({
         />
         {projectSearchOpen ? (
           <ProjectSearchModal
-            // The same merged catalog as the All Projects grid (own + team-
-            // shared cards), opened through the pull-first handler so a shared
-            // project the member has not pulled yet still opens.
-            projects={allProjectsList}
+            // Search spans personal drafts plus the shared workspace catalog.
+            // The pull-first handler still opens not-yet-local shared projects.
+            projects={projectSearchProjects}
             workspaceContext={workspaceContext}
             onOpenProject={handleOpenAllProjects}
             onClose={() => setProjectSearchOpen(false)}
@@ -1633,23 +1703,9 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
-          {view === 'home'
-            && deepSeekV4FlashCampaignAudience !== 'unknown'
-            && typeof document !== 'undefined'
-            ? createPortal(
-              <button
-                type="button"
-                className="entry-deepseek-campaign-badge"
-                onClick={openDeepSeekCampaignPricing}
-                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
-                data-testid="deepseek-campaign-pricing-badge"
-              >
-                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
-                <Icon name="arrow-right" size={13} />
-              </button>,
-              document.body,
-            )
-            : null}
+          {/* DeepSeek campaign badge moved into EntryNavRail's top-right
+              cluster (topRightSlot above) so it sits beside the account
+              module in one flex row. */}
           {amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}
@@ -1871,18 +1927,28 @@ export function EntryShell({
                     }
                   })();
                 }}
-                onUsePrompt={(prompt) => {
+                onUsePrompt={(target) => {
                   // Seed the Home composer with the template's starting prompt,
                   // then switch to Home to review + send it (keep in sync with
                   // the standalone /community branch in App.tsx).
-                  seedHomeComposerPrompt(prompt);
+                  seedHomeComposerPrompt(target.prompt);
+                  setHomePromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
+                    action: 'use',
+                    chipId: target.chipId,
+                    projectKind: target.projectKind,
+                  }));
                   changeView('home');
                 }}
                 // The gallery card's full details modal routes Use through the
                 // same Home hand-off the plugin library uses, so the plugin
                 // becomes the composer's active driver instead of only seeding
                 // prompt text.
-                onUsePlugin={usePluginFromLibrary}
+                onUsePlugin={(record, action, target) => {
+                  usePluginFromLibrary(record, action, {
+                    chipId: target.chipId,
+                    projectKind: target.projectKind,
+                  });
+                }}
               />
             ) : null}
             {/* Team destinations — the entry shell owns the nav frame only; each
@@ -2067,6 +2133,7 @@ function OnboardingView({
     if (!amrLoginPending) setActivationHintClosed(false);
   }, [amrLoginPending]);
   const [visibleAgentIds, setVisibleAgentIds] = useState<string[]>([]);
+  const [dshSetup, setDshSetup] = useState<{ busy: boolean; error: string | null } | null>(null);
   const [providerTestState, setProviderTestState] = useState<
     | { status: 'idle' }
     | { status: 'running'; inputKey: string }
@@ -2160,8 +2227,10 @@ function OnboardingView({
         (apiProtocol === 'azure' && provider.baseUrl === '' && Boolean(config.baseUrl?.trim()))
       ),
   ) ?? null;
-  const availableCliAgents = agents.filter((agent) => agent.available && agent.id !== 'amr');
-  const visibleAgents = availableCliAgents.filter((agent) => visibleAgentIds.includes(agent.id));
+  const candidateCliAgents = agents.filter(
+    (agent) => agent.id !== 'amr' && (agent.available || deepSeekHarnessNeedsSetup(agent)),
+  );
+  const visibleAgents = candidateCliAgents.filter((agent) => visibleAgentIds.includes(agent.id));
   const amrSignedIn = isAmrSessionAuthenticated(amrStatus);
   const selectedAgent = visibleAgents.find((agent) => agent.id === config.agentId) ?? null;
   const selectedAgentChoice = selectedAgent ? (config.agentModels?.[selectedAgent.id] ?? {}) : {};
@@ -2905,7 +2974,7 @@ function OnboardingView({
         // Onboarding may sit on this step for a while before finishOnboarding
         // fires refreshWorkspaceSurfacesAfterOnboarding() — without firing
         // these here too, Home's rail can render in its stale signed-out
-        // shape (still showing the "sign in to Open Design Cloud" callout)
+        // shape (still showing the "sign in to OpenDesign Cloud" callout)
         // for however long that gap lasts. Mirrors CloudSignInTip's own
         // finishSignedIn().
         notifyWorkspaceContextRefresh();
@@ -2939,12 +3008,13 @@ function OnboardingView({
 
   async function scanCliAgents(options: { preferExisting?: boolean } = {}) {
     const scanToken = beginCliScan({ clearVisible: !options.preferExisting });
-    const currentAvailableAgents = agents.filter(
-      (agent) => agent.available && agent.id !== 'amr',
+    const currentCandidateAgents = agents.filter(
+      (agent) => agent.id !== 'amr' && (agent.available || deepSeekHarnessNeedsSetup(agent)),
     );
-    if (options.preferExisting && currentAvailableAgents.length > 0) {
+    const currentAvailableAgents = currentCandidateAgents.filter((agent) => agent.available);
+    if (options.preferExisting && currentCandidateAgents.length > 0) {
       const selectedCliAgent = selectDefaultCliAgent(currentAvailableAgents);
-      showCliAgents(scanToken, currentAvailableAgents, { stagger: false });
+      showCliAgents(scanToken, currentCandidateAgents, { stagger: false });
       setCliScanStatus('done');
       emitPendingCliScanResult(scanToken, {
         result: 'success',
@@ -2955,8 +3025,8 @@ function OnboardingView({
       return currentAvailableAgents;
     }
     if (options.preferExisting && agentsLoading) {
-      showCliAgents(scanToken, currentAvailableAgents, { stagger: false });
-      return currentAvailableAgents;
+      showCliAgents(scanToken, currentCandidateAgents, { stagger: false });
+      return currentCandidateAgents;
     }
     cliRefreshPendingTokenRef.current = scanToken;
     try {
@@ -2964,13 +3034,16 @@ function OnboardingView({
       if (cliScanTokenRef.current !== scanToken) return;
       cliRefreshPendingTokenRef.current = null;
       const availableAgents = nextAgents.filter((agent) => agent.available && agent.id !== 'amr');
+      const candidateAgents = nextAgents.filter(
+        (agent) => agent.id !== 'amr' && (agent.available || deepSeekHarnessNeedsSetup(agent)),
+      );
       const selectedCliAgent = selectDefaultCliAgent(availableAgents);
       // Scan-result semantics: zero available CLIs is a `failed` outcome
       // because the user's runtime path is blocked, even though the
       // detect call itself returned successfully. `detected_cli_count`
       // separately reports the raw catalog so the dashboard can split
       // "user has no CLI installed" from "detect crashed".
-      if (availableAgents.length === 0) {
+      if (candidateAgents.length === 0) {
         setCliScanStatus('done');
         emitPendingCliScanResult(scanToken, {
           result: 'failed',
@@ -2988,7 +3061,7 @@ function OnboardingView({
           ? { selectedCliId: agentIdToTracking(selectedCliAgent.id) }
           : {}),
       });
-      showCliAgents(scanToken, availableAgents, { stagger: true });
+      showCliAgents(scanToken, candidateAgents, { stagger: true });
     } catch (err) {
       if (cliScanTokenRef.current === scanToken) {
         cliRefreshPendingTokenRef.current = null;
@@ -3062,6 +3135,48 @@ function OnboardingView({
           agentName: agent.name,
           detail: error instanceof Error ? error.message : 'Test request failed',
         },
+      });
+    }
+  }
+
+  async function confirmDshSetup() {
+    if (dshSetup?.busy) return;
+    setDshSetup({ busy: true, error: null });
+    try {
+      await installDeepSeekHarnessCompanion();
+      const nextAgents = await onRefreshAgents();
+      const installed = nextAgents.find(
+        (agent) => agent.id === 'deepseek-harness' && agent.available,
+      );
+      if (!installed) throw new Error(t('settings.dshSetupRequired'));
+      showCliAgents(
+        cliScanTokenRef.current,
+        nextAgents.filter(
+          (agent) => agent.id !== 'amr' && (agent.available || deepSeekHarnessNeedsSetup(agent)),
+        ),
+        { stagger: false },
+      );
+      onModeChange('daemon');
+      onAgentChange(installed.id);
+      setDshSetup(null);
+
+      const choice = config.agentModels?.[installed.id] ?? {};
+      const effectiveChoice = effectiveAgentModelChoice(installed, choice) ?? choice;
+      const model = effectiveChoice.model ?? defaultAgentModelId(installed) ?? '';
+      const reasoning = choice.reasoning ?? '';
+      const inputKey = [installed.id, model, reasoning, JSON.stringify(config.agentCliEnv ?? {})].join('\n');
+      setAgentTestState({ status: 'running', inputKey });
+      const result = await testAgent({
+        agentId: installed.id,
+        model: model || undefined,
+        reasoning: reasoning || undefined,
+        agentCliEnv: config.agentCliEnv ?? {},
+      });
+      setAgentTestState({ status: 'done', inputKey, result });
+    } catch (error) {
+      setDshSetup({
+        busy: false,
+        error: error instanceof Error ? error.message : t('settings.dshSetupRequired'),
       });
     }
   }
@@ -3150,7 +3265,7 @@ function OnboardingView({
 
   const primaryActionLabel = t('settings.onboardingContinue');
 
-  // Step 1 is identity only: every user signs into Open Design Cloud before
+  // Step 1 is identity only: every user signs into OpenDesign Cloud before
   // choosing Hosted, Local, or BYOK on the next screen.
   if (step === 0) {
     const cloudBusy = amrLoginPending;
@@ -3251,7 +3366,7 @@ function OnboardingView({
           <footer className="onboarding-cloud__footer">
             <LanguageMenu placement="up" align="start" />
             <span>
-              © {new Date().getFullYear()} Open Design · {t('settings.onboardingCloudRights')}
+              © {new Date().getFullYear()} OpenDesign · {t('settings.onboardingCloudRights')}
             </span>
           </footer>
         </div>
@@ -3379,7 +3494,7 @@ function OnboardingView({
           <footer className="onboarding-cloud__footer">
             <LanguageMenu placement="up" align="start" />
             <span>
-              © {new Date().getFullYear()} Open Design ·{' '}
+              © {new Date().getFullYear()} OpenDesign ·{' '}
               {t('settings.onboardingCloudRights')}
             </span>
           </footer>
@@ -3432,6 +3547,11 @@ function OnboardingView({
                   scanStatus={cliScanStatus}
                   onRefresh={() => void scanCliAgents()}
                   onSelectAgent={(agentId) => {
+                    const agent = visibleAgents.find((candidate) => candidate.id === agentId);
+                    if (agent && deepSeekHarnessNeedsSetup(agent)) {
+                      setDshSetup({ busy: false, error: null });
+                      return;
+                    }
                     onModeChange('daemon');
                     onAgentChange(agentId);
                   }}
@@ -3510,6 +3630,16 @@ function OnboardingView({
           </div>
         </div>
       </div>
+      {dshSetup ? (
+        <DeepSeekHarnessSetupDialog
+          busy={dshSetup.busy}
+          error={dshSetup.error}
+          onCancel={() => {
+            if (!dshSetup.busy) setDshSetup(null);
+          }}
+          onConfirm={() => void confirmDshSetup()}
+        />
+      ) : null}
     </section>
   );
 }
@@ -3601,7 +3731,11 @@ function OnboardingCliSetupPanel({
               <AgentIcon id={agent.id} size={22} />
               <span>
                 <strong>{agent.name}</strong>
-                <small>{agent.version ?? t('common.installed')}</small>
+                <small>
+                  {agent.available
+                    ? agent.version ?? t('common.installed')
+                    : t('settings.dshSetupRequired')}
+                </small>
               </span>
             </button>
           ))}

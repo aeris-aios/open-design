@@ -1319,9 +1319,11 @@ describe('FileWorkspace upload input', () => {
     expect(markup).toContain('class="ws-tabs-shell"');
     expect(markup).toContain('data-testid="workspace-focus-toggle"');
     // The expand control sits before the tabs bar (left side) so its
-    // direction matches where the chat pane re-emerges from.
+    // direction matches where the chat pane re-emerges from. In focus mode
+    // the project tab strip's dock host sits between them (the strip portals
+    // into it — see workspaceTabsDock.ts), so allow it in the order check.
     expect(markup).toMatch(
-      /<div class="ws-tabs-shell">\s*<button[^>]*data-testid="workspace-focus-toggle"[\s\S]*?<\/button>\s*<div class="ws-tabs-bar"/,
+      /<div class="ws-tabs-shell">\s*<button[^>]*data-testid="workspace-focus-toggle"[\s\S]*?<\/button>\s*(?:<div class="ws-tabs-project-dock"[^>]*><\/div>\s*)?<div class="ws-tabs-bar"/,
     );
   });
 
@@ -4303,6 +4305,25 @@ describe('FileWorkspace add-module menu', () => {
 });
 
 describe('FileWorkspace empty-project generation contract', () => {
+  it('shows the first-materialization syncing surface instead of mounting a cached workspace tab', () => {
+    render(
+      <FileWorkspace
+        projectId="project-1"
+        projectKind="prototype"
+        files={[workspaceFile('stale.html')]}
+        liveArtifacts={[]}
+        onRefreshFiles={vi.fn()}
+        isDeck={false}
+        tabsState={{ tabs: ['terminal:stale'], active: 'terminal:stale' }}
+        onTabsStateChange={vi.fn()}
+        materializationPending
+      />,
+    );
+
+    expect(screen.getByTestId('design-files-syncing')).toBeTruthy();
+    expect(screen.queryByTestId('design-files-empty')).toBeNull();
+  });
+
   function assistantMessage(runStatus: 'running' | 'failed'): ChatMessage {
     return {
       id: `msg-${runStatus}`,

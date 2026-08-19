@@ -99,7 +99,7 @@ export function workspaceResourceReadContext(
 }
 
 /**
- * Whether an Open Design Cloud (AMR) run has a cloud identity that could pay
+ * Whether an OpenDesign Cloud (AMR) run has a cloud identity that could pay
  * for it.
  *
  * AMR bills the caller's OWN wallet — their current workspace. The only state
@@ -417,7 +417,10 @@ export async function resolveCurrentWorkspaceContextReadWitness(
   const requestToken = workspaceContextRequestToken;
   const accountGeneration = currentWorkspaceAccountGeneration();
   const directory = await readWorkspaceDirectoryForCurrentGeneration(options);
-  const selected = chooseWorkspaceForTab(directory.items ?? []);
+  const selected = chooseWorkspaceForTab(
+    directory.items ?? [],
+    directory.activeWorkspaceId,
+  );
   const context = selected ? workspaceContextFromDirectoryItem(selected) : null;
   return createCurrentWorkspaceContextReadWitness(
     context,
@@ -507,7 +510,10 @@ function selectableWorkspaceItems(items: WorkspaceDirectoryItem[]): WorkspaceDir
   );
 }
 
-function chooseWorkspaceForTab(items: WorkspaceDirectoryItem[]): WorkspaceDirectoryItem | null {
+function chooseWorkspaceForTab(
+  items: WorkspaceDirectoryItem[],
+  restartWorkspaceId: string | null = null,
+): WorkspaceDirectoryItem | null {
   const visible = selectableWorkspaceItems(items);
   const selected = readWorkspaceSelection();
   const exact = selected
@@ -517,8 +523,12 @@ function chooseWorkspaceForTab(items: WorkspaceDirectoryItem[]): WorkspaceDirect
           && item.workspaceMemberId === selected.workspaceMemberId,
       )
     : undefined;
+  const restartDefault = restartWorkspaceId
+    ? visible.find((item) => item.workspaceId === restartWorkspaceId)
+    : undefined;
   const chosen =
     exact
+    ?? restartDefault
     ?? visible.find((item) => item.workspaceType === 'personal')
     ?? visible[0]
     ?? null;
@@ -537,6 +547,23 @@ function explicitWorkspaceHeaders(selection: WorkspaceSelection): Record<string,
   return {
     'x-od-workspace-id': selection.workspaceId,
     'x-od-workspace-member-id': selection.workspaceMemberId,
+  };
+}
+
+function workspaceDirectoryItemFromContext(
+  context: WorkspaceCollabContext,
+): WorkspaceDirectoryItem {
+  return {
+    workspaceId: context.workspaceId,
+    workspaceName:
+      context.workspaceName?.trim()
+      || context.teamName?.trim()
+      || context.workspaceId,
+    workspaceType: context.workspaceType,
+    workspaceMemberId: context.workspaceMemberId,
+    role: context.role,
+    memberStatus: context.memberStatus,
+    lifecycleState: context.lifecycleState,
   };
 }
 
@@ -648,7 +675,7 @@ export function useWorkspaceContext(): WorkspaceContextState {
    * hand keeps showing it, which is what stops the rail flashing signed-out.
    *
    * Without it, signing in during onboarding left the bottom-left "sign in to
-   * Open Design Cloud" callout on screen for the whole (vela-backed,
+   * OpenDesign Cloud" callout on screen for the whole (vela-backed,
    * up-to-seconds) re-read, because `loading` had already settled to false on
    * the earlier signed-out read and only `context !== null` gates the callout
    * (#140). It also forces the coalescing entry, whose whole premise — that
@@ -668,7 +695,12 @@ export function useWorkspaceContext(): WorkspaceContextState {
    * declaring a new local identity generation.
    */
   const loadContext = useCallback(async (
-    options: { markLoading?: boolean; fresh?: boolean } = {},
+    options: {
+      markLoading?: boolean;
+      fresh?: boolean;
+      /** Revalidate the already-selected scope without listing the account. */
+      exactScopeOnly?: boolean;
+    } = {},
   ) => {
     const requestEpoch = ++requestEpochRef.current;
     const requestGeneration = workspaceContextRequestToken;
@@ -684,16 +716,34 @@ export function useWorkspaceContext(): WorkspaceContextState {
     }
     try {
       const requestedSelection = readWorkspaceSelection();
+      const exactScopeContext =
+        options.exactScopeOnly
+        && requestedSelection
+        && cachedWorkspaceContext
+        && cachedWorkspaceContextGeneration === requestGeneration
+        && cachedWorkspaceContext.workspaceId === requestedSelection.workspaceId
+        && cachedWorkspaceContext.workspaceMemberId
+          === requestedSelection.workspaceMemberId
+          ? cachedWorkspaceContext
+          : null;
       const forceFresh = options.markLoading || options.fresh;
-      const directory = forceFresh
-        ? await readWorkspaceDirectoryForCurrentGeneration({ fresh: true })
-        : await readWorkspaceDirectoryForCurrentGeneration();
+      let directory: WorkspaceDirectoryResponse | null = null;
+      if (!exactScopeContext) {
+        directory = forceFresh
+          ? await readWorkspaceDirectoryForCurrentGeneration({ fresh: true })
+          : await readWorkspaceDirectoryForCurrentGeneration();
+      }
       if (
         !mountedRef.current
         || requestEpochRef.current !== requestEpoch
         || workspaceContextRequestToken !== requestGeneration
       ) return;
-      const selected = chooseWorkspaceForTab(directory.items ?? []);
+      const selected = exactScopeContext
+        ? workspaceDirectoryItemFromContext(exactScopeContext)
+        : chooseWorkspaceForTab(
+            directory?.items ?? [],
+            directory?.activeWorkspaceId ?? null,
+          );
       const exactSessionSelection = requestedSelection && selected
         && selected.workspaceId === requestedSelection.workspaceId
         && selected.workspaceMemberId === requestedSelection.workspaceMemberId
@@ -745,8 +795,9 @@ export function useWorkspaceContext(): WorkspaceContextState {
         // membership directory already carries it. Reuse the name from the
         // exact Workspace/member row selected for THIS tab so label consumers
         // (including plugin context defaults) remain compatible. This is display
-        // metadata only: authority still comes from the explicit ids above, and
-        // no daemon/backend "active workspace" state is consulted or written.
+        // metadata only: authority still comes from the explicit ids above.
+        // The daemon's saved workspace id is only a cold-start preference used
+        // to choose this exact directory row.
         const workspaceName = typeof selected.workspaceName === 'string'
           ? selected.workspaceName.trim()
           : '';
@@ -757,10 +808,11 @@ export function useWorkspaceContext(): WorkspaceContextState {
       // Coalesced: every mounted consumer of this hook (and every focus/pageshow
       // refresh across them) fires the same read on a home-view burst — collapse
       // them to one request. The nav shell tolerates sub-second staleness.
-      // An explicit identity-change refresh forces a fresh read instead of
-      // sharing a settled answer that predates the change.
+      // Identity changes and exact-scope safety checks force a new generation
+      // read instead of sharing a settled answer that predates their trigger.
+      // `forceCoalescedGet` still single-flights the burst across consumers.
       const coalesceKey = workspaceContextCoalesceKey();
-      const body = forceFresh
+      const body = forceFresh || options.exactScopeOnly
         ? await forceCoalescedGet(coalesceKey, fetchContext)
         : await coalescedGet(coalesceKey, fetchContext);
       if (
@@ -846,7 +898,11 @@ export function useWorkspaceContext(): WorkspaceContextState {
       // change may have landed while this browser had no sink, and accepting
       // that stale snapshot would immediately slow the fallback poll to the
       // healthy-SSE floor.
-      onActive: () => void loadContext({ fresh: true }),
+      onActive: (reason) => void loadContext(
+        reason === 'ambient'
+          ? { exactScopeOnly: true }
+          : { fresh: true },
+      ),
     },
   );
 
@@ -855,14 +911,20 @@ export function useWorkspaceContext(): WorkspaceContextState {
     // cadence when the stream is unavailable so there is no regression.
     const intervalMs = sseConnected ? WORKSPACE_CONTEXT_SSE_FLOOR_MS : WORKSPACE_CONTEXT_POLL_MS;
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') void loadContext();
+      if (document.visibilityState !== 'visible') return;
+      // A healthy browser→daemon stream still gets a periodic safety read, but
+      // the scope is already known. Avoid listing the whole account merely to
+      // re-verify the current Workspace; the daemon decides whether its stricter
+      // upstream SSE authority is healthy enough to serve a bounded scoped
+      // cache or whether this request must fall back to `/api/v1/workspaces`.
+      void loadContext(sseConnected ? { exactScopeOnly: true } : undefined);
     }, intervalMs);
     return () => clearInterval(interval);
   }, [loadContext, sseConnected]);
 
   useEffect(() => {
     const refresh = () => {
-      void loadContext();
+      void loadContext(sseConnected ? { exactScopeOnly: true } : undefined);
     };
     // An EXPLICIT refresh means a caller just changed the identity (signed in
     // through onboarding or the rail callout) and is telling us so. Focus and
@@ -918,21 +980,28 @@ export function useWorkspaceContext(): WorkspaceContextState {
       if (detail?.requestKey !== workspaceContextRequestToken) return;
       void loadContext();
     };
-    window.addEventListener('focus', refresh);
+    // While the workspace EventSource is connected, its shared manager owns
+    // focus/visibility and labels those reads as ambient exact-scope checks.
+    // Keep these listeners only for the poll-only/disconnected fallback.
+    if (!sseConnected) window.addEventListener('focus', refresh);
     window.addEventListener('pageshow', refresh);
     window.addEventListener(WORKSPACE_CONTEXT_REFRESH_EVENT, refreshAfterIdentityChange);
     window.addEventListener(WORKSPACE_CONTEXT_RETRY_EVENT, onContextRetry);
     window.addEventListener('storage', onStorage);
-    document.addEventListener('visibilitychange', onVisibilityChange);
+    if (!sseConnected) {
+      document.addEventListener('visibilitychange', onVisibilityChange);
+    }
     return () => {
-      window.removeEventListener('focus', refresh);
+      if (!sseConnected) window.removeEventListener('focus', refresh);
       window.removeEventListener('pageshow', refresh);
       window.removeEventListener(WORKSPACE_CONTEXT_REFRESH_EVENT, refreshAfterIdentityChange);
       window.removeEventListener(WORKSPACE_CONTEXT_RETRY_EVENT, onContextRetry);
       window.removeEventListener('storage', onStorage);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (!sseConnected) {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      }
     };
-  }, [loadContext]);
+  }, [loadContext, sseConnected]);
 
   const accountGeneration = currentWorkspaceAccountGeneration();
   return useMemo(
