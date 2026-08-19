@@ -3619,7 +3619,28 @@ function injectDeckBridge(
           var hashPrefix = currentHashMatch
             ? currentHashMatch[1]
             : ${JSON.stringify(inlineHashIndexPrefix)};
-          window.location.hash = hashPrefix + (target + 1);
+          var nextHash = hashPrefix + (target + 1);
+          if (window.location.hash === nextHash) return;
+          var oldUrl = String(window.location.href || '');
+          try {
+            // A fragment assignment on a Blob-backed Electron preview can be
+            // promoted to a slow navigation and briefly clear the compositor.
+            // Match artifact-owned routers: update the same-document route
+            // synchronously, then deliver the event they already listen for.
+            window.history.replaceState(null, '', nextHash);
+            var hashChangeEvent;
+            try {
+              hashChangeEvent = new HashChangeEvent('hashchange', {
+                oldURL: oldUrl,
+                newURL: String(window.location.href || ''),
+              });
+            } catch (_) {
+              hashChangeEvent = new Event('hashchange');
+            }
+            window.dispatchEvent(hashChangeEvent);
+          } catch (_) {
+            window.location.hash = nextHash;
+          }
         } catch (_) {}
       };
     }

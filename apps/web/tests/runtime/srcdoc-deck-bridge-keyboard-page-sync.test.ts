@@ -208,6 +208,7 @@ function setupSlashHashDeck() {
     url: 'https://preview.test/',
   });
   const win = dom.window;
+  const replaceState = vi.spyOn(win.history, 'replaceState');
   const parentPostMessage = vi.fn();
   Object.defineProperty(win, 'parent', {
     configurable: true,
@@ -237,6 +238,7 @@ function setupSlashHashDeck() {
     current: () => current,
     pagerCur,
     parentPostMessage,
+    replaceState,
     win,
   };
 }
@@ -351,7 +353,7 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
   });
 
   it('preserves slash-hash routes for immediate artifact-owned thumbnail jumps', async () => {
-    const { current, pagerCur, parentPostMessage, win } = setupSlashHashDeck();
+    const { current, pagerCur, parentPostMessage, replaceState, win } = setupSlashHashDeck();
 
     win.dispatchEvent(new win.MessageEvent('message', {
       data: { type: 'od:slide', action: 'go', index: 2 },
@@ -360,6 +362,7 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
 
     expect(win.location.hash).toBe('#/3');
     expect(current()).toBe(2);
+    expect(replaceState).toHaveBeenCalledWith(null, '', '#/3');
     expect(pagerCur.textContent).toBe('3');
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
   });
