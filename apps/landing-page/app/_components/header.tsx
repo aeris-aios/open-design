@@ -16,7 +16,6 @@ import {
   type HeaderCopy,
   type LandingLocaleCode,
 } from '../i18n';
-import { getOpenDesignPluginCopy } from '../open-design-plugin-i18n';
 import { getSolutionPageCopy } from '../solution-pages-i18n';
 import type { SolutionPageKey } from '../solution-pages-i18n/types';
 
@@ -74,7 +73,10 @@ const TOOL_ENTRIES: ReadonlyArray<{ href: string; key: SolutionPageKey }> = [
 
 // Agent column — the coding agents with a dedicated long-form design page
 // upstream. Routes stay in lockstep with main's /agents/ hub.
-const AGENTS: ReadonlyArray<{ name: string; route: string }> = [
+const AGENTS: ReadonlyArray<{ name: string; route: string; highlight?: boolean }> = [
+  // DeepSeek Harness leads with a red-dot highlight while its integration is
+  // the freshly launched entry (2026-08 request); demote when the push ends.
+  { name: 'DeepSeek Harness', route: 'deepseek-harness-design', highlight: true },
   { name: 'Codex', route: 'codex-design' },
   { name: 'Cursor Agent', route: 'cursor-design' },
   { name: 'Claude Code', route: 'claude-code-design' },
@@ -85,7 +87,6 @@ const AGENTS: ReadonlyArray<{ name: string; route: string }> = [
   { name: 'Grok Build', route: 'grok-design' },
   { name: 'Kimi CLI', route: 'kimi-design' },
   { name: 'DeepSeek TUI', route: 'deepseek-design' },
-  { name: 'DeepSeek Harness', route: 'deepseek-harness-design' },
   { name: 'Trae CLI', route: 'trae-cli-design' },
   { name: 'Aider', route: 'aider-design' },
   { name: 'Antigravity', route: 'antigravity-design' },
@@ -246,47 +247,26 @@ export function Header({
                 className='nav-dropdown nav-dropdown-mega'
                 aria-label={productMenuCopy.product}
               >
-                {/* Plugin column — the Codex plugin entry. The product
-                    family (HTML Anything / HTML Video / Codex Slides) moved
-                    to the footer only (2026-08 nav consolidation); the mega
-                    panel now carries Plugin + the former Solution groups. */}
+                {/* Feature column — the first mega-panel group. The former
+                    head-only "Codex Plugin" column read as a blank panel next
+                    to the populated Solution/Agent columns (live bug), so the
+                    column is now the localized "Feature" category with Codex
+                    Plugin as its first entry (2026-08 design). The product
+                    family (HTML Anything / HTML Video / Codex Slides) stays
+                    footer-only per the 2026-08 nav consolidation. */}
                 <li className='nav-mega-col nav-mega-col-merged'>
-                  {/* Product name as the column head-link, not a translatable
-                      phrase — same convention as "Codex Slides" before it.
-                      The localized "Plugins" label is reserved for the
-                      Resources → /plugins/ catalog hub to avoid one chrome
-                      word pointing at two destinations. */}
-                  <a
-                    href={href('/codex-plugin/')}
-                    className={
-                      'nav-mega-col-head' +
-                      (active === 'open-design-plugin' ? ' is-active' : '')
-                    }
-                  >
-                    Codex Plugin
-                  </a>
-                  {/* A head-only column read as a blank panel next to the
-                      populated Solution/Agent columns (live bug: the whole
-                      column rendered empty). Fill it with the plugin
-                      ecosystem's real destinations. "Install" reuses the
-                      plugin page's own translated phase label (no new i18n
-                      keys); the collection links are proper nouns. */}
+                  <span className='nav-mega-col-head'>{productMenuCopy.feature}</span>
                   <ul className='nav-mega-list'>
+                    {/* Product name, not a translatable phrase — same
+                        convention as the Agent column entries. */}
                     <li>
-                      <a href={href('/codex-plugin/#odp-install-instruction')}>
-                        <span className='dropdown-name'>
-                          {getOpenDesignPluginCopy(locale).demo.installPhase}
-                        </span>
-                      </a>
-                    </li>
-                    <li>
-                      <a href={href('/plugins/codex-design/')}>
-                        <span className='dropdown-name'>Codex Design</span>
-                      </a>
-                    </li>
-                    <li>
-                      <a href={href('/plugins/deepseek-harness-design-plugins/')}>
-                        <span className='dropdown-name'>DeepSeek Harness</span>
+                      <a
+                        href={href('/codex-plugin/')}
+                        className={
+                          active === 'open-design-plugin' ? 'is-active' : undefined
+                        }
+                      >
+                        <span className='dropdown-name'>Codex Plugin</span>
                       </a>
                     </li>
                   </ul>
@@ -356,7 +336,12 @@ export function Header({
                     {AGENTS.map((agent) => (
                       <li key={agent.route}>
                         <a href={href(`/agents/${agent.route}/`)}>
-                          <span className='dropdown-name'>{agent.name}</span>
+                          <span className='dropdown-name'>
+                            {agent.name}
+                            {agent.highlight ? (
+                              <span className='nav-new-dot' aria-hidden='true'></span>
+                            ) : null}
+                          </span>
                         </a>
                       </li>
                     ))}

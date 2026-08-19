@@ -1108,6 +1108,18 @@ a.nav-mega-col-head.is-active {
   background: transparent;
   color: var(--ink);
 }
+/* Red "new" dot — marks the currently promoted entry in the mega panel
+   (DeepSeek Harness, 2026-08). Sits superscript-ish next to the name. */
+.nav-new-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: #f53f3f;
+  vertical-align: middle;
+}
 /* A long column (Agent: 21 rows) caps its own height and scrolls so the
    panel never runs off short viewports; shorter columns stay static. */
 .nav-dropdown-mega .nav-mega-list-scroll {
