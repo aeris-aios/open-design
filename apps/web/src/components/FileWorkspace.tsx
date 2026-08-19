@@ -1398,6 +1398,19 @@ export function FileWorkspace({
   const [activeTab, setActiveTab] = useState<string>(
     tabsState.active ?? defaultRootTab,
   );
+  // `materializationPending` can briefly become true again while the router
+  // commits a file-tab URL. Once this project has rendered real workspace
+  // content, that transient revalidation must not tear down retained viewers:
+  // doing so destroys iframe browsing contexts, edit sessions, and toolbar
+  // portals for a single frame. A genuinely new project still gets the
+  // first-materialization loading surface because its id has not been marked
+  // ready in this component instance.
+  const materializedProjectRef = useRef<string | null>(
+    materializationPending ? null : projectId,
+  );
+  if (!materializationPending) materializedProjectRef.current = projectId;
+  const initialMaterializationPending =
+    materializationPending && materializedProjectRef.current !== projectId;
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const fileSyncBadgeLabel = fileSyncBadge
@@ -3932,7 +3945,7 @@ export function FileWorkspace({
             clearTabDragState();
           }}
         >
-          {!materializationPending && designSystemProject ? (
+          {!initialMaterializationPending && designSystemProject ? (
             <button
               type="button"
               className={`ws-tab design-system-tab ${activeTab === DESIGN_SYSTEM_TAB ? 'active' : ''}`}
@@ -3951,9 +3964,9 @@ export function FileWorkspace({
           ) : null}
           <button
             type="button"
-            className={`ws-tab design-files-tab ${materializationPending || designFilesTabActive ? 'active' : ''}`}
+            className={`ws-tab design-files-tab ${initialMaterializationPending || designFilesTabActive ? 'active' : ''}`}
             role="tab"
-            aria-selected={materializationPending || designFilesTabActive}
+            aria-selected={initialMaterializationPending || designFilesTabActive}
             aria-label={designFilesTabTitle}
             tabIndex={0}
             data-testid="design-files-tab"
@@ -3969,7 +3982,7 @@ export function FileWorkspace({
             </span>
             <span className="ws-tab-label">{designFilesTabLabel}</span>
           </button>
-          {!materializationPending ? visibleOrderedWorkspaceTabs.map((entry) => {
+          {!initialMaterializationPending ? visibleOrderedWorkspaceTabs.map((entry) => {
             if (entry.kind === 'browser') {
               const browserTab = entry.browserTab;
               const browserUrl = browserTab.url?.trim() ?? '';
@@ -4057,7 +4070,7 @@ export function FileWorkspace({
             );
           }) : null}
         </div>
-        {!materializationPending ? <div className="ws-add-tab">
+        {!initialMaterializationPending ? <div className="ws-add-tab">
           <button
             ref={launcherBtnRef}
             type="button"
@@ -4077,7 +4090,7 @@ export function FileWorkspace({
         {/* Pinned to the right for project/file actions; the tab launcher sits
             next to the file tabs so its spatial relationship stays clear. */}
         <div className="ws-tabs-actions">
-          {!materializationPending && fileActionsBefore ? (
+          {!initialMaterializationPending && fileActionsBefore ? (
             <div className="ws-tabs-file-actions-before">{fileActionsBefore}</div>
           ) : null}
           {/* Pure portal host. Whatever file is open owns these actions and
@@ -4091,12 +4104,12 @@ export function FileWorkspace({
             data-app-chrome-file-actions="true"
             hidden={!viewerFileActive}
           />
-          {!materializationPending && headerActions ? (
+          {!initialMaterializationPending && headerActions ? (
             <div className="ws-tabs-project-actions">{headerActions}</div>
           ) : null}
         </div>
       </div>
-      {!materializationPending && launcherOpen ? (
+      {!initialMaterializationPending && launcherOpen ? (
         <TabLauncherMenu
           anchor={launcherBtnRef.current}
           files={visibleFiles}
@@ -4146,7 +4159,7 @@ export function FileWorkspace({
           />
         </div>
       ) : null}
-      {viewerOnly && !materializationPending ? (
+      {viewerOnly && !initialMaterializationPending ? (
         <div className="workspace-readonly-notice" role="status">
           <Icon name="lock" size={14} />
           <span>{readonlyNotice ?? t('workspace.readonlyNotice')}</span>
@@ -4172,7 +4185,7 @@ export function FileWorkspace({
             </button>
           </div>
         ) : null}
-        {!materializationPending ? browserTabs.filter((browserTab) => mountedBrowserTabIds.has(browserTab.id)).map((browserTab) => (
+        {!initialMaterializationPending ? browserTabs.filter((browserTab) => mountedBrowserTabIds.has(browserTab.id)).map((browserTab) => (
           <div
             key={`${projectId}:${browserTab.id}`}
             className={`ws-browser-panel ${activeTab === browserTab.id ? 'active' : ''}`}
@@ -4210,7 +4223,7 @@ export function FileWorkspace({
             />
           </div>
         )) : null}
-        {materializationPending ? (
+        {initialMaterializationPending ? (
           <DesignFilesPanel
             projectId={projectId}
             viewerOnly
@@ -4459,7 +4472,7 @@ export function FileWorkspace({
             .
           </div>
         )}
-        {!materializationPending ? mountedHtmlViewerFiles.map((file) => {
+        {!initialMaterializationPending ? mountedHtmlViewerFiles.map((file) => {
           const workspaceActive = activeHtmlViewerFile?.name === file.name;
           return (
             <div
@@ -4493,7 +4506,7 @@ export function FileWorkspace({
             </div>
           );
         }) : null}
-        {!materializationPending && viewerFile ? (
+        {!initialMaterializationPending && viewerFile ? (
           <div
             ref={(element) => {
               syncInertAttribute(element, !viewerFileActive);
@@ -4523,7 +4536,7 @@ export function FileWorkspace({
           </div>
         ) : null}
       </div>
-      {!materializationPending ? <PageCreatorDialog
+      {!initialMaterializationPending ? <PageCreatorDialog
         open={pageCreatorOpen}
         t={t}
         locale={locale}
@@ -4540,7 +4553,7 @@ export function FileWorkspace({
           if (!pageCreating) setPageCreatorOpen(false);
         }}
       /> : null}
-      {!materializationPending ? <input
+      {!initialMaterializationPending ? <input
         ref={fileInputRef}
         type="file"
         multiple
@@ -4549,7 +4562,7 @@ export function FileWorkspace({
         onChange={handleFilePicked}
       /> : null}
       <AnimatePresence>
-        {!materializationPending && showLibraryPicker ? (
+        {!initialMaterializationPending && showLibraryPicker ? (
           <LibraryPicker
             onClose={() => setShowLibraryPicker(false)}
             onConfirm={async (assets) => {
@@ -4579,7 +4592,7 @@ export function FileWorkspace({
         ) : null}
       </AnimatePresence>
       <AnimatePresence>
-        {!materializationPending && quickSwitcherOpen ? (
+        {!initialMaterializationPending && quickSwitcherOpen ? (
           <QuickSwitcher
             projectId={projectId}
             files={visibleFiles}
