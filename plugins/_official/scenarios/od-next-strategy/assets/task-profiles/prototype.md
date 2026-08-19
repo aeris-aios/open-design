@@ -13,9 +13,13 @@ in the shared Design Spec.
 ## Artifact contract
 
 The canonical deliverable is editable prototype source with a stable runnable
-entry. Required deliverables name the source entry and any user-requested
-derived package. Buttons, navigation, forms, and primary controls implement the
-declared flow rather than acting as decoration.
+entry. The runnable entry is a root-level `index.html` that opens directly in
+a browser; prefer one self-contained html file, and add sibling assets only
+when the plan names them. Do not scaffold an application framework, package
+manager workspace, or dependency install — a prototype is static source, not
+an app build. Required deliverables name the source entry and any
+user-requested derived package. Buttons, navigation, forms, and primary
+controls implement the declared flow rather than acting as decoration.
 
 ## Build Requirements
 

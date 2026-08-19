@@ -665,7 +665,7 @@ export function composeOdNextStrategyContinuationV2(
           nativeAgentHandle: requireText(binding.nativeAgentHandle, 'nativeAgentHandle'),
           dependsOn: binding.dependsOn.map((dependency) => requireText(dependency, 'dependsOn')),
         })))}\n\`\`\``;
-    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question.${bindingBlock}`;
+    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question. Write the canonical deliverable so its runnable entry sits at the project root (an html deliverable means a root \`index.html\` that opens directly in a browser). Do not scaffold an application framework, package manager workspace, or dependency install unless a frozen Build Requirement explicitly names it.${bindingBlock}`;
   }
   return serializeOdNextRequestTurnV1({
     taskExecutionId: input.taskExecutionId,
