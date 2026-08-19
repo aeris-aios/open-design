@@ -115,6 +115,71 @@ describe('Website Clone browser broker security boundary', () => {
     }
   });
 
+  it('tears down an ordinary HTTP upstream when the browser client disconnects', async () => {
+    const targetSockets = new Set<Socket>();
+    const target = createServer((_request, response) => {
+      response.writeHead(200);
+      response.write('partial response');
+    });
+    target.on('connection', (socket) => {
+      targetSockets.add(socket);
+      socket.on('error', () => undefined);
+      socket.once('close', () => targetSockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress === 'string') throw new Error('target did not bind');
+    const proxy = await createBrowserNetworkProxy({ allowPrivateNetwork: true });
+    const client = openHttpStreamThroughProxy(proxy.port, targetAddress.port);
+
+    try {
+      await client.responseStarted;
+      expect(targetSockets.size).toBe(1);
+      client.request.destroy();
+      await waitFor(() => targetSockets.size === 0);
+    } finally {
+      client.request.destroy();
+      await proxy.close();
+      for (const socket of targetSockets) socket.destroy();
+      await new Promise<void>((resolve) => target.close(() => resolve()));
+    }
+  });
+
+  it('does not retain ordinary HTTP upstreams across repeated proxy lifecycles', async () => {
+    const targetSockets = new Set<Socket>();
+    const target = createServer((_request, response) => {
+      response.writeHead(200);
+      response.write('partial response');
+    });
+    target.on('connection', (socket) => {
+      targetSockets.add(socket);
+      socket.on('error', () => undefined);
+      socket.once('close', () => targetSockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress === 'string') throw new Error('target did not bind');
+
+    try {
+      for (let iteration = 0; iteration < 3; iteration += 1) {
+        const proxy = await createBrowserNetworkProxy({ allowPrivateNetwork: true });
+        const client = openHttpStreamThroughProxy(proxy.port, targetAddress.port);
+        try {
+          await client.responseStarted;
+          expect(targetSockets.size).toBe(1);
+          await proxy.close();
+          await waitFor(() => targetSockets.size === 0);
+        } finally {
+          client.request.destroy();
+          await proxy.close();
+        }
+      }
+    } finally {
+      for (const socket of targetSockets) socket.destroy();
+      await new Promise<void>((resolve) => target.close(() => resolve()));
+    }
+  });
+
   it('exposes only the CDP methods required by the staged recon adapter', () => {
     expect(WEB_CLONE_CDP_METHODS).toEqual(new Set([
       'Emulation.setDeviceMetricsOverride',
@@ -177,6 +242,29 @@ async function connectTunnel(proxyPort: number, targetPort: number): Promise<Soc
       socket.write(`CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\n\r\n`);
     });
   });
+}
+
+function openHttpStreamThroughProxy(proxyPort: number, targetPort: number): {
+  request: ReturnType<typeof request>;
+  responseStarted: Promise<void>;
+} {
+  let responseStartedResolve: (() => void) | undefined;
+  let responseStartedReject: ((error: Error) => void) | undefined;
+  const responseStarted = new Promise<void>((resolve, reject) => {
+    responseStartedResolve = resolve;
+    responseStartedReject = reject;
+  });
+  const outbound = request({
+    headers: { host: `127.0.0.1:${targetPort}` },
+    host: '127.0.0.1',
+    path: `http://127.0.0.1:${targetPort}/stream`,
+    port: proxyPort,
+  }, (response) => {
+    response.once('data', () => responseStartedResolve?.());
+  });
+  outbound.on('error', (error) => responseStartedReject?.(error));
+  outbound.end();
+  return { request: outbound, responseStarted };
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 1_000): Promise<void> {

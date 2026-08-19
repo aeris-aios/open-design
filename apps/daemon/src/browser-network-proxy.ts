@@ -1,5 +1,5 @@
-import http, { type IncomingMessage, type ServerResponse } from 'node:http';
-import net from 'node:net';
+import http, { type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http';
+import net, { type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 import {
@@ -57,8 +57,18 @@ export async function createBrowserNetworkProxy(
   policy: BrowserNetworkPolicy = {},
 ): Promise<BrowserNetworkProxy> {
   const tunnels = new Set<Duplex>();
+  const httpRequests = new Set<ClientRequest>();
+  const httpSockets = new Set<Socket>();
+  let closing = false;
   const server = http.createServer((request, response) => {
-    void proxyHttpRequest(request, response, policy);
+    void proxyHttpRequest(
+      request,
+      response,
+      policy,
+      httpRequests,
+      httpSockets,
+      () => closing,
+    );
   });
 
   server.on('connect', (request, client, head) => {
@@ -84,6 +94,11 @@ export async function createBrowserNetworkProxy(
   return {
     port: address.port,
     close: async () => {
+      closing = true;
+      for (const request of httpRequests) request.destroy();
+      for (const socket of httpSockets) socket.destroy();
+      httpRequests.clear();
+      httpSockets.clear();
       for (const socket of tunnels) socket.destroy();
       tunnels.clear();
       if (!server.listening) return;
@@ -96,10 +111,18 @@ async function proxyHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   policy: BrowserNetworkPolicy,
+  httpRequests: Set<ClientRequest>,
+  httpSockets: Set<Socket>,
+  isClosing: () => boolean,
 ): Promise<void> {
   try {
     const target = await resolveBrowserNetworkTarget(requestUrl(request).href, policy);
+    if (isClosing() || response.destroyed) {
+      response.destroy();
+      return;
+    }
     const upstream = http.request({
+      agent: false,
       family: target.family,
       headers: upstreamHeaders(request, target.url.host),
       host: target.address,
@@ -107,9 +130,34 @@ async function proxyHttpRequest(
       path: `${target.url.pathname}${target.url.search}`,
       port: target.url.port ? Number(target.url.port) : 80,
     }, (upstreamResponse) => {
+      if (response.destroyed) {
+        upstreamResponse.destroy();
+        return;
+      }
       response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
       upstreamResponse.pipe(response);
+      upstreamResponse.once('error', (error) => {
+        if (!response.destroyed) response.destroy(error);
+      });
     });
+    httpRequests.add(upstream);
+    const destroyUpstream = () => upstream.destroy();
+    const forgetUpstream = () => {
+      httpRequests.delete(upstream);
+      request.off('aborted', destroyUpstream);
+      request.off('error', destroyUpstream);
+      response.off('close', destroyUpstream);
+      response.off('error', destroyUpstream);
+    };
+    upstream.once('socket', (socket) => {
+      httpSockets.add(socket);
+      socket.once('close', () => httpSockets.delete(socket));
+    });
+    upstream.once('close', forgetUpstream);
+    request.once('aborted', destroyUpstream);
+    request.once('error', destroyUpstream);
+    response.once('close', destroyUpstream);
+    response.once('error', destroyUpstream);
     upstream.once('error', (error) => {
       if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
       response.end(`browser proxy upstream failed: ${proxyErrorMessage(error)}\n`);
