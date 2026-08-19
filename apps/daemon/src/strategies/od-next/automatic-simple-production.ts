@@ -363,7 +363,7 @@ export function prepareAutomaticStrategyContinuation<
   const repairCandidate =
     input.parsed.issues.length > 0
     && Boolean(plan)
-    && input.task.route === 'full_plan'
+    && (input.task.route === null || input.task.route === 'full_plan')
     && ['request', 'clarification'].includes(input.task.inputStage)
     && input.task.planContractRepairAttempts === 0;
   const simplePlanCandidate =

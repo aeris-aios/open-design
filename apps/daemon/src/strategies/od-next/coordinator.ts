@@ -107,6 +107,47 @@ function uniqueReasonCodes(values: ReadonlyArray<string>): string[] {
   return [...new Set(values)];
 }
 
+/**
+ * Run the request-stage Intake Preflight WITHOUT locking a route.
+ *
+ * Product spec 3.1 makes the main Agent the party that decides Direct Edit vs
+ * Full Plan, and it can only decide once it has read the request. The daemon
+ * therefore leaves `route` null through the request turn — a state both the
+ * task store and the projection contract model explicitly — and adopts the
+ * Agent's declaration when the turn comes back. Callers that already know the
+ * route keep using `prepareStrategyRequest`.
+ */
+export function prepareStrategyIntake(db: SqliteDb, input: {
+  taskExecutionId: string;
+  intake: OdNextIntakePreflightInput;
+  execution?: OdNextExecutionPreflightInput;
+}): { ok: boolean; reasonCodes: string[] } {
+  const current = requireTask(db, input.taskExecutionId);
+  if (
+    current.route !== null
+    || current.inputStage !== 'request'
+    || current.runs.length !== 1
+  ) {
+    throw new OdNextCoordinatorError(
+      'OD Next routes each new logical task exactly once.',
+      ['od_next_route_already_locked'],
+    );
+  }
+  if (current.outcome !== 'running') {
+    throw new OdNextCoordinatorError(
+      'Only a running request can be routed.',
+      ['od_next_task_not_running'],
+    );
+  }
+  // The Agent may still choose Direct Edit, the one route that Builds on the
+  // request stage, so execution facts are validated up front when available.
+  const reasonCodes = uniqueReasonCodes([
+    ...runIntakePreflight(input.intake).reasonCodes,
+    ...(input.execution ? runExecutionPreflight(input.execution).reasonCodes : []),
+  ]);
+  return { ok: reasonCodes.length === 0, reasonCodes };
+}
+
 export function prepareStrategyRequest(db: SqliteDb, input: {
   taskExecutionId: string;
   preference: 'auto' | 'direct_edit' | 'full_plan';
@@ -336,6 +377,14 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
     return blockTask(db, current, parsed.visibleText, reasonCodes, input.updatedAt);
   }
 
+  if (current.route === null) {
+    console.info('[od-next-task] route adopted from agent', {
+      taskExecutionId: current.taskExecutionId,
+      runId: input.runId,
+      route: state.route,
+      executionMode: state.executionMode,
+    });
+  }
   const task = compareAndTransitionStrategyTaskExecution(db, {
     taskExecutionId: current.taskExecutionId,
     expectedRevision: current.revision,
@@ -381,7 +430,7 @@ function inferClarificationRuntimeState(
     || issueCodes[0] !== 'od_next_protocol_runtime_state_missing'
   ) return null;
   if (
-    current.route !== 'full_plan'
+    (current.route !== null && current.route !== 'full_plan')
     || current.inputStage !== 'request'
     || current.clarificationCount > 0
     || parsed.planContract
@@ -417,7 +466,11 @@ function validateAcceptedTurn(
   },
 ): string[] {
   const reasonCodes: string[] = [];
-  if (state.route !== task.route) reasonCodes.push('od_next_protocol_route_mismatch');
+  // An unrouted request turn is the one place the Agent owns the route
+  // (spec 3.1). Once the chain has a route, it is locked for every later turn.
+  if (task.route !== null && state.route !== task.route) {
+    reasonCodes.push('od_next_protocol_route_mismatch');
+  }
   if (state.inputStage !== task.inputStage) reasonCodes.push('od_next_protocol_stage_mismatch');
   if (task.executionMode && state.executionMode !== task.executionMode) {
     reasonCodes.push('od_next_protocol_execution_mode_mismatch');
@@ -501,8 +554,11 @@ function tryBeginSerializationRepair(
     'od_next_protocol_runtime_state_duplicate',
     'od_next_protocol_runtime_state_invalid_schema',
   ]);
+  // A recovered Plan Contract is itself a Full Plan declaration, so an
+  // as-yet-unrouted first turn qualifies; the repair transition locks
+  // `full_plan` below.
   if (
-    current.route !== 'full_plan'
+    (current.route !== null && current.route !== 'full_plan')
     || !['request', 'clarification'].includes(current.inputStage)
     || protocolCodes.some((code) => nonRepairable.has(code))
   ) return null;
@@ -575,7 +631,11 @@ function validateRepairAnchorState(
   plan: OpenDesignPlanContractV2,
 ): string[] {
   const reasonCodes: string[] = [];
-  if (state.route !== task.route) reasonCodes.push('od_next_protocol_route_mismatch');
+  // The repair anchor may arrive on a still-unrouted first turn; the repair
+  // transition locks `full_plan` right after this check.
+  if (task.route !== null && state.route !== task.route) {
+    reasonCodes.push('od_next_protocol_route_mismatch');
+  }
   if (state.inputStage !== task.inputStage) reasonCodes.push('od_next_protocol_stage_mismatch');
   if (state.outcome !== 'plan_ready') reasonCodes.push('od_next_protocol_plan_contract_unexpected');
   if (state.executionMode !== plan.fullPlan.executionMode) {
@@ -630,12 +690,10 @@ function blockTask(
   reasonCodes: string[],
   updatedAt?: number,
 ): OdNextCoordinatorResult {
-  if (!current.route) {
-    throw new OdNextCoordinatorError(
-      'The request must be routed before protocol output is accepted.',
-      ['od_next_route_not_locked'],
-    );
-  }
+  // A turn that never produced a usable route cannot have proven Direct Edit
+  // eligibility, so it settles on the spec's fallback route (3.2: "or cannot
+  // be safely judged as Direct Edit") rather than failing to record at all.
+  const route = current.route ?? 'full_plan';
   const blockedReasonCodes = uniqueReasonCodes(reasonCodes);
   console.warn('[od-next-task] blocked', {
     taskExecutionId: current.taskExecutionId,
@@ -647,7 +705,7 @@ function blockTask(
     taskExecutionId: current.taskExecutionId,
     expectedRevision: current.revision,
     to: {
-      route: current.route,
+      route,
       inputStage: current.inputStage,
       outcome: 'blocked',
       executionMode: current.executionMode,

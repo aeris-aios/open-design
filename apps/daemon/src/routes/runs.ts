@@ -92,7 +92,7 @@ import {
 } from '../strategies/task-store.js';
 import {
   beginStrategyClarification,
-  prepareStrategyRequest,
+  prepareStrategyIntake,
 } from '../strategies/od-next/coordinator.js';
 import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
 import {
@@ -2802,16 +2802,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                       promptBundleText: preparedPromptBundleText,
                       taskInputManifestSha256: initialTaskInputSnapshot.manifestSha256,
                     });
-                    const preparedStrategy = prepareStrategyRequest(db, {
+                    // The route stays unlocked through the request turn so the
+                    // main Agent can choose Direct Edit or Full Plan from the
+                    // request itself (product spec 3.1). The daemon cannot make
+                    // that call here: four of the five eligibility facts depend
+                    // on reading what the user asked for, which only happens
+                    // once the Bundle reaches the Agent.
+                    const preparedStrategy = prepareStrategyIntake(db, {
                       taskExecutionId,
-                      preference: 'full_plan',
-                      directEdit: {
-                        editableBaselineExists: false,
-                        localAndUnambiguous: false,
-                        canonicalDeliverableStable: false,
-                        deliverableSetStable: false,
-                        dependenciesBounded: false,
-                      },
                       intake: {
                         inputRefs: [{ id: 'request', accessible: true }],
                         selectedAgentAvailable: true,
@@ -2823,7 +2821,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                         dependencies: [],
                       },
                     });
-                    if (preparedStrategy.action !== 'running') {
+                    if (!preparedStrategy.ok) {
                       throw new Error(
                         `OD Next rollout preflight blocked: ${preparedStrategy.reasonCodes.join(',')}`,
                       );

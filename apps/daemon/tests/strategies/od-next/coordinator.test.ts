@@ -13,6 +13,7 @@ import { createSnapshot } from '../../../src/plugins/snapshots.js';
 import {
   beginStrategyClarification,
   finalizeStrategyPlanningTurn as finalizeStrategyPlanningTurnRaw,
+  prepareStrategyIntake,
   prepareStrategyRequest,
 } from '../../../src/strategies/od-next/coordinator.js';
 import { OdNextMachineProtocolStream } from '../../../src/strategies/od-next/protocol.js';
@@ -1186,6 +1187,82 @@ ${block('open-design-plan-contract', planContract(snapshot))}`),
     });
     expect(withPlan.action).toBe('blocked');
     expect(withPlan.reasonCodes).toContain('od_next_protocol_runtime_state_missing');
+  });
+
+  it('lets the main Agent choose Direct Edit on an unrouted first turn', () => {
+    // Product spec 3.1: the main Agent decides Direct Edit vs Full Plan.
+    // The daemon leaves the route unlocked through the request turn and
+    // adopts the Agent's declaration, so a local edit finishes in ONE
+    // Request Turn instead of being forced through planning + production.
+    prepareStrategyIntake(db, {
+      taskExecutionId: 'task-1',
+      intake: intakePassed,
+      execution: executionPassed,
+    });
+    const beforeTurn = getStrategyTaskExecution(db, 'task-1');
+    expect(beforeTurn?.route).toBeNull();
+
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol(block('open-design-runtime-state', runtimeState({
+        route: 'direct_edit', inputStage: 'request', outcome: 'completed',
+        executionMode: 'simple',
+      }))),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: true },
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('completed');
+    const persisted = getStrategyTaskExecution(db, 'task-1');
+    expect(persisted?.route).toBe('direct_edit');
+    expect(persisted?.executionMode).toBe('simple');
+    expect(persisted?.inputStage).toBe('request');
+    // One Request Turn: Direct Edit never claims a production Run.
+    expect(persisted?.runs).toHaveLength(1);
+  });
+
+  it('adopts a Full Plan declaration on an unrouted first turn', () => {
+    prepareStrategyIntake(db, {
+      taskExecutionId: 'task-1',
+      intake: intakePassed,
+      execution: executionPassed,
+    });
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        block('open-design-plan-contract', planContract(snapshot)),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('plan_ready');
+    expect(getStrategyTaskExecution(db, 'task-1')?.route).toBe('full_plan');
+  });
+
+  it('still rejects a route change once the route is locked', () => {
+    // The unlocked-first-turn allowance must not weaken the existing guard:
+    // later turns may never re-route the task chain.
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const drift = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol(block('open-design-runtime-state', runtimeState({
+        route: 'direct_edit', inputStage: 'request', outcome: 'completed',
+        executionMode: 'simple',
+      }))),
+      completionEvidence: { physicalStatus: 'succeeded', deliverableValid: true },
+      updatedAt: 120,
+    });
+    expect(drift.action).toBe('blocked');
+    expect(drift.reasonCodes).toContain('od_next_protocol_route_mismatch');
   });
 
   it('persists blocked attribution so a blocked task can be diagnosed from the store', () => {
