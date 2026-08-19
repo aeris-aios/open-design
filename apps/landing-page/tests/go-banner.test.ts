@@ -21,6 +21,19 @@ test('homepage mounts Go ahead of the existing paid-user DeepSeek banner', () =>
   assert.match(banner, /html\.go-banner-active \.home-campaign-banner/);
 });
 
+test('Go banner preserves desktop hero spacing and adds its offset only on mobile', () => {
+  const mobileStylesStart = banner.indexOf('@media (max-width: 760px)');
+  assert.notEqual(mobileStylesStart, -1);
+  assert.doesNotMatch(
+    banner.slice(0, mobileStylesStart),
+    /html\.go-banner-active \.hero[^}]*padding-top/,
+  );
+  assert.match(
+    banner.slice(mobileStylesStart),
+    /html\.go-banner-active \.hero[^}]*padding-top: calc\(92px \+ 52px\)/,
+  );
+});
+
 test('Go banner classifies signed-out and unpaid visitors during the fixed window', () => {
   assert.match(banner, /2026-08-20T20:00:00\+08:00/);
   assert.match(banner, /2026-09-03T20:00:00\+08:00/);
