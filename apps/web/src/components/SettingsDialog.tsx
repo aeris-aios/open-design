@@ -160,7 +160,6 @@ import { PetSettings } from './pet/PetSettings';
 import { McpClientSection } from './McpClientSection';
 import { DesignSystemsSection } from './DesignSystemsSection';
 import { PrivacySection } from './PrivacySection';
-import { OdNextRolloutControl } from './OdNextRolloutControl';
 import { ProjectLocationsSection } from './ProjectLocationsSection';
 import { RoutinesSection } from './RoutinesSection';
 import { SettingsWorkspaceSection } from './SettingsWorkspaceSection';
@@ -5976,7 +5975,6 @@ export function SettingsDialog({
 
           {activeSection === 'about' ? (
             <section className="settings-section">
-              <OdNextRolloutControl />
               {appVersionInfo ? (
                 <dl className="settings-about-list">
                   <div className="settings-about-version-row">
