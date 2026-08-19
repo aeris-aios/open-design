@@ -22,6 +22,7 @@ import type { SolutionPageKey } from '../solution-pages-i18n/types';
 const REPO = 'https://github.com/nexu-io/open-design';
 const REPO_DISCUSSIONS = `${REPO}/discussions`;
 const DISCORD = 'https://discord.gg/mHAjSMV6gz';
+const FEISHU = 'https://od.kokiai.net/community/website';
 const X_PROFILE = 'https://x.com/OpenDesignHQ';
 
 // OpenDesign Cloud endpoints for the header account module.
@@ -177,6 +178,27 @@ export function Header({
   const href = (path: string) => localizedHref(path, locale);
   const homeBrandHref = brandHref === '/' ? href('/') : brandHref;
   const productMenuCopy = getHeaderProductMenuCopy(locale);
+  const usesFeishuCommunity = locale === 'zh' || locale === 'zh-tw';
+  const communityCtaLabel =
+    locale === 'zh' ? '加入飞书社群' : locale === 'zh-tw' ? '加入飛書社群' : 'Join Discord';
+  const communityBenefits =
+    locale === 'zh'
+      ? [
+          '模型 × 设计场景竞技场',
+          'Weekly Hackathon：Credits + 流量扶持',
+          'Super Thursday：每周抽奖',
+        ]
+      : locale === 'zh-tw'
+        ? [
+            '模型 × 設計場景競技場',
+            'Weekly Hackathon：Credits + 流量扶持',
+            'Super Thursday：每週抽獎',
+          ]
+        : [
+            'Model × design scenario arenas',
+            'Weekly Hackathon: credits + promotion',
+            'Super Thursday prize draws',
+          ];
 
   return (
     <header className='nav' data-od-id='nav'>
@@ -450,7 +472,8 @@ export function Header({
 
             {/* Community — Contributors / Ambassadors / Moderators / Events. These
                 pages are now localized Astro routes, so link through `href()`
-                to keep visitors on their language variant. */}
+                to keep visitors on their language variant. Discord and Feishu
+                open their respective community spaces in a new tab. */}
             <li className='has-dropdown'>
               <a
                 href={href('/community/')}
@@ -492,6 +515,11 @@ export function Header({
                   </a>
                 </li>
                 <li>
+                  <a href={FEISHU} {...ext}>
+                    <span className='dropdown-name'>Feishu</span>
+                  </a>
+                </li>
+                <li>
                   <a href={REPO_DISCUSSIONS} {...ext}>
                     <span className='dropdown-name'>
                       {productMenuCopy.communityItems.discussions}
@@ -509,6 +537,35 @@ export function Header({
           </ul>
         </nav>
         <div className='nav-side'>
+          <div className='nav-community-entry'>
+            <a
+              className='nav-community-cta'
+              href={usesFeishuCommunity ? FEISHU : DISCORD}
+              {...ext}
+              data-community-cta
+              data-community-platform={usesFeishuCommunity ? 'feishu' : 'discord'}
+            >
+              <svg
+                className='nav-community-cta-icon'
+                viewBox='0 0 20 20'
+                aria-hidden='true'
+              >
+                <path d='M4 4.75h12v8.5H9l-3.8 2.5v-2.5H4z' />
+                <path d='M7 8h6M7 10.5h4' />
+              </svg>
+              {communityCtaLabel}
+            </a>
+            <div className='nav-community-benefits-card'>
+              <ul>
+                {communityBenefits.map((benefit) => (
+                  <li key={benefit}>
+                    <span className='nav-community-benefits-dot' aria-hidden='true' />
+                    <span>{benefit}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
           {localeSwitcher ? (
             <details className='locale-switch nav-locale-switch' data-locale-switch>
               <summary
