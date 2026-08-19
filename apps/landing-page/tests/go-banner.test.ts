@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { getPricingContent } from '../app/_lib/pricing-content';
+import { getGoBannerCopy } from '../app/go-banner-i18n';
+import type { LandingLocaleCode } from '../app/i18n';
 
 const home = readFileSync(
   new URL('../app/pages/index.astro', import.meta.url),
@@ -10,10 +13,33 @@ const banner = readFileSync(
   new URL('../app/_components/go-banner.astro', import.meta.url),
   'utf8',
 );
-const copy = readFileSync(
-  new URL('../app/go-banner-i18n.ts', import.meta.url),
-  'utf8',
-);
+const expectedGoBannerDetails = {
+  en: '$5 first month · 8 popular models · ample allowance',
+  zh: '首月 $5 · 8 个热门模型 · 充裕额度',
+  'zh-tw': '首月 $5 · 8 個熱門模型 · 充裕額度',
+  ja: '初月 $5 · 人気モデル 8 種 · たっぷり使える',
+  ko: '첫 달 $5 · 인기 모델 8개 · 넉넉한 한도',
+  de: '5 $ im ersten Monat · 8 beliebte Modelle · großzügiges Kontingent',
+  fr: '5 $ le premier mois · 8 modèles populaires · quota généreux',
+  ru: '$5 за первый месяц · 8 популярных моделей · большой лимит',
+  es: '$5 el primer mes · 8 modelos populares · capacidad amplia',
+  'pt-br': '$5 no primeiro mês · 8 modelos populares · franquia ampla',
+  it: '$5 il primo mese · 8 modelli popolari · quota generosa',
+  tr: 'İlk ay $5 · 8 popüler model · yüksek kullanım kotası',
+} satisfies Partial<Record<LandingLocaleCode, string>>;
+
+const localizedPricingLocales = [
+  'en',
+  'zh',
+  'zh-tw',
+  'ja',
+  'ko',
+  'de',
+  'fr',
+  'ru',
+  'es',
+  'pt-br',
+] as const satisfies readonly LandingLocaleCode[];
 
 test('homepage mounts Go ahead of the existing paid-user DeepSeek banner', () => {
   assert.match(home, /import GoBanner from ['"]\.\.\/_components\/go-banner\.astro['"]/);
@@ -46,8 +72,21 @@ test('Go banner classifies signed-out and unpaid visitors during the fixed windo
 });
 
 test('Go banner uses the confirmed short copy and links to localized Pricing', () => {
-  assert.match(copy, /detail: '首月 \$5 · 无限用'/);
-  assert.match(copy, /detail: '\$5 first month · unlimited use'/);
+  for (const locale of Object.keys(expectedGoBannerDetails) as Array<
+    keyof typeof expectedGoBannerDetails
+  >) {
+    assert.equal(
+      getGoBannerCopy(locale).detail,
+      expectedGoBannerDetails[locale],
+      locale,
+    );
+  }
+  for (const locale of localizedPricingLocales) {
+    assert.ok(
+      getGoBannerCopy(locale).detail.endsWith(getPricingContent(locale).go.allowance),
+      locale,
+    );
+  }
   assert.match(banner, /localizedHref\('\/pricing\/', locale\)/);
   assert.match(banner, /data-go-banner-cta/);
 });
