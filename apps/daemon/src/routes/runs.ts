@@ -106,6 +106,7 @@ import type { RunEventForFailureClassification } from '../run-failure-classifica
 import { classifyRunFailure } from '../run-failure-classification.js';
 import { deriveRunErrorCode, runResultFromStatus } from '../run-result.js';
 import type { RunStatusForAnalytics } from '../run-result.js';
+import type { PinnedRunDesignSystemScope } from '../design-systems/run-scope.js';
 import {
   parseRunToolBundleForRequest,
   validateRunToolBundleForAgent,
@@ -294,6 +295,7 @@ interface ChatRun {
   requestFingerprint?: string | null;
   agentId: string | null;
   workspaceScope?: RunWorkspaceScope | null;
+  designSystemScope?: PinnedRunDesignSystemScope | null;
   model?: string | null;
   status: ChatRunStatus;
   createdAt: number;
@@ -384,6 +386,7 @@ interface RunCreateMeta extends JsonRecord {
   currentPrompt?: string;
   projectMetadata?: ProjectMetadata;
   workspaceScope?: RunWorkspaceScope | null;
+  designSystemScope?: PinnedRunDesignSystemScope | null;
 }
 
 interface RunListFilters {
@@ -794,8 +797,11 @@ function withoutSensitiveRunInput(body: JsonRecord): JsonRecord {
   delete sanitized.byokProfileId;
   delete sanitized.apiKey;
   delete sanitized.rechargeResumeCapability;
-  // Workspace scope is a server-issued authorization fact, not a request option.
+  // Scope objects are server-issued authorization facts, not request options.
+  // A caller must never be able to persist a forged Workspace or DS binding
+  // that startChatRun and tool-token minting will later treat as pinned.
   delete sanitized.workspaceScope;
+  delete sanitized.designSystemScope;
   return sanitized;
 }
 
@@ -1366,8 +1372,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       mediaExecution: mediaExecution.policy,
       toolBundle: toolBundle.bundle,
       ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
-      // Always replace any untrusted request field, including with null for an
-      // unbound project.
+      // Always overwrite the untrusted HTTP field, including for an unbound
+      // project. The absence of a persisted binding is itself authoritative.
       workspaceScope: preparedWorkspaceScope,
     };
     if (resolvedSnapshot?.ok) {
@@ -3138,6 +3144,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       mediaExecution: mediaExecution.policy,
       toolBundle: toolBundle.bundle,
       ...(chatProject?.metadata ? { projectMetadata: chatProject.metadata } : {}),
+      // `withoutSensitiveRunInput` strips caller scope; initialize the
+      // server-owned value explicitly and replace it below for bound projects.
       workspaceScope: null,
     };
     // Mirror the POST /api/runs ownership check: the assistantMessageId must
