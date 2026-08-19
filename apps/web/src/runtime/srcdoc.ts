@@ -2870,6 +2870,9 @@ function injectDeckBridge(
   const hasInlineSlideMessageListener =
     /addEventListener\s*\(\s*['"]message['"]/i.test(doc) && /\bod:slide\b/.test(doc);
   const hasInlineKeydownListener = !!options.artifactHasKeydownNavigation;
+  const hasInlineHashNavigation =
+    /(?:hashchange|onhashchange)/i.test(doc) && /location\.hash/i.test(doc);
+  const inlineHashIndexPrefix = /['"`]#\/['"`]/.test(doc) ? '#/' : '#';
   const isFrameworkDeck = /\bid\s*=\s*["']deck-stage["']/i.test(doc);
   const clickNavigation = !!options.clickNavigation && !isFrameworkDeck;
   // Framework decks (`id="deck-stage"`) get the inverse fix. Their skeleton
@@ -3514,7 +3517,9 @@ function injectDeckBridge(
   // deferred artifact handler still runs afterwards, advancing a second time
   // and desyncing the artifact's internal index from the visible slide.
   var KEY_PROBE_WINDOW_MS = 48;
+  var DIRECT_INDEX_UNLOCK_TIMEOUT_MS = 1500;
   var preferredKeyTarget = null;
+  var odNavigationSequence = 0;
   // Seeded from a source scan (inline artifact scripts run before this
   // bridge); the addEventListener patches below catch later registrations.
   // Decks with no keyboard handling at all skip the probe entirely, so their
@@ -3564,7 +3569,8 @@ function injectDeckBridge(
       target.dispatchEvent(new KeyboardEvent('keyup', init));
     } catch (_) {}
   }
-  function goViaArtifactKeys(key, onDone){
+  function goViaArtifactKeys(key, onDone, isCurrent){
+    if (isCurrent && !isCurrent()) { onDone(false); return; }
     if (!key || !artifactHasKeydownNavigation()) { onDone(false); return; }
     var beforeIndex = activeIndex(slides());
     var beforeTrack = trackTransformSnapshot();
@@ -3572,6 +3578,7 @@ function injectDeckBridge(
     // window first on every keypress would tax document-listening decks one
     // probe window per navigation.
     if (preferredKeyTarget) {
+      if (isCurrent && !isCurrent()) { onDone(false); return; }
       dispatchKeysTo(preferredKeyTarget, key);
       waitForDeckMove(beforeIndex, beforeTrack, onDone);
       return;
@@ -3583,6 +3590,7 @@ function injectDeckBridge(
     dispatchKeysTo(window, key);
     waitForDeckMove(beforeIndex, beforeTrack, function(moved){
       if (moved) { preferredKeyTarget = window; onDone(true); return; }
+      if (isCurrent && !isCurrent()) { onDone(false); return; }
       dispatchKeysTo(document, key);
       waitForDeckMove(beforeIndex, beforeTrack, function(movedViaDocument){
         if (movedViaDocument) preferredKeyTarget = document;
@@ -3590,21 +3598,57 @@ function injectDeckBridge(
       });
     });
   }
-  function stepToIndexViaKeys(target, onDone){
-    var guard = slides().length + 4;
-    function step(){
-      var current = activeIndex(slides());
-      if (current === target) { onDone(true); return; }
-      if (guard <= 0) { onDone(false); return; }
-      guard -= 1;
-      goViaArtifactKeys(target > current ? 'ArrowRight' : 'ArrowLeft', function(moved){
-        if (!moved) { onDone(false); return; }
-        step();
+  function artifactIndexInvoker(target, count){
+    var selectors = ['.nav-dot', '[data-slide-index]', '[data-page-index]'];
+    for (var s=0; s<selectors.length; s++) {
+      var controls = document.querySelectorAll(selectors[s]);
+      if (controls.length < count || !controls[target]) continue;
+      return function(){
+        try { controls[target].click(); } catch (_) {}
+      };
+    }
+    if (${JSON.stringify(hasInlineHashNavigation)}) {
+      return function(){
+        try {
+          // Preserve the artifact's own numeric hash route. Decks commonly
+          // use either #3 or #/3; changing the route shape makes their
+          // hashchange handler ignore the request, after which the bridge
+          // waits the full navigation-lock timeout and desynchronizes the
+          // artifact's private index with a DOM-only fallback.
+          var currentHashMatch = String(window.location.hash || '').match(/^(#.*?)(\d+)$/);
+          var hashPrefix = currentHashMatch
+            ? currentHashMatch[1]
+            : ${JSON.stringify(inlineHashIndexPrefix)};
+          window.location.hash = hashPrefix + (target + 1);
+        } catch (_) {}
+      };
+    }
+    return null;
+  }
+  function goViaArtifactIndex(target, navigationSequence, onDone){
+    var list = slides();
+    var invoke = artifactIndexInvoker(target, list.length);
+    if (!invoke) { onDone(false); return; }
+    var deadline = Date.now() + DIRECT_INDEX_UNLOCK_TIMEOUT_MS;
+    function attempt(){
+      if (navigationSequence !== odNavigationSequence) return;
+      var beforeIndex = activeIndex(slides());
+      var beforeTrack = trackTransformSnapshot();
+      invoke();
+      waitForDeckMove(beforeIndex, beforeTrack, function(moved){
+        if (navigationSequence !== odNavigationSequence) return;
+        if (moved || activeIndex(slides()) === target) { onDone(true); return; }
+        // Some authored decks lock navigation during their entrance/slide
+        // transition. Keep the current page visible and retry the SAME target;
+        // never translate one thumbnail click into visible intermediate pages.
+        if (Date.now() < deadline) { setTimeout(attempt, 80); return; }
+        onDone(false);
       });
     }
-    step();
+    attempt();
   }
   function go(action){
+    var navigationSequence = ++odNavigationSequence;
     var list = slides();
     if (!list.length) return;
     if (navigateViaDeckStage(list, action)) return;
@@ -3613,6 +3657,7 @@ function injectDeckBridge(
       return;
     }
     goViaArtifactKeys(keyForAction(action), function(moved){
+      if (navigationSequence !== odNavigationSequence) return;
       if (moved) { report(); return; }
       // Recompute the target at fallback time: rapid host requests can have
       // several probes in flight, and each fallback must step from the deck's
@@ -3622,26 +3667,22 @@ function injectDeckBridge(
       if (canSetActive(now) && setActive(target)) return;
       if (transformGo(target)) return;
       setTimeout(report, 280);
-    });
+    }, function(){ return navigationSequence === odNavigationSequence; });
   }
   function gotoIndex(i){
+    var navigationSequence = ++odNavigationSequence;
     var list = slides();
     if (!list.length) return;
     var target = Math.max(0, Math.min(list.length - 1, i));
     if (navigateViaDeckStage(list, 'go', target)) return;
     if (isScrollDeck(list)) { scrollGo(target); return; }
     if (activeIndex(list) === target) { report(); return; }
-    stepToIndexViaKeys(target, function(stepped){
-      if (stepped) { report(); return; }
+    goViaArtifactIndex(target, navigationSequence, function(moved){
+      if (navigationSequence !== odNavigationSequence) return;
+      if (moved) { report(); return; }
       var now = slides();
       if (canSetActive(now) && setActive(target)) return;
       if (transformGo(target)) return;
-      var current = activeIndex(slides());
-      var diff = target - current;
-      if (!diff) { report(); return; }
-      var key = diff > 0 ? 'ArrowRight' : 'ArrowLeft';
-      var n = Math.abs(diff);
-      for (var k = 0; k < n; k++) dispatchKey(key);
       setTimeout(report, 320);
     });
   }
@@ -3794,6 +3835,12 @@ function injectDeckBridge(
   addOdSlideMessageListener(function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:slide') return;
+    // Every newer host intent cancels an older multi-step jump, including a
+    // request for the slide that is CURRENTLY visible. The older jump may not
+    // have dispatched its first accepted key yet (the artifact can register on
+    // document after the window probe), so returning early without cancelling
+    // lets that stale request move the deck after the user's newer click.
+    odNavigationSequence += 1;
     var before = odSlideMessageBeforeIndex;
     odSlideMessageBeforeIndex = -1;
     function applyBridgeFallback() {
