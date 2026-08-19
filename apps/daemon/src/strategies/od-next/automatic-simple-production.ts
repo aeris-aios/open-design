@@ -20,6 +20,7 @@ import {
 import {
   finalizeStrategyPlanningResult,
   type OdNextCoordinatorResult,
+  odNextTurnMayInferDirectEditCompletion,
 } from './coordinator.js';
 import type { OdNextMachineProtocolStream } from './protocol.js';
 import type { OdNextExecutionPreflightInput } from './resolver.js';
@@ -542,6 +543,28 @@ export function completeAutomaticSimpleProduction(db: SqliteDb, input: {
     : input.physicalStatus === 'succeeded' && input.deliverableValid
       ? 'completed'
       : 'blocked';
+  // Attribute the block. Every other blocking path persists a `blockedContext`;
+  // this one did not, so the most common production block — the Run finished
+  // but delivered no resolvable canonical entry — reached the client with an
+  // empty reason set and could only be rendered as an anonymous failure. The
+  // codes mirror `validateAcceptedTurn`, which raises exactly these two for the
+  // same two conditions, so one block never gets two different names.
+  const blockedReasonCodes = outcome === 'blocked'
+    ? [
+        ...(input.physicalStatus === 'succeeded'
+          ? []
+          : ['od_next_physical_run_not_succeeded']),
+        ...(input.deliverableValid ? [] : ['od_next_canonical_deliverable_invalid']),
+      ]
+    : [];
+  if (blockedReasonCodes.length > 0) {
+    console.warn('[od-next-task] blocked', {
+      taskExecutionId: current.taskExecutionId,
+      runId: input.runId,
+      inputStage: current.inputStage,
+      reasonCodes: blockedReasonCodes,
+    });
+  }
   return compareAndTransitionStrategyTaskExecution(db, {
     taskExecutionId: current.taskExecutionId,
     expectedRevision: current.revision,
@@ -551,6 +574,9 @@ export function completeAutomaticSimpleProduction(db: SqliteDb, input: {
       outcome,
       executionMode: current.executionMode,
     },
+    ...(blockedReasonCodes.length > 0
+      ? { blockedContext: { reasonCodes: blockedReasonCodes, visibleText: null } }
+      : {}),
     ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
   });
 }
@@ -585,3 +611,5 @@ export function blockAutomaticContinuation(db: SqliteDb, input: {
     ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
   });
 }
+
+export { odNextTurnMayInferDirectEditCompletion };

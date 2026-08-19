@@ -396,14 +396,22 @@ async function probeCapabilities(
 ): Promise<RuntimeCapabilityMap | null> {
   if (!def.helpArgs || !def.capabilityFlags) return null;
   try {
-    const { stdout } = await execAgentFile(launchPath, def.helpArgs, {
+    const { stdout, stderr } = await execAgentFile(launchPath, def.helpArgs, {
       env,
       timeout: 5000,
       maxBuffer: 4 * 1024 * 1024,
     });
+    // Scan BOTH streams. Which one carries `--help` is a per-CLI accident of the
+    // arg parser: OpenCode writes its entire help to stderr and leaves stdout
+    // empty, so a stdout-only scan silently resolved every one of its flags to
+    // `false`. That made the whole capability mechanism dead for OpenCode —
+    // `--dangerously-skip-permissions` was never appended even on builds that
+    // support it, and `--dir` (which pins the workspace to the project so the
+    // agent stops adopting the enclosing git root) never applied either.
+    const help = `${String(stdout)}\n${String(stderr)}`;
     const caps: RuntimeCapabilityMap = {};
     for (const [flag, key] of Object.entries(def.capabilityFlags)) {
-      caps[key] = String(stdout).includes(flag);
+      caps[key] = help.includes(flag);
     }
     return caps;
   } catch {

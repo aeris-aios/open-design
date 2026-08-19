@@ -334,7 +334,8 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   const protocolCodes = uniqueReasonCodes(parsed.issues.map((issue) => issue.code));
   let state = parsed.runtimeState;
   if (protocolCodes.length > 0) {
-    const inferred = inferClarificationRuntimeState(current, parsed);
+    const inferred = inferClarificationRuntimeState(current, parsed)
+      ?? inferDirectEditCompletionRuntimeState(current, parsed, input.completionEvidence);
     if (inferred) {
       console.info('[od-next-task] runtime state inferred', {
         taskExecutionId: current.taskExecutionId,
@@ -347,16 +348,24 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
       const bindingCodes = plan ? validatePlanBinding(db, current, plan) : [];
       const repair = tryBeginSerializationRepair(db, current, input, parsed, protocolCodes);
       if (repair) return repair;
+      const blockedCodes = [...protocolCodes, ...bindingCodes];
+      logOdNextMachineContractGap(current, input.runId, parsed, blockedCodes);
       return blockTask(
         db,
         current,
         parsed.visibleText,
-        [...protocolCodes, ...bindingCodes],
+        blockedCodes,
         input.updatedAt,
       );
     }
   }
   if (!state) {
+    logOdNextMachineContractGap(
+      current,
+      input.runId,
+      parsed,
+      ['od_next_protocol_runtime_state_missing'],
+    );
     return blockTask(
       db,
       current,
@@ -374,6 +383,7 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
       : {}),
   });
   if (reasonCodes.length > 0) {
+    logOdNextMachineContractGap(current, input.runId, parsed, reasonCodes);
     return blockTask(db, current, parsed.visibleText, reasonCodes, input.updatedAt);
   }
 
@@ -420,6 +430,86 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
  * Anything ambiguous (a recovered plan block, extra or missing forms, a later
  * stage, a spent clarification budget) stays fail-closed.
  */
+/**
+ * Is this turn shaped like a Direct Edit that delivered but never declared it?
+ *
+ * Exported so the Run finisher knows it must resolve canonical-deliverable
+ * evidence for such a turn: without a `completed` Runtime State the evidence is
+ * otherwise never computed, and the inference below can only accept *verified*
+ * physical delivery.
+ *
+ * Deliberately stricter than the clarification inference: it requires an
+ * entirely unrouted first turn (`route === null`). Once `full_plan` is locked
+ * the request stage is planning-only, so build output there is a violation to
+ * report, never a completion to infer.
+ */
+export function odNextTurnMayInferDirectEditCompletion(
+  task: { route: string | null; inputStage: string; clarificationCount: number },
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']> | null | undefined,
+): boolean {
+  if (!parsed) return false;
+  const issueCodes = [...new Set(parsed.issues.map((issue) => issue.code))];
+  if (
+    issueCodes.length !== 1
+    || issueCodes[0] !== 'od_next_protocol_runtime_state_missing'
+  ) return false;
+  if (
+    task.route !== null
+    || task.inputStage !== 'request'
+    || task.clarificationCount > 0
+    || parsed.planContract
+    || parsed.repairPlanContract
+    || parsed.runtimeState
+    || parsed.repairRuntimeState
+  ) return false;
+  // A question form means the agent wanted to ask, not to finish.
+  return countRenderableQuestionForms(parsed.visibleText) === 0;
+}
+
+/**
+ * Recover a Direct Edit completion the agent performed but failed to declare.
+ *
+ * Observed on real runs: the agent writes the canonical deliverable correctly —
+ * `validateRunDeliverable` resolves a root `index.html` that this Run touched —
+ * then answers in prose without emitting a single machine block. The turn is
+ * refused, the logical task lands terminal-`blocked`, and the user is shown a
+ * generic failure even though the artifact they asked for is sitting in their
+ * project. No repair path can rescue it either: `tryBeginSerializationRepair`
+ * needs a recovered Plan Contract to anchor on, and this turn produced none.
+ *
+ * The declaration is missing, but the *fact* it would have declared is proven
+ * by evidence Open Design resolved itself, which is stronger than the agent's
+ * own word. This mirrors `inferClarificationRuntimeState`, which already infers
+ * a state from a renderable question form.
+ *
+ * Fail-closed: any anchor, any second issue code, any locked route, a spent
+ * clarification budget, a question form, a non-succeeded process, or an
+ * unresolved canonical deliverable all decline the inference and let the turn
+ * block as before.
+ */
+function inferDirectEditCompletionRuntimeState(
+  current: StrategyTaskExecutionRecord,
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']>,
+  completionEvidence: {
+    physicalStatus: 'succeeded' | 'failed' | 'canceled';
+    deliverableValid: boolean;
+  } | undefined,
+): StrategyRuntimeStateV2 | null {
+  if (!odNextTurnMayInferDirectEditCompletion(current, parsed)) return null;
+  if (
+    completionEvidence?.physicalStatus !== 'succeeded'
+    || completionEvidence.deliverableValid !== true
+  ) return null;
+  return {
+    schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
+    route: 'direct_edit',
+    inputStage: 'request',
+    outcome: 'completed',
+    executionMode: 'simple',
+    reasonCodes: ['od_next_protocol_runtime_state_inferred'],
+  };
+}
+
 function inferClarificationRuntimeState(
   current: StrategyTaskExecutionRecord,
   parsed: ReturnType<OdNextMachineProtocolStream['finish']>,
@@ -533,6 +623,46 @@ function validateAcceptedTurn(
     reasonCodes.push(...(input.productionEnforcementReasonCodes ?? []));
   }
   return uniqueReasonCodes(reasonCodes);
+}
+
+/**
+ * Report WHY a turn could not be accepted, not just that it was refused.
+ *
+ * `[od-next-task] blocked` carries only reason codes, which cannot distinguish
+ * "the agent emitted a malformed block" from "the agent emitted no block at
+ * all" — the two have completely different remedies, and only the first is
+ * eligible for the one allowed serialization repair. The presence map plus the
+ * parser's own structural details close that gap.
+ *
+ * Issue details are parser-authored strings about wrapper/tag shape; no model
+ * prose, Prompt body, or user content reaches this log. Lengths are bounded
+ * anyway so a pathological detail cannot flood the daemon log.
+ */
+function logOdNextMachineContractGap(
+  current: StrategyTaskExecutionRecord,
+  runId: string,
+  parsed: ReturnType<OdNextMachineProtocolStream['finish']>,
+  reasonCodes: readonly string[],
+): void {
+  console.warn('[od-next-task] machine contract gap', {
+    taskExecutionId: current.taskExecutionId,
+    runId,
+    inputStage: current.inputStage,
+    route: current.route,
+    reasonCodes: [...reasonCodes],
+    emitted: {
+      runtimeState: Boolean(parsed.runtimeState),
+      planContract: Boolean(parsed.planContract),
+      repairRuntimeState: Boolean(parsed.repairRuntimeState),
+      repairPlanContract: Boolean(parsed.repairPlanContract),
+      visibleTextLength: parsed.visibleText.length,
+    },
+    normalizations: parsed.normalizations,
+    issues: parsed.issues.slice(0, 8).map((issue) => ({
+      code: issue.code,
+      detail: issue.detail?.slice(0, 240),
+    })),
+  });
 }
 
 function tryBeginSerializationRepair(
