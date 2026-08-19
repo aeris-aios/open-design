@@ -3625,21 +3625,6 @@ function injectDeckBridge(
     }
     return null;
   }
-  function finishDirectJumpMotion(target){
-    var list = slides();
-    var slide = list[target];
-    if (!slide || typeof slide.getAnimations !== 'function') return;
-    try {
-      // A thumbnail is an explicit seek, not a request to replay every
-      // authored entrance transition. Finish only animations that belong to
-      // the selected slide after its own router has activated it. Arrow-key
-      // and in-canvas navigation still keep the artifact's native motion.
-      var animations = slide.getAnimations({ subtree: true });
-      for (var i=0; i<animations.length; i++) {
-        try { animations[i].finish(); } catch (_) {}
-      }
-    } catch (_) {}
-  }
   function goViaArtifactIndex(target, navigationSequence, onDone){
     var list = slides();
     var invoke = artifactIndexInvoker(target, list.length);
@@ -3652,11 +3637,7 @@ function injectDeckBridge(
       invoke();
       waitForDeckMove(beforeIndex, beforeTrack, function(moved){
         if (navigationSequence !== odNavigationSequence) return;
-        if (moved || activeIndex(slides()) === target) {
-          finishDirectJumpMotion(target);
-          onDone(true);
-          return;
-        }
+        if (moved || activeIndex(slides()) === target) { onDone(true); return; }
         // Some authored decks lock navigation during their entrance/slide
         // transition. Keep the current page visible and retry the SAME target;
         // never translate one thumbnail click into visible intermediate pages.

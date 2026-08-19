@@ -215,11 +215,6 @@ function setupSlashHashDeck() {
   });
   const slides = Array.from(win.document.querySelectorAll<HTMLElement>('.slide'));
   const pagerCur = win.document.getElementById('pager-cur') as HTMLElement;
-  const finishDirectJumpAnimation = vi.fn();
-  Object.defineProperty(slides[2], 'getAnimations', {
-    configurable: true,
-    value: () => [{ finish: finishDirectJumpAnimation }],
-  });
   let current = 0;
   const go = (index: number) => {
     current = Math.max(0, Math.min(slides.length - 1, index));
@@ -240,7 +235,6 @@ function setupSlashHashDeck() {
 
   return {
     current: () => current,
-    finishDirectJumpAnimation,
     pagerCur,
     parentPostMessage,
     win,
@@ -357,8 +351,7 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
   });
 
   it('preserves slash-hash routes for immediate artifact-owned thumbnail jumps', async () => {
-    const { current, finishDirectJumpAnimation, pagerCur, parentPostMessage, win } =
-      setupSlashHashDeck();
+    const { current, pagerCur, parentPostMessage, win } = setupSlashHashDeck();
 
     win.dispatchEvent(new win.MessageEvent('message', {
       data: { type: 'od:slide', action: 'go', index: 2 },
@@ -367,7 +360,6 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
 
     expect(win.location.hash).toBe('#/3');
     expect(current()).toBe(2);
-    expect(finishDirectJumpAnimation).toHaveBeenCalledOnce();
     expect(pagerCur.textContent).toBe('3');
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
   });
