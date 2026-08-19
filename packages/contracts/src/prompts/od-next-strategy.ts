@@ -294,7 +294,9 @@ This execution profile has no project-file tools. Produce only the complete decl
 
 const DISCOVERY_AND_PLANNING_SECTION = `## Discovery, planning, and Build surface
 
-On the request stage, use the supplied task facts to choose the allowed route and prepare the Task Profile, Design Spec, Full Plan, stable Todo plan, Build Requirements, and any Build Packages required by the locked execution mode.
+On the request stage YOU choose the route. Open Design does not pick it for you: it leaves the route unset until your first Runtime State declares it. Apply the active orchestration Skill's Direct Edit eligibility conditions to the request, then declare \`route\` as \`direct_edit\` or \`full_plan\`. Declare \`direct_edit\` only when every condition holds; otherwise declare \`full_plan\`. Whichever you declare is locked for the rest of the task chain, so declare it deliberately.
+
+Having chosen the route, prepare the Task Profile, Design Spec, Full Plan, stable Todo plan, Build Requirements, and any Build Packages required by the locked execution mode.
 
 For a Full Plan route, the request and clarification stages are planning-only. You may read the bounded inputs needed to freeze the plan, but do not create, edit, render, or dispatch a deliverable until Open Design continues the same native session into the production stage. Direct Edit remains the only route allowed to perform Build work on the request stage.
 
