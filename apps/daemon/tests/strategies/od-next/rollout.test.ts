@@ -15,6 +15,7 @@ import {
   stableOdNextAssignmentBucket,
   stopModeForOdNextSignal,
 } from '../../../src/strategies/od-next/rollout.js';
+import { rolloutStopSignalForBlockedContinuation } from '../../../src/strategies/od-next/automatic-continuation-service.js';
 import { latchOdNextRolloutStopOperationally } from '../../../src/strategies/od-next/rollout-control-telemetry.js';
 import { odNextRolloutAnalyticsProperties } from '../../../src/strategies/od-next/rollout-analytics.js';
 
@@ -256,6 +257,44 @@ describe('OD Next controlled rollout', () => {
       },
     }));
     db.close();
+  });
+
+  it('does not stop the whole daemon for one agent-side protocol defect', () => {
+    // Field-observed regression: two vague prompts made the agent emit a
+    // clarification state carrying a premature executionMode. That is a
+    // single-task agent defect — the machine block never reached the user —
+    // yet it latched a global hard `off`, silently returning every later
+    // request in the daemon to the legacy path across restarts.
+    for (const code of [
+      'od_next_protocol_runtime_state_invalid_schema',
+      'od_next_protocol_runtime_state_missing',
+      'od_next_protocol_runtime_state_invalid_json',
+      'od_next_protocol_runtime_state_duplicate',
+      'od_next_protocol_plan_contract_invalid_schema',
+      'od_next_protocol_plan_contract_duplicate',
+      'od_next_protocol_plan_contract_missing',
+      'od_next_protocol_plan_contract_unexpected',
+      'od_next_protocol_stage_mismatch',
+    ]) {
+      expect(rolloutStopSignalForBlockedContinuation([code]), code).toBeNull();
+    }
+
+    // A block the stream could not delimit or had to drop is a genuine
+    // contract-boundary failure and still stops the rollout.
+    expect(rolloutStopSignalForBlockedContinuation([
+      'od_next_protocol_machine_block_malformed',
+    ])).toBe('machine_contract_leak');
+    expect(rolloutStopSignalForBlockedContinuation([
+      'od_next_protocol_machine_block_too_large',
+    ])).toBe('machine_contract_leak');
+
+    // Route/mode drift and unverified children keep their existing signals.
+    expect(rolloutStopSignalForBlockedContinuation([
+      'od_next_protocol_route_mismatch',
+    ])).toBe('route_mode_drift');
+    expect(rolloutStopSignalForBlockedContinuation([
+      'od_next_protocol_execution_mode_mismatch',
+    ])).toBe('route_mode_drift');
   });
 
   it('requires exact HyperFrames metadata and lets hard off dominate an observe latch', () => {

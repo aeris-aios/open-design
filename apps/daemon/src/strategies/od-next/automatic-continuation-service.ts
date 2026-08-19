@@ -131,13 +131,36 @@ export async function resolveAutomaticContinuationEvidence(input: {
   };
 }
 
+/**
+ * Machine-block delimiting failures the protocol stream could not resolve. The
+ * stream suppresses these bodies rather than emitting them, so they are the
+ * only codes that describe a machine-contract boundary failure rather than one
+ * agent turn being non-compliant.
+ */
+const MACHINE_CONTRACT_BOUNDARY_CODES = new Set([
+  'od_next_protocol_machine_block_malformed',
+  'od_next_protocol_machine_block_too_large',
+]);
+
+/**
+ * Map one blocked task to the rollout stop signal it justifies, if any.
+ *
+ * A stop latch disables OD Next for the whole daemon instance and survives
+ * restart, so only a failure of the machine contract itself may raise one. An
+ * agent turn that omits, duplicates, or mis-populates a machine block is a
+ * per-task defect: it is already fail-closed for that task, its reason codes
+ * are persisted for attribution, and it must not silently return every later
+ * request in the daemon to the legacy path.
+ */
 export function rolloutStopSignalForBlockedContinuation(
   reasonCodes: readonly string[],
 ): 'route_mode_drift' | 'machine_contract_leak' | 'complex_child_unverified' | null {
   if (reasonCodes.some((code) => (
     code.includes('route_mismatch') || code.includes('execution_mode_mismatch')
   ))) return 'route_mode_drift';
-  if (reasonCodes.some((code) => code.includes('protocol'))) return 'machine_contract_leak';
+  if (reasonCodes.some((code) => MACHINE_CONTRACT_BOUNDARY_CODES.has(code))) {
+    return 'machine_contract_leak';
+  }
   if (reasonCodes.some((code) => code.includes('child'))) return 'complex_child_unverified';
   return null;
 }
