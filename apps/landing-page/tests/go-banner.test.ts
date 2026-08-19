@@ -56,7 +56,7 @@ test('Go banner preserves desktop hero spacing and adds its offset only on mobil
   );
   assert.match(
     banner.slice(mobileStylesStart),
-    /html\.go-banner-active \.hero[^}]*padding-top: calc\(92px \+ 52px\)/,
+    /html\.go-banner-active \.hero[^}]*padding-top: calc\(92px \+ 48px\)/,
   );
 });
 

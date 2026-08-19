@@ -10,6 +10,7 @@
  * app/_lib/pricing-team-content.ts.
  */
 import Layout from '../../_components/sub-page-layout.astro';
+import PricingIndividualPlans from '../../_components/pricing-individual-plans.astro';
 import {
   PRICING_SNAPSHOT,
   PLANS_JSON_URL,
@@ -43,6 +44,7 @@ import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 import { getPricingCampaignContent } from '../../_lib/pricing-campaign-content';
 
 const locale = localeFromPath(Astro.url.pathname);
+const isZh = locale === 'zh' || locale === 'zh-tw';
 const href = (path: string) => localizedHref(path, locale);
 const content = getPricingContent(locale);
 const teamContent = getTeamPricingContent(locale);
@@ -268,7 +270,7 @@ const jsonLd = [
     data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive}
   >
     <header class="pr-hero">
-      <h1 class="pr-hero-heading">{L.heroTitle}</h1>
+      <h1 class="pr-hero-heading">{isZh ? '零配置，只为结果付费' : locale === 'en' ? 'Zero setup. Pay only for results.' : L.heroTitle}</h1>
       <div class="pr-controls-row">
         <div class="pr-audience-toggle" role="tablist" aria-label={teamContent.audienceTabsLabel}>
           <button
@@ -281,7 +283,7 @@ const jsonLd = [
             aria-selected="true"
             tabindex="0"
           >
-            {teamContent.creatorTab}
+            {isZh ? '个人' : locale === 'en' ? 'Individual' : teamContent.creatorTab}
           </button>
           <button
             id="pr-audience-team"
@@ -293,7 +295,7 @@ const jsonLd = [
             aria-selected="false"
             tabindex="-1"
           >
-            {teamContent.teamTab}
+            {isZh ? '团队' : locale === 'en' ? 'Team' : teamContent.teamTab}
           </button>
         </div>
         <div class="pr-toggle" role="tablist" aria-label={teamContent.billingIntervalLabel}>
@@ -315,6 +317,8 @@ const jsonLd = [
       aria-labelledby="pr-audience-creator"
       data-audience-panel="creator"
     >
+    <PricingIndividualPlans />
+    {false && (
     <section class="pr-grid" aria-label={teamContent.creatorTab}>
       <article class="pr-card" data-tier="go">
         <header class="pr-head">
@@ -511,6 +515,7 @@ const jsonLd = [
         );
       })}
     </section>
+    )}
 
     <section class="pr-multimodal" aria-labelledby="pr-multimodal-title">
       <div class="pr-multimodal-copy">
@@ -1274,13 +1279,14 @@ const jsonLd = [
     flex-direction: column;
     align-items: center;
     text-align: center;
-    padding-top: 8px;
+    padding-top: 6px;
   }
   .pr-hero-heading {
-    font-family: var(--serif, Georgia, serif);
-    font-weight: 600;
-    font-size: clamp(28px, 4.2vw, 42px);
-    letter-spacing: -0.02em;
+    font-family: Albert Sans, PingFang SC, Microsoft YaHei, Arial, sans-serif;
+    font-weight: 560;
+    font-size: clamp(40px, 3.2vw, 52px);
+    line-height: 1.04;
+    letter-spacing: -0.045em;
     margin: 0;
   }
 
@@ -1290,7 +1296,8 @@ const jsonLd = [
     grid-template-columns: 1fr auto 1fr;
     align-items: end;
     width: min(1280px, 100%);
-    margin-top: 28px;
+    min-height: 42px;
+    margin-top: 65px;
   }
   .pr-toggle {
     grid-column: 3;
@@ -1305,7 +1312,8 @@ const jsonLd = [
     position: relative;
     display: flex;
     justify-content: center;
-    gap: 6px;
+    align-items: center;
+    gap: 10px;
   }
   .pr-toggle-btn {
     display: inline-flex;
@@ -1324,14 +1332,17 @@ const jsonLd = [
   .pr-toggle-separator { color: var(--ink-soft, #aaa); }
   .pr-audience-btn {
     position: relative;
-    min-width: 80px;
-    padding: 10px 18px;
+    min-width: 60px;
+    min-height: 38px;
+    padding: 0 16px;
     border: 0;
     border-radius: 8px;
     background: transparent;
     color: var(--ink-soft, #777);
     font: inherit;
-    font-size: 0.92rem;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
     white-space: nowrap;
     cursor: pointer;
     transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1), background-color 200ms cubic-bezier(0.23, 1, 0.32, 1);
@@ -1342,12 +1353,13 @@ const jsonLd = [
     background: color-mix(in srgb, var(--ink) 7%, transparent);
   }
   .pr-toggle-save {
-    font-size: 0.66rem;
-    font-weight: 600;
-    padding: 0.1rem 0.4rem;
-    border-radius: 999px;
-    background: var(--brand, #2bd200);
-    color: #103600;
+    margin-left: 7px;
+    padding: 0;
+    color: #2f8b25;
+    background: transparent;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1;
     white-space: nowrap;
   }
   @media (max-width: 760px) {

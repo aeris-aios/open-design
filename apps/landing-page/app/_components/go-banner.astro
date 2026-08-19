@@ -24,117 +24,121 @@ const apiOrigin =
   data-window-start="2026-08-20T20:00:00+08:00"
   data-window-end="2026-09-03T20:00:00+08:00"
   data-api-origin={apiOrigin}
+  aria-label={copy.ariaLabel}
   hidden
 >
-  <a class="go-banner__link" href={pricingHref} data-go-banner-cta aria-label={copy.ariaLabel}>
+  <div class="go-banner__inner">
     <span class="go-banner__badge">{copy.badge}</span>
-    <strong class="go-banner__headline">{copy.headline}</strong>
-    <span class="go-banner__divider" aria-hidden="true"></span>
-    <span class="go-banner__detail">{copy.detail}</span>
-    <span class="go-banner__cta" aria-hidden="true">→</span>
-  </a>
-  <button class="go-banner__close" type="button" data-go-banner-close aria-label={copy.closeLabel}>×</button>
+    <a class="go-banner__link" href={pricingHref} data-go-banner-cta>
+      <span class="go-banner__headline">{copy.headline}</span>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+    </a>
+  </div>
+  <button class="go-banner__close" type="button" data-go-banner-close aria-label={copy.closeLabel}>
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+  </button>
 </aside>
 
 <style>
   .go-banner {
-    position: fixed;
+    position: sticky;
     z-index: 72;
-    inset: 0 0 auto;
-    min-height: 44px;
-    border-bottom: 1px solid color-mix(in srgb, #68f22e 36%, var(--line, #d9d9d9));
-    color: var(--ink, #262626);
-    background: color-mix(in srgb, #68f22e 8%, #fff);
-    box-shadow: 0 6px 24px rgb(38 38 38 / 6%);
-    font-size: 13px;
-    line-height: 1.25;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    padding: 7px 70px;
+    color: #20241d;
+    background: #e6efd5;
+    border: 0;
   }
   .go-banner[hidden] { display: none !important; }
+  .go-banner__inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    min-width: 0;
+  }
   .go-banner__link {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    min-height: 44px;
-    padding: 8px 64px 8px 24px;
-    color: inherit;
+    gap: 7px;
+    min-width: 0;
+    padding: 4px 0;
+    color: #292d27;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
     text-decoration: none;
   }
   .go-banner__badge {
     flex: 0 0 auto;
-    padding: 4px 9px;
+    padding: 5px 9px;
     border-radius: 999px;
-    color: #102b05;
-    background: #68f22e;
-    font-size: 11px;
+    color: #173111;
+    background: #78ea57;
+    font-size: 8px;
     font-weight: 800;
+    line-height: 1;
+    letter-spacing: .045em;
     white-space: nowrap;
   }
-  .go-banner__link strong { font-weight: 720; }
-  .go-banner__divider {
-    flex: 0 0 1px;
-    align-self: stretch;
-    max-height: 18px;
-    margin-block: auto;
-    background: color-mix(in srgb, var(--ink, #262626) 22%, transparent);
+  .go-banner__headline {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .go-banner__detail { color: var(--ink-mute, #666); }
-  .go-banner__cta {
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 auto;
-    width: 25px;
-    height: 25px;
-    border-radius: 999px;
-    color: #fff;
-    background: var(--ink, #262626);
+  .go-banner__link svg {
+    flex: none;
     transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
   }
-  .go-banner__link:hover .go-banner__cta { transform: translateX(2px); }
+  .go-banner__link:hover svg { transform: translateX(3px); }
   .go-banner__link:focus-visible {
-    outline: 2px solid var(--ink, #262626);
-    outline-offset: -3px;
+    outline: 2px solid #11120f;
+    outline-offset: 3px;
   }
   .go-banner__close {
     position: absolute;
     top: 50%;
-    right: 14px;
+    right: 3.2vw;
     display: grid;
     place-items: center;
     width: 28px;
     height: 28px;
     padding: 0;
     border: 0;
-    border-radius: 50%;
-    color: var(--ink, #262626);
+    border: 1px solid transparent;
+    color: #11120f;
     background: transparent;
-    font-size: 19px;
     cursor: pointer;
-    opacity: .72;
     transform: translateY(-50%);
   }
-  .go-banner__close:hover { background: rgb(38 38 38 / 7%); opacity: 1; }
-  .go-banner__close:focus-visible { outline: 2px solid var(--ink, #262626); outline-offset: 2px; }
-  :global(html.go-banner-active) { --home-campaign-banner-height: 44px; }
+  .go-banner__close:hover { color: #11120f; }
+  .go-banner__close:focus-visible { outline: 3px solid rgb(17 18 15 / 28%); outline-offset: 1px; }
+  :global(html.go-banner-active) { --home-campaign-banner-height: 48px; }
   :global(html.go-banner-active .home-campaign-banner) { display: none !important; }
-  :global(html.go-banner-active .site-chrome) { top: 44px; }
+  :global(html.go-banner-active .site-chrome) { top: 48px; }
   @media (max-width: 760px) {
-    .go-banner { min-height: 52px; }
-    .go-banner__link {
+    .go-banner {
+      justify-content: flex-start;
+      min-height: 48px;
+      padding: 8px 48px 8px 14px;
+    }
+    .go-banner__inner {
       justify-content: flex-start;
       gap: 8px;
-      min-height: 52px;
-      padding: 7px 48px 7px 12px;
     }
-    .go-banner__headline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .go-banner__detail,
-    .go-banner__divider { display: none; }
-    :global(html.go-banner-active) { --home-campaign-banner-height: 52px; }
-    :global(html.go-banner-active .site-chrome) { top: 52px; }
-    :global(html.go-banner-active .hero) { padding-top: calc(92px + 52px); }
+    .go-banner__link { justify-content: flex-start; font-size: 10px; overflow: hidden; }
+    .go-banner__close { right: 10px; }
+    :global(html.go-banner-active) { --home-campaign-banner-height: 48px; }
+    :global(html.go-banner-active .site-chrome) { top: 48px; }
+    :global(html.go-banner-active .hero) { padding-top: calc(92px + 48px); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .go-banner__cta { transition: none; }
+    .go-banner__link svg { transition: none; }
   }
 </style>
 

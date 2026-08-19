@@ -10,7 +10,8 @@ export interface GoBannerCopy {
 
 const EN: GoBannerCopy = {
   badge: 'NEW',
-  headline: 'Go is here: an AI design and coding plan for everyone',
+  headline:
+    'The new Go plan is here. Start at $5 for your first month with ample access to popular models.',
   detail: '$5 first month · 8 popular models · ample allowance',
   ariaLabel: 'Go plan, five dollars for the first month. View pricing',
   closeLabel: 'Dismiss Go announcement',
@@ -20,14 +21,14 @@ const COPY: Partial<Record<LandingLocaleCode, GoBannerCopy>> = {
   en: EN,
   zh: {
     badge: 'NEW',
-    headline: '人人可用的 AI 设计 Coding Plan，Go 上线',
+    headline: 'Go 新套餐现已上线，首月 $5，热门模型额度充裕',
     detail: '首月 $5 · 8 个热门模型 · 充裕额度',
     ariaLabel: 'Go 套餐首月五美元，查看价格方案',
     closeLabel: '关闭 Go 上线公告',
   },
   'zh-tw': {
     badge: 'NEW',
-    headline: '人人可用的 AI 設計 Coding Plan，Go 上線',
+    headline: 'Go 新方案現已上線，首月 $5，熱門模型額度充裕',
     detail: '首月 $5 · 8 個熱門模型 · 充裕額度',
     ariaLabel: 'Go 套餐首月五美元，查看價格方案',
     closeLabel: '關閉 Go 上線公告',
