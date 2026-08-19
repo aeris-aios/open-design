@@ -1,7 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-import type { PinnedRunDesignSystemScope } from './design-systems/run-scope.js';
-
 export const DEFAULT_TOOL_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const CHAT_TOOL_TOKEN_TTL_BUFFER_MS = 15 * 60 * 1000;
 
@@ -29,8 +27,6 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/connectors/list',
   '/api/tools/connectors/execute',
   '/api/tools/design-systems/read',
-  '/api/tools/design-systems/resolve-intent',
-  '/api/tools/design-systems/validate-adherence',
   '/api/tools/media/generate',
   HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
@@ -47,8 +43,6 @@ export const CHAT_TOOL_OPERATIONS = [
   'connectors:list',
   'connectors:execute',
   'design-systems:read',
-  'design-systems:resolve-intent',
-  'design-systems:validate-adherence',
   'media:generate',
   'media:scaffold',
   'project:export',
@@ -70,12 +64,6 @@ export interface ToolTokenGrant {
   token: string;
   runId: string;
   projectId: string;
-  /** Workspace authority captured when the run token is minted. */
-  workspaceId?: string;
-  /** Member identity paired with workspaceId for personal-resource checks. */
-  workspaceMemberId?: string;
-  /** Exact Personal/Team DS binding captured when the run starts. */
-  designSystemScope?: PinnedRunDesignSystemScope;
   allowedEndpoints: readonly ToolEndpoint[];
   allowedOperations: readonly ToolOperation[];
   issuedAt: string;
@@ -94,9 +82,6 @@ export interface ToolTokenGrant {
 export interface MintToolTokenOptions {
   runId: string;
   projectId: string;
-  workspaceId?: string;
-  workspaceMemberId?: string;
-  designSystemScope?: PinnedRunDesignSystemScope;
   allowedEndpoints?: readonly ToolEndpoint[];
   allowedOperations?: readonly ToolOperation[];
   ttlMs?: number;
@@ -187,17 +172,6 @@ export class ToolTokenRegistry {
       tokenHash: hash,
       runId: options.runId,
       projectId: options.projectId,
-      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      ...(options.workspaceMemberId
-        ? { workspaceMemberId: options.workspaceMemberId }
-        : {}),
-      ...(options.designSystemScope
-        ? {
-            designSystemScope: Object.freeze({
-              ...options.designSystemScope,
-            }) as PinnedRunDesignSystemScope,
-          }
-        : {}),
       allowedEndpoints: [...(options.allowedEndpoints ?? CHAT_TOOL_ENDPOINTS)],
       allowedOperations: [...(options.allowedOperations ?? CHAT_TOOL_OPERATIONS)],
       issuedAt: new Date(nowMs).toISOString(),
