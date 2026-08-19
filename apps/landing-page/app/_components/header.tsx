@@ -667,6 +667,37 @@ export function Header({
               </ul>
             </li>
 
+            {/* Compact navigation keeps the community action inside the
+                hamburger panel so long localized labels cannot crowd the
+                fixed header row. The desktop counterpart stays in nav-side. */}
+            <li className='nav-community-mobile-entry'>
+              <a
+                className='nav-community-mobile-cta'
+                href={usesFeishuCommunity ? FEISHU : DISCORD}
+                {...ext}
+                data-community-cta
+                data-community-platform={usesFeishuCommunity ? 'feishu' : 'discord'}
+              >
+                <svg
+                  className='nav-community-cta-icon'
+                  viewBox='0 0 20 20'
+                  aria-hidden='true'
+                >
+                  <path d='M4 4.75h12v8.5H9l-3.8 2.5v-2.5H4z' />
+                  <path d='M7 8h6M7 10.5h4' />
+                </svg>
+                <span>{communityCopy.cta}</span>
+              </a>
+              <div className='nav-community-mobile-benefits'>
+                {communityCopy.benefits.map((benefit) => (
+                  <div className='nav-community-mobile-benefit' key={benefit}>
+                    <span className='nav-community-benefits-dot' aria-hidden='true' />
+                    <span>{benefit}</span>
+                  </div>
+                ))}
+              </div>
+            </li>
+
           </ul>
         </nav>
         <div className='nav-side'>
