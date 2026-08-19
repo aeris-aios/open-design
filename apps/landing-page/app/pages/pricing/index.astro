@@ -3,17 +3,18 @@
  * /pricing/ — subscription pricing page (localized).
  *
  * Card LAYOUT + COPY mirror the vela subscription modal (`pricing-plans.tsx`).
- * The NUMBERS come from `PRICING_SNAPSHOT` at build time and are reconciled
- * from `PLANS_JSON_URL` by the inline script after validating the public JSON
- * contract. The localized TEXT comes from app/_lib/pricing-content.ts and
- * app/_lib/pricing-team-content.ts. Numbers and text are kept separate on
- * purpose: only numbers are part of the plans.json contract.
+ * Plus/Pro/Max and Team NUMBERS come from `PRICING_SNAPSHOT` at build time and
+ * are reconciled from `PLANS_JSON_URL` by the inline script. Go's confirmed
+ * launch prices come from the colocated `GO_PLAN` source shared with SEO and
+ * tests. The localized TEXT comes from app/_lib/pricing-content.ts and
+ * app/_lib/pricing-team-content.ts.
  */
 import Layout from '../../_components/sub-page-layout.astro';
 import {
   PRICING_SNAPSHOT,
   PLANS_JSON_URL,
   CLOUD_CONSOLE_URL,
+  GO_PLAN,
   cloudSubscribeUrl,
   formatUsd,
   teamIntroTotalUsd,
@@ -122,22 +123,35 @@ const POPULAR_MODELS = [
   { name: 'GLM-5.2', icon: '/agent-icons/amr.svg' },
   { name: 'GLM-5.1', icon: '/agent-icons/amr.svg' },
 ] as const;
-const goMonthlySave = 10 * 12 - 60;
+const goIntroPct = Math.round(
+  (1 - GO_PLAN.monthly.introPriceUsd / GO_PLAN.monthly.priceUsd) * 100,
+);
+const goYearlyMonthly = GO_PLAN.yearly.priceUsd / 12;
+const goYearlyDiscountPct = Math.round(
+  (1 - goYearlyMonthly / GO_PLAN.monthly.priceUsd) * 100,
+);
+const goMonthlySave = GO_PLAN.monthly.priceUsd * 12 - GO_PLAN.yearly.priceUsd;
 const goView = {
   monthly: {
-    amount: '$5',
-    strike: '$10',
-    tag: fillTemplate(L.firstMonthTag, { pct: '50' }),
-    subline: fillTemplate(L.monthlyRenewal, { amountUsd: '$10' }),
-    saveCta: fillTemplate(L.yearlySaveCta, { savingsUsd: `$${goMonthlySave}` }),
+    amount: usd(GO_PLAN.monthly.introPriceUsd),
+    strike: usd(GO_PLAN.monthly.priceUsd),
+    tag: fillTemplate(L.firstMonthTag, { pct: String(goIntroPct) }),
+    subline: fillTemplate(L.monthlyRenewal, {
+      amountUsd: usd(GO_PLAN.monthly.priceUsd),
+    }),
+    saveCta: fillTemplate(L.yearlySaveCta, {
+      savingsUsd: usd(goMonthlySave),
+    }),
   },
   yearly: {
-    amount: '$5',
-    strike: '$10',
-    tag: fillTemplate(L.yearlyDiscountTag, { pct: '50' }),
+    amount: usd(goYearlyMonthly),
+    strike: usd(GO_PLAN.monthly.priceUsd),
+    tag: fillTemplate(L.yearlyDiscountTag, {
+      pct: String(goYearlyDiscountPct),
+    }),
     subline: fillTemplate(L.yearlySubline, {
-      totalUsd: '$60',
-      savingsUsd: `$${goMonthlySave}`,
+      totalUsd: usd(GO_PLAN.yearly.priceUsd),
+      savingsUsd: usd(goMonthlySave),
     }),
   },
 };
@@ -196,7 +210,7 @@ const jsonLd = [
       {
         '@type': 'Offer',
         name: 'OpenDesign Go',
-        price: '10',
+        price: String(GO_PLAN.monthly.priceUsd),
         priceCurrency: 'USD',
         url: cloudSubscribeUrl('go', 'monthly'),
       },
@@ -1400,6 +1414,9 @@ const jsonLd = [
     color: #f6f7f2;
     border-color: #10120e;
     background: #10120e;
+  }
+  .pr-card[data-tier='max'] .pr-tier-logo {
+    filter: brightness(0) invert(1);
   }
   .pr-card[data-tier='max'] .pr-cta {
     color: #122a08;

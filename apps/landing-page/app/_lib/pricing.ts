@@ -85,6 +85,13 @@ export const CLOUD_BASE_URL = 'https://open-design.ai/cloud/dashboard';
 /** Public pricing contract served by the landing page. */
 export const PLANS_JSON_URL = '/pricing/plans.json';
 
+/** Confirmed Go launch prices shared by the page, SEO metadata, and tests. */
+export const GO_PLAN = {
+  tier: 'go',
+  monthly: { priceUsd: 10, introPriceUsd: 5 },
+  yearly: { priceUsd: 60 },
+} as const;
+
 /**
  * Stable Vela contract for opening the generic billing entry. Specific plan
  * CTAs use `cloudSubscribeUrl` so Vela can start checkout without reopening a

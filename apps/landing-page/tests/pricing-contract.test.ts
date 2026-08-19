@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
   CLOUD_CONSOLE_URL,
+  GO_PLAN,
   PLANS_JSON_URL,
   PRICING_SNAPSHOT,
   cloudSubscribeUrl,
@@ -33,6 +34,10 @@ const CAMPAIGN_PATH = new URL(
 );
 const TEAM_CONTENT_PATH = new URL(
   "../app/_lib/pricing-team-content.ts",
+  import.meta.url,
+);
+const MAX_LOGO_PATH = new URL(
+  "../public/pricing/plan-max.svg",
   import.meta.url,
 );
 
@@ -86,11 +91,31 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /data-tier="free"/);
     assert.match(page, /data-tier="go"/);
     assert.match(page, /class="pr-go-wordmark"[^>]*>go<\/span>/);
-    assert.match(page, /amount: '\$5'/);
-    assert.match(page, /strike: '\$10'/);
+    assert.deepEqual(GO_PLAN, {
+      tier: "go",
+      monthly: { priceUsd: 10, introPriceUsd: 5 },
+      yearly: { priceUsd: 60 },
+    });
+    assert.match(page, /GO_PLAN\.monthly\.introPriceUsd/);
+    assert.match(page, /GO_PLAN\.monthly\.priceUsd/);
+    assert.match(page, /GO_PLAN\.yearly\.priceUsd/);
+    assert.match(page, /price: String\(GO_PLAN\.monthly\.priceUsd\)/);
     assert.match(page, /content\.go\.allowance/);
     assert.match(page, /DeepSeek V4 Flash/);
     assert.match(page, /GLM-5\.1/);
+  });
+
+  it("keeps the Max wordmark readable on its dark card", async () => {
+    const [page, logo] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      readFile(MAX_LOGO_PATH, "utf8"),
+    ]);
+
+    assert.match(logo, /stroke="#202020"/);
+    assert.match(
+      page,
+      /\.pr-card\[data-tier='max'\] \.pr-tier-logo\s*\{[^}]*filter:\s*brightness\(0\) invert\(1\);/s,
+    );
   });
 
   it("keeps the DeepSeek plan benefits without a Pricing campaign banner", async () => {
