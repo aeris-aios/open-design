@@ -400,7 +400,7 @@ describe('resolveRunFailureUi', () => {
       'You have reached the 5-hour usage limit for Kimi K2.6. Try again after 2026-08-12T06:34:47Z. This request was not charged to Wallet Credits.',
     );
     expect(ui).toMatchObject({
-      primaryAction: 'retry',
+      primaryAction: 'upgrade',
       titleKey: 'chat.runError.title.modelWindowLimit',
       messageKey: 'chat.runError.modelWindowLimitMessage',
       showSwitchCard: false,

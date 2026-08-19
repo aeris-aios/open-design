@@ -1314,6 +1314,11 @@ export function ChatPane({
         failedRunErrorEvent?.detail,
       )
     : null;
+  // A rolling model-window limit has no useful immediate retry path. Keep its
+  // localized recovery copy fully visible and present a single upgrade action
+  // instead of hiding the actionable message behind technical details.
+  const isModelWindowLimitCard =
+    failedRunErrorEvent?.failureDetail === 'model_window_limit';
   const hasInlineAmrAuthorizeFailure = Boolean(
     retryAssistant && onRetry && runFailureUi?.primaryAction === 'authorize',
   );
@@ -2768,14 +2773,16 @@ export function ChatPane({
                   icon="alert-triangle"
                   tone={runErrorTone}
                   title={
-                    runFailureUi
-                      ? t(runFailureUi.titleKey)
-                      : t('chat.runError.title.generic')
+                    isModelWindowLimitCard && displayError
+                      ? displayError
+                      : runFailureUi
+                        ? t(runFailureUi.titleKey)
+                        : t('chat.runError.title.generic')
                   }
-                  open={errorSourceOpen}
-                  onOpenChange={setErrorSourceOpen}
-                  detailsLabel={t('brand.viewDetails')}
-                  details={
+                  open={isModelWindowLimitCard ? false : errorSourceOpen}
+                  onOpenChange={isModelWindowLimitCard ? undefined : setErrorSourceOpen}
+                  detailsLabel={isModelWindowLimitCard ? undefined : t('brand.viewDetails')}
+                  details={isModelWindowLimitCard ? undefined : (
                     <div className="run-error__details">
                       <p className="run-error__description">{displayError}</p>
                       {errorDiagnosticText ? (
@@ -2796,7 +2803,7 @@ export function ChatPane({
                         </div>
                       ) : null}
                     </div>
-                  }
+                  )}
                   footerActions={showErrorActions ? (
                     <>
                       {showByokRecoveryCta ? (

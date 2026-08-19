@@ -82,10 +82,11 @@ function renderChat(opts: {
   onRetry: (m: ChatMessage) => void;
   onSend?: (...args: unknown[]) => void;
   activeAgentId?: string;
+  messages?: ChatMessage[];
 }) {
   return render(
     <ChatPane
-      messages={[resumableFailedMessage()]}
+      messages={opts.messages ?? [resumableFailedMessage()]}
       streaming={false}
       error={null}
       projectId="project-1"
@@ -104,6 +105,29 @@ function renderChat(opts: {
       config={{ agentId: opts.activeAgentId ?? 'claude', agentCliEnv: {} } as unknown as AppConfig}
     />,
   );
+}
+
+function modelWindowLimitMessage(): ChatMessage {
+  return {
+    id: 'msg-model-window-limit',
+    role: 'assistant',
+    content: '',
+    createdAt: 1,
+    runId: 'run-model-window-limit',
+    runStatus: 'failed',
+    resumable: false,
+    agentId: 'amr',
+    events: [
+      {
+        kind: 'status',
+        label: 'error',
+        detail:
+          '[code=model_limit_exceeded] Model usage limit reached. Try again after 2026-08-26T04:00:00Z.',
+        code: 'RATE_LIMITED',
+        failureDetail: 'model_window_limit',
+      },
+    ],
+  };
 }
 
 describe('ChatPane resume-on-failure', () => {
@@ -184,5 +208,23 @@ describe('ChatPane resume-on-failure', () => {
     const retryButton = screen.getByRole('button', { name: 'promptTemplates.retry' });
     expect(retryButton).toBeTruthy();
     expect(retryButton.classList.contains('chat-error-action')).toBe(true);
+  });
+});
+
+describe('ChatPane model-window limit', () => {
+  it('shows the full recovery copy with only the upgrade action', () => {
+    const onRetry = vi.fn();
+    const { container } = renderChat({
+      onRetry,
+      activeAgentId: 'amr',
+      messages: [modelWindowLimitMessage()],
+    });
+
+    const card = container.querySelector('[data-user-action-card="run-recovery"]');
+    expect(card?.textContent).toContain('chat.runError.modelWindowLimitMessage');
+    expect(card?.textContent).toContain('Aug 26, 12:00 PM');
+    expect(screen.queryByRole('button', { name: 'brand.viewDetails' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'promptTemplates.retry' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'chat.amrBalanceGate.plansCta' })).toBeTruthy();
   });
 });

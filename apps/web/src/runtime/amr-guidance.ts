@@ -516,7 +516,7 @@ export function resolveRunFailureUi(
     const parsed = readModelWindowResetAt(rawMessage);
     const retryAt = parsed && Number.isFinite(Date.parse(parsed)) ? parsed : null;
     return {
-      primaryAction: 'retry',
+      primaryAction: 'upgrade',
       titleKey: 'chat.runError.title.modelWindowLimit',
       messageKey: retryAt
         ? 'chat.runError.modelWindowLimitMessage'
