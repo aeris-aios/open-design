@@ -15,6 +15,8 @@ import {
   type RuntimeObservationEvidenceLevelV1,
 } from '@open-design/contracts';
 
+import type { RuntimeCapabilityMap } from './types.js';
+
 export interface OdNextRuntimePathDescriptor {
   runtimePath: string;
   agentId: string;
@@ -627,6 +629,45 @@ export function resolveBundledOdNextRuntimeCapability(input: {
     ...(fixture ? { fixtureManifest: fixture } : {}),
     registry: OD_NEXT_RUNTIME_CAPABILITY_REGISTRY,
   });
+}
+
+/**
+ * Advertised `--help` capability keys an admitted OD Next runtime must expose
+ * on the *installed* CLI, keyed by agent id.
+ *
+ * The fixture registry above proves what a runtime *path* is capable of; it
+ * says nothing about the build the user actually has on disk. `buildArgs`
+ * refuses to launch an admitted OD Next Run whose CLI does not advertise these
+ * flags, so admission must establish the same facts. Otherwise the daemon
+ * admits a task it cannot start and the user's Run dies with
+ * AGENT_EXECUTION_FAILED instead of quietly taking the ordinary route.
+ *
+ * `forwardSubagentText` backs native Child behaviour observation, which every
+ * admitted Claude strategy Run enables. `customAgents` backs native Build
+ * Package binding; it is required up front because a simple task may escalate
+ * to complex after planning, and discovering the gap at the production stage
+ * would strand a task mid-flight.
+ */
+export const OD_NEXT_REQUIRED_ADVERTISED_CAPABILITIES: Readonly<
+  Record<string, readonly string[]>
+> = {
+  claude: ['forwardSubagentText', 'customAgents'],
+};
+
+/**
+ * Names the advertised capability keys OD Next requires but the installed CLI
+ * did not advertise. Empty means the installed build satisfies the contract;
+ * a null capability map means the probe could not read `--help` at all, which
+ * is treated as "not advertised" so admission stays fail-closed.
+ */
+export function odNextAdvertisedCapabilityGap(input: {
+  agentId: string;
+  advertised: RuntimeCapabilityMap | null;
+}): string[] {
+  const required = OD_NEXT_REQUIRED_ADVERTISED_CAPABILITIES[input.agentId];
+  if (!required || required.length === 0) return [];
+  const advertised = input.advertised ?? {};
+  return required.filter((key) => advertised[key] !== true);
 }
 
 export type OdNextExecutionMode = 'simple' | 'complex';

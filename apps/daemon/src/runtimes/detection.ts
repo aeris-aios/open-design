@@ -53,6 +53,11 @@ const detectedRuntimeVersionProbes = new Map<
   string,
   Promise<DetectedRuntimeVersions | null>
 >();
+const detectedRuntimeCapabilityScopes = new Map<string, string>();
+const detectedRuntimeCapabilityProbes = new Map<
+  string,
+  Promise<RuntimeCapabilityMap | null>
+>();
 
 export function getDetectedRuntimeVersions(
   agentId: string | null | undefined,
@@ -98,6 +103,59 @@ export async function ensureDetectedRuntimeVersions(
   } finally {
     if (detectedRuntimeVersionProbes.get(probeKey) === probe) {
       detectedRuntimeVersionProbes.delete(probeKey);
+    }
+  }
+}
+
+/**
+ * Resolve the advertised `--help` capability flags for one selected agent
+ * without requiring a prior Settings or `/api/agents` request to have warmed
+ * `agentCapabilities`.
+ *
+ * `ensureDetectedRuntimeVersions` deliberately probes only `--version`, so an
+ * admission path that never ran full detection sees an empty capability map
+ * and cannot tell "this CLI does not advertise the flag" apart from "nobody
+ * asked the CLI yet". Callers that gate behaviour on an advertised flag must
+ * establish the answer through this probe first; it reuses the same bounded
+ * `--help` read and the same `agentCapabilities` cache as full detection.
+ *
+ * Returns null only when the runtime is not resolvable or declares no
+ * capability metadata; a CLI whose `--help` simply omits every known flag
+ * resolves to a populated map of `false` values.
+ */
+export async function ensureDetectedRuntimeCapabilities(
+  agentId: string | null | undefined,
+  configuredAgentEnv: Record<string, string> = {},
+): Promise<RuntimeCapabilityMap | null> {
+  if (!agentId) return null;
+  const def = AGENT_DEFS.find((candidate) => candidate.id === agentId);
+  if (!def) return null;
+  const context = runtimeVersionProbeContext(def, configuredAgentEnv);
+  if (!context) return null;
+  const remembered = agentCapabilities.get(agentId);
+  if (
+    remembered
+    && detectedRuntimeCapabilityScopes.get(agentId) === context.scope
+  ) {
+    return { ...remembered };
+  }
+  const probeKey = `${agentId}:${context.scope}`;
+  const existing = detectedRuntimeCapabilityProbes.get(probeKey);
+  if (existing) return existing;
+  const probe = probeCapabilities(def, context.launchPath, context.probeEnv)
+    .then((caps) => {
+      if (caps) {
+        agentCapabilities.set(def.id, caps);
+        detectedRuntimeCapabilityScopes.set(def.id, context.scope);
+      }
+      return caps ? { ...caps } : null;
+    });
+  detectedRuntimeCapabilityProbes.set(probeKey, probe);
+  try {
+    return await probe;
+  } finally {
+    if (detectedRuntimeCapabilityProbes.get(probeKey) === probe) {
+      detectedRuntimeCapabilityProbes.delete(probeKey);
     }
   }
 }
