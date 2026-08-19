@@ -1,0 +1,219 @@
+---
+import { getGoBannerCopy } from '../go-banner-i18n';
+import { localeFromPath, localizedHref, type LandingLocaleCode } from '../i18n';
+
+interface Props {
+  locale?: LandingLocaleCode;
+  apiOrigin?: string;
+}
+
+const locale = Astro.props.locale ?? localeFromPath(Astro.url.pathname);
+const copy = getGoBannerCopy(locale);
+const pricingHref = localizedHref('/pricing/', locale);
+const env = import.meta.env as Record<string, string | undefined>;
+const apiOrigin =
+  Astro.props.apiOrigin ??
+  env.PUBLIC_CLOUD_API_BASE ??
+  env.PUBLIC_AMR_API_BASE ??
+  'https://amr-api.open-design.ai';
+---
+
+<aside
+  class="go-banner"
+  data-go-banner
+  data-window-start="2026-08-20T20:00:00+08:00"
+  data-window-end="2026-09-03T20:00:00+08:00"
+  data-api-origin={apiOrigin}
+  hidden
+>
+  <a class="go-banner__link" href={pricingHref} data-go-banner-cta aria-label={copy.ariaLabel}>
+    <span class="go-banner__badge">{copy.badge}</span>
+    <strong class="go-banner__headline">{copy.headline}</strong>
+    <span class="go-banner__divider" aria-hidden="true"></span>
+    <span class="go-banner__detail">{copy.detail}</span>
+    <span class="go-banner__cta" aria-hidden="true">→</span>
+  </a>
+  <button class="go-banner__close" type="button" data-go-banner-close aria-label={copy.closeLabel}>×</button>
+</aside>
+
+<style>
+  .go-banner {
+    position: fixed;
+    z-index: 72;
+    inset: 0 0 auto;
+    min-height: 44px;
+    border-bottom: 1px solid color-mix(in srgb, #68f22e 36%, var(--line, #d9d9d9));
+    color: var(--ink, #262626);
+    background: color-mix(in srgb, #68f22e 8%, #fff);
+    box-shadow: 0 6px 24px rgb(38 38 38 / 6%);
+    font-size: 13px;
+    line-height: 1.25;
+  }
+  .go-banner[hidden] { display: none !important; }
+  .go-banner__link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 8px 64px 8px 24px;
+    color: inherit;
+    text-decoration: none;
+  }
+  .go-banner__badge {
+    flex: 0 0 auto;
+    padding: 4px 9px;
+    border-radius: 999px;
+    color: #102b05;
+    background: #68f22e;
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .go-banner__link strong { font-weight: 720; }
+  .go-banner__divider {
+    flex: 0 0 1px;
+    align-self: stretch;
+    max-height: 18px;
+    margin-block: auto;
+    background: color-mix(in srgb, var(--ink, #262626) 22%, transparent);
+  }
+  .go-banner__detail { color: var(--ink-mute, #666); }
+  .go-banner__cta {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 25px;
+    height: 25px;
+    border-radius: 999px;
+    color: #fff;
+    background: var(--ink, #262626);
+    transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .go-banner__link:hover .go-banner__cta { transform: translateX(2px); }
+  .go-banner__link:focus-visible {
+    outline: 2px solid var(--ink, #262626);
+    outline-offset: -3px;
+  }
+  .go-banner__close {
+    position: absolute;
+    top: 50%;
+    right: 14px;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    color: var(--ink, #262626);
+    background: transparent;
+    font-size: 19px;
+    cursor: pointer;
+    opacity: .72;
+    transform: translateY(-50%);
+  }
+  .go-banner__close:hover { background: rgb(38 38 38 / 7%); opacity: 1; }
+  .go-banner__close:focus-visible { outline: 2px solid var(--ink, #262626); outline-offset: 2px; }
+  :global(html.go-banner-active) { --home-campaign-banner-height: 44px; }
+  :global(html.go-banner-active .home-campaign-banner) { display: none !important; }
+  :global(html.go-banner-active .site-chrome) { top: 44px; }
+  :global(html.go-banner-active .hero) { padding-top: calc(92px + 44px); }
+  @media (max-width: 760px) {
+    .go-banner { min-height: 52px; }
+    .go-banner__link {
+      justify-content: flex-start;
+      gap: 8px;
+      min-height: 52px;
+      padding: 7px 48px 7px 12px;
+    }
+    .go-banner__headline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .go-banner__detail,
+    .go-banner__divider { display: none; }
+    :global(html.go-banner-active) { --home-campaign-banner-height: 52px; }
+    :global(html.go-banner-active .site-chrome) { top: 52px; }
+    :global(html.go-banner-active .hero) { padding-top: calc(92px + 52px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .go-banner__cta { transition: none; }
+  }
+</style>
+
+<script is:inline>
+  (() => {
+    const banner = document.querySelector('[data-go-banner]');
+    if (!banner) return;
+
+    const start = Date.parse(banner.getAttribute('data-window-start') || '');
+    const end = Date.parse(banner.getAttribute('data-window-end') || '');
+    const now = Date.now();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || now < start || now >= end) return;
+
+    const dismissKey = 'open-design:go-banner-dismissed:2026-08-20';
+    try {
+      if (window.localStorage.getItem(dismissKey) === '1') return;
+    } catch (error) {}
+
+    const track = (name, extra) => {
+      try {
+        window.__odTrack?.(name, Object.assign({
+          page_name: 'landing_home',
+          area: 'go_banner',
+          audience: 'unpaid',
+          campaign_id: 'go_plan_launch',
+        }, extra || {}));
+      } catch (error) {}
+    };
+
+    const hide = () => {
+      banner.setAttribute('hidden', '');
+      document.documentElement.classList.remove('go-banner-active');
+    };
+    const show = () => {
+      banner.removeAttribute('hidden');
+      document.documentElement.classList.add('go-banner-active');
+      track('surface_view');
+    };
+
+    banner.querySelector('[data-go-banner-cta]')?.addEventListener('click', () => {
+      track('ui_click', { element: 'cta' });
+    });
+    banner.querySelector('[data-go-banner-close]')?.addEventListener('click', () => {
+      track('ui_click', { element: 'close' });
+      try { window.localStorage.setItem(dismissKey, '1'); } catch (error) {}
+      hide();
+    });
+
+    const apiOrigin = (banner.getAttribute('data-api-origin') || '').replace(/\/$/, '');
+    if (!apiOrigin) return;
+    fetch(apiOrigin + '/api/auth/get-session', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('session_unavailable');
+        return response.json();
+      })
+      .then((session) => {
+        if (!session?.user) {
+          show();
+          return null;
+        }
+        return fetch(apiOrigin + '/api/v1/billing/summary', {
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        })
+          .then((response) => {
+            if (!response.ok) throw new Error('billing_summary_unavailable');
+            return response.json();
+          })
+          .then((summary) => {
+            const tier = String(summary?.membershipTier || '').trim().toLowerCase();
+            if (!tier || tier === 'free' || tier === 'none') show();
+          });
+      })
+      .catch(() => {
+        // A failed entitlement probe cannot safely classify a signed-in visitor.
+      });
+  })();
+</script>

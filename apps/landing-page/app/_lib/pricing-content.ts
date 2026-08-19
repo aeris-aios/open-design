@@ -40,6 +40,13 @@ export interface FreePlanCopy {
   features: string[];
 }
 
+export interface GoPlanCopy {
+  tagline: string;
+  ctaLabel: string;
+  allowance: string;
+  features: string[];
+}
+
 export interface PricingLabels {
   heroTitle: string;
   monthly: string;
@@ -88,6 +95,7 @@ export interface PricingLabels {
 export interface PricingContent {
   labels: PricingLabels;
   free: FreePlanCopy;
+  go: GoPlanCopy;
   plans: Record<PlanTierId, PlanCopy>;
 }
 
@@ -218,6 +226,16 @@ const EN: PricingContent = {
     concurrency: '1 concurrent task',
     features: ['BYOK provider keys · Local coding agents', 'Community support'],
   },
+  go: {
+    tagline: 'Lightweight needs, effortless delivery · Zero-config',
+    ctaLabel: 'Subscribe to Go',
+    allowance: '8 popular models · ample allowance',
+    features: [
+      'Full design and coding capabilities',
+      'No provider API key required',
+      'Allowance resets automatically',
+    ],
+  },
   plans: {
     plus: {
       tagline: 'Independent projects, solo delivery · Zero-config',
@@ -291,6 +309,12 @@ const ZH_CN: PricingContent = {
     ctaLabel: '免费开始',
     concurrency: '1 个任务并发',
     features: ['BYOK 自带密钥，支持本地 Coding Agent', '社区支持'],
+  },
+  go: {
+    tagline: '轻量需求，轻松交付 · 零配置即用',
+    ctaLabel: '订阅 Go',
+    allowance: '8 个热门模型 · 充裕额度',
+    features: ['完整设计与 Coding 能力', '无需配置供应商 API Key', '额度自动恢复'],
   },
   plans: {
     plus: {
@@ -366,6 +390,12 @@ const ZH_TW: PricingContent = {
     concurrency: '1 個任務並行',
     features: ['BYOK 自帶密鑰，支援本機 Coding Agent', '社群支援'],
   },
+  go: {
+    tagline: '輕量需求，輕鬆交付 · 零配置即用',
+    ctaLabel: '訂閱 Go',
+    allowance: '8 個熱門模型 · 充裕額度',
+    features: ['完整設計與 Coding 能力', '無需配置供應商 API Key', '額度自動恢復'],
+  },
   plans: {
     plus: {
       tagline: '獨立專案、零散需求，單人交付 · 零配置即用',
@@ -439,6 +469,12 @@ const ES: PricingContent = {
     ctaLabel: 'Empezar gratis',
     concurrency: '1 tarea simultánea',
     features: ['Claves BYOK · Coding agents locales', 'Soporte de la comunidad'],
+  },
+  go: {
+    tagline: 'Necesidades ligeras, entrega fácil · Sin configuración',
+    ctaLabel: 'Suscribirse a Go',
+    allowance: '8 modelos populares · capacidad amplia',
+    features: ['Todas las funciones de diseño y coding', 'Sin configurar claves API', 'La capacidad se restablece automáticamente'],
   },
   plans: {
     plus: {
@@ -514,6 +550,12 @@ const PT_BR: PricingContent = {
     concurrency: '1 tarefa simultânea',
     features: ['Chaves BYOK · Coding agents locais', 'Suporte da comunidade'],
   },
+  go: {
+    tagline: 'Demandas leves, entrega fácil · Sem configuração',
+    ctaLabel: 'Assinar o Go',
+    allowance: '8 modelos populares · franquia ampla',
+    features: ['Recursos completos de design e coding', 'Sem configurar chaves de API', 'A franquia é renovada automaticamente'],
+  },
   plans: {
     plus: {
       tagline: 'Projetos independentes, entrega individual · Sem configuração',
@@ -587,6 +629,12 @@ const RU: PricingContent = {
     ctaLabel: 'Начать бесплатно',
     concurrency: '1 одновременная задача',
     features: ['Ключи BYOK · локальные coding-агенты', 'Поддержка сообщества'],
+  },
+  go: {
+    tagline: 'Небольшие задачи без лишних усилий · Без настройки',
+    ctaLabel: 'Подписаться на Go',
+    allowance: '8 популярных моделей · большой лимит',
+    features: ['Все функции дизайна и кодинга', 'Без настройки API-ключей', 'Лимит восстанавливается автоматически'],
   },
   plans: {
     plus: {
@@ -662,6 +710,12 @@ const FR: PricingContent = {
     concurrency: '1 tâche simultanée',
     features: ['Clés BYOK · agents de code locaux', 'Support communautaire'],
   },
+  go: {
+    tagline: 'Besoins légers, livraison facile · Zéro configuration',
+    ctaLabel: 'Souscrire à Go',
+    allowance: '8 modèles populaires · quota généreux',
+    features: ['Toutes les fonctions design et coding', 'Aucune clé API à configurer', 'Le quota se réinitialise automatiquement'],
+  },
   plans: {
     plus: {
       tagline: 'Projets indépendants, livraison en solo · Sans configuration',
@@ -735,6 +789,12 @@ const KO: PricingContent = {
     ctaLabel: '무료로 시작',
     concurrency: '동시 작업 1개',
     features: ['BYOK 제공자 키 · 로컬 Coding Agent 지원', '커뮤니티 지원'],
+  },
+  go: {
+    tagline: '가벼운 요구, 간편한 완성 · 설정 없이 사용',
+    ctaLabel: 'Go 구독',
+    allowance: '인기 모델 8개 · 넉넉한 한도',
+    features: ['모든 디자인 및 Coding 기능', '공급자 API 키 설정 불필요', '한도 자동 복원'],
   },
   plans: {
     plus: {
@@ -810,6 +870,12 @@ const DE: PricingContent = {
     concurrency: '1 gleichzeitige Aufgabe',
     features: ['BYOK-Anbieterschlüssel · lokale Coding Agents', 'Community-Support'],
   },
+  go: {
+    tagline: 'Leichte Aufgaben, mühelose Ergebnisse · Ohne Einrichtung',
+    ctaLabel: 'Go abonnieren',
+    allowance: '8 beliebte Modelle · großzügiges Kontingent',
+    features: ['Alle Design- und Coding-Funktionen', 'Keine API-Schlüssel nötig', 'Kontingent wird automatisch erneuert'],
+  },
   plans: {
     plus: {
       tagline: 'Eigenständige Projekte, Lieferung im Alleingang · Ohne Einrichtung',
@@ -883,6 +949,12 @@ const JA: PricingContent = {
     ctaLabel: '無料で開始',
     concurrency: '同時実行タスク 1 件',
     features: ['BYOK プロバイダーキー・ローカル Coding Agent 対応', 'コミュニティサポート'],
+  },
+  go: {
+    tagline: '軽いニーズを手軽に完了 · 設定不要',
+    ctaLabel: 'Go を購読',
+    allowance: '人気モデル 8 種 · たっぷり使える',
+    features: ['すべてのデザイン・Coding 機能', 'プロバイダー API キー設定不要', '利用枠は自動回復'],
   },
   plans: {
     plus: {

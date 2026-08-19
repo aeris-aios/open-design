@@ -80,16 +80,20 @@ function assertPlanContract(value: unknown): asserts value is PricingContract {
 }
 
 describe("pricing contract", () => {
-  it("keeps the existing Free entry card while the Go proposal remains isolated", async () => {
+  it("replaces the Free entry card with the localized Go offer", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
-    assert.match(page, /data-tier="free"/);
-    assert.match(page, /<span class="pr-tier-name">Free<\/span>/);
-    assert.doesNotMatch(page, /data-tier="go"/);
-    assert.doesNotMatch(page, /const goPlan/);
+    assert.doesNotMatch(page, /data-tier="free"/);
+    assert.match(page, /data-tier="go"/);
+    assert.match(page, /class="pr-go-wordmark"[^>]*>go<\/span>/);
+    assert.match(page, /amount: '\$5'/);
+    assert.match(page, /strike: '\$10'/);
+    assert.match(page, /content\.go\.allowance/);
+    assert.match(page, /DeepSeek V4 Flash/);
+    assert.match(page, /GLM-5\.1/);
   });
 
-  it("renders the final DeepSeek campaign promise on personal and team pricing", async () => {
+  it("keeps the DeepSeek plan benefits without a Pricing campaign banner", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
     const campaign = await readFile(CAMPAIGN_PATH, "utf8");
 
@@ -97,7 +101,8 @@ describe("pricing contract", () => {
     assert.match(campaign, /badge: '无限使用'/);
     assert.match(campaign, /windowLabel: '活动倒计时'/);
     assert.match(campaign, /dayUnit: '天'/);
-    assert.match(page, /data-pricing-campaign-countdown/);
+    assert.doesNotMatch(page, /data-pricing-campaign-countdown/);
+    assert.doesNotMatch(page, /<aside class="pr-campaign"/);
     assert.doesNotMatch(page, /距开始/);
     assert.match(campaign, /FREE for two weeks/);
     assert.match(campaign, /body: 'DeepSeek V4 Pro 与 V4 Flash · 两周免费用'/);
@@ -126,7 +131,7 @@ describe("pricing contract", () => {
     assert.match(page, /<p class="pr-foot" set:html=\{footnoteHtml\} \/>\s*<p class="pr-campaign-disclaimer" data-pricing-campaign-surface hidden>\{deepSeekCampaign\.disclaimer\}<\/p>/);
     assert.doesNotMatch(page, /套餐内的<strong>无限制模型额度<\/strong>与<strong>免费生成次数<\/strong>/);
     assert.match(page, /\.pr-campaign-disclaimer\s*\{[\s\S]*font-size:\s*\.82rem;/);
-    assert.match(page, /track\('surface_view',\s*\{\s*area:\s*'campaign_banner'/);
+    assert.doesNotMatch(page, /area:\s*'campaign_banner'/);
     assert.match(page, /element:\s*'deepseek_v4_pro_benefit'/);
     assert.match(page, /window\.__odRecordCampaignEntry\?\./);
     assert.match(page, /'landing_pricing_team_plan'\s*:\s*'landing_pricing_personal_plan'/);
@@ -253,7 +258,7 @@ describe("pricing contract", () => {
     );
     assert.equal(
       cloudSubscribeUrl("pro", "yearly"),
-      "https://open-design.ai/cloud/dashboard?billing=plan",
+      "https://open-design.ai/cloud/dashboard?billing=plan&plan=pro&interval=yearly&checkout=auto",
     );
     assert.equal(
       scopedBillingPlanUrl("workspace-a"),
@@ -458,11 +463,10 @@ describe("pricing contract", () => {
     // `section { padding: 130px 0 }` rule must be cancelled on the grid itself.
     assert.match(page, /\.pr-grid\s*\{[^}]*padding:\s*0;/s);
 
-    // Creator/Team uses the wide underline tabs from the Vela pricing dialog,
-    // while billing interval remains its own compact control.
+    // Creator/Team and billing interval share one compact row above the cards.
     assert.match(page, /class="pr-audience-toggle"[^>]*role="tablist"/);
-    assert.match(page, /\.pr-audience-toggle\s*\{[^}]*border-bottom:/s);
-    assert.match(page, /\.pr-audience-btn\.is-active::after/);
+    assert.match(page, /\.pr-controls-row\s*\{[^}]*grid-template-columns:\s*1fr auto 1fr;/s);
+    assert.match(page, /\.pr-audience-btn\.is-active\s*\{[^}]*background:/s);
 
     // The visible Team tier control must never open the OS-native select popup.
     assert.doesNotMatch(page, /<select[^>]*data-team-tier/);
