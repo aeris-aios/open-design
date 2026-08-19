@@ -216,16 +216,16 @@ export function getFrozenSkillPackage(
  * Bodies are a separate product (see `resolveFrozenSkillBundleBodies`) because
  * the spec places them in `session_skills/user_selected_skills`, while this
  * audit roster belongs with the other frozen input identities.
+ *
+ * Returns '' when the user selected no Skill: an empty roster carries only a
+ * schema string and a digest of nothing, so the slot is omitted rather than
+ * emitted empty — the same no-empty-slot rule the spec mandates for
+ * `attachments`. The package identity itself stays verifiable through the
+ * persisted strategy task record.
  */
 export function renderFrozenSkillRosterContext(frozen: FrozenSkillPackageV1): string {
   const verified = verifyFrozenSkillPackage(frozen);
-  if (verified.selections.length === 0) {
-    return canonicalJson({
-      schema: verified.schema,
-      identity: verified.identity,
-      selectedSkills: [],
-    });
-  }
+  if (verified.selections.length === 0) return '';
   return canonicalJson({
     schema: verified.schema,
     identity: verified.identity,

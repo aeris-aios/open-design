@@ -91,7 +91,7 @@ export function serializeOdNextRequestInputFactsV1(
 }
 
 /**
- * Attachment identities only, for the Bundle's `task_config/attachments` slot.
+ * Attachment identities only, for the Bundle's `task_metadata/attachments` slot.
  *
  * Returns '' when there is no attachment, so the slot is omitted rather than
  * emitted empty. Carries reference, media type, byte count and digest — never
@@ -109,13 +109,36 @@ export function serializeOdNextAttachmentFactsV1(
 }
 
 /**
+ * True when the request carried no attachment, no comment, no MCP server, and
+ * no linked directory — an all-empty state whose serialization is pure noise in
+ * the prompt.
+ *
+ * The remaining fields are constants (`schema`, the transport descriptor, the
+ * `workspace:project` marker), so an all-empty roster tells the model nothing it
+ * cannot read off the Bundle shape itself.
+ */
+export function odNextRequestInputFactsAreEmptyV1(
+  value: OdNextRequestInputFactsV1,
+): boolean {
+  return value.attachments.length === 0
+    && value.comments.count === 0
+    && value.mcp.serverCount === 0
+    && value.workspace.linkedDirectories.length === 0;
+}
+
+/**
  * Every request input fact except attachments, for the Bundle's
  * `context/request_input_facts` slot. Attachments are a sibling slot, so
  * emitting them here too would duplicate them in the payload.
+ *
+ * Returns '' when the request carried no substantive input fact at all, so the
+ * slot is omitted rather than emitting an all-zero state — the same no-empty-
+ * slot rule the spec already mandates for `attachments`.
  */
 export function serializeOdNextWorkspaceInputFactsV1(
   value: OdNextRequestInputFactsV1,
 ): string {
+  if (odNextRequestInputFactsAreEmptyV1(value)) return '';
   return canonicalJson({
     schema: value.schema,
     comments: value.comments,

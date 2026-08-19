@@ -8,36 +8,38 @@ export const OD_NEXT_EXACT_INPUT_MAP_VERSION =
  * may own, in canonical document order.
  *
  * A contributor names the exact node it fills rather than one of four flat
- * blocks, so the ownership map records where the bytes land. `system_prompt`
- * itself stays addressable because the recipe aggregate contributes several of
- * its children at once; the constant head's leaves are listed so a future
- * per-leaf contributor has a legal target without widening the union.
+ * blocks, so the ownership map records where the bytes land. The bare
+ * `open_design_core_system_prompt` path stays addressable because the recipe
+ * aggregate contributes several of its children at once; the constant head's
+ * leaves are listed so a future per-leaf contributor has a legal target without
+ * widening the union.
  *
- * `system_prompt/active_stages` is the aggregate target for stage content:
- * `stage`/`atom` children are addressed by their `name` attribute, not by a
- * static path, so they are not separate union members.
+ * `active_stages` is the aggregate target for stage content: `stage`/`atom`
+ * children are addressed by their `name` attribute, not by a static path, so
+ * they are not separate union members.
  *
  * The split follows the bundle's cache invariant: only cross-task-constant
- * content may sit under `system_prompt`, which is why the per-run tool prompt,
- * the caller's system prompt, and the first-run form override are `context/*`
- * paths here.
+ * content may sit in the head (`open_design_core_system_prompt`,
+ * `session_skills`, `active_stages`), which is why the per-run tool prompt, the
+ * caller's system prompt, and the first-run form override are `context/*` paths
+ * here.
  */
 export const OD_NEXT_BUNDLE_NODE_PATHS_V2 = [
-  'system_prompt',
-  'system_prompt/core_system_prompt/execution_boundary',
-  'system_prompt/core_system_prompt/native_execution',
-  'system_prompt/core_system_prompt/discovery_and_planning_surface',
-  'system_prompt/core_system_prompt/core_strategy',
-  'system_prompt/session_skills/general_orchestration_skill',
-  'system_prompt/session_skills/task_type_skill',
-  'system_prompt/session_skills/user_selected_skills',
-  'system_prompt/active_stages',
-  'system_prompt/output_contract',
-  'system_prompt/echo_guard',
-  'task_config/task_type',
-  'task_config/attachments',
-  'task_config/task_configuration',
-  'task_config/title_directive',
+  'open_design_core_system_prompt',
+  'open_design_core_system_prompt/execution_boundary',
+  'open_design_core_system_prompt/native_execution',
+  'open_design_core_system_prompt/discovery_and_planning_surface',
+  'open_design_core_system_prompt/core_strategy',
+  'open_design_core_system_prompt/output_contract',
+  'open_design_core_system_prompt/echo_guard',
+  'session_skills/general_orchestration_skill',
+  'session_skills/task_type_skill',
+  'session_skills/user_selected_skills',
+  'active_stages',
+  'task_metadata/task_type',
+  'task_metadata/attachments',
+  'task_metadata/task_configuration',
+  'task_metadata/title_directive',
   'context/recipe_identity',
   'context/runtime_facts',
   'context/runtime_tool_environment',
@@ -51,7 +53,7 @@ export const OD_NEXT_BUNDLE_NODE_PATHS_V2 = [
   'context/client_system_prompt',
   'context/form_override',
   'context/prior_transcript',
-  'user_prompt',
+  'user_first_prompt',
 ] as const;
 
 export type OdNextBundleNodePathV2 = (typeof OD_NEXT_BUNDLE_NODE_PATHS_V2)[number];
@@ -163,23 +165,23 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'initial_bundle',
     source: 'composeDaemonSystemPrompt().prompt',
     owner: 'bundle serializer',
-    textTarget: 'system_prompt',
-    note: 'Structured recipe aggregate: contributes core_system_prompt, session_skills, active_stages and output_contract as elements. Cross-task constant.',
+    textTarget: 'open_design_core_system_prompt',
+    note: 'Structured recipe aggregate: contributes open_design_core_system_prompt, session_skills and active_stages as elements. Cross-task constant.',
   },
   {
     id: 'echo_guard',
     classification: 'initial_bundle',
     source: 'startChatRun.ECHO_GUARD',
     owner: 'bundle serializer',
-    textTarget: 'system_prompt/echo_guard',
-    note: 'Constant; references the `<system_prompt>` and `<user_prompt>` tag names.',
+    textTarget: 'open_design_core_system_prompt/echo_guard',
+    note: 'Constant; references the `<open_design_core_system_prompt>` and `<user_first_prompt>` tag names.',
   },
   {
     id: 'user_selected_skills',
     classification: 'initial_bundle',
     source: 'renderFrozenSkillBundleContext() user-selected Skill bodies',
     owner: 'Task 03 immutable Skill package',
-    textTarget: 'system_prompt/session_skills/user_selected_skills',
+    textTarget: 'session_skills/user_selected_skills',
     note: 'Frozen user-@Skill bodies. The one per-task member of session_skills, kept last so the shared prefix diverges as late as possible.',
   },
   {
@@ -187,7 +189,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'initial_bundle',
     source: 'loadOdNextTaskInputSnapshot().taskConfigText -> OdNextTaskConfigurationV1.taskType',
     owner: 'Task 04 canonical task configuration snapshot',
-    textTarget: 'task_config/task_type',
+    textTarget: 'task_metadata/task_type',
     note: 'Resolved task type from the frozen task-input snapshot.',
   },
   {
@@ -195,7 +197,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'initial_bundle',
     source: 'loadOdNextTaskInputSnapshot().requestInputText -> OdNextRequestInputFactsV1.attachments',
     owner: 'Task 04 immutable attachment snapshot',
-    textTarget: 'task_config/attachments',
+    textTarget: 'task_metadata/attachments',
     note: 'Immutable attachment identities (reference, mime type, digest); never attachment bodies or absolute paths.',
   },
   {
@@ -203,7 +205,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'initial_bundle',
     source: 'loadOdNextTaskInputSnapshot().taskConfigText',
     owner: 'Task 04 canonical task configuration snapshot',
-    textTarget: 'task_config/task_configuration',
+    textTarget: 'task_metadata/task_configuration',
     note: 'Canonical allowlisted task type, locale, selected agent, route, mode and execution configuration.',
   },
   {
@@ -211,7 +213,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'initial_bundle',
     source: 'startChatRun.titleGenerationPrompt',
     owner: 'bundle serializer',
-    textTarget: 'task_config/title_directive',
+    textTarget: 'task_metadata/title_directive',
     note: 'Internal title marker directive; per-task presence.',
   },
   {
@@ -220,7 +222,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'resolveOdNextStrategyRequestRecipeV2() identity fields + strategy task snapshotId',
     owner: 'bundle context serializer',
     textTarget: 'context/recipe_identity',
-    note: 'Per-task strategy identity incl. applied snapshot id. Lives here, not in the head, so the per-task UUID does not cut the shared cache prefix.',
+    note: 'Per-task strategy identity incl. applied snapshot id. Lives here, not in the head, so the per-task UUID does not cut the shared cache prefix. Audit-only package hash, Task Skill digest and stable prompt identity are deliberately not emitted.',
   },
   {
     id: 'runtime_facts',
@@ -228,7 +230,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'renderOdNextRuntimeFactsV2()',
     owner: 'bundle context serializer',
     textTarget: 'context/runtime_facts',
-    note: 'Runtime-owned planning facts the Agent copies verbatim; per-task, so excluded from system_prompt.',
+    note: 'Runtime-owned planning facts the Agent copies verbatim; per-task, so excluded from the cache-stable head.',
   },
   {
     id: 'runtime_tool_prompt',
@@ -252,7 +254,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'renderFrozenSkillBundleContext() frozen identity/roster JSON',
     owner: 'Task 03 immutable Skill package',
     textTarget: 'context/frozen_skill_package',
-    note: 'Task-owned frozen Skill identity and side-file roster; bodies are injected as user_selected_skills.',
+    note: 'Task-owned frozen Skill identity and side-file roster; bodies are injected as user_selected_skills. Omitted entirely when the user selected no Skill.',
   },
   {
     id: 'request_input_facts',
@@ -260,7 +262,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'loadOdNextTaskInputSnapshot().requestInputText',
     owner: 'Task 04 immutable request inputs',
     textTarget: 'context/request_input_facts',
-    note: 'Immutable attachment/workspace/MCP references with no absolute paths.',
+    note: 'Immutable attachment/workspace/MCP references with no absolute paths. Omitted entirely when no attachment, comment, MCP server or linked directory is present.',
   },
   {
     id: 'research_command_contract',
@@ -300,7 +302,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'ChatRequest.systemPrompt',
     owner: 'bundle context serializer',
     textTarget: 'context/client_system_prompt',
-    note: 'Caller-supplied system prompt; per-task, so excluded from system_prompt.',
+    note: 'Caller-supplied system prompt; per-task, so excluded from the cache-stable head.',
   },
   {
     id: 'form_override',
@@ -308,7 +310,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'startChatRun.formOverride',
     owner: 'bundle context serializer',
     textTarget: 'context/form_override',
-    note: 'First-run form-answer control text; per-task, so excluded from system_prompt.',
+    note: 'First-run form-answer control text; per-task, so excluded from the cache-stable head.',
   },
   {
     id: 'prior_transcript',
@@ -323,7 +325,7 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     classification: 'initial_bundle',
     source: 'resolveOdNextRequestUserPrompt({ message, currentPrompt, hasCurrentPrompt })',
     owner: 'stage-aware bundle/turn selector',
-    textTarget: 'user_prompt',
+    textTarget: 'user_first_prompt',
     note: 'Explicit currentPrompt property presence wins even for null/empty; message is used only when the property is absent.',
   },
   {
@@ -499,8 +501,8 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     classification: 'initial_bundle',
     producer: 'request',
     source: 'latestUserPromptFromHistory(history) -> ChatRequest.currentPrompt',
-    owner: 'Task 02 user_prompt serializer',
-    textTarget: 'user_prompt',
+    owner: 'Task 02 user_first_prompt serializer',
+    textTarget: 'user_first_prompt',
     note: 'Canonical latest user-authored turn. Property presence, not nullishness, selects this source.',
   },
   {
@@ -508,8 +510,8 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     classification: 'initial_bundle',
     producer: 'request',
     source: 'od run start --message -> ChatRequest.message when currentPrompt is absent',
-    owner: 'Task 02 user_prompt serializer',
-    textTarget: 'user_prompt',
+    owner: 'Task 02 user_first_prompt serializer',
+    textTarget: 'user_first_prompt',
     note: 'Compatibility fallback only when currentPrompt is not an own property; explicit null or empty never falls back.',
   },
   {
@@ -527,7 +529,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'loadOdNextTaskInputSnapshot().taskConfigText',
     owner: 'Task 04 canonical task configuration',
-    textTarget: 'task_config/task_configuration',
+    textTarget: 'task_metadata/task_configuration',
     note: 'Canonical immutable configuration loaded from the task-scoped snapshot manifest.',
   },
   {
@@ -537,15 +539,15 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     source: 'loadOdNextTaskInputSnapshot().requestInputText',
     owner: 'Task 04 immutable request inputs',
     textTarget: 'context/request_input_facts',
-    note: 'Immutable attachment identities and controlled transport references are serialized here; attachment identities are additionally projected into task_config/attachments.',
+    note: 'Immutable attachment identities and controlled transport references are serialized here; attachment identities are additionally projected into task_metadata/attachments.',
   },
   {
     id: 'strategy_task_skill',
     classification: 'initial_bundle',
     producer: 'daemon_system_prompt',
     source: 'resolveOdNextStrategyRequestRecipeV2().taskSkill',
-    owner: 'Task 02 system_prompt serializer',
-    textTarget: 'system_prompt/session_skills/task_type_skill',
+    owner: 'Task 02 Bundle head serializer',
+    textTarget: 'session_skills/task_type_skill',
     note: 'Pinned Task Skill from the verified strategy package, distinct from user-selected @Skills.',
   },
   {
@@ -554,7 +556,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'daemon_system_prompt',
     source: 'AppliedStrategyBindingV2.selectedTaskProfile / resolvedRecipe.taskType',
     owner: 'Task 02 core recipe; Task 04 canonical task configuration',
-    textTarget: 'task_config/task_type',
+    textTarget: 'task_metadata/task_type',
     note: 'Selects the verified core recipe and is serialized as the canonical Task 04 task type.',
   },
   {
@@ -564,7 +566,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     source: 'odNextStrategyRecipe.planningFacts and capabilitySnapshotHash',
     owner: 'Task 02 core recipe; Task 04 canonical task configuration',
     textTarget: 'context/runtime_facts',
-    note: 'Runtime facts are per-task, so they are emitted as Bundle context instead of inside the cross-task-constant head; task_config carries only the stable allowlisted execution selection.',
+    note: 'Runtime facts are per-task, so they are emitted as Bundle context instead of inside the cross-task-constant head; task_metadata carries only the stable allowlisted execution selection.',
   },
   {
     id: 'request_execution_configuration',
@@ -572,7 +574,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'sessionMode, locale, research, mediaExecution, titleGeneration and selected runtime profile',
     owner: 'Task 04 canonical task configuration',
-    note: 'The allowlisted stable subset is serialized in task_config; research/title/context remain their separately owned Bundle contributors.',
+    note: 'The allowlisted stable subset is serialized in task_metadata; research/title/context remain their separately owned Bundle contributors.',
   },
   {
     id: 'project_and_design_context',

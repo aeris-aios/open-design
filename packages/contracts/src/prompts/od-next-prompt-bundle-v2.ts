@@ -13,42 +13,54 @@ export const OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2 =
   'open-design.od-next-prompt-bundle/v2' as const;
 
 /**
- * The initial OD Next payload as an element tree rather than four opaque text
- * blobs.
+ * The cache-stable head of the Bundle: `open_design_core_system_prompt`,
+ * `session_skills`, and `active_stages`.
  *
- * Two invariants drive the shape, and both are load-bearing:
+ * Every byte here is identical across tasks that share a strategy version, task
+ * type, and execution profile, so a provider's prompt cache can reuse the whole
+ * prefix instead of diverging a few hundred tokens in. The PRD names these
+ * blocks at the Bundle's top level rather than under a `system_prompt` wrapper,
+ * so they are siblings of `task_metadata`, `context`, and `user_first_prompt`.
  *
- * 1. `systemPrompt` holds only content that is byte-identical across tasks of
- *    the same strategy version, task type, and execution profile. Every
- *    per-task or per-run value lives in `taskConfig`, `context`, or
- *    `userPrompt`, so a provider's prompt cache can share the long constant
- *    prefix instead of diverging a few hundred tokens in.
- * 2. `userPrompt` is the last content element, so the user's own words hold the
- *    recency position rather than transport metadata.
- *
- * `userSelectedSkills` is the one deliberate exception to (1): the spec places
+ * `userSelectedSkills` is the one deliberate exception: the spec places
  * user-chosen Skills inside `session_skills`, so a task that selects Skills
  * partitions the cache separately from one that does not. It is the last child
  * of `session_skills` to keep that divergence as late as possible.
  */
-export interface OdNextPromptBundleV2 {
-  systemPrompt: {
-    coreSystemPrompt: {
-      executionBoundary: string;
-      nativeExecution: { profile: 'filesystem' | 'text_artifact'; body: string };
-      discoveryAndPlanningSurface: string;
-      coreStrategy: string;
-    };
-    sessionSkills: {
-      generalOrchestrationSkill: { skillName: string; body: string };
-      taskTypeSkill: { skillName: string; body: string };
-      userSelectedSkills?: { skillNames: ReadonlyArray<string>; body: string } | undefined;
-    };
-    activeStages: ReadonlyArray<OdNextPromptBundleStageV2>;
+export interface OdNextPromptBundleHeadV2 {
+  coreSystemPrompt: {
+    executionBoundary: string;
+    nativeExecution: { profile: 'filesystem' | 'text_artifact'; body: string };
+    discoveryAndPlanningSurface: string;
+    coreStrategy: string;
+    /** Output constraints belong to the core system prompt, per §3.7.1 block ①. */
     outputContract: string;
     echoGuard: string;
   };
-  taskConfig: {
+  sessionSkills: {
+    generalOrchestrationSkill: { skillName: string; body: string };
+    taskTypeSkill: { skillName: string; body: string };
+    userSelectedSkills?: { skillNames: ReadonlyArray<string>; body: string } | undefined;
+  };
+  activeStages: ReadonlyArray<OdNextPromptBundleStageV2>;
+}
+
+/**
+ * The initial OD Next payload as an element tree rather than four opaque text
+ * blobs.
+ *
+ * Block order is load-bearing:
+ *
+ * 1. The head (`OdNextPromptBundleHeadV2`) comes first and is byte-identical
+ *    across tasks of the same strategy version, task type, and execution
+ *    profile. Every per-task or per-run value lives in `taskMetadata`,
+ *    `context`, or `userFirstPrompt`, so the shared cache prefix runs through
+ *    the end of `active_stages`.
+ * 2. `userFirstPrompt` is the last content element, so the user's own words
+ *    hold the recency position rather than transport metadata.
+ */
+export interface OdNextPromptBundleV2 extends OdNextPromptBundleHeadV2 {
+  taskMetadata: {
     taskType: string;
     attachments?: string | undefined;
     taskConfiguration?: string | undefined;
@@ -69,7 +81,7 @@ export interface OdNextPromptBundleV2 {
     formOverride?: string | undefined;
     priorTranscript?: string | undefined;
   };
-  userPrompt: string;
+  userFirstPrompt: string;
 }
 
 export interface OdNextPromptBundleStageV2 {
@@ -81,16 +93,18 @@ export interface OdNextPromptBundleStageV2 {
  * Per-task strategy identity. It sits in `context`, not in the head, because
  * `appliedSnapshot` is unique per task and would otherwise cut the shared cache
  * prefix at the very front of the bundle.
+ *
+ * Only the fields the model actually consumes are carried here. The audit-only
+ * strategy package hash, Task Skill digest, and stable prompt identity stay out
+ * of the prompt; they remain available through `odNextPromptCacheIdentityV2`
+ * and the persisted strategy task record.
  */
 export interface OdNextPromptBundleRecipeIdentityV2 {
   recipe: string;
   strategyId: string;
   strategyVersion: string;
   appliedSnapshot: string;
-  strategyPackageHash: string;
-  taskSkillDigest: string;
   taskProfileVersion: string;
-  stablePromptIdentity: string;
 }
 
 const CORE_SYSTEM_PROMPT_SLOTS = [
@@ -98,20 +112,15 @@ const CORE_SYSTEM_PROMPT_SLOTS = [
   'native_execution',
   'discovery_and_planning_surface',
   'core_strategy',
+  'output_contract',
+  'echo_guard',
 ] as const;
 const SESSION_SKILL_SLOTS = [
   'general_orchestration_skill',
   'task_type_skill',
   'user_selected_skills',
 ] as const;
-const SYSTEM_PROMPT_SLOTS = [
-  'core_system_prompt',
-  'session_skills',
-  'active_stages',
-  'output_contract',
-  'echo_guard',
-] as const;
-const TASK_CONFIG_SLOTS = [
+const TASK_METADATA_SLOTS = [
   'task_type',
   'attachments',
   'task_configuration',
@@ -133,20 +142,19 @@ const CONTEXT_SLOTS = [
   'prior_transcript',
 ] as const;
 const BUNDLE_SLOTS = [
-  'system_prompt',
-  'task_config',
+  'open_design_core_system_prompt',
+  'session_skills',
+  'active_stages',
+  'task_metadata',
   'context',
-  'user_prompt',
+  'user_first_prompt',
 ] as const;
 const RECIPE_IDENTITY_ATTRIBUTES = [
   ['recipe', 'recipe'],
   ['strategy_id', 'strategyId'],
   ['strategy_version', 'strategyVersion'],
   ['applied_snapshot', 'appliedSnapshot'],
-  ['strategy_package_hash', 'strategyPackageHash'],
-  ['task_skill_digest', 'taskSkillDigest'],
   ['task_profile_version', 'taskProfileVersion'],
-  ['stable_prompt_identity', 'stablePromptIdentity'],
 ] as const satisfies ReadonlyArray<readonly [string, keyof OdNextPromptBundleRecipeIdentityV2]>;
 const EXECUTION_PROFILES = new Set(['filesystem', 'text_artifact']);
 const STAGE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -219,12 +227,12 @@ function stageNode(
 }
 
 function buildTree(input: OdNextPromptBundleV2): CanonicalXmlNode {
-  const core = input.systemPrompt.coreSystemPrompt;
+  const core = input.coreSystemPrompt;
   if (!EXECUTION_PROFILES.has(core.nativeExecution.profile)) {
     throw new TypeError('nativeExecution.profile must be filesystem or text_artifact.');
   }
-  const skills = input.systemPrompt.sessionSkills;
-  if (input.systemPrompt.activeStages.length === 0) {
+  const skills = input.sessionSkills;
+  if (input.activeStages.length === 0) {
     throw new TypeError('activeStages must declare at least one stage.');
   }
   const selected = skills.userSelectedSkills;
@@ -238,73 +246,67 @@ function buildTree(input: OdNextPromptBundleV2): CanonicalXmlNode {
     children: [
       {
         kind: 'element',
-        tag: 'system_prompt',
+        tag: 'open_design_core_system_prompt',
         children: [
+          textNode('execution_boundary', core.executionBoundary, 'executionBoundary'),
           {
-            kind: 'element',
-            tag: 'core_system_prompt',
-            children: [
-              textNode('execution_boundary', core.executionBoundary, 'executionBoundary'),
-              {
-                kind: 'text',
-                tag: 'native_execution',
-                attributes: [['profile', core.nativeExecution.profile]],
-                text: requireBody(core.nativeExecution.body, 'nativeExecution.body'),
-              },
-              textNode(
-                'discovery_and_planning_surface',
-                core.discoveryAndPlanningSurface,
-                'discoveryAndPlanningSurface',
-              ),
-              textNode('core_strategy', core.coreStrategy, 'coreStrategy'),
-            ],
+            kind: 'text',
+            tag: 'native_execution',
+            attributes: [['profile', core.nativeExecution.profile]],
+            text: requireBody(core.nativeExecution.body, 'nativeExecution.body'),
           },
-          {
-            kind: 'element',
-            tag: 'session_skills',
-            children: present([
-              {
-                kind: 'text',
-                tag: 'general_orchestration_skill',
-                attributes: [['skill_name', skills.generalOrchestrationSkill.skillName]],
-                text: requireBody(
-                  skills.generalOrchestrationSkill.body,
-                  'generalOrchestrationSkill.body',
-                ),
-              },
-              {
-                kind: 'text',
-                tag: 'task_type_skill',
-                attributes: [['skill_name', skills.taskTypeSkill.skillName]],
-                text: requireBody(skills.taskTypeSkill.body, 'taskTypeSkill.body'),
-              },
-              selected
-                ? {
-                  kind: 'text',
-                  tag: 'user_selected_skills',
-                  attributes: [['skill_names', selected.skillNames.join(',')]],
-                  text: requireBody(selected.body, 'userSelectedSkills.body'),
-                }
-                : null,
-            ]),
-          },
-          {
-            kind: 'element',
-            tag: 'active_stages',
-            children: input.systemPrompt.activeStages.map(stageNode),
-          },
-          textNode('output_contract', input.systemPrompt.outputContract, 'outputContract'),
-          textNode('echo_guard', input.systemPrompt.echoGuard, 'echoGuard'),
+          textNode(
+            'discovery_and_planning_surface',
+            core.discoveryAndPlanningSurface,
+            'discoveryAndPlanningSurface',
+          ),
+          textNode('core_strategy', core.coreStrategy, 'coreStrategy'),
+          textNode('output_contract', core.outputContract, 'outputContract'),
+          textNode('echo_guard', core.echoGuard, 'echoGuard'),
         ],
       },
       {
         kind: 'element',
-        tag: 'task_config',
+        tag: 'session_skills',
         children: present([
-          textNode('task_type', input.taskConfig.taskType, 'taskType'),
-          optionalTextNode('attachments', input.taskConfig.attachments),
-          optionalTextNode('task_configuration', input.taskConfig.taskConfiguration),
-          optionalTextNode('title_directive', input.taskConfig.titleDirective),
+          {
+            kind: 'text',
+            tag: 'general_orchestration_skill',
+            attributes: [['skill_name', skills.generalOrchestrationSkill.skillName]],
+            text: requireBody(
+              skills.generalOrchestrationSkill.body,
+              'generalOrchestrationSkill.body',
+            ),
+          },
+          {
+            kind: 'text',
+            tag: 'task_type_skill',
+            attributes: [['skill_name', skills.taskTypeSkill.skillName]],
+            text: requireBody(skills.taskTypeSkill.body, 'taskTypeSkill.body'),
+          },
+          selected
+            ? {
+              kind: 'text',
+              tag: 'user_selected_skills',
+              attributes: [['skill_names', selected.skillNames.join(',')]],
+              text: requireBody(selected.body, 'userSelectedSkills.body'),
+            }
+            : null,
+        ]),
+      },
+      {
+        kind: 'element',
+        tag: 'active_stages',
+        children: input.activeStages.map(stageNode),
+      },
+      {
+        kind: 'element',
+        tag: 'task_metadata',
+        children: present([
+          textNode('task_type', input.taskMetadata.taskType, 'taskType'),
+          optionalTextNode('attachments', input.taskMetadata.attachments),
+          optionalTextNode('task_configuration', input.taskMetadata.taskConfiguration),
+          optionalTextNode('title_directive', input.taskMetadata.titleDirective),
         ]),
       },
       {
@@ -333,7 +335,7 @@ function buildTree(input: OdNextPromptBundleV2): CanonicalXmlNode {
           optionalTextNode('prior_transcript', input.context.priorTranscript),
         ]),
       },
-      textNode('user_prompt', input.userPrompt, 'userPrompt'),
+      textNode('user_first_prompt', input.userFirstPrompt, 'userFirstPrompt'),
     ],
   };
 }
@@ -395,13 +397,15 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
     throw new TypeError('Prompt Bundle schema is not ' + OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2 + '.');
   }
   const top = indexCanonicalXmlChildren(root, BUNDLE_SLOTS, 'bundle');
-  const systemPromptNode = requireCanonicalXmlElement(top.get('system_prompt'), 'system_prompt');
-  const system = indexCanonicalXmlChildren(systemPromptNode, SYSTEM_PROMPT_SLOTS, 'system_prompt');
   const coreNode = requireCanonicalXmlElement(
-    system.get('core_system_prompt'),
-    'core_system_prompt',
+    top.get('open_design_core_system_prompt'),
+    'open_design_core_system_prompt',
   );
-  const core = indexCanonicalXmlChildren(coreNode, CORE_SYSTEM_PROMPT_SLOTS, 'core_system_prompt');
+  const core = indexCanonicalXmlChildren(
+    coreNode,
+    CORE_SYSTEM_PROMPT_SLOTS,
+    'open_design_core_system_prompt',
+  );
   const nativeExecution = requireCanonicalXmlText(
     core.get('native_execution'),
     'native_execution',
@@ -410,7 +414,7 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
   if (!EXECUTION_PROFILES.has(profile)) {
     throw new TypeError('native_execution profile must be filesystem or text_artifact.');
   }
-  const skillsNode = requireCanonicalXmlElement(system.get('session_skills'), 'session_skills');
+  const skillsNode = requireCanonicalXmlElement(top.get('session_skills'), 'session_skills');
   const skills = indexCanonicalXmlChildren(skillsNode, SESSION_SKILL_SLOTS, 'session_skills');
   const general = requireCanonicalXmlText(
     skills.get('general_orchestration_skill'),
@@ -418,8 +422,8 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
   );
   const taskTypeSkill = requireCanonicalXmlText(skills.get('task_type_skill'), 'task_type_skill');
   const selectedNode = skills.get('user_selected_skills');
-  const configNode = requireCanonicalXmlElement(top.get('task_config'), 'task_config');
-  const config = indexCanonicalXmlChildren(configNode, TASK_CONFIG_SLOTS, 'task_config');
+  const metadataNode = requireCanonicalXmlElement(top.get('task_metadata'), 'task_metadata');
+  const metadata = indexCanonicalXmlChildren(metadataNode, TASK_METADATA_SLOTS, 'task_metadata');
   const contextNode = requireCanonicalXmlElement(top.get('context'), 'context');
   const context = indexCanonicalXmlChildren(contextNode, CONTEXT_SLOTS, 'context');
   const identityNode = context.get('recipe_identity');
@@ -433,62 +437,60 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
     ]),
   ) as unknown as OdNextPromptBundleRecipeIdentityV2;
   const parsed: OdNextPromptBundleV2 = {
-    systemPrompt: {
-      coreSystemPrompt: {
-        executionBoundary: readText(core, 'execution_boundary', 'execution_boundary'),
-        nativeExecution: {
-          profile: profile as 'filesystem' | 'text_artifact',
-          body: nativeExecution.text,
-        },
-        discoveryAndPlanningSurface: readText(
-          core,
-          'discovery_and_planning_surface',
-          'discovery_and_planning_surface',
-        ),
-        coreStrategy: readText(core, 'core_strategy', 'core_strategy'),
+    coreSystemPrompt: {
+      executionBoundary: readText(core, 'execution_boundary', 'execution_boundary'),
+      nativeExecution: {
+        profile: profile as 'filesystem' | 'text_artifact',
+        body: nativeExecution.text,
       },
-      sessionSkills: {
-        generalOrchestrationSkill: {
-          skillName: requireCanonicalXmlAttribute(
-            general,
-            'skill_name',
-            'general_orchestration_skill',
-          ),
-          body: general.text,
-        },
-        taskTypeSkill: {
-          skillName: requireCanonicalXmlAttribute(taskTypeSkill, 'skill_name', 'task_type_skill'),
-          body: taskTypeSkill.text,
-        },
-        ...(selectedNode
-          ? {
-            userSelectedSkills: {
-              skillNames: requireCanonicalXmlAttribute(
-                selectedNode,
-                'skill_names',
-                'user_selected_skills',
-              ).split(','),
-              body: requireCanonicalXmlText(selectedNode, 'user_selected_skills').text,
-            },
-          }
-          : {}),
-      },
-      activeStages: readStages(
-        requireCanonicalXmlElement(system.get('active_stages'), 'active_stages'),
+      discoveryAndPlanningSurface: readText(
+        core,
+        'discovery_and_planning_surface',
+        'discovery_and_planning_surface',
       ),
-      outputContract: readText(system, 'output_contract', 'output_contract'),
-      echoGuard: readText(system, 'echo_guard', 'echo_guard'),
+      coreStrategy: readText(core, 'core_strategy', 'core_strategy'),
+      outputContract: readText(core, 'output_contract', 'output_contract'),
+      echoGuard: readText(core, 'echo_guard', 'echo_guard'),
     },
-    taskConfig: {
-      taskType: readText(config, 'task_type', 'task_type'),
-      ...optionalField('attachments', readOptionalText(config, 'attachments', 'attachments')),
+    sessionSkills: {
+      generalOrchestrationSkill: {
+        skillName: requireCanonicalXmlAttribute(
+          general,
+          'skill_name',
+          'general_orchestration_skill',
+        ),
+        body: general.text,
+      },
+      taskTypeSkill: {
+        skillName: requireCanonicalXmlAttribute(taskTypeSkill, 'skill_name', 'task_type_skill'),
+        body: taskTypeSkill.text,
+      },
+      ...(selectedNode
+        ? {
+          userSelectedSkills: {
+            skillNames: requireCanonicalXmlAttribute(
+              selectedNode,
+              'skill_names',
+              'user_selected_skills',
+            ).split(','),
+            body: requireCanonicalXmlText(selectedNode, 'user_selected_skills').text,
+          },
+        }
+        : {}),
+    },
+    activeStages: readStages(
+      requireCanonicalXmlElement(top.get('active_stages'), 'active_stages'),
+    ),
+    taskMetadata: {
+      taskType: readText(metadata, 'task_type', 'task_type'),
+      ...optionalField('attachments', readOptionalText(metadata, 'attachments', 'attachments')),
       ...optionalField(
         'taskConfiguration',
-        readOptionalText(config, 'task_configuration', 'task_configuration'),
+        readOptionalText(metadata, 'task_configuration', 'task_configuration'),
       ),
       ...optionalField(
         'titleDirective',
-        readOptionalText(config, 'title_directive', 'title_directive'),
+        readOptionalText(metadata, 'title_directive', 'title_directive'),
       ),
     },
     context: {
@@ -533,7 +535,7 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
         readOptionalText(context, 'prior_transcript', 'prior_transcript'),
       ),
     },
-    userPrompt: readText(top, 'user_prompt', 'user_prompt'),
+    userFirstPrompt: readText(top, 'user_first_prompt', 'user_first_prompt'),
   };
   if (serializeOdNextPromptBundleV2(parsed) !== source) {
     throw new TypeError('Prompt Bundle is not in canonical form.');

@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   OD_NEXT_BUNDLE_ECHO_GUARD_V2,
+  type OdNextPromptBundleHeadV2,
   type OdNextPromptBundleRecipeIdentityV2,
-  type OdNextPromptBundleV2,
   serializeOdNextPromptBundleV2,
 } from '@open-design/contracts';
 import { renderResearchCommandContract } from '../prompts/research-contract.js';
@@ -149,7 +149,7 @@ export function composeChatAgentTextPayload({
   commentAttachmentReferences: string;
   imageReferences: string;
   odNextRequestBundle?: {
-    systemPrompt: OdNextPromptBundleV2['systemPrompt'];
+    head: OdNextPromptBundleHeadV2;
     recipeIdentity: OdNextPromptBundleRecipeIdentityV2;
     runtimeFacts: string;
     taskType: string;
@@ -203,8 +203,8 @@ export function composeChatAgentTextPayload({
       throw new TypeError('OD Next echo guard must match the canonical Bundle contract.');
     }
     const bundleContributors: Record<OdNextBundleTextContributorIdV2, string> = {
-      daemon_system_prompt: odNextRequestBundle.systemPrompt.coreSystemPrompt.coreStrategy,
-      echo_guard: odNextRequestBundle.systemPrompt.echoGuard,
+      daemon_system_prompt: odNextRequestBundle.head.coreSystemPrompt.coreStrategy,
+      echo_guard: odNextRequestBundle.head.coreSystemPrompt.echoGuard,
       user_selected_skills: odNextRequestBundle.userSelectedSkills?.body ?? '',
       task_type_fact: odNextRequestBundle.taskType,
       attachment_facts: odNextRequestBundle.attachments,
@@ -227,16 +227,14 @@ export function composeChatAgentTextPayload({
     };
     assertOdNextBundleTextContributorCoverage(Object.keys(bundleContributors));
     const composedPrompt = serializeOdNextPromptBundleV2({
-      systemPrompt: {
-        ...odNextRequestBundle.systemPrompt,
-        sessionSkills: {
-          ...odNextRequestBundle.systemPrompt.sessionSkills,
-          ...(odNextRequestBundle.userSelectedSkills
-            ? { userSelectedSkills: odNextRequestBundle.userSelectedSkills }
-            : {}),
-        },
+      ...odNextRequestBundle.head,
+      sessionSkills: {
+        ...odNextRequestBundle.head.sessionSkills,
+        ...(odNextRequestBundle.userSelectedSkills
+          ? { userSelectedSkills: odNextRequestBundle.userSelectedSkills }
+          : {}),
       },
-      taskConfig: {
+      taskMetadata: {
         taskType: odNextRequestBundle.taskType,
         attachments: odNextRequestBundle.attachments,
         taskConfiguration: odNextRequestBundle.taskConfiguration,
@@ -257,7 +255,7 @@ export function composeChatAgentTextPayload({
         formOverride,
         priorTranscript: odNextRequestBundle.priorTranscript,
       },
-      userPrompt: requestOrStageText,
+      userFirstPrompt: requestOrStageText,
     });
     return {
       composedPrompt,

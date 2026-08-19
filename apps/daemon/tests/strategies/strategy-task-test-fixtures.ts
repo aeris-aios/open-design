@@ -9,27 +9,25 @@ import { createEmptyFrozenSkillPackage } from '../../src/strategies/od-next/froz
 export const TEST_TASK_INPUT_MANIFEST_SHA256 = 'd'.repeat(64);
 
 export const TEST_PROMPT_BUNDLE = serializeOdNextPromptBundleV2({
-  systemPrompt: {
-    coreSystemPrompt: {
-      executionBoundary: 'Frozen test execution boundary.',
-      nativeExecution: { profile: 'filesystem', body: 'Frozen test native execution.' },
-      discoveryAndPlanningSurface: 'Frozen test planning surface.',
-      coreStrategy: 'Frozen test core strategy.',
-    },
-    sessionSkills: {
-      generalOrchestrationSkill: {
-        skillName: 'general_orchestration',
-        body: 'Frozen test orchestration.',
-      },
-      taskTypeSkill: { skillName: 'prototype', body: 'Frozen test task skill.' },
-    },
-    activeStages: [
-      { name: 'discovery', atoms: [{ name: 'discovery-question-form', body: 'Frozen atom.' }] },
-    ],
+  coreSystemPrompt: {
+    executionBoundary: 'Frozen test execution boundary.',
+    nativeExecution: { profile: 'filesystem', body: 'Frozen test native execution.' },
+    discoveryAndPlanningSurface: 'Frozen test planning surface.',
+    coreStrategy: 'Frozen test core strategy.',
     outputContract: 'Frozen test output contract.',
     echoGuard: 'Frozen test echo guard.',
   },
-  taskConfig: {
+  sessionSkills: {
+    generalOrchestrationSkill: {
+      skillName: 'general_orchestration',
+      body: 'Frozen test orchestration.',
+    },
+    taskTypeSkill: { skillName: 'prototype', body: 'Frozen test task skill.' },
+  },
+  activeStages: [
+    { name: 'discovery', atoms: [{ name: 'discovery-question-form', body: 'Frozen atom.' }] },
+  ],
+  taskMetadata: {
     taskType: 'prototype',
     taskConfiguration: 'Frozen test task configuration.',
   },
@@ -39,14 +37,11 @@ export const TEST_PROMPT_BUNDLE = serializeOdNextPromptBundleV2({
       strategyId: 'od-next-strategy',
       strategyVersion: '2.0.0',
       appliedSnapshot: 'frozen-test-snapshot',
-      strategyPackageHash: 'e'.repeat(64),
-      taskSkillDigest: 'f'.repeat(64),
       taskProfileVersion: '2.0.0',
-      stablePromptIdentity: 'frozen-test-identity',
     },
     stableRequestContext: 'Frozen test context.',
   },
-  userPrompt: '冻结的用户请求。',
+  userFirstPrompt: '冻结的用户请求。',
 });
 
 export function strategyTaskCreateIdentityFixture() {

@@ -18,8 +18,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import {
-  composeOdNextStrategyBundleSystemPromptV2,
+  composeOdNextStrategyBundleHeadV2,
   composeOdNextStrategyCorePromptV2,
+  OD_NEXT_BUNDLE_ECHO_GUARD_V2,
   odNextStrategyRecipeIdentityV2,
   renderOdNextRuntimeFactsV2,
   composeOdNextStrategyStableRequestContextV2,
@@ -9884,8 +9885,8 @@ export async function startServer({
     // cache-stable head, its per-task identity, and the runtime-owned planning
     // facts are three separate products of the same verified recipe, so they are
     // composed here together and placed in different bundle slots downstream.
-    const odNextBundleSystemPrompt = odNextStrategyRecipe
-      ? composeOdNextStrategyBundleSystemPromptV2(odNextStrategyRecipe)
+    const odNextBundleHead = odNextStrategyRecipe
+      ? composeOdNextStrategyBundleHeadV2(odNextStrategyRecipe)
       : null;
     const odNextRecipeIdentity = odNextStrategyRecipe
       ? odNextStrategyRecipeIdentityV2(odNextStrategyRecipe)
@@ -9901,7 +9902,7 @@ export async function startServer({
     // orchestrator gate so prompt and orchestrator stay in lockstep.
     return {
       prompt,
-      odNextBundleSystemPrompt,
+      odNextBundleHead,
       odNextRecipeIdentity,
       odNextRuntimeFacts,
       odNextStableContextPrompt: odNextStableRequestContext
@@ -11169,11 +11170,11 @@ export async function startServer({
           : '';
     const agentFormOverride = isOdNextRequestStage && formIdForOverride
       ? formIdForOverride === 'discovery' || formIdForOverride === 'task-type'
-        ? `The <user_prompt> contains submitted answers for the ${formIdForOverride} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
-        : `The <user_prompt> contains submitted answers for the ${formIdForOverride} form. Treat them as the active user turn and do not replay the answered form.`
+        ? `The <user_first_prompt> contains submitted answers for the ${formIdForOverride} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
+        : `The <user_first_prompt> contains submitted answers for the ${formIdForOverride} form. Treat them as the active user turn and do not replay the answered form.`
       : formOverride;
     const agentEchoGuard = isOdNextRequestStage
-      ? 'Do not quote, restate, or echo <system_prompt>. Begin the response by addressing <user_prompt>.'
+      ? OD_NEXT_BUNDLE_ECHO_GUARD_V2
       : ECHO_GUARD;
     const includeStableForPayload = isOdNextRequestStage || includeStableInstructions;
     const promptImagePaths = selectPromptImagePaths(
