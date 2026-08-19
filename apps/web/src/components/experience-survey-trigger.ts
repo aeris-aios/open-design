@@ -27,9 +27,14 @@
 // typing, so an early ask that lands badly costs a dropped chance, not a
 // derailed session.
 //
-// Frequency rule: once the user answers or closes the card, it never comes
-// back. A single dismissal is treated as a real answer to "do you want to be
-// asked this", and re-asking would spend goodwill for a marginal sample gain.
+// Frequency rule: exactly one ask per user, ever. The card retires the moment
+// it is SHOWN, not when it is answered or closed — ignoring a prompt is how
+// most people decline one, and treating silence as "ask again later" turns a
+// single question into a recurring one. So a user sees this card at most once,
+// whatever they do with it.
+//
+// That is also why a chance dropped by the typing bail-out is retried on the
+// next delivery: a card the user never saw did not spend their one ask.
 
 const RETIRED_KEY = 'open-design:experience-survey:v1:retired';
 const DELIVERY_COUNT_KEY = 'open-design:experience-survey:v1:deliveries';

@@ -1,7 +1,6 @@
 // Experience survey (NPS). Armed by a delivered artifact — any design run that
 // actually produces one — rendered globally from App.tsx so it survives the
-// project → home navigation, and retired permanently the moment the user
-// answers or closes it.
+// project → home navigation, and retired permanently the moment it is shown.
 //
 // Two questions. The score is the metric and costs one tap; the follow-up asks
 // what to fix first and can be skipped. Anything longer was cut deliberately —
@@ -189,7 +188,9 @@ export function ExperienceSurvey({
       // this chance and waits for the next delivery. That is affordable
       // precisely because deliveries repeat (~13 per user per 30 days) — and
       // the delivery that finally lands the card is the one after which the
-      // user stopped, which is the honest moment to ask.
+      // user stopped, which is the honest moment to ask. It costs nothing in
+      // frequency either: a dropped chance is one the user never saw, and the
+      // survey retires the moment it is shown.
       //
       // `beforeinput` rather than `keydown`, because an IME is how a large
       // share of this product's users write a prompt: composing Chinese emits
@@ -212,9 +213,17 @@ export function ExperienceSurvey({
     };
   }, [metricsConsent]);
 
+  // Being shown is what spends the one ask this user gets. Retiring here
+  // rather than in `finish`/`close` is the difference between "asked once" and
+  // "asked until you engage": a user who reads the card and neither answers
+  // nor closes it — the most common way to respond to an unwanted prompt — was
+  // otherwise asked again after their next artifact, and again after the one
+  // after that. `exposedRef` alone could not prevent that; it is a ref, so it
+  // resets on the next page load.
   useEffect(() => {
     if (!visible || exposedRef.current) return;
     exposedRef.current = true;
+    retireSurvey();
     onExposure?.();
   }, [visible, onExposure]);
 
