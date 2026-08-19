@@ -366,6 +366,12 @@ export function ExperienceSurvey({
             value={otherText}
             onChange={(event) => setOtherText(event.target.value)}
             placeholder={t('experienceSurvey.otherPlaceholder')}
+            // The field is auto-focused, so its name is announced immediately
+            // and is the only thing telling a screen-reader user what to type.
+            // A placeholder cannot carry that: it is not a label, and it
+            // disappears on the first keystroke. Reusing the same string keeps
+            // the two in step without a 20-locale key for the same sentence.
+            aria-label={t('experienceSurvey.otherPlaceholder')}
             autoFocus
           />
         ) : null}
