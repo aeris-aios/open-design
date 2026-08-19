@@ -112,6 +112,14 @@ export interface RunFailedToastSurfaceViewProps {
   area: 'chat_panel';
   element: 'run_failed_toast';
   error_code: string;
+  /**
+   * daemon 的细分类。加它是因为 error_code 太粗：5 小时限额卡与普通 429
+   * 同为 RATE_LIMITED，不带 detail 的话限额卡的曝光拆不出来，
+   * 点击率（触点 ⑤⑥ 漏斗的分母）就无从计算。
+   */
+  failure_detail?: string;
+  /** 仅 failure_detail=model_window_limit 时上报：false=Go 阻断卡 / true=Plus+ 告知卡。 */
+  tier_has_fallback?: boolean;
   project_id: string;
   project_kind: TrackingProjectKind | null;
   conversation_id: string | null;

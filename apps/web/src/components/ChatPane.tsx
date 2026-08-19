@@ -1709,6 +1709,10 @@ export function ChatPane({
       area: 'chat_panel',
       element: 'run_failed_toast',
       error_code: failedRunErrorEvent.code,
+      ...(failedRunErrorEvent.failureDetail
+        ? { failure_detail: failedRunErrorEvent.failureDetail }
+        : {}),
+      ...(isGoLimitCard ? { tier_has_fallback: goLimitHasFallback } : {}),
       project_id: projectId ?? '',
       project_kind: projectKindForTracking,
       conversation_id: activeConversationId,
@@ -2781,14 +2785,19 @@ export function ChatPane({
                   icon="alert-triangle"
                   tone={runErrorTone}
                   title={
-                    runFailureUi
-                      ? t(runFailureUi.titleKey)
-                      : t('chat.runError.title.generic')
+                    /* 限额卡（2026-08-19 口径）：完整文案直接上标题位，
+                       不折叠——文案自身以「高峰期繁忙」开头，标题语义不丢。
+                       其余错误卡维持「短标题 + 查看详情」的原结构。 */
+                    isGoLimitCard && displayError
+                      ? displayError
+                      : runFailureUi
+                        ? t(runFailureUi.titleKey)
+                        : t('chat.runError.title.generic')
                   }
-                  open={errorSourceOpen}
-                  onOpenChange={setErrorSourceOpen}
-                  detailsLabel={t('brand.viewDetails')}
-                  details={
+                  open={isGoLimitCard ? false : errorSourceOpen}
+                  onOpenChange={isGoLimitCard ? undefined : setErrorSourceOpen}
+                  detailsLabel={isGoLimitCard ? undefined : t('brand.viewDetails')}
+                  details={isGoLimitCard ? undefined : (
                     <div className="run-error__details">
                       <p className="run-error__description">{displayError}</p>
                       {errorDiagnosticText ? (
@@ -2809,7 +2818,7 @@ export function ChatPane({
                         </div>
                       ) : null}
                     </div>
-                  }
+                  )}
                   footerActions={showErrorActions ? (
                     <>
                       {showByokRecoveryCta ? (
