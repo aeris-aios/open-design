@@ -10372,6 +10372,7 @@ function HtmlViewer({
           paletteBridge: false,
           previewFocusGuard: true,
           previewObservability: true,
+          deferFontStylesheets: true,
           // Embed the reload counter so the srcdoc string differs across reloads
           // even when the fetched HTML bytes are identical (issue #4650).
           reloadKey,
@@ -10426,6 +10427,7 @@ function HtmlViewer({
     probeId: string;
     recoverOnFailure: boolean;
   } | null>(null);
+  const srcDocTransportTimeoutsRef = useRef<Set<number>>(new Set());
   const srcDocParsingGraceRef = useRef<{
     generation: string;
     deadline: number;
