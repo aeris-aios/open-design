@@ -26,7 +26,6 @@ import {
   latchConversationIntentSignals,
   normalizeConversationSessionMode,
 } from '../../db.js';
-import { pinRunDesignSystemScope, type PinnedRunDesignSystemScope } from '../../design-systems/run-scope.js';
 import { readMcpConfig, type McpServerConfig } from '../../mcp-config.js';
 import { isTokenExpired, readAllTokens } from '../../mcp-tokens.js';
 import { resolveProjectDir } from '../../projects.js';
@@ -35,16 +34,11 @@ import { resolveOdNextStrategyRequestRecipeV2 } from '../../plugins/strategy-rec
 import { resolveExternalMcpServersForRun } from '../../run-tool-bundle.js';
 import {
   composeChatAgentTextPayload,
-  designSystemIdFromPluginSnapshot,
-  resolveEffectiveDesignSystemSelection,
   resolveOdNextRequestUserPrompt,
   resolveResearchCommandContract,
 } from '../../runtimes/chat-prompt-inputs.js';
 import { renderRunContextPrompt } from '../../runtimes/chat-run-context.js';
-import type {
-  PinnedRunWorkspaceScope,
-  RunWorkspaceScope,
-} from '../../runtimes/project-amr-trace-env.js';
+import type { RunWorkspaceScope } from '../../runtimes/project-amr-trace-env.js';
 import type { RuntimeAgentDef } from '../../runtimes/types.js';
 import type { DetectedRuntimeVersions } from '../../runtimes/detection.js';
 import {
@@ -141,7 +135,6 @@ export interface PrepareOdNextInitialPromptBundleInput {
 
 export interface PreparedOdNextInitialPromptBundle {
   text: string;
-  designSystemScope: PinnedRunDesignSystemScope | null;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -295,31 +288,6 @@ export function createOdNextInitialPromptBundleService(
       ? resolveProjectDir(deps.projectsDir, projectId, project?.metadata)
       : null;
     const appliedPluginSnapshotId = stringValue(meta.appliedPluginSnapshotId);
-    const pluginDesignSystemId = appliedPluginSnapshotId
-      ? designSystemIdFromPluginSnapshot(
-          getSnapshot(deps.db, appliedPluginSnapshotId) as unknown as Parameters<
-            typeof designSystemIdFromPluginSnapshot
-          >[0],
-        )
-      : null;
-    const scopeSelection = project?.metadata?.intent === 'web-clone'
-      ? { id: null }
-      : resolveEffectiveDesignSystemSelection({
-          requestDesignSystemId: stringValue(designSystemId),
-          pluginDesignSystemId,
-          projectDesignSystemId: project?.designSystemId,
-          allowAppDefault: false,
-        });
-    const designSystemScope = projectId
-      ? pinRunDesignSystemScope({
-          db: deps.db,
-          projectId,
-          designSystemId: scopeSelection.id,
-          workspaceScope: meta.workspaceScope?.workspaceId
-            ? meta.workspaceScope as PinnedRunWorkspaceScope
-            : null,
-        })
-      : null;
     const runSessionMode = normalizeConversationSessionMode(sessionMode);
     const userPrompt = resolveOdNextRequestUserPrompt({
       message,
@@ -368,7 +336,6 @@ export function createOdNextInitialPromptBundleService(
       mediaHintSignal: intentSignals.media,
       platformHintSignal: intentSignals.platform,
       workspaceScope: meta.workspaceScope,
-      designSystemScope,
       frozenSkillPackage,
       odNextSyntheticCanary:
         meta.strategyRolloutDecision?.syntheticCanary === true,
@@ -484,6 +451,6 @@ export function createOdNextInitialPromptBundleService(
       },
       strategyInputStage: 'request',
     });
-    return { text: result.composedPrompt, designSystemScope };
+    return { text: result.composedPrompt };
   };
 }

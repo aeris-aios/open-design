@@ -2717,6 +2717,7 @@ describe('FileViewer SVG artifacts', () => {
           type: 'od:srcdoc-transport-activated',
           generation: readinessProbe!.generation,
           probeId: readinessProbe!.probeId,
+          bodyComplete: true,
         },
       }));
     });
@@ -5519,6 +5520,68 @@ describe('FileViewer SVG artifacts', () => {
     );
   });
 
+  it('exposes Stop sharing when publication persistence and compensation both fail', async () => {
+    const context = teamWorkspaceContext();
+    const publicUrl =
+      'https://hub.example.test/api/v1/public/snapshots/manual-revoke-slug/files/index.html';
+    const unpublishBodies: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/workspace/context')) {
+          return new Response(JSON.stringify({ context }), { status: 200 });
+        }
+        if (url.includes('publish-public')) {
+          const method = (init?.method ?? 'GET').toUpperCase();
+          if (method === 'GET') {
+            return new Response(JSON.stringify({ publication: null }), { status: 200 });
+          }
+          if (method === 'DELETE') {
+            unpublishBodies.push(JSON.parse(String(init?.body)));
+            return new Response(
+              JSON.stringify({ ok: true, slug: 'manual-revoke-slug', fileName: 'index.html' }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
+                message: `The public link remains active at ${publicUrl}.`,
+                data: {
+                  projectId: 'project-1',
+                  url: publicUrl,
+                  slug: 'manual-revoke-slug',
+                  fileName: 'index.html',
+                },
+              },
+            }),
+            { status: 502 },
+          );
+        }
+        return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+      }),
+    );
+
+    renderWithProjectWorkspace(
+      <FileViewer projectId="project-1" projectKind="prototype" file={publicPublishFile()}
+        liveHtml="<html><body><h1>Hello</h1></body></html>"
+      />,
+      context,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /share/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Get a share link/i }));
+
+    expect(await screen.findByText(publicUrl)).toBeTruthy();
+    const stopSharing = screen.getByRole('button', { name: /Stop sharing/i });
+    fireEvent.click(stopSharing);
+
+    await waitFor(() => expect(unpublishBodies).toEqual([{ slug: 'manual-revoke-slug' }]));
+    expect(await screen.findByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+  });
+
   // Reading the help must never publish. The publish row's trailing "?" carries
   // the reach + single-file limitation copy, i.e. exactly what a user wants to
   // read BEFORE committing — but it used to be nested inside the same
@@ -7362,6 +7425,7 @@ describe('FileViewer tweaks toolbar', () => {
             type: 'od:srcdoc-transport-activated',
             generation: initialGeneration,
             probeId: initialProbe!.probeId,
+            bodyComplete: true,
           },
         }));
       });
@@ -7401,6 +7465,149 @@ describe('FileViewer tweaks toolbar', () => {
       expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
     } finally {
       previewBaseResponse.resolve(new Response('', { status: 404 }));
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels an in-flight srcDoc recovery probe when the viewer unmounts', () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+        />,
+      );
+
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      expect(postMessage.mock.calls.some(
+        ([message]) => (
+          (message as { type?: unknown }).type === 'od:srcdoc-transport-ready-probe'
+        ),
+      )).toBe(true);
+
+      safetyEventMock.mockClear();
+      unmount();
+      act(() => {
+        vi.runAllTimers();
+      });
+
+      expect(safetyEventMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restarts srcDoc verification after a retained viewer rapidly reactivates', () => {
+    vi.useFakeTimers();
+    try {
+      const renderViewer = (workspaceActive: boolean) => (
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          workspaceActive={workspaceActive}
+        />
+      );
+      const { rerender } = render(renderViewer(true));
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      const probes = () => postMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; generation?: string; probeId?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-ready-probe');
+      expect(probes()).toHaveLength(1);
+
+      safetyEventMock.mockClear();
+      rerender(renderViewer(false));
+      rerender(renderViewer(true));
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+      expect(probes()).toHaveLength(2);
+      const reactivationProbe = probes()[1]!;
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type: 'od:srcdoc-transport-activated',
+            generation: reactivationProbe.generation,
+            probeId: reactivationProbe.probeId,
+            bodyComplete: true,
+          },
+        }));
+        vi.runAllTimers();
+      });
+
+      expect(safetyEventMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels srcDoc verification in Code mode and restarts it on Preview', () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
+          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+        />,
+      );
+
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      const probes = () => postMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; generation?: string; probeId?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-ready-probe');
+      expect(probes()).toHaveLength(1);
+
+      safetyEventMock.mockClear();
+      fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(safetyEventMock).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+      const previewFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const previewPostMessage = vi.spyOn(previewFrame.contentWindow!, 'postMessage');
+      const previewProbes = () => previewPostMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; generation?: string; probeId?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-ready-probe');
+      const probeCountBeforeRecoveryCheck = previewProbes().length;
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(previewProbes()).toHaveLength(probeCountBeforeRecoveryCheck + 1);
+      const previewProbe = previewProbes().at(-1)!;
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: previewFrame.contentWindow,
+          data: {
+            type: 'od:srcdoc-transport-activated',
+            generation: previewProbe.generation,
+            probeId: previewProbe.probeId,
+            bodyComplete: true,
+          },
+        }));
+        vi.runAllTimers();
+      });
+
+      expect(safetyEventMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(previewFrame);
+    } finally {
       vi.useRealTimers();
     }
   });
@@ -7799,6 +8006,7 @@ describe('FileViewer tweaks toolbar', () => {
           type: 'od:srcdoc-transport-activated',
           generation: probe.generation,
           probeId: probe.probeId,
+          bodyComplete: true,
         },
       }));
     });

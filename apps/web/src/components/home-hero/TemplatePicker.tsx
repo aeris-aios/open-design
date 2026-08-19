@@ -42,9 +42,9 @@ const VIEWPORT_MARGIN = 16;
 // available below the trigger, prefer the roomier side above it.
 const MENU_MIN_USABLE_H = 56;
 
-// Marketing is a distinct, daemon-owned OD Next route rather than an alias for
-// ordinary Image generation, so the public catalog now contains 13 kinds.
-const MAX_MENU_KINDS = 13;
+// Per product: the menu lists at most this many kinds (rows beyond it are
+// simply not shown — the catalog stays whole for the rail/carousel).
+const MAX_MENU_KINDS = 12;
 
 export function TemplatePicker({
   templates,

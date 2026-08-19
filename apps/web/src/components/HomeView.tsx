@@ -98,6 +98,11 @@ import {
 import { HomeHero, type ExamplePromptInfo, type HomeHeroHandle } from './HomeHero';
 import { AppWashKineticGrid } from './AppWashKineticGrid';
 import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips';
+import {
+  prototypeSubChipForActionChipId,
+  prototypeSubChipForSlug,
+  type HomeHeroSubChip,
+} from './home-hero/sub-chips';
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
@@ -108,6 +113,7 @@ import {
   currentWorkspaceAccountGeneration,
   useTeamProjects,
   useWorkspaceContext,
+  workspaceResourceReadContext,
 } from '../collab/useWorkspaceContext';
 import { useWorkspaceInvalidation } from '../collab/workspace-events';
 import { useWorkspaceSnapshotActivation } from '../collab/workspace-snapshot-activation';
@@ -171,6 +177,7 @@ export interface ActivePlugin {
   // kind defaults to the historical 'prototype' value.
   projectKind: ProjectKind | null;
   chipId: string | null;
+  prototypeSubtypeId: string | null;
   mediaSurface: HomeComposerMediaSurface | null;
   projectMetadata: ProjectMetadata | null;
   editableInputNames: string[];
@@ -337,8 +344,8 @@ const HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY = 'open-design:home-composer:design-
 // result, neither of which survives JSON, so it was never persisted at all —
 // a Settings round trip silently cleared the chip/example-prompt selection
 // even though the prompt text and design system correctly came back. Persist
-// only the three serializable identity fields (chip id, plugin id, project
-// kind) and re-resolve the full `ActivePlugin` from the live plugin catalog
+// only the serializable identity fields (chip id, Prototype subtype, plugin id,
+// project kind) and re-resolve the full `ActivePlugin` from the live plugin catalog
 // on remount (see `pendingChipRestore` below), the same way a cross-surface
 // "use this plugin" hand-off resolves `pendingPluginUseHandoff`.
 const HOME_COMPOSER_CHIP_KEY = 'open-design:home-composer:chip';
@@ -347,6 +354,7 @@ interface HomeComposerChipDraft {
   chipId: string | null;
   pluginId: string;
   projectKind: ProjectKind | null;
+  prototypeSubtypeId?: string | null;
 }
 // `EntryShell` keeps `HomeView` permanently mounted and toggles it with CSS
 // visibility instead of unmounting it on every Home/Community/... view
@@ -410,10 +418,17 @@ function readHomeComposerChipDraft(): HomeComposerChipDraft | null {
   try {
     const parsed = JSON.parse(raw) as Partial<HomeComposerChipDraft> | null;
     if (!parsed || typeof parsed.pluginId !== 'string' || !parsed.pluginId) return null;
+    const parsedChipId = typeof parsed.chipId === 'string' ? parsed.chipId : null;
+    const legacyPrototypeSubtype = prototypeSubChipForActionChipId(parsedChipId);
+    const parsedPrototypeSubtype =
+      typeof parsed.prototypeSubtypeId === 'string'
+        ? prototypeSubChipForSlug(parsed.prototypeSubtypeId)
+        : null;
     return {
-      chipId: typeof parsed.chipId === 'string' ? parsed.chipId : null,
+      chipId: legacyPrototypeSubtype ? 'prototype' : parsedChipId,
       pluginId: parsed.pluginId,
       projectKind: typeof parsed.projectKind === 'string' ? (parsed.projectKind as ProjectKind) : null,
+      prototypeSubtypeId: parsedPrototypeSubtype?.slug ?? legacyPrototypeSubtype?.slug ?? null,
     };
   } catch {
     return null;
@@ -489,6 +504,7 @@ export function HomeView({
   const analytics = useAnalytics();
   const workspaceContextState = useWorkspaceContext();
   const { context: workspaceContext } = workspaceContextState;
+  const pluginCatalogWorkspaceContext = workspaceResourceReadContext(workspaceContextState);
   const lastSettledLocalCatalogScopeRef = useRef<LocalCatalogScope | null>(
     localCatalogScopeFromWorkspaceContext(workspaceContext),
   );
@@ -498,9 +514,14 @@ export function HomeView({
   }
   const pluginAccountGeneration = currentWorkspaceAccountGeneration();
   const pluginCatalogOptions = {
-    workspaceContext,
+    workspaceContext: pluginCatalogWorkspaceContext,
     accountGeneration: pluginAccountGeneration,
   };
+  // Keep the provisional local catalogue available for default-template
+  // routing while Workspace discovery runs, but never expose that provisional
+  // projection in HomeHero. The prop below keeps the Examples rail in its
+  // stable loading shell until the Workspace identity and its exact cache
+  // partition have both settled.
   const desiredPluginCatalogKey = workspaceContextState.identityChangePending
     ? null
     : pluginCatalogCacheKey(pluginCatalogOptions);
@@ -684,14 +705,21 @@ export function HomeView({
         : null,
     );
   }, [designSystemCatalogScope, designSystemId]);
-  // Persist the active chip/plugin identity the same way — only the three
+  // Persist the active chip/plugin identity the same way — only the
   // serializable fields, not `active` itself (see the module note above).
   // Clearing on `active === null` covers the explicit-clear (×) and the
   // Ask-mode / skill-pick paths that reset `active` to null directly.
   useEffect(() => {
     writeHomeComposerChipDraft(
       active
-        ? { chipId: active.chipId, pluginId: active.record.id, projectKind: active.projectKind }
+        ? {
+            chipId: active.chipId,
+            pluginId: active.record.id,
+            projectKind: active.projectKind,
+            ...(active.prototypeSubtypeId
+              ? { prototypeSubtypeId: active.prototypeSubtypeId }
+              : {}),
+          }
         : null,
     );
   }, [active]);
@@ -878,7 +906,7 @@ export function HomeView({
       return promise;
     };
     pluginCatalogReloadRef.current = load;
-    if (homeActiveRef.current && workspaceContext?.workspaceType !== 'team') load();
+    if (homeActiveRef.current && pluginCatalogWorkspaceContext?.workspaceType !== 'team') load();
     else pluginCatalogStaleRef.current = true;
     const onChanged = () => {
       // A mutation event is newer than any pending snapshot and must supersede
@@ -904,27 +932,27 @@ export function HomeView({
       }
       window.removeEventListener('open-design:plugins-changed', onChanged);
     };
-  }, [desiredPluginCatalogKey, workspaceContext?.workspaceType]);
+  }, [desiredPluginCatalogKey, pluginCatalogWorkspaceContext?.workspaceType]);
 
   useEffect(() => {
     if (!isActive || !desiredPluginCatalogKey || !pluginCatalogStaleRef.current) return;
-    if (workspaceContext?.workspaceType === 'team') return;
+    if (pluginCatalogWorkspaceContext?.workspaceType === 'team') return;
     pluginCatalogStaleRef.current = false;
     pluginCatalogReloadRef.current(true);
-  }, [desiredPluginCatalogKey, isActive, workspaceContext?.workspaceType]);
+  }, [desiredPluginCatalogKey, isActive, pluginCatalogWorkspaceContext?.workspaceType]);
 
   const handlePluginStreamActive = useWorkspaceSnapshotActivation({
-    enabled: isActive && workspaceContext?.workspaceType === 'team',
+    enabled: isActive && pluginCatalogWorkspaceContext?.workspaceType === 'team',
     identity: desiredPluginCatalogKey ?? 'no-plugin-catalog',
     refresh: () => { void pluginCatalogReloadRef.current(true, true); },
   });
 
   useWorkspaceInvalidation({}, {
     workspaceContext:
-      isActive && workspaceContext?.workspaceType === 'team'
-        ? workspaceContext
+      isActive && pluginCatalogWorkspaceContext?.workspaceType === 'team'
+        ? pluginCatalogWorkspaceContext
         : null,
-    enabled: isActive && workspaceContext?.workspaceType === 'team',
+    enabled: isActive && pluginCatalogWorkspaceContext?.workspaceType === 'team',
     // App owns the global Skill/Design System catch-up. Home only refreshes
     // its plugin projection.
     onActive: () => {
@@ -1336,6 +1364,7 @@ export function HomeView({
     options?: {
       projectKind?: ProjectKind;
       chipId?: string;
+      prototypeSubtypeId?: string | null;
       inputs?: Record<string, unknown>;
       inputFields?: InputFieldSpec[];
       queryTemplate?: string | null;
@@ -1423,6 +1452,7 @@ export function HomeView({
       lastRenderedPrompt: suppressPromptUpdate ? null : optimisticPrompt,
       projectKind: options?.projectKind ?? null,
       chipId: options?.chipId ?? null,
+      prototypeSubtypeId: options?.prototypeSubtypeId ?? null,
       mediaSurface: options?.mediaSurface ?? null,
       projectMetadata: homeCreateProjectMetadata(
         options?.projectKind ?? null,
@@ -1573,6 +1603,7 @@ export function HomeView({
     options?: {
       projectKind?: ProjectKind;
       chipId?: string;
+      prototypeSubtypeId?: string | null;
       inputs?: Record<string, unknown>;
       inputFields?: InputFieldSpec[];
       queryTemplate?: string | null;
@@ -1798,9 +1829,25 @@ export function HomeView({
       writeHomeComposerChipDraft(null);
       return;
     }
+    const restoredSubtype = prototypeSubChipForSlug(restore.prototypeSubtypeId ?? null);
+    const restoredActionChip = restoredSubtype?.actionChipId
+      ? findChip(restoredSubtype.actionChipId)
+      : restore.chipId
+        ? findChip(restore.chipId)
+        : null;
+    const restoredAction = restoredActionChip?.action;
     requestActivePlugin(record, undefined, {
       chipId: restore.chipId ?? undefined,
+      prototypeSubtypeId: restoredSubtype?.slug ?? null,
       projectKind: restore.projectKind ?? undefined,
+      inputs:
+        restoredAction?.kind === 'apply-scenario' || restoredAction?.kind === 'apply-figma-migration'
+          ? restoredAction.inputs
+          : undefined,
+      projectMetadata:
+        restoredAction?.kind === 'apply-scenario' || restoredAction?.kind === 'apply-figma-migration'
+          ? restoredAction.projectMetadata ?? null
+          : null,
       replaceWithoutConfirmation: true,
       suppressPromptUpdate: true,
       deferApply: true,
@@ -1899,6 +1946,7 @@ export function HomeView({
     // active when preset cards are visible, so reuse its project kind/metadata.
     void usePlugin(record, promptText, {
       chipId,
+      prototypeSubtypeId: active?.prototypeSubtypeId ?? null,
       projectKind: active?.projectKind ?? undefined,
       projectMetadata: active?.projectMetadata ?? null,
       deferApply: true,
@@ -2162,7 +2210,8 @@ export function HomeView({
 
   function clearActivePlugin() {
     if (active?.explicitPick && active.chipId) {
-      const chip = findChip(active.chipId);
+      const prototypeSubtype = prototypeSubChipForSlug(active.prototypeSubtypeId);
+      const chip = findChip(prototypeSubtype?.actionChipId ?? active.chipId);
       const action = chip?.action;
       if (
         chip &&
@@ -2189,7 +2238,8 @@ export function HomeView({
             );
             void usePlugin(record, undefined, {
               projectKind: composer.projectKind,
-              chipId: chip.id,
+              chipId: active.chipId,
+              prototypeSubtypeId: active.prototypeSubtypeId,
               inputs: composer.inputs,
               inputFields: composer.fields,
               queryTemplate: composer.queryTemplate,
@@ -2204,7 +2254,8 @@ export function HomeView({
           }
           void usePlugin(record, undefined, {
             projectKind: action.projectKind,
-            chipId: chip.id,
+            chipId: active.chipId,
+            prototypeSubtypeId: active.prototypeSubtypeId,
             inputs: action.inputs,
             projectMetadata: action.projectMetadata ?? null,
             suppressPromptUpdate: true,
@@ -2351,8 +2402,22 @@ export function HomeView({
   // Pure UI-state mapping — the heavy lifting is delegated back to
   // existing handlers. Migration chips that don't have a bound plugin
   // (`open-template-picker`) forward to callbacks threaded in from EntryShell.
-  function pickChip(chip: HomeHeroChip) {
+  function pickChip(
+    chip: HomeHeroChip,
+    selection?: { activeChipId?: string; prototypeSubtypeId?: string | null },
+  ) {
     setError(null);
+    // Mobile and Wireframe remain internal executable catalog actions, but
+    // their visible Home parent is Prototype. Normalize legacy/direct callers
+    // here so placeholder scenarios and persisted intents cannot resurrect a
+    // removed top-level chip.
+    const legacyPrototypeSubtype = prototypeSubChipForActionChipId(chip.id);
+    const activeChipId =
+      selection?.activeChipId ?? (legacyPrototypeSubtype ? 'prototype' : chip.id);
+    const prototypeSubtypeId =
+      selection?.prototypeSubtypeId !== undefined
+        ? selection.prototypeSubtypeId
+        : legacyPrototypeSubtype?.slug ?? null;
     // P0 ui_click area=chat_composer element=plugin_chip|action_chip. The
     // chip's `action.kind` discriminates: plugin-bound chips
     // (apply-scenario / apply-figma-migration) route to a plugin; the rest
@@ -2395,7 +2460,8 @@ export function HomeView({
           );
           requestActivePlugin(record, undefined, {
             projectKind: composer.projectKind,
-            chipId: chip.id,
+            chipId: activeChipId,
+            prototypeSubtypeId,
             inputs: composer.inputs,
             inputFields: composer.fields,
             queryTemplate: composer.queryTemplate,
@@ -2415,7 +2481,8 @@ export function HomeView({
         }
         const pluginOptions = {
           projectKind: chip.action.projectKind,
-          chipId: chip.id,
+          chipId: activeChipId,
+          prototypeSubtypeId,
           inputs: chip.action.inputs,
           projectMetadata: chip.action.projectMetadata ?? null,
         };
@@ -2469,6 +2536,15 @@ export function HomeView({
     }
   }
 
+  function pickPrototypeSubtype(sub: HomeHeroSubChip | null) {
+    const actionChip = findChip(sub?.actionChipId ?? 'prototype');
+    if (!actionChip) return;
+    pickChip(actionChip, {
+      activeChipId: 'prototype',
+      prototypeSubtypeId: sub?.slug ?? null,
+    });
+  }
+
   // Consume a one-shot Home composer chip intent (e.g. "Use in new chat" on the
   // Brands tab requesting the Prototype scenario). The entry shell keeps
   // HomeView mounted across view switches, so we react to the intent event
@@ -2519,10 +2595,17 @@ export function HomeView({
       action?.kind === 'apply-scenario'
         ? plugins.find((plugin) => plugin.id === action.pluginId) ?? null
         : null;
+    const nestedPrototypeSubtype = prototypeSubChipForActionChipId(chip?.id ?? null);
+    const activeScenarioChipId = nestedPrototypeSubtype ? 'prototype' : chip?.id ?? null;
     // When the user already picked this template (the carousel-over-a-selected-
     // template case), its binding is live -- reuse it instead of re-applying,
     // which would reset the resolved snapshot and re-fire chip analytics.
-    const alreadyBound = Boolean(chip && active?.chipId === chip.id && !active.explicitPick);
+    const alreadyBound = Boolean(
+      chip &&
+      active?.chipId === activeScenarioChipId &&
+      active?.prototypeSubtypeId === (nestedPrototypeSubtype?.slug ?? null) &&
+      !active.explicitPick,
+    );
     if (chip && record && !alreadyBound) {
       pickChip(chip);
     } else if (!chip || !record) {
@@ -2534,7 +2617,7 @@ export function HomeView({
     setPromptEditedByUser(true);
     setPendingCarouselSubmit({
       text: scenario.text,
-      chipId: chip && (record || alreadyBound) ? scenario.chipId : null,
+      chipId: chip && (record || alreadyBound) ? activeScenarioChipId : null,
     });
   }
 
@@ -2568,9 +2651,18 @@ export function HomeView({
       element: 'send_button',
     });
     let submittedActive = active;
+    // The OD Next automatic route is keyed by the exact product route, not by
+    // the top-level chip: a nested Prototype scene that carries its own catalog
+    // action (Mobile / Wireframe) is that action's route, so it must not be
+    // laundered into the automatic Prototype route. Mirrors the effective-chip
+    // resolution in `clearActivePlugin`.
+    const submittedRouteChipId =
+      prototypeSubChipForSlug(submittedActive?.prototypeSubtypeId ?? null)?.actionChipId
+      ?? submittedActive?.chipId
+      ?? null;
     const automaticStrategyTaskProfile = sessionMode === 'design'
       && submittedActive?.explicitPick !== true
-      ? automaticStrategyTaskProfileForRouteId(submittedActive?.chipId)
+      ? automaticStrategyTaskProfileForRouteId(submittedRouteChipId)
       : null;
     // Pre-empt the run only when the user could actually fix it here. On the
     // seeded-brief 「使用」 path there is no field to fill, so we let the send
@@ -2707,8 +2799,8 @@ export function HomeView({
       // route through the default design router; in Ask mode they stay plain
       // chat conversations with no hidden router plugin.
       const resolvedSkillId = submittedActive ? null : activeSkill?.id ?? null;
-      const submittedChip = submittedActive?.chipId
-        ? findChip(submittedActive.chipId)
+      const submittedChip = submittedRouteChipId
+        ? findChip(submittedRouteChipId)
         : null;
       const productAutomaticScenario = submittedChip?.action.kind === 'apply-scenario'
         && submittedChip.action.automaticDefault === true
@@ -2892,6 +2984,7 @@ export function HomeView({
         activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
         activeSkillRecord={activeSkill}
         activeChipId={active?.chipId ?? null}
+        activePrototypeSubtypeId={active?.prototypeSubtypeId ?? null}
         showActivePluginChip={showActivePluginChip}
         onClearActivePlugin={clearActivePlugin}
         onClearActiveChip={clearActiveChipSelection}
@@ -2932,7 +3025,11 @@ export function HomeView({
         onRemoveFile={removeStagedFile}
         onImportFigma={() => setFigmaModalOpen(true)}
         pluginOptions={plugins}
-        pluginsLoading={pluginsLoading}
+        pluginsLoading={
+          pluginsLoading
+          || workspaceContextState.loading
+          || workspaceContextState.identityChangePending === true
+        }
         skillOptions={selectableSkills}
         skillsLoading={skillsLoading}
         mcpOptions={enabledMcpServers}
@@ -2957,6 +3054,7 @@ export function HomeView({
         onPickMcp={useMcpServer}
         onPickConnector={useConnector}
         onPickChip={pickChip}
+        onPickPrototypeSubtype={pickPrototypeSubtype}
         contextItemCount={contextItemCount}
         error={error}
         workingDir={workingDir}

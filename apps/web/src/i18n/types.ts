@@ -1375,7 +1375,6 @@ export interface Dict {
   'homeHero.chip.webClone': string;
   'homeHero.chip.liveArtifact': string;
   'homeHero.chip.deck': string;
-  'homeHero.chip.marketing': string;
   'homeHero.chip.image': string;
   'homeHero.chip.video': string;
   'homeHero.chip.hyperframes': string;
@@ -1400,7 +1399,6 @@ export interface Dict {
   'homeHero.chip.wireframeDesc': string;
   'homeHero.chip.mobileDesc': string;
   'homeHero.chip.deckDesc': string;
-  'homeHero.chip.marketingDesc': string;
   'homeHero.chip.documentDesc': string;
   'homeHero.chip.imageDesc': string;
   'homeHero.chip.videoDesc': string;
@@ -1417,7 +1415,6 @@ export interface Dict {
   'homeHero.chip.wireframeNext': string;
   'homeHero.chip.mobileNext': string;
   'homeHero.chip.deckNext': string;
-  'homeHero.chip.marketingNext': string;
   'homeHero.chip.documentNext': string;
   'homeHero.chip.imageNext': string;
   'homeHero.chip.videoNext': string;
