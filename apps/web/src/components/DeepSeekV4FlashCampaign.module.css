@@ -272,6 +272,15 @@
   border-radius: 999px;
 }
 
+.goWelcomeTerms {
+  display: grid;
+  gap: 2px;
+  margin: 9px 2px 0;
+  color: #747970;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
 .goWelcomeModal .goWelcomePrimary {
   display: flex;
   align-items: center;
@@ -499,7 +508,17 @@
   text-decoration: underline;
 }
 
-@media (max-width: 560px) {
+@media (max-height: 477px) {
+  .goWelcomeBackdrop { padding-block: 12px; }
+
+  .goWelcomeModal {
+    min-height: 0;
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+  }
+}
+
+@media (max-width: 658px) {
   .goWelcomeBackdrop { padding: 12px; }
 
   .goWelcomeModal {

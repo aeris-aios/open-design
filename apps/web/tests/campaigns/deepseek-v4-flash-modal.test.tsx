@@ -18,7 +18,9 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getGoPlanCampaignCopy } from '../../src/campaigns/go-plan-content';
 import { DeepSeekV4FlashCampaign } from '../../src/components/DeepSeekV4FlashCampaign';
+import { I18nProvider } from '../../src/i18n';
 
 const trackSpy = vi.fn();
 
@@ -133,6 +135,28 @@ describe('the modal never re-opens for a seen campaign (no URL override left)', 
 });
 
 describe('unpaid Go path opens public Pricing', () => {
+  it('renders the complete modal and accessible labels from the active locale', () => {
+    const copy = getGoPlanCampaignCopy('fr');
+
+    render(
+      <I18nProvider initial="fr">
+        <DeepSeekV4FlashCampaign audience="unpaid" active />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: copy.closeAria })).toBeVisible();
+    expect(screen.getByText(copy.newBadge, { exact: true })).toBeVisible();
+    expect(screen.getByText(copy.eyebrow, { exact: true })).toBeVisible();
+    expect(screen.getByRole('heading', { name: copy.headline })).toBeVisible();
+    expect(screen.getByText(copy.description, { exact: true })).toBeVisible();
+    expect(screen.getByRole('group', { name: copy.providersAria })).toBeVisible();
+    expect(screen.getByText(copy.benefit, { exact: true })).toBeVisible();
+    expect(screen.getAllByText(copy.status, { exact: true })).toHaveLength(3);
+    expect(screen.getByText(copy.renewal, { exact: true })).toBeVisible();
+    expect(screen.getByText(copy.boundary, { exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: copy.cta })).toBeVisible();
+  });
+
   it('opens the locale-neutral comparison page', () => {
     const open = vi.fn();
     vi.stubGlobal('open', open);

@@ -45,9 +45,10 @@ describe('Go plan touchpoints', () => {
       'benefit',
       'status',
       'cta',
-      'firstMonth',
       'renewal',
       'boundary',
+      'closeAria',
+      'providersAria',
       'workbenchBadge',
       'workbenchBadgeAria',
     ] as const;

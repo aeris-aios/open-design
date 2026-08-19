@@ -6,6 +6,7 @@ import {
   captureVisualTarget,
   configureVisualPage,
   gotoVisualHome,
+  mockSignedInVelaAccount,
   scrollVisualLocatorIntoStableView,
   VISUAL_AMR_AGENT,
   VISUAL_CLI_AGENTS,
@@ -55,6 +56,39 @@ test('[P2] captures the visual home harness', async ({ page }) => {
   await waitForVisualProjects(page, []);
 
   await captureVisual(page, 'visual-home');
+});
+
+test('[P2] captures the Go campaign at narrow and short viewport boundaries', async ({ page }) => {
+  test.setTimeout(T.xlong);
+
+  await page.clock.setFixedTime('2026-08-21T00:00:00+08:00');
+  await page.setViewportSize({ width: 600, height: 720 });
+  await configureVisualPage(page, { projects: [] });
+  await mockSignedInVelaAccount(page, { plan: 'free' });
+  await gotoVisualHome(page);
+
+  const dialog = page.getByTestId('deepseek-v4-flash-campaign-dialog');
+  const close = page.getByRole('button', { name: 'Close dialog' });
+  const cta = page.getByRole('button', { name: 'View Go plan' });
+  await expect(dialog).toBeVisible();
+  await expect(close).toBeVisible();
+  await expect(cta).toBeVisible();
+  await expectInsideViewport(page, dialog);
+  await expectInsideViewport(page, close);
+  await expectInsideViewport(page, cta);
+  await captureVisual(page, 'visual-go-campaign-600');
+
+  await page.setViewportSize({ width: 760, height: 400 });
+  await expect(close).toBeVisible();
+  await expectInsideViewport(page, dialog);
+  await expectInsideViewport(page, close);
+  await expect.poll(async () => dialog.evaluate((element) => (
+    element.scrollHeight > element.clientHeight
+  ))).toBe(true);
+  await captureVisual(page, 'visual-go-campaign-short-height');
+  await cta.scrollIntoViewIfNeeded();
+  await expect(cta).toBeVisible();
+  await expectInsideViewport(page, cta);
 });
 
 test('[P2] captures the home plugin catalog surface', async ({ page }) => {
@@ -228,4 +262,18 @@ async function openVisualPluginsCatalog(page: import('@playwright/test').Page) {
 
 function pluginMarketplaceCard(root: import('@playwright/test').Locator, title: string) {
   return root.locator('article.plugin-marketplace__item').filter({ hasText: title }).first();
+}
+
+async function expectInsideViewport(
+  page: import('@playwright/test').Page,
+  locator: import('@playwright/test').Locator,
+): Promise<void> {
+  const viewport = page.viewportSize();
+  const box = await locator.boundingBox();
+  expect(viewport).not.toBeNull();
+  expect(box).not.toBeNull();
+  expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual((viewport?.width ?? 0) + 1);
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual((viewport?.height ?? 0) + 1);
 }

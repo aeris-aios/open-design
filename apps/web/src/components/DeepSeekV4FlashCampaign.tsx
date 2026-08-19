@@ -6,6 +6,7 @@ import {
   formatDeepSeekV4FlashCampaignCountdown,
   type DeepSeekV4FlashCampaignAudience,
 } from '../campaigns/deepseek-v4-flash';
+import { getGoPlanCampaignCopy } from '../campaigns/go-plan-content';
 import { GO_PLAN_CAMPAIGN, GO_PLAN_PRICING_URL } from '../campaigns/go-plan';
 import { useAnalytics } from '../analytics/provider';
 import {
@@ -96,7 +97,7 @@ export function DeepSeekV4FlashCampaign({
   installationId = null,
 }: Props) {
   const { locale, t } = useI18n();
-  const isZh = locale === 'zh-CN' || locale === 'zh-TW';
+  const goPlanCopy = getGoPlanCampaignCopy(locale);
   const analytics = useAnalytics();
   const [modalOpen, setModalOpen] = useState(false);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -224,32 +225,32 @@ export function DeepSeekV4FlashCampaign({
           variant="ghost"
           size="icon"
           className={styles.goWelcomeClose}
-          aria-label={isZh ? '关闭弹窗' : 'Close dialog'}
+          aria-label={goPlanCopy.closeAria}
           onClick={closeModal}
         >
           <Icon name="close" size={16} />
         </Button>
 
         <div className={styles.goWelcomeVisual}>
-          <span>NEW!</span>
+          <span>{goPlanCopy.newBadge}</span>
           <div className={styles.goWelcomeLockup} aria-hidden="true">
             <strong>GO</strong>
             <b><small>$</small>5</b>
           </div>
-          <small>{isZh ? '更轻松地开始使用 OpenDesign' : 'A lighter way to start with OpenDesign'}</small>
+          <small>{goPlanCopy.eyebrow}</small>
         </div>
 
         <div className={styles.goWelcomeCopy}>
-          <h2 id={titleId}>
-            {isZh ? '人人可用的低成本设计方案' : <>Low-cost design plan<br />for everyone</>}
-          </h2>
+          <h2 id={titleId}>{goPlanCopy.headline}</h2>
           <p id={descriptionId} className={styles.goWelcomeSubtitle}>
-            {isZh
-              ? '以更低成本使用专业设计模型，让每一个想法更快成为作品。'
-              : 'Professional design intelligence at a lower cost—so every idea moves faster from prompt to finished work.'}
+            {goPlanCopy.description}
           </p>
 
-          <div className={styles.goWelcomeModelLogos} aria-label={isZh ? 'Go 套餐可用模型厂商' : 'Model providers available on Go'}>
+          <div
+            className={styles.goWelcomeModelLogos}
+            role="group"
+            aria-label={goPlanCopy.providersAria}
+          >
             {[
               { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek' },
               { src: GO_PLAN_ZHIPU_ICON, label: 'GLM', className: styles.goWelcomeZhipuLogo },
@@ -262,7 +263,7 @@ export function DeepSeekV4FlashCampaign({
           </div>
 
           <div className={styles.goWelcomePlanBenefit}>
-            <strong>{isZh ? '3 个热门模型无限使用' : '3 popular models unlimited'}</strong>
+            <strong>{goPlanCopy.benefit}</strong>
             <ul>
               {[
                 { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek V4 Flash' },
@@ -273,14 +274,19 @@ export function DeepSeekV4FlashCampaign({
                   <span className={styles.goWelcomeBenefitModel}>
                     <i className={className}><img src={src} alt="" /></i>{label}
                   </span>
-                  <small>{isZh ? '无限使用' : 'UNLIMITED'}</small>
+                  <small>{goPlanCopy.status}</small>
                 </li>
               ))}
             </ul>
           </div>
 
+          <p className={styles.goWelcomeTerms}>
+            <span>{goPlanCopy.renewal}</span>
+            <span>{goPlanCopy.boundary}</span>
+          </p>
+
           <Button className={styles.goWelcomePrimary} onClick={takeAction}>
-            {isZh ? '查看 Go 套餐 · 限时 5 折' : 'View Go plan · Limited-time 50% off'}
+            {goPlanCopy.cta}
             <Icon name="arrow-right" size={15} />
           </Button>
         </div>

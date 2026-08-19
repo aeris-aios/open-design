@@ -61,6 +61,15 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     );
   });
 
+  it('collapses the Go modal before its fixed tracks overflow and scrolls short viewports', () => {
+    expect(campaignModalStyles).toMatch(
+      /@media \(max-width: 658px\)[\s\S]*?\.goWelcomeModal\s*\{[\s\S]*?grid-template-columns: 1fr;[\s\S]*?overflow: auto;/,
+    );
+    expect(campaignModalStyles).toMatch(
+      /@media \(max-height: 477px\)[\s\S]*?\.goWelcomeModal\s*\{[\s\S]*?min-height: 0;[\s\S]*?overflow: auto;/,
+    );
+  });
+
   it('reuses the top-right campaign slot for Go and DeepSeek audiences', () => {
     expect(entryShellSource).toContain('deepseek-campaign-pricing-badge');
     expect(entryShellSource).toContain("topRightCampaignKind === 'go'");
