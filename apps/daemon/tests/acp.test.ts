@@ -2090,6 +2090,31 @@ test('attachAcpSession preserves redacted stderr diagnostics for startup exits',
   assert.equal(JSON.stringify(error).includes(apiKey), false);
 });
 
+test('attachAcpSession redacts stderr credentials split by ANSI sequences', () => {
+  const child = new FakeAcpChild();
+  const events: Array<{ event: string; payload: unknown }> = [];
+  const apiKey = `sk-test-${'a'.repeat(12)}${'b'.repeat(12)}`;
+  const ansiSplitApiKey = `sk-test-${'a'.repeat(12)}\u001b[31m${'b'.repeat(12)}\u001b[0m`;
+
+  attachAcpSession({
+    child: child as never,
+    prompt: 'hello',
+    cwd: '/tmp/od-project',
+    model: null,
+    mcpServers: [],
+    send: (event, payload) => events.push({ event, payload }),
+  });
+
+  child.stderr.write(`API key: ${ansiSplitApiKey}\n`);
+  child.emit('close', 1, null);
+
+  const error = events.find((entry) => entry.event === 'error')?.payload as {
+    error?: { details?: Record<string, unknown> };
+  };
+  assert.equal(error.error?.details?.stderr_tail, 'API key: [REDACTED:sk_key]');
+  assert.equal(JSON.stringify(error).includes(apiKey), false);
+});
+
 test('attachAcpSession classifies exits after initialize as session setup failures', () => {
   const child = new FakeAcpChild();
   const events: Array<{ event: string; payload: unknown }> = [];

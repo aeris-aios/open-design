@@ -944,10 +944,12 @@ export function attachAcpSession({
     clearStageTimer();
     parser.flush();
     if (!finished && !aborted && !fatal) {
-      const stderrTail = redactSecrets(acpStderrTail)
-        .replace(/\u001B\[[0-?]*[ -/]*[@-~]/gu, '')
-        .replace(/\r\n?/gu, '\n')
-        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, '')
+      const stderrTail = redactSecrets(
+        acpStderrTail
+          .replace(/\u001B\[[0-?]*[ -/]*[@-~]/gu, '')
+          .replace(/\r\n?/gu, '\n')
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, ''),
+      )
         .trim()
         .slice(-ACP_STDERR_DIAGNOSTIC_TAIL_LIMIT);
       fail(
