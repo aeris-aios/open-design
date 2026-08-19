@@ -894,6 +894,14 @@ export function safeTaskObservationQualityProjection(
         failureCategory: quality?.result?.error?.category,
         failureDetail: quality?.result?.error?.detail,
         failureStage: quality?.result?.error?.stage,
+        // Terminal process evidence for a failed Run. Classification alone
+        // cannot answer "what did the process actually print and how did it
+        // die", which the single-Run trace always carried.
+        exitCode: quality?.process?.exitCode,
+        signal: quality?.process?.signal,
+        stderr: quality?.process?.stderr,
+        stdout: quality?.process?.stdout,
+        diagnostics: quality?.process?.diagnostics,
         manifestCompleteness: quality?.manifests?.completeness,
         attachmentManifest: quality?.manifests?.attachments,
         artifactManifest: quality?.manifests?.artifacts,

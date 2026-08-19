@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { register } from 'prom-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { startServer } from '../../src/server.js';
 import { classifyRunFailure } from '../../src/run-failure-classification.js';
 import { summarizeRunDiagnosticsForAnalytics } from '../../src/run-diagnostics.js';
 import { deriveRunErrorCode, runResultFromStatus } from '../../src/run-result.js';
@@ -37,27 +37,79 @@ type RunEvent = {
   data: unknown;
 };
 
+type IngestionEvent = { type: string; body: Record<string, any> };
+
+/**
+ * One Run's place in the OD Next task hierarchy as Langfuse received it: the
+ * `strategy-task:<taskExecutionId>` trace plus the `strategy-stage:<stage>`
+ * child span that owns this `runId`.
+ */
+type TaskRunObservation = {
+  trace: IngestionEvent;
+  span: IngestionEvent;
+  taskExecutionId: string;
+};
+
 describe('run failure telemetry smoke', () => {
   const originalEnv = snapshotEnv();
   let started: StartedServer | null = null;
   let binDir: string | null = null;
+  let dataDirs: string[] = [];
   let ingestion: Awaited<ReturnType<typeof startLangfuseIngestion>> | null = null;
   let restoreSetTimeout: (() => void) | null = null;
 
   afterEach(async () => {
     restoreSetTimeout?.();
     restoreSetTimeout = null;
-    await Promise.resolve(started?.shutdown?.());
-    if (started?.server) {
-      await new Promise<void>((resolve) => started?.server.close(() => resolve()));
-    }
-    started = null;
+    await stopDaemon();
     await Promise.resolve(ingestion?.close());
     ingestion = null;
     if (binDir) await rm(binDir, { recursive: true, force: true });
     binDir = null;
+    for (const root of dataDirs) await removeDataDir(root);
+    dataDirs = [];
     restoreEnv(originalEnv);
+    // server.ts registers prom-client metrics on the shared default registry
+    // at import time, so the registry has to be emptied before the next case
+    // re-imports it against its own data root.
+    register.clear();
+    vi.resetModules();
   });
+
+  async function stopDaemon(): Promise<void> {
+    const current = started;
+    started = null;
+    if (!current) return;
+    await Promise.resolve(current.shutdown?.());
+    current.server.closeAllConnections?.();
+    current.server.closeIdleConnections?.();
+    await new Promise<void>((resolve) => current.server.close(() => resolve()));
+  }
+
+  /**
+   * Each case owns its daemon data root.
+   *
+   * `server.ts` resolves `OD_DATA_DIR` into `RUNTIME_DATA_DIR` once at module
+   * import time, so a fresh root only takes effect behind `vi.resetModules()`
+   * plus a dynamic import. Sharing one root across cases let the first case's
+   * failures latch the OD Next rollout stop in SQLite, which silently pushed
+   * later cases onto the legacy single-Run reporter and made their telemetry
+   * assertions pass against a path they were not meant to exercise.
+   */
+  async function startIsolatedServer(): Promise<StartedServer> {
+    await stopDaemon();
+    // A second daemon in the same worker would re-register the prom-client
+    // metrics that server.ts owns, so drop the previous registration first.
+    register.clear();
+    vi.resetModules();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-run-failure-smoke-data-'));
+    dataDirs.push(root);
+    process.env.OD_DATA_DIR = root;
+    const serverModule = await import('../../src/server.js') as unknown as {
+      startServer(options: { port: number; returnServer: true }): Promise<StartedServer>;
+    };
+    return await serverModule.startServer({ port: 0, returnServer: true });
+  }
 
   it('drives representative failed runs through analytics and Langfuse diagnostics', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-run-failure-smoke-bin-'));
@@ -72,6 +124,12 @@ describe('run failure telemetry smoke', () => {
     await writeFakeClaude(binDir, 'claude-upstream', [
       'HTTP 503 Service Unavailable: upstream provider unavailable.',
       'Gateway timeout while waiting for first token.',
+      // stderr is free text, so it can carry a local path. The delivered tail
+      // must be masked before it leaves the daemon — including the wider path
+      // shapes (/opt, /tmp, /private/var, UNC, file://) that only the
+      // Prompt-stack masker covers.
+      'Loaded config from /Users/od-smoke-user/.config/open-design/creds.json',
+      'via /opt/od-smoke-user/state.json.',
     ].join(' '));
     await writeFakeClaude(binDir, 'claude-hang', null);
     await writeFakeDeepseek(binDir, 'deepseek');
@@ -84,15 +142,10 @@ describe('run failure telemetry smoke', () => {
     delete process.env.POSTHOG_KEY;
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '400';
 
-    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
-    await putConfig(started.url, {
-      telemetry: { metrics: true, content: true, artifactManifest: false },
-      privacyDecisionAt: Date.now(),
-    });
-
     const cases = [
       {
         id: 'auth_401',
+        representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-auth') } } },
         expectedCode: 'AGENT_AUTH_REQUIRED',
@@ -104,6 +157,7 @@ describe('run failure telemetry smoke', () => {
       },
       {
         id: 'rate_limit_429',
+        representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-rate-limit') } } },
         expectedCode: 'RATE_LIMITED',
@@ -114,6 +168,7 @@ describe('run failure telemetry smoke', () => {
       },
       {
         id: 'upstream_503',
+        representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-upstream') } } },
         expectedCode: 'UPSTREAM_UNAVAILABLE',
@@ -121,9 +176,15 @@ describe('run failure telemetry smoke', () => {
         expectedDetail: 'upstream_5xx',
         expectedDiagnosticSource: 'error_event',
         expectStderr: true,
+        expectRedactedStderrPath: true,
       },
       {
+        // deepseek is outside OD_NEXT_RUNTIME_PATH_DESCRIPTORS, so the rollout
+        // reports `od_next_rollout_agent_ineligible` and this Run keeps the
+        // compatibility single-Run trace. The same diagnostics must show up
+        // there.
         id: 'context_window',
+        representation: 'single_run',
         agentId: 'deepseek',
         config: { agentCliEnv: { deepseek: { DEEPSEEK_BIN: path.join(binDir, 'deepseek') } } },
         expectedCode: 'AGENT_PROMPT_TOO_LARGE',
@@ -135,6 +196,7 @@ describe('run failure telemetry smoke', () => {
       },
       {
         id: 'hang_timeout',
+        representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-hang') } } },
         expectedCode: 'AGENT_EXECUTION_FAILED',
@@ -146,6 +208,15 @@ describe('run failure telemetry smoke', () => {
     ] as const;
 
     for (const item of cases) {
+      // Every case needs its own daemon and data root. The OD Next rollout
+      // stop latch lives in SQLite and fires for the whole daemon instance
+      // once a task continuation is blocked, so a shared daemon would push
+      // every case after the first back onto the legacy single-Run reporter.
+      started = await startIsolatedServer();
+      await putConfig(started.url, {
+        telemetry: { metrics: true, content: true, artifactManifest: false },
+        privacyDecisionAt: Date.now(),
+      });
       await putConfig(started.url, { agentId: item.agentId, ...item.config });
       const run = await createAndWaitForRun(started.url, {
         caseId: item.id,
@@ -176,18 +247,70 @@ describe('run failure telemetry smoke', () => {
       expect(diagnostics.stderr_present).toBe(item.expectStderr);
 
       await finalizeAssistantMessage(started.url, run);
-      const trace = await ingestion.waitForTrace(run.id);
+      if (item.representation === 'task_hierarchy') {
+        const observed = await ingestion.waitForTaskRunObservation(run.id);
+        // Task hierarchy identity: one trace per task execution, one child
+        // span per Run inside it.
+        expect(observed.trace.body.id, item.id)
+          .toBe(`strategy-task:${observed.taskExecutionId}`);
+        expect(observed.trace.body.name, item.id).toBe('open-design-strategy-task');
+        expect(observed.span.body.traceId, item.id).toBe(observed.trace.body.id);
+        expect(observed.span.body.id, item.id)
+          .toBe(`task-run:${observed.taskExecutionId}:${run.id}`);
+        expect(observed.span.body.name, item.id).toBe('strategy-stage:request');
+
+        const metadata = observed.span.body.metadata;
+        expect('expectedCodes' in item ? item.expectedCodes : [item.expectedCode])
+          .toContain(metadata.errorCode);
+        expect(metadata.failureCategory, item.id).toBe(item.expectedCategory);
+        expect(metadata.failureDetail, item.id).toBe(item.expectedDetail);
+
+        // Diagnostics coverage the single-Run trace used to carry. Failure
+        // classification alone cannot say what the process printed or how it
+        // died, so the hierarchy must keep reporting the stderr tail, the host
+        // close diagnostics, and the terminal exit code / signal.
+        if (item.expectStderr) {
+          expect(metadata.stderr.lineCount, item.id).toBeGreaterThan(0);
+          expect(metadata.stderr.tail.redacted, item.id).toBe(true);
+          expect(metadata.stderr.tail.text.length, item.id).toBeGreaterThan(0);
+        } else {
+          expect(metadata.stderr, item.id).toBeUndefined();
+        }
+        if ('expectRedactedStderrPath' in item && item.expectRedactedStderrPath) {
+          expect(metadata.stderr.tail.text, item.id).not.toContain('/Users/od-smoke-user');
+          expect(metadata.stderr.tail.text, item.id).not.toContain('/opt/od-smoke-user');
+          expect(metadata.stderr.tail.text, item.id).toContain('[REDACTED:');
+        }
+        expect(metadata.diagnostics.diagnostic_source, item.id)
+          .toBe(item.expectedDiagnosticSource);
+        expect(metadata.diagnostics.stderr_present, item.id).toBe(item.expectStderr);
+        expect(run.exitCode !== null || run.signal !== null, item.id).toBe(true);
+        expect(metadata.exitCode ?? null, item.id).toBe(run.exitCode);
+        expect(metadata.signal ?? null, item.id).toBe(run.signal);
+        continue;
+      }
+
+      const caseId: string = item.id;
+      // Widened so the literal `expectStderr` of a single-case branch does not
+      // narrow `item` itself away inside the conditional.
+      const expectStderr: boolean = item.expectStderr;
+      const trace = await ingestion.waitForSingleRunTrace(run.id);
+      expect(trace.body.name, caseId).toBe('open-design-turn');
       expect('expectedCodes' in item ? item.expectedCodes : [item.expectedCode])
         .toContain(trace.body.metadata.error_code);
-      expect(trace.body.metadata.failure_category).toBe(item.expectedCategory);
-      expect(trace.body.metadata.failure_detail).toBe(item.expectedDetail);
-      if (item.expectStderr) {
-        expect(trace.body.metadata.stderr.lineCount).toBeGreaterThan(0);
+      expect(trace.body.metadata.failure_category, caseId).toBe(item.expectedCategory);
+      expect(trace.body.metadata.failure_detail, caseId).toBe(item.expectedDetail);
+      if (expectStderr) {
+        expect(trace.body.metadata.stderr.lineCount, caseId).toBeGreaterThan(0);
       } else {
-        expect(trace.body.metadata.stderr).toBeUndefined();
+        expect(trace.body.metadata.stderr, caseId).toBeUndefined();
       }
+      expect(trace.body.metadata.diagnostics.diagnostic_source, caseId)
+        .toBe(item.expectedDiagnosticSource);
+      expect(trace.body.metadata.diagnostics.stderr_present, caseId)
+        .toBe(expectStderr);
     }
-  }, 60_000);
+  }, 120_000);
 
   it('reclassifies upstream + install/env failures end-to-end through a real daemon run (#3408 P1)', async () => {
     // End-to-end proof for the reclassification: a real agent process emits the
@@ -243,7 +366,7 @@ describe('run failure telemetry smoke', () => {
 
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '5000';
     delete process.env.POSTHOG_KEY;
-    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    started = await startIsolatedServer();
     await putConfig(started.url, {
       telemetry: { metrics: true, content: true, artifactManifest: false },
       privacyDecisionAt: Date.now(),
@@ -287,7 +410,7 @@ describe('run failure telemetry smoke', () => {
       expect(failure?.failure_category, item.bin).toBe(item.category);
       expect(failure?.failure_detail, item.bin).toBe(item.detail);
     }
-  });
+  }, 60_000);
 
   it('reports the terminal Langfuse fallback for headerless run requests', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-run-failure-fallback-bin-'));
@@ -300,7 +423,7 @@ describe('run failure telemetry smoke', () => {
     delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
     delete process.env.POSTHOG_KEY;
 
-    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    started = await startIsolatedServer();
     restoreSetTimeout = accelerateLangfuseTerminalFallbackDelay();
     await putConfig(started.url, {
       agentId: 'claude',
@@ -315,10 +438,12 @@ describe('run failure telemetry smoke', () => {
       message: 'od-failure-smoke-headerless-terminal-fallback',
     });
 
-    const trace = await ingestion.waitForTrace(run.id);
-    expect(trace.body.id).toBe(run.id);
-    expect(trace.body.metadata.error_code).toBe(deriveRunErrorCode(run));
-  });
+    const observed = await ingestion.waitForTaskRunObservation(run.id);
+    expect(observed.trace.body.id).toBe(`strategy-task:${observed.taskExecutionId}`);
+    expect(observed.trace.body.name).toBe('open-design-strategy-task');
+    expect(observed.span.body.id).toBe(`task-run:${observed.taskExecutionId}:${run.id}`);
+    expect(observed.span.body.metadata.errorCode).toBe(deriveRunErrorCode(run));
+  }, 60_000);
 
   it('reports terminal fallback with buffered content when final telemetry never arrives', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-run-failure-buffered-fallback-bin-'));
@@ -331,7 +456,7 @@ describe('run failure telemetry smoke', () => {
     delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
     delete process.env.POSTHOG_KEY;
 
-    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    started = await startIsolatedServer();
     restoreSetTimeout = accelerateLangfuseTerminalFallbackDelay(1000);
     await putConfig(started.url, {
       agentId: 'claude',
@@ -351,10 +476,36 @@ describe('run failure telemetry smoke', () => {
       content: bufferedContent,
       producedFiles: [{ name: 'buffered-fallback.html', kind: 'html', size: 42 }],
     });
-    const trace = await ingestion.waitForTrace(run.id);
-    expect(trace.body.output).toBe(bufferedContent);
-  });
+    const observed = await ingestion.waitForTaskRunObservation(run.id);
+    expect(observed.span.body.output).toBe(bufferedContent);
+  }, 60_000);
 });
+
+/**
+ * OD Next freezes its Run input snapshots to 0o555/0o444, so a plain recursive
+ * remove of the data root can hit EACCES. Restore write permission on the way
+ * down before retrying.
+ */
+async function removeDataDir(root: string): Promise<void> {
+  try {
+    await rm(root, { recursive: true, force: true });
+    return;
+  } catch {
+    // fall through to the permission-restoring retry
+  }
+  const { chmodSync, readdirSync, statSync } = await import('node:fs');
+  const restore = (target: string): void => {
+    try {
+      chmodSync(target, 0o700);
+      if (!statSync(target).isDirectory()) return;
+      for (const entry of readdirSync(target)) restore(path.join(target, entry));
+    } catch {
+      // best effort
+    }
+  };
+  restore(root);
+  await rm(root, { recursive: true, force: true }).catch(() => {});
+}
 
 function snapshotEnv(): Record<string, string | undefined> {
   return {
@@ -364,6 +515,7 @@ function snapshotEnv(): Record<string, string | undefined> {
     OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
     POSTHOG_KEY: process.env.POSTHOG_KEY,
     OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS: process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS,
+    OD_DATA_DIR: process.env.OD_DATA_DIR,
   };
 }
 
@@ -421,12 +573,13 @@ process.exit(0);
 
 async function startLangfuseIngestion(): Promise<{
   url: string;
-  batches: Array<{ batch: Array<{ type: string; body: Record<string, any> }> }>;
-  traces: Array<{ type: string; body: Record<string, any> }>;
+  batches: Array<{ batch: IngestionEvent[] }>;
+  traces: IngestionEvent[];
   close: () => Promise<void>;
-  waitForTrace: (traceId: string) => Promise<{ type: string; body: Record<string, any> }>;
+  waitForTaskRunObservation: (runId: string) => Promise<TaskRunObservation>;
+  waitForSingleRunTrace: (runId: string) => Promise<IngestionEvent>;
 }> {
-  const batches: Array<{ batch: Array<{ type: string; body: Record<string, any> }> }> = [];
+  const batches: Array<{ batch: IngestionEvent[] }> = [];
   const server = await new Promise<Server>((resolve) => {
     const srv = createServer((req, res) => {
       let raw = '';
@@ -446,7 +599,28 @@ async function startLangfuseIngestion(): Promise<{
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('missing ingestion address');
-  const traces = () => batches.flatMap((batch) => batch.batch).filter((item) => item.type === 'trace-create');
+  const events = () => batches.flatMap((batch) => batch.batch);
+  const traces = () => events().filter((item) => item.type === 'trace-create');
+  /**
+   * Locate the task-hierarchy observation that owns one Run.
+   *
+   * PR #7016 replaced the per-Run trace with a task trace
+   * (`strategy-task:<taskExecutionId>`) whose `strategy-stage:<stage>` child
+   * spans are keyed by `runId`, so a Run is found through its span rather than
+   * by looking up a trace whose id is the run id.
+   */
+  const findTaskRunObservation = (runId: string): TaskRunObservation | null => {
+    const span = events().find((item) => (
+      item.type === 'span-create' &&
+      typeof item.body.name === 'string' &&
+      item.body.name.startsWith('strategy-stage:') &&
+      item.body.metadata?.runId === runId
+    ));
+    if (!span) return null;
+    const trace = traces().find((item) => item.body.id === span.body.traceId);
+    if (!trace) return null;
+    return { trace, span, taskExecutionId: span.body.metadata.taskExecutionId };
+  };
   return {
     url: `http://127.0.0.1:${address.port}`,
     batches,
@@ -454,14 +628,25 @@ async function startLangfuseIngestion(): Promise<{
       return traces();
     },
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-    waitForTrace: async (traceId: string) => {
+    waitForTaskRunObservation: async (runId: string) => {
       const started = Date.now();
       while (Date.now() - started < 3000) {
-        const found = traces().find((item) => item.body.id === traceId);
+        const found = findTaskRunObservation(runId);
         if (found) return found;
         await delay(50);
       }
-      throw new Error(`timed out waiting for trace ${traceId}`);
+      throw new Error(`timed out waiting for the task observation owning run ${runId}`);
+    },
+    // Compatibility single-Run trace, still used by Runs the OD Next rollout
+    // does not own (for example a runtime outside its capability gate).
+    waitForSingleRunTrace: async (runId: string) => {
+      const started = Date.now();
+      while (Date.now() - started < 3000) {
+        const found = traces().find((item) => item.body.id === runId);
+        if (found) return found;
+        await delay(50);
+      }
+      throw new Error(`timed out waiting for the single-Run trace ${runId}`);
     },
   };
 }
