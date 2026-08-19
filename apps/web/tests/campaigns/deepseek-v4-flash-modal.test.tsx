@@ -145,7 +145,7 @@ describe('unpaid Go path opens public Pricing', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'View Go plan' }));
+    fireEvent.click(screen.getByRole('button', { name: /^View Go plan/ }));
 
     expect(open).toHaveBeenCalledTimes(1);
     const url = new URL(String(open.mock.calls[0]?.[0]));
@@ -165,7 +165,7 @@ describe('unpaid Go path opens public Pricing', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'View Go plan' }));
+    fireEvent.click(screen.getByRole('button', { name: /^View Go plan/ }));
 
     expect(open).toHaveBeenCalledTimes(1);
     const url = new URL(String(open.mock.calls[0]?.[0]));
@@ -177,7 +177,7 @@ describe('unpaid Go path opens public Pricing', () => {
     vi.stubGlobal('open', vi.fn());
     render(<DeepSeekV4FlashCampaign audience="unpaid" active />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'View Go plan' }));
+    fireEvent.click(screen.getByRole('button', { name: /^View Go plan/ }));
 
     expect(window.localStorage.getItem(
       'open-design:campaign-seen:go-plan-launch-2026',

@@ -43,7 +43,7 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     expect(entryShellSource).not.toContain('open-design.ai/zh/pricing');
   });
 
-  it('uses a restrained green campaign treatment from shared brand tokens', () => {
+  it('reuses the existing DeepSeek badge treatment without Go-only chrome', () => {
     const badgeRule = entryLayoutStyles.match(
       /\.entry-deepseek-campaign-badge\s*\{([^}]*)\}/,
     )?.[1];
@@ -55,7 +55,9 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     expect(entryLayoutStyles).toContain('.entry-deepseek-campaign-badge::before');
     expect(entryLayoutStyles).toContain('background: var(--brand-text)');
     expect(entryLayoutStyles).toContain('.entry-deepseek-campaign-badge svg');
-    expect(entryLayoutStyles).toContain('.entry-go-campaign-new');
+    expect(entryShellSource).toContain('className="entry-deepseek-campaign-badge"');
+    expect(entryLayoutStyles).not.toContain('.entry-go-campaign-new');
+    expect(entryLayoutStyles).not.toContain('.entry-go-campaign-badge');
     expect(badgeRule).not.toContain('color: var(--green)');
     expect(badgeRule).not.toContain('background: transparent');
   });

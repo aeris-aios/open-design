@@ -1684,16 +1684,13 @@ export function EntryShell({
             view === 'home' && topRightCampaignKind ? (
               <button
                 type="button"
-                className={`entry-deepseek-campaign-badge${topRightCampaignKind === 'go' ? ' entry-go-campaign-badge' : ''}`}
+                className="entry-deepseek-campaign-badge"
                 onClick={openCampaignPricing}
                 aria-label={topRightCampaignKind === 'go'
                   ? goPlanCopy.workbenchBadgeAria
                   : t('campaign.deepseekV4Flash.workbenchBadgeAria')}
                 data-testid="deepseek-campaign-pricing-badge"
               >
-                {topRightCampaignKind === 'go' && goPlanCampaignVisibility.visible ? (
-                  <span className="entry-go-campaign-new">{goPlanCopy.newBadge}</span>
-                ) : null}
                 <span>{topRightCampaignKind === 'go'
                   ? goPlanCopy.workbenchBadge
                   : t('campaign.deepseekV4Flash.workbenchBadge')}</span>

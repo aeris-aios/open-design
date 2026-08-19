@@ -1199,18 +1199,6 @@
   color: var(--brand-text);
 }
 
-.entry-go-campaign-badge::before { display: none; }
-
-.entry-go-campaign-new {
-  padding: 2px 5px;
-  border-radius: var(--radius-pill);
-  color: var(--brand-text);
-  background: var(--brand);
-  font-size: 9px;
-  font-weight: 850;
-  letter-spacing: .035em;
-}
-
 .entry-deepseek-campaign-badge:hover {
   border-color: color-mix(in srgb, var(--brand) 70%, var(--border));
   background: var(--brand-soft);

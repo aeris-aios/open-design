@@ -7,7 +7,6 @@ import {
   type DeepSeekV4FlashCampaignAudience,
 } from '../campaigns/deepseek-v4-flash';
 import { GO_PLAN_CAMPAIGN, GO_PLAN_PRICING_URL } from '../campaigns/go-plan';
-import { getGoPlanCampaignCopy } from '../campaigns/go-plan-content';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackDeepSeekCampaignModalClick,
@@ -93,7 +92,7 @@ export function DeepSeekV4FlashCampaign({
   installationId = null,
 }: Props) {
   const { locale, t } = useI18n();
-  const goCopy = getGoPlanCampaignCopy(locale);
+  const isZh = locale === 'zh-CN' || locale === 'zh-TW';
   const analytics = useAnalytics();
   const [modalOpen, setModalOpen] = useState(false);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -162,9 +161,9 @@ export function DeepSeekV4FlashCampaign({
         cta: t('campaign.deepseekV4Flash.paid.cta'),
       }
     : {
-        eyebrow: goCopy.eyebrow,
-        status: goCopy.status,
-        cta: goCopy.cta,
+        eyebrow: '',
+        status: '',
+        cta: '',
       };
   const trackModalClick = (element: 'close' | 'later' | 'use_now' | 'upgrade') => {
     if (!paid) return;
@@ -205,6 +204,87 @@ export function DeepSeekV4FlashCampaign({
     return null;
   }
 
+  if (!paid) {
+    return createPortal(
+      <Dialog
+        id={dialogId}
+        ariaLabelledBy={titleId}
+        ariaDescribedBy={descriptionId}
+        onClose={closeModal}
+        closeOnEscape
+        className={styles.goWelcomeModal}
+        backdropClassName={styles.goWelcomeBackdrop}
+        data-testid="deepseek-v4-flash-campaign-dialog"
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          className={styles.goWelcomeClose}
+          aria-label={isZh ? '关闭弹窗' : 'Close dialog'}
+          onClick={closeModal}
+        >
+          <Icon name="close" size={16} />
+        </Button>
+
+        <div className={styles.goWelcomeVisual}>
+          <span>NEW!</span>
+          <div className={styles.goWelcomeLockup} aria-hidden="true">
+            <strong>GO</strong>
+            <b><small>$</small>5</b>
+          </div>
+          <small>{isZh ? '更轻松地开始使用 OpenDesign' : 'A lighter way to start with OpenDesign'}</small>
+        </div>
+
+        <div className={styles.goWelcomeCopy}>
+          <h2 id={titleId}>
+            {isZh ? '人人可用的低成本设计方案' : <>Low-cost design plan<br />for everyone</>}
+          </h2>
+          <p id={descriptionId} className={styles.goWelcomeSubtitle}>
+            {isZh
+              ? '以更低成本使用专业设计模型，让每一个想法更快成为作品。'
+              : 'Professional design intelligence at a lower cost—so every idea moves faster from prompt to finished work.'}
+          </p>
+
+          <div className={styles.goWelcomeModelLogos} aria-label={isZh ? 'Go 套餐可用模型厂商' : 'Model providers available on Go'}>
+            {[
+              ['/agent-icons/deepseek.svg', 'DeepSeek'],
+              ['/agent-icons/glm.svg', 'GLM'],
+              ['/agent-icons/kimi.svg', 'Kimi'],
+              ['/model-icons/minimax.svg', 'MiniMax'],
+              ['/agent-icons/mimo.svg', 'MiMo'],
+            ].map(([src, label]) => (
+              <span key={label} title={label}><img src={src} alt={label} /></span>
+            ))}
+          </div>
+
+          <div className={styles.goWelcomePlanBenefit}>
+            <strong>{isZh ? '3 个热门模型无限使用' : '3 popular models unlimited'}</strong>
+            <ul>
+              {[
+                ['/agent-icons/deepseek.svg', 'DeepSeek V4 Flash'],
+                ['/agent-icons/deepseek.svg', 'DeepSeek V4 Pro'],
+                ['/agent-icons/glm.svg', 'GLM-5.2'],
+              ].map(([src, label]) => (
+                <li key={label}>
+                  <span className={styles.goWelcomeBenefitModel}>
+                    <i><img src={src} alt="" /></i>{label}
+                  </span>
+                  <small>{isZh ? '无限使用' : 'UNLIMITED'}</small>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <Button className={styles.goWelcomePrimary} onClick={takeAction}>
+            {isZh ? '查看 Go 套餐 · 限时 5 折' : 'View Go plan · Limited-time 50% off'}
+            <Icon name="arrow-right" size={15} />
+          </Button>
+        </div>
+      </Dialog>,
+      document.body,
+    );
+  }
+
   return createPortal(
     <Dialog
       id={dialogId}
@@ -227,55 +307,36 @@ export function DeepSeekV4FlashCampaign({
       </Button>
 
       <p className={styles.eyebrow}>{presentation.eyebrow}</p>
-      <h2 id={titleId} className={styles.title}>
-        {paid ? t('campaign.deepseekV4Flash.headline') : goCopy.headline}
-      </h2>
-      <p id={descriptionId} className={styles.lead}>
-        {paid ? t('campaign.deepseekV4Flash.description') : goCopy.description}
-      </p>
+      <h2 id={titleId} className={styles.title}>{t('campaign.deepseekV4Flash.headline')}</h2>
+      <p id={descriptionId} className={styles.lead}>{t('campaign.deepseekV4Flash.description')}</p>
 
       <div className={styles.modelCard}>
-        <span className={styles.modelMark} aria-hidden="true">{paid ? 'DS' : 'GO'}</span>
+        <span className={styles.modelMark} aria-hidden="true">DS</span>
         <span className={styles.modelCopy}>
-          <strong>{paid ? t('campaign.deepseekV4Flash.benefit') : goCopy.benefit}</strong>
+          <strong>{t('campaign.deepseekV4Flash.benefit')}</strong>
           <small>{presentation.status}</small>
         </span>
         <span className={styles.available}>
-          {paid ? t('campaign.deepseekV4Flash.unlocked') : goCopy.newBadge}
+          {t('campaign.deepseekV4Flash.unlocked')}
         </span>
       </div>
 
-      {paid ? (
-        <>
-          <div className={styles.countdown} aria-label={t('campaign.deepseekV4Flash.countdownLabel')}>
-            <span className={styles.countdownLabel}>{t('campaign.deepseekV4Flash.countdownLabel')}</span>
-            <strong data-testid="deepseek-v4-flash-campaign-countdown">
-              {formatDeepSeekV4FlashCampaignCountdown(countdownNow, t)}
-            </strong>
-            <small>
-              {t('campaign.deepseekV4Flash.windowLabel')}
-              {' · '}
-              {t('campaign.deepseekV4Flash.weekFreeSuffix')}
-            </small>
-          </div>
-          <p className={styles.boundary}>{t('campaign.deepseekV4Flash.boundary')}</p>
-        </>
-      ) : (
-        <>
-          <div className={styles.goOffer}>
-            <strong>$5</strong>
-            <span>{goCopy.firstMonth}</span>
-            <small>{goCopy.renewal}</small>
-          </div>
-          <p className={styles.boundary}>{goCopy.boundary}</p>
-        </>
-      )}
+      <div className={styles.countdown} aria-label={t('campaign.deepseekV4Flash.countdownLabel')}>
+        <span className={styles.countdownLabel}>{t('campaign.deepseekV4Flash.countdownLabel')}</span>
+        <strong data-testid="deepseek-v4-flash-campaign-countdown">
+          {formatDeepSeekV4FlashCampaignCountdown(countdownNow, t)}
+        </strong>
+        <small>
+          {t('campaign.deepseekV4Flash.windowLabel')}
+          {' · '}
+          {t('campaign.deepseekV4Flash.weekFreeSuffix')}
+        </small>
+      </div>
+      <p className={styles.boundary}>{t('campaign.deepseekV4Flash.boundary')}</p>
       <div className={styles.actions}>
-        {paid ? (
-          <Button variant="ghost" className={styles.laterAction} onClick={postponeModal}>
-            {t('campaign.deepseekV4Flash.later')}
-          </Button>
-        ) : null}
+        <Button variant="ghost" className={styles.laterAction} onClick={postponeModal}>
+          {t('campaign.deepseekV4Flash.later')}
+        </Button>
         <Button className={styles.primaryAction} onClick={takeAction}>
           {presentation.cta}
         </Button>
