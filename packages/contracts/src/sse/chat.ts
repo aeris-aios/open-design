@@ -154,10 +154,36 @@ export type DaemonAgentPayload =
     }
   | { type: 'raw'; line: string };
 
+/**
+ * Out-of-band run diagnostics. The payload is discriminated by `type` and is
+ * additive: a client ignores the types it does not know.
+ */
+export interface ChatSseDiagnosticPayload {
+  type: string;
+  [key: string]: unknown;
+}
+
+/**
+ * The daemon is continuing the SAME logical task in a new physical Run. A Full
+ * Plan turn spans several Runs (request -> production) that the user asked for
+ * once, and the continuation carries no user prompt, so the client keeps the
+ * originating turn open and re-points it at `nextRunId` instead of rendering a
+ * second answer.
+ */
+export interface StrategyTaskContinuationDiagnostic extends ChatSseDiagnosticPayload {
+  type: 'strategy_task_continuation';
+  taskExecutionId: string | null;
+  sourceRunId: string;
+  nextRunId: string;
+  inputStage: string | null;
+  taskRunIndex: number | null;
+}
+
 export type ChatSseEvent =
   | SseTransportEvent<'start', ChatSseStartPayload>
   | SseTransportEvent<'agent', DaemonAgentPayload>
   | SseTransportEvent<'stdout', ChatSseChunkPayload>
   | SseTransportEvent<'stderr', ChatSseChunkPayload>
+  | SseTransportEvent<'diagnostic', ChatSseDiagnosticPayload>
   | SseTransportEvent<'error', SseErrorPayload>
   | SseTransportEvent<'end', ChatSseEndPayload>;

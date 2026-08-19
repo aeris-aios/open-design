@@ -15083,6 +15083,23 @@ export async function startServer({
       const retried = finishWithRetryDecision(status, code, signal);
       if (!retried && pendingStrategyContinuation) {
         const continuation = pendingStrategyContinuation;
+        // This turn is not over: the daemon is about to run the next stage of
+        // the SAME logical task, with no user prompt of its own. Tell the
+        // client before the source stream closes, so it keeps one conversation
+        // turn open instead of drawing the continuation as a new answer.
+        const continuationTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
+        design.runs.emit(run, 'diagnostic', {
+          type: 'strategy_task_continuation',
+          taskExecutionId: continuationTask?.taskExecutionId
+            ?? strategyTaskAtStart?.taskExecutionId
+            ?? null,
+          sourceRunId: run.id,
+          nextRunId: continuation.run.id,
+          inputStage: continuationTask?.inputStage ?? null,
+          taskRunIndex: continuationTask?.runs.length
+            ? continuationTask.runs.length - 1
+            : null,
+        });
         reconcileAssistantMessageOnRunEnd(db, design.runs, continuation.run);
         internalRunCreation.start(continuation.run, async () => {
           try {

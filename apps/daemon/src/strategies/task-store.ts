@@ -431,6 +431,56 @@ export function getStrategyTaskExecutionByRunId(
   return row ? rowToTask(db, row) : null;
 }
 
+/**
+ * Map physical Run ids to the logical task turn they belong to.
+ *
+ * A read-side projection for rendering: an OD Next Full Plan spans several
+ * physical Runs (request -> production) that are ONE conversation turn, and a
+ * daemon-issued continuation has no user prompt of its own. Clients need to
+ * know which assistant messages belong to the same turn so a continuation is
+ * not drawn as an answer nobody asked for.
+ *
+ * Deliberately does NOT go through `rowToTask`: this is a projection for
+ * display, so it must stay cheap over a whole conversation and must never let
+ * one unverifiable task record fail the entire message list.
+ */
+export function strategyTaskTurnsForRunIds(
+  db: SqliteDb,
+  runIds: readonly string[],
+): Map<string, { taskExecutionId: string; taskRunIndex: number }> {
+  const turns = new Map<string, { taskExecutionId: string; taskRunIndex: number }>();
+  const unique = [...new Set(runIds.filter((id) => typeof id === 'string' && id))];
+  if (unique.length === 0) return turns;
+  try {
+    const CHUNK = 400;
+    for (let index = 0; index < unique.length; index += CHUNK) {
+      const chunk = unique.slice(index, index + CHUNK);
+      const rows = db.prepare(`
+        SELECT run_id AS runId,
+               task_execution_id AS taskExecutionId,
+               task_run_index AS taskRunIndex
+          FROM strategy_task_runs
+         WHERE run_id IN (${chunk.map(() => '?').join(', ')})
+      `).all(...chunk) as DbRow[];
+      for (const row of rows) {
+        if (
+          typeof row['runId'] !== 'string'
+          || typeof row['taskExecutionId'] !== 'string'
+          || typeof row['taskRunIndex'] !== 'number'
+        ) continue;
+        turns.set(row['runId'], {
+          taskExecutionId: row['taskExecutionId'],
+          taskRunIndex: row['taskRunIndex'],
+        });
+      }
+    }
+  } catch (error) {
+    if (isMissingTaskStoreError(error)) return turns;
+    throw error;
+  }
+  return turns;
+}
+
 export function getAwaitingClarificationStrategyTaskExecution(
   db: SqliteDb,
   input: { projectId: string; conversationId: string },

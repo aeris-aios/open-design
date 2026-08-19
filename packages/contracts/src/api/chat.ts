@@ -906,6 +906,13 @@ export interface ChatMessage {
    * back explicitly and reload recovery follows its active physical Run.
    */
   strategyTaskExecutionId?: string;
+  /**
+   * Position of this message's Run within its logical task chain. A Full Plan
+   * turn spans several physical Runs (request -> production) that the user
+   * asked for once, so only index 0 opens a conversation turn; later indices
+   * continue the same one and must not be drawn as separate answers.
+   */
+  strategyTaskRunIndex?: number;
   /** Number of leading visible characters owned by completed predecessor Runs. */
   strategyTaskPrefixLength?: number;
   /** Number of leading normalized events owned by completed predecessor Runs. */
