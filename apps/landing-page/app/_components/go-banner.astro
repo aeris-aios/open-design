@@ -118,7 +118,7 @@ const apiOrigin =
   }
   .go-banner__close:hover { color: #11120f; }
   .go-banner__close:focus-visible { outline: 3px solid rgb(17 18 15 / 28%); outline-offset: 1px; }
-  :global(html.go-banner-active) { --home-campaign-banner-height: 48px; }
+  :global(html.go-banner-active) { --home-campaign-banner-height: 0px !important; }
   :global(html.go-banner-active .home-campaign-banner) { display: none !important; }
   :global(html.go-banner-active .site-chrome) { top: 48px; }
   @media (max-width: 760px) {
@@ -133,9 +133,6 @@ const apiOrigin =
     }
     .go-banner__link { justify-content: flex-start; font-size: 10px; overflow: hidden; }
     .go-banner__close { right: 10px; }
-    :global(html.go-banner-active) { --home-campaign-banner-height: 48px; }
-    :global(html.go-banner-active .site-chrome) { top: 48px; }
-    :global(html.go-banner-active .hero) { padding-top: calc(92px + 48px); }
   }
   @media (prefers-reduced-motion: reduce) {
     .go-banner__link svg { transition: none; }

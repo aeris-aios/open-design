@@ -466,14 +466,17 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
               <ul class="plan-benefit-list">
                 {tierBenefits[tier].map((benefit, index) => (
-                  <>
-                    <li><b>✓</b><span>{benefit}</span></li>
-                    {bonusPct != null && index === 0 && (
-                      <li class="bonus-benefit">
-                        <span>{isZh ? `限时额外 +${bonusPct}%` : `Limited +${bonusPct}% bonus`}</span>
-                      </li>
-                    )}
-                  </>
+                  <li>
+                    <b>✓</b>
+                    <span>
+                      {benefit}
+                      {bonusPct != null && index === 0 && (
+                        <span class="bonus-benefit">
+                          <span>{isZh ? `限时额外 +${bonusPct}%` : `Limited +${bonusPct}% bonus`}</span>
+                        </span>
+                      )}
+                    </span>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -1112,7 +1115,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .plan-benefit-list .bonus-benefit {
     display: block;
-    margin: 7px 0 13px 23px;
+    margin: 7px 0 1px;
   }
 
   .plan-benefit-list .bonus-benefit > span {

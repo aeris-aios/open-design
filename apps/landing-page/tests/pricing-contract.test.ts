@@ -218,6 +218,20 @@ describe("pricing contract", () => {
     assert.doesNotMatch(individualPlans, /162\+ Skills|151\+ Design Systems/);
   });
 
+  it("keeps three real benefits visible when paid tiers show a bonus badge", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.match(
+      individualPlans,
+      /<li>\s*<b>✓<\/b>\s*<span>\s*\{benefit\}\s*\{bonusPct != null && index === 0 && \(\s*<span class="bonus-benefit">/s,
+    );
+    assert.doesNotMatch(individualPlans, /<li class="bonus-benefit">/);
+    assert.match(
+      individualPlans,
+      /data-benefits-expanded='false'\] \.plan-benefit-list li:nth-child\(n \+ 4\)/,
+    );
+  });
+
   it("keeps the DeepSeek plan benefits without a Pricing campaign banner", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
     const campaign = await readFile(CAMPAIGN_PATH, "utf8");

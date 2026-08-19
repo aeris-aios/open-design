@@ -47,17 +47,15 @@ test('homepage mounts Go ahead of the existing paid-user DeepSeek banner', () =>
   assert.match(banner, /html\.go-banner-active \.home-campaign-banner/);
 });
 
-test('Go banner preserves desktop hero spacing and adds its offset only on mobile', () => {
-  const mobileStylesStart = banner.indexOf('@media (max-width: 760px)');
-  assert.notEqual(mobileStylesStart, -1);
-  assert.doesNotMatch(
-    banner.slice(0, mobileStylesStart),
-    /html\.go-banner-active \.hero[^}]*padding-top/,
-  );
+test('Go banner keeps its sticky height in flow without double-offsetting the mobile hero', () => {
+  assert.match(banner, /\.go-banner\s*\{[^}]*position:\s*sticky;/s);
   assert.match(
-    banner.slice(mobileStylesStart),
-    /html\.go-banner-active \.hero[^}]*padding-top: calc\(92px \+ 48px\)/,
+    banner,
+    /html\.go-banner-active\)\s*\{\s*--home-campaign-banner-height:\s*0px !important;/,
   );
+  assert.match(banner, /html\.go-banner-active \.site-chrome\)\s*\{\s*top:\s*48px;/);
+  assert.doesNotMatch(banner, /html\.go-banner-active \.hero[^}]*padding-top/);
+  assert.match(home, /\.hero\s*\{\s*padding-top:\s*calc\(92px \+ var\(--home-campaign-banner-height\)\);/);
 });
 
 test('Go banner classifies signed-out and unpaid visitors during the fixed window', () => {
@@ -75,18 +73,21 @@ test('Go banner uses the confirmed short copy and links to localized Pricing', (
   for (const locale of Object.keys(expectedGoBannerDetails) as Array<
     keyof typeof expectedGoBannerDetails
   >) {
-    assert.equal(
-      getGoBannerCopy(locale).detail,
-      expectedGoBannerDetails[locale],
+    const copy = getGoBannerCopy(locale);
+    assert.ok(
+      copy.headline.endsWith(expectedGoBannerDetails[locale]),
       locale,
     );
+    assert.doesNotMatch(`${copy.headline} ${copy.ariaLabel}`, /unlimited|无限|無限|무제한|unbegrenzt|illimité|безлимит|ilimitado|illimitato|sınırsız/i);
   }
   for (const locale of localizedPricingLocales) {
     assert.ok(
-      getGoBannerCopy(locale).detail.endsWith(getPricingContent(locale).go.allowance),
+      getGoBannerCopy(locale).headline.endsWith(getPricingContent(locale).go.allowance),
       locale,
     );
   }
+  assert.match(banner, /\{copy\.headline\}/);
+  assert.doesNotMatch(banner, /copy\.detail/);
   assert.match(banner, /localizedHref\('\/pricing\/', locale\)/);
   assert.match(banner, /data-go-banner-cta/);
 });
