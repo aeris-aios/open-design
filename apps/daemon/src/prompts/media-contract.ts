@@ -57,28 +57,31 @@ localized sentence and nothing else:
 - A known local failure: ignore diagnostic wording and use the fixed safe copy
   for its code:
   - \`MEDIA_EXECUTION_DISABLED\`: "Image was not generated: Media generation was
-    disabled for this run (error code: MEDIA_EXECUTION_DISABLED)." Simplified
-    Chinese: \`图片未生成：本次任务未启用图片生成（错误代码：MEDIA_EXECUTION_DISABLED）\`.
+    disabled for this run (error code: \`MEDIA_EXECUTION_DISABLED\`)." Simplified
+    Chinese: 图片未生成：本次任务未启用图片生成（错误代码：\`MEDIA_EXECUTION_DISABLED\`）.
   - \`MEDIA_SURFACE_DENIED\` or \`MEDIA_MODEL_DENIED\`: "Image was not generated:
-    This run does not allow the requested image generation (error code: {code})."
-    Simplified Chinese: \`图片未生成：本次任务不允许所请求的图片生成（错误代码：{code}）\`.
+    This run does not allow the requested image generation (error code: \`{code}\`)."
+    Simplified Chinese: 图片未生成：本次任务不允许所请求的图片生成（错误代码：\`{code}\`）.
   - \`STUB_PROVIDER_DISABLED\`: "Image was not generated: The selected image
-    model has no configured renderer (error code: STUB_PROVIDER_DISABLED)."
-    Simplified Chinese: \`图片未生成：所选图片模型未配置可用的生成器（错误代码：STUB_PROVIDER_DISABLED）\`.
+    model has no configured renderer (error code: \`STUB_PROVIDER_DISABLED\`)."
+    Simplified Chinese: 图片未生成：所选图片模型未配置可用的生成器（错误代码：\`STUB_PROVIDER_DISABLED\`）.
   - \`MEDIA_DISPATCHER_UNREACHABLE\`: "Image was not generated: The local media
-    dispatcher could not be reached (error code: MEDIA_DISPATCHER_UNREACHABLE)."
-    Simplified Chinese: \`图片未生成：无法连接本地媒体生成调度器（错误代码：MEDIA_DISPATCHER_UNREACHABLE）\`.
+    dispatcher could not be reached (error code: \`MEDIA_DISPATCHER_UNREACHABLE\`)."
+    Simplified Chinese: 图片未生成：无法连接本地媒体生成调度器（错误代码：\`MEDIA_DISPATCHER_UNREACHABLE\`）.
   - \`MEDIA_DISPATCH_NOT_INVOKED\`: use this only when image generation was
     expected but no media dispatch command was invoked. Say "Image was not
     generated: The media dispatcher was not invoked (error code:
-    MEDIA_DISPATCH_NOT_INVOKED)." Simplified Chinese:
-    \`图片未生成：未调用媒体生成调度器（错误代码：MEDIA_DISPATCH_NOT_INVOKED）\`.
+    \`MEDIA_DISPATCH_NOT_INVOKED\`)." Simplified Chinese:
+    图片未生成：未调用媒体生成调度器（错误代码：\`MEDIA_DISPATCH_NOT_INVOKED\`）.
   - \`MEDIA_DISPATCH_FAILED\`: "Image was not generated: The media dispatcher
-    failed for an unclassified reason (error code: MEDIA_DISPATCH_FAILED)."
-    Simplified Chinese: \`图片未生成：媒体生成调度失败，原因未分类（错误代码：MEDIA_DISPATCH_FAILED）\`.
+    failed for an unclassified reason (error code: \`MEDIA_DISPATCH_FAILED\`)."
+    Simplified Chinese: 图片未生成：媒体生成调度失败，原因未分类（错误代码：\`MEDIA_DISPATCH_FAILED\`）.
+Render every error code as Markdown inline code so underscores remain visible
+in the rendered chat. Do not emit a bare underscore-delimited code.
+
 - A structured dispatcher or provider error with a non-empty safe public error
   \`code\` and \`message\`: include both fields. For Simplified Chinese, reply
-  exactly \`图片未生成：{message}（错误代码：{code}）\`, substituting the returned
+  exactly 图片未生成：{message}（错误代码：\`{code}\`）, substituting the returned
   values. Never use an unsanitized response body, stderr, or diagnostic field.
 - Any other failure: use \`MEDIA_DISPATCH_FAILED\` and its fixed copy above.
   Do not infer an outage from HTTP status, a placeholder/stub, missing output,

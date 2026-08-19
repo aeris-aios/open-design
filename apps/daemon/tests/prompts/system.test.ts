@@ -451,7 +451,7 @@ describe('composeSystemPrompt', () => {
           locale: 'zh-CN',
           metadata: metadata as any,
         });
-        expect(prompt).toContain('错误代码：{code}');
+        expect(prompt).toContain('错误代码：`{code}`');
         expect(prompt).toContain(
           'public code and message without reclassifying either one from wording or HTTP',
         );

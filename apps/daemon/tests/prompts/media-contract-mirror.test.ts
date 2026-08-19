@@ -62,7 +62,8 @@ describe('MEDIA_USER_REPLY_CONTRACT mirrors', () => {
     expect(normalized).toContain('The media dispatcher was not invoked');
     expect(normalized).toContain('The media dispatcher failed for an unclassified reason');
     expect(daemonBody).toContain('safety_rejection');
-    expect(daemonBody).toContain('错误代码：{code}');
+    expect(daemonBody).toContain('错误代码：\\`MEDIA_EXECUTION_DISABLED\\`');
+    expect(daemonBody).toContain('错误代码：\\`{code}\\`');
     expect(normalized).toContain('structured dispatcher or provider error');
     expect(daemonBody).not.toContain('图片生成服务暂时不可用');
   });
