@@ -1,6 +1,7 @@
-// Experience survey (NPS). Armed by a successful export, rendered globally
-// from App.tsx so it survives the project → home navigation, and retired
-// permanently the moment the user answers or closes it.
+// Experience survey (NPS). Armed by a delivered artifact — the second design
+// run that actually produces one — rendered globally from App.tsx so it
+// survives the project → home navigation, and retired permanently the moment
+// the user answers or closes it.
 //
 // Two questions. The score is the metric and costs one tap; the follow-up asks
 // what to fix first and can be skipped. Anything longer was cut deliberately —
@@ -14,7 +15,7 @@ import styles from './ExperienceSurvey.module.css';
 import {
   SURVEY_DELAY_MS,
   isSurveyRetired,
-  onExportSucceeded,
+  onArtifactDelivered,
   retireSurvey,
 } from './experience-survey-trigger';
 
@@ -139,18 +140,30 @@ export function ExperienceSurvey({
     };
   }, []);
 
-  // Arm on export. The delay gives the user a beat to see their export land
-  // before anything else asks for attention.
+  // Arm on a delivered artifact. The delay gives the user a beat to look at
+  // what the run just produced before anything else asks for attention.
   useEffect(() => {
     if (!metricsConsent) return;
     let armTimer: number | null = null;
     let modalWatcher: MutationObserver | null = null;
+    let typingWatcher: (() => void) | null = null;
+
+    const clearArm = () => {
+      if (armTimer !== null) {
+        window.clearTimeout(armTimer);
+        armTimer = null;
+      }
+      if (typingWatcher) {
+        document.removeEventListener('beforeinput', typingWatcher, true);
+        typingWatcher = null;
+      }
+    };
 
     const reveal = () => {
       if (isSurveyRetired()) return;
       if (isModalOpen()) {
         // Stay armed and wait the dialog out rather than dropping the chance:
-        // the export already happened, and this is the only one we get.
+        // the artifact is already delivered and the dialog will close.
         modalWatcher?.disconnect();
         modalWatcher = new MutationObserver(() => {
           if (isModalOpen()) return;
@@ -167,10 +180,27 @@ export function ExperienceSurvey({
       setVisible(true);
     };
 
-    const unsubscribe = onExportSucceeded(() => {
+    const unsubscribe = onArtifactDelivered(() => {
       if (isSurveyRetired() || exposedRef.current || armTimer !== null) return;
+      // Unlike an export, a delivery is usually the middle of a session rather
+      // than the end of one: the common next move is to type the follow-up
+      // prompt. Sliding a card into the corner at that moment interrupts the
+      // one thing the user is trying to do, so typing during the delay drops
+      // this chance and waits for the next delivery. That is affordable
+      // precisely because deliveries repeat (~13 per user per 30 days) — and
+      // the delivery that finally lands the card is the one after which the
+      // user stopped, which is the honest moment to ask.
+      //
+      // `beforeinput` rather than `keydown`, because an IME is how a large
+      // share of this product's users write a prompt: composing Chinese emits
+      // `keydown` with `key === 'Process'`, which no printable-character test
+      // recognizes. `beforeinput` fires for IME composition, plain typing and
+      // paste alike, and stays quiet for arrow keys, scrolling and shortcuts —
+      // exactly the line we want.
+      typingWatcher = () => clearArm();
+      document.addEventListener('beforeinput', typingWatcher, true);
       armTimer = window.setTimeout(() => {
-        armTimer = null;
+        clearArm();
         reveal();
       }, SURVEY_DELAY_MS);
     });
@@ -178,7 +208,7 @@ export function ExperienceSurvey({
     return () => {
       unsubscribe();
       modalWatcher?.disconnect();
-      if (armTimer !== null) window.clearTimeout(armTimer);
+      clearArm();
     };
   }, [metricsConsent]);
 

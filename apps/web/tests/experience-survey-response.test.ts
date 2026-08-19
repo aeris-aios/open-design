@@ -15,6 +15,7 @@ import {
   EXPERIENCE_SURVEY_ID,
   EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES,
   EXPERIENCE_SURVEY_QUESTION_IDS,
+  EXPERIENCE_SURVEY_TRIGGER,
 } from '../src/analytics/experience-survey-contract';
 
 const ids = EXPERIENCE_SURVEY_QUESTION_IDS;
@@ -89,11 +90,26 @@ describe('experience survey response reporting', () => {
     const shown = capture();
     trackExperienceSurveyShown(shown.track);
     expect(shown.event()).toBe('survey shown');
-    expect(shown.props()).toEqual({ $survey_id: EXPERIENCE_SURVEY_ID });
+    expect(shown.props()).toEqual({
+      $survey_id: EXPERIENCE_SURVEY_ID,
+      trigger: EXPERIENCE_SURVEY_TRIGGER,
+    });
 
     const dismissed = capture();
     trackExperienceSurveyDismissed(dismissed.track);
     expect(dismissed.event()).toBe('survey dismissed');
-    expect(dismissed.props()).toEqual({ $survey_id: EXPERIENCE_SURVEY_ID });
+    expect(dismissed.props()).toEqual({
+      $survey_id: EXPERIENCE_SURVEY_ID,
+      trigger: EXPERIENCE_SURVEY_TRIGGER,
+    });
+  });
+
+  // The trigger moved from a successful export to a delivered artifact. Every
+  // response carries which regime produced it, so the score before and after
+  // the move can be read apart instead of averaged together.
+  it('stamps every survey event with the trigger that armed the card', () => {
+    const sent = capture();
+    trackExperienceSurveySent(sent.track, { recommendation: 7 });
+    expect(sent.props().trigger).toBe(EXPERIENCE_SURVEY_TRIGGER);
   });
 });

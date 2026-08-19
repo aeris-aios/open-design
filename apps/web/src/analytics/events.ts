@@ -195,6 +195,7 @@ import {
   EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES,
   EXPERIENCE_SURVEY_QUESTION_IDS,
   EXPERIENCE_SURVEY_QUESTION_TEXT,
+  EXPERIENCE_SURVEY_TRIGGER,
 } from './experience-survey-contract';
 
 function send<T extends object>(
@@ -1456,11 +1457,17 @@ export function trackWhatsNewPopupClick(
 // PostHog events rather than the v2 schema's own.
 
 export function trackExperienceSurveyShown(track: Track): void {
-  send(track, 'survey shown', { $survey_id: EXPERIENCE_SURVEY_ID });
+  send(track, 'survey shown', {
+    $survey_id: EXPERIENCE_SURVEY_ID,
+    trigger: EXPERIENCE_SURVEY_TRIGGER,
+  });
 }
 
 export function trackExperienceSurveyDismissed(track: Track): void {
-  send(track, 'survey dismissed', { $survey_id: EXPERIENCE_SURVEY_ID });
+  send(track, 'survey dismissed', {
+    $survey_id: EXPERIENCE_SURVEY_ID,
+    trigger: EXPERIENCE_SURVEY_TRIGGER,
+  });
 }
 
 /**
@@ -1490,6 +1497,7 @@ export function trackExperienceSurveySent(
 
   send(track, 'survey sent', {
     $survey_id: EXPERIENCE_SURVEY_ID,
+    trigger: EXPERIENCE_SURVEY_TRIGGER,
     $survey_questions: answered,
     ...responses,
   });
