@@ -254,7 +254,7 @@
   filter: invert(1) brightness(2);
 }
 
-.goWelcomeBenefitModel.goWelcomeBenefitZhipu img {
+.goWelcomeBenefitZhipu img {
   width: 20px;
   height: 20px;
   object-fit: cover;

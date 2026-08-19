@@ -54,6 +54,9 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     expect(campaignModalStyles).toContain('.goWelcomeMimoLogo img');
     expect(campaignModalStyles).toContain('.goWelcomeZhipuLogo img');
     expect(campaignModalStyles).toContain(
+      '.goWelcomeBenefitZhipu img',
+    );
+    expect(campaignModalStyles).not.toContain(
       '.goWelcomeBenefitModel.goWelcomeBenefitZhipu img',
     );
   });
