@@ -1663,7 +1663,27 @@ export interface GoNavEntryClickProps {
   campaign_id: string;
 }
 
+/**
+ * Clicks on the 5-hour popular-model limit card in chat（需求文档触点 ⑤⑥）.
+ *
+ * `tier_has_fallback` 是唯一能把两档拆开的维度：false = Go（阻断式，没有
+ * 池外模型可切），true = Plus 及以上（告知式，可自行切换）。两档的升级
+ * 点击含义相反，混在一个桶里谁都评估不了。
+ * `switch_retry` 预留给告知卡未来的重试信号，当前实现只发 `upgrade`。
+ */
+export interface GoLimitCardClickProps {
+  page_name: 'chat_panel';
+  area: 'go_limit_card';
+  element: 'upgrade' | 'switch_retry';
+  tier_has_fallback: boolean;
+  project_id: string;
+  conversation_id: string | null;
+  assistant_message_id: string;
+  run_id: string | null;
+}
+
 export type UiClickProps =
+  | GoLimitCardClickProps
   | GoNavEntryClickProps
   | GoUpsellModalClickProps
   | EntryNavigationClickProps

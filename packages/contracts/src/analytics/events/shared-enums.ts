@@ -94,7 +94,10 @@ export type TrackingAmrEntrySource =
   // Kept separate so the campaign's handoffs are separable from the
   // balance-gate ones that also start on home.
   | 'home_go_upsell_modal'
-  | 'home_go_badge';
+  | 'home_go_badge'
+  // 与通用 chat_error_upgrade 分开：那个混着余额、鉴权等所有报错场景的
+  // 升级点击，拆不出 5 小时限额这条路径带来的转化。
+  | 'chat_go_limit_upgrade';
 
 // `deepseek_v4_flash` is the finished 8/6-8/13 free week; `deepseek_v4_pro`
 // is the 8/13-8/27 two-model window that follows it. Both stay declared so

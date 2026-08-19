@@ -17,8 +17,10 @@ import { createPortal } from 'react-dom';
 import { hasOdCard } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
+import { resolvePlanLabelTier } from '../collab/team-plan';
 import {
   trackChatPanelClick,
+  trackGoLimitCardClick,
   trackMessageQueueClick,
   trackRunFailedToastSurfaceView,
   trackRunRecoveryActionClick,
@@ -1312,8 +1314,19 @@ export function ChatPane({
         // gateway reported (the instant a model window reopens) can read it back
         // out. Same string the card renders under 「查看详情」.
         failedRunErrorEvent?.detail,
+        // 档位只有 model_window_limit 分支读：两档限额提示的文案不同。
+        resolvePlanLabelTier({ context: workspaceContext }),
       )
     : null;
+  /* 5 小时限额卡（需求文档触点 ⑤⑥）。用 failure_detail 判定，而不是看按钮
+     长相：同一个 upgrade 按钮还服务余额、套餐权限等场景，靠外观区分会把
+     别的场景一起算进本活动。tier_has_fallback 是两张卡唯一的拆档维度。 */
+  const isGoLimitCard =
+    failedRunErrorEvent?.failureDetail === 'model_window_limit';
+  const goLimitHasFallback = (() => {
+    const tier = resolvePlanLabelTier({ context: workspaceContext });
+    return tier === 'plus' || tier === 'pro' || tier === 'max';
+  })();
   const hasInlineAmrAuthorizeFailure = Boolean(
     retryAssistant && onRetry && runFailureUi?.primaryAction === 'authorize',
   );
@@ -2916,9 +2929,25 @@ export function ChatPane({
                               type="button"
                               className="chat-error-action"
                               onClick={() => {
+                                if (isGoLimitCard && retryAssistant) {
+                                  trackGoLimitCardClick(analytics.track, {
+                                    page_name: 'chat_panel',
+                                    area: 'go_limit_card',
+                                    element: 'upgrade',
+                                    tier_has_fallback: goLimitHasFallback,
+                                    project_id: projectId ?? '',
+                                    conversation_id: activeConversationId,
+                                    assistant_message_id: retryAssistant.id,
+                                    run_id: retryAssistant.runId ?? null,
+                                  });
+                                }
                                 const attribution = recordAmrEntry(
                                   analytics.track,
-                                  'chat_error_upgrade',
+                                  // 限额卡用独立来源，否则这条路径的转化会和
+                                  // 余额、鉴权等报错的升级混在一起拆不开。
+                                  isGoLimitCard
+                                    ? 'chat_go_limit_upgrade'
+                                    : 'chat_error_upgrade',
                                   new Date(),
                                   {
                                     metricsConsent:

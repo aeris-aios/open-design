@@ -13,6 +13,7 @@ import type {
   GoUpsellModalClickProps,
   GoNavEntrySurfaceViewProps,
   GoNavEntryClickProps,
+  GoLimitCardClickProps,
   NewProjectModalSurfaceViewProps,
   PluginReplacementModalSurfaceViewProps,
   PluginDetailModalSurfaceViewProps,
@@ -320,6 +321,11 @@ export function trackGoNavEntrySurfaceView(
 
 /** Click on the Go plan nav-rail entry; routes to the console plan chooser. */
 export function trackGoNavEntryClick(track: Track, props: GoNavEntryClickProps): void {
+  send(track, 'ui_click', props);
+}
+
+/** 5 小时限额卡的点击（Go 阻断卡 / Plus+ 告知卡共用，tier_has_fallback 拆档）。 */
+export function trackGoLimitCardClick(track: Track, props: GoLimitCardClickProps): void {
   send(track, 'ui_click', props);
 }
 

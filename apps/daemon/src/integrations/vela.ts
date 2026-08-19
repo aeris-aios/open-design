@@ -63,6 +63,7 @@ const AMR_ENTRY_SOURCES: ReadonlySet<TrackingAmrEntrySource> = new Set([
   // 丢弃且不报错——Open Design 侧新增 entry source 必须同步这里。
   'home_go_upsell_modal',
   'home_go_badge',
+  'chat_go_limit_upgrade',
 ]);
 
 function isCanonicalAmrAuthAttemptId(value: unknown): value is string {
@@ -148,6 +149,7 @@ const AMR_ENTRY_SOURCE_PAGE_BY_SOURCE: Record<
   // Go plan 营销触点（工作台弹窗 / 右上角入口），都在 home 面上
   home_go_upsell_modal: 'home',
   home_go_badge: 'home',
+  chat_go_limit_upgrade: 'chat_panel',
 };
 
 const AMR_ANALYTICS_EVENTS_URL =
