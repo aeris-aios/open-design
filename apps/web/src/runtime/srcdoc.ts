@@ -31,6 +31,7 @@ import {
   MANUAL_EDIT_DISCOVERY_SELECTOR,
   MANUAL_EDIT_SOURCE_PATH_ATTR,
 } from '../edit-mode/bridge';
+import { isApprovedFontStylesheetHref } from './deck-thumbnail-parser';
 
 export type SrcdocOptions = {
   deck?: boolean;
@@ -48,6 +49,9 @@ export type SrcdocOptions = {
   /** Install the live-preview error and white-screen reporting bridge. Keep
    * this disabled for exports, captures, thumbnails, and historical previews. */
   previewObservability?: boolean;
+  /** Let trusted font-CDN stylesheets load without blocking the live preview's
+   * first paint. Keep disabled for exports and other capture surfaces. */
+  deferFontStylesheets?: boolean;
   /**
    * Force every CSS animation/transition to complete instantly so the
    * document settles at its final visual state and stops repainting. Meant
@@ -395,7 +399,10 @@ export function buildSrcdoc(
   const withOdIds = annotateMissingOdIds(withSafeTitle);
   const withSourcePaths = options.editBridge ? annotateManualEditSourcePaths(withOdIds) : withOdIds;
   const withBase = options.baseHref ? injectBaseHref(withSourcePaths, options.baseHref) : withSourcePaths;
-  const withShim = injectSandboxShim(withBase);
+  const withDeferredFonts = options.deferFontStylesheets
+    ? deferTrustedFontStylesheets(withBase)
+    : withBase;
+  const withShim = injectSandboxShim(withDeferredFonts);
   const blockLoadTimeScriptRedirect = htmlHasLoadTimeLocationNavigation(withBase);
   // Always on: a redirect loop can freeze ANY previewed artifact, and the guard
   // is inert on documents that never self-redirect. Injected right after the
@@ -1299,6 +1306,62 @@ function injectManualEditBridge(doc: string): string {
   const withGuard = injectAfterHeadOpen(doc, buildManualEditKeyboardGuard());
   const withStyle = injectBeforeHeadEnd(withGuard, buildManualEditBridgeStyle());
   return injectBeforeBodyEnd(withStyle, buildManualEditBridge(false));
+}
+
+const DEFERRED_FONT_STYLESHEET_ATTR = 'data-od-deferred-font-stylesheet';
+
+function deferTrustedFontStylesheets(doc: string): string {
+  if (typeof DOMParser === 'undefined') return doc;
+  let parsed: Document;
+  try {
+    parsed = new DOMParser().parseFromString(doc, 'text/html');
+  } catch {
+    return doc;
+  }
+
+  let deferred = false;
+  parsed.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]').forEach((link) => {
+    const href = link.getAttribute('href') ?? '';
+    if (!isApprovedFontStylesheetHref(href)) return;
+    const authoredMedia = link.getAttribute('media')?.trim() ?? '';
+    if (authoredMedia.toLowerCase() === 'print') return;
+    link.setAttribute(DEFERRED_FONT_STYLESHEET_ATTR, authoredMedia);
+    link.setAttribute('media', 'print');
+    deferred = true;
+  });
+  if (!deferred) return doc;
+
+  const script = `<script data-od-font-stylesheet-loader>(function(){
+  var attr = '${DEFERRED_FONT_STYLESHEET_ATTR}';
+  var selector = 'link[' + attr + ']';
+  function activate(link){
+    if (!link || !link.hasAttribute(attr)) return;
+    var media = link.getAttribute(attr) || 'all';
+    link.setAttribute('media', media);
+    link.removeAttribute(attr);
+  }
+  function watch(link){
+    if (!link || link.__odFontStylesheetWatched) return;
+    link.__odFontStylesheetWatched = true;
+    link.addEventListener('load', function(){ activate(link); }, { once: true });
+    try { if (link.sheet) activate(link); } catch (_) {}
+  }
+  function scan(root){
+    if (!root) return;
+    if (root.matches && root.matches(selector)) watch(root);
+    var links = root.querySelectorAll ? root.querySelectorAll(selector) : [];
+    for (var i = 0; i < links.length; i += 1) watch(links[i]);
+  }
+  var observer = typeof MutationObserver === 'function' ? new MutationObserver(function(records){
+    for (var i = 0; i < records.length; i += 1) {
+      var added = records[i].addedNodes || [];
+      for (var j = 0; j < added.length; j += 1) scan(added[j]);
+    }
+  }) : null;
+  if (observer && document.documentElement) observer.observe(document.documentElement, { childList: true, subtree: true });
+  scan(document);
+})();</script>`;
+  return injectAfterHeadOpen(serializeHtmlDocument(parsed), script);
 }
 
 function injectAfterHeadOpen(doc: string, payload: string): string {

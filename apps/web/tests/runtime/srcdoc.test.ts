@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { DECK_STRUCTURED_SLIDE_SELECTOR } from '@open-design/contracts/runtime/deck-stage-fallback';
 import { buildSrcdoc } from '../../src/runtime/srcdoc';
@@ -106,6 +106,46 @@ describe('buildSrcdoc', () => {
       srcdoc.indexOf('<script>throw new Error("boot")</script>'),
     );
     expect(buildSrcdoc(html)).not.toContain('data-od-preview-observability');
+  });
+
+  it('defers trusted font stylesheets without changing authored layout CSS', async () => {
+    const parserWindow = new JSDOM('').window;
+    vi.stubGlobal('DOMParser', parserWindow.DOMParser);
+    const fontHref = 'https://fonts.googleapis.com/css2?family=Inter&display=swap';
+    const html = `<!doctype html><html><head>
+      <link href="${fontHref}" rel="stylesheet">
+      <link href="/layout.css" rel="stylesheet">
+    </head><body><main>Preview</main></body></html>`;
+    try {
+      const srcdoc = buildSrcdoc(html, { deferFontStylesheets: true });
+      const document = new JSDOM(srcdoc).window.document;
+      const fontLink = document.querySelector<HTMLLinkElement>('link[href^="https://fonts.googleapis.com/"]');
+      const layoutLink = document.querySelector<HTMLLinkElement>('link[href="/layout.css"]');
+
+      expect(fontLink?.media).toBe('print');
+      expect(fontLink?.hasAttribute('data-od-deferred-font-stylesheet')).toBe(true);
+      expect(layoutLink?.media).toBe('');
+      expect(layoutLink?.hasAttribute('data-od-deferred-font-stylesheet')).toBe(false);
+      expect(srcdoc.indexOf('data-od-font-stylesheet-loader')).toBeLessThan(
+        srcdoc.indexOf('fonts.googleapis.com'),
+      );
+
+      const runtime = new JSDOM(srcdoc, { runScripts: 'dangerously' });
+      await new Promise<void>((resolve) => runtime.window.queueMicrotask(resolve));
+      const runtimeFontLink = runtime.window.document.querySelector<HTMLLinkElement>(
+        'link[href^="https://fonts.googleapis.com/"]',
+      );
+      runtimeFontLink?.dispatchEvent(new runtime.window.Event('load'));
+      expect(runtimeFontLink?.media).toBe('all');
+      expect(runtimeFontLink?.hasAttribute('data-od-deferred-font-stylesheet')).toBe(false);
+      runtime.window.close();
+
+      const unchanged = new JSDOM(buildSrcdoc(html)).window.document;
+      expect(unchanged.querySelector<HTMLLinkElement>('link[href^="https://fonts.googleapis.com/"]')?.media).toBe('');
+    } finally {
+      vi.unstubAllGlobals();
+      parserWindow.close();
+    }
   });
 
   it('echoes the host challenge token from the srcDoc transport readiness probe', () => {
