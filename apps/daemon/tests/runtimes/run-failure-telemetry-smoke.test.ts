@@ -6,6 +6,7 @@ import path from 'node:path';
 import { register } from 'prom-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { claudeAgentDef } from '../../src/runtimes/defs/claude.js';
 import { classifyRunFailure } from '../../src/run-failure-classification.js';
 import { summarizeRunDiagnosticsForAnalytics } from '../../src/run-diagnostics.js';
 import { deriveRunErrorCode, runResultFromStatus } from '../../src/run-result.js';
@@ -29,6 +30,9 @@ type RunStatus = {
   signal: string | null;
   error: string | null;
   errorCode: string | null;
+  /** The daemon's own settled verdict, published on the terminal run status. */
+  failureCategory: string | null;
+  failureDetail: string | null;
   eventsLogPath: string;
 };
 
@@ -145,6 +149,7 @@ describe('run failure telemetry smoke', () => {
     const cases = [
       {
         id: 'auth_401',
+        daemonPublishesVerdict: true,
         representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-auth') } } },
@@ -157,6 +162,7 @@ describe('run failure telemetry smoke', () => {
       },
       {
         id: 'rate_limit_429',
+        daemonPublishesVerdict: true,
         representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-rate-limit') } } },
@@ -168,6 +174,7 @@ describe('run failure telemetry smoke', () => {
       },
       {
         id: 'upstream_503',
+        daemonPublishesVerdict: true,
         representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-upstream') } } },
@@ -185,6 +192,9 @@ describe('run failure telemetry smoke', () => {
         // there.
         id: 'context_window',
         representation: 'single_run',
+        // Rejected during prompt assembly, before the runtime finish path that
+        // stamps run.failureCategory, so the status carries no daemon verdict.
+        daemonPublishesVerdict: false,
         agentId: 'deepseek',
         config: { agentCliEnv: { deepseek: { DEEPSEEK_BIN: path.join(binDir, 'deepseek') } } },
         expectedCode: 'AGENT_PROMPT_TOO_LARGE',
@@ -196,6 +206,7 @@ describe('run failure telemetry smoke', () => {
       },
       {
         id: 'hang_timeout',
+        daemonPublishesVerdict: true,
         representation: 'task_hierarchy',
         agentId: 'claude',
         config: { agentCliEnv: { claude: { CLAUDE_BIN: path.join(binDir, 'claude-hang') } } },
@@ -223,7 +234,7 @@ describe('run failure telemetry smoke', () => {
         agentId: item.agentId,
         message: 'message' in item ? item.message : `od-failure-smoke-${item.id}`,
       });
-      const events = await readRunEvents(run.eventsLogPath);
+      const events = await readCompletedRunEvents(run.eventsLogPath);
       const errorCode = deriveRunErrorCode(run);
       const failure = classifyRunFailure({
         result: runResultFromStatus(run.status),
@@ -241,10 +252,22 @@ describe('run failure telemetry smoke', () => {
       expect(run.status, item.id).toBe('failed');
       expect('expectedCodes' in item ? item.expectedCodes : [item.expectedCode])
         .toContain(errorCode);
-      expect(failure?.failure_category).toBe(item.expectedCategory);
-      expect(failure?.failure_detail).toBe(item.expectedDetail);
-      expect(diagnostics.diagnostic_source).toBe(item.expectedDiagnosticSource);
-      expect(diagnostics.stderr_present).toBe(item.expectStderr);
+      // The daemon computes its own verdict from in-memory events when the
+      // runtime finishes and publishes it on the terminal run status. That is
+      // the value the chat UI, the persisted message, and telemetry consume,
+      // so assert it directly instead of only re-deriving a verdict test-side.
+      // A request rejected before the runtime finish path never reaches that
+      // assignment, so each case states which side of the boundary it is on
+      // rather than tolerating a null.
+      expect(run.failureCategory, item.id)
+        .toBe(item.daemonPublishesVerdict ? item.expectedCategory : null);
+      expect(run.failureDetail, item.id)
+        .toBe(item.daemonPublishesVerdict ? item.expectedDetail : null);
+      // Re-derivation from the completed durable log must agree with it.
+      expect(failure?.failure_category, item.id).toBe(item.expectedCategory);
+      expect(failure?.failure_detail, item.id).toBe(item.expectedDetail);
+      expect(diagnostics.diagnostic_source, item.id).toBe(item.expectedDiagnosticSource);
+      expect(diagnostics.stderr_present, item.id).toBe(item.expectStderr);
 
       await finalizeAssistantMessage(started.url, run);
       if (item.representation === 'task_hierarchy') {
@@ -395,7 +418,7 @@ describe('run failure telemetry smoke', () => {
         agentId: 'claude',
         message: `od-amr-reclassify-${item.bin}`,
       });
-      const events = await readRunEvents(run.eventsLogPath);
+      const events = await readCompletedRunEvents(run.eventsLogPath);
       const errorCode = deriveRunErrorCode(run);
       const failure = classifyRunFailure({
         result: runResultFromStatus(run.status),
@@ -540,6 +563,26 @@ function accelerateLangfuseTerminalFallbackDelay(delayMs = 0): () => void {
   return () => spy.mockRestore();
 }
 
+/**
+ * Help text the fake Claude CLI advertises, derived from the runtime def so it
+ * can never drift from what the daemon probes for.
+ *
+ * This is not cosmetic. `detectAgents` parses `claude -p --help` for each flag
+ * in `capabilityFlags` and caches the result on `agentCapabilities`. Once a
+ * physical Run is mapped to an OD Next strategy task, `buildArgs` sets
+ * `observeNativeChildBehavior`, and it THROWS when the probe never saw
+ * `--forward-subagent-text`. A fake that omits the flag therefore fails the Run
+ * inside the daemon before the agent is ever spawned: the Run reports that
+ * host-side TypeError (classified `process_exit`) instead of the auth /
+ * rate-limit / timeout failure the case scripted, and whether it does depends
+ * on when the task mapping becomes visible to `startChatRun`. Advertising the
+ * full probed flag set removes that ordering dependence — the fake always
+ * spawns and always produces its intended failure.
+ */
+const FAKE_CLAUDE_HELP = `Usage: claude -p ${
+  Object.keys(claudeAgentDef.capabilityFlags).map((flag) => `[${flag}]`).join(' ')
+}`;
+
 async function writeFakeClaude(dir: string, name: string, stderr: string | null): Promise<void> {
   const bin = path.join(dir, name);
   const body = stderr === null
@@ -551,7 +594,7 @@ if (process.argv.includes('--version')) {
   process.exit(0);
 }
 if (process.argv.includes('--help')) {
-  console.log('Usage: claude -p [--include-partial-messages] [--add-dir DIR]');
+  console.log(${JSON.stringify(FAKE_CLAUDE_HELP)});
   process.exit(0);
 }
 ${body}`, 'utf8');
@@ -718,6 +761,29 @@ async function readRunEvents(file: string): Promise<RunEvent[]> {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as RunEvent);
+}
+
+/**
+ * Read a Run's durable event log once it is complete.
+ *
+ * The daemon emits `end` as a Run's final event and only then closes the log
+ * write stream, so a log that already carries an `end` record carries every
+ * earlier record too. Terminal Run status is published to `GET /api/runs/:id`
+ * before that buffered write has necessarily reached disk, so sampling the file
+ * the instant the status flips can classify a log whose error record is still
+ * in flight. This waits for the log's own completion marker — not for the
+ * assertion to pass, and not for a fixed delay.
+ */
+async function readCompletedRunEvents(file: string): Promise<RunEvent[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const events = await readRunEvents(file);
+    if (events.some((event) => event.event === 'end')) return events;
+    if (Date.now() >= deadline) {
+      throw new Error(`run log ${file} never recorded a terminal end event`);
+    }
+    await delay(25);
+  }
 }
 
 async function saveAssistantMessage(
