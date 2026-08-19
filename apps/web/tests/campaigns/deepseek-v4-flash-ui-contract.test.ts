@@ -22,8 +22,42 @@ const campaignModalSource = readFileSync(
   resolve(process.cwd(), 'src/components/DeepSeekV4FlashCampaign.tsx'),
   'utf8',
 );
+const campaignModalStyles = readFileSync(
+  resolve(process.cwd(), 'src/components/DeepSeekV4FlashCampaign.module.css'),
+  'utf8',
+);
 
 describe('DeepSeek V4 Flash workbench campaign entry', () => {
+  it('uses the reviewed Go modal model marks without placeholder icons', () => {
+    expect(
+      readFileSync(
+        resolve(process.cwd(), 'public/go-plan/mimo-logo-user-CWOWEwG5.png'),
+      ).byteLength,
+    ).toBeGreaterThan(0);
+    expect(
+      readFileSync(
+        resolve(process.cwd(), 'public/go-plan/zai-logo-official-Byn-xbrp.png'),
+      ).byteLength,
+    ).toBeGreaterThan(0);
+    expect(campaignModalSource).toContain(
+      'https://unpkg.com/@lobehub/icons-static-svg@latest/icons',
+    );
+    expect(campaignModalSource).toContain(
+      '/go-plan/mimo-logo-user-CWOWEwG5.png',
+    );
+    expect(campaignModalSource).toContain(
+      '/go-plan/zai-logo-official-Byn-xbrp.png',
+    );
+    expect(campaignModalSource).toContain('styles.goWelcomeMimoLogo');
+    expect(campaignModalSource).toContain('styles.goWelcomeZhipuLogo');
+    expect(campaignModalSource).toContain('styles.goWelcomeBenefitZhipu');
+    expect(campaignModalStyles).toContain('.goWelcomeMimoLogo img');
+    expect(campaignModalStyles).toContain('.goWelcomeZhipuLogo img');
+    expect(campaignModalStyles).toContain(
+      '.goWelcomeBenefitModel.goWelcomeBenefitZhipu img',
+    );
+  });
+
   it('reuses the top-right campaign slot for Go and DeepSeek audiences', () => {
     expect(entryShellSource).toContain('deepseek-campaign-pricing-badge');
     expect(entryShellSource).toContain("topRightCampaignKind === 'go'");

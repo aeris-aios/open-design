@@ -170,8 +170,6 @@
   color: #20221e;
 }
 
-.goWelcomeModelLogos > span:last-child { width: 32px; }
-
 .goWelcomeModelLogos img {
   display: block;
   width: 22px;
@@ -181,9 +179,22 @@
   filter: brightness(0) saturate(100%);
 }
 
-.goWelcomeModelLogos > span:last-child img {
+.goWelcomeMimoLogo {
+  width: 32px !important;
+}
+
+.goWelcomeMimoLogo img {
   width: 32px;
   height: 22px;
+  object-fit: contain;
+  object-position: center;
+}
+
+.goWelcomeZhipuLogo img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  filter: none;
 }
 
 .goWelcomePlanBenefit {
@@ -241,6 +252,13 @@
   height: 14px;
   object-fit: contain;
   filter: invert(1) brightness(2);
+}
+
+.goWelcomeBenefitModel.goWelcomeBenefitZhipu img {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  filter: none;
 }
 
 .goWelcomePlanBenefit li small {

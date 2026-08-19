@@ -16,6 +16,10 @@ import { useI18n } from '../i18n';
 import { Icon } from './Icon';
 import styles from './DeepSeekV4FlashCampaign.module.css';
 
+const LOBE_ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-svg@latest/icons';
+const GO_PLAN_MIMO_ICON = '/go-plan/mimo-logo-user-CWOWEwG5.png';
+const GO_PLAN_ZHIPU_ICON = '/go-plan/zai-logo-official-Byn-xbrp.png';
+
 interface Props {
   /**
    * paid = an active personal/team subscription; unpaid = no active
@@ -247,13 +251,13 @@ export function DeepSeekV4FlashCampaign({
 
           <div className={styles.goWelcomeModelLogos} aria-label={isZh ? 'Go 套餐可用模型厂商' : 'Model providers available on Go'}>
             {[
-              ['/agent-icons/deepseek.svg', 'DeepSeek'],
-              ['/agent-icons/glm.svg', 'GLM'],
-              ['/agent-icons/kimi.svg', 'Kimi'],
-              ['/model-icons/minimax.svg', 'MiniMax'],
-              ['/agent-icons/mimo.svg', 'MiMo'],
-            ].map(([src, label]) => (
-              <span key={label} title={label}><img src={src} alt={label} /></span>
+              { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek' },
+              { src: GO_PLAN_ZHIPU_ICON, label: 'GLM', className: styles.goWelcomeZhipuLogo },
+              { src: `${LOBE_ICON_BASE}/kimi.svg`, label: 'Kimi' },
+              { src: `${LOBE_ICON_BASE}/minimax.svg`, label: 'MiniMax' },
+              { src: GO_PLAN_MIMO_ICON, label: 'MiMo', className: styles.goWelcomeMimoLogo },
+            ].map(({ src, label, className }) => (
+              <span key={label} className={className} title={label}><img src={src} alt={label} /></span>
             ))}
           </div>
 
@@ -261,13 +265,13 @@ export function DeepSeekV4FlashCampaign({
             <strong>{isZh ? '3 个热门模型无限使用' : '3 popular models unlimited'}</strong>
             <ul>
               {[
-                ['/agent-icons/deepseek.svg', 'DeepSeek V4 Flash'],
-                ['/agent-icons/deepseek.svg', 'DeepSeek V4 Pro'],
-                ['/agent-icons/glm.svg', 'GLM-5.2'],
-              ].map(([src, label]) => (
+                { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek V4 Flash' },
+                { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek V4 Pro' },
+                { src: GO_PLAN_ZHIPU_ICON, label: 'GLM-5.2', className: styles.goWelcomeBenefitZhipu },
+              ].map(({ src, label, className }) => (
                 <li key={label}>
                   <span className={styles.goWelcomeBenefitModel}>
-                    <i><img src={src} alt="" /></i>{label}
+                    <i className={className}><img src={src} alt="" /></i>{label}
                   </span>
                   <small>{isZh ? '无限使用' : 'UNLIMITED'}</small>
                 </li>
