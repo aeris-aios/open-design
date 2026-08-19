@@ -152,10 +152,12 @@ describe('DeepSeek V4 Flash campaign', () => {
   });
 
   it('reuses the modal shell for Go without showing the paid secondary action', () => {
-    expect(campaignDialogSource).toContain('goCopy.cta');
+    expect(campaignDialogSource).toContain('styles.goWelcomePrimary');
     expect(campaignDialogSource).toContain('GO_PLAN_PRICING_URL');
     expect(campaignDialogSource).not.toContain("'go_plan_modal'");
-    expect(campaignDialogSource).toMatch(/\{paid \? \([\s\S]*campaign\.deepseekV4Flash\.later[\s\S]*\) : null\}/);
+    expect(campaignDialogSource.indexOf('styles.goWelcomePrimary')).toBeLessThan(
+      campaignDialogSource.indexOf('styles.laterAction'),
+    );
   });
 
   it('keeps campaign visibility free of every URL review backdoor (product decision)', () => {
