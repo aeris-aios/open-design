@@ -487,24 +487,10 @@ describe('HomeView context picker', () => {
     expect(onSubmit.mock.calls[0]?.[0]?.pluginId).not.toBe('example-web-prototype');
   });
 
-  it('clears an active skill when the user picks a type chip (#2972)', async () => {
+  it('hands a supported automatic type entirely to OD Next without applying its legacy plugin', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (typeof url === 'string' && url.includes('/apply')) {
-        return new Response(JSON.stringify({
-          appliedPlugin: {
-            snapshotId: 'snap-web-prototype',
-            pluginId: 'example-web-prototype',
-            pluginVersion: '1.0.0',
-            inputs: {},
-          },
-          contextItems: [],
-        }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
@@ -553,10 +539,18 @@ describe('HomeView context picker', () => {
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'example-web-prototype',
+      pluginId: null,
+      pluginSelectionProvenance: 'automatic-default',
+      automaticStrategyTaskProfile: 'prototype',
       skillId: null,
       projectKind: 'prototype',
+      appliedPluginSnapshotId: null,
+      pluginTitle: null,
+      taskKind: null,
     })));
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pluginSource');
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pluginInputs');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply'))).toBe(false);
   });
 
   it('submits selected MCP servers and connectors as first-turn context', async () => {

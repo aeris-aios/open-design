@@ -10,6 +10,7 @@ import type {
   AppliedStrategyBindingV2,
   OdNextRuntimeCapabilitySnapshotV1,
   OpenDesignPlanContractV2,
+  ProjectScenarioTaskProfile,
 } from '@open-design/contracts';
 import {
   normalizeAgentObservationV1,
@@ -196,7 +197,7 @@ describe('OD Next automatic production through the real server', () => {
     expect(researchContract).toContain('Run the ordinary public fixture.');
   });
 
-  it('falls back invisibly to the ordinary default when automatic Skill freezing fails before claim', async () => {
+  it('routes an explicitly requested Skill directly through the ordinary default', async () => {
     const fixture = await createPublicRolloutFixture('prestart-skill-fallback', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
@@ -242,9 +243,9 @@ describe('OD Next automatic production through the real server', () => {
     ).get(sharedStrategySnapshot.snapshotId) as { count: number }).count).toBe(1);
     expect(await readDurableRunState(created.runId as string)).toMatchObject({
       strategyRolloutDecision: {
-        decisionClass: 'observe',
-        effectiveMode: 'observe',
-        primaryReasonCode: 'od_next_rollout_prestart_preparation_failed',
+        decisionClass: 'explicit_user',
+        effectiveMode: 'off',
+        primaryReasonCode: 'od_next_rollout_explicit_user_authority',
       },
     });
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
@@ -315,12 +316,18 @@ describe('OD Next automatic production through the real server', () => {
       {
         ...(await createProjectForScenario(started.url, 'approved-prototype', {
           kind: 'prototype',
-        })),
+        }, undefined, 'prototype')),
         taskProfile: 'prototype',
         pluginId: 'example-web-prototype',
       },
       {
-        ...(await createProjectForScenario(started.url, 'approved-ppt', { kind: 'deck' })),
+        ...(await createProjectForScenario(
+          started.url,
+          'approved-ppt',
+          { kind: 'deck' },
+          undefined,
+          'ppt',
+        )),
         taskProfile: 'ppt',
         pluginId: 'example-simple-deck',
       },
@@ -328,7 +335,7 @@ describe('OD Next automatic production through the real server', () => {
         ...(await createProjectForScenario(started.url, 'approved-marketing', {
           kind: 'prototype',
           intent: 'marketing',
-        })),
+        }, undefined, 'marketing')),
         taskProfile: 'marketing',
         pluginId: 'example-web-prototype',
       },
@@ -337,46 +344,91 @@ describe('OD Next automatic production through the real server', () => {
           kind: 'video',
           intent: 'hyperframes',
           videoModel: 'hyperframes-html',
-        })),
+        }, undefined, 'hyperframes')),
         taskProfile: 'hyperframes',
         pluginId: 'example-hyperframes',
       },
     ];
     for (const candidate of approved) {
-      expect(candidate.metadata?.scenarioBinding).toMatchObject({
+      expect(candidate.metadata?.strategyBinding).toMatchObject({
+        schemaVersion: 1,
         provenance: 'automatic_default',
-        pluginId: candidate.pluginId,
         taskProfile: candidate.taskProfile,
       });
+      expect(candidate.metadata?.scenarioBinding).toBeUndefined();
+      expect(candidate.appliedPluginSnapshotId).toBeUndefined();
     }
 
-    const sameSnapshotExplicit = await postRun(started.url, {
-      ...publicRunRequest(
-        fixture,
-        'Use the exact snapshot through ordinary routing.',
-        'same-snapshot-explicit',
-      ),
-      appliedPluginSnapshotId: fixture.appliedPluginSnapshotId,
-    });
-    expect(sameSnapshotExplicit.strategyTask).toBeUndefined();
-    expect(sameSnapshotExplicit.pluginId).toBe('example-web-prototype');
-    expect(await readDurableRunState(sameSnapshotExplicit.runId as string)).toMatchObject({
-      strategyRolloutDecision: {
-        schemaVersion: 1,
-        decisionClass: 'explicit_user',
-        primaryReasonCode: 'od_next_rollout_explicit_user_authority',
+    const forgedPatch = await fetch(
+      `${started.url}/api/projects/${encodeURIComponent(approved[0]!.projectId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          metadata: {
+            kind: 'prototype',
+            strategyBinding: {
+              schemaVersion: 1,
+              provenance: 'automatic_default',
+              taskProfile: 'marketing',
+              boundAt: Date.now(),
+            },
+          },
+        }),
+      },
+    );
+    expect(forgedPatch.status).toBe(400);
+    const preservedPatch = await fetch(
+      `${started.url}/api/projects/${encodeURIComponent(approved[0]!.projectId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ metadata: { kind: 'prototype', entryFile: 'index.html' } }),
+      },
+    );
+    expect(preservedPatch.status).toBe(200);
+    await expect(preservedPatch.json()).resolves.toMatchObject({
+      project: {
+        metadata: {
+          strategyBinding: {
+            provenance: 'automatic_default',
+            taskProfile: 'prototype',
+          },
+        },
       },
     });
-    await waitForRunTerminal(started.url, sameSnapshotExplicit.runId as string);
-    const explicitMetadata = JSON.parse((database().prepare(
-      'SELECT metadata_json AS metadataJson FROM projects WHERE id = ?',
-    ).get(fixture.projectId) as { metadataJson: string }).metadataJson) as {
-      scenarioBinding?: { provenance?: string; snapshotId?: string };
-    };
-    expect(explicitMetadata.scenarioBinding).toMatchObject({
-      provenance: 'explicit_user',
-      snapshotId: fixture.appliedPluginSnapshotId,
+
+    const forgedCreate = await fetch(`${started.url}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: `forged-strategy-binding-${Date.now()}`,
+        name: 'Forged strategy binding',
+        metadata: {
+          kind: 'prototype',
+          strategyBinding: {
+            schemaVersion: 1,
+            provenance: 'automatic_default',
+            taskProfile: 'prototype',
+            boundAt: Date.now(),
+          },
+        },
+        conversationMode: 'design',
+      }),
     });
+    expect(forgedCreate.status).toBe(200);
+    const forgedCreateBody = await forgedCreate.json() as {
+      project?: {
+        metadata?: {
+          scenarioBinding?: { pluginId?: string };
+          strategyBinding?: unknown;
+        };
+      };
+    };
+    expect(forgedCreateBody).toMatchObject({
+      project: { metadata: { scenarioBinding: { pluginId: 'example-web-prototype' } } },
+    });
+    expect(forgedCreateBody.project?.metadata?.strategyBinding).toBeUndefined();
 
     for (const candidate of approved) {
       const run = await postRun(started.url, publicRunRequest(
@@ -420,6 +472,42 @@ describe('OD Next automatic production through the real server', () => {
         },
       });
       await waitForRunTerminal(started.url, explicitRun.runId as string);
+    }
+
+    for (const [label, metadata] of [
+      ['wireframe', { kind: 'prototype', fidelity: 'wireframe' }],
+      [
+        'mobile',
+        {
+          kind: 'prototype',
+          platform: 'auto',
+          platformTargets: ['mobile-ios', 'mobile-android'],
+        },
+      ],
+    ] as const) {
+      const ordinary = await createProjectForScenario(
+        started.url,
+        `ordinary-${label}`,
+        metadata,
+      );
+      expect(ordinary.metadata?.strategyBinding).toBeUndefined();
+      expect(ordinary.metadata?.scenarioBinding).toMatchObject({
+        provenance: 'automatic_default',
+        pluginId: 'example-web-prototype',
+      });
+
+      const rejected = await fetch(`${started.url}/api/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: `rejected-${label}-${Date.now()}`,
+          name: `Rejected ${label}`,
+          metadata,
+          conversationMode: 'design',
+          automaticStrategyTaskProfile: 'prototype',
+        }),
+      });
+      expect(rejected.status).toBe(400);
     }
 
     const image = await createProjectForScenario(
@@ -501,6 +589,45 @@ describe('OD Next automatic production through the real server', () => {
       },
     });
     await waitForRunTerminal(started.url, explicitImageRun.runId as string);
+  });
+
+  it('keeps legacy automatic scenario bindings eligible for OD Next', async () => {
+    const fixture = await createPublicRolloutFixture('legacy-scenario-compat', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const legacy = await createProjectForScenario(
+      started.url,
+      'legacy-scenario-project',
+      { kind: 'prototype' },
+    );
+    expect(legacy.appliedPluginSnapshotId).toBeTruthy();
+    expect(legacy.metadata?.strategyBinding).toBeUndefined();
+    expect(legacy.metadata?.scenarioBinding).toMatchObject({
+      provenance: 'automatic_default',
+      pluginId: 'example-web-prototype',
+      taskProfile: 'prototype',
+      snapshotId: legacy.appliedPluginSnapshotId,
+    });
+
+    const created = await postRun(started.url, publicRunRequest(
+      legacy,
+      'Hold the legacy-compatible OD Next run open until canceled.',
+      'legacy-scenario-request',
+    ));
+    expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    expect(await readDurableRunState(created.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        decisionClass: 'active',
+        taskType: 'prototype',
+      },
+    });
+    await fetch(`${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`, {
+      method: 'POST',
+    });
+    await waitForRunTerminal(started.url, created.runId as string);
   });
 
   it('binds adapter-family capability facts for an unrecognized new CLI version', async () => {
@@ -602,7 +729,7 @@ describe('OD Next automatic production through the real server', () => {
     });
   });
 
-  it('keeps active retry/task pinned while rollback sends a new public request through the ordinary path', async () => {
+  it('keeps active retry/task recipe-only while rollback lazily resolves the ordinary default', async () => {
     const fixture = await createPublicRolloutFixture('rollback', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
@@ -612,43 +739,24 @@ describe('OD Next automatic production through the real server', () => {
         count: number;
       }
     ).count;
-    expect(fixture.projectMetadata?.scenarioBinding).toMatchObject({
+    expect(fixture.projectMetadata?.strategyBinding).toMatchObject({
       schemaVersion: 1,
       provenance: 'automatic_default',
-      pluginId: 'example-web-prototype',
-      snapshotId: fixture.appliedPluginSnapshotId,
       taskProfile: 'prototype',
     });
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
     process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
-    const dataDir = process.env.OD_DATA_DIR;
-    if (!dataDir) throw new Error('OD_DATA_DIR is required');
-    const selectedSkillDir = path.join(dataDir, 'skills', 'frozen-bundle-skill');
-    await mkdir(path.join(selectedSkillDir, 'references'), { recursive: true });
-    await writeFile(path.join(selectedSkillDir, 'SKILL.md'), [
-      '---',
-      'name: frozen-bundle-skill',
-      'description: OD Next frozen bundle fixture',
-      '---',
-      '# Frozen bundle workflow',
-      '',
-      'Use `references/guide.md` during Build.',
-    ].join('\n'));
-    await writeFile(path.join(selectedSkillDir, 'references', 'guide.md'), 'fixture guide\n');
     const activeBody = publicRunRequest(
       fixture,
       'Hold the public rollout run open until canceled.',
       'active-request',
     );
-    (activeBody as typeof activeBody & { skillIds: string[] }).skillIds = [
-      'frozen-bundle-skill',
-    ];
     const active = await postRun(started!.url, activeBody);
     expect(active.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
     const activeTask = getStrategyTaskExecution(database(), active.taskExecutionId as string);
     expect(activeTask?.frozenSkillPackage).toMatchObject({
         schema: 'open-design.od-next-frozen-skill-package/v1',
-        selections: [{ canonicalId: 'frozen-bundle-skill' }],
+        selections: [],
       });
     expect(activeTask?.runs[0]?.finalText).toEqual(activeTask?.promptBundle);
     expect(activeTask?.promptBundle.utf8Bytes).toBe(
@@ -657,7 +765,7 @@ describe('OD Next automatic production through the real server', () => {
     expect((database().prepare(
       'SELECT applied_plugin_snapshot_id AS snapshotId FROM projects WHERE id = ?',
     ).get(fixture.projectId) as { snapshotId: string | null }).snapshotId)
-      .toBe(fixture.appliedPluginSnapshotId);
+      .toBeNull();
 
     latchOdNextRolloutStop(database(), {
       mode: 'observe',
@@ -694,16 +802,14 @@ describe('OD Next automatic production through the real server', () => {
     const activeInvocation = (await readProjectInvocations(fixture.logPath, fixture.projectId))
       .find((invocation) => invocation.stdin.includes('Hold the public rollout run open'));
     expect(activeInvocation?.stdin).toBe(activeTask?.promptBundle.text);
-    expect(activeInvocation?.stdin).toContain('## User-selected Skill — frozen-bundle-skill');
-    expect(activeInvocation?.stdin).toContain('# Frozen bundle workflow');
-    expect(activeInvocation?.stdin).toContain('.od-skills/frozen-bundle-skill-');
-    expect(activeInvocation?.stdin).not.toContain(selectedSkillDir);
+    expect(activeInvocation?.stdin).not.toContain('## User-selected Skill');
+    expect(activeInvocation?.stdin).not.toContain('example-web-prototype');
     expect(activeInvocation?.stdin).not.toContain('available_skills');
     expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
       .toBe(strategyTaskCountAtStart + 1);
   });
 
-  it('gives Web and CLI the same Bundle identity for the same canonical Skill set', async () => {
+  it('routes explicit Web and CLI Skills through the same ordinary run', async () => {
     const fixture = await createPublicRolloutFixture('web-cli-skill-parity', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
@@ -722,8 +828,11 @@ describe('OD Next automatic production through the real server', () => {
         `# ${skillId}`,
       ].join('\n'));
     }
-    const prompt = 'Hold the public rollout run open until canceled.';
+    const prompt = 'Complete this request through ordinary Skill routing.';
     const clientRequestId = 'web-cli-skill-parity-request';
+    const strategyTaskCountAtStart = (database().prepare(
+      'SELECT COUNT(*) AS count FROM strategy_task_executions',
+    ).get() as { count: number }).count;
     const web = await postRun(started.url, {
       projectId: fixture.projectId,
       conversationId: fixture.conversationId,
@@ -733,11 +842,10 @@ describe('OD Next automatic production through the real server', () => {
       skillId: 'bundle-skill-a',
       skillIds: ['bundle-skill-a', 'bundle-skill-b'],
     });
+    expect(web.strategyTask).toBeUndefined();
+    expect(web.taskExecutionId).toBeUndefined();
+    expect(web.pluginId).toBe('example-web-prototype');
     await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
-    const webTask = getStrategyTaskExecution(database(), web.taskExecutionId as string)!;
-    await fetch(`${started.url}/api/runs/${encodeURIComponent(web.runId as string)}/cancel`, {
-      method: 'POST',
-    });
     await waitForRunTerminal(started.url, web.runId as string);
 
     const cliResult = await runOdCli([
@@ -755,30 +863,52 @@ describe('OD Next automatic production through the real server', () => {
     expect(cliResult.stderr).toBe('');
     const cli = JSON.parse(cliResult.stdout) as {
       runId: string;
-      taskExecutionId: string;
+      taskExecutionId?: string;
     };
     await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
-    const cliTask = getStrategyTaskExecution(database(), cli.taskExecutionId)!;
 
     expect(cli.runId).toBe(web.runId);
-    expect(cli.taskExecutionId).toBe(web.taskExecutionId);
-    expect(webTask.frozenSkillPackage.selections.map((skill) => skill.canonicalId)).toEqual([
-      'bundle-skill-a',
-      'bundle-skill-b',
-    ]);
-    expect(cliTask.frozenSkillPackage.selections.map((skill) => skill.canonicalId)).toEqual([
-      'bundle-skill-a',
-      'bundle-skill-b',
-    ]);
-    expect(cliTask.frozenSkillPackage.identity).toBe(webTask.frozenSkillPackage.identity);
-    expect(parseOdNextPromptBundleV1(cliTask.promptBundle.text)).toEqual(
-      parseOdNextPromptBundleV1(webTask.promptBundle.text),
-    );
-    expect(cliTask.promptBundle.sha256).toBe(webTask.promptBundle.sha256);
-    expect(cliTask.promptBundle.utf8Bytes).toBe(webTask.promptBundle.utf8Bytes);
-    expect(cliTask.promptBundle.text).toBe(webTask.promptBundle.text);
-
+    expect(cli.taskExecutionId).toBeUndefined();
+    expect((database().prepare(
+      'SELECT COUNT(*) AS count FROM strategy_task_executions',
+    ).get() as { count: number }).count).toBe(strategyTaskCountAtStart);
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+  });
+
+  it('routes project context plugins through the ordinary default', async () => {
+    const fixture = await createPublicRolloutFixture('context-plugin-authority', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const contextual = await createProjectForScenario(
+      started.url,
+      'context-plugin-project',
+      {
+        kind: 'prototype',
+        contextPlugins: [{ id: 'example-web-prototype', title: 'Web Prototype' }],
+      },
+      undefined,
+      'prototype',
+    );
+
+    const created = await postRun(started.url, publicRunRequest(
+      contextual,
+      'Use the project context through ordinary routing.',
+      'context-plugin-request',
+    ));
+
+    expect(created.strategyTask).toBeUndefined();
+    expect(created.taskExecutionId).toBeUndefined();
+    expect(created.pluginId).toBe('example-web-prototype');
+    expect(await readDurableRunState(created.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        decisionClass: 'explicit_user',
+        primaryReasonCode: 'od_next_rollout_explicit_user_authority',
+      },
+    });
+    await waitForRunTerminal(started.url, created.runId as string);
   });
 
   it('binds an active headless request and its strategy Snapshot to the project conversation', async () => {
@@ -982,16 +1112,23 @@ describe('OD Next automatic production through the real server', () => {
     expect(restoredResult.stderr).toBe('');
     const restored = JSON.parse(restoredResult.stdout) as {
       changed: boolean;
-      scenarioBinding: { provenance: string; pluginId: string; snapshotId: string };
+      scenarioBinding?: { provenance: string; pluginId: string; snapshotId: string };
+      strategyBinding: {
+        provenance: string;
+        taskProfile: ProjectScenarioTaskProfile;
+      };
     };
     expect(restored).toMatchObject({
       changed: true,
-      scenarioBinding: {
+      strategyBinding: {
         provenance: 'automatic_default',
-        pluginId: 'example-web-prototype',
+        taskProfile: 'prototype',
       },
     });
-    expect(restored.scenarioBinding.snapshotId).not.toBe(fixture.appliedPluginSnapshotId);
+    expect(restored.scenarioBinding).toBeUndefined();
+    expect((database().prepare(
+      'SELECT applied_plugin_snapshot_id AS snapshotId FROM projects WHERE id = ?',
+    ).get(fixture.projectId) as { snapshotId: string | null }).snapshotId).toBeNull();
 
     const retriedResult = await runOdCli([
       'project', 'restore-automatic-scenario', fixture.projectId,
@@ -1001,7 +1138,10 @@ describe('OD Next automatic production through the real server', () => {
     expect(retriedResult.stderr).toBe('');
     expect(JSON.parse(retriedResult.stdout)).toMatchObject({
       changed: false,
-      scenarioBinding: { snapshotId: restored.scenarioBinding.snapshotId },
+      strategyBinding: {
+        provenance: 'automatic_default',
+        taskProfile: 'prototype',
+      },
     });
 
     const automatic = await postRun(started.url, publicRunRequest(
@@ -1783,6 +1923,9 @@ async function createPublicRolloutFixture(
       metadata: { kind: 'prototype' },
       conversationMode,
       ...(pluginId ? { pluginId } : {}),
+      ...(!pluginId && conversationMode === 'design'
+        ? { automaticStrategyTaskProfile: 'prototype' }
+        : {}),
       skipDiscoveryBrief: true,
     }),
   });
@@ -1790,7 +1933,12 @@ async function createPublicRolloutFixture(
   const { conversationId, appliedPluginSnapshotId, project } = await projectResponse.json() as {
     conversationId: string;
     appliedPluginSnapshotId?: string;
-    project?: { metadata?: { scenarioBinding?: { pluginId: string; snapshotId: string } } };
+    project?: {
+      metadata?: {
+        scenarioBinding?: { pluginId: string; snapshotId: string };
+        strategyBinding?: { taskProfile: ProjectScenarioTaskProfile };
+      };
+    };
   };
   const configResponse = await fetch(`${started.url}/api/app-config`, {
     method: 'PUT',
@@ -1824,6 +1972,7 @@ async function createProjectForScenario(
     pluginId?: string;
     pluginInputs: Record<string, unknown>;
   },
+  automaticStrategyTaskProfile?: ProjectScenarioTaskProfile,
 ) {
   const projectId = `od-next-public-${label}-${Date.now()}`;
   const response = await fetch(`${url}/api/projects`, {
@@ -1834,12 +1983,14 @@ async function createProjectForScenario(
       name: `OD Next public ${label}`,
       metadata,
       ...plugin,
+      ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
       conversationMode: 'design',
       skipDiscoveryBrief: true,
     }),
   });
   const body = await response.json() as {
     conversationId: string;
+    appliedPluginSnapshotId?: string;
     project?: {
       metadata?: {
         scenarioBinding?: {
@@ -1848,6 +1999,12 @@ async function createProjectForScenario(
           snapshotId: string;
           taskProfile?: string;
         };
+        strategyBinding?: {
+          schemaVersion: number;
+          provenance: string;
+          taskProfile: ProjectScenarioTaskProfile;
+          boundAt: number;
+        };
       };
     };
   };
@@ -1855,6 +2012,7 @@ async function createProjectForScenario(
   return {
     projectId,
     conversationId: body.conversationId,
+    appliedPluginSnapshotId: body.appliedPluginSnapshotId,
     metadata: body.project?.metadata,
   };
 }

@@ -508,7 +508,6 @@ import {
 } from './strategies/task-store.js';
 import {
   InvalidFrozenSkillPackageError,
-  captureFrozenSkillPackage,
   materializeFrozenSkillPackage,
   renderFrozenSkillBundleContext,
 } from './strategies/od-next/frozen-skill-package.js';
@@ -9972,7 +9971,6 @@ export async function startServer({
       : defaultSystemPromptInputs;
     if (odNextStrategyRecipe) {
       assertOdNextSemanticRequestFactProducerCoverage('daemon_system_prompt', {
-        user_selected_skills: { skillId, skillIds, skillBody, skillName },
         strategy_task_skill: odNextStrategyRecipe.taskSkill,
         strategy_task_type: odNextStrategyRecipe.taskType,
         strategy_runtime_capability_facts: odNextStrategyRecipe.planningFacts,
@@ -15499,22 +15497,6 @@ export async function startServer({
     paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
     chat: { prepareOdNextInitialPromptBundle, startChatRun },
-    skills: {
-      captureOdNextFrozenSkillPackage: async ({ skillId, skillIds, workspaceScope }) => {
-        const workspaceId = typeof workspaceScope?.workspaceId === 'string'
-          ? workspaceScope.workspaceId.trim()
-          : '';
-        const workspaceMemberId = typeof workspaceScope?.workspaceMemberId === 'string'
-          ? workspaceScope.workspaceMemberId.trim()
-          : '';
-        const catalog = await listAllSkillLikeEntries(
-          workspaceId
-            ? { workspaceId, workspaceMemberId: workspaceMemberId || null }
-            : {},
-        );
-        return captureFrozenSkillPackage({ skillId, skillIds, catalog });
-      },
-    },
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
     plugins: {
       connectorService,

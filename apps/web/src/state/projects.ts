@@ -27,6 +27,7 @@ import type {
   PluginInstallOutcome,
   PluginShareAction,
   ProjectPluginFolderInstallRequest,
+  ProjectScenarioTaskProfile,
   RestoreProjectAutomaticScenarioResponse,
   ProjectVisibility,
   ProjectWorkspaceScopeResponse,
@@ -689,6 +690,7 @@ export async function createProject(
     pluginSource?: string;
     appliedPluginSnapshotId?: string;
     pluginInputs?: Record<string, unknown>;
+    automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
     workspaceContext?: WorkspaceCollabContext | null;
   },
   retryOptions: CreateProjectRetryOptions = {},

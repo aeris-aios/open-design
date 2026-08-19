@@ -1103,13 +1103,15 @@ test('[P0] @critical home composer delegates the default prototype scenario to d
     conversationMode?: string;
     pluginId?: string | null;
     pluginInputs?: Record<string, unknown>;
+    automaticStrategyTaskProfile?: string;
     metadata?: { kind?: string };
   };
-  expect(body.name).toBe('Web Prototype');
+  expect(body.name).toBe('Infographic 5 Habits Effective Code Reviewers');
   expect(body.pendingPrompt).toBe(prompt);
   expect(body.conversationMode).toBe('design');
   expect(body.pluginId).toBeUndefined();
-  expect(body.pluginInputs).toMatchObject({ artifactKind: 'web prototype' });
+  expect(body.pluginInputs).toBeUndefined();
+  expect(body.automaticStrategyTaskProfile).toBe('prototype');
   expect(body.metadata?.kind).toBe('prototype');
 });
 

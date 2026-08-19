@@ -31,6 +31,7 @@ import type {
   WorkspaceCollabContext,
   WorkspaceInvalidationSsePayload,
   ProjectWorkspaceScope,
+  ProjectScenarioTaskProfile,
   WorkspaceProjectSummary,
 } from '@open-design/contracts';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
@@ -245,6 +246,7 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   pluginType?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
+  automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
   initialRunContext?: RunContextSelection | null;
   conversationMode?: ChatSessionMode;
   autoSendFirstMessage?: boolean;
@@ -2991,6 +2993,9 @@ function AppInner() {
             ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
             : {}),
           ...(input.pluginInputs ? { pluginInputs: input.pluginInputs } : {}),
+          ...(input.automaticStrategyTaskProfile
+            ? { automaticStrategyTaskProfile: input.automaticStrategyTaskProfile }
+            : {}),
           workspaceContext: createWorkspaceContext,
         });
       } catch (err) {

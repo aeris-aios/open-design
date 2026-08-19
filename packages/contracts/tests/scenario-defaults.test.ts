@@ -8,12 +8,82 @@ import {
   DEFAULT_SCENARIO_PLUGIN_BY_KIND,
   DEFAULT_SCENARIO_PLUGIN_BY_TASK_KIND,
   DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
+  automaticStrategyTaskProfileForProjectMetadata,
+  automaticStrategyTaskProfileForRouteId,
   defaultScenarioPluginIdForKind,
   defaultScenarioPluginIdForProjectMetadata,
   defaultScenarioPluginIdForTaskKind,
   defaultScenarioTaskProfileForProjectMetadata,
+  hasCurrentAutomaticStrategyBinding,
   hasCurrentAutomaticScenarioBinding,
 } from '../src/plugins/scenario-defaults.js';
+
+describe('automaticStrategyTaskProfileForRouteId', () => {
+  it('recognizes only the four product-owned OD Next routes', () => {
+    expect(automaticStrategyTaskProfileForRouteId('prototype')).toBe('prototype');
+    expect(automaticStrategyTaskProfileForRouteId('deck')).toBe('ppt');
+    expect(automaticStrategyTaskProfileForRouteId('marketing')).toBe('marketing');
+    expect(automaticStrategyTaskProfileForRouteId('hyperframes')).toBe('hyperframes');
+
+    expect(automaticStrategyTaskProfileForRouteId('wireframe')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('mobile')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('image')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId(undefined)).toBeNull();
+  });
+
+  it('validates exact project metadata without admitting Wireframe or Mobile aliases', () => {
+    expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'prototype' })).toBe('prototype');
+    expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'deck' })).toBe('ppt');
+    expect(automaticStrategyTaskProfileForProjectMetadata({
+      kind: 'prototype',
+      intent: 'marketing',
+    })).toBe('marketing');
+    expect(automaticStrategyTaskProfileForProjectMetadata({
+      kind: 'video',
+      intent: 'hyperframes',
+    })).toBe('hyperframes');
+
+    expect(automaticStrategyTaskProfileForProjectMetadata({
+      kind: 'prototype',
+      fidelity: 'wireframe',
+    })).toBeNull();
+    expect(automaticStrategyTaskProfileForProjectMetadata({
+      kind: 'prototype',
+      platform: 'auto',
+      platformTargets: ['mobile-ios', 'mobile-android'],
+    })).toBeNull();
+
+    expect(defaultScenarioTaskProfileForProjectMetadata({
+      kind: 'prototype',
+      fidelity: 'wireframe',
+    }, 'example-web-prototype')).toBeNull();
+    expect(defaultScenarioTaskProfileForProjectMetadata({
+      kind: 'prototype',
+      platformTargets: ['mobile-ios'],
+    }, 'example-web-prototype')).toBeNull();
+  });
+
+  it('recognizes only an exact daemon-owned strategy binding as current automatic routing', () => {
+    const metadata = {
+      kind: 'prototype' as const,
+      strategyBinding: {
+        schemaVersion: 1 as const,
+        provenance: 'automatic_default' as const,
+        taskProfile: 'prototype' as const,
+        boundAt: 1,
+      },
+    };
+    expect(hasCurrentAutomaticStrategyBinding(metadata)).toBe(true);
+    expect(hasCurrentAutomaticScenarioBinding({
+      metadata,
+      appliedPluginSnapshotId: null,
+    })).toBe(true);
+    expect(hasCurrentAutomaticStrategyBinding({
+      ...metadata,
+      fidelity: 'wireframe' as const,
+    })).toBe(false);
+  });
+});
 
 describe('defaultScenarioPluginIdForKind', () => {
   it('maps every supported ProjectKind to a bundled scenario id', () => {

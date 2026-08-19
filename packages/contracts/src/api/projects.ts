@@ -60,6 +60,20 @@ export interface ProjectScenarioBinding {
   boundAt: number;
 }
 
+/**
+ * Daemon-owned automatic OD Next route selected at project creation.
+ *
+ * Unlike `ProjectScenarioBinding`, this identity is independent of an
+ * ordinary plugin snapshot. That lets the daemon admit OD Next for a run while
+ * retaining the ordinary default plugin solely as an invisible fallback.
+ */
+export interface ProjectStrategyBinding {
+  schemaVersion: 1;
+  provenance: 'automatic_default';
+  taskProfile: ProjectScenarioTaskProfile;
+  boundAt: number;
+}
+
 export type ProjectDisplayStatus =
   | 'not_started'
   | 'queued'
@@ -255,6 +269,8 @@ export interface ProjectMetadata {
   localCatalogScopes?: ProjectResourceCatalogScopes;
   /** Daemon-owned, exact provenance for the scenario currently pinned here. */
   scenarioBinding?: ProjectScenarioBinding;
+  /** Daemon-owned automatic OD Next route, independent of plugin selection. */
+  strategyBinding?: ProjectStrategyBinding;
   // Stored on design-system projects so the review overview can remember
   // which generated sections were accepted or sent back for another pass.
   designSystemReview?: Record<string, DesignSystemReviewEntry>;
@@ -384,6 +400,8 @@ export interface CreateProjectRequest {
   pluginSource?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
+  /** Product-owned automatic OD Next route. The daemon validates and stamps it. */
+  automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
   /** Session mode for the default conversation seeded with the project. */
   conversationMode?: ChatSessionMode;
   customInstructions?: string;
@@ -414,7 +432,8 @@ export interface RestoreProjectAutomaticScenarioRequest {
 }
 
 export interface RestoreProjectAutomaticScenarioResponse extends ProjectResponse {
-  scenarioBinding: ProjectScenarioBinding;
+  scenarioBinding?: ProjectScenarioBinding;
+  strategyBinding?: ProjectStrategyBinding;
   changed: boolean;
 }
 

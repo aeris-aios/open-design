@@ -95,7 +95,10 @@ import {
   prepareStrategyRequest,
 } from '../strategies/od-next/coordinator.js';
 import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
-import { InvalidFrozenSkillPackageError } from '../strategies/od-next/frozen-skill-package.js';
+import {
+  createEmptyFrozenSkillPackage,
+  InvalidFrozenSkillPackageError,
+} from '../strategies/od-next/frozen-skill-package.js';
 import {
   buildOdNextTaskConfigurationV1,
   createOdNextTaskInputSnapshot,
@@ -116,6 +119,7 @@ import {
   automaticScenarioTaskProfile,
   getInstalledPlugin,
   readVerifiedProjectScenarioBinding,
+  readVerifiedProjectStrategyBinding,
   resolvePluginFolder,
   resolvePluginSnapshot,
   type ResolveSnapshotResult,
@@ -319,6 +323,7 @@ interface ProjectRecord {
   name: string;
   createdAt?: number;
   updatedAt?: number;
+  skillId?: string | null;
   designSystemId?: string | null;
   metadata?: ProjectMetadata;
   appliedPluginSnapshotId?: string | null;
@@ -632,13 +637,6 @@ export interface RegisterRunRoutesDeps {
       text: string;
       designSystemScope?: PinnedRunDesignSystemScope | null;
     }>;
-  };
-  skills?: {
-    captureOdNextFrozenSkillPackage: (input: {
-      skillId?: unknown;
-      skillIds?: unknown;
-      workspaceScope?: RunWorkspaceScope | null | undefined;
-    }) => Promise<FrozenSkillPackageV1>;
   };
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
@@ -1887,19 +1885,41 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             metadata: rolloutProject.metadata as ContractProjectMetadata,
           })
         : null;
+      const verifiedStrategyBinding = readVerifiedProjectStrategyBinding(
+        rolloutProject?.metadata as ContractProjectMetadata | null | undefined,
+      );
       const projectPinIsAutomaticDefault = Boolean(
         projectHasExplicitPin
         && verifiedScenarioBinding?.provenance === 'automatic_default'
         && verifiedScenarioBinding.pluginId === defaultPluginId,
       );
-      const explicitUserPlugin = Boolean(
+      const suppliedSkillWasNamed = Boolean(
+        (typeof requestBody.skillId === 'string' && requestBody.skillId.trim().length > 0)
+        || (
+          Array.isArray(requestBody.skillIds)
+          && requestBody.skillIds.some((value) => (
+            typeof value === 'string' && value.trim().length > 0
+          ))
+        )
+        || (typeof rolloutProject?.skillId === 'string' && rolloutProject.skillId.length > 0)
+      );
+      const suppliedContextPluginWasNamed = Boolean(
+        Array.isArray((rolloutProject?.metadata as ContractProjectMetadata | undefined)?.contextPlugins)
+        && (rolloutProject?.metadata as ContractProjectMetadata).contextPlugins!.length > 0
+      );
+      const explicitExecutablePlugin = Boolean(
         suppliedSnapshotWasNamed
         || suppliedPluginWasNamed
-        || (projectHasExplicitPin && !projectPinIsAutomaticDefault),
+        || (projectHasExplicitPin && !projectPinIsAutomaticDefault)
+      );
+      const explicitUserPlugin = Boolean(
+        explicitExecutablePlugin
+        || suppliedSkillWasNamed
+        || suppliedContextPluginWasNamed
       );
       const rolloutPolicy = readOdNextRolloutPolicy();
       const rolloutTaskType = odNextTaskTypeForProjectScenarioBinding(
-        verifiedScenarioBinding,
+        verifiedStrategyBinding ?? verifiedScenarioBinding,
       );
       const routeApplicability = explicitUserPlugin
         ? 'explicit_user' as const
@@ -2006,7 +2026,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         assignmentClass: strategyRolloutDecision.eligible ? 'included' : 'not_included',
         primaryReasonCode: strategyRolloutDecision.primaryReasonCode,
       });
-      if (!explicitUserPlugin) {
+      if (!explicitExecutablePlugin) {
         const projectRow = rolloutProject;
         const hasPin =
           typeof projectRow?.appliedPluginSnapshotId === 'string'
@@ -2098,7 +2118,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         registry: registryView,
         connectorProbe: buildConnectorProbe(connectorService),
         requireSnapshotProjectMatch: true,
-        ...(!activatingStrategy && !explicitUserPlugin
+        ...(!activatingStrategy && !explicitExecutablePlugin
           && (projectPinIsAutomaticDefault || synthesizedAutomaticDefault)
           && defaultPluginId
           ? {
@@ -2122,7 +2142,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           : {}),
       });
       if (resolved && !resolved.ok) {
-        if (!explicitUserPlugin) {
+        if (!explicitExecutablePlugin) {
           console.warn(
             `[plugins] default-scenario fallback skipped for run on project ${requestBody.projectId}: ${resolved.body?.error?.code ?? 'unknown'}`,
           );
@@ -2621,21 +2641,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       && !idempotentStrategyRetry
       && strategyRolloutDecision?.effectiveMode === 'active'
     ) {
-      if (!ctx.skills) {
-        if (!await fallbackAutomaticBeforeStart(
-          new Error('OD Next Skill snapshot service is unavailable'),
-        )) return;
-      } else {
-        try {
-          frozenSkillPackage = await ctx.skills.captureOdNextFrozenSkillPackage({
-            skillId: meta.skillId,
-            skillIds: meta.skillIds,
-            workspaceScope: meta.workspaceScope,
-          });
-        } catch (error) {
-          if (!await fallbackAutomaticBeforeStart(error)) return;
-        }
-      }
+      // Automatic OD Next owns the complete prompt/Skill surface. Explicit
+      // Skills are ordinary-route authority above; an admitted strategy task
+      // therefore persists an empty package solely to keep restart/continuation
+      // identity deterministic.
+      frozenSkillPackage = createEmptyFrozenSkillPackage();
     }
     const fingerprintSnapshot = clarificationTask
       ? getSnapshot(db, clarificationTask.snapshotId)

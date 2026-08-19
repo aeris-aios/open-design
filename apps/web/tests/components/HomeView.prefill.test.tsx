@@ -139,11 +139,9 @@ const HIDDEN_DEFAULT_PLUGIN = {
   },
 };
 
-// The Prototype chip binds to the bundled `example-web-prototype`
-// plugin (which ships its own seed + layouts + checklist) instead of
-// the generic od-new-generation router. Mirror that here so the
-// chip-applies test can find a matching plugin record and the apply
-// call resolves to the new id.
+// Keep the legacy web-prototype record available for explicit presets and for
+// ordinary routes such as Wireframe / Mobile. The exact UI Mockup automatic
+// route is asserted below to bypass this record entirely in favor of OD Next.
 const WEB_PROTOTYPE_PLUGIN = {
   ...DEFAULT_PLUGIN,
   id: 'example-web-prototype',
@@ -997,16 +995,10 @@ describe('HomeView prompt handoff', () => {
     }));
   });
 
-  it('binds the Home rail UI Mockup chip locally and applies it on submit', async () => {
+  it('hands the Home rail UI Mockup chip entirely to OD Next on submit', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (typeof url === 'string' && url.includes('/apply-local')) {
-        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
@@ -1064,22 +1056,13 @@ describe('HomeView prompt handoff', () => {
     await setPromptAndSettle('Build a pricing-page prototype.');
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/example-web-prototype/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
-    ));
-    const protoApplyInputs = JSON.parse(String((applyCall?.[1] as RequestInit).body)).inputs;
-    expect(protoApplyInputs).toMatchObject({
-      artifactKind: 'web prototype',
-      audience: 'product evaluators',
-      designSystem: 'Refly Design System',
-      template: 'the bundled web prototype seed',
-    });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'example-web-prototype',
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      appliedPluginSnapshotId: null,
+      pluginTitle: null,
+      taskKind: null,
+      skillId: null,
       projectKind: 'prototype',
       prompt: 'Build a pricing-page prototype.',
       designSystemId: 'ds-refly',
@@ -1087,14 +1070,69 @@ describe('HomeView prompt handoff', () => {
         kind: 'prototype',
       }),
     })));
-    // Fidelity is deferred to first-turn discovery: the plugin is still applied
-    // with its full inputs, but its default must NOT be forwarded to the run, so
-    // the question-form flow collects it instead of inheriting a baked-in value.
-    const [{ pluginInputs: protoSubmittedInputs }] = onSubmit.mock.calls[0] as [
-      { pluginInputs?: Record<string, unknown> },
-    ];
-    expect(protoSubmittedInputs).not.toHaveProperty('fidelity');
+    const [submitted] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submitted).not.toHaveProperty('pluginInputs');
+    expect(submitted).not.toHaveProperty('pluginSource');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each([
+    ['wireframe', { kind: 'prototype', fidelity: 'wireframe' }],
+    ['mobile', {
+      kind: 'prototype',
+      platform: 'auto',
+      platformTargets: ['mobile-ios', 'mobile-android'],
+    }],
+  ] as const)('keeps the %s route on the ordinary legacy default-plugin path', async (
+    chipId,
+    expectedMetadata,
+  ) => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')) {
+        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    const onSubmit = vi.fn();
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={onSubmit}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    await clearActiveTypeChip();
+    await pickHomeTemplate(chipId);
+    await setPromptAndSettle(`Create a ${chipId} concept.`);
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/plugins/example-web-prototype/apply-local',
+      expect.anything(),
+    ));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'example-web-prototype',
+      appliedPluginSnapshotId: 'snap-web-prototype',
+      projectKind: 'prototype',
+      projectMetadata: expect.objectContaining(expectedMetadata),
+    })));
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('automaticStrategyTaskProfile');
+    expect(onSubmit.mock.calls[0]?.[0]).toHaveProperty('pluginInputs');
   });
 
   it('keeps Document prompt entry submittable even when od-new-generation has required inputs', async () => {
@@ -1169,12 +1207,6 @@ describe('HomeView prompt handoff', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (typeof url === 'string' && url.includes('/apply-local')) {
-        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
       throw new Error(`unexpected fetch ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1209,20 +1241,14 @@ describe('HomeView prompt handoff', () => {
     await setPromptAndSettle('Build a pricing-page prototype.');
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/example-web-prototype/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
-    ));
-    const protoApplyInputs = JSON.parse(String((applyCall?.[1] as RequestInit).body)).inputs;
-    expect(protoApplyInputs).toMatchObject({ designSystem: 'No design system' });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'example-web-prototype',
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
       projectKind: 'prototype',
       designSystemId: null,
     })));
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pluginInputs');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -1230,12 +1256,6 @@ describe('HomeView prompt handoff', () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (typeof url === 'string' && url.includes('/apply-local')) {
-        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
@@ -1284,9 +1304,12 @@ describe('HomeView prompt handoff', () => {
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'example-web-prototype',
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
       designSystemId: null,
     })));
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pluginInputs');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -1550,12 +1573,6 @@ describe('HomeView prompt handoff', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (typeof url === 'string' && url.includes('/api/plugins/example-simple-deck/apply-local')) {
-        return new Response(JSON.stringify(SIMPLE_DECK_APPLY_RESULT), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
       throw new Error(`unexpected fetch ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1589,12 +1606,19 @@ describe('HomeView prompt handoff', () => {
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'example-simple-deck',
+      pluginId: null,
+      automaticStrategyTaskProfile: 'ppt',
+      appliedPluginSnapshotId: null,
+      pluginTitle: null,
+      taskKind: null,
+      skillId: null,
       projectKind: 'deck',
       projectMetadata: expect.objectContaining({
         kind: 'deck',
       }),
     })));
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pluginInputs');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
   });
 
   it('switches output-type chips without replacing an existing prompt', async () => {

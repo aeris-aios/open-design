@@ -142,6 +142,39 @@ describe('createProject local plugin identity', () => {
     });
   });
 
+  it('preserves an automatic OD Next task profile without synthesizing plugin fields', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({
+      project: {
+        id: 'project-automatic-strategy',
+        name: 'Automatic strategy project',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conversation-1',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createProject({
+      name: 'Automatic strategy project',
+      skillId: null,
+      designSystemId: null,
+      metadata: { kind: 'prototype' },
+      automaticStrategyTaskProfile: 'prototype',
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      automaticStrategyTaskProfile: 'prototype',
+      metadata: { kind: 'prototype' },
+    });
+    expect(body).not.toHaveProperty('pluginId');
+    expect(body).not.toHaveProperty('pluginSource');
+    expect(body).not.toHaveProperty('appliedPluginSnapshotId');
+    expect(body).not.toHaveProperty('pluginInputs');
+  });
+
   it('preserves selected local resource catalogue scopes without adding Workspace headers', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json({
       project: {

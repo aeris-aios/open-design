@@ -55,11 +55,7 @@ describe('OD Next exact Agent input map v1', () => {
     );
     expect(semanticById.get('prior_transcript')?.source).toContain('buildDaemonPriorTranscript');
     expect(semanticById.get('current_user_turn')?.textTarget).toBe('user_prompt');
-    expect(semanticById.get('user_selected_skills')?.owner).toContain('Task 03');
-    expect(semanticById.get('user_selected_skills')).toMatchObject({
-      classification: 'initial_bundle',
-      textTarget: 'context',
-    });
+    expect(semanticById.has('user_selected_skills')).toBe(false);
     expect(semanticById.get('strategy_task_type')?.owner).toContain('Task 04');
     expect(semanticById.get('project_attachment_selection')?.owner).toContain('Task 04');
     expect(semanticById.get('available_skills_catalogue')?.classification).toBe('excluded');

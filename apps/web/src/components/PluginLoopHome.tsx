@@ -5,6 +5,7 @@ import type {
   InstalledPluginRecord,
   ProjectKind,
   ProjectMetadata,
+  ProjectScenarioTaskProfile,
   LocalCatalogScope,
   RunContextSelection,
 } from '@open-design/contracts';
@@ -32,6 +33,8 @@ export interface PluginLoopSubmit {
   prompt: string;
   pluginId: string | null;
   pluginSelectionProvenance?: 'automatic-default';
+  /** Exact product-owned OD Next route; absent for ordinary plugin routing. */
+  automaticStrategyTaskProfile?: ProjectScenarioTaskProfile | null;
   /** Exact identity of the local catalogue record selected by the user. */
   pluginSource?: string | null;
   // Marketplace trust of the routed plugin (official / community / …), used

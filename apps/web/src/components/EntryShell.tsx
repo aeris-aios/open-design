@@ -22,13 +22,14 @@ import {
   type SetStateAction,
 } from 'react';
 import {
-  defaultScenarioTaskProfileForProjectMetadata,
+  automaticStrategyTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
   type AmrWalletSnapshot,
   type ChatSessionMode,
   type ConnectorDetail,
   type InstalledPluginRecord,
   type RunContextSelection,
+  type ProjectScenarioTaskProfile,
   type WorkspaceProjectSummary,
 } from '@open-design/contracts';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
@@ -129,6 +130,7 @@ import {
   amrPlansUrlForWorkspace,
 } from '../runtime/amr-guidance';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
+import { entryStrategyRoutingFields } from './entry-strategy-routing';
 import { EntryBlankState } from './EntryBlankState';
 import { RecentProjectsStrip } from './RecentProjectsStrip';
 import {
@@ -305,6 +307,7 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   pluginType?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
+  automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
   initialRunContext?: RunContextSelection | null;
   conversationMode?: ChatSessionMode;
   autoSendFirstMessage?: boolean;
@@ -1342,10 +1345,10 @@ export function EntryShell({
     // single row without touching the form.
     const pluginId = defaultPluginIdForMetadata(input.metadata);
     const pluginInputs = defaultPluginInputsForCreate(input, pluginId);
-    const automaticStrategyRoute = pluginId
-      ? defaultScenarioTaskProfileForProjectMetadata(input.metadata, pluginId)
-      : null;
     const { skillSelectionProvenance, ...projectInput } = input;
+    const automaticStrategyRoute = skillSelectionProvenance === 'explicit-user'
+      ? null
+      : automaticStrategyTaskProfileForProjectMetadata(input.metadata);
     return onCreateProject({
       ...projectInput,
       // The modal's Blank card historically persisted a hidden default Skill
@@ -1357,7 +1360,11 @@ export function EntryShell({
       ...(automaticStrategyRoute && skillSelectionProvenance === 'automatic-default'
         ? { skillId: null }
         : {}),
-      ...(pluginInputs ? { pluginInputs } : {}),
+      ...(automaticStrategyRoute
+        ? { automaticStrategyTaskProfile: automaticStrategyRoute }
+        : pluginInputs
+          ? { pluginInputs }
+          : {}),
     });
   }
 
@@ -1499,10 +1506,11 @@ export function EntryShell({
         examplePromptBrief: payload.examplePromptContext.brief,
       } : {}),
     };
+    const strategyRoutingFields = entryStrategyRoutingFields(payload, metadata);
     const createInput: EntryCreateProjectInput = {
       name,
-      skillId: payload.skillId ?? null,
-      ...(payload.skillCatalogScope
+      ...strategyRoutingFields,
+      ...(strategyRoutingFields.skillId && payload.skillCatalogScope
         ? { skillCatalogScope: payload.skillCatalogScope }
         : {}),
       designSystemId: payload.designSystemId ?? null,
@@ -1523,7 +1531,6 @@ export function EntryShell({
       ...(payload.appliedPluginSnapshotId && !payload.pluginSelectionProvenance
         ? { appliedPluginSnapshotId: payload.appliedPluginSnapshotId }
         : {}),
-      ...(payload.pluginInputs ? { pluginInputs: payload.pluginInputs } : {}),
       ...(payload.initialRunContext ? { initialRunContext: payload.initialRunContext } : {}),
       ...(payload.conversationMode ? { conversationMode: payload.conversationMode } : {}),
       ...(payload.attachments && payload.attachments.length > 0

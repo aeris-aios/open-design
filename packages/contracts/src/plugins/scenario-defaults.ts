@@ -57,6 +57,58 @@ export type DefaultScenarioPluginId =
 export const DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID =
   'od-default' satisfies DefaultScenarioPluginId;
 
+const AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID = {
+  prototype: 'prototype',
+  deck: 'ppt',
+  marketing: 'marketing',
+  hyperframes: 'hyperframes',
+} as const satisfies Record<string, ProjectScenarioTaskProfile>;
+
+/**
+ * Resolve the product-owned OD Next route selected by a task-type surface.
+ *
+ * This is deliberately keyed by the exact UI/product route, not by broad
+ * project kind. Wireframe and Mobile projects still use `kind: 'prototype'`
+ * for rendering, but are not automatic OD Next Prototype routes.
+ */
+export function automaticStrategyTaskProfileForRouteId(
+  routeId: string | null | undefined,
+): ProjectScenarioTaskProfile | null {
+  if (!routeId) return null;
+  return AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID[
+    routeId as keyof typeof AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID
+  ] ?? null;
+}
+
+/**
+ * Validate the daemon-owned route against exact project metadata.
+ *
+ * This helper is intentionally stricter than the ordinary scenario resolver:
+ * broad prototype metadata must not let the Wireframe or Mobile aliases claim
+ * the OD Next Prototype route.
+ */
+export function automaticStrategyTaskProfileForProjectMetadata(
+  metadata: Pick<ProjectMetadata, 'kind' | 'intent' | 'fidelity' | 'platform' | 'platformTargets'>
+    | null
+    | undefined,
+): ProjectScenarioTaskProfile | null {
+  if (metadata?.intent === 'marketing') {
+    return metadata.kind === 'prototype' ? 'marketing' : null;
+  }
+  if (metadata?.intent === 'hyperframes') {
+    return metadata.kind === 'video' ? 'hyperframes' : null;
+  }
+  if (metadata?.intent != null) return null;
+  if (metadata?.kind === 'deck') return 'ppt';
+  if (metadata?.kind !== 'prototype' || metadata.fidelity === 'wireframe') return null;
+  const mobileTargets = new Set(['mobile-ios', 'mobile-android']);
+  if (
+    (metadata.platform && mobileTargets.has(metadata.platform))
+    || metadata.platformTargets?.some((target) => mobileTargets.has(target))
+  ) return null;
+  return 'prototype';
+}
+
 export const DEFAULT_SCENARIO_PLUGIN_BY_KIND: Record<ProjectKind, DefaultScenarioPluginId> = {
   // Prototypes bind to web-prototype's seed template (single-file HTML,
   // 1280×800 frame, section layouts library, P0 checklist).
@@ -104,27 +156,32 @@ export function defaultScenarioPluginIdForProjectMetadata(
  * profile unless the product metadata names an approved route.
  */
 export function defaultScenarioTaskProfileForProjectMetadata(
-  metadata: Pick<ProjectMetadata, 'kind' | 'intent'> | null | undefined,
+  metadata: Pick<ProjectMetadata, 'kind' | 'intent' | 'fidelity' | 'platform' | 'platformTargets'>
+    | null
+    | undefined,
   pluginId: string,
 ): ProjectScenarioTaskProfile | null {
-  if (metadata?.intent === 'marketing') {
-    return metadata.kind === 'prototype' && pluginId === 'example-web-prototype'
-      ? 'marketing'
-      : null;
+  const taskProfile = automaticStrategyTaskProfileForProjectMetadata(metadata);
+  if (taskProfile === 'prototype' || taskProfile === 'marketing') {
+    return pluginId === 'example-web-prototype' ? taskProfile : null;
   }
-  if (metadata?.intent === 'hyperframes') {
-    return metadata.kind === 'video' && pluginId === 'example-hyperframes'
-      ? 'hyperframes'
-      : null;
+  if (taskProfile === 'ppt') {
+    return pluginId === 'example-simple-deck' ? taskProfile : null;
   }
-  if (metadata?.intent != null) return null;
-  if (metadata?.kind === 'prototype' && pluginId === 'example-web-prototype') {
-    return 'prototype';
-  }
-  if (metadata?.kind === 'deck' && pluginId === 'example-simple-deck') {
-    return 'ppt';
+  if (taskProfile === 'hyperframes') {
+    return pluginId === 'example-hyperframes' ? taskProfile : null;
   }
   return null;
+}
+
+export function hasCurrentAutomaticStrategyBinding(
+  metadata: ProjectMetadata | null | undefined,
+): boolean {
+  const binding = metadata?.strategyBinding;
+  return binding?.schemaVersion === 1
+    && binding.provenance === 'automatic_default'
+    && binding.boundAt >= 0
+    && binding.taskProfile === automaticStrategyTaskProfileForProjectMetadata(metadata);
 }
 
 /**
@@ -136,6 +193,9 @@ export function hasCurrentAutomaticScenarioBinding(input: {
   metadata: ProjectMetadata | null | undefined;
   appliedPluginSnapshotId: string | null | undefined;
 }): boolean {
+  if (!input.appliedPluginSnapshotId && hasCurrentAutomaticStrategyBinding(input.metadata)) {
+    return true;
+  }
   const binding = input.metadata?.scenarioBinding;
   const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(input.metadata);
   return binding?.schemaVersion === 1

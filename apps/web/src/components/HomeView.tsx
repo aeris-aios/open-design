@@ -23,7 +23,10 @@ import type {
   AudioVoiceOption,
   WorkspaceContextItem,
 } from '@open-design/contracts';
-import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
+import {
+  automaticStrategyTaskProfileForRouteId,
+  DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
+} from '@open-design/contracts';
 import { projectKindFromMetadataToTracking } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
 import {
@@ -2565,6 +2568,10 @@ export function HomeView({
       element: 'send_button',
     });
     let submittedActive = active;
+    const automaticStrategyTaskProfile = sessionMode === 'design'
+      && submittedActive?.explicitPick !== true
+      ? automaticStrategyTaskProfileForRouteId(submittedActive?.chipId)
+      : null;
     // Pre-empt the run only when the user could actually fix it here. On the
     // seeded-brief 「使用」 path there is no field to fill, so we let the send
     // through and report whatever the daemon decides (below).
@@ -2612,7 +2619,11 @@ export function HomeView({
       const activeInputsChangedForSubmit = submittedActive
         ? !inputsEqual(submittedActive.result?.appliedPlugin?.inputs ?? submittedActive.inputs, submittedPluginInputs)
         : false;
-      if (submittedActive && (!submittedActive.result || activeInputsChangedForSubmit)) {
+      if (
+        submittedActive
+        && !automaticStrategyTaskProfile
+        && (!submittedActive.result || activeInputsChangedForSubmit)
+      ) {
         const result = await resolveActivePlugin(submittedActive.record, submittedPluginInputs);
         if (!result) {
           // The daemon is the authority on required inputs, and it rejects a
@@ -2703,7 +2714,9 @@ export function HomeView({
         && submittedChip.action.automaticDefault === true
         && submittedActive?.explicitPick !== true;
       const routedPluginId =
-        sessionMode === 'design'
+        automaticStrategyTaskProfile
+          ? null
+          : sessionMode === 'design'
           ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
           : submittedActive?.record.id ?? null;
       const pluginSelectionProvenance = sessionMode === 'design'
@@ -2722,20 +2735,27 @@ export function HomeView({
         prompt: trimmed,
         pluginId: routedPluginId,
         ...(pluginSelectionProvenance ? { pluginSelectionProvenance } : {}),
-        ...(submittedActive?.record.source
+        ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
+        ...(!automaticStrategyTaskProfile && submittedActive?.record.source
           ? { pluginSource: submittedActive.record.source }
           : {}),
-        pluginType: submittedActive?.record.marketplaceTrust ?? (routedPluginId ? 'official' : null),
+        pluginType: automaticStrategyTaskProfile
+          ? null
+          : submittedActive?.record.marketplaceTrust ?? (routedPluginId ? 'official' : null),
         skillId: resolvedSkillId,
         ...(resolvedSkillId && activeSkillCatalogScope
           ? { skillCatalogScope: activeSkillCatalogScope }
           : resolvedSkillId && lastSettledLocalCatalogScopeRef.current
             ? { skillCatalogScope: lastSettledLocalCatalogScopeRef.current }
           : {}),
-        appliedPluginSnapshotId: submittedActive?.result?.appliedPlugin?.snapshotId ?? null,
-        pluginTitle: submittedActive?.record.title ?? null,
-        taskKind: submittedActive?.result?.appliedPlugin?.taskKind ?? null,
-        pluginInputs: submittedPluginInputs,
+        appliedPluginSnapshotId: automaticStrategyTaskProfile
+          ? null
+          : submittedActive?.result?.appliedPlugin?.snapshotId ?? null,
+        pluginTitle: automaticStrategyTaskProfile ? null : submittedActive?.record.title ?? null,
+        taskKind: automaticStrategyTaskProfile
+          ? null
+          : submittedActive?.result?.appliedPlugin?.taskKind ?? null,
+        ...(!automaticStrategyTaskProfile ? { pluginInputs: submittedPluginInputs } : {}),
         projectKind: submittedProjectKind,
         projectMetadata: submittedProjectMetadata,
         designSystemId: submittedDesignSystemId,
