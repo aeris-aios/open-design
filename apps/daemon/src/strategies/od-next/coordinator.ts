@@ -283,6 +283,13 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   }
 
   const parsed = input.parsed;
+  if (parsed.normalizations.length > 0) {
+    console.info('[od-next-task] protocol normalized', {
+      taskExecutionId: input.taskExecutionId,
+      runId: input.runId,
+      normalizations: parsed.normalizations,
+    });
+  }
   const protocolCodes = uniqueReasonCodes(parsed.issues.map((issue) => issue.code));
   let state = parsed.runtimeState;
   if (protocolCodes.length > 0) {

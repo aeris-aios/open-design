@@ -1122,6 +1122,29 @@ ${question}`),
     expect(persisted?.blockedContext).toBeUndefined();
   });
 
+  it('accepts a clarification turn whose state predicted a premature execution mode', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1', preference: 'full_plan', directEdit: directEligible,
+      intake: intakePassed, updatedAt: 110,
+    });
+    const question = '<question-form id="scope">{"questions":[{"id":"surface","label":"Surface?"}]}</question-form>';
+    const result = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1', runId: 'run-request',
+      protocol: protocol(`${question}\n${block('open-design-runtime-state', {
+        schema: 'open-design.strategy-state/v2',
+        route: 'full_plan',
+        inputStage: 'request',
+        outcome: 'clarification_required',
+        executionMode: 'simple',
+        reasonCodes: ['scope_required'],
+      })}`),
+      updatedAt: 120,
+    });
+    expect(result.action).toBe('awaiting_clarification');
+    expect(result.task.outcome).toBe('clarification_required');
+    expect(result.task.executionMode).toBeNull();
+  });
+
   it('keeps ambiguous protocol-less turns fail-closed instead of inferring', () => {
     // Two forms: not inferable.
     prepareStrategyRequest(db, {

@@ -528,6 +528,14 @@ function renderMachineOutputSection(
     executionMode: 'simple',
     reasonCodes: [],
   } satisfies StrategyRuntimeStateV2;
+  const clarificationStateExample = {
+    schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
+    route: 'full_plan',
+    inputStage: 'request',
+    outcome: 'clarification_required',
+    executionMode: null,
+    reasonCodes: [],
+  } satisfies StrategyRuntimeStateV2;
 
   const runtimeFacts = planningFacts
     ? `\n\nOpen Design runtime-owned planning facts (copy these exact values into the contract; do not replace them with placeholders):\n\n${stableJson({
@@ -553,6 +561,12 @@ Runtime State wrapper and exact shape:
 
 <${OD_NEXT_RUNTIME_STATE_BLOCK}>
 ${stableJson(runtimeStateExample)}
+</${OD_NEXT_RUNTIME_STATE_BLOCK}>
+
+When the outcome is clarification_required, executionMode MUST be null — the execution mode is not locked until clarification resolves — and no Plan Contract block may be emitted:
+
+<${OD_NEXT_RUNTIME_STATE_BLOCK}>
+${stableJson(clarificationStateExample)}
 </${OD_NEXT_RUNTIME_STATE_BLOCK}>
 
 The visible decision summary contains only the goal, deliverables, key constraints, assumptions, risks, and open decisions. Machine blocks are consumed by Open Design and must not be paraphrased.`;

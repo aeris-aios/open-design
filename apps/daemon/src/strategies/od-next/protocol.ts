@@ -35,6 +35,13 @@ export interface OdNextMachineProtocolResult {
   repairPlanContract?: OpenDesignPlanContractV2;
   repairRuntimeState?: StrategyRuntimeStateV2;
   issues: OdNextProtocolIssue[];
+  /**
+   * Deterministic, meaning-preserving corrections applied before schema
+   * validation. A normalization is not a protocol defect: it removes an
+   * agent declaration that carries no authority at this stage (for example a
+   * premature execution-mode prediction on a clarification turn).
+   */
+  normalizations: string[];
 }
 
 type MachineKind = 'plan' | 'runtime';
@@ -109,6 +116,7 @@ export class OdNextMachineProtocolStream {
   private current: CapturedBlock | null = null;
   private readonly blocks: CapturedBlock[] = [];
   private readonly streamIssues: OdNextProtocolIssue[] = [];
+  private readonly normalizations: string[] = [];
   private readonly visible: string[] = [];
   private finished = false;
 
@@ -162,6 +170,7 @@ export class OdNextMachineProtocolStream {
     }
     return {
       visibleText: this.visible.join(''),
+      normalizations: [...this.normalizations],
       ...(plan.strict ? { planContract: plan.strict } : {}),
       ...(runtime.strict ? { runtimeState: runtime.strict } : {}),
       ...(!plan.strict && plan.repair ? { repairPlanContract: plan.repair } : {}),
@@ -355,7 +364,7 @@ export class OdNextMachineProtocolStream {
           detail: `${metadata.tag} must contain JSON only, without Markdown fences.`,
         });
       } else {
-        const parsed = schema.safeParse(exactJson.value);
+        const parsed = schema.safeParse(this.normalizeMachineValue(kind, exactJson.value));
         if (parsed.success) return { strict: parsed.data as Parsed };
         issues.push({
           code: metadata.schemaCode,
@@ -367,8 +376,33 @@ export class OdNextMachineProtocolStream {
 
     const recoveredJson = jsonValue(stripSingleJsonFence(block.body));
     if (!recoveredJson.ok) return {};
-    const recovered = schema.safeParse(recoveredJson.value);
+    const recovered = schema.safeParse(this.normalizeMachineValue(kind, recoveredJson.value));
     return recovered.success ? { repair: recovered.data as Parsed } : {};
+  }
+
+  /**
+   * A clarification turn cannot lock the execution mode — the daemon owns
+   * mode locking after clarification resolves — so an agent that predicts a
+   * mode alongside outcome clarification_required has emitted an authority-
+   * free field, not a defect. Discard exactly that field and record the
+   * normalization; every other shape passes through to schema validation
+   * unchanged.
+   */
+  private normalizeMachineValue(kind: MachineKind, value: unknown): unknown {
+    if (kind !== 'runtime') return value;
+    if (
+      typeof value !== 'object'
+      || value === null
+      || Array.isArray(value)
+    ) return value;
+    const record = value as Record<string, unknown>;
+    if (
+      record['outcome'] !== 'clarification_required'
+      || record['executionMode'] === null
+      || record['executionMode'] === undefined
+    ) return value;
+    this.normalizations.push('od_next_protocol_clarification_execution_mode_normalized');
+    return { ...record, executionMode: null };
   }
 
   private issue(code: OdNextProtocolReasonCode, detail: string): void {

@@ -93,6 +93,35 @@ describe('OD Next machine protocol stream', () => {
     }
   });
 
+  it('normalizes a premature clarification execution mode instead of failing schema', () => {
+    // Observed field shape: the agent asks for clarification but also
+    // predicts the eventual execution mode. The prediction has no authority
+    // at this stage, so it is discarded rather than fatal.
+    const stream = new OdNextMachineProtocolStream();
+    stream.push([
+      '先对齐两个问题。',
+      '<open-design-runtime-state>',
+      JSON.stringify({
+        schema: 'open-design.strategy-state/v2',
+        route: 'full_plan',
+        inputStage: 'request',
+        outcome: 'clarification_required',
+        executionMode: 'simple',
+        reasonCodes: ['scope_required'],
+      }),
+      '</open-design-runtime-state>',
+    ].join('\n'));
+    const result = stream.finish();
+    expect(result.issues).toEqual([]);
+    expect(result.runtimeState).toMatchObject({
+      outcome: 'clarification_required',
+      executionMode: null,
+    });
+    expect(result.normalizations).toEqual([
+      'od_next_protocol_clarification_execution_mode_normalized',
+    ]);
+  });
+
   it('does not treat Markdown headings or ordinary JSON as machine protocol', () => {
     const text = '# Plan Contract\n\n```json\n{"route":"full_plan"}\n```';
     const stream = new OdNextMachineProtocolStream();
