@@ -359,7 +359,7 @@ function accessStatus(category: ModelCategory, modelName: string, tier: TierId) 
 const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-Max, GPT-5.3-Codex, Gemini 3 Flash, GPT-5.4 mini, GPT-5.6-Luna, Kimi-K2.5, GLM-5';
 ---
 
-<section class="demo-individual-pricing" data-demo-pricing data-benefits-expanded="true">
+<section class="demo-individual-pricing" data-demo-pricing data-benefits-expanded="false">
   <div class="benefits-summary-stage">
     <div class="four-tier-grid decision-grid">
       {cardData.map(({ tier, logo, view }) => {
@@ -433,7 +433,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   </button>
                 </section>
 
-                <section class:list={['plan-model-module', { 'is-expanded': tier === 'go', 'unavailable-model-module': tier === 'go', 'recommended-model-module': tier === 'pro' || tier === 'max' }]} data-model-module>
+                <section class:list={['plan-model-module', { 'unavailable-model-module': tier === 'go', 'recommended-model-module': tier === 'pro' || tier === 'max' }]} data-model-module>
                   <header>
                     <h4>{tier === 'go' ? (isZh ? '旗舰模型' : 'Flagship models') : `${flagship.length}+ ${isZh ? '个旗舰模型' : 'flagship models'}`}</h4>
                     {tier === 'go' && <span>{isZh ? '不可用' : 'No access'}</span>}
@@ -445,8 +445,8 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       </li>
                     ))}
                   </ul>
-                  <button type="button" class="model-module-toggle" aria-expanded={tier === 'go' ? 'true' : 'false'} data-module-toggle data-total={flagship.length}>
-                    <span>{tier === 'go' ? (isZh ? '收起' : 'Show less') : (isZh ? `查看全部 ${flagship.length} 个` : `View all ${flagship.length}`)}</span><span class="toggle-symbol">+</span>
+                  <button type="button" class="model-module-toggle" aria-expanded="false" data-module-toggle data-total={flagship.length}>
+                    <span>{isZh ? `查看全部 ${flagship.length} 个` : `View all ${flagship.length}`}</span><span class="toggle-symbol">+</span>
                   </button>
                 </section>
 
@@ -482,8 +482,8 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
       })}
     </div>
     <div class="shared-benefits-toggle-wrap">
-      <button type="button" class="shared-benefits-toggle" aria-expanded="true" data-benefits-toggle>
-        <span>{isZh ? '收起权益' : 'Show fewer benefits'}</span><span class="shared-benefits-chevron" aria-hidden="true"></span>
+      <button type="button" class="shared-benefits-toggle" aria-expanded="false" data-benefits-toggle>
+        <span>{isZh ? '查看更多权益' : 'View more benefits'}</span><span class="shared-benefits-chevron" aria-hidden="true"></span>
       </button>
     </div>
   </div>
@@ -1708,7 +1708,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
       const label = benefitsToggle.querySelector('span');
       if (label) label.textContent = document.documentElement.lang.startsWith('zh')
         ? expanded ? '收起权益' : '查看更多权益'
-        : expanded ? 'Show fewer benefits' : 'Show more benefits';
+        : expanded ? 'Show fewer benefits' : 'View more benefits';
     });
   });
 </script>

@@ -129,6 +129,13 @@ describe("pricing contract", () => {
     assert.match(plans, /data-usage-module/);
     assert.match(plans, /new IntersectionObserver/);
     assert.match(plans, /threshold:\s*0\.22/);
+    assert.match(plans, /data-benefits-expanded="false"/);
+    assert.match(
+      plans,
+      /class="shared-benefits-toggle" aria-expanded="false" data-benefits-toggle/,
+    );
+    assert.match(plans, /isZh \? '查看更多权益' : 'View more benefits'/);
+    assert.doesNotMatch(plans, /'is-expanded': tier === 'go'/);
     assert.match(
       plans,
       /\.individual-usage-meter i\s*\{[^}]*background:\s*#dcfac7;/s,
