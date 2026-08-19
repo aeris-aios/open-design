@@ -16,6 +16,7 @@ import {
   type HeaderCopy,
   type LandingLocaleCode,
 } from '../i18n';
+import { getOpenDesignPluginCopy } from '../open-design-plugin-i18n';
 import { getSolutionPageCopy } from '../solution-pages-i18n';
 import type { SolutionPageKey } from '../solution-pages-i18n/types';
 
@@ -264,6 +265,31 @@ export function Header({
                   >
                     Codex Plugin
                   </a>
+                  {/* A head-only column read as a blank panel next to the
+                      populated Solution/Agent columns (live bug: the whole
+                      column rendered empty). Fill it with the plugin
+                      ecosystem's real destinations. "Install" reuses the
+                      plugin page's own translated phase label (no new i18n
+                      keys); the collection links are proper nouns. */}
+                  <ul className='nav-mega-list'>
+                    <li>
+                      <a href={href('/codex-plugin/#odp-install-instruction')}>
+                        <span className='dropdown-name'>
+                          {getOpenDesignPluginCopy(locale).demo.installPhase}
+                        </span>
+                      </a>
+                    </li>
+                    <li>
+                      <a href={href('/plugins/codex-design/')}>
+                        <span className='dropdown-name'>Codex Design</span>
+                      </a>
+                    </li>
+                    <li>
+                      <a href={href('/plugins/deepseek-harness-design-plugins/')}>
+                        <span className='dropdown-name'>DeepSeek Harness</span>
+                      </a>
+                    </li>
+                  </ul>
                 </li>
                 {/* Former Solution dropdown, folded into the mega panel as
                     three side-by-side columns (Use cases / Roles / Tools). */}
