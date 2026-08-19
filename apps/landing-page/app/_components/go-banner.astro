@@ -161,6 +161,10 @@ const WINDOW_END = '2026-09-03T20:00:00+08:00';
      不叠放。付费用户看不到 Go banner，DS 条不受影响。 */
   :global(html.go-banner-suppresses-campaign .home-campaign-banner) { display: none !important; }
   :global(html.go-banner-suppresses-campaign) { --home-campaign-banner-height: 0px !important; }
+  /* 与 PR #6881 的版本发布条（.hm-announce）互斥：活动条在时发布条让位，
+     头部只保留一条。该元素来自尚未合入的分支——选择器匹配不到就是 no-op，
+     两个 PR 的合并顺序无关。 */
+  :global(body.go-has-announce .hm-announce) { display: none !important; }
   :global(body.go-has-announce .hero) { padding-top: calc(92px + 44px); }
 </style>
 

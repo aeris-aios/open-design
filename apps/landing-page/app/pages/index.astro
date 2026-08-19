@@ -246,6 +246,9 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
     <style is:global>
       :root { --home-campaign-banner-height: 0px; }
       html.home-campaign-banner-active { --home-campaign-banner-height: 44px; }
+      /* 与 PR #6881 的版本发布条互斥（同 go-banner 内的规则）：
+         活动期头部只保留活动条，发布条让位；活动下线后自动恢复。 */
+      html.home-campaign-banner-active .hm-announce { display: none !important; }
       .home-campaign-banner {
         position: fixed;
         z-index: 70;
