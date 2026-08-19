@@ -29,7 +29,6 @@ import {
   evaluateOdNextComplexEligibility,
   evaluateOdNextComplexProduction,
   type OdNextComplexRuntimeEvidence,
-  ownsOdNextNativeBuildPackageBindings,
 } from './complex-production.js';
 import { createOdNextNativeBuildPackageBindings } from './native-build-package.js';
 
@@ -394,7 +393,7 @@ export function prepareAutomaticStrategyContinuation<
   // continuation text and remain fail-closed until their own native handle
   // owner is wired; never teach Codex/OpenCode a Claude tool shape.
   const nativeBuildPackageBindings = complexPlanCandidate
-    && ownsOdNextNativeBuildPackageBindings(input.task.selectedAgentId)
+    && input.task.selectedAgentId === 'claude'
     ? createOdNextNativeBuildPackageBindings({
         taskExecutionId: input.task.taskExecutionId,
         taskRunIndex: input.task.runs.length,

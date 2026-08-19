@@ -248,6 +248,7 @@ export async function resolveOdNextPromptRecipeForRun(input: {
       inputRefs: ['request'],
       productionRoutes: catalog.productionRoutes,
       outputKinds: catalog.outputKinds,
+      nativeChildLifecycleVerified: eligibility.eligible,
     },
   };
 }

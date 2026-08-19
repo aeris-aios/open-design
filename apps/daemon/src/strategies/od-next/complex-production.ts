@@ -134,29 +134,6 @@ function buildPackageId(
  * in order, and that the parent summary completed after the children. Array
  * order is the normalized adapter replay order, avoiding cross-clock math.
  */
-/**
- * Does this runtime's Child evidence carry Build Package ownership?
- *
- * Ownership travels on a per-runtime transport: the daemon issues opaque
- * handles through Claude's `--agents` contract and reads them back from the
- * structured `subagent_type`, and only `claude-child-evidence.ts` stamps
- * `attributes.buildPackageId`. No other adapter has that transport, by the
- * scope decision recorded beside the binding factory in
- * `automatic-simple-production.ts` ("never teach Codex/OpenCode a Claude tool
- * shape").
- *
- * Runtimes without it must still be able to finish a complex task. Demanding
- * an attribute their adapter cannot produce refused every complex run on
- * Codex, native OpenCode and AMR at the completion turn — after a full
- * production Run had already been spent — and the blocked verdict then latched
- * OD Next off for the whole daemon. Package-ownership assertions are therefore
- * scoped to the runtimes that can answer them; every lifecycle, graph, parent
- * and ordering assertion still applies to all four.
- */
-export function ownsOdNextNativeBuildPackageBindings(agentId: string): boolean {
-  return agentId === 'claude';
-}
-
 export function evaluateOdNextComplexChildEvidence(input: {
   plan: OpenDesignPlanContractV2;
   taskExecutionId: string;
@@ -164,15 +141,7 @@ export function evaluateOdNextComplexChildEvidence(input: {
   taskRunIndex: number;
   observations?: readonly unknown[];
   taskRunObservationId?: string;
-  /**
-   * Assert that every Child names the Build Package it owns. Only meaningful
-   * for a runtime whose adapter stamps `attributes.buildPackageId`; see
-   * `ownsOdNextNativeBuildPackageBindings`. Defaults to asserting so a caller
-   * must opt out deliberately.
-   */
-  verifiesBuildPackageOwnership?: boolean;
 }): OdNextComplexGateResult {
-  const verifiesBuildPackageOwnership = input.verifiesBuildPackageOwnership ?? true;
   if (!input.observations || input.observations.length === 0) {
     return {
       eligible: false,
@@ -189,6 +158,24 @@ export function evaluateOdNextComplexChildEvidence(input: {
   }
   const observations = parsed.flatMap((result) => result.success ? [result.data] : []);
   const reasonCodes: OdNextComplexProductionReasonCode[] = [];
+  // Verify Build Package ownership only when the evidence actually carries it.
+  //
+  // Ownership rides on Claude's `--agents` / structured `subagent_type`
+  // transport, so `attributes.buildPackageId` is a best-effort attribute that
+  // most runtimes simply cannot produce. Demanding it from all of them refused
+  // every complex run on Codex, native OpenCode and AMR at the completion turn,
+  // after a full production Run had already been spent — and the blocked
+  // verdict then latched OD Next off for the whole daemon.
+  //
+  // Keying on the evidence rather than on an agent allowlist means a runtime
+  // that starts stamping ownership is verified the moment it does, one whose
+  // Children never name a package is simply not held to it, and a Claude turn
+  // whose model slipped degrades to the same best-effort footing instead of
+  // destroying a finished task. Every lifecycle, graph, parent and ordering
+  // assertion below applies unconditionally either way.
+  const childObservations = observations.filter((item) => item.kind === 'child_agent');
+  const verifiesBuildPackageOwnership = childObservations.length > 0
+    && childObservations.every((item) => buildPackageId(item) !== undefined);
   if (observations.some((observation) => (
     observation.identity.taskExecutionId !== input.taskExecutionId
     || observation.identity.runId !== input.runId
@@ -372,8 +359,6 @@ export function evaluateOdNextComplexProduction(input: {
     ...(input.evidence?.taskRunObservationId
       ? { taskRunObservationId: input.evidence.taskRunObservationId }
       : {}),
-    verifiesBuildPackageOwnership:
-      ownsOdNextNativeBuildPackageBindings(input.selectedAgentId),
   });
   const reasonCodes = uniqueReasonCodes([
     ...eligibility.reasonCodes,

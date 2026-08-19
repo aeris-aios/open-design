@@ -34,6 +34,14 @@ export interface OdNextStrategyRequestRecipeV2 {
     inputRefs: ReadonlyArray<string>;
     productionRoutes: ReadonlyArray<string>;
     outputKinds: ReadonlyArray<string>;
+    /**
+     * Does the selected runtime have the verified structured native Child
+     * lifecycle that complex mode requires? The core strategy makes this a
+     * precondition for locking complex, so the Agent has to be told the answer
+     * — asked to judge a capability it cannot observe, it can only guess, and
+     * the safe guess is always simple.
+     */
+    nativeChildLifecycleVerified: boolean;
   } | undefined;
   executionProfile: 'filesystem' | 'text_artifact';
   coreStrategy: string;
@@ -631,6 +639,7 @@ ${stableJson({
     supportedOutputKinds: planningFacts.outputKinds.length
       ? [...planningFacts.outputKinds]
       : ['artifact'],
+    nativeChildLifecycleVerified: planningFacts.nativeChildLifecycleVerified,
   })}`;
 }
 

@@ -109,6 +109,7 @@ describe('OD Next V2 prompt recipe', () => {
         inputRefs: ['request'],
         productionRoutes: ['html', 'prototype-html'],
         outputKinds: ['prototype', 'html'],
+        nativeChildLifecycleVerified: true,
       },
     });
     const contract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);
@@ -134,12 +135,18 @@ describe('OD Next V2 prompt recipe', () => {
         inputRefs: ['request'],
         productionRoutes: ['html', 'prototype-html'],
         outputKinds: ['prototype', 'html'],
+        nativeChildLifecycleVerified: true,
       },
     });
     expect(facts).toContain(`"capabilitySnapshotHash": "${B}"`);
     expect(facts).toContain('"allowedProductionRoutes": [');
     expect(facts).toContain('"prototype-html"');
     expect(facts).toContain(`"appliedSnapshot": "${recipe.snapshotId}"`);
+    // The core strategy makes verified structured native Child lifecycle a
+    // precondition for locking complex mode. Asked to judge a capability it
+    // cannot observe, an Agent can only guess, and the safe guess is simple —
+    // so the answer has to travel with the other runtime-owned facts.
+    expect(facts).toContain('"nativeChildLifecycleVerified": true');
   });
 
   it('renders real stable request facts through the shared recipe owner', () => {
