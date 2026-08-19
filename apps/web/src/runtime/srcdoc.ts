@@ -3598,6 +3598,23 @@ function injectDeckBridge(
       });
     });
   }
+  function stepToIndexViaKeys(target, navigationSequence, onDone){
+    var guard = slides().length + 4;
+    function isCurrent(){ return navigationSequence === odNavigationSequence; }
+    function step(){
+      if (!isCurrent()) return;
+      var current = activeIndex(slides());
+      if (current === target) { onDone(true); return; }
+      if (guard <= 0) { onDone(false); return; }
+      guard -= 1;
+      goViaArtifactKeys(target > current ? 'ArrowRight' : 'ArrowLeft', function(moved){
+        if (!isCurrent()) return;
+        if (!moved) { onDone(false); return; }
+        step();
+      }, isCurrent);
+    }
+    step();
+  }
   function artifactIndexInvoker(target, count){
     var selectors = ['.nav-dot', '[data-slide-index]', '[data-page-index]'];
     for (var s=0; s<selectors.length; s++) {
@@ -3701,10 +3718,14 @@ function injectDeckBridge(
     goViaArtifactIndex(target, navigationSequence, function(moved){
       if (navigationSequence !== odNavigationSequence) return;
       if (moved) { report(); return; }
-      var now = slides();
-      if (canSetActive(now) && setActive(target)) return;
-      if (transformGo(target)) return;
-      setTimeout(report, 320);
+      stepToIndexViaKeys(target, navigationSequence, function(stepped){
+        if (navigationSequence !== odNavigationSequence) return;
+        if (stepped) { report(); return; }
+        var now = slides();
+        if (canSetActive(now) && setActive(target)) return;
+        if (transformGo(target)) return;
+        setTimeout(report, 320);
+      });
     });
   }
   function isInteractiveClickTarget(target){

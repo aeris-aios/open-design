@@ -352,6 +352,40 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
   });
 
+  it('keeps keyboard-only deck state in sync across direct selection and later paging', async () => {
+    const { win, track, pagerCur, visited } = setupCustomCounterDeck();
+    visited.length = 0;
+
+    // This artifact deliberately exposes no nav dots, indexed controls, hash
+    // route, or public goTo API. Its keyboard handler is the only owner of the
+    // private page index that drives both the canvas and its own counter.
+    win.dispatchEvent(new win.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'go', index: 2 },
+    }));
+    await vi.waitFor(() => {
+      expect(track.style.transform).toBe('translateX(-200vw)');
+      expect(pagerCur.textContent).toBe('3');
+    });
+    expect(visited).toEqual([1, 2]);
+
+    win.dispatchEvent(new win.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'next' },
+    }));
+    await vi.waitFor(() => {
+      expect(track.style.transform).toBe('translateX(-200vw)');
+      expect(pagerCur.textContent).toBe('3');
+      expect(visited).toEqual([1, 2, 2]);
+    });
+
+    win.dispatchEvent(new win.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'prev' },
+    }));
+    await vi.waitFor(() => {
+      expect(track.style.transform).toBe('translateX(-100vw)');
+      expect(pagerCur.textContent).toBe('2');
+    });
+  });
+
   it('preserves slash-hash routes for immediate artifact-owned thumbnail jumps', async () => {
     const { current, pagerCur, parentPostMessage, replaceState, win } = setupSlashHashDeck();
 
