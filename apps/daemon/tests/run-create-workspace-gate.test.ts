@@ -815,6 +815,36 @@ describe('POST /api/runs — workspace mutation gate', () => {
     expect(typeof payload.runId).toBe('string');
   });
 
+  it.each(['/api/runs', '/api/chat'])(
+    'ignores a client-forged workspace scope for an unbound project through %s',
+    async (route) => {
+      const baseUrl = await startServer();
+      const response = await fetch(`${baseUrl}${route}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: UNBOUND_PROJECT,
+          agentId: 'claude',
+          message: 'do not trust request scope',
+          workspaceScope: {
+            schemaVersion: 1,
+            projectId: UNBOUND_PROJECT,
+            workspaceId: 'forged-workspace',
+            workspaceMemberId: 'forged-member',
+            source: 'persisted_project_binding',
+          },
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      const { runId } = (await response.json()) as { runId: string };
+      const statusResponse = await fetch(`${baseUrl}/api/runs/${runId}`);
+      expect(statusResponse.status).toBe(200);
+      const run = await statusResponse.json() as Record<string, unknown>;
+      expect(run.workspaceScope).toBeNull();
+    },
+  );
+
   it('keeps an untyped historical AMR run account-scoped during a directory outage', async () => {
     const verifyWorkspaceRequestAuthority = vi.fn(async () => ({
       ok: false,

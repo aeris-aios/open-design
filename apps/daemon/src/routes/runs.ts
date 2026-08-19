@@ -794,6 +794,8 @@ function withoutSensitiveRunInput(body: JsonRecord): JsonRecord {
   delete sanitized.byokProfileId;
   delete sanitized.apiKey;
   delete sanitized.rechargeResumeCapability;
+  // Workspace scope is a server-issued authorization fact, not a request option.
+  delete sanitized.workspaceScope;
   return sanitized;
 }
 
@@ -1364,7 +1366,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       mediaExecution: mediaExecution.policy,
       toolBundle: toolBundle.bundle,
       ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
-      ...(preparedWorkspaceScope ? { workspaceScope: preparedWorkspaceScope } : {}),
+      // Always replace any untrusted request field, including with null for an
+      // unbound project.
+      workspaceScope: preparedWorkspaceScope,
     };
     if (resolvedSnapshot?.ok) {
       meta.appliedPluginSnapshotId = resolvedSnapshot.snapshotId;
@@ -3134,6 +3138,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       mediaExecution: mediaExecution.policy,
       toolBundle: toolBundle.bundle,
       ...(chatProject?.metadata ? { projectMetadata: chatProject.metadata } : {}),
+      workspaceScope: null,
     };
     // Mirror the POST /api/runs ownership check: the assistantMessageId must
     // reference an assistant message in THIS conversation, or the run mutates a
