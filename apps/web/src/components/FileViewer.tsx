@@ -646,7 +646,6 @@ type SrcDocTransportCacheEntry = {
 };
 const htmlPreviewSrcDocTransportState = new Map<string, SrcDocTransportCacheEntry>();
 const htmlPreviewDocumentUrlState = new Map<string, string>();
-const htmlPreviewSrcDocPaintedState = new Set<string>();
 function nextPreviewContentMeasurementDocumentEpoch(): string {
   previewContentMeasurementDocumentEpochSequence += 1;
   return `preview-document-${previewContentMeasurementDocumentEpochSequence}`;
@@ -701,14 +700,6 @@ function previewDocumentUrl(key: string, html: string): string | null {
     }
   }
   return url;
-}
-function markSrcDocPreviewPainted(key: string) {
-  htmlPreviewSrcDocPaintedState.delete(key);
-  htmlPreviewSrcDocPaintedState.add(key);
-  if (htmlPreviewSrcDocPaintedState.size > MAX_CACHED_SRC_DOC_TRANSPORTS) {
-    const oldest = htmlPreviewSrcDocPaintedState.values().next().value;
-    if (oldest != null) htmlPreviewSrcDocPaintedState.delete(oldest);
-  }
 }
 type PreviewContentWidthCacheEntry = {
   version: typeof PREVIEW_CONTENT_WIDTH_CACHE_VERSION;
@@ -8271,15 +8262,6 @@ function HtmlViewer({
   // Until that first load event lands, keep a loader over the transport stack.
   const urlPreviewLoadedKeysRef = useRef<Set<string>>(new Set());
   const [urlPreviewFirstLoadPending, setUrlPreviewFirstLoadPending] = useState(false);
-  const srcDocPreviewPaintKey = `${projectId}\0${file.name}`;
-  const [srcDocPreviewFirstLoadPending, setSrcDocPreviewFirstLoadPending] = useState(
-    () => !htmlPreviewSrcDocPaintedState.has(srcDocPreviewPaintKey),
-  );
-  useEffect(() => {
-    setSrcDocPreviewFirstLoadPending(
-      !htmlPreviewSrcDocPaintedState.has(srcDocPreviewPaintKey),
-    );
-  }, [srcDocPreviewPaintKey]);
   const [boardMode, setBoardMode] = useState(false);
   const [commentPanelOpen, setCommentPanelOpen] = useState(false);
   const commentPanelToggleRef = useRef<HTMLButtonElement | null>(null);
@@ -10844,8 +10826,6 @@ function HtmlViewer({
         srcDocParsingGraceRef.current = null;
         verifiedSrcDocTransportRef.current = { frame, generation: data.generation };
         srcDocNavigationCommittedRef.current = { frame, generation: data.generation };
-        markSrcDocPreviewPainted(srcDocPreviewPaintKey);
-        setSrcDocPreviewFirstLoadPending(false);
       } else if (
         typeof data.probeId === 'string'
         && pending
@@ -10925,7 +10905,6 @@ function HtmlViewer({
     recoverUnacknowledgedSrcDocTransport,
     replayPreviewBridgeModes,
     scheduleSrcDocTransportTimeout,
-    srcDocPreviewPaintKey,
     workspaceActive,
   ]);
   // React can commit a fresh `srcdoc` attribute while Chromium aborts the
@@ -16575,19 +16554,6 @@ function HtmlViewer({
                           <CenteredLoader label={t('fileViewer.loading')} />
                         </div>
                       ) : null}
-                      {!useUrlLoadPreview
-                        && srcDocTransportContent
-                        && srcDocPreviewFirstLoadPending ? (
-                          <div
-                            className="artifact-preview-first-load"
-                            role="status"
-                            aria-busy="true"
-                            aria-label={t('fileViewer.loading')}
-                            data-testid="artifact-preview-first-load"
-                          >
-                            <CenteredLoader label={t('fileViewer.loading')} />
-                          </div>
-                        ) : null}
                     </div>
                   </PreviewDrawOverlay>
                   {previewAssetWarning ? (

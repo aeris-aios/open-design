@@ -1804,7 +1804,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(reactivatedFrame.name).toBe(frameName);
   });
 
-  it('shows localized loading only until a srcDoc file paints for the first time', () => {
+  it('does not cover non-empty srcDoc content while paint verification is pending', () => {
     const viewer = (
       <I18nProvider initial="zh-CN">
         <FileViewer
@@ -1822,10 +1822,7 @@ describe('FileViewer SVG artifacts', () => {
       </I18nProvider>
     );
     const { unmount } = render(viewer);
-    expect(screen.getByTestId('artifact-preview-first-load')).toHaveAttribute(
-      'aria-label',
-      '加载中…',
-    );
+    expect(screen.queryByTestId('artifact-preview-first-load')).not.toBeInTheDocument();
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
     fireEvent.load(frame);
