@@ -209,7 +209,15 @@ export function getFrozenSkillPackage(
   return verified;
 }
 
-export function renderFrozenSkillBundleContext(frozen: FrozenSkillPackageV1): string {
+/**
+ * The frozen Skill roster for the Bundle's `context/frozen_skill_package` slot:
+ * identity, digests and the side-file roster, with no Skill body.
+ *
+ * Bodies are a separate product (see `resolveFrozenSkillBundleBodies`) because
+ * the spec places them in `session_skills/user_selected_skills`, while this
+ * audit roster belongs with the other frozen input identities.
+ */
+export function renderFrozenSkillRosterContext(frozen: FrozenSkillPackageV1): string {
   const verified = verifyFrozenSkillPackage(frozen);
   if (verified.selections.length === 0) {
     return canonicalJson({
@@ -218,29 +226,42 @@ export function renderFrozenSkillBundleContext(frozen: FrozenSkillPackageV1): st
       selectedSkills: [],
     });
   }
-  return [
-    canonicalJson({
-      schema: verified.schema,
-      identity: verified.identity,
-      selectedSkills: verified.selections.map((selection) => ({
-        id: selection.canonicalId,
-        materializedRoot: frozenSkillMaterializedRoot(verified, selection),
-        bodyDigest: selection.bodyDigest,
-        bodyBytes: selection.bodyByteLength,
-        files: selection.files.map((file) => ({
-          path: file.path,
-          digest: file.digest,
-          bytes: file.byteLength,
-        })),
+  return canonicalJson({
+    schema: verified.schema,
+    identity: verified.identity,
+    selectedSkills: verified.selections.map((selection) => ({
+      id: selection.canonicalId,
+      materializedRoot: frozenSkillMaterializedRoot(verified, selection),
+      bodyDigest: selection.bodyDigest,
+      bodyBytes: selection.bodyByteLength,
+      files: selection.files.map((file) => ({
+        path: file.path,
+        digest: file.digest,
+        bytes: file.byteLength,
       })),
-    }),
-    ...verified.selections.map((selection) => [
-      `## User-selected Skill — ${selection.name}`,
+    })),
+  });
+}
+
+/**
+ * The frozen user-selected Skill bodies for the Bundle's
+ * `session_skills/user_selected_skills` slot, or null when the user selected
+ * none so the optional slot is omitted entirely.
+ */
+export function resolveFrozenSkillBundleBodies(
+  frozen: FrozenSkillPackageV1,
+): { skillNames: string[]; body: string } | null {
+  const verified = verifyFrozenSkillPackage(frozen);
+  if (verified.selections.length === 0) return null;
+  return {
+    skillNames: verified.selections.map((selection) => selection.canonicalId),
+    body: verified.selections.map((selection) => [
+      `# ${selection.name}`,
       `Frozen identity: ${selection.canonicalId}@${selection.bodyDigest}`,
       `Frozen side-file root: ${frozenSkillMaterializedRoot(verified, selection)}`,
       selection.body,
-    ].join('\n\n')),
-  ].join('\n\n---\n\n');
+    ].join('\n\n')).join('\n\n'),
+  };
 }
 
 export async function materializeFrozenSkillPackage(input: {

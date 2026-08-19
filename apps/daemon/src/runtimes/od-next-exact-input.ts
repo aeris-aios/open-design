@@ -1,7 +1,60 @@
-import { parseOdNextPromptBundleV1 } from '@open-design/contracts';
+import { parseOdNextPromptBundleV2 } from '@open-design/contracts';
 
 export const OD_NEXT_EXACT_INPUT_MAP_VERSION =
-  'open-design.od-next-exact-input-map/v1' as const;
+  'open-design.od-next-exact-input-map/v2' as const;
+
+/**
+ * Every addressable node of the v2 Prompt Bundle tree that a text contributor
+ * may own, in canonical document order.
+ *
+ * A contributor names the exact node it fills rather than one of four flat
+ * blocks, so the ownership map records where the bytes land. `system_prompt`
+ * itself stays addressable because the recipe aggregate contributes several of
+ * its children at once; the constant head's leaves are listed so a future
+ * per-leaf contributor has a legal target without widening the union.
+ *
+ * `system_prompt/active_stages` is the aggregate target for stage content:
+ * `stage`/`atom` children are addressed by their `name` attribute, not by a
+ * static path, so they are not separate union members.
+ *
+ * The split follows the bundle's cache invariant: only cross-task-constant
+ * content may sit under `system_prompt`, which is why the per-run tool prompt,
+ * the caller's system prompt, and the first-run form override are `context/*`
+ * paths here.
+ */
+export const OD_NEXT_BUNDLE_NODE_PATHS_V2 = [
+  'system_prompt',
+  'system_prompt/core_system_prompt/execution_boundary',
+  'system_prompt/core_system_prompt/native_execution',
+  'system_prompt/core_system_prompt/discovery_and_planning_surface',
+  'system_prompt/core_system_prompt/core_strategy',
+  'system_prompt/session_skills/general_orchestration_skill',
+  'system_prompt/session_skills/task_type_skill',
+  'system_prompt/session_skills/user_selected_skills',
+  'system_prompt/active_stages',
+  'system_prompt/output_contract',
+  'system_prompt/echo_guard',
+  'task_config/task_type',
+  'task_config/attachments',
+  'task_config/task_configuration',
+  'task_config/title_directive',
+  'context/recipe_identity',
+  'context/runtime_facts',
+  'context/runtime_tool_environment',
+  'context/stable_request_context',
+  'context/frozen_skill_package',
+  'context/request_input_facts',
+  'context/research_command_contract',
+  'context/run_context',
+  'context/connected_external_mcp',
+  'context/browser_unavailable_guard',
+  'context/client_system_prompt',
+  'context/form_override',
+  'context/prior_transcript',
+  'user_prompt',
+] as const;
+
+export type OdNextBundleNodePathV2 = (typeof OD_NEXT_BUNDLE_NODE_PATHS_V2)[number];
 
 export type OdNextExactInputClassification =
   | 'initial_bundle'
@@ -21,7 +74,7 @@ export type OdNextExactInputEntry = Readonly<{
   classification: OdNextExactInputClassification;
   source: string;
   owner: string;
-  textTarget?: 'system_prompt' | 'user_prompt' | 'task_config' | 'context';
+  textTarget?: OdNextBundleNodePathV2;
   stage?: 'clarification' | 'contract_repair' | 'production';
   note: string;
 }>;
@@ -32,16 +85,17 @@ export type OdNextSemanticRequestFactEntry = Readonly<{
   producer?: 'daemon_system_prompt' | 'request';
   source: string;
   owner: string;
-  textTarget?: 'system_prompt' | 'user_prompt' | 'task_config' | 'context';
+  textTarget?: OdNextBundleNodePathV2;
   note: string;
 }>;
 
 /**
- * Every leaf text input consumed by the current production Markdown composer.
+ * Every leaf text input consumed by the ordinary production Markdown composer,
+ * which is the non-OD-Next path and still emits flat Markdown sections.
  *
- * Task 02 will replace that composer for OD Next. Keeping this list separate
- * from the ownership map makes an unregistered addition fail at the production
- * seam instead of silently escaping the future XML root.
+ * Keeping this list separate from the ownership map makes an unregistered
+ * addition fail at the production seam instead of silently escaping the OD Next
+ * XML root.
  */
 export const OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1 = [
   'form_override',
@@ -65,106 +119,212 @@ export const OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1 = [
 export type OdNextLegacyTextContributorId =
   (typeof OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1)[number];
 
-/** Every leaf text input consumed by the canonical OD Next request Bundle. */
-export const OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1 = [
-  'form_override',
+/**
+ * Every leaf text input consumed by the canonical OD Next request Bundle, in
+ * the tree's canonical node order.
+ */
+export const OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2 = [
   'daemon_system_prompt',
-  'runtime_tool_prompt',
-  'client_system_prompt',
   'echo_guard',
-  'request_text',
-  'title_generation_directive',
+  'user_selected_skills',
+  'task_type_fact',
+  'attachment_facts',
   'task_config_pending_fact',
+  'title_generation_directive',
+  'recipe_identity',
+  'runtime_facts',
+  'runtime_tool_prompt',
   'stable_context_prompt',
-  'prior_transcript',
+  'frozen_skill_package',
+  'request_input_facts',
   'research_command_contract',
   'run_context_prompt',
   'connected_external_mcp_reference',
   'browser_unavailable_guard',
-  'request_input_pending_fact',
+  'client_system_prompt',
+  'form_override',
+  'prior_transcript',
+  'request_text',
 ] as const;
 
-export type OdNextBundleTextContributorId =
-  (typeof OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1)[number];
+export type OdNextBundleTextContributorIdV2 =
+  (typeof OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2)[number];
 
 /**
  * Final text-segment and transport ownership map. Aggregate entries such as
  * `daemon_system_prompt` deliberately remain aggregates here; their semantic
  * leaves are enumerated in OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 below.
  * `source` names a real production symbol/seam, not a product-spec alias.
+ * `textTarget` names the exact v2 Bundle node the bytes land in.
  */
 export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
-  {
-    id: 'form_override',
-    classification: 'initial_bundle',
-    source: 'startChatRun.formOverride',
-    owner: 'bundle serializer',
-    textTarget: 'system_prompt',
-    note: 'First-run form-answer control text; later generic user turns are outside this strategy state machine.',
-  },
   {
     id: 'daemon_system_prompt',
     classification: 'initial_bundle',
     source: 'composeDaemonSystemPrompt().prompt',
     owner: 'bundle serializer',
     textTarget: 'system_prompt',
-    note: 'Core recipe aggregate only. Stable request context is a separate canonical Bundle contributor.',
+    note: 'Structured recipe aggregate: contributes core_system_prompt, session_skills, active_stages and output_contract as elements. Cross-task constant.',
   },
   {
-    id: 'runtime_tool_prompt',
+    id: 'echo_guard',
     classification: 'initial_bundle',
-    source: 'createAgentRuntimeToolPrompt()',
+    source: 'startChatRun.ECHO_GUARD',
     owner: 'bundle serializer',
-    textTarget: 'system_prompt',
-    note: 'Textual tool contract only; the executable capability and credentials remain transport facts.',
+    textTarget: 'system_prompt/echo_guard',
+    note: 'Constant; references the `<system_prompt>` and `<user_prompt>` tag names.',
   },
   {
-    id: 'research_command_contract',
+    id: 'user_selected_skills',
     classification: 'initial_bundle',
-    source: 'resolveResearchCommandContract()',
-    owner: 'bundle serializer',
-    textTarget: 'context',
-    note: 'Stable request-scoped research instructions.',
+    source: 'renderFrozenSkillBundleContext() user-selected Skill bodies',
+    owner: 'Task 03 immutable Skill package',
+    textTarget: 'system_prompt/session_skills/user_selected_skills',
+    note: 'Frozen user-@Skill bodies. The one per-task member of session_skills, kept last so the shared prefix diverges as late as possible.',
   },
   {
-    id: 'run_context_prompt',
+    id: 'task_type_fact',
     classification: 'initial_bundle',
-    source: 'renderRunContextPrompt()',
-    owner: 'bundle serializer',
-    textTarget: 'context',
-    note: 'User-selected stable run context.',
+    source: 'loadOdNextTaskInputSnapshot().taskConfigText -> OdNextTaskConfigurationV1.taskType',
+    owner: 'Task 04 canonical task configuration snapshot',
+    textTarget: 'task_config/task_type',
+    note: 'Resolved task type from the frozen task-input snapshot.',
   },
   {
-    id: 'connected_external_mcp_reference',
-    classification: 'transport_reference',
-    source: 'renderConnectedExternalMcpDirective()',
-    owner: 'bundle context reference',
-    textTarget: 'context',
-    note: 'Safe connection-state reference; never embeds OAuth tokens or substitutes for MCP registration.',
-  },
-  {
-    id: 'browser_unavailable_guard',
+    id: 'attachment_facts',
     classification: 'initial_bundle',
-    source: 'renderBrowserUseUnavailablePrompt()',
-    owner: 'bundle serializer',
-    textTarget: 'context',
-    note: 'Request-scoped browser capability limitation.',
+    source: 'loadOdNextTaskInputSnapshot().requestInputText -> OdNextRequestInputFactsV1.attachments',
+    owner: 'Task 04 immutable attachment snapshot',
+    textTarget: 'task_config/attachments',
+    note: 'Immutable attachment identities (reference, mime type, digest); never attachment bodies or absolute paths.',
+  },
+  {
+    id: 'task_config_pending_fact',
+    classification: 'initial_bundle',
+    source: 'loadOdNextTaskInputSnapshot().taskConfigText',
+    owner: 'Task 04 canonical task configuration snapshot',
+    textTarget: 'task_config/task_configuration',
+    note: 'Canonical allowlisted task type, locale, selected agent, route, mode and execution configuration.',
   },
   {
     id: 'title_generation_directive',
     classification: 'initial_bundle',
     source: 'startChatRun.titleGenerationPrompt',
     owner: 'bundle serializer',
-    textTarget: 'task_config',
-    note: 'First physical Run only; disabled for native-session continuation.',
+    textTarget: 'task_config/title_directive',
+    note: 'Internal title marker directive; per-task presence.',
+  },
+  {
+    id: 'recipe_identity',
+    classification: 'initial_bundle',
+    source: 'resolveOdNextStrategyRequestRecipeV2() identity fields + strategy task snapshotId',
+    owner: 'bundle context serializer',
+    textTarget: 'context/recipe_identity',
+    note: 'Per-task strategy identity incl. applied snapshot id. Lives here, not in the head, so the per-task UUID does not cut the shared cache prefix.',
+  },
+  {
+    id: 'runtime_facts',
+    classification: 'initial_bundle',
+    source: 'renderOdNextRuntimeFactsV2()',
+    owner: 'bundle context serializer',
+    textTarget: 'context/runtime_facts',
+    note: 'Runtime-owned planning facts the Agent copies verbatim; per-task, so excluded from system_prompt.',
+  },
+  {
+    id: 'runtime_tool_prompt',
+    classification: 'initial_bundle',
+    source: 'createAgentRuntimeToolPrompt()',
+    owner: 'bundle context serializer',
+    textTarget: 'context/runtime_tool_environment',
+    note: 'Textual tool contract embedding the per-run daemon URL; executable capability and credentials remain transport facts.',
+  },
+  {
+    id: 'stable_context_prompt',
+    classification: 'initial_bundle',
+    source: 'composeOdNextStrategyStableRequestContextV2()',
+    owner: 'bundle context serializer',
+    textTarget: 'context/stable_request_context',
+    note: 'Stable project, design, instruction and memory context.',
+  },
+  {
+    id: 'frozen_skill_package',
+    classification: 'initial_bundle',
+    source: 'renderFrozenSkillBundleContext() frozen identity/roster JSON',
+    owner: 'Task 03 immutable Skill package',
+    textTarget: 'context/frozen_skill_package',
+    note: 'Task-owned frozen Skill identity and side-file roster; bodies are injected as user_selected_skills.',
+  },
+  {
+    id: 'request_input_facts',
+    classification: 'initial_bundle',
+    source: 'loadOdNextTaskInputSnapshot().requestInputText',
+    owner: 'Task 04 immutable request inputs',
+    textTarget: 'context/request_input_facts',
+    note: 'Immutable attachment/workspace/MCP references with no absolute paths.',
+  },
+  {
+    id: 'research_command_contract',
+    classification: 'initial_bundle',
+    source: 'resolveResearchCommandContract()',
+    owner: 'bundle context serializer',
+    textTarget: 'context/research_command_contract',
+    note: 'Research contract for the canonical current turn only.',
+  },
+  {
+    id: 'run_context_prompt',
+    classification: 'initial_bundle',
+    source: 'renderRunContextPrompt()',
+    owner: 'bundle context serializer',
+    textTarget: 'context/run_context',
+    note: 'User-selected workspace context, plugins, MCP servers and connectors.',
+  },
+  {
+    id: 'connected_external_mcp_reference',
+    classification: 'transport_reference',
+    source: 'renderConnectedExternalMcpDirective()',
+    owner: 'bundle context reference',
+    textTarget: 'context/connected_external_mcp',
+    note: 'Already-authenticated external MCP server references, frozen per task.',
+  },
+  {
+    id: 'browser_unavailable_guard',
+    classification: 'initial_bundle',
+    source: 'renderBrowserUseUnavailablePrompt()',
+    owner: 'bundle context serializer',
+    textTarget: 'context/browser_unavailable_guard',
+    note: 'Browser-automation unavailability reason, frozen per task.',
   },
   {
     id: 'client_system_prompt',
     classification: 'initial_bundle',
     source: 'ChatRequest.systemPrompt',
-    owner: 'bundle serializer',
-    textTarget: 'system_prompt',
-    note: 'Client-provided system instructions admitted by the current chat contract.',
+    owner: 'bundle context serializer',
+    textTarget: 'context/client_system_prompt',
+    note: 'Caller-supplied system prompt; per-task, so excluded from system_prompt.',
+  },
+  {
+    id: 'form_override',
+    classification: 'initial_bundle',
+    source: 'startChatRun.formOverride',
+    owner: 'bundle context serializer',
+    textTarget: 'context/form_override',
+    note: 'First-run form-answer control text; per-task, so excluded from system_prompt.',
+  },
+  {
+    id: 'prior_transcript',
+    classification: 'initial_bundle',
+    source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript',
+    owner: 'bundle context serializer',
+    textTarget: 'context/prior_transcript',
+    note: 'Agent-scoped transcript ending before the canonical current user turn.',
+  },
+  {
+    id: 'request_text',
+    classification: 'initial_bundle',
+    source: 'resolveOdNextRequestUserPrompt({ message, currentPrompt, hasCurrentPrompt })',
+    owner: 'stage-aware bundle/turn selector',
+    textTarget: 'user_prompt',
+    note: 'Explicit currentPrompt property presence wins even for null/empty; message is used only when the property is absent.',
   },
   {
     id: 'cwd_reference',
@@ -179,54 +339,6 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     source: 'loadOdNextTaskInputSnapshot().requestInputText',
     owner: 'Task 04 immutable workspace reference',
     note: 'Live linked-directory paths are excluded; stable linked-dir:N aliases are emitted while access stays out of band.',
-  },
-  {
-    id: 'echo_guard',
-    classification: 'initial_bundle',
-    source: 'startChatRun.ECHO_GUARD',
-    owner: 'bundle serializer',
-    textTarget: 'system_prompt',
-    note: 'Response-shape instruction that must be inside the single root for OD Next.',
-  },
-  {
-    id: 'request_text',
-    classification: 'initial_bundle',
-    source: 'resolveOdNextRequestUserPrompt({ message, currentPrompt, hasCurrentPrompt })',
-    owner: 'stage-aware bundle/turn selector',
-    textTarget: 'user_prompt',
-    note: 'Explicit currentPrompt property presence wins even for null/empty values; message is used only when the property is absent.',
-  },
-  {
-    id: 'task_config_pending_fact',
-    classification: 'initial_bundle',
-    source: 'loadOdNextTaskInputSnapshot().taskConfigText',
-    owner: 'Task 04 canonical task configuration snapshot',
-    textTarget: 'task_config',
-    note: 'Canonical allowlisted task type, locale, selected agent, route, mode and execution configuration.',
-  },
-  {
-    id: 'stable_context_prompt',
-    classification: 'initial_bundle',
-    source: 'composeOdNextStrategyStableRequestContextV2()',
-    owner: 'bundle context serializer',
-    textTarget: 'context',
-    note: 'Stable project, design, instruction and memory context, kept separate from the core recipe.',
-  },
-  {
-    id: 'prior_transcript',
-    classification: 'initial_bundle',
-    source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript',
-    owner: 'bundle context serializer',
-    textTarget: 'context',
-    note: 'Agent-scoped transcript ending before the canonical current user turn; no substring subtraction is used.',
-  },
-  {
-    id: 'request_input_pending_fact',
-    classification: 'initial_bundle',
-    source: 'renderFrozenSkillBundleContext() + loadOdNextTaskInputSnapshot().requestInputText',
-    owner: 'Tasks 03/04 immutable request inputs',
-    textTarget: 'context',
-    note: 'Carries the task-owned frozen Skill identity/body/side-file roster plus immutable attachment identities and path-free workspace/MCP references.',
   },
   {
     id: 'clarification_turn',
@@ -379,7 +491,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript',
     owner: 'Task 02 transcript/context serializer',
-    textTarget: 'context',
+    textTarget: 'context/prior_transcript',
     note: 'Contains only agent-scoped history before the latest user turn; ChatRequest.message remains a legacy transport compatibility field.',
   },
   {
@@ -406,7 +518,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'composeOdNextStrategyStableRequestContextV2() -> odNextStableContextPrompt',
     owner: 'Task 02 context serializer',
-    textTarget: 'context',
+    textTarget: 'context/stable_request_context',
     note: 'The production Bundle receives this aggregate separately from the core recipe system prompt.',
   },
   {
@@ -415,7 +527,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'loadOdNextTaskInputSnapshot().taskConfigText',
     owner: 'Task 04 canonical task configuration',
-    textTarget: 'task_config',
+    textTarget: 'task_config/task_configuration',
     note: 'Canonical immutable configuration loaded from the task-scoped snapshot manifest.',
   },
   {
@@ -424,8 +536,8 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'loadOdNextTaskInputSnapshot().requestInputText',
     owner: 'Task 04 immutable request inputs',
-    textTarget: 'context',
-    note: 'Immutable attachment identities and controlled transport references are serialized here; OD Next active routes carry no external Skill package.',
+    textTarget: 'context/request_input_facts',
+    note: 'Immutable attachment identities and controlled transport references are serialized here; attachment identities are additionally projected into task_config/attachments.',
   },
   {
     id: 'strategy_task_skill',
@@ -433,7 +545,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'daemon_system_prompt',
     source: 'resolveOdNextStrategyRequestRecipeV2().taskSkill',
     owner: 'Task 02 system_prompt serializer',
-    textTarget: 'system_prompt',
+    textTarget: 'system_prompt/session_skills/task_type_skill',
     note: 'Pinned Task Skill from the verified strategy package, distinct from user-selected @Skills.',
   },
   {
@@ -442,8 +554,8 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'daemon_system_prompt',
     source: 'AppliedStrategyBindingV2.selectedTaskProfile / resolvedRecipe.taskType',
     owner: 'Task 02 core recipe; Task 04 canonical task configuration',
-    textTarget: 'system_prompt',
-    note: 'Appears in the verified core recipe and in Task 04 canonical task_config.',
+    textTarget: 'task_config/task_type',
+    note: 'Selects the verified core recipe and is serialized as the canonical Task 04 task type.',
   },
   {
     id: 'strategy_runtime_capability_facts',
@@ -451,8 +563,8 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'daemon_system_prompt',
     source: 'odNextStrategyRecipe.planningFacts and capabilitySnapshotHash',
     owner: 'Task 02 core recipe; Task 04 canonical task configuration',
-    textTarget: 'system_prompt',
-    note: 'Runtime facts remain in the verified core recipe; Task 04 task_config contains only the stable allowlisted execution selection.',
+    textTarget: 'context/runtime_facts',
+    note: 'Runtime facts are per-task, so they are emitted as Bundle context instead of inside the cross-task-constant head; task_config carries only the stable allowlisted execution selection.',
   },
   {
     id: 'request_execution_configuration',
@@ -468,7 +580,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'daemon_system_prompt',
     source: 'metadata, template, design-system fields, craftBody/craftSections and memoryBody',
     owner: 'Task 02 context serializer',
-    textTarget: 'context',
+    textTarget: 'context/stable_request_context',
     note: 'Stable project/design facts currently nested in composeDaemonSystemPrompt().',
   },
   {
@@ -477,7 +589,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'daemon_system_prompt',
     source: 'userInstructions + projectInstructions',
     owner: 'Task 02 context serializer',
-    textTarget: 'context',
+    textTarget: 'context/stable_request_context',
     note: 'Stable instruction facts currently nested in the daemon system aggregate.',
   },
   {
@@ -486,7 +598,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     producer: 'request',
     source: 'ChatRequest.context -> renderRunContextPrompt()',
     owner: 'Task 02 context serializer',
-    textTarget: 'context',
+    textTarget: 'context/run_context',
     note: 'Explicit user-selected context facts, separate from transcript history.',
   },
   {
@@ -574,10 +686,13 @@ const ALLOWED_CLASSIFICATIONS = new Set<OdNextExactInputClassification>([
   'excluded',
 ]);
 
+const ALLOWED_BUNDLE_NODE_PATHS = new Set<string>(OD_NEXT_BUNDLE_NODE_PATHS_V2);
+
 export function assertOdNextExactInputMapV1(
   entries: readonly OdNextExactInputEntry[] = OD_NEXT_EXACT_INPUT_MAP_V1,
 ): void {
   const ids = new Set<string>();
+  const claimedNodePaths = new Map<string, string>();
   for (const entry of entries) {
     if (!entry.id || ids.has(entry.id)) {
       throw new Error(`OD Next exact-input map has a missing or duplicate id: ${entry.id || '<empty>'}`);
@@ -600,6 +715,18 @@ export function assertOdNextExactInputMapV1(
       && entry.textTarget
     ) {
       throw new Error(`OD Next non-text input ${entry.id} must not declare a Bundle target`);
+    }
+    if (entry.textTarget) {
+      if (!ALLOWED_BUNDLE_NODE_PATHS.has(entry.textTarget)) {
+        throw new Error(`OD Next textual input ${entry.id} declares an unknown Bundle node path: ${entry.textTarget}`);
+      }
+      const owner = claimedNodePaths.get(entry.textTarget);
+      if (owner) {
+        throw new Error(
+          `OD Next Bundle node path ${entry.textTarget} is claimed by both ${owner} and ${entry.id}`,
+        );
+      }
+      claimedNodePaths.set(entry.textTarget, entry.id);
     }
   }
 
@@ -626,6 +753,9 @@ export function assertOdNextExactInputMapV1(
       && entry.textTarget
     ) {
       throw new Error(`OD Next semantic non-text fact ${entry.id} must not declare a Bundle target`);
+    }
+    if (entry.textTarget && !ALLOWED_BUNDLE_NODE_PATHS.has(entry.textTarget)) {
+      throw new Error(`OD Next semantic text fact ${entry.id} declares an unknown Bundle node path: ${entry.textTarget}`);
     }
   }
 }
@@ -693,7 +823,7 @@ export function assertOdNextBundleTextContributorCoverage(
   contributorIds: readonly string[],
 ): void {
   assertOdNextExactInputMapV1();
-  const expected = new Set<string>(OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1);
+  const expected = new Set<string>(OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2);
   const mapped = new Set<string>(OD_NEXT_EXACT_INPUT_MAP_V1.map((entry) => entry.id));
   const unmappedExpected = [...expected].filter((id) => !mapped.has(id));
   if (unmappedExpected.length > 0) {
@@ -718,13 +848,15 @@ export function assertOdNextBundleTextContributorCoverage(
 }
 
 /**
- * Fail-closed boundary witness for the canonical first textual payload.
- * Task 02 owns the XML serializer; this task only establishes the byte boundary
- * it must satisfy. Leading/trailing whitespace and a second root are rejected.
+ * Fail-closed boundary witness for the canonical first textual payload: the
+ * exact text must be one canonical `open_design_prompt_bundle` v2 tree and
+ * nothing else. Delegating to the contract's parser means the witness also
+ * rejects a payload that parses but is not in canonical form, so leading or
+ * trailing bytes, a second root, and a drifting serializer all fail here.
  */
 export function assertSingleOdNextPromptBundleRoot(exactText: string): void {
   try {
-    parseOdNextPromptBundleV1(exactText);
+    parseOdNextPromptBundleV2(exactText);
   } catch (error) {
     throw new Error(
       'OD Next initial exact text must be one canonical open_design_prompt_bundle root with no outer bytes',

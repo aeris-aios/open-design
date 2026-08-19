@@ -1,9 +1,17 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { strategyPackageHashFromDigests } from '@open-design/plugin-runtime';
-import type { AppliedPluginSnapshot, OpenDesignPlanContractV2 } from '@open-design/contracts';
+import {
+  OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
+  OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
+  OD_NEXT_REQUEST_TURN_SCHEMA_V1,
+  serializeOdNextPromptBundleV1,
+  type AppliedPluginSnapshot,
+  type OpenDesignPlanContractV2,
+} from '@open-design/contracts';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,11 +29,54 @@ import {
   migrateStrategyTaskStore,
 } from '../../src/strategies/task-store.js';
 import {
+  TEST_PROMPT_BUNDLE,
   strategyTaskCreateIdentityFixture,
   strategyTaskTurnText,
 } from './strategy-task-test-fixtures.js';
 
 const AGENT_ID = 'codex';
+
+// A row persisted before the v2 composer landed, byte-for-byte.
+const LEGACY_PROMPT_BUNDLE = serializeOdNextPromptBundleV1({
+  systemPrompt: 'Frozen legacy system prompt.',
+  userPrompt: '遗留的用户请求。',
+  taskConfig: 'Frozen legacy task configuration.',
+  context: 'Frozen legacy context.',
+});
+
+function finalTextColumns(text: string) {
+  return {
+    text,
+    utf8Bytes: Buffer.byteLength(text, 'utf8'),
+    sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
+}
+
+/**
+ * Rewrite a task's persisted Bundle row to a given schema label and text with a
+ * self-consistent byte count and digest, so the only thing under test is how
+ * reads dispatch on the stored version -- never a tamper signal.
+ */
+function persistBundleAs(
+  db: Database.Database,
+  taskExecutionId: string,
+  schema: string,
+  text: string,
+): void {
+  const columns = finalTextColumns(text);
+  db.prepare(`
+    UPDATE strategy_task_executions
+       SET prompt_bundle_schema = ?, prompt_bundle_text = ?,
+           prompt_bundle_utf8_bytes = ?, prompt_bundle_sha256 = ?
+     WHERE task_execution_id = ?
+  `).run(schema, columns.text, columns.utf8Bytes, columns.sha256, taskExecutionId);
+  db.prepare(`
+    UPDATE strategy_task_runs
+       SET final_text_schema = ?, final_text = ?,
+           final_text_utf8_bytes = ?, final_text_sha256 = ?
+     WHERE task_execution_id = ? AND task_run_index = 0
+  `).run(schema, columns.text, columns.utf8Bytes, columns.sha256, taskExecutionId);
+}
 
 type TestTransitionInput = Omit<CompareAndTransitionStrategyTaskInput, 'nextRun'> & {
   nextRun?: Omit<NonNullable<CompareAndTransitionStrategyTaskInput['nextRun']>, 'finalText'> & {
@@ -165,9 +216,14 @@ function seedParents(db: Database.Database): AppliedPluginSnapshot {
   return createStrategySnapshot(db);
 }
 
-function createTask(db: Database.Database, snapshot: AppliedPluginSnapshot, runId = 'run-request') {
+function createTask(
+  db: Database.Database,
+  snapshot: AppliedPluginSnapshot,
+  runId = 'run-request',
+  taskExecutionId = 'task-1',
+) {
   return createStrategyTaskExecution(db, {
-    taskExecutionId: 'task-1',
+    taskExecutionId,
     projectId: 'project-1',
     conversationId: 'conversation-1',
     snapshotId: snapshot.snapshotId,
@@ -226,7 +282,7 @@ describe('durable strategy task store', () => {
     const task = createTask(db, snapshot);
     expect(task.promptBundle).toMatchObject({
       kind: 'bundle',
-      schema: 'open-design.od-next-prompt-bundle/v1',
+      schema: OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
       text: expect.stringContaining('冻结的用户请求。'),
       utf8Bytes: Buffer.byteLength(task.promptBundle.text, 'utf8'),
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -303,6 +359,98 @@ describe('durable strategy task store', () => {
         /persisted|identity|Bundle|final text/i,
       );
     }
+  });
+
+  it('keeps a v1 persisted Prompt Bundle row readable at its own stored version', () => {
+    const task = createTask(db, snapshot);
+    persistBundleAs(
+      db,
+      task.taskExecutionId,
+      OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
+      LEGACY_PROMPT_BUNDLE,
+    );
+
+    const reopened = getStrategyTaskExecution(db, task.taskExecutionId);
+    expect(reopened?.promptBundle).toEqual({
+      kind: 'bundle',
+      schema: OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
+      ...finalTextColumns(LEGACY_PROMPT_BUNDLE),
+    });
+    expect(reopened?.promptBundle.text).toContain('遗留的用户请求。');
+    // The read path replays the stored version instead of minting the current
+    // one, so the legacy row is not silently relabelled on the way out.
+    expect(reopened?.runs[0]?.finalText).toEqual(reopened?.promptBundle);
+    expect(getStrategyTaskExecutionByRunId(db, task.initialRunId)).toEqual(reopened);
+
+    // The run-mapping write path still works on top of a legacy Bundle, and a
+    // continuation Turn keeps its own single version.
+    const continued = compareAndTransitionStrategyTaskExecution(db, {
+      taskExecutionId: task.taskExecutionId,
+      expectedRevision: task.revision,
+      to: {
+        route: 'full_plan',
+        inputStage: 'clarification',
+        outcome: 'running',
+        executionMode: null,
+      },
+      nextRun: { runId: 'run-legacy-clarification', sourceRunId: task.initialRunId },
+    });
+    expect(continued.promptBundle.schema).toBe(OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1);
+    expect(continued.runs[1]?.finalText.schema).toBe(OD_NEXT_REQUEST_TURN_SCHEMA_V1);
+    expect(getStrategyTaskExecutionByRunId(db, 'run-legacy-clarification')?.promptBundle)
+      .toEqual(reopened?.promptBundle);
+  });
+
+  it('fails closed when a stored Bundle schema label disagrees with its text version', () => {
+    const mislabeledV1 = createTask(db, snapshot, 'run-mislabeled-v1', 'task-mislabeled-v1');
+    persistBundleAs(
+      db,
+      mislabeledV1.taskExecutionId,
+      OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
+      TEST_PROMPT_BUNDLE,
+    );
+    expect(() => getStrategyTaskExecution(db, mislabeledV1.taskExecutionId))
+      .toThrow(/canonical|Prompt Bundle/i);
+    expect(() => getStrategyTaskExecutionByRunId(db, 'run-mislabeled-v1'))
+      .toThrow(/canonical|Prompt Bundle/i);
+
+    const mislabeledV2 = createTask(db, snapshot, 'run-mislabeled-v2', 'task-mislabeled-v2');
+    persistBundleAs(
+      db,
+      mislabeledV2.taskExecutionId,
+      OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
+      LEGACY_PROMPT_BUNDLE,
+    );
+    expect(() => getStrategyTaskExecution(db, mislabeledV2.taskExecutionId))
+      .toThrow(/canonical|Prompt Bundle/i);
+    expect(() => getStrategyTaskExecutionByRunId(db, 'run-mislabeled-v2'))
+      .toThrow(/canonical|Prompt Bundle/i);
+
+    // A Turn schema on a Bundle row is a corrupt kind/schema pairing, not a
+    // version this store may tolerate.
+    const crossKind = createTask(db, snapshot, 'run-cross-kind', 'task-cross-kind');
+    persistBundleAs(
+      db,
+      crossKind.taskExecutionId,
+      OD_NEXT_REQUEST_TURN_SCHEMA_V1,
+      TEST_PROMPT_BUNDLE,
+    );
+    expect(() => getStrategyTaskExecution(db, crossKind.taskExecutionId))
+      .toThrow(/versioned final text/i);
+  });
+
+  it('rejects a legacy v1 Bundle offered as freshly composed task text', () => {
+    expect(() => createStrategyTaskExecution(db, {
+      taskExecutionId: 'task-legacy-compose',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      snapshotId: snapshot.snapshotId,
+      selectedAgentId: AGENT_ID,
+      initialRunId: 'run-legacy-compose',
+      ...strategyTaskCreateIdentityFixture(),
+      promptBundleText: LEGACY_PROMPT_BUNDLE,
+    })).toThrow(/Prompt Bundle/i);
+    expect(getStrategyTaskExecution(db, 'task-legacy-compose')).toBeNull();
   });
 
   it('creates an immutable snapshot/agent identity and supports task and Run lookup', () => {

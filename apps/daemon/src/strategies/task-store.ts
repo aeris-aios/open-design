@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto';
 import {
   AppliedStrategyBindingV2Schema,
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
+  OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
   OD_NEXT_REQUEST_TURN_SCHEMA_V1,
   OD_NEXT_STRATEGY_ID,
   OpenDesignPlanContractV2Schema,
   StrategyRuntimeStateV2Schema,
   StrategyRuntimeTransitionV2Schema,
   parseOdNextPromptBundleV1,
+  parseOdNextPromptBundleV2,
   parseOdNextRequestTurnV1,
   type OpenDesignPlanContractV2,
   type StrategyExecutionModeV2,
@@ -36,6 +38,29 @@ const TERMINAL_OUTCOMES = new Set<StrategyTaskOutcome>([
   'canceled',
 ]);
 
+/**
+ * The Prompt Bundle version the daemon composes for every NEW task. Bumping it
+ * changes only what is written; already-persisted rows keep their own version.
+ */
+const COMPOSED_PROMPT_BUNDLE_SCHEMA = OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2;
+
+/**
+ * Every schema label a stored final text may legally carry, keyed by its kind.
+ *
+ * This table is the single place that decides version tolerance. A `bundle` row
+ * is readable at either Prompt Bundle version because v1 rows predate the v2
+ * composer and are never migrated; a `turn` row has exactly one version. A
+ * label outside its kind's set is a corrupted row, not a version to tolerate,
+ * so it fails closed rather than being coerced to the current version.
+ */
+const ACCEPTED_FINAL_TEXT_SCHEMAS = {
+  bundle: [OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1, OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2],
+  turn: [OD_NEXT_REQUEST_TURN_SCHEMA_V1],
+} as const satisfies Record<
+  StrategyTaskFinalTextKind,
+  ReadonlyArray<StrategyTaskFinalTextSchema>
+>;
+
 export type StrategyTaskOutcome = 'running' | StrategyOutcomeV2;
 
 export interface StrategyTaskRunMapping {
@@ -46,11 +71,21 @@ export interface StrategyTaskRunMapping {
   finalText: StrategyTaskFinalTextIdentity;
 }
 
+export type StrategyTaskFinalTextKind = 'bundle' | 'turn';
+
+/**
+ * A stored final text always carries the schema it was written with. Prompt
+ * Bundles exist at two versions because v1 rows are already persisted and are
+ * never rewritten; request Turns have exactly one.
+ */
+export type StrategyTaskFinalTextSchema =
+  | typeof OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
+  | typeof OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2
+  | typeof OD_NEXT_REQUEST_TURN_SCHEMA_V1;
+
 export interface StrategyTaskFinalTextIdentity {
-  kind: 'bundle' | 'turn';
-  schema:
-    | typeof OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
-    | typeof OD_NEXT_REQUEST_TURN_SCHEMA_V1;
+  kind: StrategyTaskFinalTextKind;
+  schema: StrategyTaskFinalTextSchema;
   text: string;
   utf8Bytes: number;
   sha256: string;
@@ -258,11 +293,7 @@ export function createStrategyTaskExecution(
   const selectedAgentId = requireNonEmpty(input.selectedAgentId, 'selectedAgentId');
   const initialRunId = requireNonEmpty(input.initialRunId, 'initialRunId');
   const frozenSkillPackage = input.frozenSkillPackage;
-  const promptBundle = finalTextIdentity({
-    kind: 'bundle',
-    text: input.promptBundleText,
-  });
-  parseOdNextPromptBundleV1(promptBundle.text);
+  const promptBundle = composedPromptBundleIdentity(input.promptBundleText);
   const taskInputManifestSha256 = requireSha256(
     input.taskInputManifestSha256,
     'taskInputManifestSha256',
@@ -830,7 +861,7 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
     utf8Bytes: row['prompt_bundle_utf8_bytes'],
     sha256: row['prompt_bundle_sha256'],
   });
-  parseOdNextPromptBundleV1(promptBundle.text);
+  parseStoredPromptBundle(promptBundle);
   if (!sameFinalTextIdentity(promptBundle, mappings[0]!.finalText)) {
     throw new InvalidStrategyTaskRecordError(
       'Initial strategy task Run text must exactly match the persisted Prompt Bundle.',
@@ -945,23 +976,90 @@ function insertableFrozenSkillPackage(value: FrozenSkillPackageV1): FrozenSkillP
   return value;
 }
 
+/**
+ * Bind a final text to the schema it is written or read under.
+ *
+ * The schema is an argument, never derived from `kind`: the write path mints the
+ * version it composes while the read path replays the version the row already
+ * stores, and conflating the two would silently rewrite a legacy row's identity
+ * into the current version. The pairing is still constrained -- a kind may only
+ * carry a schema listed for it in `ACCEPTED_FINAL_TEXT_SCHEMAS`.
+ */
 function finalTextIdentity(input: {
-  kind: StrategyTaskFinalTextIdentity['kind'];
+  kind: StrategyTaskFinalTextKind;
+  schema: StrategyTaskFinalTextSchema;
   text: string;
 }): StrategyTaskFinalTextIdentity {
   if (typeof input.text !== 'string' || !input.text.length) {
     throw new InvalidStrategyTaskRecordError('Strategy task final text must not be empty.');
   }
-  const schema = input.kind === 'bundle'
-    ? OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
-    : OD_NEXT_REQUEST_TURN_SCHEMA_V1;
   return {
     kind: input.kind,
-    schema,
+    schema: acceptedFinalTextSchema(input.kind, input.schema),
     text: input.text,
     utf8Bytes: Buffer.byteLength(input.text, 'utf8'),
     sha256: createHash('sha256').update(input.text, 'utf8').digest('hex'),
   };
+}
+
+/**
+ * Narrow an untrusted schema label to one its kind may legally carry.
+ *
+ * A label that is absent, unknown, or belongs to the other kind is a corrupt
+ * record. Rejecting here is what keeps a v1 label paired with v2 text (and the
+ * reverse) from ever reaching a parser that would happily read it.
+ */
+function acceptedFinalTextSchema(
+  kind: StrategyTaskFinalTextKind,
+  schema: unknown,
+): StrategyTaskFinalTextSchema {
+  const accepted: ReadonlyArray<StrategyTaskFinalTextSchema> = ACCEPTED_FINAL_TEXT_SCHEMAS[kind];
+  const match = accepted.find((candidate): boolean => candidate === schema);
+  if (!match) {
+    throw new InvalidStrategyTaskRecordError(
+      'Mapped OD Next task Run is missing its versioned final text.',
+    );
+  }
+  return match;
+}
+
+/**
+ * Parse a persisted Prompt Bundle with the parser that owns its stored version.
+ *
+ * Each version's parser also proves the text re-serializes byte-identically, so
+ * dispatching on the row's own label is what makes canonicality a check against
+ * the version the bytes were written at rather than against whatever version the
+ * daemon composes today.
+ */
+function parseStoredPromptBundle(identity: StrategyTaskFinalTextIdentity): void {
+  if (identity.schema === OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2) {
+    parseOdNextPromptBundleV2(identity.text);
+    return;
+  }
+  if (identity.schema === OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1) {
+    parseOdNextPromptBundleV1(identity.text);
+    return;
+  }
+  throw new InvalidStrategyTaskRecordError(
+    'Persisted OD Next Prompt Bundle does not carry a Prompt Bundle schema.',
+  );
+}
+
+/**
+ * Mint the identity for freshly composed Prompt Bundle text.
+ *
+ * New tasks are current-version only. Accepting a legacy bundle here would
+ * persist a row in a version the composer no longer produces, so v1 text is
+ * rejected at write time even though v1 rows stay readable forever.
+ */
+function composedPromptBundleIdentity(text: string): StrategyTaskFinalTextIdentity {
+  const identity = finalTextIdentity({
+    kind: 'bundle',
+    schema: COMPOSED_PROMPT_BUNDLE_SCHEMA,
+    text,
+  });
+  parseOdNextPromptBundleV2(identity.text);
+  return identity;
 }
 
 function continuationFinalTextIdentity(input: {
@@ -975,7 +1073,11 @@ function continuationFinalTextIdentity(input: {
       'A continuation final text cannot use the request stage.',
     );
   }
-  const identity = finalTextIdentity({ kind: 'turn', text: input.text });
+  const identity = finalTextIdentity({
+    kind: 'turn',
+    schema: OD_NEXT_REQUEST_TURN_SCHEMA_V1,
+    text: input.text,
+  });
   const parsed = parseOdNextRequestTurnV1(identity.text);
   if (
     parsed.taskExecutionId !== input.taskExecutionId
@@ -1001,15 +1103,13 @@ function parseStoredFinalText(input: {
       'Mapped OD Next task Run is missing its final text kind.',
     );
   }
-  const expectedSchema = input.kind === 'bundle'
-    ? OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
-    : OD_NEXT_REQUEST_TURN_SCHEMA_V1;
-  if (input.schema !== expectedSchema || typeof input.text !== 'string' || !input.text.length) {
+  const schema = acceptedFinalTextSchema(input.kind, input.schema);
+  if (typeof input.text !== 'string' || !input.text.length) {
     throw new InvalidStrategyTaskRecordError(
       'Mapped OD Next task Run is missing its versioned final text.',
     );
   }
-  const identity = finalTextIdentity({ kind: input.kind, text: input.text });
+  const identity = finalTextIdentity({ kind: input.kind, schema, text: input.text });
   if (
     input.utf8Bytes !== identity.utf8Bytes
     || input.sha256 !== identity.sha256
@@ -1035,7 +1135,7 @@ function validateMappedFinalText(
         'Initial strategy task Run must own the persisted Prompt Bundle.',
       );
     }
-    parseOdNextPromptBundleV1(identity.text);
+    parseStoredPromptBundle(identity);
     return;
   }
   if (identity.kind !== 'turn' || mapping.inputStage === 'request') {

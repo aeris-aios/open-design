@@ -15,7 +15,8 @@ import {
   materializeFrozenSkillPackage,
   migrateFrozenSkillPackageStore,
   normalizeSelectedSkillIds,
-  renderFrozenSkillBundleContext,
+  renderFrozenSkillRosterContext,
+  resolveFrozenSkillBundleBodies,
 } from '../../../src/strategies/od-next/frozen-skill-package.js';
 
 const temporaryRoots: string[] = [];
@@ -75,8 +76,11 @@ describe('OD Next frozen user-selected Skill package', () => {
     expect(frozen.selections[0]?.files.map((file) => file.path)).toEqual([
       'references/guide.md',
     ]);
-    expect(renderFrozenSkillBundleContext(frozen)).toContain('# Frozen workflow');
-    expect(renderFrozenSkillBundleContext(frozen)).not.toContain(skill.dir);
+    // The roster carries identity only; bodies are a separate Bundle slot.
+    expect(renderFrozenSkillRosterContext(frozen)).not.toContain('# Frozen workflow');
+    expect(renderFrozenSkillRosterContext(frozen)).not.toContain(skill.dir);
+    expect(resolveFrozenSkillBundleBodies(frozen)?.body).toContain('# Frozen workflow');
+    expect(resolveFrozenSkillBundleBodies(frozen)?.body).not.toContain(skill.dir);
 
     const db = packageDb();
     insertFrozenSkillPackage(db, 'task-1', frozen);

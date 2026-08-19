@@ -126,7 +126,7 @@ describe('buildStructuredMainRunObservationV1', () => {
   });
 
   it.each([
-    ['request', 'bundle', 'open-design.od-next-prompt-bundle/v1'],
+    ['request', 'bundle', 'open-design.od-next-prompt-bundle/v2'],
     ['clarification', 'turn', 'open-design.od-next-request-turn/v1'],
     ['contract_repair', 'turn', 'open-design.od-next-request-turn/v1'],
     ['production', 'turn', 'open-design.od-next-request-turn/v1'],

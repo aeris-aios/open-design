@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { serializeOdNextPromptBundleV1 } from '@open-design/contracts';
+import {
+  OD_NEXT_BUNDLE_ECHO_GUARD_V2,
+  type OdNextPromptBundleRecipeIdentityV2,
+  type OdNextPromptBundleV2,
+  serializeOdNextPromptBundleV2,
+} from '@open-design/contracts';
 import { renderResearchCommandContract } from '../prompts/research-contract.js';
 import {
   describeChangedStableSections,
@@ -11,7 +16,7 @@ import {
 import {
   assertOdNextBundleTextContributorCoverage,
   assertOdNextLegacyTextContributorCoverage,
-  type OdNextBundleTextContributorId,
+  type OdNextBundleTextContributorIdV2,
   type OdNextExactInputStage,
   type OdNextLegacyTextContributorId,
 } from './od-next-exact-input.js';
@@ -144,10 +149,17 @@ export function composeChatAgentTextPayload({
   commentAttachmentReferences: string;
   imageReferences: string;
   odNextRequestBundle?: {
+    systemPrompt: OdNextPromptBundleV2['systemPrompt'];
+    recipeIdentity: OdNextPromptBundleRecipeIdentityV2;
+    runtimeFacts: string;
+    taskType: string;
+    attachments: string;
+    taskConfiguration: string;
     stableContext: string;
     priorTranscript: string;
-    taskConfigPendingFact: string;
-    requestInputPendingFact: string;
+    frozenSkillPackage: string;
+    requestInputFacts: string;
+    userSelectedSkills: { skillNames: ReadonlyArray<string>; body: string } | null;
   } | undefined;
   strategyInputStage?: OdNextExactInputStage | null;
 }) {
@@ -184,57 +196,75 @@ export function composeChatAgentTextPayload({
     if (!odNextRequestBundle) {
       throw new TypeError('OD Next request stage requires canonical Bundle inputs.');
     }
-    const bundleContributors: Record<OdNextBundleTextContributorId, string> = {
-      form_override: formOverride,
-      daemon_system_prompt: daemonSystemPrompt,
-      runtime_tool_prompt: runtimeToolPrompt,
-      client_system_prompt: clientSystemPrompt,
-      echo_guard: echoGuard,
-      request_text: requestOrStageText,
+    // The echo guard names the bundle's own tag names, so the contract owns its
+    // wording. Comparing instead of overwriting makes a drifting caller fail
+    // loudly rather than shipping two different guards.
+    if (echoGuard.trim() && echoGuard.trim() !== OD_NEXT_BUNDLE_ECHO_GUARD_V2) {
+      throw new TypeError('OD Next echo guard must match the canonical Bundle contract.');
+    }
+    const bundleContributors: Record<OdNextBundleTextContributorIdV2, string> = {
+      daemon_system_prompt: odNextRequestBundle.systemPrompt.coreSystemPrompt.coreStrategy,
+      echo_guard: odNextRequestBundle.systemPrompt.echoGuard,
+      user_selected_skills: odNextRequestBundle.userSelectedSkills?.body ?? '',
+      task_type_fact: odNextRequestBundle.taskType,
+      attachment_facts: odNextRequestBundle.attachments,
+      task_config_pending_fact: odNextRequestBundle.taskConfiguration,
       title_generation_directive: titleGenerationDirective,
-      task_config_pending_fact: odNextRequestBundle.taskConfigPendingFact,
+      recipe_identity: odNextRequestBundle.recipeIdentity.appliedSnapshot,
+      runtime_facts: odNextRequestBundle.runtimeFacts,
+      runtime_tool_prompt: runtimeToolPrompt,
       stable_context_prompt: odNextRequestBundle.stableContext,
-      prior_transcript: odNextRequestBundle.priorTranscript,
+      frozen_skill_package: odNextRequestBundle.frozenSkillPackage,
+      request_input_facts: odNextRequestBundle.requestInputFacts,
       research_command_contract: researchCommandContract,
       run_context_prompt: runContextPrompt,
       connected_external_mcp_reference: connectedExternalMcpReference,
       browser_unavailable_guard: browserUnavailableGuard,
-      request_input_pending_fact: odNextRequestBundle.requestInputPendingFact,
+      client_system_prompt: clientSystemPrompt,
+      form_override: formOverride,
+      prior_transcript: odNextRequestBundle.priorTranscript,
+      request_text: requestOrStageText,
     };
     assertOdNextBundleTextContributorCoverage(Object.keys(bundleContributors));
-    const join = (parts: readonly string[]): string => parts
-      .map((part) => (typeof part === 'string' ? part.trim() : ''))
-      .filter(Boolean)
-      .join('\n\n---\n\n');
-    const systemPrompt = join([
-      formOverride,
-      daemonSystemPrompt,
-      runtimeToolPrompt,
-      clientSystemPrompt,
-      echoGuard,
-    ]);
-    const taskConfig = join([
-      titleGenerationDirective,
-      odNextRequestBundle.taskConfigPendingFact,
-    ]);
-    const context = join([
-      odNextRequestBundle.stableContext,
-      odNextRequestBundle.priorTranscript,
-      researchCommandContract,
-      runContextPrompt,
-      connectedExternalMcpReference,
-      browserUnavailableGuard,
-      odNextRequestBundle.requestInputPendingFact,
-    ]);
+    const composedPrompt = serializeOdNextPromptBundleV2({
+      systemPrompt: {
+        ...odNextRequestBundle.systemPrompt,
+        sessionSkills: {
+          ...odNextRequestBundle.systemPrompt.sessionSkills,
+          ...(odNextRequestBundle.userSelectedSkills
+            ? { userSelectedSkills: odNextRequestBundle.userSelectedSkills }
+            : {}),
+        },
+      },
+      taskConfig: {
+        taskType: odNextRequestBundle.taskType,
+        attachments: odNextRequestBundle.attachments,
+        taskConfiguration: odNextRequestBundle.taskConfiguration,
+        titleDirective: titleGenerationDirective,
+      },
+      context: {
+        recipeIdentity: odNextRequestBundle.recipeIdentity,
+        runtimeFacts: odNextRequestBundle.runtimeFacts,
+        runtimeToolEnvironment: runtimeToolPrompt,
+        stableRequestContext: odNextRequestBundle.stableContext,
+        frozenSkillPackage: odNextRequestBundle.frozenSkillPackage,
+        requestInputFacts: odNextRequestBundle.requestInputFacts,
+        researchCommandContract,
+        runContext: runContextPrompt,
+        connectedExternalMcp: connectedExternalMcpReference,
+        browserUnavailableGuard,
+        clientSystemPrompt,
+        formOverride,
+        priorTranscript: odNextRequestBundle.priorTranscript,
+      },
+      userPrompt: requestOrStageText,
+    });
     return {
-      composedPrompt: serializeOdNextPromptBundleV1({
-        systemPrompt,
-        userPrompt: requestOrStageText,
-        taskConfig,
-        context,
-      }),
+      composedPrompt,
       clientInstructionPrompt: '',
-      instructionPrompt: systemPrompt,
+      // The structured system prompt has no single flat text form; callers that
+      // need a live instruction string are on the ordinary path below.
+      instructionPrompt: '',
     };
   }
 

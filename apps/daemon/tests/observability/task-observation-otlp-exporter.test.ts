@@ -68,7 +68,7 @@ StrategyTaskExecutionRecord {
     promptBundle: {
       ...FINAL_TEXT,
       kind: 'bundle',
-      schema: 'open-design.od-next-prompt-bundle/v1',
+      schema: 'open-design.od-next-prompt-bundle/v2',
     },
     frozenInputIdentity: {
       schema: 'open-design.od-next-frozen-input-identity/v1',

@@ -16,7 +16,7 @@ import {
 describe('prompt telemetry builder', () => {
   it('binds the raw OD Next inner text identity while keeping its safe body bounded and redacted', () => {
     const finalText = [
-      '<open_design_prompt_bundle schema="open-design.od-next-prompt-bundle/v1">',
+      '<open_design_prompt_bundle schema="open-design.od-next-prompt-bundle/v2">',
       'Inspect /Users/alice/private/design.ts with sk-test-1234567890123456789012.',
       'x'.repeat(80 * 1024),
       '</open_design_prompt_bundle>',
@@ -30,7 +30,7 @@ describe('prompt telemetry builder', () => {
       finalText,
       persisted: {
         kind: 'bundle',
-        schema: 'open-design.od-next-prompt-bundle/v1',
+        schema: 'open-design.od-next-prompt-bundle/v2',
         text: finalText,
         utf8Bytes: Buffer.byteLength(finalText, 'utf8'),
         sha256,
@@ -42,7 +42,7 @@ describe('prompt telemetry builder', () => {
       schema: 'open-design.od-next-exact-send-prompt/v1',
       boundary: 'hostComposed',
       kind: 'bundle',
-      promptSchema: 'open-design.od-next-prompt-bundle/v1',
+      promptSchema: 'open-design.od-next-prompt-bundle/v2',
       stage: 'request',
       sha256,
       utf8Bytes: Buffer.byteLength(finalText, 'utf8'),

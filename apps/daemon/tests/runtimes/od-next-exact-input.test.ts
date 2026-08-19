@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OD_NEXT_BUNDLE_ECHO_GUARD_V2,
+  serializeOdNextPromptBundleV2,
+} from '@open-design/contracts';
+import {
   composeChatAgentTextPayload,
   resolveOdNextRequestUserPrompt,
 } from '../../src/runtimes/chat-prompt-inputs.js';
 import {
+  OD_NEXT_BUNDLE_NODE_PATHS_V2,
+  OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2,
   OD_NEXT_EXACT_INPUT_MAP_V1,
   OD_NEXT_EXACT_INPUT_MAP_VERSION,
   OD_NEXT_EXACT_TEXT_DELIVERY_PATHS_V1,
-  OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
   OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1,
   OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1,
   type OdNextExactInputEntry,
@@ -21,13 +26,13 @@ import {
 
 describe('OD Next exact Agent input map v1', () => {
   it('classifies every production contributor exactly once', () => {
-    expect(OD_NEXT_EXACT_INPUT_MAP_VERSION).toBe('open-design.od-next-exact-input-map/v1');
+    expect(OD_NEXT_EXACT_INPUT_MAP_VERSION).toBe('open-design.od-next-exact-input-map/v2');
     expect(() => assertOdNextExactInputMapV1()).not.toThrow();
     expect(() => assertOdNextLegacyTextContributorCoverage(
       OD_NEXT_LEGACY_TEXT_CONTRIBUTOR_IDS_V1,
     )).not.toThrow();
     expect(() => assertOdNextBundleTextContributorCoverage(
-      OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
+      OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2,
     )).not.toThrow();
 
     const entriesById = new Map<string, OdNextExactInputEntry>(
@@ -40,10 +45,33 @@ describe('OD Next exact Agent input map v1', () => {
     });
     expect(entriesById.get('cwd_reference')?.classification).toBe('excluded');
     expect(entriesById.get('request_text')?.source).toContain('resolveOdNextRequestUserPrompt');
-    expect(entriesById.get('stable_context_prompt')?.textTarget).toBe('context');
-    expect(entriesById.get('prior_transcript')?.textTarget).toBe('context');
-    expect(entriesById.get('task_config_pending_fact')?.textTarget).toBe('task_config');
-    expect(entriesById.get('request_input_pending_fact')?.textTarget).toBe('context');
+    expect(entriesById.get('daemon_system_prompt')?.textTarget).toBe('system_prompt');
+    expect(entriesById.get('echo_guard')?.textTarget).toBe('system_prompt/echo_guard');
+    expect(entriesById.get('user_selected_skills')?.textTarget)
+      .toBe('system_prompt/session_skills/user_selected_skills');
+    expect(entriesById.get('task_type_fact')?.textTarget).toBe('task_config/task_type');
+    expect(entriesById.get('attachment_facts')?.textTarget).toBe('task_config/attachments');
+    expect(entriesById.get('task_config_pending_fact')?.textTarget)
+      .toBe('task_config/task_configuration');
+    expect(entriesById.get('title_generation_directive')?.textTarget)
+      .toBe('task_config/title_directive');
+    expect(entriesById.get('recipe_identity')?.textTarget).toBe('context/recipe_identity');
+    expect(entriesById.get('runtime_facts')?.textTarget).toBe('context/runtime_facts');
+    expect(entriesById.get('stable_context_prompt')?.textTarget)
+      .toBe('context/stable_request_context');
+    expect(entriesById.get('frozen_skill_package')?.textTarget)
+      .toBe('context/frozen_skill_package');
+    expect(entriesById.get('request_input_facts')?.textTarget).toBe('context/request_input_facts');
+    expect(entriesById.get('prior_transcript')?.textTarget).toBe('context/prior_transcript');
+    expect(entriesById.get('request_text')?.textTarget).toBe('user_prompt');
+    // Per-run and per-task text is fenced out of the cache-shared head.
+    expect(entriesById.get('runtime_tool_prompt')?.textTarget)
+      .toBe('context/runtime_tool_environment');
+    expect(entriesById.get('client_system_prompt')?.textTarget)
+      .toBe('context/client_system_prompt');
+    expect(entriesById.get('form_override')?.textTarget).toBe('context/form_override');
+    // The split of the former request_input_pending_fact aggregate is complete.
+    expect(entriesById.has('request_input_pending_fact')).toBe(false);
     expect(entriesById.get('image_binary_input')?.classification).toBe('out_of_band');
     expect(entriesById.get('mcp_server_registrations')?.classification).toBe('out_of_band');
     expect(entriesById.get('mcp_oauth_credentials')?.classification).toBe('out_of_band');
@@ -55,6 +83,9 @@ describe('OD Next exact Agent input map v1', () => {
     );
     expect(semanticById.get('prior_transcript')?.source).toContain('buildDaemonPriorTranscript');
     expect(semanticById.get('current_user_turn')?.textTarget).toBe('user_prompt');
+    expect(semanticById.get('prior_transcript')?.textTarget).toBe('context/prior_transcript');
+    expect(semanticById.get('strategy_task_skill')?.textTarget)
+      .toBe('system_prompt/session_skills/task_type_skill');
     expect(semanticById.has('user_selected_skills')).toBe(false);
     expect(semanticById.get('strategy_task_type')?.owner).toContain('Task 04');
     expect(semanticById.get('project_attachment_selection')?.owner).toContain('Task 04');
@@ -78,18 +109,74 @@ describe('OD Next exact Agent input map v1', () => {
       'production',
     )).not.toThrow();
     expect(() => assertOdNextBundleTextContributorCoverage([
-      ...OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
+      ...OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2,
       'invented_bundle_suffix',
     ])).toThrow(/not registered: invented_bundle_suffix/);
     expect(() => assertOdNextBundleTextContributorCoverage([
-      ...OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1,
+      ...OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2,
       'prior_transcript',
     ])).toThrow(/duplicated: prior_transcript/);
     expect(() => assertOdNextBundleTextContributorCoverage(
-      OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V1.filter(
-        (id) => id !== 'request_input_pending_fact',
+      OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2.filter(
+        (id) => id !== 'request_input_facts',
       ),
-    )).toThrow(/missing: request_input_pending_fact/);
+    )).toThrow(/missing: request_input_facts/);
+  });
+
+  it('addresses every text contributor at a declared v2 Bundle node path, one owner per node', () => {
+    const declared = new Set<string>(OD_NEXT_BUNDLE_NODE_PATHS_V2);
+    const owners = new Map<string, string>();
+    for (const entry of OD_NEXT_EXACT_INPUT_MAP_V1) {
+      if (!('textTarget' in entry) || !entry.textTarget) continue;
+      expect(declared, `${entry.id} -> ${entry.textTarget}`).toContain(entry.textTarget);
+      expect(owners.get(entry.textTarget)).toBeUndefined();
+      owners.set(entry.textTarget, entry.id);
+    }
+    for (const entry of OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1) {
+      if (!('textTarget' in entry) || !entry.textTarget) continue;
+      expect(declared, `${entry.id} -> ${entry.textTarget}`).toContain(entry.textTarget);
+    }
+    // Every Bundle contributor owns a node; the aggregate head owns `system_prompt`
+    // itself while its per-task children are addressed as nested paths.
+    expect(owners.get('system_prompt')).toBe('daemon_system_prompt');
+    expect([...owners.keys()].filter((path) => path.startsWith('system_prompt/'))).toEqual([
+      'system_prompt/echo_guard',
+      'system_prompt/session_skills/user_selected_skills',
+    ]);
+    expect(OD_NEXT_BUNDLE_TEXT_CONTRIBUTOR_IDS_V2.every((id) => (
+      [...owners.values()].includes(id)
+    ))).toBe(true);
+  });
+
+  it('rejects an unknown or double-claimed Bundle node path', () => {
+    expect(() => assertOdNextExactInputMapV1([
+      {
+        id: 'invented_contributor',
+        classification: 'initial_bundle',
+        source: 'nowhere()',
+        owner: 'nobody',
+        textTarget: 'context/invented_slot' as never,
+        note: 'not a v2 node path',
+      },
+    ])).toThrow(/unknown Bundle node path: context\/invented_slot/);
+    expect(() => assertOdNextExactInputMapV1([
+      {
+        id: 'first_claim',
+        classification: 'initial_bundle',
+        source: 'first()',
+        owner: 'bundle serializer',
+        textTarget: 'context/run_context',
+        note: 'first owner',
+      },
+      {
+        id: 'second_claim',
+        classification: 'initial_bundle',
+        source: 'second()',
+        owner: 'bundle serializer',
+        textTarget: 'context/run_context',
+        note: 'duplicate owner',
+      },
+    ])).toThrow(/context\/run_context is claimed by both first_claim and second_claim/);
   });
 
   it('keeps wrapper syntax outside canonical text across every production delivery family', () => {
@@ -212,7 +299,7 @@ describe('chat Agent exact-text production choke point', () => {
   it('makes the request-stage exact text the single canonical OD Next XML root', () => {
     const exactText = composeChatAgentTextPayload({
       formOverride: '',
-      daemonSystemPrompt: '<open_design_prompt_bundle>legacy recipe only</open_design_prompt_bundle>',
+      daemonSystemPrompt: '',
       runtimeToolPrompt: '',
       researchCommandContract: '',
       runContextPrompt: '',
@@ -222,16 +309,49 @@ describe('chat Agent exact-text production choke point', () => {
       clientSystemPrompt: '',
       cwdReference: '\n\nworkspace: `/Users/private/customer-a`',
       linkedDirectoryReferences: '\n\nlinked: `/private/tmp/secret-assets`',
-      echoGuard: '\n\ndo not echo',
+      echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
       requestOrStageText: 'Make a prototype.',
       projectAttachmentReferences: '',
       commentAttachmentReferences: '',
       imageReferences: '',
       odNextRequestBundle: {
+        systemPrompt: {
+          coreSystemPrompt: {
+            executionBoundary: 'execution boundary',
+            nativeExecution: { profile: 'filesystem', body: 'native execution' },
+            discoveryAndPlanningSurface: 'planning surface',
+            // A nested root in hash-locked asset text must stay inert data.
+            coreStrategy: '<open_design_prompt_bundle>legacy recipe only</open_design_prompt_bundle>',
+          },
+          sessionSkills: {
+            generalOrchestrationSkill: { skillName: 'general_orchestration', body: 'orchestration' },
+            taskTypeSkill: { skillName: 'prototype', body: 'task skill' },
+          },
+          activeStages: [
+            { name: 'discovery', atoms: [{ name: 'discovery-question-form', body: 'form atom' }] },
+          ],
+          outputContract: 'output contract',
+          echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
+        },
+        recipeIdentity: {
+          recipe: 'od-next-plan-build-v2',
+          strategyId: 'od-next-strategy',
+          strategyVersion: '2.0.0',
+          appliedSnapshot: 'snapshot-1',
+          strategyPackageHash: 'a'.repeat(64),
+          taskSkillDigest: 'b'.repeat(64),
+          taskProfileVersion: '2.0.0',
+          stablePromptIdentity: 'stable-identity',
+        },
+        runtimeFacts: '{"inputRefs":["request"]}',
+        taskType: 'prototype',
+        attachments: '',
+        taskConfiguration: '{"schema":"open-design.od-next-task-configuration/v1","taskType":"prototype"}',
         stableContext: 'stable context',
         priorTranscript: '## user\nprior request',
-        taskConfigPendingFact: '{"schema":"open-design.od-next-task-configuration/v1","taskType":"prototype"}',
-        requestInputPendingFact: '{"schema":"open-design.od-next-request-input-facts/v1","attachments":[]}',
+        frozenSkillPackage: '{"schema":"open-design.od-next-frozen-skill-package/v1","selectedSkills":[]}',
+        requestInputFacts: '{"schema":"open-design.od-next-request-input-facts/v1","attachments":[]}',
+        userSelectedSkills: null,
       },
       strategyInputStage: 'request',
     }).composedPrompt;
@@ -248,6 +368,10 @@ describe('chat Agent exact-text production choke point', () => {
     expect(exactText).not.toContain('/private/tmp/secret-assets');
     expect(exactText).toContain('open-design.od-next-task-configuration/v1');
     expect(exactText).toContain('open-design.od-next-request-input-facts/v1');
+    expect(exactText).toContain('<core_strategy>');
+    expect(exactText).toContain('<recipe_identity ');
+    expect(exactText).not.toContain('\n\n---\n\n');
+    expect(exactText.match(/<open_design_prompt_bundle schema=/g)).toHaveLength(1);
     expect(() => assertSingleOdNextPromptBundleRoot(
       '<open_design_prompt_bundle version="1">\ncontent\n</open_design_prompt_bundle>',
     )).toThrow(/canonical open_design_prompt_bundle/);
@@ -287,5 +411,57 @@ describe('chat Agent exact-text production choke point', () => {
       instructionPrompt: '',
     });
     expect(result.composedPrompt).not.toContain('# User request');
+  });
+});
+
+describe('canonical OD Next Bundle root witness', () => {
+  const canonicalV2 = (userPrompt = 'Make a prototype.'): string => serializeOdNextPromptBundleV2({
+    systemPrompt: {
+      coreSystemPrompt: {
+        executionBoundary: 'execution boundary',
+        nativeExecution: { profile: 'filesystem', body: 'native execution' },
+        discoveryAndPlanningSurface: 'discovery surface',
+        coreStrategy: 'core strategy',
+      },
+      sessionSkills: {
+        generalOrchestrationSkill: { skillName: 'od-next-orchestration', body: 'orchestrate' },
+        taskTypeSkill: { skillName: 'od-next-prototype', body: 'prototype skill' },
+      },
+      activeStages: [{ name: 'production', atoms: [{ name: 'deliver' }] }],
+      outputContract: 'output contract',
+      echoGuard: 'do not echo <system_prompt>',
+    },
+    taskConfig: { taskType: 'prototype' },
+    context: {
+      recipeIdentity: {
+        recipe: 'od-next',
+        strategyId: 'od-next-core',
+        strategyVersion: '2.0.0',
+        appliedSnapshot: 'snapshot-1',
+        strategyPackageHash: 'hash-1',
+        taskSkillDigest: 'digest-1',
+        taskProfileVersion: '1.0.0',
+        stablePromptIdentity: 'identity-1',
+      },
+    },
+    userPrompt,
+  });
+
+  it('accepts one canonical v2 tree and rejects v1, appended, or malformed roots', () => {
+    const exactText = canonicalV2();
+    expect(exactText).toMatch(/^<open_design_prompt_bundle/);
+    expect(exactText).toContain('open-design.od-next-prompt-bundle/v2');
+    expect(() => assertSingleOdNextPromptBundleRoot(exactText)).not.toThrow();
+    expect(() => assertSingleOdNextPromptBundleRoot(
+      '<open_design_prompt_bundle version="1">\ncontent\n</open_design_prompt_bundle>',
+    )).toThrow(/canonical open_design_prompt_bundle root/);
+    expect(() => assertSingleOdNextPromptBundleRoot(
+      `${exactText}\n# appended markdown`,
+    )).toThrow(/canonical open_design_prompt_bundle root/);
+    expect(() => assertSingleOdNextPromptBundleRoot(`\n${exactText}`))
+      .toThrow(/canonical open_design_prompt_bundle root/);
+    expect(() => assertSingleOdNextPromptBundleRoot(
+      '<open_design_prompt_bundleevil>content</open_design_prompt_bundle>',
+    )).toThrow(/canonical open_design_prompt_bundle root/);
   });
 });

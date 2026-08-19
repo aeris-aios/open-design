@@ -12,6 +12,11 @@ import {
 } from '../plugins/strategy-v2.js';
 import type { ChatSessionMode } from '../api/chat.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
+import type {
+  OdNextPromptBundleRecipeIdentityV2,
+  OdNextPromptBundleStageV2,
+  OdNextPromptBundleV2,
+} from './od-next-prompt-bundle-v2.js';
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
@@ -34,7 +39,7 @@ export interface OdNextStrategyRequestRecipeV2 {
   coreStrategy: string;
   generalOrchestration: string;
   taskSkill: string;
-  activeStageBlocks: ReadonlyArray<string>;
+  activeStages: ReadonlyArray<OdNextPromptBundleStageV2>;
 }
 
 /**
@@ -214,50 +219,76 @@ export function assertOdNextPlanningBuildOnlyV2(
   }
 }
 
-/** Require the exact three stage blocks and all five declared atom headings. */
-export function assertOdNextActiveStageBlocksV2(
-  blocks: ReadonlyArray<string>,
-): string[] {
-  if (blocks.length !== OD_NEXT_PROMPT_STAGE_CONTRACT_V2.length) {
+/**
+ * Require exactly the declared stages, in order, each carrying exactly its
+ * declared atoms.
+ *
+ * The stage list is structured data now, so this checks the data itself rather
+ * than pattern-matching the markdown headings a renderer happened to emit. An
+ * atom with no prompt fragment is legal: the element's presence is the fact,
+ * and the body is optional.
+ */
+export function assertOdNextActiveStagesV2(
+  stages: ReadonlyArray<OdNextPromptBundleStageV2>,
+): OdNextPromptBundleStageV2[] {
+  if (stages.length !== OD_NEXT_PROMPT_STAGE_CONTRACT_V2.length) {
     throw new TypeError(
-      'OD Next request recipe requires exactly discovery, plan, and generate stage blocks.',
+      'OD Next request recipe requires exactly discovery, plan, and generate stages.',
     );
   }
   return OD_NEXT_PROMPT_STAGE_CONTRACT_V2.map((expected, index) => {
-    const block = requireText(blocks[index] ?? '', `activeStageBlocks[${index}]`);
-    const activeStageHeadings = block.match(/^## Active stage:\s*([^\n]+)$/gm) ?? [];
-    if (
-      activeStageHeadings.length !== 1
-      || activeStageHeadings[0] !== `## Active stage: ${expected.id}`
-    ) {
+    const stage = stages[index];
+    if (!stage || stage.name !== expected.id) {
       throw new TypeError(
-        `activeStageBlocks[${index}] must describe only the ${expected.id} stage.`,
+        `activeStages[${index}] must describe the ${expected.id} stage.`,
       );
     }
-    for (const atom of expected.atoms) {
-      const escaped = atom.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const headings = block.match(new RegExp(`^### ${escaped}$`, 'gm')) ?? [];
-      if (headings.length !== 1) {
-        throw new TypeError(
-          `OD Next ${expected.id} stage must contain exactly one ${atom} atom heading.`,
-        );
+    const atomIds = stage.atoms.map(({ name }) => name);
+    if (
+      atomIds.length !== expected.atoms.length
+      || atomIds.some((atomId, atomIndex) => atomId !== expected.atoms[atomIndex])
+    ) {
+      throw new TypeError(
+        `OD Next ${expected.id} stage must declare exactly ${expected.atoms.join(', ')}.`,
+      );
+    }
+    for (const atom of stage.atoms) {
+      if (typeof atom.body === 'string' && atom.body.trim()) {
+        assertOdNextPlanningBuildOnlyV2(atom.body, `activeStages[${index}] atom ${atom.name}`);
       }
     }
-    const atomHeadings = Array.from(block.matchAll(/^###\s+([^\n]+)$/gm))
-      .map((match) => match[1]);
-    if (
-      atomHeadings.length !== expected.atoms.length
-      || atomHeadings.some((heading, headingIndex) => (
-        heading !== expected.atoms[headingIndex]
-      ))
-    ) {
-      throw new TypeError(
-        `activeStageBlocks[${index}] contains an unexpected atom subsection heading.`,
-      );
-    }
-    assertOdNextPlanningBuildOnlyV2(block, `activeStageBlocks[${index}]`);
-    return block;
+    return {
+      name: stage.name,
+      atoms: stage.atoms.map((atom) => (
+        typeof atom.body === 'string' && atom.body.trim()
+          ? { name: atom.name, body: atom.body }
+          : { name: atom.name }
+      )),
+    };
   });
+}
+
+const EMPTY_ATOM_MARKDOWN_BODY =
+  'This runtime atom has no additional prompt fragment in recipe v2.';
+
+/**
+ * Render structured stages back into the legacy markdown block form.
+ *
+ * Only the ordinary/non-Bundle composer still needs this shape; the canonical
+ * Bundle consumes the structure directly so it never has to reparse headings.
+ */
+export function renderOdNextActiveStageBlocksV2(
+  stages: ReadonlyArray<OdNextPromptBundleStageV2>,
+): string[] {
+  return stages.map((stage) => [
+    `## Active stage: ${stage.name}`,
+    ...stage.atoms.flatMap((atom) => [
+      `### ${atom.name}`,
+      typeof atom.body === 'string' && atom.body.trim()
+        ? atom.body
+        : EMPTY_ATOM_MARKDOWN_BODY,
+    ]),
+  ].join('\n\n'));
 }
 
 /**
@@ -275,6 +306,13 @@ export function odNextPromptCacheIdentityV2(input: Pick<
     requireSha256(input.taskProfileDigest, 'taskProfileDigest'),
   ].join(':');
 }
+
+/**
+ * Named here so the Bundle's own tag names and the instruction that references
+ * them cannot drift apart in separate files.
+ */
+export const OD_NEXT_BUNDLE_ECHO_GUARD_V2 =
+  'Do not quote, restate, or echo <system_prompt>. Begin the response by addressing <user_prompt>.';
 
 const EXECUTION_AND_SECURITY_SECTION = `# Open Design execution and security boundary
 
@@ -440,35 +478,42 @@ Use these real project, audience, brand, locale, memory, and instruction inputs 
 ${blocks.join('\n\n')}`;
 }
 
-function renderMachineOutputSection(
+const RUNTIME_OWNED_PLACEHOLDERS = {
+  appliedSnapshot: 'copy-applied-snapshot-from-recipe-identity',
+  capabilitySnapshotHash: '0'.repeat(64),
+  inputRef: 'copy-input-refs-from-runtime-facts',
+  productionRoute: 'copy-production-route-from-runtime-facts',
+  selectedAgentId: 'copy-selected-agent-id-from-runtime-facts',
+} as const;
+
+/**
+ * Render the wire-protocol contract with every per-task value replaced by a
+ * copy-from instruction.
+ *
+ * This section is the tail of the cache-stable prefix, so it must not embed a
+ * task's snapshot id, capability hash, input refs, or production routes. The
+ * real values travel in `<recipe_identity>` and `<runtime_facts>`, which sit
+ * after `system_prompt` ends; the model is told to copy from there.
+ *
+ * Task type, task-profile version, and output kind DO appear here. They vary
+ * per task type, not per task, which is the same partition `task_type_skill`
+ * already imposes on the prefix.
+ */
+export function renderOdNextOutputContractV2(
   input: OdNextStrategyRequestRecipeV2,
-  context: OdNextStrategyStableRequestContextV2,
 ): string {
-  const selectedAgentId = context.agentId?.trim() || 'selected-agent-id-from-runtime';
   const planningFacts = input.planningFacts;
-  if (
-    planningFacts
-    && !SHA256_HEX.test(planningFacts.capabilitySnapshotHash)
-  ) {
+  if (planningFacts && !SHA256_HEX.test(planningFacts.capabilitySnapshotHash)) {
     throw new TypeError('OD Next planning capabilitySnapshotHash must be 64 lowercase hex characters.');
   }
-  const inputRefs = planningFacts?.inputRefs.length
-    ? [...planningFacts.inputRefs]
-    : ['user-request'];
-  const productionRoutes = planningFacts?.productionRoutes.length
-    ? [...planningFacts.productionRoutes]
-    : ['declared-production-route'];
-  const outputKinds = planningFacts?.outputKinds.length
-    ? [...planningFacts.outputKinds]
-    : ['artifact'];
-  const canonicalOutputKind = outputKinds[0] ?? 'artifact';
+  const canonicalOutputKind = planningFacts?.outputKinds[0] ?? 'artifact';
   const planContractExample = {
     schema: OD_NEXT_PLAN_CONTRACT_SCHEMA,
     strategy: {
       id: OD_NEXT_STRATEGY_ID,
       version: input.strategyVersion,
       packageHash: input.packageHash,
-      snapshotId: input.snapshotId,
+      snapshotId: RUNTIME_OWNED_PLACEHOLDERS.appliedSnapshot,
     },
     taskProfile: {
       schemaVersion: '2',
@@ -476,7 +521,7 @@ function renderMachineOutputSection(
       taskProfileVersion: input.taskProfileVersion,
       goal: 'replace-with-resolved-goal',
       contextAndAudience: 'replace-with-resolved-context-and-audience',
-      inputsAndReferences: inputRefs,
+      inputsAndReferences: [RUNTIME_OWNED_PLACEHOLDERS.inputRef],
       constraints: [],
       canonicalDeliverable: {
         id: 'canonical-deliverable',
@@ -505,10 +550,10 @@ function renderMachineOutputSection(
       buildPackages: [],
     },
     runManifest: {
-      selectedAgentId,
-      capabilitySnapshotHash: planningFacts?.capabilitySnapshotHash ?? '0'.repeat(64),
-      inputRefs,
-      productionRoutes: [productionRoutes[0] ?? 'declared-production-route'],
+      selectedAgentId: RUNTIME_OWNED_PLACEHOLDERS.selectedAgentId,
+      capabilitySnapshotHash: RUNTIME_OWNED_PLACEHOLDERS.capabilitySnapshotHash,
+      inputRefs: [RUNTIME_OWNED_PLACEHOLDERS.inputRef],
+      productionRoutes: [RUNTIME_OWNED_PLACEHOLDERS.productionRoute],
       preflight: { intake: 'passed', execution: 'passed' },
     },
     decisionSummary: {
@@ -537,19 +582,7 @@ function renderMachineOutputSection(
     reasonCodes: [],
   } satisfies StrategyRuntimeStateV2;
 
-  const runtimeFacts = planningFacts
-    ? `\n\nOpen Design runtime-owned planning facts (copy these exact values into the contract; do not replace them with placeholders):\n\n${stableJson({
-      taskProfileVersion: input.taskProfileVersion,
-      capabilitySnapshotHash: planningFacts.capabilitySnapshotHash,
-      inputRefs,
-      allowedProductionRoutes: productionRoutes,
-      supportedOutputKinds: outputKinds,
-    })}`
-    : '';
-
-  return `## Strict machine wire protocol and user output boundary
-
-The JSON field sets below are the exact V2 contract shapes. Replace example values with resolved run values; do not add fields. Runtime-owned planning facts must be copied byte-for-byte. Every buildRequirements entry is an object with exactly id and text; every readinessArtifacts entry is an object with exactly id, version, and a 64-character lowercase-hex digest. designSpec.source is exactly existing-artifact, brand, or resolved-baseline. Emit JSON only between the matching tags, without Markdown fences or a second copy. Emit exactly one Runtime State block on every response. Emit at most one Plan Contract block, only when a complete Full Plan is ready. Keep machine blocks separate from visible prose.${runtimeFacts}
+  return `The JSON field sets below are the exact V2 contract shapes. Replace example values with resolved run values; do not add fields. Every value named \`copy-…\`, plus the all-zero capabilitySnapshotHash, is a placeholder: copy the real value byte-for-byte from the <recipe_identity> attributes or the <runtime_facts> block in <context>, and never invent one. Every buildRequirements entry is an object with exactly id and text; every readinessArtifacts entry is an object with exactly id, version, and a 64-character lowercase-hex digest. designSpec.source is exactly existing-artifact, brand, or resolved-baseline. Emit JSON only between the matching tags, without Markdown fences or a second copy. Emit exactly one Runtime State block on every response. Emit at most one Plan Contract block, only when a complete Full Plan is ready. Keep machine blocks separate from visible prose.
 
 Plan Contract wrapper and exact shape:
 
@@ -570,6 +603,49 @@ ${stableJson(clarificationStateExample)}
 </${OD_NEXT_RUNTIME_STATE_BLOCK}>
 
 The visible decision summary contains only the goal, deliverables, key constraints, assumptions, risks, and open decisions. Machine blocks are consumed by Open Design and must not be paraphrased.`;
+}
+
+/**
+ * The per-task planning facts the Agent must copy verbatim into its contract.
+ *
+ * Lives in `<context>` so the values that change every task never sit inside
+ * the shared cache prefix.
+ */
+export function renderOdNextRuntimeFactsV2(
+  input: OdNextStrategyRequestRecipeV2,
+  context: OdNextStrategyStableRequestContextV2 = {},
+): string {
+  const planningFacts = input.planningFacts;
+  if (!planningFacts) return '';
+  if (!SHA256_HEX.test(planningFacts.capabilitySnapshotHash)) {
+    throw new TypeError('OD Next planning capabilitySnapshotHash must be 64 lowercase hex characters.');
+  }
+  return `Runtime-owned planning facts. Copy these exact values into the contract; do not replace them with placeholders.
+
+${stableJson({
+    taskProfileVersion: input.taskProfileVersion,
+    appliedSnapshot: input.snapshotId,
+    selectedAgentId: context.agentId?.trim() || 'selected-agent-id-from-runtime',
+    capabilitySnapshotHash: planningFacts.capabilitySnapshotHash,
+    inputRefs: planningFacts.inputRefs.length ? [...planningFacts.inputRefs] : ['user-request'],
+    allowedProductionRoutes: planningFacts.productionRoutes.length
+      ? [...planningFacts.productionRoutes]
+      : ['declared-production-route'],
+    supportedOutputKinds: planningFacts.outputKinds.length
+      ? [...planningFacts.outputKinds]
+      : ['artifact'],
+  })}`;
+}
+
+/** Legacy markdown wrapper around the output contract and its runtime facts. */
+function renderMachineOutputSection(
+  input: OdNextStrategyRequestRecipeV2,
+  context: OdNextStrategyStableRequestContextV2,
+): string {
+  const runtimeFacts = renderOdNextRuntimeFactsV2(input, context);
+  return `## Strict machine wire protocol and user output boundary
+
+${renderOdNextOutputContractV2(input)}${runtimeFacts ? `\n\n${runtimeFacts}` : ''}`;
 }
 
 /** Compose the request-stage, cache-stable OD Next planning/Build recipe. */
@@ -600,7 +676,7 @@ export function composeOdNextStrategyRequestPromptV2(
     'generalOrchestration',
   );
   assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
-  const stageBlocks = assertOdNextActiveStageBlocksV2(input.activeStageBlocks);
+  const stageBlocks = renderOdNextActiveStageBlocksV2(assertOdNextActiveStagesV2(input.activeStages));
   const sections = [
     EXECUTION_AND_SECURITY_SECTION,
     executionSection,
@@ -614,6 +690,97 @@ export function composeOdNextStrategyRequestPromptV2(
     renderMachineOutputSection(input, context),
   ].filter((section) => section.length > 0);
   return sections.join('\n\n---\n\n');
+}
+
+/**
+ * Validate the recipe and return the parts every composer shares.
+ *
+ * Both the canonical Bundle and the legacy markdown path must reject the same
+ * inputs, so the gate lives here rather than being duplicated per composer.
+ */
+function verifyOdNextRecipeV2(input: OdNextStrategyRequestRecipeV2): {
+  coreStrategy: string;
+  generalOrchestration: string;
+  taskSkill: string;
+  stages: OdNextPromptBundleStageV2[];
+  snapshotId: string;
+  strategyVersion: string;
+  identity: string;
+} {
+  if (input.recipe !== OD_NEXT_PROMPT_RECIPE_ID) {
+    throw new TypeError('Unsupported OD Next prompt recipe.');
+  }
+  if (input.strategyId !== OD_NEXT_STRATEGY_ID) {
+    throw new TypeError('OD Next strategy id does not match the recipe.');
+  }
+  const coreStrategy = requireText(input.coreStrategy, 'coreStrategy');
+  const generalOrchestration = requireText(input.generalOrchestration, 'generalOrchestration');
+  const taskSkill = requireText(input.taskSkill, 'taskSkill');
+  assertOdNextPlanningBuildOnlyV2(coreStrategy, 'coreStrategy');
+  assertOdNextPlanningBuildOnlyV2(generalOrchestration, 'generalOrchestration');
+  assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
+  return {
+    coreStrategy,
+    generalOrchestration,
+    taskSkill,
+    stages: assertOdNextActiveStagesV2(input.activeStages),
+    snapshotId: requireText(input.snapshotId, 'snapshotId'),
+    strategyVersion: requireText(input.strategyVersion, 'strategyVersion'),
+    identity: odNextPromptCacheIdentityV2(input),
+  };
+}
+
+/** Per-task strategy identity for the Bundle's `<recipe_identity>` marker. */
+export function odNextStrategyRecipeIdentityV2(
+  input: OdNextStrategyRequestRecipeV2,
+): OdNextPromptBundleRecipeIdentityV2 {
+  const verified = verifyOdNextRecipeV2(input);
+  return {
+    recipe: input.recipe,
+    strategyId: input.strategyId,
+    strategyVersion: verified.strategyVersion,
+    appliedSnapshot: verified.snapshotId,
+    strategyPackageHash: input.packageHash,
+    taskSkillDigest: input.taskProfileDigest,
+    taskProfileVersion: requireText(input.taskProfileVersion, 'taskProfileVersion'),
+    stablePromptIdentity: verified.identity,
+  };
+}
+
+/**
+ * Compose the Bundle's `<system_prompt>` slots as structured nodes.
+ *
+ * Everything here is byte-identical across tasks that share a strategy version,
+ * task type, and execution profile. The caller supplies `userSelectedSkills`
+ * separately because those are the one per-task member of `session_skills`.
+ */
+export function composeOdNextStrategyBundleSystemPromptV2(
+  input: OdNextStrategyRequestRecipeV2,
+): OdNextPromptBundleV2['systemPrompt'] {
+  const verified = verifyOdNextRecipeV2(input);
+  return {
+    coreSystemPrompt: {
+      executionBoundary: EXECUTION_AND_SECURITY_SECTION,
+      nativeExecution: {
+        profile: input.executionProfile,
+        body: input.executionProfile === 'text_artifact'
+          ? TEXT_ARTIFACT_EXECUTION_SECTION
+          : FILESYSTEM_EXECUTION_SECTION,
+      },
+      discoveryAndPlanningSurface: DISCOVERY_AND_PLANNING_SECTION,
+      coreStrategy: verified.coreStrategy,
+    },
+    sessionSkills: {
+      generalOrchestrationSkill: {
+        skillName: 'general_orchestration',
+        body: verified.generalOrchestration,
+      },
+      taskTypeSkill: { skillName: input.taskType, body: verified.taskSkill },
+    },
+    activeStages: verified.stages,
+    outputContract: renderOdNextOutputContractV2(input),
+    echoGuard: OD_NEXT_BUNDLE_ECHO_GUARD_V2,
+  };
 }
 
 /** Compose the verified recipe without stable request context for Bundle system_prompt. */

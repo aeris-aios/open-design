@@ -5,6 +5,7 @@ import {
   OD_NEXT_PROMPT_RECIPE_ID,
   OD_NEXT_STRATEGY_ID,
   type AppliedPluginSnapshot,
+  type OdNextPromptBundleStageV2,
   type OdNextStrategyRequestRecipeV2,
 } from '@open-design/contracts';
 import { resolvePluginFolder } from './registry.js';
@@ -32,10 +33,17 @@ export interface OdNextStrategyAtomBodyV2 {
   body: string;
 }
 
-function renderValidatedStageBlock(
+/**
+ * Validate one stage's loaded atom bodies and return it as structured data.
+ *
+ * The pipeline already knows which atoms belong to the stage, so the stage is
+ * expressed as `{ name, atoms }` and the Bundle renders it as elements. An atom
+ * with no prompt fragment carries no body: its presence is the fact.
+ */
+function buildValidatedStage(
   stage: (typeof OD_NEXT_PROMPT_STAGE_CONTRACT_V2)[number],
   loadedBodies: ReadonlyArray<OdNextStrategyAtomBodyV2>,
-): string {
+): OdNextPromptBundleStageV2 {
   const expectedAtoms = new Set<string>(stage.atoms);
   const bodies = new Map<string, string>();
   for (const entry of loadedBodies) {
@@ -73,15 +81,13 @@ function renderValidatedStageBlock(
     }
   }
 
-  const parts = [`## Active stage: ${stage.id}`];
-  for (const atomId of stage.atoms) {
-    parts.push(
-      `### ${atomId}`,
-      bodies.get(atomId)
-        ?? 'This runtime atom has no additional prompt fragment in recipe v2.',
-    );
-  }
-  return parts.join('\n\n');
+  return {
+    name: stage.id,
+    atoms: stage.atoms.map((atomId) => {
+      const body = bodies.get(atomId);
+      return body ? { name: atomId, body } : { name: atomId };
+    }),
+  };
 }
 
 /**
@@ -147,7 +153,7 @@ export async function resolveOdNextStrategyRequestRecipeV2(input: {
         'OD Next atom prompts are disabled; refusing an incomplete request recipe.',
       );
     }
-    const activeStageBlocks = [];
+    const activeStages: OdNextPromptBundleStageV2[] = [];
     for (const [index, stage] of pipeline.stages.entries()) {
       const expected = OD_NEXT_PROMPT_STAGE_CONTRACT_V2[index];
       if (!expected || stage.id !== expected.id) {
@@ -156,7 +162,7 @@ export async function resolveOdNextStrategyRequestRecipeV2(input: {
         );
       }
       const loadedBodies = await input.loadAtomBodies(stage.atoms);
-      activeStageBlocks.push(renderValidatedStageBlock(expected, loadedBodies));
+      activeStages.push(buildValidatedStage(expected, loadedBodies));
     }
     const assets = loadBundledStrategyPromptAssetsV2({
       plugin: resolved.record,
@@ -175,7 +181,7 @@ export async function resolveOdNextStrategyRequestRecipeV2(input: {
       coreStrategy: assets.coreStrategy,
       generalOrchestration: assets.generalOrchestration,
       taskSkill: assets.taskSkill,
-      activeStageBlocks,
+      activeStages,
     };
   } catch (error) {
     if (error instanceof InvalidOdNextStrategyPromptRecipeV2Error) throw error;

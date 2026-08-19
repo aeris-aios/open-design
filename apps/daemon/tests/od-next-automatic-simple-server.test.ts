@@ -15,7 +15,7 @@ import type {
 import {
   normalizeAgentObservationV1,
   OD_NEXT_PROMPT_STAGE_CONTRACT_V2,
-  parseOdNextPromptBundleV1,
+  parseOdNextPromptBundleV2,
 } from '@open-design/contracts';
 
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
@@ -1278,6 +1278,50 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[0]?.stdin).toContain('<user_prompt>');
     expect(invocations[0]?.stdin).toContain('<task_config>');
     expect(invocations[0]?.stdin).toContain('<context>');
+    // The Bundle is a tree: each spec slot is its own element, not a '---'
+    // section inside one blob, and the user's words come last.
+    for (const nested of [
+      '<core_system_prompt>',
+      '<execution_boundary>',
+      '<core_strategy>',
+      '<session_skills>',
+      '<task_type_skill skill_name="prototype">',
+      '<active_stages>',
+      '<stage name="discovery">',
+      '<atom name="discovery-question-form">',
+      '<output_contract>',
+      '<echo_guard>',
+      '<task_type>',
+      '<attachments>',
+      '<recipe_identity ',
+      '<runtime_tool_environment>',
+    ]) {
+      expect(invocations[0]!.stdin).toContain(nested);
+    }
+    expect(invocations[0]!.stdin).not.toContain('\n\n---\n\n');
+    expect(invocations[0]!.stdin).not.toContain('## Active stage:');
+    expect(invocations[0]!.stdin.lastIndexOf('<user_prompt>'))
+      .toBeGreaterThan(invocations[0]!.stdin.lastIndexOf('</context>'));
+    // Drift 2, proved on the real payload: system_prompt is the shared cache
+    // prefix, so no per-task or per-run value may appear inside it.
+    const firstStdin = invocations[0]!.stdin;
+    const systemPromptSlice = firstStdin.slice(
+      firstStdin.indexOf('  <system_prompt>'),
+      firstStdin.indexOf('  </system_prompt>'),
+    );
+    expect(systemPromptSlice.length).toBeGreaterThan(0);
+    for (const perTaskValue of [
+      'open-design.od-next-task-configuration/v1',
+      'open-design.od-next-request-input-facts/v1',
+      'task-input:attachments/attachment-001.pdf',
+      'workspace:project',
+      // The runtime tool contract embeds the daemon URL, which is per-run.
+      'Daemon URL',
+      'OD_TASK_INPUT_DIR',
+    ]) {
+      expect(systemPromptSlice).not.toContain(perTaskValue);
+      expect(firstStdin).toContain(perTaskValue);
+    }
     expect(invocations[0]?.stdin).toContain('open-design.od-next-task-configuration/v1');
     expect(invocations[0]?.stdin).toContain('open-design.od-next-request-input-facts/v1');
     expect(invocations[0]?.stdin).toContain('"taskType":"prototype"');
@@ -1484,16 +1528,12 @@ describe('OD Next automatic production through the real server', () => {
 
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(invocations).toHaveLength(3);
-    const bundle = parseOdNextPromptBundleV1(invocations[0]!.stdin);
+    const bundle = parseOdNextPromptBundleV2(invocations[0]!.stdin);
     expect(bundle.userPrompt).toBe(repeatedQuery);
-    expect(bundle.context).toContain(priorTranscript);
-    const researchStart = bundle.context.indexOf('## Research command contract');
-    expect(researchStart).toBeGreaterThanOrEqual(0);
-    const researchEnd = bundle.context.indexOf('\n\n---\n\n', researchStart);
-    const researchContract = bundle.context.slice(
-      researchStart,
-      researchEnd >= 0 ? researchEnd : undefined,
-    );
+    expect(bundle.context.priorTranscript).toContain(priorTranscript);
+    // No separator arithmetic: the contract is addressable as its own node.
+    const researchContract = bundle.context.researchCommandContract ?? '';
+    expect(researchContract).toContain('## Research command contract');
     expect(researchContract).toContain(`Canonical query for this run:\n\n\`\`\`text\n${repeatedQuery}\n\`\`\``);
     expect(researchContract.match(new RegExp(repeatedQuery, 'g'))).toHaveLength(1);
     expect(researchContract).not.toContain('PRIOR_ASSISTANT_ONLY_MARKER');
@@ -2369,7 +2409,12 @@ function finish() {
     text = ${JSON.stringify(initialRepair)};
   }
   const snapshotPath = logPath + '.snapshot';
-  const detectedSnapshot = /applied snapshot:[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+  // The Bundle publishes the applied snapshot as a <recipe_identity> attribute
+  // and inside <runtime_facts>; the older Markdown line and inline example value
+  // are kept as fallbacks so this fixture can read either shape.
+  const detectedSnapshot = /applied_snapshot=[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+    || /appliedSnapshot[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+    || /applied snapshot:[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
     || /"snapshotId"\\s*:\\s*"([a-f0-9-]{36})"/.exec(stdin)?.[1];
   if (detectedSnapshot) fs.writeFileSync(snapshotPath, detectedSnapshot);
   const appliedSnapshot = detectedSnapshot
@@ -2431,7 +2476,12 @@ function finish() {
   fs.appendFileSync(logPath, JSON.stringify({ argv, stdin, cwd: process.cwd(), startedAt: Date.now() }) + '\\n');
   const production = stdin.includes('native continuation — production');
   const snapshotPath = logPath + '.snapshot';
-  const detectedSnapshot = /applied snapshot:[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+  // The Bundle publishes the applied snapshot as a <recipe_identity> attribute
+  // and inside <runtime_facts>; the older Markdown line and inline example value
+  // are kept as fallbacks so this fixture can read either shape.
+  const detectedSnapshot = /applied_snapshot=[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+    || /appliedSnapshot[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
+    || /applied snapshot:[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1]
     || /"snapshotId"\\s*:\\s*"([a-f0-9-]{36})"/.exec(stdin)?.[1];
   if (detectedSnapshot) fs.writeFileSync(snapshotPath, detectedSnapshot);
   const appliedSnapshot = detectedSnapshot

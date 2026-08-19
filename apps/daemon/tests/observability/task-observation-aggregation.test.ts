@@ -44,7 +44,7 @@ function finalText(kind: 'bundle' | 'turn') {
   return {
     kind,
     schema: kind === 'bundle'
-      ? 'open-design.od-next-prompt-bundle/v1' as const
+      ? 'open-design.od-next-prompt-bundle/v2' as const
       : 'open-design.od-next-request-turn/v1' as const,
     text: `${kind}-fixture`,
     utf8Bytes: `${kind}-fixture`.length,
