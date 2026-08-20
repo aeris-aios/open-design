@@ -1648,19 +1648,19 @@
   padding: 0;
   border: 3px solid #fff;
   border-radius: 50% 50% 50% 10px;
-  background: #d96a46;
-  color: white;
+  background: var(--accent-strong, #202020);
+  color: var(--brand, #87ea5c);
   font-size: 18px;
   font-weight: 700;
   line-height: 36px;
   text-align: center;
-  box-shadow: 0 10px 22px rgba(33, 24, 18, 0.22);
+  box-shadow: 0 10px 22px rgba(32, 32, 32, 0.24);
   pointer-events: auto;
   transform: translate(-50%, -50%);
 }
 .comment-saved-pin:hover,
 .comment-active-pin:hover {
-  background: #c95e3e;
+  background: var(--accent, #353535);
   transform: translate(-50%, calc(-50% - 1px));
 }
 .comment-active-pin {
