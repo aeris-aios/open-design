@@ -378,12 +378,19 @@ export function forgetDetectedExecutable(agentId: string): void {
   detectedExecutables.delete(agentId);
 }
 
-function rememberedExecutable(agentId: string, skip: Set<string>): string | null {
+/**
+ * Pick the remembered winner, but only when the live search already offers it.
+ *
+ * The memory reorders candidates; it must never introduce one. Resolution has
+ * to stay a pure function of the current environment — an emptied PATH, a
+ * sandboxed `OD_AGENT_HOME`, or an uninstalled CLI all have to keep meaning
+ * "not found", and a winner remembered from a richer environment must not
+ * resurrect a binary the caller can no longer see.
+ */
+function preferRememberedExecutable(agentId: string, candidates: string[]): string | null {
   const remembered = detectedExecutables.get(agentId);
-  if (!remembered || skip.has(remembered)) return null;
-  // A remembered winner that has since been uninstalled must not outrank a
-  // live PATH walk.
-  return existsSync(remembered) ? remembered : null;
+  if (!remembered) return null;
+  return candidates.includes(remembered) ? remembered : null;
 }
 
 export function inspectAgentExecutableResolution(
@@ -413,21 +420,21 @@ export function inspectAgentExecutableResolution(
     ...(Array.isArray(def.fallbackBins) ? def.fallbackBins : []),
   ];
   const skip = new Set(options.skipPathCandidates ?? []);
-  // Prefer the candidate detection proved invocable over a fresh PATH walk,
-  // which would otherwise return the first file that merely *exists* — the
-  // broken shim detection already walked past. An explicit `*_BIN` override
-  // and a packaged built-in still outrank both (see the selectedPath order
-  // below), so this only replaces the guesswork, never a deliberate choice.
-  let pathResolvedPath: string | null = rememberedExecutable(def.id, skip);
-  if (!pathResolvedPath) {
-    outer: for (const bin of candidates) {
-      for (const resolved of resolveAllOnPath(bin)) {
-        if (skip.has(resolved)) continue;
-        pathResolvedPath = resolved;
-        break outer;
-      }
+  const pathCandidates: string[] = [];
+  for (const bin of candidates) {
+    for (const resolved of resolveAllOnPath(bin)) {
+      if (skip.has(resolved) || pathCandidates.includes(resolved)) continue;
+      pathCandidates.push(resolved);
     }
   }
+  // Among what the current environment offers, prefer the candidate detection
+  // proved invocable; otherwise take the first hit as before. Plain order is
+  // not enough on its own — the first file that merely *exists* is exactly the
+  // broken shim detection walked past. An explicit `*_BIN` override and a
+  // packaged built-in still outrank both (see the selectedPath order below),
+  // so this only settles guesswork, never a deliberate choice.
+  const pathResolvedPath: string | null =
+    preferRememberedExecutable(def.id, pathCandidates) ?? pathCandidates[0] ?? null;
   const builtInPath = packagedBuiltInExecutable(def, configuredEnv);
   const appBundlePath = codexAppBundleExecutable(def);
   return {

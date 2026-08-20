@@ -116,6 +116,31 @@ describe('agent executable resolution falls back past unusable candidates', () =
     expect(launch.launchPath).toBe(goodBin);
   });
 
+  // Remembering detection's winner must reorder candidates, never introduce
+  // one. Resolution stays a pure function of the current environment: an
+  // emptied PATH, a sandboxed OD_AGENT_HOME, or an uninstalled CLI all still
+  // mean "not found". Without this, a winner learned in a richer environment
+  // resurrects a binary the caller can no longer see — which is how a route
+  // that must report the runtime as unavailable starts reporting it as ready.
+  it('does not resurrect a remembered binary once the environment stops offering it', async () => {
+    if (process.platform === 'win32') return;
+    const goodDir = tempDir('remembered');
+    const goodBin = writeWorkingShim(goodDir);
+
+    process.env.OD_AGENT_HOME = goodDir;
+    process.env.PATH = goodDir;
+
+    const detected = await detectAgent(def);
+    expect(detected.available).toBe(true);
+    expect(detected.path).toBe(goodBin);
+    expect(resolveAgentLaunch(def).selectedPath).toBe(goodBin);
+
+    // The binary is still on disk — only the search environment changed.
+    process.env.PATH = '';
+
+    expect(resolveAgentLaunch(def).selectedPath).toBeNull();
+  });
+
   // Even when every candidate is unusable, detection must surface the path it
   // actually tried. The picker hides an agent that reports no path at all, so
   // dropping it leaves the user with an invisible agent and no way to act.
