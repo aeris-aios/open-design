@@ -628,18 +628,6 @@ export interface Dict {
   'settings.privacyDataDeletion': string;
   'settings.privacyDataDeletionHint': string;
   'settings.about': string;
-  'settings.odNextRolloutTitle': string;
-  'settings.odNextRolloutHint': string;
-  'settings.odNextRolloutScope': string;
-  'settings.odNextRolloutRequested': string;
-  'settings.odNextRolloutEffective': string;
-  'settings.odNextRolloutLatch': string;
-  'settings.odNextRolloutRefresh': string;
-  'settings.odNextRolloutReset': string;
-  'settings.odNextRolloutResetConfirm': string;
-  'settings.odNextRolloutResetting': string;
-  'settings.odNextRolloutLoadFailed': string;
-  'settings.odNextRolloutResetFailed': string;
   'settings.aboutHint': string;
   'settings.appVersion': string;
   'settings.appChannel': string;
