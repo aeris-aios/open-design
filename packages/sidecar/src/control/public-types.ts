@@ -78,6 +78,25 @@ export type SidecarConvergeResult = Readonly<{
   stopped: boolean;
 }>;
 
+export type SidecarStopOptions = Readonly<{ graceMs?: number }>;
+
+export type SidecarServiceStopRequest = Readonly<{
+  options?: SidecarStopOptions;
+  service: string;
+}>;
+
+export type SidecarServiceStopAttempt =
+  | Readonly<{
+      result: SidecarConvergeResult;
+      service: string;
+      status: "fulfilled";
+    }>
+  | Readonly<{
+      error: unknown;
+      service: string;
+      status: "rejected";
+    }>;
+
 export type SidecarCallOptions = Readonly<{
   /** `null` is reserved for lifecycle calls whose response is the terminal event itself. */
   timeoutMs?: number | null;
@@ -105,7 +124,7 @@ export type SidecarControlPlane = Readonly<{
   launch<TMethods>(options: SidecarLaunchOptions): Promise<SidecarLaunch<TMethods>>;
   probe(service: string): Promise<SidecarProbeResult>;
   requestStop(service: string): Promise<SidecarStopResult>;
-  stop(service: string, options?: Readonly<{ graceMs?: number }>): Promise<SidecarConvergeResult>;
+  stop(service: string, options?: SidecarStopOptions): Promise<SidecarConvergeResult>;
 }>;
 
 export type AccessControlPlaneOptions = Readonly<{
@@ -119,7 +138,7 @@ export type SidecarControlAccess = Readonly<{
   connect<TMethods>(service: string): Promise<SidecarControlClient<TMethods>>;
   probe(service: string): Promise<SidecarProbeResult>;
   requestStop(service: string): Promise<SidecarStopResult>;
-  stop(service: string, options?: Readonly<{ graceMs?: number }>): Promise<SidecarConvergeResult>;
+  stop(service: string, options?: SidecarStopOptions): Promise<SidecarConvergeResult>;
 }>;
 
 export type SidecarExposeOptions<TMethods> = AttachSidecarOptions<TMethods> & Readonly<{

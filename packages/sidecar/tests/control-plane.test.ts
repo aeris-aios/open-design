@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import {
   installPrivateLaunchForTest,
   privateLaunchStateForTest,
   sendPrivateRequestForTest,
+  writePrivateReadyDescriptorForTest,
 } from "../src/control/private-testing.js";
 import { attachDemoBody } from "./fixtures/control-body.js";
 import {
@@ -52,11 +54,36 @@ describe("sidecar control public boundary", () => {
       "forwardSidecarEnvironment",
       "readSidecarContext",
       "resumeControlPlane",
+      "stopSidecarServices",
       "stripSidecarEnvironment",
     ]);
 
     const publicNames = Object.keys(publicControl).join(" ").toLowerCase();
     expect(publicNames).not.toMatch(/endpoint|incarnation|ipc|process|stamp|transport/);
+  });
+});
+
+describe("sidecar ordered convergence", () => {
+  it("attempts every requested service even when earlier stops reject", async () => {
+    const calls: string[] = [];
+    const control = {
+      async stop(service: string) {
+        calls.push(service);
+        if (service !== "daemon") throw new Error(`${service} failed`);
+        return { forced: false, pid: 42, stopped: true };
+      },
+    };
+
+    await expect(publicControl.stopSidecarServices(control, [
+      { service: "desktop" },
+      { service: "web" },
+      { service: "daemon" },
+    ])).resolves.toMatchObject([
+      { service: "desktop", status: "rejected" },
+      { service: "web", status: "rejected" },
+      { result: { stopped: true }, service: "daemon", status: "fulfilled" },
+    ]);
+    expect(calls).toEqual(["desktop", "web", "daemon"]);
   });
 });
 
@@ -433,6 +460,73 @@ describe("independent sidecar controller and body", () => {
     const mismatchedController = createDemoController(scope, mismatchedRoots);
     await expect(mismatchedController.stop("daemon")).rejects.toMatchObject({ code: "peer-mismatch" });
     await expect(createDemoController(scope, roots).connect("daemon")).resolves.toBeDefined();
+  });
+
+  it("does not force an acknowledged peer that remains alive past the grace period", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const childEntry = join(import.meta.dirname, "fixtures", "control-uncooperative-child.ts");
+    const launch = await controller.launch<DemoMethods>({
+      args: ["--import", "tsx", childEntry],
+      executable: process.execPath,
+      service: "daemon",
+    });
+    cleanups.push(async () => {
+      await launch.stop();
+    });
+
+    const access = publicControl.accessControlPlane({ runtimeRoot: roots.runtimeRoot, scope });
+    await expect(access.stop("daemon", { graceMs: 10 })).resolves.toEqual({
+      forced: false,
+      pid: launch.pid,
+      stopped: false,
+    });
+    expect(() => process.kill(launch.pid, 0)).not.toThrow();
+  });
+
+  it("never signals a reused PID from a stale descriptor", async () => {
+    const { roots, scope } = await createFixture();
+    const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      unrelated.once("error", rejectSpawn);
+      unrelated.once("spawn", resolveSpawn);
+    });
+    const pid = unrelated.pid;
+    if (pid == null) throw new Error("unrelated fixture did not report a pid");
+    cleanups.push(async () => {
+      if (unrelated.exitCode == null && unrelated.signalCode == null) unrelated.kill("SIGKILL");
+      await new Promise<void>((resolveExit) => {
+        if (unrelated.exitCode != null || unrelated.signalCode != null) resolveExit();
+        else unrelated.once("exit", () => resolveExit());
+      });
+    });
+
+    const launch = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    await writePrivateReadyDescriptorForTest(launch, pid);
+
+    const access = publicControl.accessControlPlane({ runtimeRoot: roots.runtimeRoot, scope });
+    await expect(access.stop("daemon", { graceMs: 10 })).resolves.toEqual({
+      forced: false,
+      pid,
+      stopped: false,
+    });
+    expect(() => process.kill(pid, 0)).not.toThrow();
+
+    const bootstrap = createDemoController(scope, roots);
+    await expect(bootstrap.stop("daemon", { graceMs: 10 })).resolves.toEqual({
+      forced: false,
+      pid,
+      stopped: false,
+    });
+    expect(() => process.kill(pid, 0)).not.toThrow();
   });
 
   it("does not attach a controller with a different caller-owned projection", async () => {

@@ -37,13 +37,18 @@ function control(input: {
   daemonUrl?: string | null;
   webUrl?: string | null;
   stopped?: boolean;
+  stopErrors?: Partial<Record<string, Error>>;
   showError?: Error;
 } = {}): { control: SidecarControlPlane; show: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> } {
   const show = vi.fn(async () => {
     if (input.showError != null) throw input.showError;
     return { accepted: true as const };
   });
-  const stop = vi.fn(async () => ({ forced: false, pid: 1234, stopped: input.stopped ?? true }));
+  const stop = vi.fn(async (service: string) => {
+    const error = input.stopErrors?.[service];
+    if (error != null) throw error;
+    return { forced: false, pid: 1234, stopped: input.stopped ?? true };
+  });
   const connect = vi.fn(async (service: string) => ({
     call: async (method: string) => {
       if (service === "desktop" && method === "show") return await show();
@@ -127,6 +132,24 @@ describe("packaged launcher convergence", () => {
         ["web"],
         ["daemon"],
       ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not launch a replacement when one service fails to converge", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-partial-desktop-"));
+    const fake = control({
+      stopErrors: { desktop: new Error("desktop descriptor mismatch") },
+      webUrl: null,
+    });
+    try {
+      await expect(inspectExistingDesktopForLauncher("release-beta", {
+        control: fake.control,
+        incomingVersion: "0.19.4-beta.9",
+        paths: paths(root),
+      })).resolves.toEqual({ action: "exit", reason: "existing-focus-failed" });
+      expect(fake.stop.mock.calls.map(([service]) => service)).toEqual(["desktop", "web", "daemon"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

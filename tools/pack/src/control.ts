@@ -10,6 +10,7 @@ import {
 } from "@open-design/contracts/runtime/sidecars";
 import {
   accessControlPlane,
+  stopSidecarServices,
   type SidecarControlAccess,
   type SidecarConvergeResult,
   type SidecarControlScope,
@@ -60,9 +61,21 @@ export function createToolPackControl(
 export async function stopToolPackServices(
   control: SidecarControlAccess,
 ): Promise<SidecarConvergeResult[]> {
-  const results: SidecarConvergeResult[] = [];
-  results.push(await control.stop(APP_KEYS.DESKTOP, { graceMs: 15_000 }));
-  results.push(await control.stop(APP_KEYS.WEB));
-  results.push(await control.stop(APP_KEYS.DAEMON));
-  return results;
+  const attempts = await stopSidecarServices(control, [
+    { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
+    { service: APP_KEYS.WEB },
+    { service: APP_KEYS.DAEMON },
+  ]);
+  const failures = attempts.flatMap((attempt) =>
+    attempt.status === "rejected"
+      ? [new Error(`failed to stop ${attempt.service}`, { cause: attempt.error })]
+      : []
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "failed to converge one or more packaged services");
+  }
+  return attempts.map((attempt) => {
+    if (attempt.status !== "fulfilled") throw new Error("unreachable rejected stop attempt");
+    return attempt.result;
+  });
 }

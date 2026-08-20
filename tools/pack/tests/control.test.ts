@@ -1,0 +1,26 @@
+import type { SidecarControlAccess } from "@open-design/sidecar/control";
+import { describe, expect, it, vi } from "vitest";
+
+import { stopToolPackServices } from "../src/control.js";
+
+describe("tools-pack service convergence", () => {
+  it.each(["desktop", "web"] as const)(
+    "attempts every service before reporting a %s stop failure",
+    async (failedService) => {
+      const stop = vi.fn(async (service: string) => {
+        if (service === failedService) throw new Error(`${service} failed`);
+        return { forced: false, pid: null, stopped: true };
+      });
+      const control = { stop } as unknown as SidecarControlAccess;
+
+      await expect(stopToolPackServices(control)).rejects.toThrow(
+        "failed to converge one or more packaged services",
+      );
+      expect(stop.mock.calls).toEqual([
+        ["desktop", { graceMs: 15_000 }],
+        ["web"],
+        ["daemon"],
+      ]);
+    },
+  );
+});

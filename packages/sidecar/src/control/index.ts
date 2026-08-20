@@ -6,6 +6,7 @@ export {
   connectSidecar,
   forwardSidecarEnvironment,
   resumeControlPlane,
+  stopSidecarServices,
   stripSidecarEnvironment,
 } from "./controller.js";
 export type {
@@ -31,4 +32,7 @@ export type {
   SidecarMethodHandlers,
   SidecarProbeResult,
   SidecarStopResult,
+  SidecarServiceStopAttempt,
+  SidecarServiceStopRequest,
+  SidecarStopOptions,
 } from "./public-types.js";

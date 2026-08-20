@@ -10,7 +10,11 @@ import {
   type WebSidecarMethods,
 } from "@open-design/contracts/runtime/sidecars";
 import type { DesktopSidecarMethods } from "@open-design/host/sidecar";
-import { accessControlPlane, type SidecarControlAccess } from "@open-design/sidecar/control";
+import {
+  accessControlPlane,
+  stopSidecarServices,
+  type SidecarControlAccess,
+} from "@open-design/sidecar/control";
 
 import { readPackagedDesktopControlIdentity } from "./identity.js";
 import type { PackagedNamespacePaths } from "./paths.js";
@@ -90,17 +94,21 @@ async function restartExistingDesktop(input: {
   paths: PackagedNamespacePaths;
   reason: "headless-owner" | "stale-sidecar" | "superseded-version";
 }): Promise<boolean> {
-  const results = [
-    await input.control.stop(APP_KEYS.DESKTOP, { graceMs: 15_000 }),
-    await input.control.stop(APP_KEYS.WEB),
-    await input.control.stop(APP_KEYS.DAEMON),
-  ];
-  const [result] = results;
+  const attempts = await stopSidecarServices(input.control, [
+    { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
+    { service: APP_KEYS.WEB },
+    { service: APP_KEYS.DAEMON },
+  ]);
+  const desktop = attempts[0];
+  const desktopResult = desktop?.status === "fulfilled" ? desktop.result : null;
+  const failedServices = attempts
+    .filter((attempt) => attempt.status === "rejected" || !attempt.result.stopped)
+    .map((attempt) => attempt.service);
   await writeLauncherAfterQuitLog(
     input.paths,
-    `inspect-found-existing namespace=${input.namespace} shutdown=${result.stopped ? "exited" : "failed"} reason=${input.reason} pid=${result.pid ?? "unknown"} forced=${result.forced}`,
+    `inspect-found-existing namespace=${input.namespace} shutdown=${failedServices.length === 0 ? "exited" : "failed"} reason=${input.reason} pid=${desktopResult?.pid ?? "unknown"} forced=${desktopResult?.forced ?? false} failedServices=${failedServices.join(",") || "none"}`,
   );
-  return results.every((candidate) => candidate.stopped);
+  return failedServices.length === 0;
 }
 
 function incomingVersionSupersedesExisting(

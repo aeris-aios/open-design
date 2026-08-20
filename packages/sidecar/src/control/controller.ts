@@ -47,6 +47,9 @@ import type {
   SidecarLaunchOptions,
   SidecarProbeResult,
   SidecarStopResult,
+  SidecarServiceStopAttempt,
+  SidecarServiceStopRequest,
+  SidecarStopOptions,
 } from "./public-types.js";
 
 const SEMANTIC_CALL_TIMEOUT_MS = 600_000;
@@ -116,10 +119,13 @@ async function readAccessibleDescriptor(
   try {
     descriptor = normalizePrivateReadyDescriptor(raw);
   } catch (error) {
-    throw new SidecarControlError("peer-unavailable", "sidecar peer descriptor is invalid", { cause: error });
+    throw new SidecarControlError("peer-mismatch", "sidecar peer descriptor is invalid", { cause: error });
   }
   if (!sameControlIdentity(descriptor.identity, identity) || descriptor.roots.runtimeRoot !== runtimeRoot) {
-    throw peerUnavailable(identity);
+    throw new SidecarControlError(
+      "peer-mismatch",
+      "sidecar peer is unavailable because its descriptor does not match the requested control fencing",
+    );
   }
   return descriptor;
 }
@@ -137,6 +143,64 @@ function childExit(child: ReturnType<typeof spawn>): Promise<SidecarExit> {
     child.once("error", rejectExit);
     child.once("exit", (code, signal) => resolveExit({ code, signal }));
   });
+}
+
+async function stopDescriptorPeer(
+  descriptorFor: () => Promise<PrivateReadyDescriptor>,
+  options: SidecarStopOptions = {},
+): Promise<SidecarConvergeResult> {
+  let descriptor: PrivateReadyDescriptor;
+  try {
+    descriptor = await descriptorFor();
+  } catch (error) {
+    if (error instanceof SidecarControlError && error.code === "peer-unavailable") {
+      return { forced: false, pid: null, stopped: true };
+    }
+    throw error;
+  }
+
+  const graceMs = normalizeTimeout(options.graceMs, 5_000, "graceMs");
+  if (!processAlive(descriptor.pid)) {
+    return { forced: false, pid: descriptor.pid, stopped: true };
+  }
+
+  try {
+    await createClient(descriptor).requestStop();
+  } catch {
+    return {
+      forced: false,
+      pid: descriptor.pid,
+      stopped: !processAlive(descriptor.pid),
+    };
+  }
+
+  return {
+    forced: false,
+    pid: descriptor.pid,
+    stopped: await waitForStopped(descriptor.pid, graceMs),
+  };
+}
+
+/** Attempt every requested service in order without letting one failure skip the rest. */
+export async function stopSidecarServices(
+  control: Pick<SidecarControlAccess, "stop">,
+  requests: readonly SidecarServiceStopRequest[],
+): Promise<SidecarServiceStopAttempt[]> {
+  const attempts: SidecarServiceStopAttempt[] = [];
+  for (const request of requests) {
+    try {
+      attempts.push({
+        result: request.options == null
+          ? await control.stop(request.service)
+          : await control.stop(request.service, request.options),
+        service: request.service,
+        status: "fulfilled",
+      });
+    } catch (error) {
+      attempts.push({ error, service: request.service, status: "rejected" });
+    }
+  }
+  return attempts;
 }
 
 function createClient<TMethods>(descriptor: PrivateLaunchMetadata): SidecarControlClient<TMethods> {
@@ -234,27 +298,7 @@ export function accessControlPlane(options: AccessControlPlaneOptions): SidecarC
     },
     scope,
     async stop(service, stopOptions = {}) {
-      let descriptor: PrivateReadyDescriptor;
-      try {
-        descriptor = await descriptorFor(service);
-      } catch {
-        return { forced: false, pid: null, stopped: true };
-      }
-      const graceMs = normalizeTimeout(stopOptions.graceMs, 5_000, "graceMs");
-      await createClient(descriptor).requestStop().catch(() => undefined);
-      if (await waitForStopped(descriptor.pid, graceMs)) {
-        return { forced: false, pid: descriptor.pid, stopped: true };
-      }
-      try {
-        process.kill(descriptor.pid, "SIGKILL");
-      } catch {
-        // The peer may have exited between liveness checks.
-      }
-      return {
-        forced: true,
-        pid: descriptor.pid,
-        stopped: await waitForStopped(descriptor.pid, 5_000),
-      };
+      return await stopDescriptorPeer(() => descriptorFor(service), stopOptions);
     },
   });
 }
@@ -391,33 +435,10 @@ export function bootstrapControlPlane({
   };
   const stop = async (
     service: string,
-    options: Readonly<{ graceMs?: number }> = {},
+    options: SidecarStopOptions = {},
   ): Promise<SidecarConvergeResult> => {
     const identity = normalizeControlIdentity({ ...scope, service });
-    let descriptor: PrivateReadyDescriptor;
-    try {
-      descriptor = await readCurrentDescriptor(identity, roots);
-    } catch (error) {
-      if (error instanceof SidecarControlError && error.code === "peer-unavailable") {
-        return { forced: false, pid: null, stopped: true };
-      }
-      throw error;
-    }
-    const graceMs = normalizeTimeout(options.graceMs, 5_000, "graceMs");
-    await createClient(descriptor).requestStop().catch(() => undefined);
-    if (await waitForStopped(descriptor.pid, graceMs)) {
-      return { forced: false, pid: descriptor.pid, stopped: true };
-    }
-    try {
-      process.kill(descriptor.pid, "SIGKILL");
-    } catch {
-      // The peer may have exited between the final liveness probe and escalation.
-    }
-    return {
-      forced: true,
-      pid: descriptor.pid,
-      stopped: await waitForStopped(descriptor.pid, 5_000),
-    };
+    return await stopDescriptorPeer(() => readCurrentDescriptor(identity, roots), options);
   };
   const launch = async <TMethods>(options: SidecarLaunchOptions): Promise<SidecarLaunch<TMethods>> => {
     if (typeof options.executable !== "string" || options.executable.length === 0) {

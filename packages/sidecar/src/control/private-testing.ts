@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 
 import { isWindowsNamedPipePath } from "../ipc-path.js";
+import { writeJsonFile } from "../json-file.js";
 import {
   createPrivateRequest,
   createPrivateLaunchMetadata,
@@ -10,6 +11,7 @@ import {
   type PrivateLaunchMetadata,
   type PrivateControlOperation,
   type PrivateControlResponse,
+  type PrivateReadyDescriptor,
 } from "./private-protocol.js";
 import { requestJsonIpc } from "../json-ipc.js";
 import type {
@@ -30,6 +32,14 @@ export function createPrivateLaunchForTest(input: {
 
 export function installPrivateLaunchForTest(metadata: PrivateLaunchMetadata): () => void {
   return installPrivateLaunchMetadata(metadata);
+}
+
+export async function writePrivateReadyDescriptorForTest(
+  metadata: PrivateLaunchMetadata,
+  pid: number,
+): Promise<void> {
+  const { descriptorPath } = privateControlPaths(metadata.identity, metadata.roots);
+  await writeJsonFile(descriptorPath, { ...metadata, pid } satisfies PrivateReadyDescriptor);
 }
 
 export async function sendPrivateRequestForTest(
