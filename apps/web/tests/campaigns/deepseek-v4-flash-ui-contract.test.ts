@@ -28,20 +28,20 @@ const campaignModalStyles = readFileSync(
 );
 
 describe('DeepSeek V4 Flash workbench campaign entry', () => {
-  it('uses the reviewed Go modal model marks without placeholder icons', () => {
-    expect(
-      readFileSync(
-        resolve(process.cwd(), 'public/go-plan/mimo-logo-user-CWOWEwG5.png'),
-      ).byteLength,
-    ).toBeGreaterThan(0);
-    expect(
-      readFileSync(
-        resolve(process.cwd(), 'public/go-plan/zai-logo-official-Byn-xbrp.png'),
-      ).byteLength,
-    ).toBeGreaterThan(0);
-    expect(campaignModalSource).toContain(
-      'https://unpkg.com/@lobehub/icons-static-svg@latest/icons',
-    );
+  it('uses checked-in Go modal model marks without network dependencies', () => {
+    for (const assetPath of [
+      'public/agent-icons/deepseek.svg',
+      'public/agent-icons/kimi.svg',
+      'public/model-icons/minimax.svg',
+      'public/go-plan/mimo-logo-user-CWOWEwG5.png',
+      'public/go-plan/zai-logo-official-Byn-xbrp.png',
+    ]) {
+      expect(readFileSync(resolve(process.cwd(), assetPath)).byteLength).toBeGreaterThan(0);
+    }
+    expect(campaignModalSource).not.toContain('unpkg.com');
+    expect(campaignModalSource).toContain('/agent-icons/deepseek.svg');
+    expect(campaignModalSource).toContain('/agent-icons/kimi.svg');
+    expect(campaignModalSource).toContain('/model-icons/minimax.svg');
     expect(campaignModalSource).toContain(
       '/go-plan/mimo-logo-user-CWOWEwG5.png',
     );

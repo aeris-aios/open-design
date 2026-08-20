@@ -17,7 +17,9 @@ import { useI18n } from '../i18n';
 import { Icon } from './Icon';
 import styles from './DeepSeekV4FlashCampaign.module.css';
 
-const LOBE_ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-svg@latest/icons';
+const GO_PLAN_DEEPSEEK_ICON = '/agent-icons/deepseek.svg';
+const GO_PLAN_KIMI_ICON = '/agent-icons/kimi.svg';
+const GO_PLAN_MINIMAX_ICON = '/model-icons/minimax.svg';
 const GO_PLAN_MIMO_ICON = '/go-plan/mimo-logo-user-CWOWEwG5.png';
 const GO_PLAN_ZHIPU_ICON = '/go-plan/zai-logo-official-Byn-xbrp.png';
 
@@ -252,10 +254,10 @@ export function DeepSeekV4FlashCampaign({
             aria-label={goPlanCopy.providersAria}
           >
             {[
-              { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek' },
+              { src: GO_PLAN_DEEPSEEK_ICON, label: 'DeepSeek' },
               { src: GO_PLAN_ZHIPU_ICON, label: 'GLM', className: styles.goWelcomeZhipuLogo },
-              { src: `${LOBE_ICON_BASE}/kimi.svg`, label: 'Kimi' },
-              { src: `${LOBE_ICON_BASE}/minimax.svg`, label: 'MiniMax' },
+              { src: GO_PLAN_KIMI_ICON, label: 'Kimi' },
+              { src: GO_PLAN_MINIMAX_ICON, label: 'MiniMax' },
               { src: GO_PLAN_MIMO_ICON, label: 'MiMo', className: styles.goWelcomeMimoLogo },
             ].map(({ src, label, className }) => (
               <span key={label} className={className} title={label}><img src={src} alt={label} /></span>
@@ -266,8 +268,8 @@ export function DeepSeekV4FlashCampaign({
             <strong>{goPlanCopy.benefit}</strong>
             <ul>
               {[
-                { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek V4 Flash' },
-                { src: `${LOBE_ICON_BASE}/deepseek.svg`, label: 'DeepSeek V4 Pro' },
+                { src: GO_PLAN_DEEPSEEK_ICON, label: 'DeepSeek V4 Flash' },
+                { src: GO_PLAN_DEEPSEEK_ICON, label: 'DeepSeek V4 Pro' },
                 { src: GO_PLAN_ZHIPU_ICON, label: 'GLM-5.2', className: styles.goWelcomeBenefitZhipu },
               ].map(({ src, label, className }) => (
                 <li key={label}>
