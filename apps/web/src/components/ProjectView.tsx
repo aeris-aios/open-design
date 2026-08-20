@@ -143,6 +143,7 @@ import {
   resolveDesignDeliveryOutcome,
   type DesignDeliveryOutcome,
 } from '../runtime/design-delivery';
+import { notifyArtifactDelivered } from './experience-survey-trigger';
 import { RESUME_CONTINUE_PROMPT } from '../runtime/resume';
 import {
   amrBalanceGateScopeForWorkspaceContext,
@@ -1935,6 +1936,8 @@ export function ProjectView({
         : projectRunWorkspaceContext
           ? 'workspace'
           : 'pending';
+  const projectResourceAuthorityRef = useRef(projectResourceAuthority);
+  projectResourceAuthorityRef.current = projectResourceAuthority;
   const projectRunWorkspaceContextRef = useRef(projectRunWorkspaceContext);
   projectRunWorkspaceContextRef.current = projectRunWorkspaceContext;
   // The AMR pre-run balance gate uses the project's resolved scope, or the one
@@ -3058,27 +3061,60 @@ export function ProjectView({
     const reloadingCurrentConversation =
       messagesConversationIdRef.current === activeConversationId
       && messagesAuthorityKeyRef.current === projectRunAuthorityKey;
+    const liveReloadMessageIds = new Set<string>();
+    if (
+      messagesConversationIdRef.current === activeConversationId
+      && streamingConversationIdRef.current === activeConversationId
+      && abortRef.current !== null
+      && cancelRef.current !== null
+      && projectResourceAuthorityRef.current !== 'denied'
+    ) {
+      const currentMessages = messagesRef.current;
+      let assistantIndex = -1;
+      for (let index = currentMessages.length - 1; index >= 0; index -= 1) {
+        const message = currentMessages[index];
+        if (message?.role === 'assistant' && isActiveRunStatus(message.runStatus)) {
+          liveReloadMessageIds.add(message.id);
+          assistantIndex = index;
+          break;
+        }
+      }
+      for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+        const message = currentMessages[index];
+        if (message?.role !== 'user') continue;
+        liveReloadMessageIds.add(message.id);
+        break;
+      }
+    }
+    const preservingLiveConversation = liveReloadMessageIds.size > 0;
     // Reset the initialized flag so auto-send waits for this authoritative DB
     // read to settle before checking messages.length. A same-conversation
-    // authority refresh keeps the prior transcript visible, but invalidates
-    // its initialized state until the refresh succeeds.
+    // authority refresh keeps the prior transcript visible. An authority-key
+    // handoff keeps only the live turn, so its pending read cannot detach the
+    // stream or later replace those rows with an empty snapshot.
     setMessagesInitialized(false);
     let cancelled = false;
     const requestWorkspaceContext = projectRunWorkspaceContextRef.current;
-    setMessagesConversationId(null);
     setFailedMessagesConversationId(null);
-    setStreaming(false);
-    streamingConversationIdRef.current = null;
-    setStreamingConversationId(null);
+    if (!preservingLiveConversation) {
+      setMessagesConversationId(null);
+      setStreaming(false);
+      streamingConversationIdRef.current = null;
+      setStreamingConversationId(null);
+    }
     if (!reloadingCurrentConversation) {
-      setMessages([]);
+      setMessages((current) =>
+        preservingLiveConversation
+          ? current.filter((message) => liveReloadMessageIds.has(message.id))
+          : [],
+      );
       commitPreviewComments([]);
       setAttachedComments([]);
       setArtifact(null);
       savedArtifactRef.current = null;
     }
     const commentsGeneration = previewCommentsGenerationRef.current;
-    if (!reloadingCurrentConversation) {
+    if (!reloadingCurrentConversation && !preservingLiveConversation) {
       messagesConversationIdRef.current = null;
       messagesAuthorityKeyRef.current = null;
     }
@@ -3106,7 +3142,14 @@ export function ProjectView({
           requestWorkspaceContext,
         );
         if (cancelled) return;
-        setMessages(normalizeConversationMessageOrder(list));
+        setMessages((current) =>
+          preservingLiveConversation
+            ? mergeServerMessagesIntoConversation(
+                current.filter((message) => liveReloadMessageIds.has(message.id)),
+                list,
+              )
+            : normalizeConversationMessageOrder(list),
+        );
         setMessagesInitialized(true);
         setAttachedComments([]);
         setArtifact(null);
@@ -3120,16 +3163,22 @@ export function ProjectView({
         if (cancelled) return;
         const message = err instanceof Error ? err.message : 'Could not load messages for this conversation.';
         if (!reloadingCurrentConversation) {
-          setMessages([]);
+          setMessages((current) =>
+            preservingLiveConversation
+              ? current.filter((item) => liveReloadMessageIds.has(item.id))
+              : [],
+          );
           commitPreviewComments([]);
           setAttachedComments([]);
           setArtifact(null);
           savedArtifactRef.current = null;
         }
         setError(message);
-        messagesConversationIdRef.current = null;
-        messagesAuthorityKeyRef.current = null;
-        setMessagesConversationId(null);
+        if (!preservingLiveConversation) {
+          messagesConversationIdRef.current = null;
+          messagesAuthorityKeyRef.current = null;
+          setMessagesConversationId(null);
+        }
         setFailedMessagesConversationId(activeConversationId);
       }
     })();
@@ -5550,6 +5599,7 @@ export function ProjectView({
               events: message.events,
               producedFileCount: produced.length,
               traceObjectFileCount: traceObjectFiles.length,
+              artifactCount: status.artifactCount,
               persistenceSucceeded: artifactPersistenceSucceeded,
               persistenceFailed: artifactPersistenceError !== undefined,
             });
@@ -5708,6 +5758,7 @@ export function ProjectView({
             ? preservedTaskPrefixEvents
             : []
           : [...(message.events ?? [])];
+        let daemonArtifactCount = status.artifactCount;
         let latestReattachRunStatus: ChatMessage['runStatus'] = status.status;
         let authoritativeReattachArtifactPaths = status.artifactPaths;
         const applyContentDelta = (delta: string) => {
@@ -5840,6 +5891,9 @@ export function ProjectView({
               genericDisconnectBackoffUntilRef.current.delete(runId);
               replayedEvents = appendCoalescedAgentEvent(replayedEvents, ev);
               textBuffer.appendEvent(ev);
+            },
+            onArtifactCount: (count) => {
+              daemonArtifactCount = count;
             },
             onDone: async () => {
               // A reattached run interrupted by a "send now" still receives a
@@ -5995,6 +6049,7 @@ export function ProjectView({
                   events: deliveryEvents,
                   producedFileCount: produced.length,
                   traceObjectFileCount: traceObjectFiles.length,
+                  artifactCount: daemonArtifactCount,
                   persistenceSucceeded: artifactPersistenceSucceeded,
                   persistenceFailed: artifactPersistenceError !== undefined,
                 });
@@ -7082,6 +7137,7 @@ export function ProjectView({
       // that just failed in the current session (the daemon status fetch is only
       // needed on reload, not for runs that are already known to have failed).
       let currentRunId: string | undefined = undefined;
+      let daemonArtifactCount: number | undefined;
       const updateConversationLatestRun = (
         status: NonNullable<ChatMessage['runStatus']>,
         endedAt?: number,
@@ -7266,14 +7322,45 @@ export function ProjectView({
       let streamedText = '';
 
       const updateAssistant = (updater: (prev: ChatMessage) => ChatMessage) => {
-        setMessages((curr) =>
-          curr.map((m) => {
+        setMessages((curr) => {
+          let found = false;
+          const next = curr.map((m) => {
             if (m.id !== assistantId) return m;
+            found = true;
             const updated = updater(m);
             latestAssistantMsg = updated;
             return updated;
-          }),
-        );
+          });
+          if (found) return next;
+
+          // A workspace-authority refresh can reload the same conversation
+          // while POST /runs is retrying. That authoritative read may still
+          // be empty and replace the Home handoff's client-owned user and
+          // assistant placeholders. The stream remains attached, however, so
+          // dropping later deltas here leaves a successful daemon run blank
+          // until a tab switch or reload reads the persisted transcript.
+          //
+          // Restore only the two rows owned by the live controller for the
+          // project and conversation still on screen. A revoked authority is
+          // never allowed to resurrect them, and settled historical messages
+          // keep the existing clear-on-authority-change behavior.
+          if (
+            abortRef.current !== controller
+            || projectIdRef.current !== project.id
+            || activeConversationIdRef.current !== runConversationId
+            || projectResourceAuthorityRef.current === 'denied'
+          ) {
+            return curr;
+          }
+          const updated = updater(latestAssistantMsg);
+          latestAssistantMsg = updated;
+          const userAlreadyPresent = curr.some((message) => message.id === userMsg.id);
+          return [
+            ...curr,
+            ...(userAlreadyPresent ? [] : [userMsg]),
+            updated,
+          ];
+        });
       };
       let persistTimer: ReturnType<typeof setTimeout> | null = null;
       const persistAssistantSoon = () => {
@@ -7494,6 +7581,9 @@ export function ProjectView({
           if (ev.kind === 'text') textBuffer.appendTextEvent(ev.text);
           else if (ev.kind === 'thinking') textBuffer.appendEvent(ev);
           else pushEvent(ev);
+        },
+        onArtifactCount: (count: number) => {
+          daemonArtifactCount = count;
         },
         onToolInputDelta: (id: string, name: string, delta: string) => {
           setLiveToolInput((prev) => ({
@@ -7737,6 +7827,7 @@ export function ProjectView({
                 events: deliveryCandidate.events,
                 producedFileCount: produced.length,
                 traceObjectFileCount: traceObjectFiles.length,
+                artifactCount: daemonArtifactCount,
                 persistenceSucceeded: artifactPersistenceSucceeded,
                 persistenceFailed: artifactPersistenceError !== undefined,
               });
@@ -7746,6 +7837,13 @@ export function ProjectView({
                 artifactPersistenceError,
               );
               latestAssistantMsg = finalized;
+              // Only the live completion path arms the experience survey. The
+              // reattach and artifact-recovery paths below also settle on
+              // `delivered`, but they do so while replaying a run that
+              // finished before this page load — "how was that?" about work
+              // the user cannot remember finishing is a worse question than
+              // one not asked.
+              if (deliveryOutcome === 'delivered') notifyArtifactDelivered();
               setMessages((curr) => {
                 const updated = curr.map((m) =>
                   m.id === assistantId
@@ -11261,9 +11359,14 @@ export function ProjectView({
     </>
   );
 
+  // The `.app` shell belongs to the caller, not to this component. App.tsx
+  // renders the same `div.app` around both this view and
+  // ProjectCreationPendingView so React reconciles one element across the
+  // hand-off. Owning the shell here would make each view mount its own
+  // element and replay the `.app` entrance animation, which reads as the
+  // project frame flashing twice on the way in from Home.
   return (
     <CollabProvider value={collabValue}>
-    <div className="app">
       <CritiqueTheaterMount
         projectId={project.id}
         enabled={critiqueTheaterEnabled}
@@ -11831,7 +11934,6 @@ export function ProjectView({
           />
         ) : null}
       </AnimatePresence>
-    </div>
     </CollabProvider>
   );
 }

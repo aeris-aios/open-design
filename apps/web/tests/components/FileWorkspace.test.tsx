@@ -2421,7 +2421,9 @@ describe('FileWorkspace launcher tab creation', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /alpha\.html/i }));
     await waitFor(() => expect(screen.getByTestId('artifact-preview-frame').getAttribute('title')).toBe('alpha.html'));
-    expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(5);
+    // The evicted frame remounts from its exact-version source snapshot. It
+    // must not add a fifth raw read before the file revision changes.
+    expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(4);
     await waitFor(() => {
       expect(screen.getAllByTestId('retained-file-viewer').map((viewer) => viewer.getAttribute('data-file-name')))
         .toEqual(['alpha.html', 'gamma.html', 'delta.html']);
@@ -4322,6 +4324,36 @@ describe('FileWorkspace empty-project generation contract', () => {
 
     expect(screen.getByTestId('design-files-syncing')).toBeTruthy();
     expect(screen.queryByTestId('design-files-empty')).toBeNull();
+  });
+
+  it('keeps an already-materialized viewer and header actions mounted during route revalidation', () => {
+    const file = workspaceFile('artifact.html');
+    const tabsState = { tabs: [file.name], active: file.name };
+    const onTabsStateChange = vi.fn();
+    const renderWorkspace = (materializationPending: boolean) => (
+      <FileWorkspace
+        projectId="project-1"
+        projectKind="prototype"
+        files={[file]}
+        liveArtifacts={[]}
+        onRefreshFiles={vi.fn()}
+        isDeck={false}
+        tabsState={tabsState}
+        onTabsStateChange={onTabsStateChange}
+        materializationPending={materializationPending}
+        fileActionsBefore={<button type="button">Reveal artifact</button>}
+        headerActions={<button type="button">Project action</button>}
+      />
+    );
+    const { rerender } = render(renderWorkspace(false));
+    const retainedViewer = screen.getByTestId('retained-file-viewer');
+
+    rerender(renderWorkspace(true));
+
+    expect(screen.getByTestId('retained-file-viewer')).toBe(retainedViewer);
+    expect(screen.queryByTestId('design-files-syncing')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Reveal artifact' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Project action' })).toBeTruthy();
   });
 
   function assistantMessage(runStatus: 'running' | 'failed'): ChatMessage {
