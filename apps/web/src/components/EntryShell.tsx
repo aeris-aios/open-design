@@ -34,7 +34,6 @@ import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackHomeNavClick,
-  trackHomeToolbarClick,
   trackOnboardingClick,
   trackOnboardingCompleteResult,
   trackOnboardingRuntimeScanResult,
@@ -180,13 +179,7 @@ import {
   recordOptimisticProjectOwnership,
   type OptimisticProjectOwnershipWitnesses,
 } from '../collab/optimistic-project-ownership';
-import {
-  getModelCapabilityTag,
-  getModelCostTier,
-  MODEL_CAPABILITY_TAG_LABEL_KEYS,
-  MODEL_COST_TIER_LABEL_KEYS,
-  type ModelCapabilityTag,
-} from './modelCapabilityTags';
+import type { ModelCapabilityTag } from './modelCapabilityTags';
 import { LanguageMenu } from './LanguageMenu';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
@@ -196,7 +189,6 @@ import { ExtensionsMarketplace } from './PluginsView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import {
-  createProject,
   duplicatePluginAsProject,
   patchProject,
   ProjectCreateError,
@@ -243,7 +235,6 @@ import {
   RAIL_OPEN_STORAGE_KEY,
   readStoredRailOpen,
 } from './entryRailBridge';
-import { enterpriseUrl } from './enterpriseUrl';
 import { resolveByokModelPreference } from './byok/validation';
 import onboardingSourceStyles from './OnboardingModelSource.module.css';
 
@@ -286,13 +277,6 @@ type OnboardingAgentTestState =
 // `specs/current/plugin-driven-flow-plan.md`.
 const ONBOARDING_BYOK_AUTO_FETCH_DELAY_MS = 300;
 const ONBOARDING_BYOK_AUTO_TEST_DELAY_MS = 500;
-
-const ONBOARDING_AMR_MODEL_OPTIONS: NonNullable<AgentInfo['models']> = [
-  { id: 'claude-opus-4.8', label: 'Claude Opus 4.8' },
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { id: 'glm-5.1', label: 'GLM 5.1' },
-];
 
 type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   metadata?: CreateInput['metadata'];
@@ -587,7 +571,6 @@ export function EntryShell({
   onSkillsChanged,
   onRefreshAgents,
   onCreateProject,
-  onCreatePluginShareProject,
   onImportClaudeDesign,
   onImportFolder,
   onImportFolderResponse,
@@ -3788,105 +3771,6 @@ function OnboardingCliSetupPanel({
   );
 }
 
-function OnboardingAmrModelSelect({
-  models,
-  modelsSource,
-  selectedModel,
-  onSelectModel,
-}: {
-  models: NonNullable<AgentInfo['models']>;
-  modelsSource: AgentInfo['modelsSource'];
-  selectedModel: string;
-  onSelectModel: (model: string) => void;
-}) {
-  const t = useT();
-  const modelSource = modelsSource ?? 'fallback';
-  const displayModels = models.map((model) => {
-    const capability = onboardingModelCapabilityLabel(t, model);
-    const cost = onboardingModelCostLabel(t, model);
-    return {
-      value: model.id,
-      label: formatOnboardingAmrModelLabel(model),
-      tag: capability?.label,
-      tagKind: capability?.kind,
-      meta: cost?.label,
-    };
-  });
-  const modelSourceLabel = t('settings.onboardingAmrModelSourceLabel');
-  return (
-    <div
-      className="onboarding-view__model-picker"
-      onClick={(event) => event.stopPropagation()}
-    >
-      <OnboardingDropdown
-        label={`${t('settings.modelPicker')} · ${modelSourceLabel}`}
-        placeholder={t('settings.modelSourceFallback')}
-        value={selectedModel}
-        options={displayModels}
-        onChange={onSelectModel}
-        searchable
-        searchPlaceholder={t('newproj.modelSearch')}
-        sourceTone={modelSource}
-      />
-    </div>
-  );
-}
-
-function formatOnboardingAmrModelLabel(
-  model: NonNullable<AgentInfo['models']>[number],
-): string {
-  const label = model.label?.trim();
-  if (label && label !== model.id && !/^[a-z0-9._-]+$/.test(label)) {
-    return label;
-  }
-  return model.id
-    .split('-')
-    .filter(Boolean)
-    .map(formatModelToken)
-    .join(' ');
-}
-
-function formatModelToken(token: string): string {
-  const lower = token.toLowerCase();
-  const known: Record<string, string> = {
-    claude: 'Claude',
-    opus: 'Opus',
-    sonnet: 'Sonnet',
-    haiku: 'Haiku',
-    deepseek: 'DeepSeek',
-    gemini: 'Gemini',
-    glm: 'GLM',
-    gpt: 'GPT',
-    oss: 'OSS',
-    kimi: 'Kimi',
-    minimax: 'MiniMax',
-    mimo: 'MiMo',
-    qwen3: 'Qwen3',
-    seed: 'Seed',
-  };
-  if (known[lower]) return known[lower];
-  if (/^v\d/i.test(token)) return token.toUpperCase();
-  if (/^\d+b$/i.test(token) || /^a\d+b$/i.test(token)) return token.toUpperCase();
-  if (/^\d+(\.\d+)*$/.test(token)) return token;
-  return token.charAt(0).toUpperCase() + token.slice(1);
-}
-
-function onboardingModelCapabilityLabel(
-  t: ReturnType<typeof useT>,
-  model: Pick<NonNullable<AgentInfo['models']>[number], 'id' | 'metadata'>,
-): { label: string; kind: ModelCapabilityTag } | undefined {
-  const tag = getModelCapabilityTag(model);
-  return tag ? { label: t(MODEL_CAPABILITY_TAG_LABEL_KEYS[tag]), kind: tag } : undefined;
-}
-
-function onboardingModelCostLabel(
-  t: ReturnType<typeof useT>,
-  model: Pick<NonNullable<AgentInfo['models']>[number], 'id' | 'metadata'>,
-): { label: string } | undefined {
-  const tier = getModelCostTier(model);
-  return tier ? { label: t(MODEL_COST_TIER_LABEL_KEYS[tier]) } : undefined;
-}
-
 function OnboardingByokSetupPanel({
   apiProtocol,
   apiKey,
@@ -4545,212 +4429,6 @@ export function OnboardingDropdown(props: OnboardingDropdownProps) {
             ) : null}
           </div>
         </div>
-      ) : null}
-    </div>
-  );
-}
-
-// Placeholder for the AMR cloud card shown while AMR availability is still
-// being probed (the cold-start detection stream / one-shot re-probe). It
-// mirrors the real card's footprint exactly — same featured/amr grid, same
-// 246px min-height — so resolving to the real card causes no layout jump.
-// The AMR brand (icon + name) is known up-front and rendered solid; only the
-// version meta, benefit list, and model picker — the parts that depend on the
-// probe result — shimmer. Non-interactive and announced via role="status".
-function OnboardingAmrCloudSkeleton() {
-  const t = useT();
-  return (
-    <div className="onboarding-view__amr-cloud-card">
-      <div
-        className="onboarding-view__card onboarding-view__card--featured onboarding-view__card--amr onboarding-view__card--benefit-aside onboarding-view__card--skeleton"
-        role="status"
-        aria-busy="true"
-        aria-label={t('common.loading')}
-      >
-        <span className="onboarding-view__identity">
-          <span className="onboarding-view__icon onboarding-view__icon--asset">
-            <AgentIcon id="amr" size={52} className="onboarding-view__agent-logo" />
-          </span>
-          <span className="onboarding-view__card-copy">
-            <span className="onboarding-view__card-top">
-              <strong>{t('settings.amrCloud')}</strong>
-            </span>
-            <span className="onboarding-view__skeleton-line onboarding-view__skeleton-line--meta" />
-          </span>
-        </span>
-        <span className="onboarding-view__benefit-aside" aria-hidden="true">
-          <span className="onboarding-view__benefit-stack onboarding-view__benefit-stack--skeleton">
-            <span className="onboarding-view__skeleton-line onboarding-view__skeleton-line--benefit" />
-            <span className="onboarding-view__skeleton-line onboarding-view__skeleton-line--benefit" />
-            <span className="onboarding-view__skeleton-line onboarding-view__skeleton-line--benefit" />
-            <span className="onboarding-view__skeleton-line onboarding-view__skeleton-line--benefit" />
-          </span>
-        </span>
-        <span className="onboarding-view__card-model" aria-hidden="true">
-          <span className="onboarding-view__skeleton-model">
-            <span className="onboarding-view__skeleton-model-label" />
-            <span className="onboarding-view__skeleton-model-bar" />
-          </span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function OnboardingChoiceCard({
-  icon,
-  agentIconId,
-  title,
-  body,
-  benefits,
-  upcomingLabel,
-  upcomingBenefits,
-  benefitPlacement = 'copy',
-  metaLabel,
-  modelSlot,
-  actionLabel,
-  selected,
-  badge,
-  statusSlot,
-  featured,
-  variant,
-  onClick,
-}: {
-  icon: 'orbit' | 'hammer' | 'sliders' | 'github' | 'upload' | 'sparkles';
-  agentIconId?: string;
-  title: string;
-  body: string;
-  benefits?: string[];
-  upcomingLabel?: string;
-  upcomingBenefits?: string[];
-  benefitPlacement?: 'copy' | 'aside';
-  metaLabel?: string;
-  modelSlot?: ReactNode;
-  actionLabel?: string;
-  selected: boolean;
-  badge?: string;
-  statusSlot?: ReactNode;
-  featured?: boolean;
-  variant?: 'amr';
-  onClick: () => void;
-}) {
-  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    onClick();
-  }
-
-  const hasBenefits =
-    (benefits && benefits.length > 0) ||
-    (upcomingBenefits && upcomingBenefits.length > 0);
-  const benefitStack = hasBenefits ? (
-    <span className="onboarding-view__benefit-stack">
-      {benefits && benefits.length > 0 ? (
-        <span className="onboarding-view__benefits">
-          {benefits.map((item, index) => (
-            <span
-              key={item}
-              className={`onboarding-view__benefit${
-                index >= 2 ? ' onboarding-view__benefit--hero' : ''
-              }`}
-            >
-              {item}
-            </span>
-          ))}
-        </span>
-      ) : null}
-      {upcomingBenefits && upcomingBenefits.length > 0 ? (
-        <span className="onboarding-view__upcoming-benefits">
-          {upcomingLabel ? (
-            <span className="onboarding-view__upcoming-label">{upcomingLabel}</span>
-          ) : null}
-          {upcomingBenefits.map((item) => (
-            <span key={item} className="onboarding-view__benefit onboarding-view__benefit--upcoming">
-              {item}
-            </span>
-          ))}
-        </span>
-      ) : null}
-    </span>
-  ) : null;
-  const modelUnderLogo = variant === 'amr' && modelSlot;
-  const iconNode = (
-    <span
-      className={
-        'onboarding-view__icon' +
-        (agentIconId ? ' onboarding-view__icon--asset' : '')
-      }
-    >
-      {agentIconId ? (
-        <AgentIcon
-          id={agentIconId}
-          size={featured ? 52 : 40}
-          className="onboarding-view__agent-logo"
-        />
-      ) : (
-        <Icon name={icon} size={18} />
-      )}
-    </span>
-  );
-  const copyNode = (
-    <span className="onboarding-view__card-copy">
-      <span className="onboarding-view__card-top">
-        <strong>{title}</strong>
-        {badge ? <span className="onboarding-view__badge">{badge}</span> : null}
-      </span>
-      {metaLabel ? <span className="onboarding-view__card-meta">{metaLabel}</span> : null}
-      {modelUnderLogo ? null : modelSlot}
-      {benefitPlacement === 'copy' && benefitStack ? (
-        benefitStack
-      ) : !modelSlot ? (
-        <small>{body}</small>
-      ) : null}
-    </span>
-  );
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      className={`onboarding-view__card${selected ? ' is-selected' : ''}${
-        featured ? ' onboarding-view__card--featured' : ''
-      }${variant ? ` onboarding-view__card--${variant}` : ''}${
-        benefitPlacement === 'aside' ? ' onboarding-view__card--benefit-aside' : ''
-      }`}
-      onClick={onClick}
-      onKeyDown={handleKeyDown}
-      aria-pressed={selected}
-    >
-      {variant === 'amr' ? (
-        <span className="onboarding-view__identity">
-          {iconNode}
-          {copyNode}
-        </span>
-      ) : (
-        <>
-          {iconNode}
-          {copyNode}
-        </>
-      )}
-      {modelUnderLogo ? (
-        <span className="onboarding-view__card-model">
-          {modelSlot}
-        </span>
-      ) : null}
-      {benefitPlacement === 'aside' && benefitStack ? (
-        <span className="onboarding-view__benefit-aside">{benefitStack}</span>
-      ) : null}
-      {statusSlot ? (
-        <span className="onboarding-view__card-status">
-          {statusSlot}
-        </span>
-      ) : null}
-      {actionLabel ? <span className="onboarding-view__card-action">{actionLabel}</span> : null}
-      {selected ? (
-        <span className="onboarding-view__check">
-          <Icon name="check" size={14} />
-        </span>
       ) : null}
     </div>
   );
