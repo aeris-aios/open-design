@@ -10853,7 +10853,13 @@ export async function startServer({
       run.turnCompletedCleanly = false;
       run.terminalTrigger = null;
       lifecycle.resetForAttempt(run.retryAttemptCount ?? 0);
+      // Spread, not replace: `resetForAttempt` has just stamped this attempt's
+      // `attemptStartedAt`/`attemptIndex`, and replacing the object wholesale
+      // dropped them, so nothing downstream could tell which attempt a run
+      // event belonged to. Only the `run.createdAt` fallback for the logical
+      // run start is added on top.
       run.analyticsTelemetry = {
+        ...run.analyticsTelemetry,
         startRequestedAt: run.analyticsTelemetry?.startRequestedAt ?? run.createdAt,
       };
     };

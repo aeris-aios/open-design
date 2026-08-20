@@ -1868,6 +1868,8 @@ describe('summarizeRunTimingAnalytics outstanding tools across a retry', () => {
       telemetry: {
         // Post-retry telemetry: attempt 2 only, and it never called a tool.
         startRequestedAt: 1_100,
+        attemptStartedAt: 18_000,
+        attemptIndex: 2,
         stdinWriteEndAt: 19_000,
         firstModelEventAt: 20_000,
         firstModelEventType: 'text_delta' as const,
@@ -1909,6 +1911,38 @@ describe('summarizeRunTimingAnalytics outstanding tools across a retry', () => {
 
     // The skewed start is clipped to the anchor, not discarded: 4s -> 15s.
     expect(result.model_active_duration_ms).toBe(11_000);
+    expect(result.bottleneck_phase).toBe('tool_execution');
+  });
+});
+
+describe('summarizeRunTimingAnalytics outstanding tools without a model-event mark', () => {
+  it('keeps a current-attempt outstanding tool when the anchor fell back to the first token', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 30_000,
+      analyticsCapturedAt: 30_050,
+      telemetry: {
+        // Legacy or recovery telemetry: no `firstModelEventAt`, so the phase
+        // anchor falls back to the first token at 10s.
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        stdinWriteEndAt: 3_000,
+        firstTokenAt: 10_000,
+        attemptStartedAt: 2_000,
+        attemptIndex: 1,
+      },
+      events: [
+        // Issued by THIS attempt at 4s and never completed. It was observed
+        // before the first token, which is exactly the tool-first shape this
+        // change exists to measure.
+        { id: 1, event: 'agent', timestamp: 4_000, data: { type: 'tool_use', id: 't1', name: 'Bash' } },
+      ],
+    });
+
+    // The tool held the whole 10s-30s active window. Gating the close on the
+    // phase anchor rather than the attempt boundary discards it and hands the
+    // window to stream_output.
+    expect(result.model_active_duration_ms).toBe(20_000);
     expect(result.bottleneck_phase).toBe('tool_execution');
   });
 });

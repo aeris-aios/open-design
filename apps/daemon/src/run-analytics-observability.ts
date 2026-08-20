@@ -1100,6 +1100,10 @@ export function summarizeRunTimingAnalytics(args: {
   ].filter((value): value is number => value !== undefined && Number.isFinite(value));
   const phaseAnchorAt =
     phaseAnchorCandidates.length > 0 ? Math.min(...phaseAnchorCandidates) : undefined;
+  // When the current attempt began. Distinct from `phaseAnchorAt`: the anchor
+  // is when the model started responding, this is when the attempt started
+  // running, and on a tool-first run the tools come between them.
+  const attemptStartAt = telemetry.attemptStartedAt ?? startAt;
   // A run can end while a tool is still outstanding (crash, cancel, timeout),
   // leaving a tool_use with no tool_result. That span still occupied the clock,
   // so close it at run end for phase purposes.
@@ -1108,16 +1112,20 @@ export function summarizeRunTimingAnalytics(args: {
   // while lifecycle telemetry does not, so an attempt whose child was killed
   // mid-tool leaves an open span behind; closing that at run end would stretch
   // it across the retry boundary and bill the new attempt for a tool it never
-  // called. The gate is the daemon-clock timestamp we OBSERVED the tool_use at,
-  // not its start -- a producer-supplied `startedAt` can legitimately predate
-  // the anchor on a tool that is genuinely running, and clipping already
-  // handles that.
-  if (phaseAnchorAt !== undefined) {
-    for (const [toolUseId, startedAt] of openTools) {
-      const observedAt = openToolObservedAt.get(toolUseId);
-      if (observedAt === undefined || observedAt < phaseAnchorAt) continue;
-      toolIntervals.push({ start: startedAt, end: runEndAt });
-    }
+  // called.
+  //
+  // Gated on the ATTEMPT boundary, not the phase anchor. The anchor falls back
+  // to the first token when no model-event mark exists, and on a tool-first run
+  // that lands after the tools -- gating on it would discard the very spans
+  // this measures. Compared against the daemon-clock timestamp we OBSERVED the
+  // tool_use at, which shares a clock with our own marks; a producer-supplied
+  // `startedAt` can legitimately predate the anchor on a live tool, and the
+  // clip below already handles that.
+  for (const [toolUseId, startedAt] of openTools) {
+    const observedAt = openToolObservedAt.get(toolUseId);
+    if (observedAt === undefined) continue;
+    if (attemptStartAt !== undefined && observedAt < attemptStartAt) continue;
+    toolIntervals.push({ start: startedAt, end: runEndAt });
   }
   const firstModelEventType =
     telemetry.firstModelEventType ??
@@ -1280,7 +1288,6 @@ export function summarizeRunTimingAnalytics(args: {
   }
 
   if (typeof telemetry.attemptIndex === 'number') result.attempt_index = telemetry.attemptIndex;
-  const attemptStartAt = telemetry.attemptStartedAt ?? startAt;
   setMeasuredDuration(result, 'attempt_duration_ms', [], 'unknown', attemptStartAt, runEndAt);
   setMeasuredDuration(result, 'attempt_time_to_first_token_ms', [], 'unknown', attemptStartAt, telemetry.firstTokenAt);
   if (result.last_observed_phase !== undefined) {
