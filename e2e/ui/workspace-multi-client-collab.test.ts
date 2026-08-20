@@ -510,7 +510,6 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
       await expect(ownerPage.getByTestId('file-workspace')).toBeVisible({
         timeout: T.long,
       });
-      await ownerPage.getByTestId('board-mode-toggle').click();
       await ownerPage.getByTestId('comment-panel-toggle').click();
       await expect(
         ownerPage

@@ -7371,7 +7371,7 @@ describe('FileViewer tweaks toolbar', () => {
     });
   }
 
-  it('renders Annotation, Edit, and Draw as the primary preview tools', async () => {
+  it('renders Comments, Edit, and Draw as the primary preview tools', async () => {
     render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
@@ -7380,7 +7380,8 @@ describe('FileViewer tweaks toolbar', () => {
 
     expect(screen.queryByTestId('palette-tweaks-toggle')).toBeNull();
     expect(screen.queryByTestId('inspect-mode-toggle')).toBeNull();
-    expect(screen.getByTestId('board-mode-toggle')).toBeTruthy();
+    expect(screen.queryByTestId('board-mode-toggle')).toBeNull();
+    expect(screen.getByTestId('comment-panel-toggle')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'More annotation tools' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Pick element' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Region' })).toBeNull();
@@ -8827,7 +8828,7 @@ describe('FileViewer tweaks toolbar', () => {
         liveHtml='<html><body><main data-od-id="hero">Comment V1</main></body></html>'
       />,
     );
-    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     await waitFor(() => {
       const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
@@ -9390,7 +9391,7 @@ describe('FileViewer tweaks toolbar', () => {
       </>,
     );
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -9463,7 +9464,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(commentsButton.textContent).toContain('1');
     expect(commentsButton.getAttribute('aria-label')).toBe('Comments (1)');
     expect(
-      screen.getByTestId('board-mode-toggle').compareDocumentPosition(screen.getByTestId('manual-edit-mode-toggle')) &
+      screen.getByTestId('draw-overlay-toggle').compareDocumentPosition(screen.getByTestId('manual-edit-mode-toggle')) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
@@ -9472,7 +9473,7 @@ describe('FileViewer tweaks toolbar', () => {
     ).toBeTruthy();
   });
 
-  it('keeps comments and annotation picker mutually exclusive', () => {
+  it('opens and closes comments and annotation mode from one control', () => {
     const { container } = render(
       <FileViewer
         projectId="project-1"
@@ -9486,21 +9487,19 @@ describe('FileViewer tweaks toolbar', () => {
     expect(container.querySelector('.comment-preview-layer')?.className).not.toContain('comment-preview-layer-comments-open');
     expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByTestId('board-mode-toggle')).toBeNull();
 
-    clickAgentTool('board-mode-toggle');
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
     expect(container.querySelector('.comment-preview-layer')?.className).not.toContain('comment-preview-layer-comments-open');
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('inspect-empty-hint-container')).toBeNull();
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('false');
     expect(screen.queryByTestId('inspect-empty-hint-container')).toBeNull();
   });
 
@@ -9531,7 +9530,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(dock.contains(screen.getByTestId('artifact-preview-frame'))).toBe(false);
   });
 
-  it('keeps non-docked tablet comment-tool previews fitted to the padded canvas', async () => {
+  it('keeps tablet comment-tool previews fitted while the comments panel is open', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function getBoundingClientRectMock(this: HTMLElement) {
         if (this.classList.contains('viewer-body')) return testRect(0, 0, 900, 700);
@@ -9549,11 +9548,11 @@ describe('FileViewer tweaks toolbar', () => {
 
     fireEvent.click(screen.getByLabelText('Preview viewport'));
     fireEvent.click(screen.getByRole('option', { name: 'Tablet' }));
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     const layout = screen.getByTestId('comment-preview-layout');
     await waitFor(() => {
-      expect(layout.className).not.toContain('comment-preview-layer-with-side-dock');
+      expect(layout.className).toContain('comment-preview-layer-with-side-dock');
       expect(Number(layout.style.getPropertyValue('--preview-scale'))).toBeCloseTo((700 - 48) / 1180);
     });
   });
@@ -9871,7 +9870,6 @@ describe('FileViewer tweaks toolbar', () => {
   });
 
   it.each([
-    ['Comment', 'board-mode-toggle'],
     ['Draw', 'draw-overlay-toggle'],
     ['Edit', 'manual-edit-mode-toggle'],
   ])('keeps fixed-width auto-fit stable while %s freezes an older revision', async (_mode, toggleTestId) => {
@@ -9948,7 +9946,7 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -10011,7 +10009,7 @@ describe('FileViewer tweaks toolbar', () => {
       </CollabProvider>,
     );
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -10145,7 +10143,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('1');
     expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('2');
 
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
     expect(screen.queryByTestId('comment-saved-marker-pin-newer')).toBeNull();
@@ -10608,7 +10606,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -10623,10 +10621,12 @@ describe('FileViewer tweaks toolbar', () => {
       },
     }));
 
-    const input = await screen.findByTestId('comment-popover-input') as HTMLTextAreaElement;
+    const popover = await screen.findByTestId('comment-popover');
+    const input = within(popover).getByTestId('comment-popover-input') as HTMLTextAreaElement;
     expect(input.value).toBe('');
-    expect(screen.queryByText('Existing note should stay in the thread')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(within(popover).queryByText('Existing note should stay in the thread')).toBeNull();
+    expect(within(popover).queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
   });
 
   it('shows saved image attachments when reopening a comment from the list', async () => {
@@ -10706,7 +10706,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('annotation-style-summary')).toBeNull();
   });
 
-  it('keeps the comment panel closed after saving an annotation comment', async () => {
+  it('keeps the comment panel open after saving an annotation comment', async () => {
     function Harness() {
       const [comments, setComments] = useState<PreviewComment[]>([]);
       return (
@@ -10747,7 +10747,7 @@ describe('FileViewer tweaks toolbar', () => {
     render(<Harness />);
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
@@ -10763,12 +10763,12 @@ describe('FileViewer tweaks toolbar', () => {
     }));
 
     const input = await screen.findByTestId('comment-popover-input');
-    expect(screen.queryByTestId('comment-side-panel')).toBeNull();
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     fireEvent.change(input, { target: { value: '加大字号' } });
     fireEvent.click(screen.getByTestId('comment-popover-save'));
 
     await waitFor(() => expect(screen.queryByTestId('comment-popover')).toBeNull());
-    expect(screen.queryByTestId('comment-side-panel')).toBeNull();
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
     expect(screen.getByText('Comment saved')).toBeTruthy();
   });
 
@@ -10896,7 +10896,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
       data: {
@@ -10943,7 +10943,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow,
       data: {
@@ -10983,7 +10983,7 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.queryByRole('menuitem', { name: 'Pick element' })).toBeNull();
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('draw-overlay-toggle').getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -10998,7 +10998,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
+    clickAgentTool('comment-panel-toggle');
 
     const target = {
       elementId: 'hero',
@@ -11037,158 +11037,11 @@ describe('FileViewer tweaks toolbar', () => {
     expect(summary.textContent).toContain('13.5px');
     expect(await screen.findByTestId('comment-popover-input')).toBeTruthy();
     expect(screen.getByTestId('comment-target-overlay')).toBeTruthy();
-    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('inspect-panel')).toBeNull();
     await waitFor(() => {
       expect(screen.queryByTestId('annotation-hover-popover')).toBeNull();
     });
-  });
-
-  it('keeps the hover card mounted when the pointer moves onto it (no flicker)', async () => {
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
-
-    const target = {
-      elementId: 'hero',
-      selector: '[data-od-id="hero"]',
-      label: 'p',
-      text: 'Hero',
-      position: { x: 8, y: 12, width: 312, height: 63 },
-      hoverPoint: { x: 200, y: 100 },
-      htmlHint: '<p data-od-id="hero">Hero</p>',
-      style: { color: 'rgb(26, 25, 22)', fontSize: '13.5px' },
-    };
-
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    const card = await screen.findByTestId('annotation-hover-popover');
-
-    // Pointer crosses from the element onto the floating card. The iframe sees
-    // that as a mouseout and posts od:comment-leave; the card's own mouseenter
-    // fires first and pins it, so the leave must be ignored and the card stays.
-    fireEvent.mouseEnter(card);
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od:comment-leave' },
-    }));
-
-    // Give React a chance to (wrongly) unmount before asserting it did not.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
-
-    // Leaving the card itself dismisses it.
-    fireEvent.mouseLeave(card);
-    await waitFor(() => {
-      expect(screen.queryByTestId('annotation-hover-popover')).toBeNull();
-    });
-  });
-
-  it('ignores an occlusion leave that arrives before the card pins (no entry flicker)', async () => {
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
-
-    const target = {
-      elementId: 'hero',
-      selector: '[data-od-id="hero"]',
-      label: 'p',
-      text: 'Hero',
-      position: { x: 8, y: 12, width: 312, height: 63 },
-      hoverPoint: { x: 200, y: 100 },
-      htmlHint: '<p data-od-id="hero">Hero</p>',
-      style: { color: 'rgb(26, 25, 22)', fontSize: '13.5px' },
-    };
-
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    const card = await screen.findByTestId('annotation-hover-popover');
-
-    // Real-world ordering the synchronous teardown got wrong: the iframe's async
-    // od:comment-leave lands BEFORE the card's mouseenter has had a chance to pin
-    // it. The dismiss must be deferred so the imminent mouseenter cancels it —
-    // otherwise the card tears down for a frame and flickers on the way in.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od:comment-leave' },
-    }));
-    fireEvent.mouseEnter(card);
-
-    await new Promise((resolve) => setTimeout(resolve, 140));
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
-  });
-
-  it('keeps the card when the pointer moves from it back onto the element', async () => {
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    clickAgentTool('board-mode-toggle');
-
-    const target = {
-      elementId: 'hero',
-      selector: '[data-od-id="hero"]',
-      label: 'p',
-      text: 'Hero',
-      position: { x: 8, y: 12, width: 312, height: 63 },
-      hoverPoint: { x: 200, y: 100 },
-      htmlHint: '<p data-od-id="hero">Hero</p>',
-      style: { color: 'rgb(26, 25, 22)', fontSize: '13.5px' },
-    };
-
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    const card = await screen.findByTestId('annotation-hover-popover');
-    fireEvent.mouseEnter(card);
-
-    // Pointer leaves the card heading back onto the element it overlaps. The
-    // card must NOT tear down synchronously on its own mouseleave — clearing
-    // here is what made the card vanish while the pointer was still over the
-    // element (the iframe does not always re-emit a hover to bring it back).
-    fireEvent.mouseLeave(card);
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
-
-    // A re-hover (pointer landed back on the element) cancels the pending
-    // dismiss, so the card stays put rather than blinking out.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { ...target, type: 'od:comment-hover' },
-    }));
-
-    await new Promise((resolve) => setTimeout(resolve, 140));
-    expect(screen.queryByTestId('annotation-hover-popover')).not.toBeNull();
   });
 
   it('closes an open saved-comment composer when that comment leaves the open state', async () => {

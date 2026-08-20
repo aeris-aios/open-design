@@ -13792,35 +13792,6 @@ function HtmlViewer({
     activateDraw();
   }
 
-  function activateCommentTool() {
-    fireArtifactToolbarClick('comment');
-    capturePreviewScrollPosition();
-    if (boardMode && !commentCreateMode && boardTool === 'inspect') {
-      setBoardMode(false);
-      setCommentCreateMode(false);
-      clearBoardComposer();
-      setAgentToolsOpen(false);
-      return;
-    }
-    const activateComment = () => {
-      setCommentPanelOpen(false);
-      setCommentCreateMode(false);
-      clearBoardComposer();
-      setInspectMode(false);
-      setDrawOverlayOpen(false);
-      setMode('preview');
-      activateBoard('inspect');
-      closeArtifactToolMenus();
-    };
-    if (manualEditMode) {
-      void exitManualEditModeAfterFlush().then((ok) => {
-        if (ok) activateComment();
-      });
-      return;
-    }
-    activateComment();
-  }
-
   function activateCommentCreateTool(returnFocusTarget?: HTMLElement | null) {
     if (returnFocusTarget) commentPanelReturnFocusRef.current = returnFocusTarget;
     fireArtifactToolbarClick('comment');
@@ -15457,21 +15428,6 @@ function HtmlViewer({
                   <RemixIcon name="camera-line" size={15} />
                 </button>
               ) : null}
-              <div className="artifact-tool-menu-anchor">
-                <button
-                  type="button"
-                  className={`viewer-action viewer-action-icon viewer-comment-toggle od-tooltip${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
-                  data-testid="board-mode-toggle"
-                  data-tooltip={t('fileViewer.comment')}
-                  data-tooltip-placement="bottom"
-                  title={t('fileViewer.comment')}
-                  aria-label={t('fileViewer.comment')}
-                  aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
-                  onClick={activateCommentTool}
-                >
-                  <RemixIcon name="chat-new-line" size={15} />
-                </button>
-              </div>
               <button
                 className={`viewer-action viewer-action-icon od-tooltip${drawOverlayOpen ? ' active' : ''}`}
                 type="button"
@@ -15649,18 +15605,6 @@ function HtmlViewer({
                         </button>
                       </>
                     ) : null}
-                    <button
-                      type="button"
-                      className={`viewer-toolbar-more-item${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
-                      role="menuitem"
-                      onClick={() => {
-                        activateCommentTool();
-                        setToolbarMoreOpen(false);
-                      }}
-                    >
-                      <RemixIcon name="chat-new-line" size={15} />
-                      <span>{t('fileViewer.comment')}</span>
-                    </button>
                     <button
                       type="button"
                       className={`viewer-toolbar-more-item${drawOverlayOpen ? ' active' : ''}`}

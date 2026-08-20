@@ -99,8 +99,8 @@ test('[P0] manual edit inspector previews and persists page and selected element
   await expect(viewMode.getByRole('tab', { name: 'Code', exact: true })).toBeVisible();
   await expect(artifactPreview(page)).toBeVisible();
 
-  await page.getByTestId('board-mode-toggle').click();
-  await expect(page.getByRole('button', { name: /^Comment$/ })).toBeVisible();
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: /^Share$/ })).toBeVisible();
   const actionMenu = await openShareExportMenu(page);
   await expect(actionMenu.getByRole('menuitem', { name: /Export as PDF/i })).toBeVisible();
@@ -415,10 +415,10 @@ test('[P0] @critical preview toolbar keeps share, download, comment, and zoom ac
   await offlinePage.close();
   await expect(downloadMenu).toHaveCount(0);
 
-  await page.getByRole('button', { name: /^Comment$/ }).click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: /^Comment$/ }).click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'false');
 
   const zoomButton = page.locator('.viewer-toolbar-zoom .zoom-trigger');
   await expect(zoomButton).toHaveText(/^\d+%$/);
@@ -556,23 +556,19 @@ test('[P1] HTML preview toolbar exposes comments, mark, and edit workflows', asy
   // The screenshot step is gone: `screenshot-copy-button` no longer exists in
   // apps/web, and FileViewer's own suite asserts its absence. Comments, mark
   // and edit below are still live, so the rest of this spec stands.
-  await page.getByTestId('board-mode-toggle').click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
   await artifactPreviewFrame(page).locator('[data-od-id="hero-title"]').click();
   await expect(page.getByTestId('comment-popover')).toBeVisible();
   await page.getByTestId('comment-popover-input').fill('Panel-level comment');
   await page.getByTestId('comment-popover').getByRole('button', { name: /^Comment$/ }).click();
   await expect(page.getByTestId('comment-saved-marker-hero-title')).toBeVisible();
 
-  await expect(page.getByTestId('comment-side-panel')).toHaveCount(0);
   const commentsButton = page.getByTestId('comment-panel-toggle');
-  await commentsButton.click();
-  await expect(commentsButton).toHaveAttribute('aria-pressed', 'false');
-  await commentsButton.click();
   await expect(page.getByTestId('comment-side-panel')).toBeVisible();
   await expect(page.getByTestId('comment-side-panel')).toContainText('Panel-level comment');
   await expect(commentsButton).toContainText('1');
-  await page.getByRole('button', { name: /hide comments/i }).click();
+  await commentsButton.click();
   await expect(page.getByTestId('chat-composer')).toBeVisible();
 
   await holdNextRunOpen(page);
@@ -618,8 +614,8 @@ test('[P1] draw annotation composer floats near the selected mark and can be que
   await page.goto(`/projects/${projectId}/conversations/${conversationId}/files/draw-position.html`);
   await openDesignFile(page, 'draw-position.html');
 
-  await page.getByTestId('board-mode-toggle').click();
-  await expect(page.getByTestId('board-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('comment-panel-toggle').click();
+  await expect(page.getByTestId('comment-panel-toggle')).toHaveAttribute('aria-pressed', 'true');
   await holdNextRunOpen(page);
   await sendPrompt(page, 'Keep draw queue mode active');
   await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
