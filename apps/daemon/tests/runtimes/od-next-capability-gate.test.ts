@@ -122,8 +122,8 @@ describe('OD Next runtime capability gate', () => {
     }
   });
 
-  it('keeps unpublished groups unknown while registering the reviewed Codex, Claude, and native OpenCode tuples', () => {
-    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(3);
+  it('registers every reviewed tuple, Vela included', () => {
+    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(4);
     expect(OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS).toEqual([
       CODEX_0_147_0_BEST_EFFORT_MANIFEST,
       CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,
@@ -219,7 +219,7 @@ describe('OD Next runtime capability gate', () => {
     });
   });
 
-  it('accepts the Vela seven-path replay as best-effort evidence without promoting the unpublished build', () => {
+  it('admits Vela on the native OpenCode runtime it shares with the registered OpenCode tuple', () => {
     const seed = JSON.parse(readFileSync(
       join(fixtureDir, 'vela-opencode-0.0.1-local-opencode-1.18.18.sanitized-real-seed.json'),
       'utf8',
@@ -240,13 +240,19 @@ describe('OD Next runtime capability gate', () => {
     })).toMatchObject({
       includedInInitialRollout: true,
       tupleMatched: true,
-      reason: 'capability_tuple_unverified',
+      // Vela drives the same native OpenCode runtime already registered under
+      // `native-opencode`; its Child mechanism is that runtime's, reached over
+      // the ACP extension instead of the CLI stream. Withholding the tuple did
+      // not withhold an unproven capability, it refused complex execution to an
+      // agent whose seven evidence paths all pass. Re-pin `agentCliVersion`
+      // once Vela publishes a build with a stable producer version.
+      reason: 'capability_resolved',
       snapshot: {
         runtimePath: 'vela-opencode',
         agentCliVersion: '0.0.1-od-next-local',
         runtimeCompanionVersion: '1.18.18',
-        nativeSessionContinuation: { support: 'unknown' },
-        nativeSubagents: { support: 'unknown' },
+        nativeSessionContinuation: { support: 'verified' },
+        nativeSubagents: { support: 'verified', evidenceLevel: 'L2' },
       },
     });
   });
