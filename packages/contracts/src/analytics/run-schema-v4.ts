@@ -285,7 +285,7 @@ function diagnosticsFromLegacy(legacy: JsonRecord): RunDiagnosticsProps | undefi
     launch_preflight_duration_ms: numberValue(legacy.launch_preflight_duration_ms),
     stdin_write_duration_ms: numberValue(legacy.stdin_write_duration_ms),
     runtime_init_to_first_token_ms: numberValue(legacy.runtime_init_to_first_token_ms),
-    runtime_init_to_first_model_event_ms: numberValue(legacy.runtime_init_to_first_model_event_ms),
+    runtime_init_to_first_model_response_ms: numberValue(legacy.runtime_init_to_first_model_response_ms),
     spawn_to_first_token_ms: numberValue(legacy.spawn_to_first_token_ms),
     cli_ready_ms: numberValue(legacy.cli_ready_ms),
     session_init_ms: numberValue(legacy.session_init_ms),

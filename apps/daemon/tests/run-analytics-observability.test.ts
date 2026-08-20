@@ -1148,7 +1148,7 @@ describe('summarizeRunTimingAnalytics', () => {
       time_to_first_token_ms: 1300,
       time_to_first_visible_output_ms: 1300,
       runtime_init_to_first_token_ms: 650,
-      runtime_init_to_first_model_event_ms: 150,
+      runtime_init_to_first_model_response_ms: 150,
       spawn_to_first_token_ms: 740,
       time_to_first_artifact_ms: 3050,
       // No subsegment markers were observed, so the whole spawn->first-token
@@ -1550,7 +1550,7 @@ describe('summarizeRunTimingAnalytics phase anchoring', () => {
     const result = summarizeRunTimingAnalytics(toolFirstRun);
 
     // stdin closed at 3.2s and the model responded at 4s.
-    expect(result.runtime_init_to_first_model_event_ms).toBe(800);
+    expect(result.runtime_init_to_first_model_response_ms).toBe(800);
   });
 
   it('counts the whole tool loop as model-active time', () => {
@@ -1614,7 +1614,7 @@ describe('summarizeRunTimingAnalytics phase anchoring', () => {
 
     // Text-first runs already had a truthful anchor, so the new fields must
     // land on exactly the old numbers -- no drift for Claude Code-shaped runs.
-    expect(result.runtime_init_to_first_model_event_ms).toBe(result.runtime_init_to_first_token_ms);
+    expect(result.runtime_init_to_first_model_response_ms).toBe(result.runtime_init_to_first_token_ms);
     expect(result.model_active_duration_ms).toBe(result.generation_duration_ms);
   });
 
@@ -1644,7 +1644,7 @@ describe('summarizeRunTimingAnalytics phase anchoring', () => {
     // are not reset per retry attempt. `time_to_first_model_event_ms` keeps
     // its existing scan-based fallback and is unaffected.
     expect(result.time_to_first_model_event_ms).toBe(2_000);
-    expect(result.runtime_init_to_first_model_event_ms).toBe(20_800);
+    expect(result.runtime_init_to_first_model_response_ms).toBe(20_800);
     expect(result.model_active_duration_ms).toBe(1_000);
   });
 });
@@ -1788,7 +1788,7 @@ describe('summarizeRunTimingAnalytics anchor and completeness edges', () => {
     // reports a 1s active window and a 16s runtime init for a run that was
     // streaming the whole time.
     expect(result.model_active_duration_ms).toBe(15_000);
-    expect(result.runtime_init_to_first_model_event_ms).toBe(2_000);
+    expect(result.runtime_init_to_first_model_response_ms).toBe(2_000);
     expect(result.bottleneck_phase).toBe('stream_output');
   });
 
@@ -2066,5 +2066,79 @@ describe('summarizeRunTimingAnalytics late tool results from a dead attempt', ()
     expect(result.bottleneck_phase).toBe('stream_output');
     // The published metric keeps its whole-run paired-sum definition.
     expect(result.tool_duration_ms).toBe(26_900);
+  });
+});
+
+describe('summarizeRunTimingAnalytics separates the response anchor from the event mark', () => {
+  it('anchors phases on the response while the published metric keeps arrival', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 30_000,
+      analyticsCapturedAt: 30_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        stdinWriteEndAt: 3_000,
+        // ACP: the canonical tool_use arrived at 20s, but the tool began at 4s.
+        firstModelEventAt: 20_000,
+        firstModelResponseAt: 4_000,
+        firstModelEventType: 'tool_use' as const,
+        attemptStartedAt: 2_000,
+        attemptIndex: 1,
+      },
+      events: [],
+    });
+
+    // Already published, and this PR promised not to move it.
+    expect(result.time_to_first_model_event_ms).toBe(18_000);
+    // New, and measured from when the model actually started working.
+    expect(result.runtime_init_to_first_model_response_ms).toBe(1_000);
+    expect(result.model_active_duration_ms).toBe(26_000);
+  });
+});
+
+describe('summarizeRunTimingAnalytics with an unattributable tool ledger', () => {
+  const ambiguousRun = {
+    runCreatedAt: 1_000,
+    runUpdatedAt: 30_000,
+    analyticsCapturedAt: 30_050,
+    telemetry: {
+      startRequestedAt: 1_100,
+      attemptStartedAt: 20_000,
+      attemptIndex: 2,
+      stdinWriteEndAt: 20_500,
+      firstModelEventAt: 21_000,
+      firstModelResponseAt: 21_000,
+      firstModelEventType: 'text_delta' as const,
+      firstTokenAt: 21_000,
+    },
+    events: [
+      // Attempt 1 opened `call_0` and was killed before it returned.
+      { id: 1, event: 'agent', timestamp: 3_000, data: { type: 'tool_use', id: 'call_0', name: 'Bash' } },
+      // Attempt 2's fresh session restarts sequential ids and opens the same
+      // one for a different call.
+      { id: 2, event: 'agent', timestamp: 21_500, data: { type: 'tool_use', id: 'call_0', name: 'Read' } },
+      // A result arrives. Nothing in the event log says which of the two it
+      // belongs to, and the two readings differ by 8s of occupancy.
+      { id: 3, event: 'agent', timestamp: 22_000, data: { type: 'tool_result', toolUseId: 'call_0' } },
+    ],
+  };
+
+  it('withholds the bottleneck when a result cannot be attributed to an attempt', () => {
+    const result = summarizeRunTimingAnalytics(ambiguousRun);
+
+    expect(result.bottleneck_phase).toBeUndefined();
+  });
+
+  it('marks phase timing partial rather than complete', () => {
+    const result = summarizeRunTimingAnalytics(ambiguousRun);
+
+    expect(result.phase_timing_status).toBe('partial');
+  });
+
+  it('still reports mark-derived timings', () => {
+    const result = summarizeRunTimingAnalytics(ambiguousRun);
+
+    expect(result.model_active_duration_ms).toBe(9_000);
   });
 });

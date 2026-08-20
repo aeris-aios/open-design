@@ -517,7 +517,7 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   // Runtime init measured to the first model event of any kind rather than to
   // the first text token. On a tool-first run the first-token variant absorbs
   // the whole tool loop and reads as slow startup.
-  runtime_init_to_first_model_event_ms?: number;
+  runtime_init_to_first_model_response_ms?: number;
   spawn_to_first_token_ms?: number;
   time_to_first_artifact_ms?: number;
   // `spawn_to_first_token_ms` split into auditable subsegments so dashboards

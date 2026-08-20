@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createRunLifecycleTracer,
   runLifecycleMarkersForStreamEvent,
@@ -27,21 +27,30 @@ describe('runLifecycleMarkersForStreamEvent', () => {
 
 describe('createRunLifecycleTracer', () => {
   it('only records first timestamps for repeated lifecycle marks', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T00:00:10.000Z'));
+    const arrivedAt = Date.now();
     const run = {};
     const lifecycle = createRunLifecycleTracer(run);
 
     lifecycle.mark('first_artifact_write', 1_000);
     lifecycle.mark('first_artifact_write', 2_000);
+    // Second argument is the producer's start, not the mark's timestamp.
     lifecycle.markFirstModelEvent('tool_use', 3_000);
     lifecycle.markFirstModelEvent('text_delta', 4_000);
 
     expect(run).toEqual({
       analyticsTelemetry: {
         firstArtifactWriteAt: 1_000,
-        firstModelEventAt: 3_000,
+        // Arrival, first-write-wins -- the repeat does not overwrite it.
+        firstModelEventAt: arrivedAt,
         firstModelEventType: 'tool_use',
+        // Earliest producer start wins, so the 4_000 repeat does not win here
+        // either.
+        firstModelResponseAt: 3_000,
       },
     });
+    vi.useRealTimers();
   });
 });
 
@@ -132,7 +141,7 @@ describe('createRunLifecycleTracer first model event ordering', () => {
 
     // First-write-wins would anchor at 200 and lose the 100ms head start,
     // pushing every phase boundary later.
-    expect(run.analyticsTelemetry?.firstModelEventAt).toBe(100);
+    expect(run.analyticsTelemetry?.firstModelResponseAt).toBe(100);
     expect(run.analyticsTelemetry?.firstModelEventType).toBe('tool_use');
   });
 
@@ -143,7 +152,34 @@ describe('createRunLifecycleTracer first model event ordering', () => {
     tracer.markFirstModelEvent('tool_use', 100);
     tracer.markFirstModelEvent('text_delta', 300);
 
-    expect(run.analyticsTelemetry?.firstModelEventAt).toBe(100);
+    expect(run.analyticsTelemetry?.firstModelResponseAt).toBe(100);
     expect(run.analyticsTelemetry?.firstModelEventType).toBe('tool_use');
   });
 })
+
+describe('createRunLifecycleTracer keeps the legacy model-event mark intact', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('records arrival for firstModelEventAt and the producer start separately', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T00:00:20.000Z'));
+    const arrivedAt = Date.now();
+    const producerStartedAt = arrivedAt - 16_000;
+    const run: { analyticsTelemetry?: Record<string, unknown> | null } = {};
+    const tracer = createRunLifecycleTracer(run as never);
+
+    // ACP emits the canonical tool_use at terminal status, so this arrives at
+    // 20s carrying a first-frame time of 4s.
+    tracer.markFirstModelEvent('tool_use', producerStartedAt);
+
+    // `time_to_first_model_event_ms` is built from this field and is already
+    // published. It must keep meaning "when we saw the first model event",
+    // or every dashboard reading it silently shifts.
+    expect(run.analyticsTelemetry?.firstModelEventAt).toBe(arrivedAt);
+    expect(run.analyticsTelemetry?.firstModelEventType).toBe('tool_use');
+    // The phase anchor is a separate mark: when the model actually began.
+    expect(run.analyticsTelemetry?.firstModelResponseAt).toBe(producerStartedAt);
+  });
+});

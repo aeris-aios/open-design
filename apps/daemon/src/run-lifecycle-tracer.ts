@@ -103,7 +103,10 @@ export function runLifecycleMarkersForStreamEvent(
 
 export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
   mark(mark: RunLifecycleMark, timestamp?: number): void;
-  markFirstModelEvent(type: TrackingFirstModelEventType, timestamp?: number): void;
+  markFirstModelEvent(
+    type: TrackingFirstModelEventType,
+    producerStartedAt?: number,
+  ): void;
   resetForAttempt(attemptIndex: number, timestamp?: number): void;
 } {
   const mark = (lifecycleMark: RunLifecycleMark, timestamp = Date.now()) => {
@@ -118,22 +121,45 @@ export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
 
   return {
     mark,
-    markFirstModelEvent(type: TrackingFirstModelEventType, timestamp = Date.now()) {
-      if (!Number.isFinite(timestamp)) return;
+    markFirstModelEvent(
+      type: TrackingFirstModelEventType,
+      producerStartedAt?: number,
+    ) {
+      const arrivedAt = Date.now();
       const current = run.analyticsTelemetry ?? {};
-      const existing = current.firstModelEventAt;
-      // Earliest wins, not first observed. ACP holds each toolCallId until it
-      // is terminal, so two parallel calls can complete in the opposite order
-      // they started: the call that began later can be the first one we hear
-      // about. First-write-wins would anchor on it and lose the real head
-      // start. Marks without a producer timestamp default to arrival, which is
-      // monotonic, so this only ever moves the anchor earlier.
-      if (existing !== undefined && timestamp >= existing) return;
-      run.analyticsTelemetry = {
-        ...current,
-        firstModelEventAt: timestamp,
-        firstModelEventType: type,
-      };
+      const next = { ...current };
+      let changed = false;
+
+      // `firstModelEventAt` is when we SAW the first model event. It is already
+      // published as `time_to_first_model_event_ms`, so it stays first-write-
+      // wins on arrival -- a producer-supplied start must not silently move it.
+      if (current.firstModelEventAt === undefined) {
+        next.firstModelEventAt = arrivedAt;
+        next.firstModelEventType = type;
+        changed = true;
+      }
+
+      // `firstModelResponseAt` is when the model actually began responding, and
+      // is what phase boundaries anchor on. Two reasons it differs from
+      // arrival: ACP holds each toolCallId until terminal status, so the
+      // canonical `tool_use` arrives when the tool ENDS while its payload
+      // carries the real start; and parallel calls can terminate in the
+      // opposite order they began, so earliest-wins rather than first-wins.
+      // Clamped to arrival so a producer clock running ahead cannot claim the
+      // model responded in the future.
+      const responseAt =
+        typeof producerStartedAt === 'number' && Number.isFinite(producerStartedAt)
+          ? Math.min(producerStartedAt, arrivedAt)
+          : arrivedAt;
+      if (
+        current.firstModelResponseAt === undefined ||
+        responseAt < current.firstModelResponseAt
+      ) {
+        next.firstModelResponseAt = responseAt;
+        changed = true;
+      }
+
+      if (changed) run.analyticsTelemetry = next;
     },
     resetForAttempt(attemptIndex: number, timestamp = Date.now()) {
       run.analyticsTelemetry = {

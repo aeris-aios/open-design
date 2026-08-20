@@ -104,6 +104,10 @@ export interface RunTelemetryTimestamps {
   stdinWriteStartAt?: number;
   stdinWriteEndAt?: number;
   firstModelEventAt?: number;
+  // When the model began responding, as opposed to when we first saw evidence
+  // of it. Phase boundaries anchor here; `firstModelEventAt` keeps feeding the
+  // published `time_to_first_model_event_ms`.
+  firstModelResponseAt?: number;
   firstModelEventType?: TrackingFirstModelEventType;
   firstTokenAt?: number;
   firstVisibleOutputAt?: number;
@@ -172,7 +176,7 @@ export interface RunTimingAnalytics {
   // thinking, text, artifact) rather than to the first text token. On a
   // tool-first run `runtime_init_to_first_token_ms` swallows the entire tool
   // loop; this one stops the moment the model starts responding.
-  runtime_init_to_first_model_event_ms?: number;
+  runtime_init_to_first_model_response_ms?: number;
   spawn_to_first_token_ms?: number;
   time_to_first_artifact_ms?: number;
   // `spawn_to_first_token_ms` split into auditable subsegments. By construction
@@ -1009,6 +1013,12 @@ export function summarizeRunTimingAnalytics(args: {
   // separate from its start, which may be a producer-supplied `startedAt` from
   // a different clock and so cannot be compared against our own marks.
   const openToolObservedAt = new Map<string, number>();
+  // Tool ids whose opener was replaced by a same-id call from a later attempt.
+  const displacedToolUseIds = new Set<string>();
+  // Set when a `tool_result` arrives for such an id: the two candidate openers
+  // differ by seconds of occupancy and the log cannot say which one closed, so
+  // phase attribution for this run is not a measurement.
+  let toolLedgerAmbiguous = false;
   const openToolNames = new Map<string, string>();
   // Count unique tool_use ids so historical double-emits (or retries) do not
   // inflate tool_call_count.
@@ -1068,6 +1078,10 @@ export function summarizeRunTimingAnalytics(args: {
         attemptStartAt !== undefined &&
         priorObservedAt < attemptStartAt &&
         ts >= attemptStartAt;
+      // Remember that a previous attempt's opener was pushed aside. Its result
+      // may still be in flight, and once two calls have shared an id nothing in
+      // the event log says which of them a later `tool_result` closes.
+      if (reusesDeadAttemptId) displacedToolUseIds.add(data.id);
       if (!openTools.has(data.id) || reusesDeadAttemptId) {
         openTools.set(data.id, toolStartedAt);
         openToolObservedAt.set(data.id, ts);
@@ -1095,6 +1109,7 @@ export function summarizeRunTimingAnalytics(args: {
       const startedAt = openTools.get(data.toolUseId);
       if (startedAt !== undefined && ts >= startedAt) {
         toolDurationMs += ts - startedAt;
+        if (displacedToolUseIds.has(data.toolUseId)) toolLedgerAmbiguous = true;
         if (openedInCurrentAttempt(openToolObservedAt.get(data.toolUseId))) {
           toolIntervals.push({ start: startedAt, end: ts });
         }
@@ -1133,6 +1148,7 @@ export function summarizeRunTimingAnalytics(args: {
   // daemon-generated finalizer event, a producer clock offset), and this keeps
   // one from dragging every boundary to the end of the run.
   const phaseAnchorCandidates = [
+    telemetry.firstModelResponseAt,
     telemetry.firstModelEventAt,
     telemetry.firstTokenAt,
   ].filter((value): value is number => value !== undefined && Number.isFinite(value));
@@ -1196,7 +1212,7 @@ export function summarizeRunTimingAnalytics(args: {
   if (runtimeInitToFirstToken !== undefined) {
     result.runtime_init_to_first_token_ms = runtimeInitToFirstToken;
   }
-  setMeasuredDuration(result, 'runtime_init_to_first_model_event_ms', phaseDurations, 'runtime_init', runtimeInitStartAt, phaseAnchorAt);
+  setMeasuredDuration(result, 'runtime_init_to_first_model_response_ms', phaseDurations, 'runtime_init', runtimeInitStartAt, phaseAnchorAt);
   const spawnToFirstToken = durationBetween(telemetry.processSpawnedAt, telemetry.firstTokenAt);
   if (spawnToFirstToken !== undefined) result.spawn_to_first_token_ms = spawnToFirstToken;
   const timeToFirstArtifact = durationBetween(startAt, firstArtifactWriteAt);
@@ -1281,7 +1297,12 @@ export function summarizeRunTimingAnalytics(args: {
   // built from lifecycle marks are still sound, but we cannot know whether an
   // evicted tool would have outweighed them, so naming a winner would report
   // an artefact of what the buffer happened to keep.
-  if (bottleneckPhase !== undefined && eventStreamComplete) {
+  // The ledger phases are reconstructed from tool frames. Truncation removes
+  // frames; an id shared by two attempts makes the surviving ones
+  // unattributable. Either way the winner would describe the log rather than
+  // the run.
+  const phaseLedgerReliable = eventStreamComplete && !toolLedgerAmbiguous;
+  if (bottleneckPhase !== undefined && phaseLedgerReliable) {
     result.bottleneck_phase = bottleneckPhase;
   }
   result.phase_schema_version = RUN_PHASE_SCHEMA_VERSION;
@@ -1302,7 +1323,7 @@ export function summarizeRunTimingAnalytics(args: {
   // Truncation can only downgrade a `complete` claim; it never upgrades a
   // bundle whose boundaries were genuinely missing.
   result.phase_timing_status =
-    !eventStreamComplete && phaseTimingStatus === 'complete'
+    !phaseLedgerReliable && phaseTimingStatus === 'complete'
       ? 'partial'
       : phaseTimingStatus;
 
