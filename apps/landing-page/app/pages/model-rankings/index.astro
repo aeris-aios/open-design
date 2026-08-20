@@ -1,0 +1,427 @@
+---
+import Layout from '../../_components/sub-page-layout.astro';
+import './model-rankings.css';
+
+type Model = {
+  name: string;
+  maker: string;
+  icon: string;
+  color: string;
+  pdr: number;
+  d0: number;
+  d1: number;
+  d2: number;
+  time: number;
+  cost: number;
+  calls: number;
+};
+
+const models: Model[] = [
+  { name: 'Gemini 3.1 Pro', maker: 'Google', icon: '/agents/gemini.svg', color: '#168cf3', pdr: 88.4, d0: 98.7, d1: 59.8, d2: 31.7, time: 164, cost: 1.92, calls: 16.4 },
+  { name: 'GPT-5.6', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#151714', pdr: 86.9, d0: 99.2, d1: 60.7, d2: 30.4, time: 138, cost: 1.78, calls: 14.8 },
+  { name: 'Claude Opus 5.0', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#ff7c3f', pdr: 84.7, d0: 97.4, d1: 58.6, d2: 32.1, time: 181, cost: 2.26, calls: 18.2 },
+  { name: 'Grok 4.6', maker: 'xAI', icon: '/agents/xai.svg', color: '#7a63e8', pdr: 80.2, d0: 96.1, d1: 56.9, d2: 29.8, time: 126, cost: 1.44, calls: 13.1 },
+  { name: 'Claude Sonnet 5.0', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#df9b70', pdr: 78.8, d0: 98.1, d1: 56.1, d2: 29.6, time: 112, cost: 1.08, calls: 12.5 },
+  { name: 'Kimi K3', maker: 'Moonshot AI', icon: '/agents/moonshot.svg', color: '#6350cf', pdr: 76.6, d0: 96.8, d1: 55.7, d2: 28.9, time: 118, cost: 0.94, calls: 12.9 },
+  { name: 'Gemini 3.1 Flash', maker: 'Google', icon: '/agents/gemini.svg', color: '#54bff2', pdr: 74.5, d0: 98, d1: 54.2, d2: 27.9, time: 74, cost: 0.62, calls: 9.8 },
+  { name: 'GPT-5.5', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#66706a', pdr: 72.1, d0: 97.2, d1: 53.6, d2: 27.4, time: 96, cost: 0.86, calls: 11.2 },
+  { name: 'Qwen 3.8 Max', maker: 'Alibaba', icon: '/agents/qwen.svg', color: '#564bd0', pdr: 70.8, d0: 95.9, d1: 52.9, d2: 27.1, time: 89, cost: 0.58, calls: 10.6 },
+  { name: 'DeepSeek V4', maker: 'DeepSeek', icon: '/agents/deepseek.svg', color: '#5277f6', pdr: 68.6, d0: 94.4, d1: 51.8, d2: 26.6, time: 83, cost: 0.48, calls: 10.1 },
+];
+
+const tasks = [
+  { id: 'landing', label: 'Landing Page', group: 'Visual', color: '#ff7c43', area: '1 / 1 / 3 / 3' },
+  { id: 'commerce', label: 'Commerce', group: 'Visual', color: '#ed743a', area: '1 / 3 / 2 / 4' },
+  { id: 'content', label: 'Content & Media', group: 'Visual', color: '#dd6936', area: '2 / 3 / 3 / 4' },
+  { id: 'dashboard', label: 'Dashboard', group: 'Product', color: '#7761e8', area: '1 / 4 / 3 / 6' },
+  { id: 'prototype', label: 'Product Prototype', group: 'Product', color: '#6753d2', area: '3 / 4 / 4 / 5' },
+  { id: 'workflow', label: 'Workflow', group: 'Product', color: '#5d4bc4', area: '3 / 5 / 4 / 6' },
+  { id: 'mobile', label: 'Mobile UI', group: 'Interface', color: '#3ab375', area: '1 / 6 / 3 / 8' },
+  { id: 'responsive', label: 'Responsive', group: 'Interface', color: '#30a96d', area: '3 / 6 / 4 / 7' },
+  { id: 'designsystem', label: 'Design System', group: 'Interface', color: '#289b62', area: '3 / 7 / 4 / 8' },
+  { id: 'data', label: 'Data Visualization', group: 'Data', color: '#158bf0', area: '1 / 8 / 3 / 9' },
+  { id: 'form', label: 'Forms', group: 'Data', color: '#087bd9', area: '3 / 8 / 4 / 9' },
+  { id: 'editorial', label: 'Editorial', group: 'Visual', color: '#d96334', area: '3 / 1 / 4 / 4' },
+];
+
+const taskScore = (model: Model, taskIndex: number, modelIndex: number) =>
+  Number(Math.max(55, Math.min(94, model.pdr + ((taskIndex * 7 + modelIndex * 5) % 13) - 6)).toFixed(1));
+
+const taskWinners = tasks.map((task, taskIndex) => {
+  const winner = models
+    .map((model, modelIndex) => ({ ...model, taskValue: taskScore(model, taskIndex, modelIndex) }))
+    .sort((a, b) => b.taskValue - a.taskValue)[0]!;
+  return { ...task, winner };
+});
+
+const efficiencyX = (model: Model) => Math.max(5, Math.min(95, 5 + (model.time / 340) * 90));
+const efficiencyY = (model: Model) => Math.max(6, Math.min(94, 6 + ((model.pdr - 65) / 25) * 88));
+const requirementX = (model: Model) => 7 + ((model.d1 - 50) / 12) * 86;
+const requirementY = (model: Model) => 8 + ((model.d2 - 25) / 8) * 82;
+
+const title = 'AI Design Model Rankings | OpenDesign';
+const description = 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.';
+const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
+---
+
+<Layout
+  title={title}
+  description={description}
+  active="resources"
+  localeCanonicalOnly
+  mainClassName="model-index-main"
+>
+  <article class="model-index-page" data-model-index>
+    <header class="model-index-intro">
+      <p class="model-index-kicker">OpenDesign Model Index</p>
+      <h1>AI Design Model Rankings</h1>
+      <p>Independent model rankings for design work. Models are evaluated on OpenDesign using the same private benchmark and scoring framework.</p>
+      <div class="model-index-note"><span>Preview data</span><p>Final launch scores will replace the demonstration dataset without changing this page structure.</p></div>
+    </header>
+
+    <section class="model-section leaderboard-section" aria-labelledby="leaderboard-title">
+      <div class="section-heading">
+        <div>
+          <span class="section-index">01 / Overall</span>
+          <h2 id="leaderboard-title">Model Leaderboard</h2>
+          <p>Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.</p>
+        </div>
+        <div class="leaderboard-metric-tabs" role="tablist" aria-label="Ranking metric">
+          {[
+            ['pdr', 'PDR', 'Overall'],
+            ['d0', 'D0', 'Renderability'],
+            ['d1', 'D1', 'Requirement'],
+            ['d2', 'D2', 'Design quality'],
+          ].map(([id, code, label], index) => (
+            <button type="button" role="tab" aria-selected={index === 0 ? 'true' : 'false'} class:list={{ active: index === 0 }} data-metric={id}>
+              <strong>{code}</strong><span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div class="leaderboard-bars">
+        <div class="bar-view-toolbar">
+          <div class="bar-display-tabs" role="tablist" aria-label="Leaderboard value format">
+            <button type="button" role="tab" aria-selected="true" class="active" data-view="percentage">Percentage</button>
+            <button type="button" role="tab" aria-selected="false" data-view="score">Score</button>
+          </div>
+        </div>
+        <div class="bar-head">
+          <span>Model</span>
+          <div class="bar-scale" aria-label="Percentage scale">
+            <span>0</span><span>25</span><span>50</span><span>75</span><span>100%</span>
+          </div>
+          <span class="bar-head-value">Percentage</span>
+        </div>
+        <div class="bar-list">
+          {models.map((model, index) => (
+            <div class="leaderboard-bar-row" data-model={model.name}>
+              <span class="bar-model">
+                <i data-rank>{index + 1}</i>
+                <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
+                <span><strong>{model.name}</strong><small>{model.maker}</small></span>
+              </span>
+              <span class="bar-track"><span class="bar-fill" style={`width:${model.pdr}%;background:${model.color}`}></span></span>
+              <span class="bar-value"><strong>{model.pdr.toFixed(1)}%</strong><small></small></span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="model-section task-section" aria-labelledby="task-title">
+      <div class="section-heading">
+        <div><span class="section-index">02 / Tasks</span><h2 id="task-title">Top models by task</h2><p>Each design task's Top 1 model, ranked by PDR on OpenDesign.</p></div>
+      </div>
+      <div class="task-map">
+        {taskWinners.map((task) => (
+          <div class="task-tile" style={`background:${task.color};grid-area:${task.area}`}>
+            <span>{task.label}</span><small>{task.group}</small>
+            <div class="task-winner">
+              <span class="model-icon"><img src={task.winner.icon} alt="" width="24" height="24" /></span>
+              <strong>{task.winner.name}</strong><b>{task.winner.taskValue}%</b>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div class="task-legend" aria-label="Task category share">
+        <span><i class="visual"></i>Visual 31.4%</span><span><i class="product"></i>Product 28.7%</span><span><i class="interface"></i>Interface 27.6%</span><span><i class="data"></i>Data 12.3%</span>
+      </div>
+    </section>
+
+    <section class="model-section efficiency-section" aria-labelledby="efficiency-title">
+      <div class="section-heading">
+        <div><span class="section-index">03 / Efficiency</span><h2 id="efficiency-title">Model efficiency frontier</h2><p>Compare design performance against speed, cost, and tool calls across three task difficulty levels.</p></div>
+      </div>
+      <div class="efficiency-explorer" data-efficiency>
+        <div class="efficiency-toolbar">
+          <div class="efficiency-module-tabs" role="tablist" aria-label="Efficiency metric">
+            <button type="button" role="tab" aria-selected="true" class="active" data-efficiency-module="speed"><span>01</span><strong>Speed</strong></button>
+            <button type="button" role="tab" aria-selected="false" data-efficiency-module="cost"><span>02</span><strong>Cost</strong></button>
+            <button type="button" role="tab" aria-selected="false" data-efficiency-module="calls"><span>03</span><strong>Tool calls</strong></button>
+          </div>
+          <div class="difficulty-control"><span>Task difficulty</span>
+            <div class="difficulty-tabs" role="group" aria-label="Task difficulty">
+              <span class="difficulty-indicator" aria-hidden="true"></span>
+              <button type="button" data-difficulty="simple" aria-pressed="false">Simple</button>
+              <button type="button" data-difficulty="general" aria-pressed="true" class="active">General</button>
+              <button type="button" data-difficulty="difficult" aria-pressed="false">Difficult</button>
+            </div>
+          </div>
+        </div>
+        <div class="efficiency-chart-shell">
+          <div class="efficiency-chart-main">
+            <div class="efficiency-chart-copy"><span data-efficiency-eyebrow>General tasks · lower is better</span><h3 data-efficiency-title>PDR vs Speed</h3><p>Top-left quadrant shows models with stronger design performance and better efficiency.</p></div>
+            <div class="efficiency-chart-stage">
+              <span class="efficiency-y-title">PDR (higher ↑)</span><span class="efficiency-x-title" data-efficiency-x-label>Runtime (slower →)</span>
+              <div class="efficiency-y-ticks" aria-hidden="true"><span>90</span><span>82</span><span>74</span><span>66</span></div>
+              <div class="efficiency-x-ticks" aria-hidden="true"><span>0s</span><span>85s</span><span>170s</span><span>255s</span><span>340s</span></div>
+              <div class="efficiency-plot">
+                <div class="efficiency-ideal-zone"><span>High PDR · High efficiency</span></div>
+                <svg class="efficiency-frontier" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points=""></polyline></svg>
+                {models.map((model, index) => (
+                  <div class:list={['efficiency-point', { 'is-highlighted': index < 4 }]} data-efficiency-point={model.name} style={`left:${efficiencyX(model)}%;bottom:${efficiencyY(model)}%;--point-color:${model.color}`}>
+                    <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
+                    <span class="efficiency-point-label"><strong>{model.name}</strong><small>{model.time}s · {model.pdr}%</small></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <aside class="efficiency-model-index">
+            <div class="model-index-heading"><span>Models</span><strong data-model-count>{models.length}</strong></div>
+            <label><span class="sr-only">Search models</span><input type="search" data-model-search placeholder="Search models" /></label>
+            <div class="efficiency-model-list">
+              {models.map((model) => (
+                <div class="efficiency-model-row" data-efficiency-row={model.name}>
+                  <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
+                  <span><strong>{model.name}</strong><small>{model.maker}</small></span><b>{model.time}s</b>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="model-section benchmark-section" aria-labelledby="benchmark-title">
+      <div class="section-heading"><div><span class="section-index">04 / Quality frontier</span><h2 id="benchmark-title">Requirement × Design</h2><p>See which models balance requirement fulfillment (D1) with design quality (D2).</p></div></div>
+      <div class="benchmark-controls">
+        <div class="benchmark-axis-legend">
+          <div class="axis-key"><b>X</b><span><small>D1</small>Requirement fulfillment</span></div>
+          <div class="axis-key"><b>Y</b><span><small>D2</small>Design quality</span></div>
+        </div>
+        <label class="pareto-toggle"><input type="checkbox" data-pareto /><span></span>Show Pareto</label>
+      </div>
+      <div class="plot-card">
+        <div class="plot-card-head"><span>Top 10 evaluated models</span><strong>Higher is better ↗</strong></div>
+        <div class="plot-y">D2 · Design quality</div><div class="plot-x">D1 · Requirement fulfillment</div>
+        <div class="plot-y-ticks" aria-hidden="true"><span>35</span><span>30</span><span>25</span></div>
+        <div class="plot-x-ticks" aria-hidden="true"><span>50</span><span>54</span><span>58</span><span>62</span></div>
+        <div class="plot-grid">
+          <div class="plot-ideal-zone"><span>Balanced leaders</span></div><div class="pareto-area" hidden></div>
+          {models.map((model, index) => (
+            <div class:list={['plot-point', { 'is-leading': index < 3 }]} style={`left:${requirementX(model)}%;bottom:${requirementY(model)}%;--point-color:${model.color}`}>
+              <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
+              <span class="plot-point-label">{model.name}<small>D1 {model.d1} · D2 {model.d2}</small></span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="model-section method-section" aria-labelledby="method-title">
+      <div class="section-heading"><div><span class="section-index">05 / Method</span><h2 id="method-title">Evaluation framework</h2><p>One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.</p></div></div>
+      <div class="method-overview">
+        <div class="method-primary"><span>Primary metric</span><div><strong>PDR</strong><h3>Primary Design Result</h3></div><p>The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.</p></div>
+        <ol class="method-flow" aria-label="Evaluation sequence">
+          <li><b>01</b><span><strong>Run</strong><small>Same private task set and OpenDesign harness</small></span></li>
+          <li><b>02</b><span><strong>Gate</strong><small>D0 checks whether the result can render</small></span></li>
+          <li><b>03</b><span><strong>Score</strong><small>D1 requirement, 65 points · D2 design, 35 points</small></span></li>
+          <li><b>04</b><span><strong>Report</strong><small>PDR ranking plus separate efficiency metrics</small></span></li>
+        </ol>
+      </div>
+      <div class="method-table">
+        <article><header><span>D0</span><em>Hard gate</em></header><h3>HTML renderability</h3><p>Confirms that the generated result opens as a usable webpage before quality is judged.</p><ul><li>HTML loads successfully</li><li>No blank or blocked result</li><li>No fatal runtime failure</li></ul></article>
+        <article><header><span>D1</span><em>65 points</em></header><h3>Requirement fulfillment</h3><p>Measures whether the requested product and interaction requirements are actually implemented.</p><ul><li>Page and module coverage</li><li>Required content and states</li><li>Interactions and constraints</li></ul></article>
+        <article><header><span>D2</span><em>35 points</em></header><h3>Design quality</h3><p>Reviews the visible quality and usability of the final rendered experience.</p><ul><li>Hierarchy and composition</li><li>Typography and visual finish</li><li>Readability and responsive behavior</li></ul></article>
+        <article><header><span>EFF</span><em>Separate</em></header><h3>Model efficiency</h3><p>Shows the resources required to reach the result and does not increase or reduce PDR.</p><ul><li>Cost per design session</li><li>Tool-call count</li><li>Total runtime by task difficulty</li></ul></article>
+      </div>
+      <div class="method-disclosure">
+        <div><strong>Fair comparison</strong><p>Models run through the same OpenDesign harness, private benchmark, and scoring framework.</p></div>
+        <div><strong>Benchmark boundary</strong><p>Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.</p></div>
+        <div><strong>How to interpret it</strong><p>Scores describe the evaluated model version in OpenDesign—not a general intelligence ranking.</p></div>
+      </div>
+    </section>
+  </article>
+  <script is:inline type="application/json" id="model-rankings-data" set:html={modelsJson}></script>
+  <script>
+    type Metric = 'pdr' | 'd0' | 'd1' | 'd2';
+    type ViewMode = 'percentage' | 'score';
+    type EfficiencyModule = 'speed' | 'cost' | 'calls';
+    type Difficulty = 'simple' | 'general' | 'difficult';
+    type ClientModel = {
+      name: string;
+      maker: string;
+      icon: string;
+      color: string;
+      pdr: number;
+      d0: number;
+      d1: number;
+      d2: number;
+      time: number;
+      cost: number;
+      calls: number;
+    };
+
+    const root = document.querySelector<HTMLElement>('[data-model-index]');
+    const dataElement = document.querySelector<HTMLScriptElement>('#model-rankings-data');
+    if (root && dataElement) {
+      const modelData = JSON.parse(dataElement.textContent || '[]') as ClientModel[];
+      let activeMetric: Metric = 'pdr';
+      let activeView: ViewMode = 'percentage';
+
+      const maximumFor = (metric: Metric) => metric === 'd1' ? 65 : metric === 'd2' ? 35 : 100;
+      const scoreFor = (model: ClientModel, metric: Metric) => metric === 'pdr' ? model.d1 + model.d2 : model[metric];
+      const formatTick = (value: number) => Number.isInteger(value) ? String(value) : value.toFixed(1);
+
+      const renderLeaderboard = () => {
+        const maximum = maximumFor(activeMetric);
+        const scoreMaximum = activeMetric === 'pdr' ? 100 : maximum;
+        const sorted = [...modelData].sort((a, b) => {
+          if (activeView === 'score' && activeMetric === 'pdr') return scoreFor(b, activeMetric) - scoreFor(a, activeMetric);
+          return b[activeMetric] - a[activeMetric];
+        });
+        const list = root.querySelector<HTMLElement>('.bar-list');
+        const scale = root.querySelector<HTMLElement>('.bar-scale');
+        const valueHead = root.querySelector<HTMLElement>('.bar-head-value');
+        if (!list || !scale || !valueHead) return;
+        const scaleMaximum = activeView === 'percentage' ? 100 : scoreMaximum;
+        scale.innerHTML = [0, .25, .5, .75, 1].map((step, index) => `<span>${formatTick(scaleMaximum * step)}${activeView === 'percentage' && index === 4 ? '%' : ''}</span>`).join('');
+        scale.setAttribute('aria-label', `${activeView === 'percentage' ? 'Percentage' : 'Score'} scale`);
+        valueHead.textContent = activeView === 'percentage' ? 'Percentage' : 'Score';
+
+        sorted.forEach((model, index) => {
+          const row = list.querySelector<HTMLElement>(`[data-model="${CSS.escape(model.name)}"]`);
+          if (!row) return;
+          const percentage = model[activeMetric] / maximum * 100;
+          const score = scoreFor(model, activeMetric);
+          const ratio = activeView === 'percentage' ? percentage : score / scoreMaximum * 100;
+          const rank = row.querySelector<HTMLElement>('[data-rank]');
+          const fill = row.querySelector<HTMLElement>('.bar-fill');
+          const value = row.querySelector<HTMLElement>('.bar-value');
+          if (rank) rank.textContent = String(index + 1);
+          if (fill) fill.style.width = `${ratio}%`;
+          if (value) value.innerHTML = activeView === 'percentage' ? `<strong>${percentage.toFixed(1)}%</strong><small></small>` : `<strong>${score.toFixed(1)}</strong><small>/ ${scoreMaximum}</small>`;
+          list.append(row);
+        });
+      };
+
+      root.querySelectorAll<HTMLButtonElement>('[data-metric]').forEach((button) => button.addEventListener('click', () => {
+        activeMetric = button.dataset.metric as Metric;
+        root.querySelectorAll<HTMLButtonElement>('[data-metric]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-selected', String(selected));
+        });
+        renderLeaderboard();
+      }));
+      root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => button.addEventListener('click', () => {
+        activeView = button.dataset.view as ViewMode;
+        root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-selected', String(selected));
+        });
+        renderLeaderboard();
+      }));
+
+      const moduleConfig = {
+        speed: { title: 'PDR vs Speed', xLabel: 'Runtime (slower →)', maximum: 340, ticks: [0, 85, 170, 255, 340], format: (value: number) => `${Math.round(value)}s` },
+        cost: { title: 'PDR vs Cost', xLabel: 'Cost per session (higher →)', maximum: 6.25, ticks: [0, 1.5, 3, 4.5, 6], format: (value: number) => `$${value.toFixed(2)}` },
+        calls: { title: 'PDR vs Tool Calls', xLabel: 'Tool calls (more →)', maximum: 36, ticks: [0, 9, 18, 27, 36], format: (value: number) => `${Math.round(value)} calls` },
+      } satisfies Record<EfficiencyModule, { title: string; xLabel: string; maximum: number; ticks: number[]; format: (value: number) => string }>;
+      const difficultyConfig = {
+        simple: { label: 'Simple', cost: .48, calls: .55, time: .62 },
+        general: { label: 'General', cost: 1, calls: 1, time: 1 },
+        difficult: { label: 'Difficult', cost: 2.65, calls: 1.9, time: 1.78 },
+      } satisfies Record<Difficulty, { label: string; cost: number; calls: number; time: number }>;
+      let activeModule: EfficiencyModule = 'speed';
+      let activeDifficulty: Difficulty = 'general';
+
+      const valueFor = (model: ClientModel) => {
+        const multiplier = difficultyConfig[activeDifficulty];
+        if (activeModule === 'speed') return model.time * multiplier.time;
+        if (activeModule === 'cost') return model.cost * multiplier.cost;
+        return model.calls * multiplier.calls;
+      };
+      const renderEfficiency = () => {
+        const config = moduleConfig[activeModule];
+        const difficulty = difficultyConfig[activeDifficulty];
+        const eyebrow = root.querySelector<HTMLElement>('[data-efficiency-eyebrow]');
+        const titleNode = root.querySelector<HTMLElement>('[data-efficiency-title]');
+        const xLabel = root.querySelector<HTMLElement>('[data-efficiency-x-label]');
+        const ticks = root.querySelector<HTMLElement>('.efficiency-x-ticks');
+        if (eyebrow) eyebrow.textContent = `${difficulty.label} tasks · lower is better`;
+        if (titleNode) titleNode.textContent = config.title;
+        if (xLabel) xLabel.textContent = config.xLabel;
+        if (ticks) ticks.innerHTML = config.ticks.map((tick) => `<span>${config.format(tick)}</span>`).join('');
+        const points = modelData.map((model) => ({ model, value: valueFor(model), x: Math.max(5, Math.min(95, 5 + valueFor(model) / config.maximum * 90)), y: Math.max(6, Math.min(94, 6 + (model.pdr - 65) / 25 * 88)) }));
+        points.forEach(({ model, value, x, y }) => {
+          const point = root.querySelector<HTMLElement>(`[data-efficiency-point="${CSS.escape(model.name)}"]`);
+          const row = root.querySelector<HTMLElement>(`[data-efficiency-row="${CSS.escape(model.name)}"]`);
+          if (point) {
+            point.style.left = `${x}%`; point.style.bottom = `${y}%`;
+            const label = point.querySelector<HTMLElement>('small');
+            if (label) label.textContent = `${config.format(value)} · ${model.pdr}%`;
+          }
+          const rowValue = row?.querySelector<HTMLElement>('b');
+          if (rowValue) rowValue.textContent = config.format(value);
+        });
+        let best = -Infinity;
+        const frontier = [...points].sort((a, b) => a.value - b.value).filter((point) => {
+          if (point.model.pdr <= best) return false;
+          best = point.model.pdr; return true;
+        });
+        const polyline = root.querySelector<SVGPolylineElement>('.efficiency-frontier polyline');
+        if (polyline) polyline.setAttribute('points', frontier.map((point) => `${point.x},${100 - point.y}`).join(' '));
+      };
+
+      root.querySelectorAll<HTMLButtonElement>('[data-efficiency-module]').forEach((button) => button.addEventListener('click', () => {
+        activeModule = button.dataset.efficiencyModule as EfficiencyModule;
+        root.querySelectorAll<HTMLButtonElement>('[data-efficiency-module]').forEach((item) => {
+          const selected = item === button; item.classList.toggle('active', selected); item.setAttribute('aria-selected', String(selected));
+        });
+        renderEfficiency();
+      }));
+      root.querySelectorAll<HTMLButtonElement>('[data-difficulty]').forEach((button, index) => button.addEventListener('click', () => {
+        activeDifficulty = button.dataset.difficulty as Difficulty;
+        root.querySelectorAll<HTMLButtonElement>('[data-difficulty]').forEach((item) => {
+          const selected = item === button; item.classList.toggle('active', selected); item.setAttribute('aria-pressed', String(selected));
+        });
+        root.querySelector<HTMLElement>('.difficulty-tabs')?.style.setProperty('--indicator-x', `${index * 100}%`);
+        renderEfficiency();
+      }));
+      root.querySelector<HTMLInputElement>('[data-model-search]')?.addEventListener('input', (event) => {
+        const query = (event.currentTarget as HTMLInputElement).value.trim().toLowerCase();
+        let count = 0;
+        modelData.forEach((model) => {
+          const matches = !query || model.name.toLowerCase().includes(query) || model.maker.toLowerCase().includes(query);
+          root.querySelector<HTMLElement>(`[data-efficiency-row="${CSS.escape(model.name)}"]`)?.toggleAttribute('hidden', !matches);
+          root.querySelector<HTMLElement>(`[data-efficiency-point="${CSS.escape(model.name)}"]`)?.classList.toggle('is-muted', !matches);
+          if (matches) count += 1;
+        });
+        const countNode = root.querySelector<HTMLElement>('[data-model-count]');
+        if (countNode) countNode.textContent = String(count);
+      });
+      root.querySelector<HTMLInputElement>('[data-pareto]')?.addEventListener('change', (event) => {
+        const area = root.querySelector<HTMLElement>('.pareto-area');
+        if (area) area.hidden = !(event.currentTarget as HTMLInputElement).checked;
+      });
+
+      renderLeaderboard();
+      renderEfficiency();
+    }
+  </script>
+</Layout>
