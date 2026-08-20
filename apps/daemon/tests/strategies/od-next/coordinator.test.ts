@@ -12,6 +12,7 @@ import { closeDatabase, openDatabase } from '../../../src/db.js';
 import { createSnapshot } from '../../../src/plugins/snapshots.js';
 import {
   beginStrategyClarification,
+  odNextTurnMayInferProductionCompletion,
   finalizeStrategyPlanningTurn as finalizeStrategyPlanningTurnRaw,
   prepareStrategyIntake,
   prepareStrategyRequest,
@@ -1515,5 +1516,28 @@ ${block('open-design-plan-contract', planContract(snapshot))}`),
     const projection = projectStrategyTask(waiting.task, 'run-request');
     expect(projection.terminal).toBe(false);
     expect(projection.blockedContext).toBeUndefined();
+  });
+});
+
+describe('OD Next production completion inference', () => {
+  it('never infers a complex completion from a turn that declared nothing', () => {
+    // The inference rests on Open Design having resolved the evidence the agent
+    // failed to declare, and for a simple plan that evidence IS the canonical
+    // deliverable. A complex plan additionally owes verified native Child
+    // lifecycle — the property that makes it complex — which no deliverable
+    // check substitutes for. Accepting complex here certified Children nobody
+    // observed: an AMR complex Run whose Vela build ships no child-lifecycle
+    // producer reported `knownChildCount: 0` and still landed `completed`,
+    // walking past `evaluateOdNextComplexChildEvidence` entirely.
+    const parsed = protocol('Built all three pages and wired the navigation.').finish();
+
+    expect(odNextTurnMayInferProductionCompletion(
+      { route: 'full_plan', inputStage: 'production', executionMode: 'simple' },
+      parsed,
+    )).toBe(true);
+    expect(odNextTurnMayInferProductionCompletion(
+      { route: 'full_plan', inputStage: 'production', executionMode: 'complex' },
+      parsed,
+    )).toBe(false);
   });
 });

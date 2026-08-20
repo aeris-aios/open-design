@@ -503,7 +503,16 @@ export function odNextTurnMayInferProductionCompletion(
   if (!turnDeclaredNothing(parsed)) return false;
   return task.inputStage === 'production'
     && task.route === 'full_plan'
-    && task.executionMode !== null;
+    // Simple only. The inference rests on Open Design having resolved the
+    // evidence the agent failed to declare, and for a simple plan that evidence
+    // IS the canonical deliverable. A complex plan additionally owes verified
+    // native Child lifecycle — the thing that makes it complex — which no
+    // deliverable check can stand in for. Inferring completion there certified
+    // Children nobody observed: an AMR complex Run whose Vela build ships no
+    // child-lifecycle producer reported `knownChildCount: 0` and still landed
+    // `completed`, walking straight past `evaluateOdNextComplexChildEvidence`.
+    // A complex turn that declares nothing keeps blocking.
+    && task.executionMode === 'simple';
 }
 
 /**
