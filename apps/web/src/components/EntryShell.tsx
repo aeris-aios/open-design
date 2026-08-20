@@ -41,6 +41,8 @@ import {
   trackPageView,
   trackDeepSeekCampaignBadgeClick,
   trackDeepSeekCampaignBadgeSurfaceView,
+  trackGoPlanBadgeClick,
+  trackGoPlanBadgeSurfaceView,
 } from '../analytics/events';
 import {
   amrHandoffDeviceId,
@@ -1192,7 +1194,18 @@ export function EntryShell({
   useEffect(() => {
     if (view !== 'home' || !topRightCampaignKind) return;
     const go = topRightCampaignKind === 'go';
-    if (go) return;
+    if (go) {
+      trackGoPlanBadgeSurfaceView(analytics.track, {
+        page_name: 'home',
+        area: 'go_badge',
+        element: 'badge',
+        campaign_id: 'go_plan_launch',
+        audience: 'unpaid',
+        locale,
+        has_new_badge: goPlanCampaignVisibility.visible,
+      });
+      return;
+    }
     trackDeepSeekCampaignBadgeSurfaceView(analytics.track, {
       page_name: 'home',
       area: 'campaign_badge',
@@ -1200,12 +1213,42 @@ export function EntryShell({
       campaign_id: 'deepseek_v4_pro',
       user_state: 'paid',
     });
-  }, [analytics.track, topRightCampaignKind, view]);
+  }, [analytics.track, goPlanCampaignVisibility.visible, locale, topRightCampaignKind, view]);
   const openCampaignPricing = useCallback(() => {
     if (!topRightCampaignKind) return;
     const go = topRightCampaignKind === 'go';
     if (go) {
-      window.open(GO_PLAN_PRICING_URL, '_blank', 'noopener,noreferrer');
+      trackGoPlanBadgeClick(analytics.track, {
+        page_name: 'home',
+        area: 'go_badge',
+        element: 'badge',
+        action: 'open_purchase_panel',
+        campaign_id: 'go_plan_launch',
+        audience: 'unpaid',
+        locale,
+        has_new_badge: goPlanCampaignVisibility.visible,
+      });
+      const attribution = recordAmrEntry(
+        analytics.track,
+        'go_workbench_badge',
+        new Date(),
+        {
+          metricsConsent: config.telemetry?.metrics === true,
+          campaignId: 'go_plan_launch',
+          conversionSource: 'go_workbench_badge',
+        },
+      );
+      const deviceId = amrHandoffDeviceId({
+        metricsConsent: config.telemetry?.metrics === true,
+        resolvedDeviceId: getResolvedDeviceId(),
+        installationId: config.installationId,
+      });
+      const destination = GO_PLAN_PRICING_URL;
+      window.open(
+        attributedAmrUrl(destination, attribution, deviceId),
+        '_blank',
+        'noopener,noreferrer',
+      );
       return;
     }
     trackDeepSeekCampaignBadgeClick(analytics.track, {
@@ -1242,6 +1285,8 @@ export function EntryShell({
     analytics.track,
     config.installationId,
     config.telemetry?.metrics,
+    goPlanCampaignVisibility.visible,
+    locale,
     topRightCampaignKind,
     workspaceContext?.workspaceId,
   ]);
