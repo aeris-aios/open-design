@@ -152,31 +152,6 @@ const MACHINE_CONTRACT_BOUNDARY_CODES = new Set([
  * are persisted for attribution, and it must not silently return every later
  * request in the daemon to the legacy path.
  */
-/**
- * Does a child-evidence coverage gap justify the daemon-wide rollout stop?
- *
- * Only for a COMPLEX task. `evaluateOdNextComplexProduction` is the sole
- * consumer that requires per-child coverage; the simple lane never reads it
- * (`automatic-simple-production.ts` holds no child-coverage reference). A
- * simple task has no Child agents by construction, so `unavailable` coverage is
- * accurate missingness rather than a contract failure.
- *
- * Latching regardless of mode disabled OD Next for every agent and every task
- * type after a single ordinary simple Run — the latch scope is
- * `daemon_instance` and only an operator `od strategy rollout reset` restores
- * it. The stop signal is itself named `complex_child_unverified`.
- *
- * The coverage diagnostic is still emitted in both modes, so task observability
- * keeps recording the missingness either way.
- */
-export function childCoverageGapJustifiesRolloutStop(input: {
-  executionMode: 'simple' | 'complex' | null | undefined;
-  availability: string;
-}): boolean {
-  if (input.availability === 'complete') return false;
-  return input.executionMode === 'complex';
-}
-
 export function rolloutStopSignalForBlockedContinuation(
   reasonCodes: readonly string[],
 ): 'route_mode_drift' | 'machine_contract_leak' | 'complex_child_unverified' | null {
@@ -186,6 +161,17 @@ export function rolloutStopSignalForBlockedContinuation(
   if (reasonCodes.some((code) => MACHINE_CONTRACT_BOUNDARY_CODES.has(code))) {
     return 'machine_contract_leak';
   }
-  if (reasonCodes.some((code) => code.includes('child'))) return 'complex_child_unverified';
+  // Child evidence deliberately raises nothing.
+  //
+  // The other two signals mean OD Next's own contract broke, which is true
+  // whichever agent hit it, so disabling the strategy daemon-wide is
+  // proportionate. Unverifiable Children are a property of ONE runtime — Vela
+  // ships no child-lifecycle producer today, so an AMR complex Run cannot be
+  // certified at all — and the task is already fail-closed with its reason
+  // codes persisted. Latching there took OD Next away from Codex, Claude and
+  // OpenCode because a fourth runtime lacks a capability, recoverable only by
+  // an operator `od strategy rollout reset`. `complex_child_unverified` stays
+  // in the reason-code union so daemons already holding that latch, and the
+  // records that explain them, keep parsing.
   return null;
 }

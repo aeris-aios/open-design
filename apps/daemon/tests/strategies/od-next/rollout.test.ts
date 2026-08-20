@@ -16,7 +16,6 @@ import {
   stopModeForOdNextSignal,
 } from '../../../src/strategies/od-next/rollout.js';
 import {
-  childCoverageGapJustifiesRolloutStop,
   rolloutStopSignalForBlockedContinuation,
 } from '../../../src/strategies/od-next/automatic-continuation-service.js';
 import { latchOdNextRolloutStopOperationally } from '../../../src/strategies/od-next/rollout-control-telemetry.js';
@@ -300,38 +299,29 @@ describe('OD Next controlled rollout', () => {
     ])).toBe('route_mode_drift');
   });
 
-  it('only lets a complex task turn a child-coverage gap into the daemon-wide stop', () => {
-    // A simple task has no Child agents, so missing child coverage is accurate
-    // missingness. Latching on it disabled OD Next for every agent and task
-    // type after one ordinary simple Run (latch scope is `daemon_instance`) and
-    // only an operator reset restored it.
-    for (const availability of ['unavailable', 'partial'] as const) {
-      expect(childCoverageGapJustifiesRolloutStop({
-        executionMode: 'simple',
-        availability,
-      }), availability).toBe(false);
-      expect(childCoverageGapJustifiesRolloutStop({
-        executionMode: null,
-        availability,
-      }), availability).toBe(false);
-      expect(childCoverageGapJustifiesRolloutStop({
-        executionMode: undefined,
-        availability,
-      }), availability).toBe(false);
-      // The complex production gate is the one consumer that needs coverage.
-      expect(childCoverageGapJustifiesRolloutStop({
-        executionMode: 'complex',
-        availability,
-      }), availability).toBe(true);
+  it('never turns unverifiable Children into the daemon-wide stop', () => {
+    // The other two signals mean OD Next's own contract broke, which is true
+    // whichever agent hit it. Unverifiable Children are a property of ONE
+    // runtime — Vela ships no child-lifecycle producer, so an AMR complex Run
+    // cannot be certified at all — and that task is already fail-closed with
+    // its reason codes persisted. Latching took OD Next away from Codex,
+    // Claude and OpenCode because a fourth runtime lacks a capability, and only
+    // an operator `od strategy rollout reset` gave it back.
+    for (const reasonCode of [
+      'od_next_complex_child_evidence_missing',
+      'od_next_complex_child_evidence_invalid',
+      'od_next_complex_child_started_missing',
+      'od_next_complex_child_terminal_missing',
+    ]) {
+      expect(rolloutStopSignalForBlockedContinuation([reasonCode]), reasonCode).toBeNull();
     }
 
-    // Complete coverage never stops the rollout, whatever the mode.
-    for (const executionMode of ['simple', 'complex', null] as const) {
-      expect(childCoverageGapJustifiesRolloutStop({
-        executionMode,
-        availability: 'complete',
-      }), String(executionMode)).toBe(false);
-    }
+    // A genuine contract break still stops the daemon, even alongside a child
+    // code, because that one is not about the runtime.
+    expect(rolloutStopSignalForBlockedContinuation([
+      'od_next_complex_child_evidence_missing',
+      'od_next_protocol_route_mismatch',
+    ])).toBe('route_mode_drift');
   });
 
   it('requires exact HyperFrames metadata and lets hard off dominate an observe latch', () => {

@@ -458,7 +458,6 @@ import {
 } from './strategies/od-next/native-build-package.js';
 import {
   resolveAutomaticContinuationEvidence,
-  childCoverageGapJustifiesRolloutStop,
   rolloutStopSignalForBlockedContinuation,
   type OdNextComplexProductionResolver,
   type OdNextExecutionPreflightResolver,
@@ -13765,29 +13764,6 @@ export async function startServer({
       plaintextStdoutBuffer.length = 0;
       return true;
     };
-    /**
-     * A child-evidence coverage gap only justifies the daemon-wide rollout stop
-     * for a COMPLEX task.
-     *
-     * `evaluateOdNextComplexProduction` is the only consumer that requires
-     * per-child coverage; the simple lane never reads it
-     * (`automatic-simple-production.ts` has no child-coverage reference at all).
-     * A simple task has no Child agents by construction, so `unavailable`
-     * coverage is accurate missingness, not a contract failure. Latching on it
-     * disabled OD Next for every agent and every task type after a single
-     * ordinary simple Run, and only an operator `od strategy rollout reset`
-     * could restore it. The stop signal is even named `complex_child_unverified`.
-     *
-     * The coverage diagnostic itself is still emitted in both modes so task
-     * observability keeps recording the missingness.
-     */
-    const latchRolloutOnChildCoverageGap = (availability = 'unavailable') => {
-      if (!childCoverageGapJustifiesRolloutStop({
-        executionMode: strategyTaskAtStart?.executionMode,
-        availability,
-      })) return;
-      latchOdNextRolloutForRun(run, 'observe', 'complex_child_unverified');
-    };
     const publishRuntimeChildEvidenceCoverage = (coverage) => {
       if (!strategyTaskAtStart || !coverage) return;
       sendAgentEvent({
@@ -13795,7 +13771,6 @@ export async function startServer({
         name: 'child_evidence_coverage_v1',
         coverage,
       });
-      latchRolloutOnChildCoverageGap(coverage.availability);
     };
 
     if (def.streamFormat === 'claude-stream-json') {
@@ -14409,7 +14384,6 @@ export async function startServer({
                 diagnosticCounts: childEvidence.diagnostics,
               },
             });
-            latchRolloutOnChildCoverageGap(childEvidence.availability);
           } catch (error) {
             console.warn('[observability] Codex child evidence unavailable', String(error));
             sendAgentEvent({
@@ -14424,7 +14398,6 @@ export async function startServer({
                 diagnosticCounts: [{ code: 'collector_exception', count: 1 }],
               },
             });
-            latchRolloutOnChildCoverageGap();
           }
         }
       }
