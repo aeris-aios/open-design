@@ -68,6 +68,26 @@ describe("workflow scope planner", () => {
     });
   });
 
+  test("runs planner contract tests for CI control-plane changes", () => {
+    const controlPlaneFiles = [
+      ".github/config/scopes.json",
+      ".github/config/hash.json",
+      ".github/config/runners.json",
+      ".github/scripts/scopes.py",
+      ".github/scripts/hash.py",
+      ".github/scripts/runners.py",
+      ".github/scripts/lib/config.py",
+      ".github/scripts/lib/github.py",
+    ];
+    for (const file of controlPlaneFiles) {
+      expect(plan("pr", [file]), file).toMatchObject({
+        scopes: { web_tests_required: true, workspace_validation_required: true },
+        enabled: { e2e_vitest: true, workspace_unit_tests: true },
+        trace: { escalations: [] },
+      });
+    }
+  });
+
   test("directly owns promoted merge-queue routing", () => {
     expect(plan("merge-queue", ["docs/spec.md"])).toMatchObject({
       enabled: { preflight: true, workspace_unit_tests: false, e2e_vitest: false },
