@@ -14369,9 +14369,11 @@ export async function startServer({
                 observation,
               });
             }
-            const knownChildCount = new Set(childEvidence.observations
-              .filter((observation) => observation.kind === 'child_agent')
-              .map((observation) => observation.identity.observationId)).size;
+            // The adapter owns this figure: Codex identifies a Child
+            // observation per (session, turn), so deriving the count from
+            // observation ids here reported one re-invoked Child once per
+            // invocation, which no other runtime does.
+            const { knownChildCount } = childEvidence;
             sendAgentEvent({
               type: 'diagnostic',
               name: 'child_evidence_coverage_v1',

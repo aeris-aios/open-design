@@ -44,6 +44,16 @@ export type ObservationFactAvailabilityV1 = z.infer<
 export const ChildEvidenceCoverageV1Schema = z.object({
   availability: ObservationFactAvailabilityV1Schema,
   source: nonEmptyStringSchema,
+  /**
+   * How many distinct Child agents the adapter observed — NOT how many times
+   * they were invoked.
+   *
+   * A parent may re-enter the same Child repeatedly, and a runtime whose
+   * evidence is turn-shaped (Codex opens a new rollout turn per invocation)
+   * must fold those back to one before reporting here. Leaving the unit unsaid
+   * let one adapter count invocations and another count Children, which made
+   * the two runtimes' figures silently incomparable.
+   */
   knownChildCount: nonNegativeIntegerSchema,
   explicitZero: z.boolean(),
   limitations: limitationListSchema,

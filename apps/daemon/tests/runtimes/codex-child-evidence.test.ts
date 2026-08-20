@@ -549,6 +549,10 @@ describe('collectCodexChildEvidence', () => {
     }
     expect(result.limitations).not.toContain('codex_child_turn_ambiguous');
     expect(result.diagnostics).toEqual([]);
+    // Two turns, one Child. `knownChildCount` answers "how many Children ran",
+    // the same question OpenCode's `knownChildIds.size` answers, so a Child its
+    // parent re-entered must not inflate it.
+    expect(result.knownChildCount).toBe(1);
   });
 
   it('fails closed on undeclared roots, unsafe files, ambiguous rotation, and scan bounds', async () => {
