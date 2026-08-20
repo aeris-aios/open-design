@@ -14,6 +14,7 @@ describe('Go plan touchpoints', () => {
     const start = Date.parse(GO_PLAN_CAMPAIGN.window.startAt);
     const end = Date.parse(GO_PLAN_CAMPAIGN.window.endAtExclusive);
 
+    expect(GO_PLAN_CAMPAIGN.window.startAt).toBe('2026-08-20T17:00:00+08:00');
     expect(isGoPlanCampaignWindowOpen(start - 1)).toBe(false);
     expect(isGoPlanCampaignWindowOpen(start)).toBe(true);
     expect(isGoPlanCampaignWindowOpen(end - 1)).toBe(true);

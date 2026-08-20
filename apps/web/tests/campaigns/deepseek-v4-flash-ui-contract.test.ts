@@ -84,6 +84,16 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
     expect(entryShellSource).toContain("t('campaign.deepseekV4Flash.workbenchBadge')");
     expect(entryShellSource).toContain("t('campaign.deepseekV4Flash.workbenchBadgeAria')");
     expect(entryShellSource).toContain("subscriptionAudience === 'unpaid'");
+    expect(entryShellSource).toContain('goPlanCampaignVisibility.visible');
+  });
+
+  it('keeps the top-right campaign entry visible across every workspace tab', () => {
+    expect(entryShellSource).toMatch(
+      /topRightSlot=\{\s*topRightCampaignKind \? \(/,
+    );
+    expect(entryShellSource).not.toMatch(
+      /topRightSlot=\{\s*view === 'home'/,
+    );
   });
 
   it('sends both Go and paid DeepSeek badges to public Pricing', () => {

@@ -704,7 +704,9 @@ export function EntryShell({
         : 'unknown';
   const topRightCampaignKind =
     subscriptionAudience === 'unpaid'
-      ? 'go'
+      ? goPlanCampaignVisibility.visible
+        ? 'go'
+        : null
       : deepSeekV4FlashCampaignAudience === 'paid'
         ? 'deepseek'
         : null;
@@ -1681,7 +1683,7 @@ export function EntryShell({
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
           topRightSlot={
-            view === 'home' && topRightCampaignKind ? (
+            topRightCampaignKind ? (
               <button
                 type="button"
                 className="entry-deepseek-campaign-badge"
@@ -1728,9 +1730,8 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
-          {/* DeepSeek campaign badge moved into EntryNavRail's top-right
-              cluster (topRightSlot above) so it sits beside the account
-              module in one flex row. */}
+          {/* The campaign badge lives in EntryNavRail's top-right cluster so it
+              stays beside the account module across every entry tab. */}
           {amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}

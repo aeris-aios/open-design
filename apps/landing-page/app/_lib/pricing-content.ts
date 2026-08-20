@@ -105,6 +105,7 @@ export interface PersonalPricingCopy {
   creatorDeveloperSupport: string;
   popularModels: string;
   flagshipModels: string;
+  flagshipModelCount: string;
   imageModels: string;
   modelCount: string;
   unlimited: string;
@@ -244,6 +245,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   creatorDeveloperSupport: 'Creator / developer support',
   popularModels: 'Popular models',
   flagshipModels: 'Flagship models',
+  flagshipModelCount: '{count}+ flagship models',
   imageModels: 'Image models',
   modelCount: '{count} models',
   unlimited: 'Unlimited',
@@ -289,6 +291,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   creatorDeveloperSupport: '创作者 / 开发者支持',
   popularModels: '热门模型',
   flagshipModels: '旗舰模型',
+  flagshipModelCount: '{count}+ 个旗舰模型',
   imageModels: '图片模型',
   modelCount: '{count} 个模型',
   unlimited: '无限量',
@@ -334,6 +337,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   creatorDeveloperSupport: '創作者 / 開發者支援',
   popularModels: '熱門模型',
   flagshipModels: '旗艦模型',
+  flagshipModelCount: '{count}+ 個旗艦模型',
   imageModels: '圖片模型',
   modelCount: '{count} 個模型',
   unlimited: '無限量',
@@ -379,6 +383,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   creatorDeveloperSupport: 'Soporte para creadores / desarrolladores',
   popularModels: 'Modelos populares',
   flagshipModels: 'Modelos insignia',
+  flagshipModelCount: '{count}+ modelos insignia',
   imageModels: 'Modelos de imagen',
   modelCount: '{count} modelos',
   unlimited: 'Ilimitado',
@@ -424,6 +429,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   creatorDeveloperSupport: 'Suporte para criadores / desenvolvedores',
   popularModels: 'Modelos populares',
   flagshipModels: 'Modelos de ponta',
+  flagshipModelCount: '{count}+ modelos de ponta',
   imageModels: 'Modelos de imagem',
   modelCount: '{count} modelos',
   unlimited: 'Ilimitado',
@@ -469,6 +475,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   creatorDeveloperSupport: 'Поддержка авторов / разработчиков',
   popularModels: 'Популярные модели',
   flagshipModels: 'Флагманские модели',
+  flagshipModelCount: '{count}+ флагманских моделей',
   imageModels: 'Модели изображений',
   modelCount: '{count} моделей',
   unlimited: 'Без ограничений',
@@ -514,6 +521,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   creatorDeveloperSupport: 'Support créateur / développeur',
   popularModels: 'Modèles populaires',
   flagshipModels: 'Modèles phares',
+  flagshipModelCount: '{count}+ modèles phares',
   imageModels: 'Modèles d’image',
   modelCount: '{count} modèles',
   unlimited: 'Illimité',
@@ -559,6 +567,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   creatorDeveloperSupport: '크리에이터 / 개발자 지원',
   popularModels: '인기 모델',
   flagshipModels: '플래그십 모델',
+  flagshipModelCount: '{count}+ 플래그십 모델',
   imageModels: '이미지 모델',
   modelCount: '모델 {count}개',
   unlimited: '무제한',
@@ -604,6 +613,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   creatorDeveloperSupport: 'Support für Kreative / Entwickler',
   popularModels: 'Beliebte Modelle',
   flagshipModels: 'Flaggschiffmodelle',
+  flagshipModelCount: '{count}+ Flaggschiffmodelle',
   imageModels: 'Bildmodelle',
   modelCount: '{count} Modelle',
   unlimited: 'Unbegrenzt',
@@ -649,6 +659,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   creatorDeveloperSupport: 'クリエイター / 開発者サポート',
   popularModels: '人気モデル',
   flagshipModels: 'フラッグシップモデル',
+  flagshipModelCount: 'フラッグシップモデル {count} 種以上',
   imageModels: '画像モデル',
   modelCount: '{count} モデル',
   unlimited: '無制限',
@@ -709,8 +720,8 @@ const EN: PricingContent = {
     freeTrialCreditLabel: 'Limited trial model credits (valid for 7 days)',
     firstMonthTag: '{pct}% off 1st month',
     yearlyDiscountTag: '{pct}% off',
-    yearlySubline: 'Billed yearly · {totalUsd} / year (save {savingsUsd})',
-    monthlyRenewal: 'Then {amountUsd} / mo',
+    yearlySubline: 'Billed {totalUsd}/year',
+    monthlyRenewal: 'First-month price',
     yearlySaveCta: 'Save {savingsUsd} yearly',
   },
   free: {
@@ -720,8 +731,8 @@ const EN: PricingContent = {
     features: ['BYOK provider keys · Local coding agents', 'Community support'],
   },
   go: {
-    tagline: 'Lightweight needs, effortless delivery · Zero-config',
-    ctaLabel: 'Subscribe to Go',
+    tagline: 'Light needs · Easy delivery',
+    ctaLabel: 'Subscribe',
     allowance: '8 popular models · ample allowance',
     features: [
       'Full design and coding capabilities',
@@ -731,8 +742,8 @@ const EN: PricingContent = {
   },
   plans: {
     plus: {
-      tagline: 'Independent projects, solo delivery · Zero-config',
-      ctaLabel: 'Upgrade to Plus',
+      tagline: 'Everyday design · Continuous delivery',
+      ctaLabel: 'Subscribe',
       concurrency: '2 concurrent tasks',
       features: [
         'Zero-config professional design agent',
@@ -742,8 +753,8 @@ const EN: PricingContent = {
       ],
     },
     pro: {
-      tagline: 'One person, a whole design team · Zero-config',
-      ctaLabel: 'Upgrade to Pro',
+      tagline: 'Complex projects · Efficient production',
+      ctaLabel: 'Subscribe',
       concurrency: '5 concurrent tasks',
       features: [
         'Zero-config professional design agent',
@@ -753,8 +764,8 @@ const EN: PricingContent = {
       ],
     },
     max: {
-      tagline: 'Outsourced design costs, slashed · Zero-config',
-      ctaLabel: 'Upgrade to Max',
+      tagline: 'High-volume creation · Consistent output',
+      ctaLabel: 'Subscribe',
       concurrency: '10 concurrent tasks',
       features: [
         'Zero-config professional design agent',
