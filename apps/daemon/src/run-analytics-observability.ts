@@ -970,6 +970,11 @@ export function summarizeRunTimingAnalytics(args: {
 }): RunTimingAnalytics {
   const telemetry = args.telemetry ?? {};
   const runEndAt = args.runUpdatedAt;
+  const scanStartAt = telemetry.startChatRunStartedAt ?? telemetry.startRequestedAt;
+  // When the current attempt began. Needed inside the scan so a tool id reused
+  // by a retry is not merged with the corpse of the same id from a dead
+  // attempt.
+  const attemptStartAt = telemetry.attemptStartedAt ?? scanStartAt;
   let toolCallCount = 0;
   let toolDurationMs = 0;
   const toolIntervals: Array<{ start: number; end: number }> = [];
@@ -1032,7 +1037,19 @@ export function summarizeRunTimingAnalytics(args: {
           : undefined;
       const toolStartedAt = payloadStartedAt ?? ts;
       // First tool_use timestamp wins for duration pairing.
-      if (!openTools.has(data.id)) {
+      const priorObservedAt = openToolObservedAt.get(data.id);
+      // Sequential tool ids (`call_0`, `call_1`, ...) restart in a retry's
+      // fresh session, so a still-open entry from a killed attempt can collide
+      // with a genuinely new call. Keeping the old start would pair attempt
+      // one's opening with attempt two's close and report a tool that never
+      // ran. Replace, rather than merge, when the open entry predates this
+      // attempt and the new one does not.
+      const reusesDeadAttemptId =
+        priorObservedAt !== undefined &&
+        attemptStartAt !== undefined &&
+        priorObservedAt < attemptStartAt &&
+        ts >= attemptStartAt;
+      if (!openTools.has(data.id) || reusesDeadAttemptId) {
         openTools.set(data.id, toolStartedAt);
         openToolObservedAt.set(data.id, ts);
       } else if (payloadStartedAt !== undefined) {
@@ -1100,10 +1117,6 @@ export function summarizeRunTimingAnalytics(args: {
   ].filter((value): value is number => value !== undefined && Number.isFinite(value));
   const phaseAnchorAt =
     phaseAnchorCandidates.length > 0 ? Math.min(...phaseAnchorCandidates) : undefined;
-  // When the current attempt began. Distinct from `phaseAnchorAt`: the anchor
-  // is when the model started responding, this is when the attempt started
-  // running, and on a tool-first run the tools come between them.
-  const attemptStartAt = telemetry.attemptStartedAt ?? startAt;
   // A run can end while a tool is still outstanding (crash, cancel, timeout),
   // leaving a tool_use with no tool_result. That span still occupied the clock,
   // so close it at run end for phase purposes.

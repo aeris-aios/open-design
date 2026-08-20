@@ -1358,6 +1358,43 @@ describe('buildTracePayload', () => {
     expect(metadata.total_duration_ms).toBe(100);
   });
 
+  it('measures model-active on the same boundaries as the analytics metric', () => {
+    const batch = buildTracePayload(
+      makeCtx({
+        run: {
+          runId: 'run-model-active',
+          status: 'succeeded',
+          startedAt: 1_700_000_000_000,
+          endedAt: 1_700_000_010_000,
+          timingMarks: {
+            startChatRunStartedAt: 1_700_000_000_100,
+            processSpawnedAt: 1_700_000_000_300,
+            stdinWriteEndAt: 1_700_000_000_500,
+            // Text-first: the server stamps first-token before the send() path
+            // records the model-event mark, so the two are not equal and the
+            // earlier one is the true start of the response.
+            firstTokenAt: 1_700_000_001_000,
+            firstModelEventAt: 1_700_000_001_200,
+            finalizeStartAt: 1_700_000_009_000,
+          },
+        },
+      }),
+    );
+
+    const generation = bodyOf(batch, 'generation-create', 'llm');
+    const measured =
+      generation.metadata.performance_diagnostics.semantic_phases.measured;
+
+    // `model_active_duration_ms` takes the earliest of the two marks and runs
+    // to run end. This entry exists to be compared against that number, so a
+    // different window here makes PostHog and Langfuse disagree on the same
+    // run.
+    expect(measured['model-active']).toMatchObject({
+      duration_ms: 9_000,
+      status: 'measured',
+    });
+  });
+
   it('adds duration spans for run timing marks', () => {
     const promptTelemetry = buildPromptStackTelemetry({
       composedPrompt:

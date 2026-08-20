@@ -78,3 +78,43 @@ describe('runLifecycleMarkersForStreamEvent artifact events', () => {
     ).toBe('thinking_delta');
   });
 });
+
+describe('runLifecycleMarkersForStreamEvent producer-supplied start', () => {
+  it('carries a tool_use startedAt so the anchor is not stamped at completion', () => {
+    // ACP accumulates tool_call frames and emits the canonical tool_use only
+    // once the call reaches a terminal status, with `startedAt` set to the
+    // first frame's arrival (daemon clock). Stamping the anchor when that
+    // delayed event arrives puts it at tool COMPLETION, so a tool-only ACP
+    // turn measures its whole tool loop as runtime init.
+    const markers = runLifecycleMarkersForStreamEvent('agent', {
+      type: 'tool_use',
+      id: 't1',
+      name: 'Bash',
+      startedAt: 1_700_000_000_000,
+    });
+
+    expect(markers.firstModelEventType).toBe('tool_use');
+    expect(markers.firstModelEventAt).toBe(1_700_000_000_000);
+  });
+
+  it('leaves the timestamp to the caller when the payload carries no start', () => {
+    const markers = runLifecycleMarkersForStreamEvent('agent', {
+      type: 'text_delta',
+      text: 'hi',
+    });
+
+    expect(markers.firstModelEventType).toBe('text_delta');
+    expect(markers.firstModelEventAt).toBeUndefined();
+  });
+
+  it('ignores a start that is not a finite number', () => {
+    for (const startedAt of [Number.NaN, Number.POSITIVE_INFINITY, '123', null]) {
+      const markers = runLifecycleMarkersForStreamEvent('agent', {
+        type: 'tool_use',
+        id: 't1',
+        startedAt,
+      });
+      expect(markers.firstModelEventAt).toBeUndefined();
+    }
+  });
+});

@@ -1946,3 +1946,36 @@ describe('summarizeRunTimingAnalytics outstanding tools without a model-event ma
     expect(result.bottleneck_phase).toBe('tool_execution');
   });
 });
+
+describe('summarizeRunTimingAnalytics tool id reuse across a retry', () => {
+  it('does not pair a dead attempt\'s open tool with a same-id retry tool', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 25_000,
+      analyticsCapturedAt: 25_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        attemptStartedAt: 20_000,
+        attemptIndex: 2,
+        stdinWriteEndAt: 20_200,
+        firstModelEventAt: 20_500,
+        firstModelEventType: 'text_delta' as const,
+        firstTokenAt: 20_500,
+      },
+      events: [
+        // Attempt 1's child was killed mid-tool, leaving `call_0` open.
+        { id: 1, event: 'agent', timestamp: 3_000, data: { type: 'tool_use', id: 'call_0', name: 'Bash' } },
+        // Sequential ids restart at `call_0` in the retry's fresh session, so
+        // the id collides with the corpse above.
+        { id: 2, event: 'agent', timestamp: 21_500, data: { type: 'tool_use', id: 'call_0', name: 'Read' } },
+        { id: 3, event: 'agent', timestamp: 22_000, data: { type: 'tool_result', toolUseId: 'call_0' } },
+      ],
+    });
+
+    // The retry tool ran 21.5s -> 22.0s. Keeping the stale start pairs
+    // attempt 1's 3s opening with attempt 2's 22s close and reports a 19s
+    // tool that never existed.
+    expect(result.tool_duration_ms).toBe(500);
+    expect(result.model_active_duration_ms).toBe(4_500);
+  });
+});

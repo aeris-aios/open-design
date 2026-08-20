@@ -10688,7 +10688,13 @@ export async function startServer({
     const send = (event, data) => {
       const lifecycleMarkers = runLifecycleMarkersForStreamEvent(event, data);
       if (lifecycleMarkers.firstModelEventType) {
-        lifecycle.markFirstModelEvent(lifecycleMarkers.firstModelEventType);
+        // `firstModelEventAt` is present when the producer told us when the
+        // work began. ACP emits `tool_use` at terminal status, so without this
+        // the anchor lands at tool completion.
+        lifecycle.markFirstModelEvent(
+          lifecycleMarkers.firstModelEventType,
+          lifecycleMarkers.firstModelEventAt,
+        );
       }
       if (lifecycleMarkers.firstVisibleOutput) {
         lifecycle.mark('first_visible_output');

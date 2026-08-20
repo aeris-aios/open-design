@@ -44,6 +44,13 @@ export interface RunWithLifecycleTelemetry {
 
 export interface RunLifecycleStreamEventMarkers {
   firstModelEventType?: TrackingFirstModelEventType;
+  // When the producer says this event's work actually began, on the daemon's
+  // clock. Present when a payload carries `startedAt`, which ACP does: it
+  // accumulates tool_call frames and emits the canonical `tool_use` only once
+  // the call is terminal, so the arrival time of that event is the tool's END.
+  // Stamping the anchor from arrival would measure a tool-only ACP turn as
+  // runtime init, which is the case this whole boundary change exists for.
+  firstModelEventAt?: number;
   firstVisibleOutput: boolean;
   firstArtifactWrite: boolean;
 }
@@ -68,8 +75,19 @@ export function runLifecycleMarkersForStreamEvent(
       type === 'text_delta' || type === 'thinking_delta' || type === 'tool_use'
         ? type
         : undefined;
+    const startedAt =
+      data && typeof data === 'object' && 'startedAt' in data
+        ? (data as { startedAt?: unknown }).startedAt
+        : undefined;
+    const firstModelEventAt =
+      typeof startedAt === 'number' && Number.isFinite(startedAt)
+        ? startedAt
+        : undefined;
     return {
       ...(firstModelEventType ? { firstModelEventType } : {}),
+      ...(firstModelEventType && firstModelEventAt !== undefined
+        ? { firstModelEventAt }
+        : {}),
       firstVisibleOutput:
         type === 'text_delta' ||
         type === 'thinking_delta' ||
