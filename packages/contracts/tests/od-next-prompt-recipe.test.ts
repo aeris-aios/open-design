@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  composeOdNextStrategyBundleHeadV2,
   composeOdNextStrategyCorePromptV2,
   composeOdNextStrategyContinuationV2,
   composeOdNextStrategyRequestPromptV2,
@@ -190,6 +191,24 @@ describe('OD Next V2 prompt recipe', () => {
     expect(prompt).toContain('Direct Edit remains the only route allowed to perform Build work');
     expect(prompt).toContain(`strategy package: \`${A}\``);
     expect(prompt).toContain(`selected Task Skill digest: \`${B}\``);
+  });
+
+  // Every clarification rule in both prompt trees was phrased as "when to emit
+  // a form" / "skip the form"; nothing forbade writing the bare marker as a
+  // section label. A real turn duly answered `<question-form> 无需提出——…` — an
+  // unclosed marker with prose for a body — which renders as nothing and
+  // latches the project on `Needs input`. The skip case has to name the marker
+  // itself, not just the form.
+  it('forbids restating the literal question-form marker when nothing is asked', () => {
+    const prompt = composeOdNextStrategyRequestPromptV2(recipe);
+    expect(prompt).toContain(
+      'do not output, quote, or explain the `<question-form>` marker',
+    );
+    // The constraint has to travel with the section that introduces the form,
+    // so a bundle that ships only the core system prompt still carries it.
+    expect(
+      composeOdNextStrategyBundleHeadV2(recipe).coreSystemPrompt.discoveryAndPlanningSurface,
+    ).toContain('do not output, quote, or explain the `<question-form>` marker');
   });
 
   it('pins daemon-owned planning facts into the strict machine example', () => {

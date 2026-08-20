@@ -405,6 +405,89 @@ describe('OD Next planning coordinator', () => {
     });
   });
 
+  // Observed on a real OD Next turn: the agent decided it had nothing to ask
+  // and STILL wrote the literal marker as a declaration line —
+  // `<question-form> 无需提出——…` — unclosed, prose instead of JSON. The
+  // renderable count is 0 for such a turn, so the coordinator scored it as a
+  // clean no-clarification turn and recorded nothing at all. The stray marker
+  // is a contract violation the daemon must report, but it is NOT a gate: the
+  // planning turn still has to reach production.
+  it('reports a stray question-form marker without blocking the handoff', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const plan = planContract(snapshot);
+    const final = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        '策略判断信息充足，将直接进入生产。\n\n<question-form> 无需提出',
+        block('open-design-plan-contract', plan),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(final.action).toBe('plan_ready');
+    expect(final.task).toMatchObject({ outcome: 'plan_ready', executionMode: 'simple' });
+    expect(final.reasonCodes).toContain('od_next_question_form_unterminated');
+  });
+
+  it('reports a closed question-form block the parser cannot render', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const plan = planContract(snapshot);
+    const final = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        'Planning complete. <question-form>无需提出</question-form>',
+        block('open-design-plan-contract', plan),
+        block('open-design-runtime-state', runtimeState({
+          outcome: 'plan_ready', executionMode: 'simple',
+        })),
+      ].join('\n')),
+      executionPreflight: executionPassed,
+      updatedAt: 120,
+    });
+    expect(final.action).toBe('plan_ready');
+    expect(final.reasonCodes).toContain('od_next_question_form_unrenderable');
+  });
+
+  // A genuine, renderable form on a clarification turn must stay clean — the
+  // new signal only fires on markers that can never render.
+  it('raises no marker signal for a renderable clarification form', () => {
+    prepareStrategyRequest(db, {
+      taskExecutionId: 'task-1',
+      preference: 'full_plan',
+      directEdit: directEligible,
+      intake: intakePassed,
+      updatedAt: 110,
+    });
+    const final = finalizeStrategyPlanningTurn(db, {
+      taskExecutionId: 'task-1',
+      runId: 'run-request',
+      protocol: protocol([
+        '<question-form id="scope">{"questions":[{"id":"surface","label":"Surface?"}]}</question-form>',
+        block('open-design-runtime-state', runtimeState({ outcome: 'clarification_required' })),
+      ].join('\n')),
+      updatedAt: 120,
+    });
+    expect(final.action).toBe('awaiting_clarification');
+    expect(final.reasonCodes).toEqual([]);
+  });
+
   it('allows one serialization-only repair only with a durable semantic hash anchor', () => {
     prepareStrategyRequest(db, {
       taskExecutionId: 'task-1',

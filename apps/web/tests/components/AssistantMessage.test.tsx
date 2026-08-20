@@ -1345,6 +1345,31 @@ describe('AssistantMessage question forms', () => {
     expect(screen.getByTestId('question-form-loading')).toBeTruthy();
     expect(screen.getByText('One quick check:')).toBeTruthy();
   });
+
+  it('renders a prose-bodied open tag as text instead of a loading frame', () => {
+    // Production repro: a strategy turn that needed no clarification narrated
+    // its decision into an open <question-form> tag. The tail can never parse
+    // as a form body, so the skeleton must not appear and no character after
+    // the tag may be dropped from the view.
+    const text =
+      '策略判断信息充足，将直接进入生产。\n\n<question-form> 无需提出——所有决策都可通过场景推断安全默认。';
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          content: text,
+          events: [{ kind: 'text', text } as ChatMessage['events'][number]],
+        })}
+        streaming
+        projectId="proj-1"
+        isLast
+      />,
+    );
+
+    expect(screen.queryByTestId('question-form-loading')).toBeNull();
+    expect(
+      screen.getByText(/无需提出——所有决策都可通过场景推断安全默认。/),
+    ).toBeTruthy();
+  });
 });
 
 describe('AssistantMessage recovered produced files', () => {

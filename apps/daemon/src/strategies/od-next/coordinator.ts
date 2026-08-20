@@ -10,7 +10,7 @@ import {
 import type Database from 'better-sqlite3';
 
 import { getSnapshot } from '../../plugins/snapshots.js';
-import { countRenderableQuestionForms } from '../../question-form-detect.js';
+import { countRenderableQuestionForms, scanQuestionForms } from '../../question-form-detect.js';
 import {
   compareAndTransitionStrategyTaskExecution,
   getStrategyTaskExecution,
@@ -45,6 +45,8 @@ export type OdNextCoordinatorReasonCode =
   | 'od_next_clarification_form_unexpected'
   | 'od_next_clarification_answer_missing'
   | 'od_next_clarification_repeated'
+  | 'od_next_question_form_unterminated'
+  | 'od_next_question_form_unrenderable'
   | 'od_next_contract_repair_semantic_drift'
   | 'od_next_contract_repair_tool_use_forbidden'
   | 'od_next_plan_task_profile_mismatch'
@@ -324,6 +326,19 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   }
 
   const parsed = input.parsed;
+  // Recorded for every turn, blocked or accepted, and never used to decide the
+  // verdict — see `questionFormMarkerReasonCodes`.
+  const markerCodes = questionFormMarkerReasonCodes(parsed.visibleText);
+  if (markerCodes.length > 0) {
+    console.warn('[od-next-task] question form marker unrenderable', {
+      taskExecutionId: current.taskExecutionId,
+      runId: input.runId,
+      inputStage: current.inputStage,
+      route: current.route,
+      reasonCodes: markerCodes,
+      visibleTextLength: parsed.visibleText.length,
+    });
+  }
   if (parsed.normalizations.length > 0) {
     console.info('[od-next-task] protocol normalized', {
       taskExecutionId: input.taskExecutionId,
@@ -414,7 +429,7 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
       : state.outcome,
     task,
     visibleText: parsed.visibleText,
-    reasonCodes: state.reasonCodes,
+    reasonCodes: uniqueReasonCodes([...state.reasonCodes, ...markerCodes]),
     ...(parsed.planContract
       ? { decisionSummary: parsed.planContract.decisionSummary }
       : {}),
@@ -609,6 +624,34 @@ function inferClarificationRuntimeState(
     executionMode: null,
     reasonCodes: ['od_next_protocol_runtime_state_inferred'],
   };
+}
+
+/**
+ * Reason codes a turn earns for *writing* the `<question-form>` markup in a
+ * shape that can never render — an unterminated marker, or a closed block whose
+ * body is not a form.
+ *
+ * The invariant: the clarification markup is a host-parsed contract, so any
+ * occurrence of it either renders a form or is a violation. The renderable
+ * count alone cannot express that. A turn that declared no clarification and
+ * still wrote `<question-form> 无需提出——…` scored `forms === 0`, matched none of
+ * the clarification branches in `validateAcceptedTurn`, and was accepted with
+ * an empty reason-code list — the daemon's only record of a real contract break
+ * was the raw prose it handed straight to the UI.
+ *
+ * Deliberately kept OUT of `validateAcceptedTurn`: every code that function
+ * returns blocks the turn (`finalizeStrategyPlanningResult` calls `blockTask`
+ * on a non-empty list). A stray marker on an otherwise valid planning turn must
+ * still reach production, so these codes are attribution, never a gate.
+ */
+function questionFormMarkerReasonCodes(
+  visibleText: string,
+): OdNextCoordinatorReasonCode[] {
+  const scan = scanQuestionForms(visibleText);
+  const codes: OdNextCoordinatorReasonCode[] = [];
+  if (scan.unterminated) codes.push('od_next_question_form_unterminated');
+  if (scan.unrenderable > 0) codes.push('od_next_question_form_unrenderable');
+  return codes;
 }
 
 function validateAcceptedTurn(
@@ -896,7 +939,15 @@ function blockTask(
   // eligibility, so it settles on the spec's fallback route (3.2: "or cannot
   // be safely judged as Direct Edit") rather than failing to record at all.
   const route = current.route ?? 'full_plan';
-  const blockedReasonCodes = uniqueReasonCodes(reasonCodes);
+  // A turn blocked for another reason still gets its marker violation recorded:
+  // `blocked_reason_codes_json` is the only durable attribution channel the task
+  // store has, and these codes raise no rollout stop signal
+  // (`rolloutStopSignalForBlockedContinuation` matches route/execution-mode
+  // drift and machine-block boundary failures only).
+  const blockedReasonCodes = uniqueReasonCodes([
+    ...reasonCodes,
+    ...questionFormMarkerReasonCodes(visibleText),
+  ]);
   console.warn('[od-next-task] blocked', {
     taskExecutionId: current.taskExecutionId,
     runId: current.latestRunId,
