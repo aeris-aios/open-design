@@ -14,17 +14,19 @@ export function isInternalStrategySnapshot(
 }
 
 /**
- * Whether the session-mode chip still tells the user something the turn has not
- * already told them. `Ask` and `Plan` are per-turn opt-outs whose behaviour the
- * user chose, so they stay labelled everywhere. `Design Agent` is the default a
- * strategy-owned turn already implies, which makes the chip pure chrome above
- * the prompt.
+ * The session-mode chip labels a turn the user steered away from the default.
+ * `Ask` and `Plan` are those opt-outs, so they stay labelled everywhere.
+ * `Design` is the default every design project already runs in: labelling it
+ * restates the default above every single prompt.
+ *
+ * It also cannot be resolved in time on the OD Next path. The daemon binds the
+ * strategy to the turn only after the optimistic user message is on screen, so
+ * a rule that asked "is this turn strategy-owned?" would show the chip, then
+ * drop it a beat later when the snapshot lands — the flicker acceptance caught.
+ * Keying on the mode alone is decided the moment the message renders.
  */
-export function shouldShowSessionModeChip(input: {
-  sessionMode: ChatSessionMode | undefined;
-  snapshot: Pick<AppliedPluginSnapshot, 'strategy'> | null | undefined;
-}): boolean {
-  if (!input.sessionMode) return false;
-  if (input.sessionMode !== 'design') return true;
-  return !isInternalStrategySnapshot(input.snapshot);
+export function shouldShowSessionModeChip(
+  sessionMode: ChatSessionMode | undefined,
+): boolean {
+  return Boolean(sessionMode) && sessionMode !== 'design';
 }

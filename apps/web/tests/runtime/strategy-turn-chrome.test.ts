@@ -35,29 +35,17 @@ describe('isInternalStrategySnapshot', () => {
 });
 
 describe('shouldShowSessionModeChip', () => {
-  it('drops the default Design label once a strategy owns the turn', () => {
-    expect(
-      shouldShowSessionModeChip({
-        sessionMode: 'design',
-        snapshot: { strategy: strategyBinding },
-      }),
-    ).toBe(false);
+  it('drops the default Design label', () => {
+    expect(shouldShowSessionModeChip('design')).toBe(false);
   });
 
-  it('keeps the Design label when the user picked the plugin themselves', () => {
-    expect(shouldShowSessionModeChip({ sessionMode: 'design', snapshot: {} })).toBe(true);
-    expect(shouldShowSessionModeChip({ sessionMode: 'design', snapshot: null })).toBe(true);
-  });
-
-  it('keeps Ask and Plan labelled even on a strategy-owned turn', () => {
+  it('keeps Ask and Plan labelled', () => {
     for (const sessionMode of ['chat', 'plan'] as const) {
-      expect(
-        shouldShowSessionModeChip({ sessionMode, snapshot: { strategy: strategyBinding } }),
-      ).toBe(true);
+      expect(shouldShowSessionModeChip(sessionMode)).toBe(true);
     }
   });
 
   it('renders nothing when the message carries no session mode', () => {
-    expect(shouldShowSessionModeChip({ sessionMode: undefined, snapshot: null })).toBe(false);
+    expect(shouldShowSessionModeChip(undefined)).toBe(false);
   });
 });

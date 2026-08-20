@@ -67,6 +67,7 @@ import {
   type VisualStyleContext,
 } from "../runtime/visual-style-catalog";
 import { splitStreamingArtifact, stripArtifact, stripRecoveredHtmlFallbackForDisplay } from "../artifacts/strip";
+import { stripInternalControlMarkers } from "../artifacts/internal-markers";
 import { BRAND_BROWSER_TAB_ID } from "../runtime/brand-browser-bridge";
 import {
   getPluginFolderCandidates,
@@ -2585,9 +2586,14 @@ function ProseBlock({
 }) {
   const t = useT();
   const cleaned = useMemo(() => {
-    const stripped = stripArtifact(text);
-    return hideRecoveredHtmlFallback ? stripRecoveredHtmlFallbackForDisplay(stripped, text) : stripped;
-  }, [hideRecoveredHtmlFallback, text]);
+    // Internal control markers come off first: they are daemon plumbing that
+    // never belongs in prose, and a leaked one would otherwise reach Markdown.
+    const withoutMarkers = stripInternalControlMarkers(text, { streaming });
+    const stripped = stripArtifact(withoutMarkers);
+    return hideRecoveredHtmlFallback
+      ? stripRecoveredHtmlFallbackForDisplay(stripped, withoutMarkers)
+      : stripped;
+  }, [hideRecoveredHtmlFallback, streaming, text]);
   // While the latest turn is still streaming a not-yet-closed question-form,
   // drop the partial `<question-form>{…` markup from the prose so the chat
   // doesn't flash raw JSON; an inline loading frame takes its place. A not-yet-closed

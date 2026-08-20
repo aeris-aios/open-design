@@ -3690,10 +3690,7 @@ function ChatRows({
           onRequestDesignSystemDetails={onRequestDesignSystemDetails}
           t={t}
           appliedContextItems={appliedContextByMessageId.get(m.id) ?? []}
-          showSessionModeChip={shouldShowSessionModeChip({
-            sessionMode: m.sessionMode,
-            snapshot: m.appliedPluginSnapshot ?? activePluginSnapshot ?? null,
-          })}
+          showSessionModeChip={shouldShowSessionModeChip(m.sessionMode)}
           highlighted={highlightedUserMessageId === m.id}
         />
       );

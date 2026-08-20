@@ -853,7 +853,9 @@ describe('ChatPane streaming state', () => {
       />,
     );
 
-    expect(screen.getByTestId('msg-session-mode-chip').textContent).toContain('Design Agent');
+    // Design is the default mode, so it carries no chip — only the opt-outs
+    // (Ask / Plan) are labelled.
+    expect(screen.queryByTestId('msg-session-mode-chip')).toBeNull();
     expect(screen.getByTestId('msg-workspace-context-chip').textContent).toContain('Dribbble');
     const context = screen.getByTestId('msg-applied-context');
     expect(context.textContent).toContain('A Decade of Refinement Glow-Up');
@@ -1002,6 +1004,43 @@ describe('ChatPane streaming state', () => {
     expect(screen.queryByTestId('msg-applied-context')).toBeNull();
     expect(screen.queryByText(/OD Next Strategy V2/)).toBeNull();
     expect(screen.queryByText(/od-next-strategy/)).toBeNull();
+  });
+
+  it('never flashes the mode chip on a design turn awaiting its strategy binding', () => {
+    // The optimistic user message renders before POST /api/runs answers, so it
+    // has no appliedPluginSnapshot yet — the state the acceptance run caught
+    // showing "Design" for a beat and then dropping it.
+    const messages: ChatMessage[] = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'A minimal reading app',
+        createdAt: 1,
+        sessionMode: 'design',
+      },
+    ] as ChatMessage[];
+
+    render(
+      <ChatPane
+        projectKindForTracking="prototype"
+        messages={messages}
+        streaming={false}
+        error={null}
+        projectId="project-1"
+        projectFiles={[]}
+        onEnsureProject={async () => 'project-1'}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        conversations={conversations}
+        activeConversationId="conv-1"
+        onSelectConversation={vi.fn()}
+        onDeleteConversation={vi.fn()}
+        projectMetadata={projectMetadata}
+      />,
+    );
+
+    expect(screen.queryByTestId('msg-run-context-row')).toBeNull();
+    expect(screen.queryByTestId('msg-session-mode-chip')).toBeNull();
   });
 
   it('still lists user-chosen context on a strategy-owned turn', () => {

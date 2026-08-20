@@ -13492,9 +13492,15 @@ export async function startServer({
     const runGuard = createRoleMarkerGuard('run');
     let runWarned = false;
     const visibleStdoutControlStripper = new TerminalControlSequenceStripper();
+    // Strip on every Run, announce on the Runs that asked for a title. The
+    // directive lives in the agent's own session history, so a resumed CLI can
+    // repeat the marker on a later turn that never requested one — gating the
+    // stripper on the request is what let `<od-title>` reach the chat.
     const titleMarkerStripper = createAgentTitleMarkerStripper({
-      enabled: Boolean(titleGenerationRequested),
-      emitTitle: (title) => send('agent', { type: 'conversation_title', title }),
+      enabled: true,
+      emitTitle: titleGenerationRequested
+        ? (title) => send('agent', { type: 'conversation_title', title })
+        : () => {},
     });
 
     function flushAgentTitleMarkerBuffer() {
