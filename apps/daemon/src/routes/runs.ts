@@ -35,7 +35,6 @@ import type { AuthorizeProjectRequest } from '../collab/project-request-authorit
 import {
   workspaceResourceContextFromRequest,
   type BoundWorkspaceResourceMutationGate,
-  type VerifyWorkspaceRequestAuthority,
   type WorkspaceResourceAccessInput,
 } from '../collab/workspace-resource-mutation.js';
 import {
@@ -107,7 +106,6 @@ import type { RunEventForFailureClassification } from '../run-failure-classifica
 import { classifyRunFailure } from '../run-failure-classification.js';
 import { deriveRunErrorCode, runResultFromStatus } from '../run-result.js';
 import type { RunStatusForAnalytics } from '../run-result.js';
-import type { PinnedRunDesignSystemScope } from '../design-systems/run-scope.js';
 import {
   parseRunToolBundleForRequest,
   validateRunToolBundleForAgent,
@@ -296,7 +294,6 @@ interface ChatRun {
   requestFingerprint?: string | null;
   agentId: string | null;
   workspaceScope?: RunWorkspaceScope | null;
-  designSystemScope?: PinnedRunDesignSystemScope | null;
   model?: string | null;
   status: ChatRunStatus;
   createdAt: number;
@@ -387,7 +384,6 @@ interface RunCreateMeta extends JsonRecord {
   currentPrompt?: string;
   projectMetadata?: ProjectMetadata;
   workspaceScope?: RunWorkspaceScope | null;
-  designSystemScope?: PinnedRunDesignSystemScope | null;
 }
 
 interface RunListFilters {
@@ -613,7 +609,6 @@ export interface RegisterRunRoutesDeps {
   };
   amrWorkspaceScope?: {
     isSignedIn: () => boolean | Promise<boolean>;
-    verifyWorkspaceRequestAuthority: VerifyWorkspaceRequestAuthority;
   };
 }
 
@@ -799,11 +794,8 @@ function withoutSensitiveRunInput(body: JsonRecord): JsonRecord {
   delete sanitized.byokProfileId;
   delete sanitized.apiKey;
   delete sanitized.rechargeResumeCapability;
-  // Scope objects are server-issued authorization facts, not request options.
-  // A caller must never be able to persist a forged Workspace or DS binding
-  // that startChatRun and tool-token minting will later treat as pinned.
+  // Workspace scope is a server-issued authorization fact, not a request option.
   delete sanitized.workspaceScope;
-  delete sanitized.designSystemScope;
   return sanitized;
 }
 
@@ -980,10 +972,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
 
   /**
    * Pin a run to its persisted project binding. The sole adoption branch is a
-   * signed-in AMR request for a truly unbound historical project: a freshly
-   * verified exact Personal identity becomes the persisted creator witness.
-   * Every other runtime keeps its legacy local path and never reads Workspace
-   * authority here.
+   * signed-in AMR request for a truly unbound historical project: an explicitly
+   * Personal local attribution becomes the persisted creator witness. Vela
+   * remains the final membership and billing authority when the run reaches
+   * the cloud; local run creation never probes the Workspace directory.
    */
   async function prepareRunWorkspaceScope(
     req: ApiRequest,
@@ -1069,8 +1061,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       // compatibility lane. Home may create it before Workspace discovery
       // settles, after already running the account balance gate; requiring a
       // later identity here would turn that accepted first prompt into a 409.
-      // Explicitly bound projects still pin their persisted Workspace above,
-      // and any asserted identity below is freshly verified before adoption.
+      // Explicitly bound projects still pin their persisted Workspace above.
       return {
         ok: true,
         workspaceScope: accountScopedRunWorkspaceScopeForProject(projectId),
@@ -1086,31 +1077,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       return { ok: false };
     }
 
-    const verified =
-      await ctx.amrWorkspaceScope.verifyWorkspaceRequestAuthority(req);
-    if (!verified.ok) {
-      sendApiError(
-        res,
-        verified.status,
-        verified.code,
-        verified.message,
-        verified.retryable ? { retryable: true } : {},
-      );
-      return { ok: false };
-    }
-    if (
-      verified.context.workspaceId !== requestContext.workspaceId
-      || verified.context.workspaceMemberId !== requestContext.workspaceMemberId
-    ) {
-      sendApiError(
-        res,
-        403,
-        'WORKSPACE_ACCESS_DENIED',
-        'the verified Workspace identity does not match the run request',
-      );
-      return { ok: false };
-    }
-    if (verified.context.workspaceType !== 'personal') {
+    if (requestContext.workspaceTypeAsserted === 'team') {
       sendApiError(
         res,
         409,
@@ -1118,6 +1085,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'historical projects can only be adopted into a Personal Workspace',
       );
       return { ok: false };
+    }
+    if (requestContext.workspaceTypeAsserted !== 'personal') {
+      return {
+        ok: true,
+        workspaceScope: accountScopedRunWorkspaceScopeForProject(projectId),
+      };
     }
     const ensureWorkspaceProject = ctx.projectStore.ensureWorkspaceProject;
     if (!ensureWorkspaceProject) {
@@ -1141,11 +1114,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (existing) return existing;
       ensureWorkspaceProject(db, {
         projectId,
-        workspaceId: verified.context.workspaceId,
+        workspaceId: requestContext.workspaceId,
         visibility: 'personal',
         resourceState: 'active',
-        createdByWorkspaceMemberId: verified.context.workspaceMemberId,
-        updatedByWorkspaceMemberId: verified.context.workspaceMemberId,
+        createdByWorkspaceMemberId: requestContext.workspaceMemberId,
+        updatedByWorkspaceMemberId: requestContext.workspaceMemberId,
         syncState: 'local_only',
         resourceHubResourceId: null,
         cloudTombstonedAt: null,
@@ -1155,7 +1128,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       return getWorkspaceProjectByProjectId(db, projectId);
     });
     const adopted = bindPersonal();
-    if (adopted?.workspaceId !== verified.context.workspaceId) {
+    if (adopted?.workspaceId !== requestContext.workspaceId) {
       sendApiError(
         res,
         409,
@@ -1165,7 +1138,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       return { ok: false };
     }
     const workspaceScope = pinRunWorkspaceScopeForProject(db, projectId);
-    if (!workspaceScope || workspaceScope.workspaceId !== verified.context.workspaceId) {
+    if (!workspaceScope || workspaceScope.workspaceId !== requestContext.workspaceId) {
       sendApiError(
         res,
         409,
@@ -1188,13 +1161,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   ): Promise<boolean> {
     if (!run.projectId || !ctx.authorizeProjectRequest) return true;
 
-    // Local CLI/MCP callers predate Workspace transport headers. Once a run
-    // exists, its persisted agentId is the reliable runtime discriminator:
-    // non-AMR runtimes do not call the Workspace billing plane, so their
-    // headerless status/stream/cancel lifecycle must not depend on Workspace
-    // membership authority. AMR remains exact-authority-only. Likewise, any
-    // caller that explicitly asserts a Workspace identity still goes through
-    // the normal gate so a conflicting or partial scope cannot be ignored.
+    // Once a run exists, status/stream/cancel are local lifecycle operations.
+    // Headerless CLI/MCP/browser callers must not lose access merely because
+    // the Workspace directory is stale or offline, regardless of which agent
+    // created the run. Explicitly asserted identity still goes through the
+    // local project gate so conflicting or partial scope cannot be ignored.
     const requestContext = workspaceResourceContextFromRequest(req);
     const carriesNavigationScope =
       options.mode === 'read'
@@ -1206,10 +1177,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           && req.query.workspaceMemberId.trim().length > 0)
       );
     if (
-      typeof run.agentId === 'string'
-      && run.agentId.length > 0
-      && run.agentId !== 'amr'
-      && requestContext === null
+      requestContext === null
       && !carriesNavigationScope
     ) {
       return true;
@@ -1398,8 +1366,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       mediaExecution: mediaExecution.policy,
       toolBundle: toolBundle.bundle,
       ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
-      // Always overwrite the untrusted HTTP field, including for an unbound
-      // project. The absence of a persisted binding is itself authoritative.
+      // Always replace any untrusted request field, including with null for an
+      // unbound project.
       workspaceScope: preparedWorkspaceScope,
     };
     if (resolvedSnapshot?.ok) {
@@ -3170,8 +3138,6 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       mediaExecution: mediaExecution.policy,
       toolBundle: toolBundle.bundle,
       ...(chatProject?.metadata ? { projectMetadata: chatProject.metadata } : {}),
-      // `withoutSensitiveRunInput` strips caller scope; initialize the
-      // server-owned value explicitly and replace it below for bound projects.
       workspaceScope: null,
     };
     // Mirror the POST /api/runs ownership check: the assistantMessageId must

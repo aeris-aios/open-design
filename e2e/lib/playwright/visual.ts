@@ -263,6 +263,11 @@ export async function configureVisualPage(page: Page, options: VisualPageOptions
   const config = { ...VISUAL_CONFIG, ...(options.config ?? {}) };
   const agents = options.agents ?? [MOCK_AGENT];
 
+  // Screenshot-level `animations: 'disabled'` only fast-forwards CSS motion.
+  // The home wordmark and placeholder carousel are driven by requestAnimationFrame
+  // and timers, so make them take the product's deterministic static fallback too.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+
   // Visual coverage is a web rendering contract, not a daemon behavior lane.
   // Register these first so the narrower fixtures below win; every other
   // daemon-owned request terminates at a deterministic browser-side boundary.

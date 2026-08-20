@@ -22,7 +22,160 @@ import type { SolutionPageKey } from '../solution-pages-i18n/types';
 const REPO = 'https://github.com/nexu-io/open-design';
 const REPO_DISCUSSIONS = `${REPO}/discussions`;
 const DISCORD = 'https://discord.gg/mHAjSMV6gz';
+const FEISHU = 'https://od.kokiai.net/community/website';
 const X_PROFILE = 'https://x.com/OpenDesignHQ';
+
+type CommunityEntryCopy = {
+  cta: string;
+  benefits: readonly [string, string, string];
+};
+
+const COMMUNITY_ENTRY_COPY = {
+  en: {
+    cta: 'Join Discord',
+    benefits: [
+      'Model × design scenario arenas',
+      'Weekly Hackathon: credits + promotion',
+      'Super Thursday: weekly prize draws',
+    ],
+  },
+  zh: {
+    cta: '加入飞书社群',
+    benefits: [
+      '模型 × 设计场景竞技场',
+      'Weekly Hackathon：Credits + 流量扶持',
+      'Super Thursday：每周抽奖',
+    ],
+  },
+  'zh-tw': {
+    cta: '加入飛書社群',
+    benefits: [
+      '模型 × 設計場景競技場',
+      'Weekly Hackathon：Credits + 流量扶持',
+      'Super Thursday：每週抽獎',
+    ],
+  },
+  ja: {
+    cta: 'Discordに参加',
+    benefits: [
+      'モデル × デザインシーンのアリーナ',
+      'Weekly Hackathon：クレジット＋露出支援',
+      'Super Thursday：毎週抽選',
+    ],
+  },
+  ko: {
+    cta: 'Discord 참여',
+    benefits: [
+      '모델 × 디자인 시나리오 아레나',
+      'Weekly Hackathon: 크레딧 + 홍보 지원',
+      'Super Thursday: 매주 추첨',
+    ],
+  },
+  de: {
+    cta: 'Discord beitreten',
+    benefits: [
+      'Arenen für Modelle × Designszenarien',
+      'Weekly Hackathon: Credits + Reichweite',
+      'Super Thursday: wöchentliche Verlosung',
+    ],
+  },
+  fr: {
+    cta: 'Rejoindre Discord',
+    benefits: [
+      'Arènes modèles × scénarios de design',
+      'Weekly Hackathon : crédits + mise en avant',
+      'Super Thursday : tirage hebdomadaire',
+    ],
+  },
+  ru: {
+    cta: 'Вступить в Discord',
+    benefits: [
+      'Арены: модели × дизайн-сценарии',
+      'Weekly Hackathon: кредиты + продвижение',
+      'Super Thursday: еженедельный розыгрыш',
+    ],
+  },
+  es: {
+    cta: 'Unirse a Discord',
+    benefits: [
+      'Arenas de modelos × escenarios de diseño',
+      'Weekly Hackathon: créditos + promoción',
+      'Super Thursday: sorteo semanal',
+    ],
+  },
+  'pt-br': {
+    cta: 'Entrar no Discord',
+    benefits: [
+      'Arenas de modelos × cenários de design',
+      'Weekly Hackathon: créditos + divulgação',
+      'Super Thursday: sorteio semanal',
+    ],
+  },
+  it: {
+    cta: 'Unisciti a Discord',
+    benefits: [
+      'Arene modelli × scenari di design',
+      'Weekly Hackathon: crediti + promozione',
+      'Super Thursday: estrazione settimanale',
+    ],
+  },
+  vi: {
+    cta: 'Tham gia Discord',
+    benefits: [
+      'Đấu trường mô hình × bối cảnh thiết kế',
+      'Weekly Hackathon: credit + hỗ trợ quảng bá',
+      'Super Thursday: quay thưởng hằng tuần',
+    ],
+  },
+  pl: {
+    cta: 'Dołącz do Discorda',
+    benefits: [
+      'Areny modeli × scenariuszy projektowych',
+      'Weekly Hackathon: kredyty + promocja',
+      'Super Thursday: cotygodniowe losowanie',
+    ],
+  },
+  id: {
+    cta: 'Gabung Discord',
+    benefits: [
+      'Arena model × skenario desain',
+      'Weekly Hackathon: kredit + dukungan promosi',
+      'Super Thursday: undian mingguan',
+    ],
+  },
+  nl: {
+    cta: 'Word lid van Discord',
+    benefits: [
+      'Arena’s voor modellen × ontwerpscenario’s',
+      'Weekly Hackathon: credits + promotie',
+      'Super Thursday: wekelijkse loting',
+    ],
+  },
+  ar: {
+    cta: 'انضم إلى Discord',
+    benefits: [
+      'ساحات النماذج × سيناريوهات التصميم',
+      'Weekly Hackathon: أرصدة + دعم الترويج',
+      'Super Thursday: سحب أسبوعي',
+    ],
+  },
+  tr: {
+    cta: "Discord'a katıl",
+    benefits: [
+      'Model × tasarım senaryosu arenaları',
+      'Weekly Hackathon: kredi + tanıtım desteği',
+      'Super Thursday: haftalık çekiliş',
+    ],
+  },
+  uk: {
+    cta: 'Приєднатися до Discord',
+    benefits: [
+      'Арени: моделі × дизайн-сценарії',
+      'Weekly Hackathon: кредити + промопідтримка',
+      'Super Thursday: щотижневий розіграш',
+    ],
+  },
+} as const satisfies Record<LandingLocaleCode, CommunityEntryCopy>;
 
 // OpenDesign Cloud endpoints for the header account module.
 // Production defaults; overridable at build time via PUBLIC_* env so a
@@ -30,7 +183,7 @@ const X_PROFILE = 'https://x.com/OpenDesignHQ';
 // the runtime via `data-*` on `.nav-account` because the auth logic lives in
 // `header-enhancer.astro`'s `<script is:inline>` (NOT processed by Vite, so it
 // cannot read `import.meta.env` itself).
-const env = import.meta.env as Record<string, string | undefined>;
+const env = (import.meta.env ?? {}) as Record<string, string | undefined>;
 const CLOUD_API_BASE =
   env.PUBLIC_CLOUD_API_BASE ?? env.PUBLIC_AMR_API_BASE ?? 'https://amr-api.open-design.ai';
 const CLOUD_CONSOLE_URL =
@@ -73,7 +226,10 @@ const TOOL_ENTRIES: ReadonlyArray<{ href: string; key: SolutionPageKey }> = [
 
 // Agent column — the coding agents with a dedicated long-form design page
 // upstream. Routes stay in lockstep with main's /agents/ hub.
-const AGENTS: ReadonlyArray<{ name: string; route: string }> = [
+const AGENTS: ReadonlyArray<{ name: string; route: string; highlight?: boolean }> = [
+  // DeepSeek Harness leads with a red-dot highlight while its integration is
+  // the freshly launched entry (2026-08 request); demote when the push ends.
+  { name: 'DeepSeek Harness', route: 'deepseek-harness-design', highlight: true },
   { name: 'Codex', route: 'codex-design' },
   { name: 'Cursor Agent', route: 'cursor-design' },
   { name: 'Claude Code', route: 'claude-code-design' },
@@ -84,7 +240,6 @@ const AGENTS: ReadonlyArray<{ name: string; route: string }> = [
   { name: 'Grok Build', route: 'grok-design' },
   { name: 'Kimi CLI', route: 'kimi-design' },
   { name: 'DeepSeek TUI', route: 'deepseek-design' },
-  { name: 'DeepSeek Harness', route: 'deepseek-harness-design' },
   { name: 'Trae CLI', route: 'trae-cli-design' },
   { name: 'Aider', route: 'aider-design' },
   { name: 'Antigravity', route: 'antigravity-design' },
@@ -177,6 +332,8 @@ export function Header({
   const href = (path: string) => localizedHref(path, locale);
   const homeBrandHref = brandHref === '/' ? href('/') : brandHref;
   const productMenuCopy = getHeaderProductMenuCopy(locale);
+  const usesFeishuCommunity = locale === 'zh' || locale === 'zh-tw';
+  const communityCopy = COMMUNITY_ENTRY_COPY[locale];
 
   return (
     <header className='nav' data-od-id='nav'>
@@ -191,7 +348,7 @@ export function Header({
           />
         </a>
         {/*
-          Mobile / tablet hamburger. Hidden by CSS at ≥1100px (the desktop
+          Mobile / tablet hamburger. Hidden by CSS at ≥1367px (the desktop
           breakpoint where the full nav fits). At narrower widths it toggles
           `.is-open` on the parent <header> via a small handler in
           `header-enhancer.astro` — when open, the `<nav>` element below
@@ -245,25 +402,29 @@ export function Header({
                 className='nav-dropdown nav-dropdown-mega'
                 aria-label={productMenuCopy.product}
               >
-                {/* Plugin column — the Codex plugin entry. The product
-                    family (HTML Anything / HTML Video / Codex Slides) moved
-                    to the footer only (2026-08 nav consolidation); the mega
-                    panel now carries Plugin + the former Solution groups. */}
+                {/* Feature column — the first mega-panel group. The former
+                    head-only "Codex Plugin" column read as a blank panel next
+                    to the populated Solution/Agent columns (live bug), so the
+                    column is now the localized "Feature" category with Codex
+                    Plugin as its first entry (2026-08 design). The product
+                    family (HTML Anything / HTML Video / Codex Slides) stays
+                    footer-only per the 2026-08 nav consolidation. */}
                 <li className='nav-mega-col nav-mega-col-merged'>
-                  {/* Product name as the column head-link, not a translatable
-                      phrase — same convention as "Codex Slides" before it.
-                      The localized "Plugins" label is reserved for the
-                      Resources → /plugins/ catalog hub to avoid one chrome
-                      word pointing at two destinations. */}
-                  <a
-                    href={href('/codex-plugin/')}
-                    className={
-                      'nav-mega-col-head' +
-                      (active === 'open-design-plugin' ? ' is-active' : '')
-                    }
-                  >
-                    Codex Plugin
-                  </a>
+                  <span className='nav-mega-col-head'>{productMenuCopy.feature}</span>
+                  <ul className='nav-mega-list'>
+                    {/* Product name, not a translatable phrase — same
+                        convention as the Agent column entries. */}
+                    <li>
+                      <a
+                        href={href('/codex-plugin/')}
+                        className={
+                          active === 'open-design-plugin' ? 'is-active' : undefined
+                        }
+                      >
+                        <span className='dropdown-name'>Codex Plugin</span>
+                      </a>
+                    </li>
+                  </ul>
                 </li>
                 {/* Former Solution dropdown, folded into the mega panel as
                     three side-by-side columns (Use cases / Roles / Tools). */}
@@ -330,7 +491,12 @@ export function Header({
                     {AGENTS.map((agent) => (
                       <li key={agent.route}>
                         <a href={href(`/agents/${agent.route}/`)}>
-                          <span className='dropdown-name'>{agent.name}</span>
+                          <span className='dropdown-name'>
+                            {agent.name}
+                            {agent.highlight ? (
+                              <span className='nav-new-dot' aria-hidden='true'></span>
+                            ) : null}
+                          </span>
                         </a>
                       </li>
                     ))}
@@ -450,7 +616,8 @@ export function Header({
 
             {/* Community — Contributors / Ambassadors / Moderators / Events. These
                 pages are now localized Astro routes, so link through `href()`
-                to keep visitors on their language variant. */}
+                to keep visitors on their language variant. Discord and Feishu
+                open their respective community spaces in a new tab. */}
             <li className='has-dropdown'>
               <a
                 href={href('/community/')}
@@ -492,6 +659,11 @@ export function Header({
                   </a>
                 </li>
                 <li>
+                  <a href={FEISHU} {...ext}>
+                    <span className='dropdown-name'>Feishu</span>
+                  </a>
+                </li>
+                <li>
                   <a href={REPO_DISCUSSIONS} {...ext}>
                     <span className='dropdown-name'>
                       {productMenuCopy.communityItems.discussions}
@@ -506,9 +678,69 @@ export function Header({
               </ul>
             </li>
 
+            {/* Compact navigation keeps the community action inside the
+                hamburger panel so long localized labels cannot crowd the
+                fixed header row. The desktop counterpart stays in nav-side. */}
+            <li className='nav-community-mobile-entry'>
+              <a
+                className='nav-community-mobile-cta'
+                href={usesFeishuCommunity ? FEISHU : DISCORD}
+                {...ext}
+                data-community-cta
+                data-community-platform={usesFeishuCommunity ? 'feishu' : 'discord'}
+              >
+                <svg
+                  className='nav-community-cta-icon'
+                  viewBox='0 0 20 20'
+                  aria-hidden='true'
+                >
+                  <path d='M4 4.75h12v8.5H9l-3.8 2.5v-2.5H4z' />
+                  <path d='M7 8h6M7 10.5h4' />
+                </svg>
+                <span>{communityCopy.cta}</span>
+              </a>
+              <div className='nav-community-mobile-benefits'>
+                {communityCopy.benefits.map((benefit) => (
+                  <div className='nav-community-mobile-benefit' key={benefit}>
+                    <span className='nav-community-benefits-dot' aria-hidden='true' />
+                    <span>{benefit}</span>
+                  </div>
+                ))}
+              </div>
+            </li>
+
           </ul>
         </nav>
         <div className='nav-side'>
+          <div className='nav-community-entry'>
+            <a
+              className='nav-community-cta'
+              href={usesFeishuCommunity ? FEISHU : DISCORD}
+              {...ext}
+              data-community-cta
+              data-community-platform={usesFeishuCommunity ? 'feishu' : 'discord'}
+            >
+              <svg
+                className='nav-community-cta-icon'
+                viewBox='0 0 20 20'
+                aria-hidden='true'
+              >
+                <path d='M4 4.75h12v8.5H9l-3.8 2.5v-2.5H4z' />
+                <path d='M7 8h6M7 10.5h4' />
+              </svg>
+              {communityCopy.cta}
+            </a>
+            <div className='nav-community-benefits-card'>
+              <ul>
+                {communityCopy.benefits.map((benefit) => (
+                  <li key={benefit}>
+                    <span className='nav-community-benefits-dot' aria-hidden='true' />
+                    <span>{benefit}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
           {localeSwitcher ? (
             <details className='locale-switch nav-locale-switch' data-locale-switch>
               <summary
