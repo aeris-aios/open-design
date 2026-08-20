@@ -1006,7 +1006,9 @@ export function summarizeRunTimingAnalytics(args: {
       rec.event === 'agent' &&
       data?.type === 'artifact'
     ) {
-      firstObservedModelEventType = firstObservedModelEventType ?? 'artifact';
+      // Not a first-model-event candidate, for the same reason the lifecycle
+      // tracer skips it: this event is the daemon persisting stdout at close
+      // time, not the model responding. It is still the artifact-write source.
       if (artifactWriteSource === undefined) artifactWriteSource = 'artifact_event';
     }
 
@@ -1067,6 +1069,13 @@ export function summarizeRunTimingAnalytics(args: {
     }
   }
 
+  // A run can end while a tool is still outstanding (crash, cancel, timeout),
+  // leaving a tool_use with no tool_result. That span still occupied the clock,
+  // so close it at run end for phase purposes. `tool_duration_ms` keeps
+  // counting completed pairs only and is unaffected.
+  for (const startedAt of openTools.values()) {
+    toolIntervals.push({ start: startedAt, end: runEndAt });
+  }
   const startAt = telemetry.startChatRunStartedAt ?? telemetry.startRequestedAt;
   const totalDurationMs = Math.max(0, args.analyticsCapturedAt - args.runCreatedAt);
   const firstModelEventAt = telemetry.firstModelEventAt ?? firstToolUseAt ?? telemetry.firstTokenAt;
@@ -1080,7 +1089,18 @@ export function summarizeRunTimingAnalytics(args: {
   // is scanned off event records stamped with the daemon's clock and is never
   // reset between retry attempts. Subtracting that from a tracer timestamp is
   // cross-clock arithmetic. Phase anchoring uses tracer-reported marks only.
-  const phaseAnchorAt = telemetry.firstModelEventAt ?? telemetry.firstTokenAt;
+  //
+  // Taken as the EARLIEST of the two rather than preferring the model-event
+  // mark: "the model started responding" cannot be later than the moment it
+  // emitted its first token. A late mark is always a bug at the producer (a
+  // daemon-generated finalizer event, a producer clock offset), and this keeps
+  // one from dragging every boundary to the end of the run.
+  const phaseAnchorCandidates = [
+    telemetry.firstModelEventAt,
+    telemetry.firstTokenAt,
+  ].filter((value): value is number => value !== undefined && Number.isFinite(value));
+  const phaseAnchorAt =
+    phaseAnchorCandidates.length > 0 ? Math.min(...phaseAnchorCandidates) : undefined;
   const firstModelEventType =
     telemetry.firstModelEventType ??
     firstObservedModelEventType ??
@@ -1208,7 +1228,11 @@ export function summarizeRunTimingAnalytics(args: {
     telemetry.processSpawnStartedAt,
     telemetry.processSpawnedAt,
     telemetry.modelCallStartAt,
-    telemetry.firstTokenAt,
+    // The boundary the phases are actually measured from. A tool-only turn
+    // never emits text, and requiring a token here would mark a fully
+    // instrumented run `partial` and drop it from dashboards that filter on
+    // complete timings. The first-token FIELDS are unchanged.
+    phaseAnchorAt,
     runEndAt,
   ]);
 

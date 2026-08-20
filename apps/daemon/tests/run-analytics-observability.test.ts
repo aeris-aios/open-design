@@ -1758,3 +1758,103 @@ describe('summarizeRunTimingAnalytics tool phase occupancy', () => {
     expect(result.tool_duration_ms).toBe(7_000);
   });
 });
+
+describe('summarizeRunTimingAnalytics anchor and completeness edges', () => {
+  it('does not let a late daemon-persisted artifact push the anchor past the first token', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 20_000,
+      analyticsCapturedAt: 20_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        processSpawnedAt: 2_500,
+        stdinWriteEndAt: 3_000,
+        // Plain-stream runs stamp first-token from the first buffered stdout
+        // chunk, then the daemon persists stdout artifacts at close time and
+        // emits an `artifact` agent event. That event is a daemon action, not
+        // a model response, and it arrives near the end of the run.
+        firstTokenAt: 5_000,
+        firstVisibleOutputAt: 5_000,
+        firstModelEventAt: 19_000,
+        firstModelEventType: 'artifact' as const,
+        attemptIndex: 1,
+        attemptStartedAt: 2_000,
+      },
+      events: [],
+    });
+
+    // The model had produced output by 5s. Anchoring on the 19s artifact
+    // reports a 1s active window and a 16s runtime init for a run that was
+    // streaming the whole time.
+    expect(result.model_active_duration_ms).toBe(15_000);
+    expect(result.runtime_init_to_first_model_event_ms).toBe(2_000);
+    expect(result.bottleneck_phase).toBe('stream_output');
+  });
+
+  it('reports complete phase timing for a fully instrumented run with no text token', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 12_000,
+      analyticsCapturedAt: 12_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        promptBuildStartAt: 2_100,
+        promptBuildEndAt: 2_200,
+        processSpawnStartedAt: 2_300,
+        processSpawnedAt: 2_400,
+        modelCallStartAt: 2_500,
+        stdinWriteEndAt: 2_600,
+        // A tool-only turn: the model worked and finished without ever
+        // emitting text.
+        firstModelEventAt: 3_000,
+        firstModelEventType: 'tool_use' as const,
+        attemptIndex: 1,
+        attemptStartedAt: 2_000,
+      },
+      events: [
+        { id: 1, event: 'agent', timestamp: 3_000, data: { type: 'tool_use', id: 't1', name: 'Bash' } },
+        { id: 2, event: 'agent', timestamp: 8_000, data: { type: 'tool_result', toolUseId: 't1' } },
+      ],
+    });
+
+    // Every boundary the phases are actually measured from is present, so
+    // this run is fully measured. Requiring a text token here marks it
+    // partial and drops it from dashboards that filter on complete timings.
+    expect(result.time_to_first_token_ms).toBeUndefined();
+    expect(result.phase_timing_status).toBe('complete');
+  });
+
+  it('counts a tool still running at run end as tool occupancy', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 15_000,
+      analyticsCapturedAt: 15_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        processSpawnedAt: 3_000,
+        stdinWriteEndAt: 3_500,
+        firstModelEventAt: 4_000,
+        firstModelEventType: 'tool_use' as const,
+        attemptIndex: 1,
+        attemptStartedAt: 2_000,
+      },
+      events: [
+        // The run died while this tool was still outstanding, so there is no
+        // tool_result to pair with.
+        { id: 1, event: 'agent', timestamp: 5_000, data: { type: 'tool_use', id: 't1', name: 'Bash' } },
+      ],
+    });
+
+    // 10s of the 11s active window was spent inside that tool. Treating the
+    // unpaired span as zero occupancy hands the whole window to stream_output
+    // and contradicts last_observed_phase.
+    expect(result.model_active_duration_ms).toBe(11_000);
+    expect(result.bottleneck_phase).toBe('tool_execution');
+    expect(result.last_observed_phase).toBe('tool_execution');
+    // The published metric only ever sums completed pairs.
+    expect(result.tool_duration_ms).toBe(0);
+  });
+});

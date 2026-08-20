@@ -57,11 +57,15 @@ export function runLifecycleMarkersForStreamEvent(
       ? (data as { type?: unknown }).type
       : undefined;
   if (event === 'agent') {
+    // `artifact` is deliberately absent. Agent `artifact` events are emitted
+    // from exactly one place -- the daemon's close-time persistence of
+    // plain-stream stdout -- and never by a runtime relaying model output.
+    // Marking one would stamp a daemon action taken at the END of the run as
+    // the moment the model started responding, which is both wrong on its own
+    // terms and would push every phase boundary to the end of the run. Re-add
+    // it only if a runtime starts emitting a model-authored artifact event.
     const firstModelEventType =
-      type === 'text_delta' ||
-      type === 'thinking_delta' ||
-      type === 'tool_use' ||
-      type === 'artifact'
+      type === 'text_delta' || type === 'thinking_delta' || type === 'tool_use'
         ? type
         : undefined;
     return {
