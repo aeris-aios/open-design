@@ -2082,6 +2082,7 @@ export const ptBR: Dict = {
   'inlineSwitcher.missingApiKey': 'Chave de API ausente — abra Configurações.',
   'inlineSwitcher.openFullSettings': 'Abrir configurações de execução',
   'inlineSwitcher.customSuffix': '(personalizado)',
+  'inlineSwitcher.unlimitedBadge': 'Ilimitado',
   'project.backToProjects': 'Voltar aos projetos',
   'project.brandReadyTitle': 'O design system {name} está pronto',
   'project.brandReadyTitleGeneric': 'Seu design system está pronto',
