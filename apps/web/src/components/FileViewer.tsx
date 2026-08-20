@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import {
@@ -4911,6 +4911,9 @@ export function CommentSidePanel({
 }
 
 const COMMENT_SIDE_DRAG_MIME = 'application/x-open-design-preview-comment';
+const COMMENT_FLOAT_PANEL_MIN_WIDTH = 260;
+const COMMENT_FLOAT_PANEL_DEFAULT_WIDTH = 360;
+const COMMENT_FLOAT_PANEL_MAX_WIDTH = 480;
 
 type CommentSideDropEdge = 'before' | 'after';
 
@@ -4996,6 +4999,8 @@ function CommentSideDock({
   renderCreateForm = true,
   t,
   composer,
+  floatingPanelWidth,
+  onFloatingPanelWidthChange,
 }: {
   comments: PreviewComment[];
   projectId?: string;
@@ -5024,12 +5029,71 @@ function CommentSideDock({
   renderCreateForm?: boolean;
   t: TranslateFn;
   composer?: ReactNode;
+  /** The width and resize callback are supplied only for the floating panel. */
+  floatingPanelWidth?: number;
+  onFloatingPanelWidthChange?: (width: number) => void;
 }) {
+  const resizeFloatingPanel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (collapsed || typeof floatingPanelWidth !== 'number' || !onFloatingPanelWidthChange) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = floatingPanelWidth;
+    const ownerDocument = event.currentTarget.ownerDocument;
+    const maximum = Math.min(
+      COMMENT_FLOAT_PANEL_MAX_WIDTH,
+      Math.max(COMMENT_FLOAT_PANEL_MIN_WIDTH, (ownerDocument.defaultView?.innerWidth ?? 0) - 32),
+    );
+    const update = (clientX: number) => {
+      onFloatingPanelWidthChange(
+        clamp(startWidth + startX - clientX, COMMENT_FLOAT_PANEL_MIN_WIDTH, maximum),
+      );
+    };
+    const move = (moveEvent: PointerEvent) => update(moveEvent.clientX);
+    const stop = () => {
+      ownerDocument.removeEventListener('pointermove', move);
+      ownerDocument.removeEventListener('pointerup', stop);
+      ownerDocument.removeEventListener('pointercancel', stop);
+    };
+    ownerDocument.addEventListener('pointermove', move);
+    ownerDocument.addEventListener('pointerup', stop);
+    ownerDocument.addEventListener('pointercancel', stop);
+  };
+  const resizeByKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (typeof floatingPanelWidth !== 'number' || !onFloatingPanelWidthChange) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? 1 : -1;
+    onFloatingPanelWidthChange(
+      clamp(
+        floatingPanelWidth + direction * 16,
+        COMMENT_FLOAT_PANEL_MIN_WIDTH,
+        COMMENT_FLOAT_PANEL_MAX_WIDTH,
+      ),
+    );
+  };
+  const floatingPanelResizable = !collapsed
+    && typeof floatingPanelWidth === 'number'
+    && Boolean(onFloatingPanelWidthChange);
   return (
     <div
       className={`comment-side-dock${collapsed ? ' collapsed' : ''}`}
       data-testid="comment-side-dock"
     >
+      {floatingPanelResizable ? (
+        <div
+          className="comment-side-resize-handle"
+          data-testid="comment-side-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('entry.resizeAria')}
+          aria-valuemin={COMMENT_FLOAT_PANEL_MIN_WIDTH}
+          aria-valuemax={COMMENT_FLOAT_PANEL_MAX_WIDTH}
+          aria-valuenow={floatingPanelWidth}
+          tabIndex={0}
+          onPointerDown={resizeFloatingPanel}
+          onKeyDown={resizeByKey}
+        />
+      ) : null}
       <CommentSidePanel
         comments={comments}
         projectId={projectId}
@@ -8300,6 +8364,9 @@ function HtmlViewer({
   const [annotationFrozenSource, setAnnotationFrozenSource] = useState<string | null>(null);
   const [manualEditViewportWidth, setManualEditViewportWidth] = useState<number | null>(null);
   const [commentPortalHost, setCommentPortalHost] = useState<HTMLElement | null>(null);
+  const [commentFloatingPanelWidth, setCommentFloatingPanelWidth] = useState(
+    COMMENT_FLOAT_PANEL_DEFAULT_WIDTH,
+  );
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
   const [commentComposerHost, setCommentComposerHost] = useState<HTMLDivElement | null>(null);
   const [commentPreviewCanvasNode, setCommentPreviewCanvasNode] = useState<HTMLDivElement | null>(null);
@@ -8712,6 +8779,13 @@ function HtmlViewer({
       setCommentPortalHost(null);
     };
   }, [commentPanelOpen, commentPortalId]);
+  useLayoutEffect(() => {
+    if (!commentPortalHost) return;
+    commentPortalHost.style.setProperty('--comment-float-width', `${commentFloatingPanelWidth}px`);
+    return () => {
+      commentPortalHost.style.removeProperty('--comment-float-width');
+    };
+  }, [commentFloatingPanelWidth, commentPortalHost]);
   useLayoutEffect(() => {
     if (commentPanelOpen) return;
     const target = pendingCommentPanelFocusRef.current;
@@ -15004,6 +15078,23 @@ function HtmlViewer({
       },
     };
   })();
+  const commentComposerBounds = (() => {
+    const baseBounds = commentComposerPortalMetrics?.bounds ?? previewBodySize;
+    if (!baseBounds || !commentPortalHost || !commentComposerPortalMetrics) return baseBounds;
+    const panelRect = commentPortalHost.getBoundingClientRect();
+    const composerHostRect = commentComposerPortalMetrics.host.getBoundingClientRect();
+    if (panelRect.width <= 0 || composerHostRect.width <= 0) return baseBounds;
+    // The floating side panel sits above the preview rather than participating
+    // in its layout. Treat its left edge as the popover's visual right boundary
+    // so a newly opened composer is never hidden beneath the comments list.
+    const rightLimit = panelRect.left - composerHostRect.left
+      + (baseBounds.scrollLeft ?? 0) - 14;
+    if (!Number.isFinite(rightLimit) || rightLimit >= baseBounds.width) return baseBounds;
+    return {
+      ...baseBounds,
+      width: Math.max(0, rightLimit),
+    };
+  })();
   const commentComposerNode = boardMode && activeCommentTarget && activeCommentTargetVisible ? (
     <BoardComposerPopover
       target={activeCommentTarget}
@@ -15070,7 +15161,7 @@ function HtmlViewer({
           y: overlayPreviewTransform.offsetY,
         }
       }
-      bounds={commentComposerPortalMetrics?.bounds ?? previewBodySize}
+      bounds={commentComposerBounds}
       docked={false}
       commenting
     />
@@ -15233,6 +15324,8 @@ function HtmlViewer({
       renderCreateForm={!commentPortalHost}
       t={t}
       composer={null}
+      floatingPanelWidth={commentPortalHost ? commentFloatingPanelWidth : undefined}
+      onFloatingPanelWidthChange={commentPortalHost ? setCommentFloatingPanelWidth : undefined}
     />
   ) : null;
   const speakerNotesFeedback = speakerNotesStatus === 'saved'

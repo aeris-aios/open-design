@@ -9376,6 +9376,42 @@ describe('FileViewer tweaks toolbar', () => {
     });
   });
 
+  it('lets a floating comment list shrink to a safe minimum width', async () => {
+    const portalId = 'project-comments-resize';
+    render(
+      <>
+        <div id={portalId} data-testid="comment-float-host" />
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile()}
+          liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+          commentPortalId={portalId}
+        />
+      </>,
+    );
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    const handle = await screen.findByTestId('comment-side-resize-handle');
+    const host = screen.getByTestId('comment-float-host');
+
+    expect(host.style.getPropertyValue('--comment-float-width')).toBe('360px');
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 300 });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 440 });
+    fireEvent.pointerUp(document, { pointerId: 1, clientX: 440 });
+
+    await waitFor(() => {
+      expect(host.style.getPropertyValue('--comment-float-width')).toBe('260px');
+      expect(handle).toHaveAttribute('aria-valuenow', '260');
+    });
+
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    await waitFor(() => {
+      expect(host.style.getPropertyValue('--comment-float-width')).toBe('276px');
+      expect(handle).toHaveAttribute('aria-valuenow', '276');
+    });
+  });
+
   it('keeps the comment popover open and restores focus when View all comments closes', async () => {
     const portalId = 'project-comments-view-all';
     render(
