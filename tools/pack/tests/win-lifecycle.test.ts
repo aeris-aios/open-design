@@ -180,6 +180,39 @@ describe("installPackedWinApp", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  it.each([false, true])(
+    "refuses install after an unproven stop (existing uninstaller: %s)",
+    async (withUninstaller) => {
+      const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
+      const config = createConfig(root);
+      const paths = resolveWinPaths(config);
+      const installedSentinel = join(paths.installDir, "sentinel.txt");
+      try {
+        await mkdir(dirname(paths.setupPath), { recursive: true });
+        await mkdir(paths.installDir, { recursive: true });
+        await writeFile(paths.setupPath, "", "utf8");
+        await writeFile(installedSentinel, "installed", "utf8");
+        if (withUninstaller) await writeFile(paths.uninstallerPath, "uninstaller", "utf8");
+        stopControl.mockImplementation(async (service) => ({
+          code: 0,
+          pid: null,
+          signal: null,
+          stopped: service !== "web",
+        }));
+        invokeNsis.mockReset();
+
+        await expect(installPackedWinApp(config)).rejects.toThrow(
+          "cannot install Windows app after an unproven stop (partial)",
+        );
+        await expect(readFile(installedSentinel, "utf8")).resolves.toBe("installed");
+        expect(invokeNsis).not.toHaveBeenCalled();
+      } finally {
+        stopControl.mockResolvedValue({ code: 0, pid: null, signal: null, stopped: true });
+        await rm(root, { force: true, recursive: true });
+      }
+    },
+  );
 });
 
 describe("inspectPackedWinApp", () => {

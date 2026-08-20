@@ -167,12 +167,19 @@ async function observeWinResidues(config: ToolPackConfig, paths = resolveWinPath
 export async function installPackedWinApp(config: ToolPackConfig): Promise<WinInstallResult> {
   const lifecycleTimings: WinLifecycleTiming[] = [];
   const paths = resolveWinPaths(config);
-  const registeredPaths = await measureLifecycleStep(lifecycleTimings, "resolve registered paths", async () => resolveWinRegisteredPaths(config, paths));
   if (!(await pathExists(paths.setupPath))) throw new Error(`no windows installer found at ${paths.setupPath}; run tools-pack win build first`);
-  if (await pathExists(registeredPaths.uninstallerPath)) {
-    await measureLifecycleStep(lifecycleTimings, "pre-install uninstall", async () => uninstallPackedWinApp(config));
-  } else {
-    await measureLifecycleStep(lifecycleTimings, "pre-install remove install dir", async () => removeTree(registeredPaths.installDir));
+  const uninstall = await measureLifecycleStep(
+    lifecycleTimings,
+    "pre-install uninstall",
+    async () => uninstallPackedWinApp(config),
+  );
+  if (uninstall.skipped) {
+    throw new Error(
+      `cannot install Windows app after an unproven stop (${uninstall.stop.status})`
+      + (uninstall.stop.remainingPids.length === 0
+        ? ""
+        : `; remaining PIDs: ${uninstall.stop.remainingPids.join(", ")}`),
+    );
   }
   await measureLifecycleStep(lifecycleTimings, "ensure install directory", async () => mkdir(paths.installDir, { recursive: true }));
   await measureLifecycleStep(lifecycleTimings, "nsis install", async () => runTimed(paths.installTimingPath, "install", async () => {
