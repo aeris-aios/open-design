@@ -150,6 +150,19 @@ record them in the Design Spec:
   enlarged type and generous whitespace; the read version may carry full
   arguments and annotations, but still keeps one main conclusion per slide.
 
+### Avoid deck clichés
+
+- Apply the core anti-cliché defaults strictly: no warm beige / cream slide
+  grounds by default, no stock UI faces as display type, no invented metrics.
+- Avoid the gradient-wash title slide with an oversized headline floating on
+  a colored blur; a cover earns attention through typography, a real image,
+  or one strong graphic device.
+- Never put an icon beside every bullet or heading; icons appear only where
+  they add meaning.
+- Never center-align every slide; alignment follows the layout catalog above.
+- Avoid decorative corner blobs, floating orbs, and abstract 3D shapes used
+  as page filler.
+
 ### Express data and relationships accurately
 
 - Choose charts and graphics by the relationship: comparison, trend,

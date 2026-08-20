@@ -117,6 +117,9 @@ record them in the Design Spec:
 
 ### Avoid runaway motion
 
+- Apply the core anti-cliché defaults strictly: no warm beige / cream color
+  washes as the default grade, and no floating-particle or glow overlays
+  used as filler between scenes.
 - Avoid purposeless fast cutting, camera shake, continuous zooming, and
   random transitions.
 - Avoid unexplained jumps in subject, lighting, scale, or style between

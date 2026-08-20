@@ -135,8 +135,13 @@ Build Package.
 
 ### Avoid templated AI visuals
 
+- Apply the core anti-cliché defaults strictly: no warm beige / cream
+  default grounds and no generic stock-gradient backdrops unless the brand
+  or selected direction requires them.
 - Avoid unmotivated neon gradients, glowing text, floating orbs, random
   particles, and decorative 3D elements.
+- Never invent awards, certification badges, press quotes, ratings, or
+  testimonials the user has not provided.
 - Avoid over-rounded corners, excessive badges, and card stacks with no focal
   point.
 - Never use garbled or incorrect text, distorted logos, malformed hands,
