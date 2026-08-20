@@ -8285,6 +8285,14 @@ function HtmlViewer({
   }, [file.name, manualEditMode, onRetainActivityChange]);
   const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(false);
   const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
+  // A successful Manual Edit save mutates the active iframe through the edit
+  // bridge before/while the same result is persisted. Remember that exact
+  // source revision so closing Edit can adopt the already-correct DOM instead
+  // of navigating the iframe to an equivalent freshly-built document.
+  const manualEditPersistedDocumentRef = useRef<{
+    sourceFingerprint: string;
+    reloadKey: number;
+  } | null>(null);
   // Source snapshot frozen while a non-edit annotation pass (Mark/Draw,
   // Comment, Inspect) is open. The file-watcher live-reload (chokidar →
   // filesRefresh → preview refresh) would otherwise re-render the iframe
@@ -8642,6 +8650,16 @@ function HtmlViewer({
     canvasTop: 0,
   });
   const previewScrollRequestAtRef = useRef(0);
+  const previewScrollCaptureSequenceRef = useRef(0);
+  const pendingPreviewScrollCapturesRef = useRef(new Map<string, {
+    resolve: (position: {
+      frameLeft: number;
+      frameTop: number;
+      canvasLeft: number;
+      canvasTop: number;
+    } | null) => void;
+    timeout: number;
+  }>());
   const dcViewportRef = useRef({
     x: 0,
     y: 0,
@@ -8667,6 +8685,7 @@ function HtmlViewer({
   useEffect(() => {
     setManualEditSrcDocActive(false);
     setManualEditFrozenSource(null);
+    manualEditPersistedDocumentRef.current = null;
     manualEditLiveStylesRef.current.clear();
     previewRuntimeStateRef.current = null;
   }, [fileViewportKey, projectId, file.name]);
@@ -8721,35 +8740,102 @@ function HtmlViewer({
     const next = target.isConnected ? target : fallback;
     next?.focus();
   }, [commentPanelOpen]);
-  const capturePreviewScrollPosition = useCallback(() => {
+  const capturePreviewScrollPosition = useCallback(async (): Promise<void> => {
     const host = previewBodyRef.current;
-    let frameLeft = 0;
-    let frameTop = 0;
-    let canvasLeft = 0;
-    let canvasTop = 0;
-    try {
-      const frameDocument = iframeRef.current?.contentWindow?.document;
-      const frameScroll = frameDocument?.scrollingElement;
-      const canvasScroll = frameDocument?.querySelector<HTMLElement>('.design-canvas');
-      frameLeft = frameScroll?.scrollLeft ?? 0;
-      frameTop = frameScroll?.scrollTop ?? 0;
-      canvasLeft = canvasScroll?.scrollLeft ?? 0;
-      canvasTop = canvasScroll?.scrollTop ?? 0;
-    } catch {
-      frameLeft = 0;
-      frameTop = 0;
-      canvasLeft = 0;
-      canvasTop = 0;
+    const frame = iframeRef.current;
+    let position = previewScrollPositionRef.current;
+    const sandbox = frame?.getAttribute('sandbox');
+    const sandboxTokens = new Set((sandbox ?? '').split(/\s+/).filter(Boolean));
+    // An iframe with a sandbox attribute but no allow-same-origin has an
+    // opaque origin even when it renders our own srcDoc. jsdom does not model
+    // that security boundary, so derive readability from the authored iframe
+    // contract instead of optimistically touching contentWindow.document.
+    let frameReadable = sandbox === null || sandboxTokens.has('allow-same-origin');
+    if (frameReadable) {
+      try {
+        const frameDocument = frame?.contentWindow?.document;
+        const frameScroll = frameDocument?.scrollingElement;
+        const canvasScroll = frameDocument?.querySelector<HTMLElement>('.design-canvas');
+        if (frameDocument && frameScroll) {
+          position = {
+            frameLeft: frameScroll.scrollLeft,
+            frameTop: frameScroll.scrollTop,
+            canvasLeft: canvasScroll?.scrollLeft ?? frameScroll.scrollLeft,
+            canvasTop: canvasScroll?.scrollTop ?? frameScroll.scrollTop,
+          };
+          previewScrollPositionRef.current = position;
+        } else {
+          frameReadable = false;
+        }
+      } catch {
+        frameReadable = false;
+      }
     }
-    previewScrollRestoreRef.current = {
+    const snapshot = {
       hostLeft: host?.scrollLeft ?? 0,
       hostTop: host?.scrollTop ?? 0,
-      frameLeft: frameLeft || previewScrollPositionRef.current.frameLeft,
-      frameTop: frameTop || previewScrollPositionRef.current.frameTop,
-      canvasLeft: canvasLeft || previewScrollPositionRef.current.canvasLeft,
-      canvasTop: canvasTop || previewScrollPositionRef.current.canvasTop,
+      frameLeft: position.frameLeft,
+      frameTop: position.frameTop,
+      canvasLeft: position.canvasLeft,
+      canvasTop: position.canvasTop,
       expiresAt: Date.now() + 5000,
     };
+    previewScrollRestoreRef.current = snapshot;
+    if (frameReadable || !frame?.contentWindow) return;
+
+    const requestId = `preview-scroll-${previewScrollCaptureSequenceRef.current += 1}`;
+    const exactPositionPromise = new Promise<typeof position | null>((resolve) => {
+      const timeout = window.setTimeout(() => {
+        pendingPreviewScrollCapturesRef.current.delete(requestId);
+        resolve(null);
+      }, 120);
+      pendingPreviewScrollCapturesRef.current.set(requestId, { resolve, timeout });
+      try {
+        frame.contentWindow?.postMessage({
+          type: 'od:preview-scroll-capture',
+          requestId,
+        }, '*');
+      } catch {
+        window.clearTimeout(timeout);
+        pendingPreviewScrollCapturesRef.current.delete(requestId);
+        resolve(null);
+      }
+    });
+    const installExactPosition = (exactPosition: typeof position | null) => {
+      // A newer mode transition may have installed its own snapshot while
+      // this opaque-frame round trip was in flight. Never let the older
+      // response overwrite that newer restore intent.
+      if (!exactPosition || previewScrollRestoreRef.current !== snapshot) return;
+      previewScrollPositionRef.current = exactPosition;
+      previewScrollRestoreRef.current = {
+        ...snapshot,
+        ...exactPosition,
+        expiresAt: Date.now() + 5000,
+      };
+    };
+    const hasKnownNonZeroScroll = (
+      snapshot.hostLeft !== 0
+      || snapshot.hostTop !== 0
+      || position.frameLeft !== 0
+      || position.frameTop !== 0
+      || position.canvasLeft !== 0
+      || position.canvasTop !== 0
+    );
+    if (!hasKnownNonZeroScroll) {
+      // At the origin there is no jump-to-top to prevent. Keep the precise
+      // capture in flight for subsequent transitions, but do not serialize an
+      // otherwise instant save behind a bridge timeout if the iframe is gone.
+      void exactPositionPromise.then(installExactPosition);
+      return;
+    }
+    installExactPosition(await exactPositionPromise);
+  }, []);
+  useEffect(() => () => {
+    for (const pending of pendingPreviewScrollCapturesRef.current.values()) {
+      window.clearTimeout(pending.timeout);
+      pending.resolve(null);
+    }
+    pendingPreviewScrollCapturesRef.current.clear();
   }, []);
   const restorePreviewScrollPosition = useCallback(() => {
     const snapshot = previewScrollRestoreRef.current;
@@ -9738,7 +9824,8 @@ function HtmlViewer({
   // has been rewritten to its own scoped raw URL; otherwise the first srcDoc
   // paint can leak an unscoped font/image request before the async rewrite
   // finishes.
-  const scopedRelativeAssetRefs = workspaceContext != null && relativeProjectAssetRefs;
+  const scopedRelativeAssetRefs =
+    workspaceContext?.workspaceType === 'team' && relativeProjectAssetRefs;
   const livePreviewSource = scopedRelativeAssetRefs && inlinedSource === null
     ? null
     : (inlinedSource ?? deckVisualSource);
@@ -9881,6 +9968,15 @@ function HtmlViewer({
   useEffect(() => {
     if (!workspaceActive) return;
     setPreviewAssetWarning(null);
+    // Personal/local project resources do not need Team authorization
+    // headers, so the iframe's own subresource requests are the source of
+    // truth. Probing
+    // the same paths here duplicates every image/font read before first paint
+    // (large landing pages can exceed 20 MB) and competes with Chromium's
+    // renderer for the exact files it is already loading. Team previews keep
+    // the preflight because browser-owned iframe requests cannot surface the
+    // daemon's scoped raw-route refusal safely to the host UI.
+    if (workspaceContext?.workspaceType !== 'team') return;
     if (mode !== 'preview' || effectiveDeck) return;
     const s = routingHtmlSource;
     if (!s) return;
@@ -9993,6 +10089,8 @@ function HtmlViewer({
   );
   useEffect(() => {
     if (
+      workspaceContext?.workspaceType !== 'team'
+      ||
       useUrlLoadPreview
       || authoredSrcDocBase !== false
       || effectiveScopedSrcDocPreviewBase
@@ -10037,12 +10135,31 @@ function HtmlViewer({
   const frozenPreviewMeasurementDocumentEpochRef = useRef(
     previewContentMeasurementDocumentEpoch,
   );
-  if (!interactivePreviewModeActive) {
+  const frozenSrcDocSourceSnapshotRefreshKeyRef = useRef(sourceSnapshotRefreshKey);
+  const persistedManualEditDocument = manualEditPersistedDocumentRef.current;
+  const canAdoptPersistedManualEditDocument =
+    !interactivePreviewModeActive
+    && persistedManualEditDocument?.reloadKey === reloadKey
+    && livePreviewSource != null
+    && persistedManualEditDocument.sourceFingerprint === previewSourceFingerprint(livePreviewSource);
+  if (!interactivePreviewModeActive && !canAdoptPersistedManualEditDocument) {
     frozenPreviewMeasurementDocumentEpochRef.current =
       previewContentMeasurementDocumentEpoch;
+    frozenSrcDocSourceSnapshotRefreshKeyRef.current = sourceSnapshotRefreshKey;
   }
   const transportPreviewMeasurementDocumentEpoch =
     frozenPreviewMeasurementDocumentEpochRef.current;
+  // Manual Edit persists immediately, then its file write and version record
+  // can arrive as several project watcher refreshes. The edit bridge already
+  // shows the saved result in the current document; allowing those metadata
+  // echoes to change the srcDoc identity replaces that document once per
+  // pulse and makes a single Save visibly reload several times. Freeze only
+  // the transport's refresh identity while an interactive snapshot is held.
+  // Source bytes still update in memory/disk, and leaving the mode consumes
+  // the latest refresh key in one document commit. Ordinary agent edits in
+  // preview mode remain live because this ref follows every refresh there.
+  const transportSourceSnapshotRefreshKey =
+    frozenSrcDocSourceSnapshotRefreshKeyRef.current;
   previewContentMeasurementExpectedDocumentEpochRef.current =
     transportPreviewMeasurementDocumentEpoch;
   const frozenPreviewSrcUrlRef = useRef<string | null>(null);
@@ -10292,6 +10409,17 @@ function HtmlViewer({
     setInlinedSource(null);
     if (useUrlLoadPreview) return;
     if (!assetInliningSource) return;
+    // Personal-project srcDoc previews already have a stable raw-file base,
+    // so Chromium can resolve ordinary relative assets itself. Re-fetching
+    // and inlining every stylesheet/script here replaces an already-visible
+    // document after asynchronous file discovery settles. Team previews are
+    // different: iframe subresource requests cannot carry workspace auth, so
+    // they still require per-asset materialization. Personal root-relative
+    // refs also keep this pass because they first need project-file-list
+    // normalization before the stable base can resolve them correctly.
+    const requiresAssetMaterialization =
+      workspaceContext?.workspaceType === 'team' || projectRootAssetRefs;
+    if (!requiresAssetMaterialization) return;
     // Root-relative project asset refs need the confirmed file list before
     // they can be normalized; wait for it rather than inlining a half-fixed
     // document (the effect re-runs when the set lands).
@@ -10327,7 +10455,7 @@ function HtmlViewer({
     ?? projectRawUrl(projectId, baseDirFor(file.name), workspaceContext);
   const srcDocTransportIdentity = [
     srcDocPreviewBaseIdentity,
-    sourceSnapshotRefreshKey,
+    transportSourceSnapshotRefreshKey,
     reloadKey,
     transportPreviewMeasurementDocumentEpoch,
     effectiveDeck ? 'deck' : 'html',
@@ -10401,7 +10529,11 @@ function HtmlViewer({
   // is activated. Code mode remains workspace-active, so agent edits still
   // update its retained preview immediately and are ready when Preview opens.
   const committedSrcDocTransportRef = useRef(candidateSrcDocTransport);
-  if (workspaceActive) {
+  const persistedManualEditCandidate = manualEditPersistedDocumentRef.current;
+  const candidateRepresentsPersistedManualEditDocument =
+    persistedManualEditCandidate?.reloadKey === reloadKey
+    && persistedManualEditCandidate.sourceFingerprint === candidateSrcDocTransport.sourceFingerprint;
+  if (workspaceActive && !candidateRepresentsPersistedManualEditDocument) {
     committedSrcDocTransportRef.current = candidateSrcDocTransport;
   }
   const srcDocTransport = committedSrcDocTransportRef.current;
@@ -11263,12 +11395,27 @@ function HtmlViewer({
       if (!isActivePreviewIframeSource(ev.source)) return;
       const data = ev.data as {
         type?: string;
+        requestId?: string;
         frameLeft?: number;
         frameTop?: number;
         canvasLeft?: number;
         canvasTop?: number;
       } | null;
       if (!data || data.type !== 'od:preview-scroll') return;
+      const position = {
+        frameLeft: Number(data.frameLeft || 0),
+        frameTop: Number(data.frameTop || 0),
+        canvasLeft: Number(data.canvasLeft || 0),
+        canvasTop: Number(data.canvasTop || 0),
+      };
+      if (data.requestId) {
+        const pending = pendingPreviewScrollCapturesRef.current.get(data.requestId);
+        if (!pending) return;
+        pendingPreviewScrollCapturesRef.current.delete(data.requestId);
+        window.clearTimeout(pending.timeout);
+        pending.resolve(position);
+        return;
+      }
       if (previewScrollRestoreRef.current && Number(data.canvasLeft || 0) === 0 && Number(data.canvasTop || 0) === 0) return;
       if (
         previewScrollPositionRef.current.canvasLeft !== 0 ||
@@ -11277,12 +11424,7 @@ function HtmlViewer({
         const isInitialZeroReport = Number(data.canvasLeft || 0) === 0 && Number(data.canvasTop || 0) === 0;
         if (isInitialZeroReport && Date.now() - previewScrollRequestAtRef.current < 1200) return;
       }
-      previewScrollPositionRef.current = {
-        frameLeft: Number(data.frameLeft || 0),
-        frameTop: Number(data.frameTop || 0),
-        canvasLeft: Number(data.canvasLeft || 0),
-        canvasTop: Number(data.canvasTop || 0),
-      };
+      previewScrollPositionRef.current = position;
     }
     function onRestoreRequest(ev: MessageEvent) {
       if (!isOurPreviewIframeSource(ev.source)) return;
@@ -12470,6 +12612,14 @@ function HtmlViewer({
         'The file changed outside manual edit mode. Refreshing before applying manual edits.',
       ))) return false;
       const parentVersionId = await resolveManualEditParentVersionId(baseSource);
+      // A committed content patch can notify the file watcher as soon as the
+      // write lands. Capture the opaque iframe's exact scroll position before
+      // that write so neither the watcher nor our local source update can
+      // rebuild the preview from an initial 0/0 position. Style patches stream
+      // live through postMessage and never reload.
+      if (patch.kind !== 'set-style') {
+        await capturePreviewScrollPosition();
+      }
       const saved = await writeProjectTextFileDetailed(projectId, file.name, result.source, {
         artifactManifest: file.artifactManifest,
         versionSource: 'manual',
@@ -12493,21 +12643,13 @@ function HtmlViewer({
         afterSource: result.source,
         createdAt: Date.now(),
       };
-      // A committed content patch rewrites manualEditFrozenSource below, which
-      // rebuilds the preview srcDoc and reloads the iframe from the top.
-      // Snapshot the scroll position first so the post-reload restore path
-      // (the srcDoc effect + the bridge's od:preview-scroll-request round
-      // trip) puts the user back where they were. The edit-entry snapshot has
-      // usually expired by save time, and without a fresh one the new
-      // document's initial 0/0 scroll report clobbers the last-known
-      // position (#92). set-style patches stream live via postMessage and
-      // never reload, so they don't need (or take) a snapshot.
-      if (patch.kind !== 'set-style') {
-        capturePreviewScrollPosition();
-      }
       setSource(result.source);
       sourceRef.current = result.source;
       setInlinedSource(null);
+      manualEditPersistedDocumentRef.current = {
+        sourceFingerprint: previewSourceFingerprint(result.source),
+        reloadKey,
+      };
       if (patch.kind !== 'set-style') {
         setManualEditFrozenSource(result.source);
       }
@@ -12574,6 +12716,7 @@ function HtmlViewer({
     setSource(persisted);
     sourceRef.current = persisted;
     setInlinedSource(null);
+    manualEditPersistedDocumentRef.current = null;
     setManualEditHistory([]);
     setManualEditUndone([]);
     manualEditPendingStyleRef.current = null;
@@ -12614,10 +12757,14 @@ function HtmlViewer({
       }
       // Same srcDoc rebuild as a committed patch — keep the scroll position
       // across the reload (#92).
-      capturePreviewScrollPosition();
+      await capturePreviewScrollPosition();
       setSource(latest.beforeSource);
       sourceRef.current = latest.beforeSource;
       setInlinedSource(null);
+      manualEditPersistedDocumentRef.current = {
+        sourceFingerprint: previewSourceFingerprint(latest.beforeSource),
+        reloadKey,
+      };
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
       setManualEditUndone((current) => [latest, ...current]);
@@ -12653,10 +12800,14 @@ function HtmlViewer({
       }
       // Same srcDoc rebuild as a committed patch — keep the scroll position
       // across the reload (#92).
-      capturePreviewScrollPosition();
+      await capturePreviewScrollPosition();
       setSource(latest.afterSource);
       sourceRef.current = latest.afterSource;
       setInlinedSource(null);
+      manualEditPersistedDocumentRef.current = {
+        sourceFingerprint: previewSourceFingerprint(latest.afterSource),
+        reloadKey,
+      };
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
       setManualEditHistory((current) => [latest, ...current]);
@@ -13647,7 +13798,7 @@ function HtmlViewer({
         file.name,
       );
     }
-    capturePreviewScrollPosition();
+    void capturePreviewScrollPosition();
     imageExportSnapshotDataUrlRef.current = null;
     setInlinedSource(null);
     setReloadKey((key) => key + 1);
@@ -13772,7 +13923,7 @@ function HtmlViewer({
       setAgentToolsOpen(false);
       return;
     }
-    capturePreviewScrollPosition();
+    void capturePreviewScrollPosition();
     const activateDraw = () => {
       setCommentPanelOpen(false);
       setCommentCreateMode(false);
@@ -13794,7 +13945,7 @@ function HtmlViewer({
 
   function activateCommentTool() {
     fireArtifactToolbarClick('comment');
-    capturePreviewScrollPosition();
+    void capturePreviewScrollPosition();
     if (boardMode && !commentCreateMode && boardTool === 'inspect') {
       setBoardMode(false);
       setCommentCreateMode(false);
@@ -13824,7 +13975,7 @@ function HtmlViewer({
   function activateCommentCreateTool(returnFocusTarget?: HTMLElement | null) {
     if (returnFocusTarget) commentPanelReturnFocusRef.current = returnFocusTarget;
     fireArtifactToolbarClick('comment');
-    capturePreviewScrollPosition();
+    void capturePreviewScrollPosition();
     if (boardMode && commentCreateMode) {
       setBoardMode(false);
       setCommentCreateMode(false);
@@ -13871,7 +14022,7 @@ function HtmlViewer({
   function activateManualEditTool() {
     if (viewerOnly || (!manualEditMode && !manualEditEntryAllowed)) return;
     fireArtifactToolbarClick('edit');
-    capturePreviewScrollPosition();
+    void capturePreviewScrollPosition();
     if (!manualEditMode) {
       if (manualEditActivationPendingRef.current) return;
       const enterManualEditMode = () => {
@@ -17655,7 +17806,7 @@ async function inlineRelativeAssets(
     (next, { from, to }) => next.replace(from, () => to),
     normalized,
   );
-  return workspaceContext && projectFilePaths
+  return workspaceContext?.workspaceType === 'team' && projectFilePaths
     ? rewriteProjectAssetRefsToRawUrls(inlined, fileName, projectFilePaths, toRawUrl)
     : inlined;
 }

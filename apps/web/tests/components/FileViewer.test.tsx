@@ -128,6 +128,15 @@ function teamWorkspaceContext(): WorkspaceCollabContext {
   };
 }
 
+function personalWorkspaceContext(): WorkspaceCollabContext {
+  return {
+    ...teamWorkspaceContext(),
+    workspaceId: 'personal-ws-1',
+    workspaceType: 'personal',
+    teamId: undefined,
+  };
+}
+
 /** Fetch stub that answers the workspace-context read with `context`, and every
  *  other route with the empty-deployments payload these viewer tests expect. */
 function stubFetchWithWorkspaceContext(context: WorkspaceCollabContext | null): void {
@@ -3045,6 +3054,8 @@ describe('FileViewer SVG artifacts', () => {
       expect(frame.srcdoc).toContain('data-od-edit-bridge');
       return frame;
     });
+    const editTransport = editFrame.srcdoc;
+    const editUrl = editFrame.getAttribute('src');
 
     fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
 
@@ -3053,6 +3064,8 @@ describe('FileViewer SVG artifacts', () => {
     const urlFrame = container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement | null;
 
     expect(previewFrame).toBe(editFrame);
+    expect(previewFrame.srcdoc).toBe(editTransport);
+    expect(previewFrame.getAttribute('src')).toBe(editUrl);
     expect(previewFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
     expect(previewFrame.srcdoc).toContain('data-od-edit-bridge');
     expect(urlFrame?.getAttribute('data-od-active')).toBe('false');
@@ -3325,6 +3338,56 @@ describe('FileViewer SVG artifacts', () => {
     expect(writes).toHaveLength(2);
     expect(writes.at(-1)).toContain('Edited after return');
     expect(writes.at(-1)).toContain('translate(12px, 8px)');
+  });
+
+  it('keeps the edit iframe stable across save watcher echoes, then consumes the latest revision on exit', async () => {
+    const file = baseFile({
+      name: 'edit-save-watch.html',
+      path: 'edit-save-watch.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Edit save watch',
+        entry: 'edit-save-watch.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const props = {
+      projectId: 'project-1',
+      projectKind: 'prototype' as const,
+      file,
+      // Storage access forces the preview onto the srcDoc transport used by
+      // Manual Edit in the packaged Electron client.
+      liveHtml: '<html><body><script>localStorage.getItem("theme")</script><main>Editable</main></body></html>',
+    };
+    const { rerender } = render(<FileViewer {...props} filesRefreshKey={1} />);
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return active;
+    });
+    const editTransport = frame.srcdoc;
+
+    // One persisted save can emit multiple file-list / version watcher
+    // refreshes. They update background metadata, but must not replace the
+    // live edit document that already shows the saved style through the edit
+    // bridge.
+    rerender(<FileViewer {...props} filesRefreshKey={7} />);
+    rerender(<FileViewer {...props} filesRefreshKey={9} />);
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).toBe(editTransport);
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+    });
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).not.toBe(editTransport);
   });
 
   // #4291 review: if the exit-time text commit fails, the close path must NOT
@@ -3892,6 +3955,210 @@ describe('FileViewer SVG artifacts', () => {
 
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
     expect(postCount).toBe(2);
+  });
+
+  it('adopts a successfully saved live style without reloading when Edit closes', async () => {
+    const initialSource = '<html><body><p data-od-id="copy">Copy</p></body></html>';
+    let persistedSource = initialSource;
+    let postCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: { method?: string; body?: BodyInit | null }) => {
+      const value = String(url);
+      if (value.includes('/files') && opts?.method === 'POST') {
+        postCount += 1;
+        persistedSource = (JSON.parse(String(opts.body)) as { content: string }).content;
+        return new Response(JSON.stringify({ file: { name: 'page.html', mtime: 2 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (value.includes('/raw/page.html')) return new Response(persistedSource, { status: 200 });
+      if (value.includes('/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={baseFile({ name: 'page.html', path: 'page.html', mime: 'text/html', kind: 'html' })}
+        liveHtml={initialSource}
+      />,
+    );
+    const toggle = screen.getByTestId('manual-edit-mode-toggle');
+    fireEvent.click(toggle);
+    const frame = await waitFor(() => {
+      const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return active;
+    });
+    const transportBeforeSave = frame.srcdoc;
+    const textTarget = {
+      ...manualEditTarget('copy', 'Copy', 20),
+      kind: 'text' as const,
+      tagName: 'p',
+      text: 'Copy',
+      fields: { text: 'Copy' },
+      isLayoutContainer: false,
+      outerHtml: '<p data-od-id="copy">Copy</p>',
+    };
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od-edit-select', target: textTarget },
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od-edit-drag-commit',
+          id: 'copy',
+          transform: 'translate(12px, 8px)',
+          display: 'block',
+        },
+      }));
+    });
+    expect(await screen.findByTitle('Copy')).toBeTruthy();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
+
+    expect(postCount).toBe(1);
+    expect(persistedSource).toContain('translate(12px, 8px)');
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).toBe(transportBeforeSave);
+
+    // Re-entering Edit must keep adopting the document that already contains
+    // the persisted mutation. Toggling the bridge back on is not a new source
+    // revision and must not navigate the retained iframe again.
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).toBe(transportBeforeSave);
+  });
+
+  it('waits for the opaque preview scroll snapshot before committing a content edit', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const initialSource = '<html><body><p data-od-id="copy">Copy</p></body></html>';
+    let persistedSource = initialSource;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: { method?: string; body?: BodyInit | null }) => {
+      const value = String(url);
+      if (value.includes('/files') && opts?.method === 'POST') {
+        persistedSource = (JSON.parse(String(opts.body)) as { content: string }).content;
+        return new Response(JSON.stringify({ file: { name: 'page.html', mtime: 2 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (value.includes('/raw/page.html')) return new Response(persistedSource, { status: 200 });
+      if (value.includes('/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+    const onFileSaved = vi.fn();
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={baseFile({ name: 'page.html', path: 'page.html', mime: 'text/html', kind: 'html' })}
+        liveHtml={initialSource}
+        onFileSaved={onFileSaved}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return active;
+    });
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    // Packaged srcDoc previews omit allow-same-origin. jsdom does not enforce
+    // that boundary, so the host must derive opacity from the iframe sandbox
+    // contract instead of assuming its synthetic contentWindow is readable.
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:preview-scroll',
+          frameLeft: 0,
+          frameTop: 480,
+          canvasLeft: 0,
+          canvasTop: 480,
+        },
+      }));
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od-edit-text-commit', id: 'copy', value: 'Edited copy' },
+      }));
+    });
+
+    const capture = await waitFor(() => {
+      const message = postMessage.mock.calls
+        .map(([value]) => value)
+        .find((value) => (
+          typeof value === 'object'
+          && value !== null
+          && (value as { type?: unknown }).type === 'od:preview-scroll-capture'
+        )) as { type: string; requestId: string } | undefined;
+      expect(message?.requestId).toBeTruthy();
+      return message!;
+    });
+    // The exact iframe snapshot must precede the disk write. Otherwise the
+    // file watcher can publish the new source and rebuild the preview before
+    // the host knows which scroll position to restore.
+    expect(persistedSource).toBe(initialSource);
+    expect(onFileSaved).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:preview-scroll',
+          requestId: capture.requestId,
+          frameLeft: 0,
+          frameTop: 640,
+          canvasLeft: 0,
+          canvasTop: 640,
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(persistedSource).toContain('Edited copy');
+      expect(onFileSaved).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+
+    await waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'od:preview-scroll-restore',
+          frameTop: 640,
+          canvasTop: 640,
+        }),
+        '*',
+      );
+    });
   });
 
   // #4291 review (iframe-driven path): an Enter-committed edit can still be
@@ -8646,7 +8913,109 @@ describe('FileViewer tweaks toolbar', () => {
     expect(hiddenAfterExit.srcdoc).toContain('Materialize me');
   });
 
-  it('surfaces raw-route security failures for preview assets without leaking the symlink target', async () => {
+  it('does not duplicate every iframe asset request through the local preview preflight', async () => {
+    const source = '<html><body><img src="assets/hero.png" alt="Hero"></body></html>';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/files')) {
+        return new Response(JSON.stringify({
+          files: [
+            htmlPreviewFile(),
+            baseFile({
+              name: 'assets/hero.png',
+              path: 'assets/hero.png',
+              type: 'file',
+              kind: 'image',
+              mime: 'image/png',
+            }),
+          ],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithProjectWorkspace(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+      personalWorkspaceContext(),
+    );
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/projects/project-1/files'))).toBe(true);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/raw/assets/hero.png')
+    ))).toHaveLength(0);
+  });
+
+  it('keeps a personal srcDoc transport stable when relative-asset discovery settles', async () => {
+    const filesResponse = deferredResponse();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url === '/api/projects/project-1/files') return filesResponse.promise;
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/scope-personal/page.html',
+          file: 'page.html',
+          opaqueOrigin: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      renderWithProjectWorkspace(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile({ name: 'page.html', path: 'page.html' })}
+          liveHtml={'<html><body><script>localStorage.getItem("theme")</script><img src="assets/hero.png"></body></html>'}
+        />,
+        personalWorkspaceContext(),
+      );
+
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      const initialTransport = frame.srcdoc;
+      expect(initialTransport).toContain('src="assets/hero.png"');
+
+      filesResponse.resolve(new Response(JSON.stringify({
+        files: [
+          htmlPreviewFile({ name: 'page.html', path: 'page.html' }),
+          baseFile({
+            name: 'assets/hero.png',
+            path: 'assets/hero.png',
+            kind: 'image',
+            mime: 'image/png',
+          }),
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      await waitFor(() => {
+        expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/projects/project-1/files')).toBe(true);
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 25));
+
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/api/projects/project-1/preview-url')
+      ))).toBe(false);
+      expect(frame.srcdoc).toBe(initialTransport);
+    } finally {
+      filesResponse.resolve(new Response(JSON.stringify({ files: [] }), { status: 200 }));
+    }
+  });
+
+  it('surfaces raw-route security failures for Team preview assets without leaking the symlink target', async () => {
     const source = '<html><body><img src="assets/hero.png" alt="Hero"></body></html>';
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
@@ -8682,13 +9051,14 @@ describe('FileViewer tweaks toolbar', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(
+    renderWithProjectWorkspace(
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
         file={htmlPreviewFile()}
         liveHtml={source}
       />,
+      teamWorkspaceContext(),
     );
 
     const warning = await screen.findByTestId('preview-asset-warning');

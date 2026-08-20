@@ -2155,17 +2155,19 @@ function meaningfulDomFallbackTarget(el) {
     schedulePostTargets();
     schedulePostPreviewScroll();
   }
-  function postPreviewScroll(){
+  function postPreviewScroll(requestId){
     var el = previewScrollElement();
     if (!el) return;
     var frame = document.scrollingElement || document.documentElement;
-    window.parent.postMessage({
+    var payload = {
       type: 'od:preview-scroll',
       canvasLeft: Math.round(el.scrollLeft || 0),
       canvasTop: Math.round(el.scrollTop || 0),
       frameLeft: Math.round(frame.scrollLeft || 0),
       frameTop: Math.round(frame.scrollTop || 0)
-    }, '*');
+    };
+    if (typeof requestId === 'string' && requestId) payload.requestId = requestId;
+    window.parent.postMessage(payload, '*');
   }
   function schedulePostPreviewScroll(){
     if (postPreviewScrollPending) return;
@@ -2467,6 +2469,10 @@ function meaningfulDomFallbackTarget(el) {
     if (!data || !data.type) return;
     if (data.type === 'od:preview-runtime-state-restore') {
       scheduleRuntimeStateRestore(data.state);
+      return;
+    }
+    if (data.type === 'od:preview-scroll-capture') {
+      postPreviewScroll(data.requestId);
       return;
     }
     if (data.type === 'od:comment-mode') {
@@ -2957,7 +2963,9 @@ function injectDeckBridge(
 .deck-stage { flex-shrink: 0 !important; }
 </style>`
     : `<style data-od-deck-fix>
-.stage, .deck-stage, .deck-shell { place-content: center !important; }
+.stage:not(:has(> .slide)),
+.deck-stage:not(:has(> .slide)),
+.deck-shell:not(:has(> .slide)) { place-content: center !important; }
 </style>`;
   const script = `<script data-od-deck-bridge>(function(){
   var initialSlideIndex = ${safeInitialSlideIndex};
