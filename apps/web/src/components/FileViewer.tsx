@@ -1585,6 +1585,19 @@ export function cancelManualEditPendingStyleSnapshot(
   return { ...pending, styles: nextStyles };
 }
 
+export function manualEditHistoryStyleSnapshot(
+  source: string,
+  patch: ManualEditPatch,
+): Partial<ManualEditStyles> | null {
+  if (patch.kind !== 'set-style') return null;
+  const sourceStyles = readManualEditStyles(source, patch.id);
+  return (Object.keys(patch.styles) as Array<keyof ManualEditStyles>)
+    .reduce<Partial<ManualEditStyles>>((styles, key) => {
+      styles[key] = sourceStyles[key] ?? '';
+      return styles;
+    }, {});
+}
+
 function usePreviewCanvasSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   const [size, setSize] = useState<PreviewCanvasSize | undefined>(undefined);
@@ -12551,6 +12564,28 @@ function HtmlViewer({
     };
   }
 
+  function reconcileRetainedManualEditHistoryDocument(
+    savedSource: string,
+    patch: ManualEditPatch,
+  ): ManualEditPatch {
+    const restoredStyles = manualEditHistoryStyleSnapshot(savedSource, patch);
+    if (patch.kind !== 'set-style' || !restoredStyles) return patch;
+    const version = nextManualEditPreviewVersion();
+    const previousPreview = manualEditLiveStylesRef.current.get(patch.id);
+    manualEditLiveStylesRef.current.set(patch.id, {
+      styles: { ...previousPreview?.styles, ...restoredStyles },
+      version,
+    });
+    previewStyleToIframe(patch.id, restoredStyles, version);
+    if (selectedManualEditTargetIdRef.current === patch.id) {
+      setManualEditDraft((current) => ({
+        ...current,
+        styles: { ...current.styles, ...restoredStyles },
+      }));
+    }
+    return { ...patch, styles: restoredStyles };
+  }
+
   async function resetManualEditPanelDraft() {
     if (manualEditTextSessionIdRef.current) await finishManualEditTextSession(false);
     cancelManualEditStyleDraft();
@@ -12761,7 +12796,10 @@ function HtmlViewer({
       setSource(latest.beforeSource);
       sourceRef.current = latest.beforeSource;
       setInlinedSource(null);
-      syncRetainedManualEditDocument(latest.beforeSource, latest.patch);
+      syncRetainedManualEditDocument(
+        latest.beforeSource,
+        reconcileRetainedManualEditHistoryDocument(latest.beforeSource, latest.patch),
+      );
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
       setManualEditUndone((current) => [latest, ...current]);
@@ -12801,7 +12839,10 @@ function HtmlViewer({
       setSource(latest.afterSource);
       sourceRef.current = latest.afterSource;
       setInlinedSource(null);
-      syncRetainedManualEditDocument(latest.afterSource, latest.patch);
+      syncRetainedManualEditDocument(
+        latest.afterSource,
+        reconcileRetainedManualEditHistoryDocument(latest.afterSource, latest.patch),
+      );
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
       setManualEditHistory((current) => [latest, ...current]);

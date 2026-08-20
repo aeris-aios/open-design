@@ -76,6 +76,7 @@ import {
   deckKeyboardShortcutForEvent,
   effectivePreviewScale,
   fileVersionPreviewOptions,
+  manualEditHistoryStyleSnapshot,
   parseInspectOverridesFromSource,
   previewOverlayTransform,
   previewMeasurementFrameIsUsable,
@@ -4047,6 +4048,28 @@ describe('FileViewer SVG artifacts', () => {
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
     expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
     expect(frame.srcdoc).toBe(transportBeforeSave);
+  });
+
+  it('derives the retained live style from each undo and redo source revision', () => {
+    const beforeSource = '<html><body><p data-od-id="copy">Copy</p></body></html>';
+    const afterSource = '<html><body><p data-od-id="copy" style="display: block; transform: translate(12px, 8px)">Copy</p></body></html>';
+    const patch = {
+      id: 'copy',
+      kind: 'set-style' as const,
+      styles: {
+        display: 'block',
+        transform: 'translate(12px, 8px)',
+      },
+    };
+
+    expect(manualEditHistoryStyleSnapshot(beforeSource, patch)).toEqual({
+      display: '',
+      transform: '',
+    });
+    expect(manualEditHistoryStyleSnapshot(afterSource, patch)).toEqual({
+      display: 'block',
+      transform: 'translate(12px, 8px)',
+    });
   });
 
   it('invalidates a saved-document adoption after an external revision before the saved bytes return', async () => {
