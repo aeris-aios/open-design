@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { detectAgent } from '../../src/runtimes/detection.js';
+import { resolveAgentLaunch } from '../../src/runtimes/launch.js';
 import type { RuntimeAgentDef } from '../../src/runtimes/types.js';
 
 // A minimal agent def: no compatibility probe, so these cases isolate the
@@ -88,6 +89,31 @@ describe('agent executable resolution falls back past unusable candidates', () =
     expect(detected.available).toBe(true);
     expect(detected.path).toBe(goodBin);
     expect(detected.version).toBe('0.1.0-rc.6');
+  });
+
+  // Detection deciding an agent is usable is worthless if the spawn sites go
+  // back to the binary detection just rejected: Settings would advertise the
+  // agent as installed while every chat turn execs the broken shim. Detection
+  // and launch have to agree on which executable this agent runs.
+  it('makes every later launch resolve to the binary detection settled on', async () => {
+    if (process.platform === 'win32') return;
+    const brokenDir = tempDir('broken-launch');
+    const goodDir = tempDir('good-launch');
+    const brokenBin = writeBrokenShim(brokenDir);
+    const goodBin = writeWorkingShim(goodDir);
+
+    process.env.OD_AGENT_HOME = goodDir;
+    process.env.PATH = [brokenDir, goodDir].join(path.delimiter);
+
+    const detected = await detectAgent(def);
+    expect(detected.available).toBe(true);
+    expect(detected.path).toBe(goodBin);
+
+    // What chat, the connection test, memory-llm, and companion setup all call.
+    const launch = resolveAgentLaunch(def);
+    expect(launch.selectedPath).toBe(goodBin);
+    expect(launch.selectedPath).not.toBe(brokenBin);
+    expect(launch.launchPath).toBe(goodBin);
   });
 
   // Even when every candidate is unusable, detection must surface the path it

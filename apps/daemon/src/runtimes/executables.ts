@@ -353,6 +353,39 @@ export function resolveAgentExecutable(
   return inspectAgentExecutableResolution(def, configuredEnv).selectedPath;
 }
 
+// The executable a completed detection pass settled on, per agent id.
+//
+// Detection is the only stage that learns which candidate can actually be
+// executed — it is the only one that spawns anything. Without recording that
+// answer, every later resolution (chat, connection test, memory summariser,
+// companion install) would redo the naive "first hit on PATH" walk and land
+// back on the very shim detection just rejected: Settings would advertise the
+// agent as installed while each turn exec'd a broken wrapper. Publishing the
+// winner here keeps detection and launch pointed at the same binary.
+const detectedExecutables = new Map<string, string>();
+
+/** Record the executable a detection pass proved invocable. */
+export function rememberDetectedExecutable(agentId: string, resolvedPath: string): void {
+  detectedExecutables.set(agentId, resolvedPath);
+}
+
+/**
+ * Drop an agent's remembered executable. Detection clears it before each pass
+ * so a re-scan after the user repairs or removes a CLI never resolves against
+ * a stale winner.
+ */
+export function forgetDetectedExecutable(agentId: string): void {
+  detectedExecutables.delete(agentId);
+}
+
+function rememberedExecutable(agentId: string, skip: Set<string>): string | null {
+  const remembered = detectedExecutables.get(agentId);
+  if (!remembered || skip.has(remembered)) return null;
+  // A remembered winner that has since been uninstalled must not outrank a
+  // live PATH walk.
+  return existsSync(remembered) ? remembered : null;
+}
+
 export function inspectAgentExecutableResolution(
   def: RuntimeAgentDef,
   configuredEnv: Record<string, string> = {},
@@ -380,12 +413,19 @@ export function inspectAgentExecutableResolution(
     ...(Array.isArray(def.fallbackBins) ? def.fallbackBins : []),
   ];
   const skip = new Set(options.skipPathCandidates ?? []);
-  let pathResolvedPath: string | null = null;
-  outer: for (const bin of candidates) {
-    for (const resolved of resolveAllOnPath(bin)) {
-      if (skip.has(resolved)) continue;
-      pathResolvedPath = resolved;
-      break outer;
+  // Prefer the candidate detection proved invocable over a fresh PATH walk,
+  // which would otherwise return the first file that merely *exists* — the
+  // broken shim detection already walked past. An explicit `*_BIN` override
+  // and a packaged built-in still outrank both (see the selectedPath order
+  // below), so this only replaces the guesswork, never a deliberate choice.
+  let pathResolvedPath: string | null = rememberedExecutable(def.id, skip);
+  if (!pathResolvedPath) {
+    outer: for (const bin of candidates) {
+      for (const resolved of resolveAllOnPath(bin)) {
+        if (skip.has(resolved)) continue;
+        pathResolvedPath = resolved;
+        break outer;
+      }
     }
   }
   const builtInPath = packagedBuiltInExecutable(def, configuredEnv);

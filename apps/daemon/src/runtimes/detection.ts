@@ -11,7 +11,11 @@ import { spawnEnvForAgent } from './env.js';
 import { probeAgentAuthStatus } from './auth.js';
 import { agentCapabilities } from './capabilities.js';
 import { installMetaForAgent } from './metadata.js';
-import { resolveAmrOpenCodeExecutable } from './executables.js';
+import {
+  forgetDetectedExecutable,
+  rememberDetectedExecutable,
+  resolveAmrOpenCodeExecutable,
+} from './executables.js';
 import { resolveAmrProfile } from '../integrations/vela.js';
 import {
   buildAuthDiagnostic,
@@ -254,6 +258,9 @@ async function probe(
   configuredEnv: Record<string, string> = {},
 ): Promise<DetectedAgent> {
   detectedRuntimeVersions.delete(def.id);
+  // Drop the previous winner before re-probing: a rescan after the user fixes
+  // or removes a CLI must not resolve against a stale one.
+  forgetDetectedExecutable(def.id);
   // Detection must probe the exact path the runtime will spawn, not just the
   // PATH-visible shim. This is load-bearing for Codex under nvm/fnm/mise:
   // the discovered `codex` entry is often a `#!/usr/bin/env node` wrapper
@@ -336,6 +343,14 @@ async function probe(
       next,
     );
     outcome = await probeVersionAtPath(def, next.launchPath, probeEnv);
+  }
+  // Publish the executable this pass proved invocable, so chat, the connection
+  // test, and every other spawn site resolve to the same binary instead of
+  // redoing the naive first-hit-on-PATH walk. This restores the invariant
+  // stated above — detection probes the exact path the runtime will spawn —
+  // which the candidate walk would otherwise have broken.
+  if (outcome.kind !== 'not-invocable') {
+    rememberDetectedExecutable(def.id, launch.selectedPath);
   }
   if (outcome.kind === 'not-invocable') {
     // Report the path that was actually tried. The agent picker only renders
