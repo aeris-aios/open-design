@@ -7321,9 +7321,9 @@ function srcDocLoadRequiresFreshParseOnReturnToVisible(state: {
 function HtmlViewer({
   projectId,
   projectKind,
-  file: requestedFile,
+  file,
   liveHtml,
-  filesRefreshKey: requestedFilesRefreshKey = 0,
+  filesRefreshKey = 0,
   isDeck,
   streaming,
   commentQueueOnSend = false,
@@ -7395,16 +7395,10 @@ function HtmlViewer({
 }) {
   const { locale, t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
-  // Keep the entire file revision coherent with the retained viewer's active
-  // state. A watcher commonly advances mtime and filesRefreshKey together;
-  // reading live mtime while freezing only the token still changes iframe src
-  // in the background. Hidden viewers record the latest revision and promote
-  // it once, synchronously, when they become active again.
-  const pendingFileRef = useRef(requestedFile);
-  const consumedFileRef = useRef(requestedFile);
-  pendingFileRef.current = requestedFile;
-  if (workspaceActive) consumedFileRef.current = pendingFileRef.current;
-  const file = consumedFileRef.current;
+  // Retained viewers prewarm new file revisions behind the active tab. Keeping
+  // the live metadata here is what lets an agent edit finish loading before
+  // the user switches back; activation itself must not promote a stale
+  // snapshot and start a visible navigation.
   const {
     workspaceContext: observedWorkspaceContext,
     workspaceContextLoading,
@@ -7444,65 +7438,13 @@ function HtmlViewer({
   const sourceAuthorizationScopeKey = stableWorkspaceContextRef.current.key;
   const projectResourceReadBlocked =
     sourceAuthorizationScopeKey === null;
-  // A retained viewer must not consume global file-watch pulses while hidden.
-  // Remember only the latest token and apply it synchronously on activation so
-  // a long-hidden tab performs one refresh, never one request per missed pulse.
-  const pendingFilesRefreshKeyRef = useRef(requestedFilesRefreshKey);
-  const consumedFilesRefreshKeyRef = useRef(requestedFilesRefreshKey);
-  const appliedFilesRefreshKeyRef = useRef(requestedFilesRefreshKey);
-  const resumedFilesRefreshRef = useRef<{
-    projectId: string;
-    fileName: string;
-    refreshKey: number;
-  } | null>(null);
-  const previousWorkspaceActiveRef = useRef(workspaceActive);
-  const previousFileRevisionRef = useRef({
-    projectId,
-    fileName: file.name,
-    mtime: file.mtime,
-    size: file.size,
-  });
+  // File-watch pulses are debounced by the URL refresh effect below. Consume
+  // them while retained so the hidden document is already current when its tab
+  // becomes visible.
+  const appliedFilesRefreshKeyRef = useRef(filesRefreshKey);
   const workspaceActiveRef = useRef(workspaceActive);
   workspaceActiveRef.current = workspaceActive;
-  pendingFilesRefreshKeyRef.current = requestedFilesRefreshKey;
-  if (workspaceActive) {
-    consumedFilesRefreshKeyRef.current = pendingFilesRefreshKeyRef.current;
-    const previousFileRevision = previousFileRevisionRef.current;
-    const sameFile = previousFileRevision.projectId === projectId
-      && previousFileRevision.fileName === file.name;
-    const fileRevisionChanged = sameFile && (
-      previousFileRevision.mtime !== file.mtime
-      || previousFileRevision.size !== file.size
-    );
-    // FileWorkspace freezes an inactive viewer's ProjectFile snapshot. When it
-    // reactivates with a newer mtime, the normal base URL/source refresh already
-    // loads that latest revision. The same is true when ProjectView atomically
-    // commits a refreshed metadata snapshot and its generation key. In either
-    // case, encode the generation in the declarative URL and skip a second
-    // delayed refresh.
-    if (
-      appliedFilesRefreshKeyRef.current !== pendingFilesRefreshKeyRef.current
-      && sameFile
-      && (!previousWorkspaceActiveRef.current || fileRevisionChanged)
-    ) {
-      resumedFilesRefreshRef.current = {
-        projectId,
-        fileName: file.name,
-        refreshKey: pendingFilesRefreshKeyRef.current,
-      };
-      appliedFilesRefreshKeyRef.current = pendingFilesRefreshKeyRef.current;
-    }
-    previousFileRevisionRef.current = {
-      projectId,
-      fileName: file.name,
-      mtime: file.mtime,
-      size: file.size,
-    };
-  }
-  previousWorkspaceActiveRef.current = workspaceActive;
-  const filesRefreshKey = consumedFilesRefreshKeyRef.current;
-  const activeFilesRefreshPending = workspaceActive
-    && filesRefreshKey !== 0
+  const filesRefreshPending = filesRefreshKey !== 0
     && appliedFilesRefreshKeyRef.current !== filesRefreshKey;
   const analytics = useAnalytics();
   // Team collaboration: resolve comment anchors through the drift ladder when
@@ -9403,11 +9345,9 @@ function HtmlViewer({
     !isDeck;
 
   useEffect(() => {
-    // Open HTML tabs stay mounted so their first activation should be a pure
-    // visibility swap. Warm each retained viewer exactly once in the
-    // background, then keep the existing inactive-refresh deferral: agent/file
-    // watch revisions are consumed only when that tab becomes active again.
-    if (!workspaceActive && sourceEverLoadedRef.current) return;
+    // Open HTML tabs stay mounted at the real viewport size. Keep refreshing
+    // retained source snapshots in the background so activation is only a
+    // visibility swap, including after an agent edits an inactive file.
     // Never turn a pending or denied bound-project authority into a legal
     // local/headerless read. The authorization key changes when an exact
     // Workspace witness resolves, which reruns this effect with scoped URL and
@@ -9620,7 +9560,6 @@ function HtmlViewer({
     sourceAuthorizationScopeKey,
     currentSourceIdentity,
     shouldDeferPassivePreviewSource,
-    workspaceActive,
     projectResourceReadBlocked,
   ]);
 
@@ -10171,13 +10110,6 @@ function HtmlViewer({
     frozenPreviewSrcUrlRef.current = null;
   }
   const effectiveBasePreviewSrcUrl = frozenPreviewSrcUrlRef.current ?? basePreviewSrcUrl;
-  const resumedFilesRefresh = resumedFilesRefreshRef.current;
-  const resumedPreviewSrcUrl = resumedFilesRefresh
-    && resumedFilesRefresh.projectId === projectId
-    && resumedFilesRefresh.fileName === file.name
-    && resumedFilesRefresh.refreshKey === filesRefreshKey
-    ? appendResourceQuery(effectiveBasePreviewSrcUrl, `fr=${filesRefreshKey}`)
-    : null;
   // Switching to a different file/project while an annotation tool is still
   // open must NOT keep the viewer pinned to the previous artifact. The
   // per-file annotation data is already reset on file.name change, but the
@@ -10219,21 +10151,18 @@ function HtmlViewer({
     lastGoodSourceForRoutingRef.current = null;
     prevSourceBeforeReloadRef.current = null;
   }, [projectId, file.name, sourceLoadedFileKey]);
-  const activePreviewSrcUrl = resumedPreviewSrcUrl ?? (activeFilesRefreshPending
+  const previewSrcMatchesCurrentBase = previewSrcUrl === effectiveBasePreviewSrcUrl
+    || previewSrcUrl.startsWith(`${effectiveBasePreviewSrcUrl}&`);
+  const activePreviewSrcUrl = filesRefreshPending || previewSrcMatchesCurrentBase
     ? previewSrcUrl
-    : (
-        previewSrcUrl === effectiveBasePreviewSrcUrl
-        || previewSrcUrl.startsWith(`${effectiveBasePreviewSrcUrl}&`)
-      )
-      ? previewSrcUrl
-      : effectiveBasePreviewSrcUrl);
+    : effectiveBasePreviewSrcUrl;
   const previewSrcCarriesCurrentRefresh = filesRefreshKey !== 0
     && new RegExp(`[?&]fr=${filesRefreshKey}(?:&|$)`).test(previewSrcUrl);
   useEffect(() => {
-    if (activeFilesRefreshPending || previewSrcCarriesCurrentRefresh) return;
+    if (filesRefreshPending || previewSrcCarriesCurrentRefresh) return;
     setPreviewSrcUrl(effectiveBasePreviewSrcUrl);
     setUrlSelectionBridgeReady(false);
-  }, [activeFilesRefreshPending, effectiveBasePreviewSrcUrl, previewSrcCarriesCurrentRefresh]);
+  }, [effectiveBasePreviewSrcUrl, filesRefreshPending, previewSrcCarriesCurrentRefresh]);
   const previewObservabilitySeenRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     previewObservabilitySeenRef.current = new Set();
@@ -10308,7 +10237,6 @@ function HtmlViewer({
     url: null,
   });
   useEffect(() => {
-    if (!workspaceActive) return;
     if (!(needsPowered && useUrlLoadPreview)) {
       setPowered({ resolved: false, url: null });
       return;
@@ -10332,7 +10260,6 @@ function HtmlViewer({
     file.name,
     file.mtime,
     reloadKey,
-    workspaceActive,
   ]);
   const usePoweredPreview = needsPowered && useUrlLoadPreview && powered.url != null;
   const poweredResolving = needsPowered && useUrlLoadPreview && !powered.resolved;
@@ -10347,7 +10274,6 @@ function HtmlViewer({
   } | null>(null);
 
   useEffect(() => {
-    if (!workspaceActive) return;
     if (filesRefreshKey === 0) return;
     if (appliedFilesRefreshKeyRef.current === filesRefreshKey) return;
     // Defer the file-watcher live-reload while annotating; the effect re-runs
@@ -10402,7 +10328,6 @@ function HtmlViewer({
     reloadKey,
     transportPreviewMeasurementDocumentEpoch,
     usePoweredPreview,
-    workspaceActive,
   ]);
 
   useEffect(() => {
@@ -10521,19 +10446,16 @@ function HtmlViewer({
       srcDocBaseHref,
     ],
   );
-  // A retained file tab may observe a newer file generation while its iframe
-  // is hidden. Updating `srcdoc` in that state starts a background navigation
-  // which Chromium can abort when the user switches tabs again before it
-  // commits. Keep the last displayed document byte-for-byte stable while the
-  // workspace is inactive, then commit only the newest candidate when the tab
-  // is activated. Code mode remains workspace-active, so agent edits still
-  // update its retained preview immediately and are ready when Preview opens.
+  // A retained file tab stays full-sized but transparent, so a newer srcDoc can
+  // finish its navigation before activation. Deferring this assignment until
+  // activation made the first visible frame both resize and navigate, which is
+  // the white flash reported after agent edits.
   const committedSrcDocTransportRef = useRef(candidateSrcDocTransport);
   const persistedManualEditCandidate = manualEditPersistedDocumentRef.current;
   const candidateRepresentsPersistedManualEditDocument =
     persistedManualEditCandidate?.reloadKey === reloadKey
     && persistedManualEditCandidate.sourceFingerprint === candidateSrcDocTransport.sourceFingerprint;
-  if (workspaceActive && !candidateRepresentsPersistedManualEditDocument) {
+  if (!candidateRepresentsPersistedManualEditDocument) {
     committedSrcDocTransportRef.current = candidateSrcDocTransport;
   }
   const srcDocTransport = committedSrcDocTransportRef.current;
@@ -11238,7 +11160,7 @@ function HtmlViewer({
         `odPreviewEpoch=${encodeURIComponent(transportPreviewMeasurementDocumentEpoch)}`,
       );
   const lastRenderedUrlFrameSrcRef = useRef(computedUrlFrameSrc);
-  const urlFrameSrc = activeFilesRefreshPending
+  const urlFrameSrc = filesRefreshPending
     ? lastRenderedUrlFrameSrcRef.current
     : activePoweredPreviewSrcOverride ?? computedUrlFrameSrc;
   lastRenderedUrlFrameSrcRef.current = urlFrameSrc;
@@ -12560,13 +12482,27 @@ function HtmlViewer({
     else setManualEditPageStylesOpen(false);
   }
 
-  function syncRetainedTextDocument(savedSource: string, patch: ManualEditPatch): void {
-    if (patch.kind !== 'set-text') {
-      manualEditPersistedDocumentRef.current = null;
-      return;
+  function syncRetainedManualEditDocument(savedSource: string, patch: ManualEditPatch): void {
+    let liveDocumentMatchesSavedSource = false;
+    if (patch.kind === 'set-text') {
+      const savedText = readManualEditFields(savedSource, patch.id).text;
+      liveDocumentMatchesSavedSource = savedText !== undefined
+        && previewTextToIframe(patch.id, savedText);
+    } else if (patch.kind === 'set-style') {
+      const targetStillExists = patch.id === '__body__'
+        || Boolean(readManualEditOuterHtml(savedSource, patch.id));
+      const livePreview = manualEditLiveStylesRef.current.get(patch.id);
+      liveDocumentMatchesSavedSource = targetStillExists
+        && livePreview !== undefined
+        && (Object.keys(patch.styles) as Array<keyof ManualEditStyles>).every((key) => (
+          manualEditPersistedValueMatchesSavedSnapshot(
+            key,
+            livePreview.styles[key] ?? '',
+            patch.styles[key] ?? '',
+          )
+        ));
     }
-    const savedText = readManualEditFields(savedSource, patch.id).text;
-    if (savedText === undefined || !previewTextToIframe(patch.id, savedText)) {
+    if (!liveDocumentMatchesSavedSource) {
       manualEditPersistedDocumentRef.current = null;
       return;
     }
@@ -12669,13 +12605,6 @@ function HtmlViewer({
       setSource(result.source);
       sourceRef.current = result.source;
       setInlinedSource(null);
-      // Inline text edits already changed the live DOM, while text entered in
-      // the inspector only exists in React state until Save. Apply the saved
-      // value through the bridge before adopting the retained document so the
-      // no-reload path never leaves the iframe one edit behind. Other content
-      // patch kinds do not yet have a live bridge equivalent; let those take
-      // the normal single document refresh instead of claiming stale DOM.
-      syncRetainedTextDocument(result.source, patch);
       if (patch.kind !== 'set-style') {
         setManualEditFrozenSource(result.source);
       }
@@ -12723,6 +12652,12 @@ function HtmlViewer({
       if (patch.kind === 'set-style') {
         reconcileManualEditStyleSave(patch.id, patch.styles, result.source);
       }
+      // Text and style edits already changed the live DOM through the edit
+      // bridge. Adopt that exact persisted source revision so the watcher echo
+      // does not navigate an equivalent srcDoc over the visible document.
+      // Other content patches still take one normal document refresh because
+      // they do not yet have a live bridge equivalent.
+      syncRetainedManualEditDocument(result.source, patch);
       setManualEditError(null);
       await onFileSaved?.();
       return true;
@@ -12787,7 +12722,7 @@ function HtmlViewer({
       setSource(latest.beforeSource);
       sourceRef.current = latest.beforeSource;
       setInlinedSource(null);
-      syncRetainedTextDocument(latest.beforeSource, latest.patch);
+      syncRetainedManualEditDocument(latest.beforeSource, latest.patch);
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
       setManualEditUndone((current) => [latest, ...current]);
@@ -12827,7 +12762,7 @@ function HtmlViewer({
       setSource(latest.afterSource);
       sourceRef.current = latest.afterSource;
       setInlinedSource(null);
-      syncRetainedTextDocument(latest.afterSource, latest.patch);
+      syncRetainedManualEditDocument(latest.afterSource, latest.patch);
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
       setManualEditHistory((current) => [latest, ...current]);

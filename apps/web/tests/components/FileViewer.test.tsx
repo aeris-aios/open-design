@@ -2360,7 +2360,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
-  it('defers file-watch refreshes while retained and consumes only the latest key when reactivated', async () => {
+  it('prewarms the latest file-watch refresh while retained and does not navigate on reactivation', async () => {
     const replaceMock = vi.fn();
     const frameWindows = new WeakMap<HTMLIFrameElement, Window>();
     vi.spyOn(HTMLIFrameElement.prototype, 'contentWindow', 'get').mockImplementation(function (this: HTMLIFrameElement) {
@@ -2402,19 +2402,17 @@ describe('FileViewer SVG artifacts', () => {
 
     rerender(<FileViewer {...props} workspaceActive={false} filesRefreshKey={7} />);
     rerender(<FileViewer {...props} workspaceActive={false} filesRefreshKey={9} />);
-    await new Promise((resolve) => window.setTimeout(resolve, 240));
-    expect(frame.getAttribute('src')).toBe(initialSrc);
+    await waitFor(() => expect(frame.getAttribute('src')).toContain('fr=9'));
+    const prewarmedSrc = frame.getAttribute('src');
+    expect(prewarmedSrc).not.toBe(initialSrc);
     expect(replaceMock).not.toHaveBeenCalled();
 
     rerender(<FileViewer {...props} workspaceActive filesRefreshKey={9} />);
-    await waitFor(() => expect(frame.getAttribute('src')).toContain('fr=9'));
-    // React commits the accumulated revision directly on activation. It must
-    // not follow that navigation with a second location.replace reload.
+    expect(frame.getAttribute('src')).toBe(prewarmedSrc);
     expect(replaceMock).not.toHaveBeenCalled();
 
     rerender(<FileViewer {...props} workspaceActive={false} filesRefreshKey={9} />);
     rerender(<FileViewer {...props} workspaceActive filesRefreshKey={9} />);
-    await new Promise((resolve) => window.setTimeout(resolve, 240));
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
@@ -2455,7 +2453,7 @@ describe('FileViewer SVG artifacts', () => {
     }
   });
 
-  it('defers simultaneous mtime and file-watch updates while retained, then applies only the latest version once', async () => {
+  it('prewarms simultaneous mtime and file-watch updates while retained, then reactivates without navigation', async () => {
     const replaceMock = vi.fn();
     const frameWindows = new WeakMap<HTMLIFrameElement, Window>();
     vi.spyOn(HTMLIFrameElement.prototype, 'contentWindow', 'get').mockImplementation(function (this: HTMLIFrameElement) {
@@ -2513,10 +2511,13 @@ describe('FileViewer SVG artifacts', () => {
         workspaceActive={false}
       />,
     );
-    await Promise.resolve();
+    await waitFor(() => expect(frame.getAttribute('src')).toContain('fr=9'));
 
     expect(document.querySelector('iframe[title="retained-version.html"]')).toBe(frame);
-    expect(frame.getAttribute('src')).toBe(initialSrc);
+    const prewarmedSrc = String(frame.getAttribute('src'));
+    expect(prewarmedSrc).not.toBe(initialSrc);
+    expect(prewarmedSrc).toContain('v=3000');
+    expect(prewarmedSrc).toContain('fr=9');
     expect(replaceMock).not.toHaveBeenCalled();
 
     rerender(
@@ -2527,10 +2528,7 @@ describe('FileViewer SVG artifacts', () => {
         workspaceActive
       />,
     );
-    await waitFor(() => expect(frame.getAttribute('src')).toContain('fr=9'));
-    const activatedUrl = String(frame.getAttribute('src'));
-    expect(activatedUrl).toContain('v=3000');
-    expect(activatedUrl).toContain('fr=9');
+    expect(frame.getAttribute('src')).toBe(prewarmedSrc);
     expect(replaceMock).not.toHaveBeenCalled();
 
     rerender(
@@ -8580,7 +8578,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(frame.srcdoc).toContain('Agent V2');
   });
 
-  it('defers hidden file-tab srcDoc updates and commits only the latest generation on activation', () => {
+  it('prewarms hidden file-tab srcDoc updates and reactivates the latest generation without navigation', () => {
     const fileV1 = htmlPreviewFile({
       name: 'retained-agent-edit.html',
       path: 'retained-agent-edit.html',
@@ -8606,16 +8604,17 @@ describe('FileViewer tweaks toolbar', () => {
 
     rerender(renderViewer(false, 2_000, 'Retained V2'));
     expect(screen.getByTestId('artifact-preview-frame-srcdoc-retained-retained-agent-edit.html')).toBe(frame);
-    expect(frame.srcdoc).toBe(initialSrcDoc);
+    expect(frame.srcdoc).toContain('Retained V2');
+    expect(frame.srcdoc).not.toBe(initialSrcDoc);
 
     rerender(renderViewer(false, 3_000, 'Retained V3'));
-    expect(frame.srcdoc).toBe(initialSrcDoc);
+    expect(frame.srcdoc).toContain('Retained V3');
+    expect(frame.srcdoc).not.toContain('Retained V2');
+    const prewarmedSrcDoc = frame.srcdoc;
 
     rerender(renderViewer(true, 3_000, 'Retained V3'));
     expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
-    expect(frame.srcdoc).toContain('Retained V3');
-    expect(frame.srcdoc).not.toContain('Retained V2');
-    expect(frame.srcdoc).not.toBe(initialSrcDoc);
+    expect(frame.srcdoc).toBe(prewarmedSrcDoc);
   });
 
   it('preserves an authored base without minting a project-scoped preview capability', async () => {
