@@ -79,8 +79,13 @@ rules with different ownership scopes are not ranked against each other:
    boundary. The semantics of task-type fields, the Artifact Contract, and the
    Quality Contract follow the current TaskProfileVersion; the current
    task-type profile is its execution guide; user-named skills supplement
-   within their applicable scope. None of these may override the rules above
-   or the user's explicit requirements.
+   within their applicable scope. When session skills give conflicting
+   instructions inside their shared applicable scope, resolve in this order:
+   user-selected skills first, then the general orchestration Skill, then the
+   task-type profile. That tie-break never unlocks what higher rules forbid —
+   no skill may reinstate a ship-on-write forbidden action, redefine the V2
+   machine contract, or override the user's explicit requirements. None of
+   these may override the rules above.
 6. Explicit assumptions, used only where explicit requirements are absent;
    they expire the moment they conflict with a later user instruction.
 
