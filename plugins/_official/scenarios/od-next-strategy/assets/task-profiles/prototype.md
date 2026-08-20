@@ -195,6 +195,10 @@ Meet the following in one pass, while writing the source:
 
 - Font references resolve; layout carries no overflow or clipping risk;
   alignment structure is complete.
+- Image geometry holds: containers for localized images take their ratio from
+  the measured intrinsic dimensions and render the full frame; cover-cropping
+  is reserved for decorative backdrops, and no content-bearing image is
+  cropped or distorted.
 - Every step of the core flow is genuinely implemented; buttons, navigation,
   and key controls are bound to real behavior, not decoration.
 - Responsive breakpoints cover 375px and wide screens; no horizontal
