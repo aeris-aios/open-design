@@ -391,6 +391,22 @@ describe("pricing contract", () => {
     );
   });
 
+  it("marks GLM-5.2, not MiniMax M2.7, as unlimited on Pro", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+    const proUnlimitedBlock = individualPlans.match(
+      /pro: new Set\(\[([\s\S]*?)\]\),/,
+    )?.[1];
+
+    assert.ok(proUnlimitedBlock);
+    const proUnlimitedModels = Array.from(
+      proUnlimitedBlock.matchAll(/'([^']+)'/g),
+      (match) => match[1],
+    );
+    assert.equal(proUnlimitedModels.length, 5);
+    assert.ok(proUnlimitedModels.includes("GLM-5.2"));
+    assert.equal(proUnlimitedModels.includes("MiniMax M2.7"), false);
+  });
+
   it("leads the comparison with Go unlimited models and keeps ample access check-only", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
     const comparisonBlock = individualPlans.match(
@@ -991,6 +1007,14 @@ describe("pricing contract", () => {
     assert.match(
       page,
       /<path d="M5 21V6\.5L12 3v18"\s*\/>[\s\S]*?<path d="M12 8h7v13"\s*\/>[\s\S]*?<path d="M3 21h18"\s*\/>/,
+    );
+    assert.match(
+      page,
+      /\.pr-team-stepper button:first-child\s*\{\s*justify-self:\s*start;\s*\}/,
+    );
+    assert.match(
+      page,
+      /\.pr-team-stepper button:last-child\s*\{\s*justify-self:\s*end;\s*\}/,
     );
   });
 
