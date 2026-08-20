@@ -32,7 +32,16 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
-  process.exit(1);
-});
+void main().then(
+  () => {
+    // Next dev/runtime internals may retain handles after their public close
+    // promises settle. The semantic stop boundary above has already stopped
+    // the web server and closed the fenced control descriptor, so force this
+    // dedicated sidecar process to complete instead of leaking a hidden owner.
+    process.exit(0);
+  },
+  (error: unknown) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error));
+    process.exit(1);
+  },
+);

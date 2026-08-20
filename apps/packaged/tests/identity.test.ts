@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -109,7 +109,7 @@ describe("packaged identity markers", () => {
       namespaceRoot: paths.namespaceRoot,
       pid: process.pid,
       ppid: process.ppid,
-      runtime: { channel: "beta", generation: 9, namespace: root.split("/").pop()!, source: "packaged" },
+      runtime: { channel: "beta", generation: 9, namespace: basename(root), source: "packaged" },
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       version: 1,
