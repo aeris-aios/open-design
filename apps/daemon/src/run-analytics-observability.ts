@@ -168,6 +168,11 @@ export interface RunTimingAnalytics {
   time_to_first_token_ms?: number;
   time_to_first_visible_output_ms?: number;
   runtime_init_to_first_token_ms?: number;
+  // Runtime init measured to the first model event of ANY kind (tool call,
+  // thinking, text, artifact) rather than to the first text token. On a
+  // tool-first run `runtime_init_to_first_token_ms` swallows the entire tool
+  // loop; this one stops the moment the model starts responding.
+  runtime_init_to_first_model_event_ms?: number;
   spawn_to_first_token_ms?: number;
   time_to_first_artifact_ms?: number;
   // `spawn_to_first_token_ms` split into auditable subsegments. By construction
@@ -179,6 +184,10 @@ export interface RunTimingAnalytics {
   model_first_token_ms?: number;
   spawn_to_first_token_remainder_ms?: number;
   generation_duration_ms?: number;
+  // The full window during which the model was working: first model event to
+  // run end. `generation_duration_ms` starts at the first text token instead,
+  // so for tool-first runs it reports only the closing message.
+  model_active_duration_ms?: number;
   tool_call_count: number;
   tool_duration_ms?: number;
   artifact_write_duration_ms?: number;
@@ -187,6 +196,9 @@ export interface RunTimingAnalytics {
   finalize_duration_ms?: number;
   total_duration_ms: number;
   bottleneck_phase?: TrackingRunLifecyclePhase;
+  // Which phase-boundary definition produced `bottleneck_phase`. Rows from
+  // different versions are not comparable; filter, do not average.
+  phase_schema_version?: number;
   last_observed_phase?: TrackingRunLifecyclePhase;
   phase_timing_status?: TrackingRunPhaseTimingStatus;
   attempt_index?: number;
@@ -272,6 +284,14 @@ function measuredStatus(values: Array<number | undefined>): TrackingRunPhaseTimi
   if (measured === 0) return 'missing';
   return measured === values.length ? 'complete' : 'partial';
 }
+
+// Bumped when phase BOUNDARY definitions change in a way that makes new rows
+// incomparable with old ones, so a dashboard can filter to one definition
+// instead of averaging two.
+//   v2: `runtime_init` and `stream_output` re-anchored from the first text
+//       token to the first model event, and `stream_output` made mutually
+//       exclusive with `tool_execution`.
+const RUN_PHASE_SCHEMA_VERSION = 2;
 
 function setMeasuredDuration(
   result: Partial<RunTimingAnalytics>,
@@ -1007,6 +1027,17 @@ export function summarizeRunTimingAnalytics(args: {
   const startAt = telemetry.startChatRunStartedAt ?? telemetry.startRequestedAt;
   const totalDurationMs = Math.max(0, args.analyticsCapturedAt - args.runCreatedAt);
   const firstModelEventAt = telemetry.firstModelEventAt ?? firstToolUseAt ?? telemetry.firstTokenAt;
+  // Phase boundaries anchor on when the model STARTED RESPONDING, in whatever
+  // form -- a tool call and a thinking delta both mean the model is working
+  // and the user can see something happen. `firstTokenAt` marks the first
+  // *text* only, so on a tool-first run it lands after the whole tool loop and
+  // bills that loop to startup.
+  //
+  // Deliberately NOT the composite above: its middle fallback `firstToolUseAt`
+  // is scanned off event records stamped with the daemon's clock and is never
+  // reset between retry attempts. Subtracting that from a tracer timestamp is
+  // cross-clock arithmetic. Phase anchoring uses tracer-reported marks only.
+  const phaseAnchorAt = telemetry.firstModelEventAt ?? telemetry.firstTokenAt;
   const firstModelEventType =
     telemetry.firstModelEventType ??
     firstObservedModelEventType ??
@@ -1035,12 +1066,38 @@ export function summarizeRunTimingAnalytics(args: {
   if (timeToFirstToken !== undefined) result.time_to_first_token_ms = timeToFirstToken;
   const timeToFirstVisibleOutput = durationBetween(startAt, firstVisibleOutputAt);
   if (timeToFirstVisibleOutput !== undefined) result.time_to_first_visible_output_ms = timeToFirstVisibleOutput;
-  setMeasuredDuration(result, 'runtime_init_to_first_token_ms', phaseDurations, 'runtime_init', telemetry.stdinWriteEndAt ?? telemetry.modelCallStartAt ?? telemetry.processSpawnedAt, telemetry.firstTokenAt);
+  const runtimeInitStartAt =
+    telemetry.stdinWriteEndAt ?? telemetry.modelCallStartAt ?? telemetry.processSpawnedAt;
+  // The published field keeps its first-token meaning so existing dashboards
+  // keep reading the same number; only the `runtime_init` PHASE moves to the
+  // model-event anchor, which is what bottleneck attribution consumes.
+  const runtimeInitToFirstToken = durationBetween(runtimeInitStartAt, telemetry.firstTokenAt);
+  if (runtimeInitToFirstToken !== undefined) {
+    result.runtime_init_to_first_token_ms = runtimeInitToFirstToken;
+  }
+  setMeasuredDuration(result, 'runtime_init_to_first_model_event_ms', phaseDurations, 'runtime_init', runtimeInitStartAt, phaseAnchorAt);
   const spawnToFirstToken = durationBetween(telemetry.processSpawnedAt, telemetry.firstTokenAt);
   if (spawnToFirstToken !== undefined) result.spawn_to_first_token_ms = spawnToFirstToken;
   const timeToFirstArtifact = durationBetween(startAt, firstArtifactWriteAt);
   if (timeToFirstArtifact !== undefined) result.time_to_first_artifact_ms = timeToFirstArtifact;
-  setMeasuredDuration(result, 'generation_duration_ms', phaseDurations, 'stream_output', telemetry.firstTokenAt, runEndAt);
+  // Same split as runtime_init: `generation_duration_ms` keeps its first-token
+  // meaning, `model_active_duration_ms` is the corrected window. The
+  // `stream_output` PHASE additionally subtracts tool time so it stays
+  // mutually exclusive with `tool_execution`; without that the tool loop is
+  // counted in both and `stream_output` wins the bottleneck by construction.
+  const generationDuration = durationBetween(telemetry.firstTokenAt, runEndAt);
+  if (generationDuration !== undefined) result.generation_duration_ms = generationDuration;
+  const modelActiveDuration = durationBetween(phaseAnchorAt, runEndAt);
+  if (modelActiveDuration !== undefined) {
+    result.model_active_duration_ms = modelActiveDuration;
+    phaseDurations.push({
+      phase: 'stream_output',
+      // Floored: tool spans can overlap (parallel calls) or carry a
+      // producer-supplied `startedAt` from another clock, either of which can
+      // push the sum past the model-active window.
+      duration: Math.max(0, modelActiveDuration - Math.round(toolDurationMs)),
+    });
+  }
   if (toolCallCount > 0) result.tool_duration_ms = Math.round(toolDurationMs);
   if (toolCallCount > 0) {
     phaseDurations.push({ phase: 'tool_execution', duration: Math.round(toolDurationMs) });
@@ -1097,6 +1154,7 @@ export function summarizeRunTimingAnalytics(args: {
 
   const bottleneckPhase = largestMeasuredPhase(phaseDurations);
   if (bottleneckPhase !== undefined) result.bottleneck_phase = bottleneckPhase;
+  result.phase_schema_version = RUN_PHASE_SCHEMA_VERSION;
   result.phase_timing_status = measuredStatus([
     startAt,
     telemetry.promptBuildStartAt,

@@ -1148,12 +1148,14 @@ describe('summarizeRunTimingAnalytics', () => {
       time_to_first_token_ms: 1300,
       time_to_first_visible_output_ms: 1300,
       runtime_init_to_first_token_ms: 650,
+      runtime_init_to_first_model_event_ms: 150,
       spawn_to_first_token_ms: 740,
       time_to_first_artifact_ms: 3050,
       // No subsegment markers were observed, so the whole spawn->first-token
       // span is unattributed and falls into the remainder.
       spawn_to_first_token_remainder_ms: 740,
       generation_duration_ms: 5500,
+      model_active_duration_ms: 6000,
       tool_call_count: 2,
       tool_duration_ms: 650,
       artifact_write_duration_ms: 250,
@@ -1162,6 +1164,7 @@ describe('summarizeRunTimingAnalytics', () => {
       finalize_duration_ms: 20,
       total_duration_ms: 7020,
       bottleneck_phase: 'stream_output',
+      phase_schema_version: 2,
       last_observed_phase: 'artifact_write',
       phase_timing_status: 'complete',
       attempt_index: 1,
@@ -1257,11 +1260,13 @@ describe('summarizeRunTimingAnalytics', () => {
     expect(result).toEqual({
       queue_duration_ms: 100,
       generation_duration_ms: 2440,
+      model_active_duration_ms: 2440,
       tool_call_count: 0,
       artifact_write_status: 'none',
       total_duration_ms: 2450,
       first_model_event_type: 'text_delta',
       bottleneck_phase: 'stream_output',
+      phase_schema_version: 2,
       last_observed_phase: 'stream_output',
       phase_timing_status: 'partial',
       attempt_duration_ms: 2400,
@@ -1500,5 +1505,146 @@ describe('summarizeToolAnalytics', () => {
     ]);
     expect(result.tool_names).toEqual(['Write', 'Bash', 'Fetch', 'Tool']);
     expect(result.tool_name_count).toBe(4);
+  });
+});
+
+describe('summarizeRunTimingAnalytics phase anchoring', () => {
+  // A tool-first run: the model starts working at 4s (a tool_use) but stays
+  // silent until 24s, then emits one short closing sentence before the run
+  // ends at 25s. This is the dominant shape for OpenCode/OpenAI runs.
+  //
+  // Phase boundaries must follow when the model STARTED RESPONDING, not when
+  // it first emitted text. Anchoring phases on `firstTokenAt` charges the
+  // whole 20s tool loop to `runtime_init` and leaves the generation phase
+  // holding only the closing sentence.
+  const toolFirstRun = {
+    runCreatedAt: 1_000,
+    runUpdatedAt: 25_000,
+    analyticsCapturedAt: 25_200,
+    telemetry: {
+      startRequestedAt: 1_100,
+      startChatRunStartedAt: 2_000,
+      processSpawnStartedAt: 2_500,
+      processSpawnedAt: 3_000,
+      modelCallStartAt: 3_100,
+      stdinWriteStartAt: 3_100,
+      stdinWriteEndAt: 3_200,
+      firstModelEventAt: 4_000,
+      firstModelEventType: 'tool_use' as const,
+      firstTokenAt: 24_000,
+      firstVisibleOutputAt: 24_000,
+      attemptIndex: 1,
+      attemptStartedAt: 2_000,
+    },
+    events: [
+      { id: 1, event: 'agent', timestamp: 4_000, data: { type: 'tool_use', id: 't1', name: 'Read' } },
+      { id: 2, event: 'agent', timestamp: 9_000, data: { type: 'tool_result', toolUseId: 't1' } },
+      { id: 3, event: 'agent', timestamp: 10_000, data: { type: 'tool_use', id: 't2', name: 'Bash' } },
+      { id: 4, event: 'agent', timestamp: 16_000, data: { type: 'tool_result', toolUseId: 't2' } },
+      { id: 5, event: 'agent', timestamp: 17_000, data: { type: 'tool_use', id: 't3', name: 'Write' } },
+      { id: 6, event: 'agent', timestamp: 22_000, data: { type: 'tool_result', toolUseId: 't3' } },
+    ],
+  };
+
+  it('measures runtime init up to the first model event, not the first token', () => {
+    const result = summarizeRunTimingAnalytics(toolFirstRun);
+
+    // stdin closed at 3.2s and the model responded at 4s.
+    expect(result.runtime_init_to_first_model_event_ms).toBe(800);
+  });
+
+  it('counts the whole tool loop as model-active time', () => {
+    const result = summarizeRunTimingAnalytics(toolFirstRun);
+
+    // The model responded at 4s and the run ended at 25s.
+    expect(result.model_active_duration_ms).toBe(21_000);
+  });
+
+  it('blames the tool loop rather than startup for a tool-first run', () => {
+    const result = summarizeRunTimingAnalytics(toolFirstRun);
+
+    // Tool execution is 16s of the 21s model-active window; the re-anchored
+    // runtime_init phase is 0.8s. Anchoring on firstTokenAt reports a 20.8s
+    // `runtime_init` phase and wins the bottleneck with pure startup.
+    expect(result.tool_duration_ms).toBe(16_000);
+    expect(result.bottleneck_phase).toBe('tool_execution');
+  });
+
+  it('stamps the phase schema version so old and new rows are separable', () => {
+    const result = summarizeRunTimingAnalytics(toolFirstRun);
+
+    expect(result.phase_schema_version).toBe(2);
+  });
+
+  it('leaves every first-token metric at its published meaning', () => {
+    const result = summarizeRunTimingAnalytics(toolFirstRun);
+
+    // These four are consumed by existing dashboards. Re-anchoring phases
+    // must not silently redefine them.
+    expect(result.time_to_first_token_ms).toBe(22_000);
+    expect(result.runtime_init_to_first_token_ms).toBe(20_800);
+    expect(result.spawn_to_first_token_ms).toBe(21_000);
+    expect(result.generation_duration_ms).toBe(1_000);
+  });
+
+  it('reports identical old and new values when the model leads with text', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 8_000,
+      analyticsCapturedAt: 8_020,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        processSpawnStartedAt: 2_500,
+        processSpawnedAt: 3_000,
+        stdinWriteStartAt: 3_100,
+        stdinWriteEndAt: 3_200,
+        firstModelEventAt: 4_000,
+        firstModelEventType: 'text_delta' as const,
+        firstTokenAt: 4_000,
+        firstVisibleOutputAt: 4_000,
+        attemptIndex: 1,
+        attemptStartedAt: 2_000,
+      },
+      events: [
+        { id: 1, event: 'agent', timestamp: 5_000, data: { type: 'tool_use', id: 't1', name: 'Read' } },
+        { id: 2, event: 'agent', timestamp: 5_500, data: { type: 'tool_result', toolUseId: 't1' } },
+      ],
+    });
+
+    // Text-first runs already had a truthful anchor, so the new fields must
+    // land on exactly the old numbers -- no drift for Claude Code-shaped runs.
+    expect(result.runtime_init_to_first_model_event_ms).toBe(result.runtime_init_to_first_token_ms);
+    expect(result.model_active_duration_ms).toBe(result.generation_duration_ms);
+  });
+
+  it('falls back to the first token when the client reported no model event', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 25_000,
+      analyticsCapturedAt: 25_100,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 2_000,
+        processSpawnedAt: 3_000,
+        stdinWriteEndAt: 3_200,
+        firstTokenAt: 24_000,
+        attemptIndex: 1,
+        attemptStartedAt: 2_000,
+      },
+      events: [
+        { id: 1, event: 'agent', timestamp: 4_000, data: { type: 'tool_use', id: 't1', name: 'Read' } },
+        { id: 2, event: 'agent', timestamp: 9_000, data: { type: 'tool_result', toolUseId: 't1' } },
+      ],
+    });
+
+    // Older clients send no `firstModelEventAt`. The phase anchor falls back
+    // to the first token rather than to the scanned `tool_use` timestamp:
+    // event records carry the daemon's clock, not the lifecycle tracer's, and
+    // are not reset per retry attempt. `time_to_first_model_event_ms` keeps
+    // its existing scan-based fallback and is unaffected.
+    expect(result.time_to_first_model_event_ms).toBe(2_000);
+    expect(result.runtime_init_to_first_model_event_ms).toBe(20_800);
+    expect(result.model_active_duration_ms).toBe(1_000);
   });
 });

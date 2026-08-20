@@ -1021,6 +1021,12 @@ function buildSemanticPhaseDiagnostics(ctx: ReportContext): Record<string, unkno
   addMeasured('runtime-init-to-first-token', marks.stdinWriteEndAt ?? marks.modelCallStartAt ?? marks.processSpawnedAt, marks.firstTokenAt);
   addMeasured('agent-call', marks.modelCallStartAt, ctx.run.endedAt);
   addMeasured('stream-output', marks.firstTokenAt, marks.finalizeStartAt ?? ctx.run.endedAt);
+  // `stream-output` starts at the first text token, so a tool-first run shows
+  // only its closing message here. `model-active` is the same window anchored
+  // on the first model event of any kind. Kept as a diagnostics entry rather
+  // than a second span: this map rides along in existing metadata, while a new
+  // span would add an observation row per run.
+  addMeasured('model-active', marks.firstModelEventAt ?? marks.firstTokenAt, marks.finalizeStartAt ?? ctx.run.endedAt);
   addMeasured('artifact-write', marks.firstArtifactWriteAt, marks.finalizeStartAt ?? ctx.run.endedAt);
   addMeasured('finalize', marks.finalizeStartAt, ctx.run.endedAt);
   return {
