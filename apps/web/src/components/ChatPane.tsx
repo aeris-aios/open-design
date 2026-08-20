@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { hasOdCard } from '@open-design/contracts';
+import { hasOdCard, OD_NEXT_STRATEGY_ID } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
 import {
@@ -39,6 +39,10 @@ import {
   type DesignToolboxActionId,
 } from '../runtime/design-toolbox';
 import { isRetryableAssistantTerminalFailure } from '../runtime/design-delivery';
+import {
+  isInternalStrategySnapshot,
+  shouldShowSessionModeChip,
+} from '../runtime/strategy-turn-chrome';
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
@@ -3598,7 +3602,10 @@ function ChatRows({
       const pluginSnapshot = message.appliedPluginSnapshot ?? activePluginSnapshot ?? null;
       const contextItems: AppliedContextItem[] = [];
 
-      if (pluginSnapshot) {
+      // A strategy package is daemon-applied plumbing, never a plugin the
+      // user chose, so it stays out of the applied-context line in both the
+      // snapshot and the raw-id form.
+      if (pluginSnapshot && !isInternalStrategySnapshot(pluginSnapshot)) {
         contextItems.push({
           kind: 'plugin',
           title: pluginSnapshot.pluginTitle ?? pluginSnapshot.pluginId,
@@ -3607,6 +3614,7 @@ function ChatRows({
       }
       for (const pluginId of message.runContext?.pluginIds ?? []) {
         if (pluginSnapshot?.pluginId === pluginId) continue;
+        if (pluginId === OD_NEXT_STRATEGY_ID) continue;
         contextItems.push({ kind: 'plugin', title: pluginId, pluginId });
       }
       for (const skillId of message.runContext?.skillIds ?? []) {
@@ -3682,6 +3690,10 @@ function ChatRows({
           onRequestDesignSystemDetails={onRequestDesignSystemDetails}
           t={t}
           appliedContextItems={appliedContextByMessageId.get(m.id) ?? []}
+          showSessionModeChip={shouldShowSessionModeChip({
+            sessionMode: m.sessionMode,
+            snapshot: m.appliedPluginSnapshot ?? activePluginSnapshot ?? null,
+          })}
           highlighted={highlightedUserMessageId === m.id}
         />
       );
@@ -4728,6 +4740,7 @@ function UserMessageImpl({
   onRequestDesignSystemDetails,
   t,
   appliedContextItems,
+  showSessionModeChip,
   highlighted,
 }: {
   message: ChatMessage;
@@ -4738,6 +4751,7 @@ function UserMessageImpl({
   onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
   t: TranslateFn;
   appliedContextItems: AppliedContextItem[];
+  showSessionModeChip: boolean;
   highlighted?: boolean;
 }) {
   const { workspaceContext } = useProjectCollabContext();
@@ -4746,7 +4760,7 @@ function UserMessageImpl({
   const workspaceItems = message.runContext?.workspaceItems ?? [];
   const visibleWorkspaceItems = workspaceItems.filter((item) => item.kind !== 'design-system');
   const hasRunContext = Boolean(
-    message.sessionMode ||
+    showSessionModeChip ||
       visibleWorkspaceItems.length > 0 ||
       appliedContextItems.length > 0,
   );
@@ -4781,7 +4795,7 @@ function UserMessageImpl({
       <span className="sr-only">{t('chat.you')}</span>
       {hasRunContext ? (
         <div className="msg-run-context-row" data-testid="msg-run-context-row">
-          {message.sessionMode ? (
+          {showSessionModeChip && message.sessionMode ? (
             <MessageSessionModeChip mode={message.sessionMode} t={t} />
           ) : null}
           {visibleWorkspaceItems.map((item) => (
