@@ -2113,6 +2113,7 @@ export const id: Dict = {
   'chat.comments.saved': 'Komentar tersimpan',
   'chat.comments.emptySaved': 'Tidak ada komentar tersimpan.',
   'chat.comments.add': 'Tambah',
+  'chat.comments.addComment': 'Tambahkan komentar',
   'chat.comments.addAll': 'Tambah semua',
   'chat.comments.remove': 'Hapus',
   'chat.comments.placeholder': 'Komentari elemen ini...',

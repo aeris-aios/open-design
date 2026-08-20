@@ -2113,6 +2113,7 @@ export const de: Dict = {
   'chat.comments.saved': 'Gespeicherte Kommentare',
   'chat.comments.emptySaved': 'Keine gespeicherten Kommentare.',
   'chat.comments.add': 'Hinzufügen',
+  'chat.comments.addComment': 'Kommentar hinzufügen',
   'chat.comments.addAll': 'Alle hinzufügen',
   'chat.comments.remove': 'Entfernen',
   'chat.comments.placeholder': 'Dieses Element kommentieren…',

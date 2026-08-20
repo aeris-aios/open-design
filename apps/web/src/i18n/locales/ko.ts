@@ -2113,6 +2113,7 @@ export const ko: Dict = {
   'chat.comments.saved': '저장된 댓글',
   'chat.comments.emptySaved': '저장된 댓글이 없습니다.',
   'chat.comments.add': '추가',
+  'chat.comments.addComment': '댓글 추가',
   'chat.comments.addAll': '모두 추가',
   'chat.comments.remove': '제거',
   'chat.comments.placeholder': '이 요소에 댓글 달기…',

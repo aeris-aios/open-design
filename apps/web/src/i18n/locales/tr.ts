@@ -2113,6 +2113,7 @@ export const tr: Dict = {
   'chat.comments.saved': 'Kaydedilen yorumlar',
   'chat.comments.emptySaved': 'Kaydedilmiş yorum yok.',
   'chat.comments.add': 'Ekle',
+  'chat.comments.addComment': 'Yorum ekle',
   'chat.comments.addAll': 'Tümünü ekle',
   'chat.comments.remove': 'Kaldır',
   'chat.comments.placeholder': 'Bu öğeye yorum yapın…',

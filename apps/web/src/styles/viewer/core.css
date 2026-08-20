@@ -1648,8 +1648,11 @@
   padding: 0;
   border: 3px solid #fff;
   border-radius: 50% 50% 50% 10px;
-  background: var(--accent-strong, #202020);
-  color: var(--brand, #87ea5c);
+  /* The host editor's --accent-strong can be white in light themes. Pins
+     must remain dark at rest and while selected so their green index remains
+     legible against every preview. */
+  background: #202020;
+  color: #87ea5c;
   font-size: 18px;
   font-weight: 700;
   line-height: 36px;
@@ -1660,7 +1663,7 @@
 }
 .comment-saved-pin:hover,
 .comment-active-pin:hover {
-  background: var(--accent, #353535);
+  background: #353535;
   transform: translate(-50%, calc(-50% - 1px));
 }
 .comment-active-pin {
@@ -1717,28 +1720,11 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 650;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.comment-popover-view-all {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.25;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.comment-popover-view-all:hover {
-  color: var(--text);
 }
 .comment-popover-drag-handle {
   flex: 0 0 auto;
@@ -1957,6 +1943,35 @@
   gap: 10px;
   min-width: 0;
 }
+.comment-popover-actions-end .comment-popover-add,
+.comment-popover-actions-end .comment-popover-send {
+  min-width: 128px;
+  min-height: 42px;
+  padding-inline: 16px;
+  font-size: 15px;
+  font-weight: 650;
+}
+.comment-popover-actions-end .comment-popover-add {
+  border-color: var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-xs);
+}
+.comment-popover-actions-end .comment-popover-add:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.comment-popover-actions-end .comment-popover-send {
+  border-color: color-mix(in srgb, #ff5a3c 48%, var(--border));
+  background: color-mix(in srgb, #ff5a3c 42%, var(--bg-panel));
+  color: #fff;
+  box-shadow: 0 4px 10px color-mix(in srgb, #ff5a3c 22%, transparent);
+}
+.comment-popover-actions-end .comment-popover-send:hover:not(:disabled) {
+  border-color: #ff5a3c;
+  background: color-mix(in srgb, #ff5a3c 56%, var(--bg-panel));
+}
 .comment-popover-actions-start {
   display: inline-flex;
   align-items: center;
@@ -1983,6 +1998,13 @@
   background: var(--bg-subtle);
   border-color: var(--border-strong);
   color: var(--text);
+}
+.comment-popover-title-close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-color: transparent;
+  box-shadow: none;
 }
 .comment-popover button > svg {
   display: block;

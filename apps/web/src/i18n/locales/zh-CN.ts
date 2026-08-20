@@ -2204,6 +2204,7 @@ export const zhCN: Dict = {
   "chat.comments.saved": "已保存的评论",
   "chat.comments.emptySaved": "没有已保存的评论。",
   "chat.comments.add": "添加",
+  "chat.comments.addComment": "添加评论",
   "chat.comments.addAll": "全部添加",
   "chat.comments.remove": "移除",
   "chat.comments.placeholder": "评论此元素…",

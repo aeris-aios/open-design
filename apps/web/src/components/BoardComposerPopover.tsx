@@ -428,7 +428,6 @@ export function BoardComposerPopover({
   onRemoveMember,
   onHoverMember,
   onDeleteComment,
-  onViewAllComments,
   images = [],
   existingImages = [],
   onAttachImages,
@@ -462,8 +461,6 @@ export function BoardComposerPopover({
   onRemoveMember: (elementId: string) => void;
   onHoverMember?: (elementId: string | null) => void;
   onDeleteComment?: (commentId: string) => void | Promise<boolean | void>;
-  /** Opens the all-comments side panel without closing this popover. */
-  onViewAllComments?: (returnFocusTarget?: HTMLElement | null) => void;
   /** Object-URL thumbnails for images the user attached to this comment. */
   images?: { file: File; url: string }[];
   /** Already-saved attachment thumbnails (read-only) for a re-opened comment. */
@@ -671,20 +668,18 @@ export function BoardComposerPopover({
           >
             <span aria-hidden />
           </button>
-          <span className="comment-popover-title" title={target.label || target.elementId}>
-            {target.label || target.elementId}
+          <span className="comment-popover-title">
+            {t('chat.comments.comment')}
           </span>
-          {onViewAllComments ? (
-            <button
-              type="button"
-              className="comment-popover-view-all"
-              data-testid="comment-popover-view-all"
-              onClick={(event) => onViewAllComments(event.currentTarget)}
-            >
-              {t('chat.comments.viewAll')}
-              <Icon name="chevron-right" size={12} />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="comment-popover-close comment-popover-title-close"
+            onClick={onClose}
+            title={t('common.close')}
+            aria-label={t('common.close')}
+          >
+            <Icon name="close" size={14} />
+          </button>
         </div>
       ) : null}
       {/* Everything above the action row scrolls; the action row itself lives
@@ -855,17 +850,7 @@ export function BoardComposerPopover({
               >
                 <Icon name="trash" size={14} />
               </button>
-            ) : (
-              <button
-                type="button"
-                className="comment-popover-close"
-                onClick={onClose}
-                title={t('common.close')}
-                aria-label={t('common.close')}
-              >
-                <Icon name="close" size={14} />
-              </button>
-            )}
+            ) : null}
           </div>
           <div className="comment-popover-actions-end">
             {isPodSelection ? (
@@ -897,28 +882,30 @@ export function BoardComposerPopover({
               </>
             ) : (
               <>
-                {/* Element: comment (save) is the primary CTA (also Enter);
-                    send-to-chat is secondary. Save (edit) is gated by
+                {/* Element: saving is a secondary local action; sending to
+                    chat is the primary continuation. Save (edit) is gated by
                     canEditComment; send-to-chat by canSendToAgent. */}
-                {canSendToAgent && allowSendToChat ? (
+                {canEditComment ? (
                   <Button
                     variant="ghost"
+                    className="comment-popover-add"
+                    data-testid="comment-popover-save"
+                    disabled={saveDisabled}
+                    onClick={() => void onSaveComment()}
+                  >
+                    {t('chat.comments.addComment')}
+                  </Button>
+                ) : null}
+                {canSendToAgent && allowSendToChat ? (
+                  <Button
+                    variant="primary"
+                    className="comment-popover-send"
                     data-testid="comment-add-send"
                     disabled={sendBlocked}
                     title={sendDisabled ? sendDisabledReason : undefined}
                     onClick={() => void onSendBatch()}
                   >
                     {primaryLabel}
-                  </Button>
-                ) : null}
-                {canEditComment ? (
-                  <Button
-                    variant="primary"
-                    data-testid="comment-popover-save"
-                    disabled={saveDisabled}
-                    onClick={() => void onSaveComment()}
-                  >
-                    {t('chat.comments.comment')}
                   </Button>
                 ) : null}
               </>

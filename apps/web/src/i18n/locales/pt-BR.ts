@@ -2113,6 +2113,7 @@ export const ptBR: Dict = {
   'chat.comments.saved': 'Comentários salvos',
   'chat.comments.emptySaved': 'Nenhum comentário salvo.',
   'chat.comments.add': 'Adicionar',
+  'chat.comments.addComment': 'Adicionar comentário',
   'chat.comments.addAll': 'Adicionar todos',
   'chat.comments.remove': 'Remover',
   'chat.comments.placeholder': 'Comente neste elemento…',

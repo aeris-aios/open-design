@@ -2113,6 +2113,7 @@ export const ar: Dict = {
   'chat.comments.saved': 'تعليقات محفوظة',
   'chat.comments.emptySaved': 'لا توجد تعليقات محفوظة.',
   'chat.comments.add': 'إضافة',
+  'chat.comments.addComment': 'إضافة تعليق',
   'chat.comments.addAll': 'إضافة الكل',
   'chat.comments.remove': 'إزالة',
   'chat.comments.placeholder': 'علق على هذا العنصر...',

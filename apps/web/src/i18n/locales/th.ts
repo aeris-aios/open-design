@@ -2113,6 +2113,7 @@ export const th: Dict = {
   'chat.comments.saved': 'บันทึกความคิดเห็นแล้ว',
   'chat.comments.emptySaved': 'ไม่มีการบันทึกความคิดเห็น',
   'chat.comments.add': 'เพิ่ม',
+  'chat.comments.addComment': 'เพิ่มความคิดเห็น',
   'chat.comments.addAll': 'เพิ่มทั้งหมด',
   'chat.comments.remove': 'ลบ',
   'chat.comments.placeholder': 'แสดงความคิดเห็นเกี่ยวกับส่วนนี้…',

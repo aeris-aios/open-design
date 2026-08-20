@@ -2113,6 +2113,7 @@ export const ru: Dict = {
   'chat.comments.saved': 'Сохранённые комментарии',
   'chat.comments.emptySaved': 'Сохранённых комментариев нет.',
   'chat.comments.add': 'Добавить',
+  'chat.comments.addComment': 'Добавить комментарий',
   'chat.comments.addAll': 'Добавить все',
   'chat.comments.remove': 'Удалить',
   'chat.comments.placeholder': 'Оставьте комментарий к этому элементу…',

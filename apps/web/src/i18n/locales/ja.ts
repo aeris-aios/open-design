@@ -2113,6 +2113,7 @@ export const ja: Dict = {
   'chat.comments.saved': '保存済みコメント',
   'chat.comments.emptySaved': '保存されたコメントはありません。',
   'chat.comments.add': '追加',
+  'chat.comments.addComment': 'コメントを追加',
   'chat.comments.addAll': 'すべて追加',
   'chat.comments.remove': '削除',
   'chat.comments.placeholder': 'この要素にコメント…',

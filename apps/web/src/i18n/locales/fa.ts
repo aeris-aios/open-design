@@ -2113,6 +2113,7 @@ export const fa: Dict = {
   'chat.comments.saved': 'نظرات ذخیره‌شده',
   'chat.comments.emptySaved': 'هیچ نظر ذخیره‌شده‌ای وجود ندارد.',
   'chat.comments.add': 'افزودن',
+  'chat.comments.addComment': 'افزودن نظر',
   'chat.comments.addAll': 'افزودن همه',
   'chat.comments.remove': 'حذف',
   'chat.comments.placeholder': 'درباره این عنصر نظر بدهید…',

@@ -2212,6 +2212,7 @@ export const zhTW: Dict = {
   "chat.comments.saved": "已儲存的評論",
   "chat.comments.emptySaved": "沒有已儲存的評論。",
   "chat.comments.add": "新增",
+  "chat.comments.addComment": "新增留言",
   "chat.comments.addAll": "全部新增",
   "chat.comments.remove": "移除",
   "chat.comments.placeholder": "評論此元素…",

@@ -9412,52 +9412,6 @@ describe('FileViewer tweaks toolbar', () => {
     });
   });
 
-  it('keeps the comment popover open and restores focus when View all comments closes', async () => {
-    const portalId = 'project-comments-view-all';
-    render(
-      <>
-        <div id={portalId} data-testid="comment-float-host" />
-        <FileViewer
-          projectId="project-1"
-          projectKind="prototype"
-          file={htmlPreviewFile()}
-          liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-          commentPortalId={portalId}
-        />
-      </>,
-    );
-
-    clickAgentTool('comment-panel-toggle');
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: {
-        type: 'od:comment-target',
-        elementId: 'hero',
-        selector: '[data-od-id="hero"]',
-        label: 'Hero',
-        text: 'Hero',
-        position: { x: 8, y: 12, width: 120, height: 48 },
-        hoverPoint: { x: 12, y: 16 },
-        htmlHint: '<main data-od-id="hero">Hero</main>',
-      },
-    }));
-
-    const viewAll = await screen.findByTestId('comment-popover-view-all');
-    fireEvent.click(viewAll);
-
-    const panel = await screen.findByTestId('comment-side-panel');
-    const dismiss = within(panel).getByRole('button', { name: /hide comments/i });
-    dismiss.focus();
-    fireEvent.click(dismiss);
-
-    await waitFor(() => {
-      expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-      expect(screen.getByTestId('comment-popover')).toBeTruthy();
-      expect(document.activeElement).toBe(viewAll);
-    });
-  });
-
   it('shows the open comment count beside the comments icon', () => {
     const openComment: PreviewComment = {
       id: 'comment-open',
@@ -11059,7 +11013,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('annotation-hover-style-summary')).toBeNull();
     expect(screen.queryByTestId('annotation-hover-popover')).toBeNull();
     expect(screen.queryByTestId('inspect-panel')).toBeNull();
-    expect(await screen.findByTestId('comment-target-overlay')).toBeTruthy();
+    expect(screen.queryByTestId('comment-target-overlay')).toBeNull();
     expect(screen.queryByTestId('comment-popover-input')).toBeNull();
 
     window.dispatchEvent(new MessageEvent('message', {
@@ -11072,7 +11026,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(summary.textContent).toContain('#1A1916');
     expect(summary.textContent).toContain('13.5px');
     expect(await screen.findByTestId('comment-popover-input')).toBeTruthy();
-    expect(screen.getByTestId('comment-target-overlay')).toBeTruthy();
+    expect(screen.queryByTestId('comment-target-overlay')).toBeNull();
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('inspect-panel')).toBeNull();
     await waitFor(() => {

@@ -2939,6 +2939,7 @@ export interface Dict {
   'chat.comments.saved': string;
   'chat.comments.emptySaved': string;
   'chat.comments.add': string;
+  'chat.comments.addComment': string;
   'chat.comments.addAll': string;
   'chat.comments.remove': string;
   'chat.comments.placeholder': string;

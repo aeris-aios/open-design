@@ -2113,6 +2113,7 @@ export const uk: Dict = {
   'chat.comments.saved': 'Збережені коментарі',
   'chat.comments.emptySaved': 'Немає збережених коментарів.',
   'chat.comments.add': 'Додати',
+  'chat.comments.addComment': 'Додати коментар',
   'chat.comments.addAll': 'Додати все',
   'chat.comments.remove': 'Видалити',
   'chat.comments.placeholder': 'Коментар до цього елемента…',

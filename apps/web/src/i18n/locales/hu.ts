@@ -2113,6 +2113,7 @@ export const hu: Dict = {
   'chat.comments.saved': 'Mentett megjegyzések',
   'chat.comments.emptySaved': 'Nincsenek mentett megjegyzések.',
   'chat.comments.add': 'Hozzáadás',
+  'chat.comments.addComment': 'Megjegyzés hozzáadása',
   'chat.comments.addAll': 'Összes hozzáadása',
   'chat.comments.remove': 'Eltávolítás',
   'chat.comments.placeholder': 'Megjegyzés ehhez az elemhez…',
