@@ -5004,6 +5004,41 @@ export function ProjectView({
     ],
   );
 
+  const resolvePreviewComment = useCallback(
+    async (commentId: string): Promise<boolean> => {
+      const commentConversationId = activeConversationId ?? routeConversationId;
+      if (!commentConversationId || projectCollab.materializationPending) return false;
+      const saved = await patchPreviewCommentStatus(
+        project.id,
+        commentConversationId,
+        commentId,
+        'resolved',
+        projectRunWorkspaceContext,
+      );
+      if (!saved) {
+        setProjectActionsToast({
+          message: t('project.previewCommentSaveFailed'),
+          details: null,
+          tone: 'error',
+          ttlMs: 5000,
+        });
+        return false;
+      }
+      commitPreviewComments((current) => mergeSavedPreviewComment(current, saved));
+      setAttachedComments((current) => removeAttachedComment(current, commentId));
+      return true;
+    },
+    [
+      project.id,
+      activeConversationId,
+      routeConversationId,
+      commitPreviewComments,
+      projectRunWorkspaceContext,
+      t,
+      projectCollab.materializationPending,
+    ],
+  );
+
   /**
    * Persist a sidebar drag-reorder (recvq5BVsolIxi Phase 2). Applies the new
    * `sortKey` to local state FIRST (optimistic — the drag already showed the
@@ -11405,6 +11440,7 @@ export function ProjectView({
           previewComments={previewComments}
           onSavePreviewComment={savePreviewComment}
           onRemovePreviewComment={removePreviewComment}
+          onResolvePreviewComment={resolvePreviewComment}
           onReorderPreviewComment={reorderPreviewComment}
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
           onBrandExtractionStopRequest={projectIsProgrammaticBrandExtraction ? handleStop : undefined}

@@ -108,6 +108,23 @@ function popoverSizeForPositioning(
   };
 }
 
+function commentRelativeTime(comment: PreviewComment, t: TranslateFn): string {
+  const timestamp = Math.max(
+    Number.isFinite(comment.updatedAt) ? comment.updatedAt : 0,
+    Number.isFinite(comment.createdAt) ? comment.createdAt : 0,
+  );
+  const diff = Date.now() - timestamp;
+  if (diff < 60_000) return t('common.justNow');
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return t('common.minutesAgo', { n: mins });
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return t('common.hoursAgo', { n: hours });
+  const days = Math.floor(hours / 24);
+  if (days < 7) return t('common.daysAgo', { n: days });
+  const weeks = Math.floor(days / 7);
+  return weeks < 5 ? t('common.weeksAgo', { n: weeks }) : new Date(timestamp).toLocaleDateString();
+}
+
 function clampPopoverPositionStyle(
   left: number,
   top: number,
@@ -414,6 +431,176 @@ export function AnnotationHoverPopover({
   );
 }
 
+/**
+ * A saved comment is a review record, not a second "new comment" form.  This
+ * card keeps that distinction visible when a reviewer selects an existing pin:
+ * it shows the authored note first, then offers the only two follow-up paths
+ * that matter in the review flow — resolve it, or hand it to Chat.
+ */
+function CommentDetailPopover({
+  target,
+  comment,
+  authorLabel,
+  existingImages = [],
+  onClose,
+  onResolve,
+  onSendToChat,
+  onDelete,
+  sending,
+  sendDisabled = false,
+  sendDisabledReason,
+  canResolve = true,
+  canSendToChat = true,
+  t,
+  scale = 1,
+  bounds,
+  offset,
+}: {
+  target: PreviewCommentSnapshot;
+  comment: PreviewComment;
+  authorLabel?: string;
+  existingImages?: { url: string; name: string }[];
+  onClose: () => void;
+  onResolve?: () => void | Promise<unknown>;
+  onSendToChat: (reply: string) => void | Promise<void>;
+  onDelete?: () => void | Promise<unknown>;
+  sending: boolean;
+  sendDisabled?: boolean;
+  sendDisabledReason?: string;
+  canResolve?: boolean;
+  canSendToChat?: boolean;
+  t: TranslateFn;
+  scale?: number;
+  bounds?: PopoverBounds;
+  offset?: PopoverOffset;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [cardSize, setCardSize] = useState<PopoverSize | undefined>(undefined);
+  const [reply, setReply] = useState('');
+  const [moreOpen, setMoreOpen] = useState(false);
+  useLayoutEffect(() => {
+    const node = cardRef.current;
+    if (!node) return;
+    const measure = () => {
+      const rect = node.getBoundingClientRect();
+      const next = { width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
+      if (next.width <= 0 || next.height <= 0) return;
+      setCardSize((current) => (
+        current?.width === next.width && current.height === next.height ? current : next
+      ));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const style = popoverAnchorStyle(target, scale, bounds, offset, true, cardSize);
+  const author = authorLabel?.trim() || t('chat.comments.comment');
+  const time = commentRelativeTime(comment, t);
+  const sendBlocked = sending || sendDisabled;
+  return (
+    <div
+      ref={cardRef}
+      className="comment-popover comment-popover-detail"
+      data-testid="comment-detail-popover"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t('chat.comments.comment')}
+      style={style}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="comment-detail-header">
+        <div className="comment-detail-meta">
+          <strong>{author}</strong>
+          <span>{time}</span>
+        </div>
+        <div className="comment-detail-more-wrap">
+          <button
+            type="button"
+            className={`comment-detail-more${moreOpen ? ' is-open' : ''}`}
+            aria-label={t('chat.comments.actions')}
+            aria-expanded={moreOpen}
+            title={t('chat.comments.actions')}
+            onClick={() => setMoreOpen((open) => !open)}
+          >
+            <Icon name="more-horizontal" size={16} />
+          </button>
+          {moreOpen ? (
+            <div className="comment-detail-menu">
+              <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
+              {onDelete ? <Button variant="ghost" onClick={() => void onDelete()}>{t('common.delete')}</Button> : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <p className="comment-detail-note">{comment.note}</p>
+      {existingImages.length > 0 ? (
+        <div className="comment-popover-images">
+          {existingImages.map((item) => (
+            <a
+              key={item.url}
+              className="comment-popover-image-thumb"
+              data-testid="comment-popover-existing-image"
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={item.name}
+            >
+              <img src={item.url} alt={item.name} />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      <Textarea
+        className="comment-detail-reply"
+        data-testid="comment-detail-reply"
+        value={reply}
+        placeholder={t('chat.comments.replyPlaceholder')}
+        aria-label={t('chat.comments.replyPlaceholder')}
+        onChange={(event) => setReply(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !sendBlocked && canSendToChat) {
+            event.preventDefault();
+            void onSendToChat(reply.trim());
+          }
+        }}
+      />
+      <div className="comment-popover-actions comment-detail-actions">
+        <div className="comment-popover-actions-end">
+          {canResolve && onResolve ? (
+            <Button
+              variant="ghost"
+              className="comment-popover-add"
+              data-testid="comment-detail-resolve"
+              disabled={sending}
+              onClick={() => void onResolve()}
+            >
+              {t('chat.comments.resolve')}
+            </Button>
+          ) : null}
+          {canSendToChat ? (
+            <Button
+              variant="primary"
+              className="comment-popover-send"
+              data-testid="comment-detail-send"
+              disabled={sendBlocked}
+              title={sendDisabled ? sendDisabledReason : undefined}
+              onClick={() => void onSendToChat(reply.trim())}
+            >
+              {sending ? t('chat.comments.sending') : t('chat.comments.sendToChat')}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function BoardComposerPopover({
   target,
   existing,
@@ -428,6 +615,9 @@ export function BoardComposerPopover({
   onRemoveMember,
   onHoverMember,
   onDeleteComment,
+  onResolveComment,
+  onViewAllComments,
+  existingAuthorLabel,
   images = [],
   existingImages = [],
   onAttachImages,
@@ -457,10 +647,15 @@ export function BoardComposerPopover({
   onRemoveQueuedNote: (index: number) => void;
   onClose: () => void;
   onSaveComment: () => void | Promise<void>;
-  onSendBatch: () => void | Promise<void>;
+  onSendBatch: (reply?: string) => void | Promise<void>;
   onRemoveMember: (elementId: string) => void;
   onHoverMember?: (elementId: string | null) => void;
   onDeleteComment?: (commentId: string) => void | Promise<boolean | void>;
+  onResolveComment?: (commentId: string) => void | Promise<boolean | void>;
+  /** Opens the complete comment list without leaving the current draft. */
+  onViewAllComments?: (returnFocusTarget?: HTMLElement | null) => void;
+  /** Resolved from the workspace member directory by the viewer. */
+  existingAuthorLabel?: string;
   /** Object-URL thumbnails for images the user attached to this comment. */
   images?: { file: File; url: string }[];
   /** Already-saved attachment thumbnails (read-only) for a re-opened comment. */
@@ -641,6 +836,29 @@ export function BoardComposerPopover({
     e.preventDefault();
     onAttachImages?.(imgs);
   }
+  if (existing) {
+    return (
+      <CommentDetailPopover
+        target={target}
+        comment={existing}
+        authorLabel={existingAuthorLabel}
+        existingImages={existingImages}
+        onClose={onClose}
+        onResolve={onResolveComment ? () => onResolveComment(existing.id) : undefined}
+        onSendToChat={(reply) => onSendBatch(reply)}
+        onDelete={onDeleteComment && canDeleteComment ? () => onDeleteComment(existing.id) : undefined}
+        sending={sending}
+        sendDisabled={sendDisabled}
+        sendDisabledReason={sendDisabledReason}
+        canResolve={canSendToAgent}
+        canSendToChat={canSendToAgent && allowSendToChat}
+        t={t}
+        scale={scale}
+        bounds={bounds}
+        offset={offset}
+      />
+    );
+  }
   return (
     <div
       ref={popoverRef}
@@ -671,6 +889,16 @@ export function BoardComposerPopover({
           <span className="comment-popover-title">
             {t('chat.comments.comment')}
           </span>
+          {onViewAllComments ? (
+            <button
+              type="button"
+              className="comment-popover-view-all"
+              data-testid="comment-popover-view-all"
+              onClick={(event) => onViewAllComments(event.currentTarget)}
+            >
+              {t('chat.comments.viewAll')}
+            </button>
+          ) : null}
           <button
             type="button"
             className="comment-popover-close comment-popover-title-close"
@@ -841,17 +1069,6 @@ export function BoardComposerPopover({
                   <Icon name="attach" size={14} />
                 </button>
               </>
-            ) : null}
-            {existing && onDeleteComment && canDeleteComment ? (
-              <button
-                type="button"
-                className="comment-popover-close comment-popover-delete"
-                onClick={() => void onDeleteComment(existing.id)}
-                title={t('common.delete')}
-                aria-label={t('common.delete')}
-              >
-                <Icon name="trash" size={14} />
-              </button>
             ) : null}
           </div>
           <div className="comment-popover-actions-end">

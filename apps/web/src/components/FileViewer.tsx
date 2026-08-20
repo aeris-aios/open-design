@@ -1749,6 +1749,7 @@ interface Props {
   previewComments?: PreviewComment[];
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean, images?: File[], commentId?: string) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<boolean>;
+  onResolvePreviewComment?: (commentId: string) => Promise<boolean>;
   /**
    * Persist a drag-reorder of the sidebar's display order (recvq5BVsolIxi
    * Phase 2): `sortKey` is the value the caller computed for `commentId`
@@ -1850,6 +1851,7 @@ export const FileViewer = memo(function FileViewer({
   previewComments = [],
   onSavePreviewComment,
   onRemovePreviewComment,
+  onResolvePreviewComment,
   onReorderPreviewComment,
   onSendBoardCommentAttachments,
   onFileSaved,
@@ -1939,6 +1941,7 @@ export const FileViewer = memo(function FileViewer({
         previewComments={previewComments}
         onSavePreviewComment={onSavePreviewComment}
         onRemovePreviewComment={onRemovePreviewComment}
+        onResolvePreviewComment={onResolvePreviewComment}
         onReorderPreviewComment={onReorderPreviewComment}
         onSendBoardCommentAttachments={onSendBoardCommentAttachments}
         onFileSaved={onFileSaved}
@@ -7395,6 +7398,7 @@ function HtmlViewer({
   previewComments = [],
   onSavePreviewComment,
   onRemovePreviewComment,
+  onResolvePreviewComment,
   onReorderPreviewComment,
   onSendBoardCommentAttachments,
   onFileSaved,
@@ -7430,6 +7434,7 @@ function HtmlViewer({
   previewComments?: PreviewComment[];
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean, images?: File[], commentId?: string) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<boolean>;
+  onResolvePreviewComment?: (commentId: string) => Promise<boolean>;
   onReorderPreviewComment?: (commentId: string, sortKey: number) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
   onFileSaved?: () => Promise<void> | void;
@@ -13879,7 +13884,9 @@ function HtmlViewer({
       return;
     }
     const activateCommentCreate = () => {
-      setCommentPanelOpen(true);
+      // Entering review starts the lightweight point-comment flow. The full
+      // list is intentionally deferred to the composer's "View all" action.
+      setCommentPanelOpen(false);
       setCommentSidePanelCollapsed(false);
       setCommentCreateMode(true);
       if (!activeCommentTarget) clearBoardComposer();
@@ -13984,7 +13991,7 @@ function HtmlViewer({
     return { ...target, slideIndex: slideState.active };
   }
 
-  async function sendBoardBatch() {
+  async function sendBoardBatch(reply = '') {
     if (!activeCommentTarget || !onSendBoardCommentAttachments) return;
     const existingComment = currentActiveComposerComment();
     const sendingUnchangedSavedComment = Boolean(
@@ -13996,8 +14003,11 @@ function HtmlViewer({
     if (existingComment && sendingUnchangedSavedComment) {
       setSendingBoardBatch(true);
       try {
+        const outgoingComment = reply.trim()
+          ? { ...existingComment, note: `${existingComment.note}\n\nReply: ${reply.trim()}` }
+          : existingComment;
         const result = await onSendBoardCommentAttachments(
-          commentsToAttachments([existingComment]),
+          commentsToAttachments([outgoingComment]),
         );
         if (!commentSendCompleted(result, existingComment.id)) return;
         if (!onRemovePreviewComment) return;
@@ -15059,6 +15069,10 @@ function HtmlViewer({
     ),
     [workspaceContext, projectResourceReadBlocked],
   );
+  const { resolve: resolveCommentAuthor } = useTeamMembers(commentAuthorSelf);
+  const activeComposerAuthorLabel = activeComposerComment
+    ? resolveCommentAuthor(activeComposerComment.authorMemberId)?.displayName
+    : undefined;
   const commentComposerPortalMetrics = (() => {
     if (!commentComposerHost || !commentPreviewCanvasNode) return null;
     const hostRect = commentComposerHost.getBoundingClientRect();
@@ -15099,6 +15113,7 @@ function HtmlViewer({
     <BoardComposerPopover
       target={activeCommentTarget}
       existing={activeComposerComment}
+      existingAuthorLabel={activeComposerAuthorLabel}
       canEditComment={canEditActiveComment}
       canDeleteComment={canDeleteActiveComment}
       canSendToAgent={canSendActiveComment}
@@ -15111,7 +15126,7 @@ function HtmlViewer({
       }
       onClose={clearBoardComposer}
       onSaveComment={() => { fireCommentPopoverClick('save_comment'); return savePersistentComment(); }}
-      onSendBatch={() => { fireCommentPopoverClick('send_to_chat'); return sendBoardBatch(); }}
+      onSendBatch={(reply) => { fireCommentPopoverClick('send_to_chat'); return sendBoardBatch(reply); }}
       images={boardImagePreviews}
       existingImages={
         activeComposerAttachments.map((attachment) => ({
@@ -15131,6 +15146,23 @@ function HtmlViewer({
         setHoveredPodMemberId((current) => (current === elementId ? null : current));
       }}
       onHoverMember={setHoveredPodMemberId}
+      onResolveComment={onResolvePreviewComment ? async (commentId) => {
+        const resolved = await onResolvePreviewComment(commentId);
+        if (!resolved) return false;
+        clearBoardComposer();
+        setSelectedSideCommentIds((current) => {
+          if (!current.has(commentId)) return current;
+          const next = new Set(current);
+          next.delete(commentId);
+          return next;
+        });
+        return true;
+      } : undefined}
+      onViewAllComments={(returnFocusTarget) => {
+        commentPanelReturnFocusRef.current = returnFocusTarget ?? null;
+        setCommentPanelOpen(true);
+        setCommentSidePanelCollapsed(false);
+      }}
       onDeleteComment={onRemovePreviewComment ? async (commentId) => {
         const removed = await onRemovePreviewComment(commentId);
         if (!removed) return;
@@ -15264,7 +15296,9 @@ function HtmlViewer({
         setActiveCommentExistingAttachments(comment.attachments ?? []);
         setBoardMode(true);
         setCommentCreateMode(true);
-        setCommentPanelOpen(true);
+        // A selected saved comment opens its focused review card. The list is
+        // an on-demand record (View all), not a second panel behind the card.
+        setCommentPanelOpen(false);
         setCommentSidePanelCollapsed(false);
       }}
       onSendSelected={async () => {
@@ -16668,14 +16702,14 @@ function HtmlViewer({
                   activeTarget={activeCommentTarget}
                   activeExistingCommentId={activeComposerComment?.id ?? null}
                   boardTool={boardTool}
-                  showActivePin={commentCreateMode}
+                  showActivePin={commentCreateMode && !activeComposerComment}
                   scale={overlayPreviewScale}
                   offsetX={overlayPreviewTransform.offsetX}
                   offsetY={overlayPreviewTransform.offsetY}
                   strokePoints={strokePoints}
                   activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
                   onOpenComment={(comment, snapshot) => {
-                    setCommentPanelOpen(true);
+                    setCommentPanelOpen(false);
                     setCommentSidePanelCollapsed(false);
                     setCommentCreateMode(true);
                     setBoardMode(true);

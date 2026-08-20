@@ -2948,6 +2948,9 @@ export interface Dict {
   'chat.comments.removeAttachment': string;
   'chat.comments.removeAttachmentAria': string;
   'chat.comments.comment': string;
+  'chat.comments.replyPlaceholder': string;
+  'chat.comments.resolve': string;
+  'chat.comments.actions': string;
   'chat.comments.sendToChat': string;
   'chat.comments.viewAll': string;
   'chat.comments.sending': string;

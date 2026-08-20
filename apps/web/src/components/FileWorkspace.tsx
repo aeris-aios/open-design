@@ -253,6 +253,7 @@ interface Props {
   previewComments?: PreviewComment[];
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean, images?: File[], commentId?: string) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<boolean>;
+  onResolvePreviewComment?: (commentId: string) => Promise<boolean>;
   onReorderPreviewComment?: (commentId: string, sortKey: number) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
   onBrandExtractionStopRequest?: () => void;
@@ -1307,6 +1308,7 @@ export function FileWorkspace({
   previewComments = NO_PREVIEW_COMMENTS,
   onSavePreviewComment,
   onRemovePreviewComment,
+  onResolvePreviewComment,
   onReorderPreviewComment,
   onSendBoardCommentAttachments,
   onBrandExtractionStopRequest,
@@ -3349,6 +3351,7 @@ export function FileWorkspace({
       previewComments={previewCommentsByFile.get(file.name) ?? NO_PREVIEW_COMMENTS}
       onSavePreviewComment={onSavePreviewComment}
       onRemovePreviewComment={onRemovePreviewComment}
+      onResolvePreviewComment={onResolvePreviewComment}
       onReorderPreviewComment={onReorderPreviewComment}
       onSendBoardCommentAttachments={onSendBoardCommentAttachments}
       onBrandExtractionStopRequest={
