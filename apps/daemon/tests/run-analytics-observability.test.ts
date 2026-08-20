@@ -2033,3 +2033,38 @@ describe('summarizeRunTimingAnalytics with a truncated event stream', () => {
     expect(result.total_duration_ms).toBe(59_050);
   });
 });
+
+describe('summarizeRunTimingAnalytics late tool results from a dead attempt', () => {
+  it('does not charge the current attempt for a tool opened before it started', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 30_000,
+      analyticsCapturedAt: 30_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        attemptStartedAt: 20_000,
+        attemptIndex: 2,
+        stdinWriteEndAt: 20_500,
+        firstModelEventAt: 21_000,
+        firstModelEventType: 'text_delta' as const,
+        firstTokenAt: 21_000,
+      },
+      events: [
+        // Opened by attempt 1.
+        { id: 1, event: 'agent', timestamp: 3_000, data: { type: 'tool_use', id: 'call_0', name: 'Bash' } },
+        // Its result lands long after attempt 2 is under way -- a buffered
+        // stdout flush racing the abort, which the ACP session code already
+        // documents as a real sequence. Attempt 2 issued no tool of its own.
+        { id: 2, event: 'agent', timestamp: 29_900, data: { type: 'tool_result', toolUseId: 'call_0' } },
+      ],
+    });
+
+    // Pairing this into an interval spans the retry boundary; clipping then
+    // reports 8.9s of tool execution inside a 9s window for an attempt that
+    // never called a tool.
+    expect(result.model_active_duration_ms).toBe(9_000);
+    expect(result.bottleneck_phase).toBe('stream_output');
+    // The published metric keeps its whole-run paired-sum definition.
+    expect(result.tool_duration_ms).toBe(26_900);
+  });
+});

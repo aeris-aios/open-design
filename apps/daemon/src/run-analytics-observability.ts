@@ -984,6 +984,16 @@ export function summarizeRunTimingAnalytics(args: {
   // by a retry is not merged with the corpse of the same id from a dead
   // attempt.
   const attemptStartAt = telemetry.attemptStartedAt ?? scanStartAt;
+  // Phase occupancy counts only tools THIS attempt opened. `run.events` survives
+  // a retry, so the list still carries the previous attempt's frames, and a
+  // stale entry can reach an interval three different ways: its id gets reused
+  // by a new call, it is still open at run end, or its result arrives late (a
+  // buffered flush racing the abort). Every append to `toolIntervals` goes
+  // through this gate. `tool_duration_ms` deliberately does not -- it keeps its
+  // whole-run paired-sum definition.
+  const openedInCurrentAttempt = (openedAt: number | undefined): boolean =>
+    openedAt !== undefined &&
+    (attemptStartAt === undefined || openedAt >= attemptStartAt);
   let toolCallCount = 0;
   let toolDurationMs = 0;
   const toolIntervals: Array<{ start: number; end: number }> = [];
@@ -1085,7 +1095,9 @@ export function summarizeRunTimingAnalytics(args: {
       const startedAt = openTools.get(data.toolUseId);
       if (startedAt !== undefined && ts >= startedAt) {
         toolDurationMs += ts - startedAt;
-        toolIntervals.push({ start: startedAt, end: ts });
+        if (openedInCurrentAttempt(openToolObservedAt.get(data.toolUseId))) {
+          toolIntervals.push({ start: startedAt, end: ts });
+        }
         lastToolActivityAt = ts;
         const name = openToolNames.get(data.toolUseId);
         if (
@@ -1144,9 +1156,7 @@ export function summarizeRunTimingAnalytics(args: {
   // `startedAt` can legitimately predate the anchor on a live tool, and the
   // clip below already handles that.
   for (const [toolUseId, startedAt] of openTools) {
-    const observedAt = openToolObservedAt.get(toolUseId);
-    if (observedAt === undefined) continue;
-    if (attemptStartAt !== undefined && observedAt < attemptStartAt) continue;
+    if (!openedInCurrentAttempt(openToolObservedAt.get(toolUseId))) continue;
     toolIntervals.push({ start: startedAt, end: runEndAt });
   }
   const firstModelEventType =
