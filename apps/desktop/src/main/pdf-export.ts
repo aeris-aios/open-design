@@ -396,15 +396,34 @@ export async function waitForPrintableContent(window: BrowserWindow): Promise<vo
   // executeJavaScript itself stays pending. Resolve rather than reject, for
   // the same reason the in-page bound does.
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
     await Promise.race([
       pageSettled,
       new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, PRINTABLE_CONTENT_WAIT_TIMEOUT_MS);
+        timer = setTimeout(() => {
+          timedOut = true;
+          resolve();
+        }, PRINTABLE_CONTENT_WAIT_TIMEOUT_MS);
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+
+  // Giving up on the wait is not enough on its own: the requests we stopped
+  // waiting for are still in flight, and every later `executeJavaScript` in
+  // the capture pipeline queues behind a renderer that is still busy with
+  // them. Measured on a document whose <img> and CSS url() both point at a
+  // socket that never answers, the steps AFTER this one still cost ~38s.
+  // Cancelling the outstanding loads hands the renderer back to us; the
+  // document is already parsed, so nothing that has rendered is lost.
+  if (timedOut) {
+    try {
+      window.webContents.stop();
+    } catch {
+      // A destroyed webContents means the export is being torn down anyway.
+    }
   }
 }
 

@@ -379,6 +379,61 @@ describe('waitForPrintableContent', () => {
     }
   });
 
+  // Bounding the wait is necessary but not sufficient. The requests we stopped
+  // waiting for stay in flight, and every later executeJavaScript in the
+  // capture pipeline queues behind a renderer still busy with them. Measured
+  // against a real Electron main process on a document whose <img> and CSS
+  // url() both point at a socket that never answers:
+  //
+  //   without stop()   prepare 15340ms  render 22459ms  total 52889ms (unstable)
+  //   with stop()      prepare     6ms  render 10566ms  total 25700ms (repeatable)
+  test('[P0] cancels the outstanding loads when it gives up, so the renderer is usable again', async () => {
+    vi.useFakeTimers();
+    try {
+      let stopped = 0;
+      const window = {
+        webContents: {
+          async executeJavaScript(_script: string) {
+            return new Promise<boolean>(() => {});
+          },
+          stop() {
+            stopped += 1;
+          },
+        },
+      };
+
+      const pending = waitForPrintableContent(
+        window as unknown as Parameters<typeof waitForPrintableContent>[0],
+      );
+      await vi.advanceTimersByTimeAsync(PRINTABLE_CONTENT_WAIT_TIMEOUT_MS + 1_000);
+      await pending;
+
+      expect(stopped, 'a timed-out wait must release the renderer').toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('leaves the loads alone when the page settles on its own', async () => {
+    let stopped = 0;
+    const window = {
+      webContents: {
+        async executeJavaScript(_script: string) {
+          return true;
+        },
+        stop() {
+          stopped += 1;
+        },
+      },
+    };
+
+    await waitForPrintableContent(
+      window as unknown as Parameters<typeof waitForPrintableContent>[0],
+    );
+
+    expect(stopped, 'a healthy export must not have its own loads cancelled').toBe(0);
+  });
+
   test('bounds the page-side waits from inside the injected script too', async () => {
     const scripts: string[] = [];
     const window = {

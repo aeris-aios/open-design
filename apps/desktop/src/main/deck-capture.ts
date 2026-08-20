@@ -161,6 +161,52 @@ const REAL_SLIDES_JS =
  * paints it (capturePage needs a live frame) without any visible flash or
  * focus theft, then destroyed.
  */
+/**
+ * How long to wait for the artifact document itself before proceeding with
+ * whatever has rendered.
+ */
+export const ARTIFACT_DOCUMENT_LOAD_TIMEOUT_MS = 15_000;
+
+/**
+ * Load the artifact into the offscreen window without letting a single stalled
+ * subresource block the whole export.
+ *
+ * `loadURL()` resolves on `did-finish-load`, which Chromium only fires once
+ * EVERY subresource has settled. An image or font URL that answers neither way
+ * — the packaged `od://` failure mode — therefore leaves `loadURL()` pending
+ * forever, and the export hung here long before reaching the (separately
+ * bounded) `waitForPrintableContent` step. Production bore this out: 122 of
+ * 142 `DESKTOP_RENDERER_UNAVAILABLE` failures sat at the daemon's 600s IPC
+ * ceiling.
+ *
+ * `dom-ready` is the signal we actually need: the document is parsed and
+ * scriptable, which is all the capture pipeline requires — waiting for
+ * subresources is `waitForPrintableContent`'s job, and it bounds itself. The
+ * listener is attached before `loadURL` so a fast `data:` URL cannot fire it
+ * before we are listening.
+ */
+export async function loadArtifactDocument(window: BrowserWindow, url: string): Promise<void> {
+  const domReady = new Promise<void>((resolve) => {
+    window.webContents.once("dom-ready", () => resolve());
+  });
+  // Keep the rejection handled: a genuine `did-fail-load` must not surface as
+  // an unhandled rejection just because the race already settled on dom-ready.
+  const finished = window.loadURL(url).catch(() => undefined);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      finished,
+      domReady,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ARTIFACT_DOCUMENT_LOAD_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function renderDeckSlides(
   input: DesktopRenderSlidesInput,
 ): Promise<DesktopRenderSlidesResult> {
@@ -206,7 +252,7 @@ export async function renderDeckSlides(
 
   try {
     const doc = injectBaseHref(input.html, input.baseHref);
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(doc)}`);
+    await loadArtifactDocument(window, `data:text/html;charset=utf-8,${encodeURIComponent(doc)}`);
     tLoad = Date.now();
     await waitForPrintableContent(window);
     tAssets = Date.now();
