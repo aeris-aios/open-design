@@ -88,7 +88,7 @@ class ScopeContract:
         seen = set()
         for index, rule in enumerate(self.rules):
             rule = object_value(rule, f"scopes.rules[{index}]")
-            allowed = {"id", "match", "effects", "confidence", "guard"}
+            allowed = {"id", "match", "effects", "confidence"}
             if not set(rule) <= allowed or not {"id", "match", "effects", "confidence"} <= set(rule):
                 raise ConfigError(f"scopes.rules[{index}] has invalid keys")
             rule_id = rule["id"]
@@ -102,13 +102,36 @@ class ScopeContract:
                 raise ConfigError(f"scope rule {rule_id} has unknown effects {sorted(unknown)}")
             if rule["confidence"] not in CONFIDENCE:
                 raise ConfigError(f"scope rule {rule_id} has invalid confidence")
-            if rule["confidence"] == "certain" and not rule.get("guard"):
-                raise ConfigError(f"certain scope rule {rule_id} requires a guard")
         if set(self.matrices) != {"ui_p0", "visual"}:
             raise ConfigError("scopes.matrices must contain ui_p0 and visual")
+        matrix_names = {}
+        for matrix_name, fields in (("ui_p0", {"name", "shard"}), ("visual", {"name", "files"})):
+            entries = self.matrices[matrix_name]
+            if not isinstance(entries, list) or not entries:
+                raise ConfigError(f"scopes.matrices.{matrix_name} must be a non-empty array")
+            names = []
+            for index, entry in enumerate(entries):
+                entry = object_value(entry, f"scopes.matrices.{matrix_name}[{index}]")
+                if set(entry) != fields:
+                    raise ConfigError(f"scopes.matrices.{matrix_name}[{index}] keys must be {sorted(fields)}")
+                for field in fields:
+                    if not isinstance(entry[field], str) or not entry[field]:
+                        raise ConfigError(f"scopes.matrices.{matrix_name}[{index}].{field} must be a non-empty string")
+                names.append(entry["name"])
+            if len(set(names)) != len(names):
+                raise ConfigError(f"scopes.matrices.{matrix_name} contains duplicate names")
+            matrix_names[matrix_name] = set(names)
+        if set(self.shadow) != {"match", "matrixNames"}:
+            raise ConfigError("scopes.uiP0Shadow keys must be match and matrixNames")
         shadow_match = self.shadow.get("match")
         if shadow_match not in self.matches:
             raise ConfigError("scopes.uiP0Shadow.match is unknown")
+        shadow_names = self._string_list(self.shadow.get("matrixNames"), "scopes.uiP0Shadow.matrixNames")
+        if len(set(shadow_names)) != len(shadow_names):
+            raise ConfigError("scopes.uiP0Shadow.matrixNames contains duplicates")
+        unknown_shadow_names = set(shadow_names) - matrix_names["ui_p0"]
+        if unknown_shadow_names:
+            raise ConfigError(f"scopes.uiP0Shadow.matrixNames contains unknown names {sorted(unknown_shadow_names)}")
 
     def _token_matches(self, file, token):
         if token.startswith("match://"):
@@ -299,6 +322,7 @@ def emit_plan(plan, output_path=None):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
     github = sub.add_parser("github-output")
     github.add_argument("--output", type=Path)
@@ -306,14 +330,18 @@ def parse_args():
     plan.add_argument("--context", choices=("pr", "merge-queue", "full"), default="pr")
     plan.add_argument("--files", nargs="*", default=[])
     plan.add_argument("--files-from")
+    sub.add_parser("validate")
     sub.add_parser("rules")
     return parser.parse_args()
 
 
 def main():
     root = repository_root(__file__)
-    contract = ScopeContract(root / ".github/config/scopes.json")
     args = parse_args()
+    contract = ScopeContract(args.config or root / ".github/config/scopes.json")
+    if args.command == "validate":
+        print("scope configuration is valid")
+        return 0
     if args.command == "rules":
         for rule in contract.rules:
             print(f"{rule['id']}\n  confidence: {rule['confidence']}\n  effects: {', '.join(rule['effects']) or '(none)'}")

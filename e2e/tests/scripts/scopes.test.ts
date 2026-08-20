@@ -1,12 +1,12 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
 import { uiP0CiMatrix, visualCiMatrix } from "../../lib/playwright/suites.ts";
-import { evaluateScopeOutputs, matchingScopeRules, scopeConfig } from "../../../scripts/lib/scope-config.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const script = path.join(repoRoot, ".github/scripts/scopes.py");
@@ -27,9 +27,30 @@ function plan(context: "pr" | "merge-queue" | "full", files: string[] = []): Pla
 
 describe("workflow scope planner", () => {
   test("keeps the JSON matrices aligned with the business-owned suite topology", () => {
-    expect(scopeConfig.matrices.ui_p0).toEqual(uiP0CiMatrix);
-    expect(scopeConfig.matrices.visual).toEqual(visualCiMatrix);
     expect(plan("full").matrices).toEqual({ ui_p0: uiP0CiMatrix, visual: visualCiMatrix });
+  });
+
+  test("owns configuration validation without a downstream guard registry", () => {
+    expect(execFileSync("python3", [script, "validate"], { cwd: repoRoot, encoding: "utf8" }))
+      .toContain("scope configuration is valid");
+
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), "scope-contract-"));
+    try {
+      const config = JSON.parse(readFileSync(path.join(repoRoot, ".github/config/scopes.json"), "utf8")) as {
+        matrices: { ui_p0: Array<{ name: string; shard: string }> };
+      };
+      config.matrices.ui_p0.push({ ...config.matrices.ui_p0[0]! });
+      const configPath = path.join(temporaryRoot, "scopes.json");
+      writeFileSync(configPath, JSON.stringify(config));
+      const failed = spawnSync("python3", [script, "--config", configPath, "validate"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+      });
+      expect(failed.status).toBe(2);
+      expect(failed.stderr).toContain("scopes.matrices.ui_p0 contains duplicate names");
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
   });
 
   test("routes representative PR changes without importing the workspace", () => {
@@ -47,9 +68,17 @@ describe("workflow scope planner", () => {
     });
   });
 
-  test("only certain rules can narrow the merge queue", () => {
+  test("directly owns promoted merge-queue routing", () => {
     expect(plan("merge-queue", ["docs/spec.md"])).toMatchObject({
       enabled: { preflight: true, workspace_unit_tests: false, e2e_vitest: false },
+      trace: { escalations: [] },
+    });
+    expect(plan("merge-queue", ["apps/daemon/src/server.ts"])).toMatchObject({
+      enabled: { daemon_unit_tests: true, e2e_vitest: true, ui_p0: true, web_workspace_tests: false },
+      trace: { escalations: [] },
+    });
+    expect(plan("merge-queue", ["apps/desktop/src/main.ts"])).toMatchObject({
+      enabled: { windows_tools_pack_payload_tests: true, workspace_unit_tests: true, e2e_vitest: false },
       trace: { escalations: [] },
     });
     const medium = plan("merge-queue", ["apps/web/src/App.tsx"]);
@@ -64,27 +93,6 @@ describe("workflow scope planner", () => {
       "entry-settings", "project-workspace", "project-collab", "project-runtime",
     ]);
     expect(plan("pr", ["apps/daemon/src/server.ts"]).trace.uiP0Shadow.mode).toBe("full-fallback");
-  });
-
-  test("the TypeScript guard reader agrees with Python on promoted boundaries", () => {
-    const samples = ["docs/spec.md", "apps/daemon/src/server.ts", "apps/desktop/src/main.ts"];
-    for (const file of samples) {
-      const pythonPlan = plan("merge-queue", [file]);
-      const guardEvaluation = evaluateScopeOutputs([file], "certain");
-      expect(pythonPlan.trace.escalations.length > 0).toBe(guardEvaluation.decisions[0]?.escalated);
-      expect(matchingScopeRules(file).map((rule) => rule.id)).not.toHaveLength(0);
-    }
-  });
-
-  test("every certain rule names a live policy-floor guard", () => {
-    const registered = new Set(execFileSync("pnpm", ["--silent", "guard", "--list-checks"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    }).trim().split("\n"));
-    for (const rule of scopeConfig.rules.filter((candidate) => candidate.confidence === "certain")) {
-      expect(rule.guard).toBeTruthy();
-      expect(registered).toContain(rule.guard);
-    }
   });
 
   test("configuration remains a Linux workflow-control contract", () => {

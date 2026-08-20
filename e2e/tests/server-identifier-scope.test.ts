@@ -46,11 +46,9 @@ import { describe, expect, it } from 'vitest';
  *   Vitest` lane even at the merge queue's `certain` threshold — the strictest
  *   context there is. An unresolved file list escalates fail-closed to full,
  *   which arms it too.
- * - That wiring cannot rot silently. The `daemon core boundary` guard
- *   (`scripts/lib/guard/scope.ts`) asserts `ci.yml` still contains both
- *   the `e2e_vitest` hash-run identity and `pnpm --filter @open-design/e2e test`, and
- *   it is scope-enabled in the policy floor and its current `"*"` declaration
- *   invalidates on every new tracked tree.
+ * - Direct `scopes.py plan` tests pin that routing, while the workflow topology
+ *   test pins the `e2e_vitest` hash-run identity and package command. Those are
+ *   planner contract tests, not an independent proof that authorizes the plan.
  *
  * The placement also follows the root `AGENTS.md` boundary rule — cross-app and
  * repository-resource consistency checks belong here, not inside an app package

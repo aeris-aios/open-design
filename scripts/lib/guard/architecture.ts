@@ -4,11 +4,8 @@ import ts from "typescript";
 
 import type { GuardContext } from "./core.ts";
 
-const suiteModule = "e2e/lib/playwright/suites.ts";
 const guardModule = "scripts/guard.ts";
 const guardLibraryPrefix = "scripts/lib/guard/";
-const scopePolicyModule = `${guardLibraryPrefix}scope.ts`;
-const scopeConfigModule = "scripts/lib/scope-config.ts";
 
 function repositoryPath(filePath: string): string {
   return filePath.split(path.sep).join("/");
@@ -34,9 +31,7 @@ async function collectTypeScriptSources(
 }
 
 export async function loadScriptsArchitectureSources(repoRoot: string): Promise<Map<string, string>> {
-  const sources = await collectTypeScriptSources(repoRoot);
-  sources.set(suiteModule, await readFile(path.join(repoRoot, suiteModule), "utf8"));
-  return sources;
+  return collectTypeScriptSources(repoRoot);
 }
 
 function importsFrom(source: string): string[] {
@@ -128,11 +123,7 @@ export function scriptsArchitectureErrors(sources: ReadonlyMap<string, string>):
       if (dependency != null && specifier.startsWith(".") && !sources.has(dependency)) {
         errors.push(`${module} imports missing module ${dependency}`);
       }
-      if (
-        dependency == null ||
-        (!dependency.startsWith(guardLibraryPrefix) &&
-          (module !== scopePolicyModule || ![suiteModule, scopeConfigModule].includes(dependency)))
-      ) {
+      if (dependency == null || !dependency.startsWith(guardLibraryPrefix)) {
         errors.push(`${module} imports ${specifier} outside the guard library closure`);
       }
       if (dependency === guardModule) {

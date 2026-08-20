@@ -1,7 +1,7 @@
 # CI scope confidence methodology
 
 This is the current authority for CI scope confidence rules in
-`.github/config/scopes.json`, their guard requirements, and their evidence recipes.
+`.github/config/scopes.json`, their planner invariants, and their evidence recipes.
 Workflow topology and the capability/handoff architecture stay owned by
 `.github/AGENTS.md`; do not restate them here.
 
@@ -35,11 +35,11 @@ all broad workspace validation.
 Its rule and matrix data lives in `.github/config/scopes.json`; it never imports
 workspace code. `.github/scripts/runners.py` and `.github/scripts/hash.py` share
 the same stdlib-only cold-start boundary.
-`scripts/guard.ts` is the postinstall policy-floor entrypoint and composes its
-shared mechanism and scope contracts from `scripts/lib/guard/`. The
-`scripts library architecture` guard keeps those layers acyclic, prevents
-workflow control from reaching guard or third-party dependencies, and keeps CLI
-process control out of the guard library closure.
+`scripts/guard.ts` is a downstream repository-policy entrypoint. It runs only
+after the plan exists and therefore does not authorize scope classification or
+workload omission. The planner validates its own configuration and routing
+contract before emitting any workload decision; repository guards remain
+useful checks, but they are not part of the planner's trust chain.
 
 ## Orthogonal hash composition
 
@@ -81,65 +81,37 @@ frequency-weighted tonnage lists barely intersect).
 
 ## Certain-tier requirements
 
-A PR that makes a rule `certain` must be statable in three sentences: which
-rule, what guard, how much tonnage. Anything that cannot fit that statement is
-riding along and must be split out.
+`certain` is an operational planner policy, not a proof that semantic
+dependencies are complete. A downstream job, including `pnpm guard`, cannot
+authorize an omission already made by the plan that scheduled it.
 
 Requirements:
 
-1. **A defensible core.** Promote the subset of the surface whose boundary
-   invariant is local and checkable. Split the rule if needed. Example: the
-   global `*.md` regex is permanently medium because its safety depends on
-   *other* rules covering every runtime-markdown directory — a cross-rule
-   invariant no local guard can keep.
-2. **A guard that resolves.** The rule's `guard` field must name a live
-   `scripts/guard.ts` check (`pnpm --silent guard --list-checks` is the
-   registry; the rule-table invariant test enforces resolution). Guards for
-   certain rules must run in the policy floor — `pnpm guard` in preflight
-   qualifies — so the check that justifies skipping always itself runs.
-3. **Evidence proportional to the guard's strength.** Guard invariants come in
-   three strengths: *definitional* (the surface cannot enter build or runtime
-   by construction — e.g. docs), *structural* (an import-graph boundary), and
-   *behavioral* (a topology test). Definitional rules may rely on replay
-   evidence alone. Structural and behavioral rules additionally require at
-   least 10 qualifying single-PR queue groups from the latest 400 first-parent
-   merges. Native `ifTrustAll` traces are preferred; paired evidence also
-   qualifies when the PR ran the candidate medium plan for the same file set,
-   the real queue group ran the full plan, both succeeded, and the proposed
-   plan has not weakened since that pair.
-4. **Goldens updated, divergence pinned.** The golden that changes is the
-   proof of the behavior change; the goldens that do not change are the proof
-   of its containment.
-5. **Exceptions bind to checkable preconditions.** Every guard allowlist entry
-   is a claim, and claims split by what justifies them. A *local, definitional*
-   fact ("this string is passed as data to a pure function, never opened") may
-   stay prose — it can only be falsified by editing the allowlisted file
-   itself, which puts the entry in front of a reviewer. A *remote, mutable*
-   fact ("that lane doesn't run this file", "that workflow is outside the
-   gate") must not be trusted as prose: the guard verifies the fact and drops
-   the exception the moment it stops holding, so the failure mode is a loud
-   guard report at the change that broke the premise — not a rationale that
-   rotted silently years earlier. Worked example: the consumption guard
-   tolerates `apps/daemon/tests/runtimes/trae-cli.test.ts` reading
-   `docs/agent-adapters.md` because that exact document is classified as
-   daemon core. Editing the consumed document therefore runs the same full
-   daemon suite as editing its consumer; the allowlist cannot create a skipped
-   producer/consumer edge.
+1. **A conservative rule-table boundary.** Keep promoted matches explicit and
+   narrow. Unknown, mixed, empty-unresolved, invalid, or below-threshold inputs
+   must select the full plan.
+2. **Planner-owned validation.** `python3 .github/scripts/scopes.py validate`
+   must reject schema drift, unknown effects, invalid regexes, match cycles,
+   malformed or duplicate matrices, and invalid UI P0 shadow references before
+   any workload decision is emitted.
+3. **Direct planner behavior tests.** Goldens invoke `scopes.py plan` itself for
+   representative in-bound, out-of-bound, mixed, and fallback inputs. Do not
+   reimplement the evaluator in another language and compare two copies.
+4. **Measured operational evidence.** Replay and paired-run evidence quantify
+   how often a rule applies and whether the retained plan has passed in
+   practice. This evidence can justify an operational decision, but it must not
+   be described as a complete dependency proof.
 
-No general demotion policy is defined. One hard rule is active: if a guard
-check is deleted or renamed, the rule-table invariant test fails CI — a
-certain rule can never silently outlive its guard. Rule five is the same
-principle one level down: an exception can never silently outlive its premise.
+Independent semantic-closure guards may be evaluated later. They must sit
+outside the planner's scheduling authority before their evidence can strengthen
+a `certain` claim.
 
 ## Certain-exempt boundary
 
 Rule `certain-exempt-surface`: prefixes `docs/`, `apps/landing-page/`,
 `.vscode/`, `.idea/`, `.github/ISSUE_TEMPLATE/` plus exacts `LICENSE`,
-`.github/CODEOWNERS`. Guard: `certain-exempt surface consumption`
-(`scripts/check-certain-exempt-consumption.ts`) — no skippable-lane source may
-reference a certain-exempt path; policy-floor code (root `scripts/`) is exempt
-from the scan because preflight always runs and may validate docs content
-(product neutrality does).
+`.github/CODEOWNERS`. The planner owns this classification directly; no
+downstream guard is treated as proof that these files are unconsumed.
 
 Current evidence and exceptions:
 
@@ -148,10 +120,6 @@ Current evidence and exceptions:
 - Root markdown such as `README.md` remains medium because bare filename
   literals are widespread as project-fixture data and are not locally
   distinguishable from repository-root reads.
-- Allowlisted true consumer:
-  `tools/release/src/release-note/prepare.ts` reads `docs/CHANGELOG`, which
-  executes only in release workflows; `@open-design/tools-release` tests run
-  in no `ci.yml` lane.
 
 ## Certain packaged-leaf boundary
 
@@ -168,23 +136,10 @@ the focused packaged launcher update-loop fallback, and Windows launcher
 payload tests. It skips web workspace tests, broad E2E Vitest, UI P0, critical
 Playwright, and visual Playwright.
 
-Guard: `packaged leaf boundary`
-(`scripts/check-packaged-leaf-boundary.ts`). The policy-floor check scans
-skippable-lane source for package imports and repository paths entering the
-certain core, verifies that every core sample resolves to exactly the guarded
-effects at the certain threshold, and pins the workspace-unit command block.
-Allowed consumers are limited to:
-
-- `tools/dev/`, whose tests stay armed by the certain rule;
-- the focused packaged launcher update-loop test;
-- scope, workflow, cross-app, fork-approval, and package-manager invocation
-  fixtures that treat the paths as data;
-- the packaged and tools-pack esbuild entry configs, which own their source
-  entrypoints while config changes themselves remain medium-tier.
-
 Package manifests, build configs, bins, vendor content, and files outside the
 listed core remain medium. A mixed queue group containing any medium file
-still escalates to the full plan.
+still escalates to the full plan. Direct `scopes.py plan` tests pin the retained
+effects and escalation behavior; they do not claim to prove every consumer.
 
 Current evidence:
 
@@ -214,19 +169,10 @@ to exercise daemon buildability, user-level API/runtime behavior, and every
 merge-gated UI P0 capability without treating web-owned rendering tests or
 packaging-format tests as daemon consumers.
 
-Guard: `daemon core boundary` (`scripts/lib/guard/scope.ts`). The policy-floor
-check verifies that:
-
-- representative source, markdown, and test files resolve only to the certain
-  daemon rule and its exact guarded effects;
-- the daemon sidecar subtree, runtime-definition shadow, and daemon package
-  manifest still escalate;
-- the workflow continues to execute E2E Vitest and the full UI P0 matrix;
-- web code cannot import another app's private implementation, and web tests
-  do not read the daemon tree through filesystem APIs;
-- the visual harness intercepts every daemon-owned route family; explicit
-  visual fixtures win and every remaining request terminates with a
-  deterministic browser-side 404.
+Direct `scopes.py plan` tests pin representative daemon-core routing and
+out-of-bound escalation. General cross-app and visual-harness guards remain
+repository checks, but they do not authorize the planner's daemon-core
+omissions.
 
 The authoritative cross-app critique coverage walker lives in
 `e2e/tests/critique-coverage.test.ts`, which remains armed by the daemon-core
@@ -234,7 +180,7 @@ plan. The latest 400 first-parent merges contain 78 pure daemon-core groups.
 Fifteen recent groups have successful narrow PR validation paired with
 successful full merge-group validation. A representative full queue run spends
 about 20 runner-minutes in the web, visual, and Windows jobs omitted by the
-guarded plan; UI P0 remains the critical path.
+planner; UI P0 remains the critical path.
 
 ## Daemon UI P0 capability shadow
 
@@ -257,11 +203,9 @@ and model selector. Any empty, unresolved, mixed, unknown, or out-of-surface
 change falls back to the full four-domain matrix and records the reason in
 `trace.uiP0Shadow`.
 
-Guard: `UI P0 shadow contract` (`scripts/lib/guard/scope.ts`). It pins the
-applied full matrix, the candidate group set, representative in-bound
-resolution, and full fallback for shared daemon, runtime-composition, web, and
-unresolved inputs. The shadow must accumulate successful paired runs before it
-can become an execution input under the certain-tier requirements.
+Direct `scopes.py plan` tests pin the applied full matrix, candidate group set,
+representative in-bound resolution, and full fallback. The shadow must
+accumulate successful paired runs before it can become an execution input.
 
 The latest-400 first-parent replay contains three matching groups. The
 candidate would avoid one UI P0 worker per matching group, currently about
@@ -277,11 +221,9 @@ The predicate is queue-only: PR/manual-hot run broad validation even when the
 medium-tier plan has no effects, and forced-full or escalated queue plans run
 everything.
 
-The certain-exempt consumption guard executes in preflight, and `pnpm guard`
-sees every changed path (including a misleading executable such as
-`docs/example.js`). The workspace-unit job does not own landing-page
-validation, and the broad workspace typecheck excludes
-`@open-design/landing-page`.
+`pnpm guard` still runs as ordinary policy-floor work when preflight is
+enabled, but its result does not authorize the zero-effect plan. The planner's
+classification and fail-open behavior are the operative contract.
 
 The 398-merge replay ending at `b99a9fdc3` contains 46 qualifying queue plans
 (11.6%). A sample of 12 successful merge-group runs measures broad prebuild
@@ -335,7 +277,9 @@ infrastructure.
 
 ## Open questions
 
-- Demotion policy beyond the guard-resolution hard rule.
+- A demotion policy for `certain` rules when planner evidence becomes stale.
+- What independent evidence source could strengthen semantic closure without
+  being scheduled by the plan it is meant to assess.
 - Whether medium-tier zero-effect PR plans should use the policy floor; this
   needs its own evidence and containment review.
 - Queue batching discount: the 11.6% figure assumes single-PR queue groups; a
