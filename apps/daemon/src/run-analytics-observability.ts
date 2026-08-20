@@ -981,6 +981,10 @@ export function summarizeRunTimingAnalytics(args: {
   let artifactWriteSource: TrackingArtifactWriteSource | undefined;
   let liveArtifactSeen = false;
   const openTools = new Map<string, number>();
+  // When each still-open tool_use was OBSERVED, on the daemon's clock. Kept
+  // separate from its start, which may be a producer-supplied `startedAt` from
+  // a different clock and so cannot be compared against our own marks.
+  const openToolObservedAt = new Map<string, number>();
   const openToolNames = new Map<string, string>();
   // Count unique tool_use ids so historical double-emits (or retries) do not
   // inflate tool_call_count.
@@ -1030,6 +1034,7 @@ export function summarizeRunTimingAnalytics(args: {
       // First tool_use timestamp wins for duration pairing.
       if (!openTools.has(data.id)) {
         openTools.set(data.id, toolStartedAt);
+        openToolObservedAt.set(data.id, ts);
       } else if (payloadStartedAt !== undefined) {
         const prev = openTools.get(data.id);
         if (prev !== undefined && payloadStartedAt < prev) {
@@ -1064,18 +1069,12 @@ export function summarizeRunTimingAnalytics(args: {
           firstArtifactWriteToolEndedAt = ts;
         }
         openTools.delete(data.toolUseId);
+        openToolObservedAt.delete(data.toolUseId);
         openToolNames.delete(data.toolUseId);
       }
     }
   }
 
-  // A run can end while a tool is still outstanding (crash, cancel, timeout),
-  // leaving a tool_use with no tool_result. That span still occupied the clock,
-  // so close it at run end for phase purposes. `tool_duration_ms` keeps
-  // counting completed pairs only and is unaffected.
-  for (const startedAt of openTools.values()) {
-    toolIntervals.push({ start: startedAt, end: runEndAt });
-  }
   const startAt = telemetry.startChatRunStartedAt ?? telemetry.startRequestedAt;
   const totalDurationMs = Math.max(0, args.analyticsCapturedAt - args.runCreatedAt);
   const firstModelEventAt = telemetry.firstModelEventAt ?? firstToolUseAt ?? telemetry.firstTokenAt;
@@ -1101,6 +1100,25 @@ export function summarizeRunTimingAnalytics(args: {
   ].filter((value): value is number => value !== undefined && Number.isFinite(value));
   const phaseAnchorAt =
     phaseAnchorCandidates.length > 0 ? Math.min(...phaseAnchorCandidates) : undefined;
+  // A run can end while a tool is still outstanding (crash, cancel, timeout),
+  // leaving a tool_use with no tool_result. That span still occupied the clock,
+  // so close it at run end for phase purposes.
+  //
+  // Only for tools this attempt actually issued. `run.events` survives a retry
+  // while lifecycle telemetry does not, so an attempt whose child was killed
+  // mid-tool leaves an open span behind; closing that at run end would stretch
+  // it across the retry boundary and bill the new attempt for a tool it never
+  // called. The gate is the daemon-clock timestamp we OBSERVED the tool_use at,
+  // not its start -- a producer-supplied `startedAt` can legitimately predate
+  // the anchor on a tool that is genuinely running, and clipping already
+  // handles that.
+  if (phaseAnchorAt !== undefined) {
+    for (const [toolUseId, startedAt] of openTools) {
+      const observedAt = openToolObservedAt.get(toolUseId);
+      if (observedAt === undefined || observedAt < phaseAnchorAt) continue;
+      toolIntervals.push({ start: startedAt, end: runEndAt });
+    }
+  }
   const firstModelEventType =
     telemetry.firstModelEventType ??
     firstObservedModelEventType ??

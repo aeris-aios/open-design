@@ -1858,3 +1858,57 @@ describe('summarizeRunTimingAnalytics anchor and completeness edges', () => {
     expect(result.tool_duration_ms).toBe(0);
   });
 });
+
+describe('summarizeRunTimingAnalytics outstanding tools across a retry', () => {
+  it('does not carry a killed attempt\'s unfinished tool into the new attempt', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 25_000,
+      analyticsCapturedAt: 25_100,
+      telemetry: {
+        // Post-retry telemetry: attempt 2 only, and it never called a tool.
+        startRequestedAt: 1_100,
+        stdinWriteEndAt: 19_000,
+        firstModelEventAt: 20_000,
+        firstModelEventType: 'text_delta' as const,
+        firstTokenAt: 20_000,
+      },
+      events: [
+        // Attempt 1's child was killed mid-tool, so this tool_use never got a
+        // result and stays open. `run.events` survives the retry.
+        { id: 1, event: 'agent', timestamp: 3_000, data: { type: 'tool_use', id: 'a1', name: 'Bash' } },
+      ],
+    });
+
+    // Closing that span at run end stretches it across the retry boundary, so
+    // clipping to the attempt-2 window hands 5s of "tool execution" to an
+    // attempt that made no tool call at all.
+    expect(result.model_active_duration_ms).toBe(5_000);
+    expect(result.bottleneck_phase).toBe('stream_output');
+    expect(result.tool_duration_ms).toBe(0);
+  });
+
+  it('still closes an outstanding tool whose producer start predates the anchor', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 15_000,
+      analyticsCapturedAt: 15_050,
+      telemetry: {
+        startRequestedAt: 1_050,
+        startChatRunStartedAt: 1_100,
+        stdinWriteEndAt: 3_500,
+        firstModelEventAt: 4_000,
+        firstModelEventType: 'tool_use' as const,
+      },
+      events: [
+        // Observed after the anchor, so this tool really is running in this
+        // attempt; only its producer-supplied start is skewed early.
+        { id: 1, event: 'agent', timestamp: 5_000, data: { type: 'tool_use', id: 't1', name: 'Bash', startedAt: 1_000 } },
+      ],
+    });
+
+    // The skewed start is clipped to the anchor, not discarded: 4s -> 15s.
+    expect(result.model_active_duration_ms).toBe(11_000);
+    expect(result.bottleneck_phase).toBe('tool_execution');
+  });
+});
