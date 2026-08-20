@@ -119,8 +119,16 @@ export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
   return {
     mark,
     markFirstModelEvent(type: TrackingFirstModelEventType, timestamp = Date.now()) {
+      if (!Number.isFinite(timestamp)) return;
       const current = run.analyticsTelemetry ?? {};
-      if (current.firstModelEventAt !== undefined) return;
+      const existing = current.firstModelEventAt;
+      // Earliest wins, not first observed. ACP holds each toolCallId until it
+      // is terminal, so two parallel calls can complete in the opposite order
+      // they started: the call that began later can be the first one we hear
+      // about. First-write-wins would anchor on it and lose the real head
+      // start. Marks without a producer timestamp default to arrival, which is
+      // monotonic, so this only ever moves the anchor earlier.
+      if (existing !== undefined && timestamp >= existing) return;
       run.analyticsTelemetry = {
         ...current,
         firstModelEventAt: timestamp,

@@ -118,3 +118,32 @@ describe('runLifecycleMarkersForStreamEvent producer-supplied start', () => {
     }
   });
 });
+
+describe('createRunLifecycleTracer first model event ordering', () => {
+  it('keeps the earliest producer start when terminal events arrive out of order', () => {
+    const run: { analyticsTelemetry?: Record<string, unknown> | null } = {};
+    const tracer = createRunLifecycleTracer(run as never);
+
+    // ACP holds each toolCallId until it reaches terminal status, so two
+    // parallel calls can complete in the opposite order they started. Call B
+    // (started 200) finishes first; call A (started 100) finishes after.
+    tracer.markFirstModelEvent('tool_use', 200);
+    tracer.markFirstModelEvent('tool_use', 100);
+
+    // First-write-wins would anchor at 200 and lose the 100ms head start,
+    // pushing every phase boundary later.
+    expect(run.analyticsTelemetry?.firstModelEventAt).toBe(100);
+    expect(run.analyticsTelemetry?.firstModelEventType).toBe('tool_use');
+  });
+
+  it('does not let a later event move the anchor forward', () => {
+    const run: { analyticsTelemetry?: Record<string, unknown> | null } = {};
+    const tracer = createRunLifecycleTracer(run as never);
+
+    tracer.markFirstModelEvent('tool_use', 100);
+    tracer.markFirstModelEvent('text_delta', 300);
+
+    expect(run.analyticsTelemetry?.firstModelEventAt).toBe(100);
+    expect(run.analyticsTelemetry?.firstModelEventType).toBe('tool_use');
+  });
+})

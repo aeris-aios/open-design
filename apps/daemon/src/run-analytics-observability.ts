@@ -970,6 +970,15 @@ export function summarizeRunTimingAnalytics(args: {
 }): RunTimingAnalytics {
   const telemetry = args.telemetry ?? {};
   const runEndAt = args.runUpdatedAt;
+  // `run.events` is a bounded ring buffer, so a long run evicts its earliest
+  // records -- including the tool_use frames that phase occupancy is
+  // reconstructed from. Lifecycle marks live on the run itself and survive, so
+  // without this check a truncated run reports zero tool occupancy, hands the
+  // whole active window to `stream_output`, and still calls the bundle
+  // complete. Same signal the execution diagnostics in runtimes/runs.ts use.
+  const firstEventId = args.events[0]?.id;
+  const eventStreamComplete =
+    args.events.length === 0 || firstEventId === undefined || firstEventId === 1;
   const scanStartAt = telemetry.startChatRunStartedAt ?? telemetry.startRequestedAt;
   // When the current attempt began. Needed inside the scan so a tool id reused
   // by a retry is not merged with the corpse of the same id from a dead
@@ -1258,9 +1267,15 @@ export function summarizeRunTimingAnalytics(args: {
   else if (lastObservedAt !== undefined) result.last_observed_phase = 'unknown';
 
   const bottleneckPhase = largestMeasuredPhase(phaseDurations);
-  if (bottleneckPhase !== undefined) result.bottleneck_phase = bottleneckPhase;
+  // Withheld rather than guessed when the event log was truncated: the phases
+  // built from lifecycle marks are still sound, but we cannot know whether an
+  // evicted tool would have outweighed them, so naming a winner would report
+  // an artefact of what the buffer happened to keep.
+  if (bottleneckPhase !== undefined && eventStreamComplete) {
+    result.bottleneck_phase = bottleneckPhase;
+  }
   result.phase_schema_version = RUN_PHASE_SCHEMA_VERSION;
-  result.phase_timing_status = measuredStatus([
+  const phaseTimingStatus = measuredStatus([
     startAt,
     telemetry.promptBuildStartAt,
     telemetry.promptBuildEndAt,
@@ -1274,6 +1289,12 @@ export function summarizeRunTimingAnalytics(args: {
     phaseAnchorAt,
     runEndAt,
   ]);
+  // Truncation can only downgrade a `complete` claim; it never upgrades a
+  // bundle whose boundaries were genuinely missing.
+  result.phase_timing_status =
+    !eventStreamComplete && phaseTimingStatus === 'complete'
+      ? 'partial'
+      : phaseTimingStatus;
 
   if (spawnToFirstToken !== undefined) {
     const cliReady = durationBetween(

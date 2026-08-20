@@ -1979,3 +1979,57 @@ describe('summarizeRunTimingAnalytics tool id reuse across a retry', () => {
     expect(result.model_active_duration_ms).toBe(4_500);
   });
 });
+
+describe('summarizeRunTimingAnalytics with a truncated event stream', () => {
+  const truncatedRun = {
+    runCreatedAt: 1_000,
+    runUpdatedAt: 60_000,
+    analyticsCapturedAt: 60_050,
+    telemetry: {
+      startRequestedAt: 1_100,
+      startChatRunStartedAt: 2_000,
+      promptBuildStartAt: 2_100,
+      promptBuildEndAt: 2_200,
+      processSpawnStartedAt: 2_300,
+      processSpawnedAt: 2_400,
+      modelCallStartAt: 2_500,
+      stdinWriteEndAt: 2_600,
+      firstModelEventAt: 3_000,
+      firstModelEventType: 'tool_use' as const,
+      firstTokenAt: 25_000,
+      attemptStartedAt: 2_000,
+      attemptIndex: 1,
+    },
+    // The run's event ring buffer evicted everything before id 2001, which is
+    // where the opening tool_use lived. Every lifecycle mark still survives,
+    // because those live on the run rather than in the event list.
+    events: [
+      { id: 2_001, event: 'agent', timestamp: 55_000, data: { type: 'text_delta', text: 'done' } },
+    ],
+  };
+
+  it('does not claim complete phase timing when tool intervals may be missing', () => {
+    const result = summarizeRunTimingAnalytics(truncatedRun);
+
+    expect(result.phase_timing_status).toBe('partial');
+  });
+
+  it('withholds the bottleneck rather than blaming the phase that survived', () => {
+    const result = summarizeRunTimingAnalytics(truncatedRun);
+
+    // With the tool events evicted, occupancy reconstructs as zero and the
+    // whole active window lands on stream_output. That is not a measurement,
+    // it is an artefact of what the buffer happened to keep.
+    expect(result.bottleneck_phase).toBeUndefined();
+  });
+
+  it('still reports timings that come from lifecycle marks', () => {
+    const result = summarizeRunTimingAnalytics(truncatedRun);
+
+    // These never depended on the event list, so truncation does not touch
+    // them.
+    expect(result.model_active_duration_ms).toBe(57_000);
+    expect(result.time_to_first_token_ms).toBe(23_000);
+    expect(result.total_duration_ms).toBe(59_050);
+  });
+});
