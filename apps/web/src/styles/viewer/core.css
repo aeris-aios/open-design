@@ -1923,8 +1923,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
   margin-top: 8px;
 }
 .comment-popover-actions > * {
@@ -1939,17 +1939,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
   min-width: 0;
 }
 .comment-popover-actions-end .comment-popover-add,
 .comment-popover-actions-end .comment-popover-send {
-  min-width: 128px;
-  min-height: 42px;
-  padding-inline: 16px;
-  font-size: 15px;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 40px;
+  padding-inline: 10px;
+  font-size: 14px;
   font-weight: 650;
+  white-space: nowrap;
 }
 .comment-popover-actions-end .comment-popover-add {
   border-color: var(--border);
