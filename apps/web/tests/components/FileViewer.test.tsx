@@ -852,7 +852,7 @@ describe('FileViewer preview scale', () => {
       projectKind: 'prototype' as const,
       file,
     };
-    const { rerender } = render(
+    const { container, rerender } = render(
       <CollabProvider value={{
         ...projectWorkspaceCollabValue(null),
         projectResourceAuthority: 'local',
@@ -869,6 +869,11 @@ describe('FileViewer preview scale', () => {
       expect(frame).not.toBeNull();
       return frame!;
     });
+    expect(container.querySelector<HTMLElement>('.viewer-toolbar')?.style.visibility).toBe('hidden');
+    expect(retainedFrame.style.visibility).toBe('');
+    expect(retainedFrame.style.transform).toBe('');
+    expect(retainedFrame.style.willChange).toBe('');
+    expect(retainedFrame.dataset.odActive).toBe('true');
 
     rerender(
       <CollabProvider value={{
@@ -880,6 +885,10 @@ describe('FileViewer preview scale', () => {
     );
 
     expect(document.querySelector('iframe[data-testid="artifact-preview-frame"]')).toBe(retainedFrame);
+    expect(container.querySelector<HTMLElement>('.viewer-toolbar')?.style.visibility).toBe('');
+    expect(retainedFrame.style.visibility).toBe('');
+    expect(retainedFrame.style.transform).toBe('translateZ(0)');
+    expect(retainedFrame.style.willChange).toBe('transform');
     expect(rawReads).toHaveLength(1);
   });
 

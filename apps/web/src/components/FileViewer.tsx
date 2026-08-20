@@ -25,6 +25,7 @@ import {
   type SocialShareResponse,
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
+import { PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE } from '@open-design/contracts/runtime/preview-observability';
 import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
@@ -376,6 +377,15 @@ const POWERED_PREVIEW_SANDBOX =
 const POWERED_PREVIEW_ALLOW =
   'accelerometer; autoplay; camera; cross-origin-isolated; fullscreen; gamepad; gyroscope; microphone; xr-spatial-tracking';
 const PREVIEW_BRIDGE_QUERY = 'odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability';
+// Electron can finish navigating an iframe under a fully transparent retained
+// file viewer without committing its latest compositor surface when the viewer
+// becomes visible again. Adding this layer only while the file is active makes
+// activation itself invalidate that surface. It does not reload the document,
+// so runtime state and warm-tab switching remain intact.
+const ACTIVE_PREVIEW_REPAINT_STYLE = {
+  transform: 'translateZ(0)',
+  willChange: 'transform',
+} satisfies CSSProperties;
 // Generic runtime UI state carried across the URL-load -> srcDoc transport
 // switch. This preserves the current page of multi-page prototypes while
 // leaving artifact scripts and business state inside their sandboxed frames.
@@ -10558,7 +10568,16 @@ function HtmlViewer({
     // becomes visible, while an already verified frame needs no new work.
     if (!workspaceActive || mode !== 'preview') cancelPendingSrcDocTransport();
   }, [cancelPendingSrcDocTransport, mode, workspaceActive]);
+  const postPreviewObservabilityHostState = useCallback((target: HTMLIFrameElement | null) => {
+    const win = target?.contentWindow;
+    if (!win) return;
+    win.postMessage({
+      type: PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE,
+      active: workspaceActive && mode === 'preview',
+    }, '*');
+  }, [mode, workspaceActive]);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
+    postPreviewObservabilityHostState(target);
     if (!workspaceActive) return;
     const win = target?.contentWindow;
     if (!win) return;
@@ -10597,9 +10616,16 @@ function HtmlViewer({
     inspectMode,
     manualEditMode,
     postAndConsumePreviewRuntimeState,
+    postPreviewObservabilityHostState,
     selectedManualEditTarget?.id,
     workspaceActive,
   ]);
+  useEffect(() => {
+    const urlFrame = urlPreviewIframeRef.current;
+    const srcDocFrame = srcDocPreviewIframeRef.current;
+    postPreviewObservabilityHostState(urlFrame);
+    if (srcDocFrame !== urlFrame) postPreviewObservabilityHostState(srcDocFrame);
+  }, [postPreviewObservabilityHostState]);
   // Only materialized while the in-tab presentation overlay is up — building
   // it eagerly would re-run buildSrcdoc on every source edit for a document
   // nobody is presenting.
@@ -15447,7 +15473,7 @@ function HtmlViewer({
 
   return (
     <div className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
-      <div className="viewer-toolbar">
+      <div className="viewer-toolbar" style={workspaceActive ? undefined : { visibility: 'hidden' }}>
         <div className="viewer-toolbar-left">
           {showDeckThumbnailRail ? (
             <button
@@ -16510,7 +16536,8 @@ function HtmlViewer({
                             ? (useUrlLoadPreview ? 'artifact-preview-frame' : 'artifact-preview-frame-url-load')
                             : `artifact-preview-frame-retained-${file.name}`}
                           data-od-render-mode="url-load"
-                          data-od-active={workspaceActive && mode === 'preview' && useUrlLoadPreview ? 'true' : 'false'}
+                          data-od-active={mode === 'preview' && useUrlLoadPreview ? 'true' : 'false'}
+                          style={workspaceActive ? ACTIVE_PREVIEW_REPAINT_STYLE : undefined}
                           aria-hidden={workspaceActive && mode === 'preview' && useUrlLoadPreview ? undefined : true}
                           tabIndex={workspaceActive && mode === 'preview' && useUrlLoadPreview ? 0 : -1}
                           title={file.name}
@@ -16553,7 +16580,8 @@ function HtmlViewer({
                             ? (useUrlLoadPreview ? 'artifact-preview-frame' : 'artifact-preview-frame-url-load')
                             : `artifact-preview-frame-retained-${file.name}`}
                           data-od-render-mode="url-load"
-                          data-od-active={workspaceActive && mode === 'preview' && useUrlLoadPreview ? 'true' : 'false'}
+                          data-od-active={mode === 'preview' && useUrlLoadPreview ? 'true' : 'false'}
+                          style={workspaceActive ? ACTIVE_PREVIEW_REPAINT_STYLE : undefined}
                           aria-hidden={workspaceActive && mode === 'preview' && useUrlLoadPreview ? undefined : true}
                           tabIndex={workspaceActive && mode === 'preview' && useUrlLoadPreview ? 0 : -1}
                           title={file.name}
@@ -16598,7 +16626,8 @@ function HtmlViewer({
                           ? (useUrlLoadPreview ? 'artifact-preview-frame-srcdoc' : 'artifact-preview-frame')
                           : `artifact-preview-frame-srcdoc-retained-${file.name}`}
                         data-od-render-mode="srcdoc"
-                        data-od-active={workspaceActive && mode === 'preview' && !useUrlLoadPreview ? 'true' : 'false'}
+                        data-od-active={mode === 'preview' && !useUrlLoadPreview ? 'true' : 'false'}
+                        style={workspaceActive ? ACTIVE_PREVIEW_REPAINT_STYLE : undefined}
                         aria-hidden={workspaceActive && mode === 'preview' && !useUrlLoadPreview ? undefined : true}
                         tabIndex={workspaceActive && mode === 'preview' && !useUrlLoadPreview ? 0 : -1}
                         title={file.name}

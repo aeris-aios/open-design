@@ -9,6 +9,8 @@
  */
 
 export const PREVIEW_OBSERVABILITY_MESSAGE_TYPE = 'od:preview-observability';
+export const PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE =
+  'od:preview-observability-host-state';
 export const PREVIEW_OBSERVABILITY_PROTOCOL_VERSION = 1;
 export const PREVIEW_OBSERVABILITY_BRIDGE_MARKER = 'data-od-preview-observability';
 export const PREVIEW_WHITE_SCREEN_TIMEOUT_MS = 5_000;
@@ -145,6 +147,7 @@ export function buildPreviewObservabilityBridge(): string {
   var VERSION = ${PREVIEW_OBSERVABILITY_PROTOCOL_VERSION};
   var WHITE_SCREEN_TIMEOUT = ${PREVIEW_WHITE_SCREEN_TIMEOUT_MS};
   var WHITE_SCREEN_CONFIRMATION_DELAY = ${PREVIEW_WHITE_SCREEN_CONFIRMATION_MS};
+  var HOST_STATE_TYPE = ${JSON.stringify(PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE)};
   var MAX_EVENTS = 12;
   var sentCount = 0;
   var sent = Object.create(null);
@@ -265,8 +268,16 @@ export function buildPreviewObservabilityBridge(): string {
   var whiteScreenReported = false;
   var whiteScreenCheckTimer = null;
   var whiteScreenConfirmationTimer = null;
+  var hostActive = false;
+  function clearWhiteScreenTimers(){
+    if (whiteScreenCheckTimer !== null) clearTimeout(whiteScreenCheckTimer);
+    if (whiteScreenConfirmationTimer !== null) clearTimeout(whiteScreenConfirmationTimer);
+    whiteScreenCheckTimer = null;
+    whiteScreenConfirmationTimer = null;
+  }
   function whiteScreenCheckEligible(){
-    return document.readyState === 'complete' &&
+    return hostActive &&
+      document.readyState === 'complete' &&
       document.visibilityState === 'visible' &&
       (window.innerWidth || 0) > 1 &&
       (window.innerHeight || 0) > 1;
@@ -309,7 +320,18 @@ export function buildPreviewObservabilityBridge(): string {
   function scheduleWhiteScreenCheckWhenEligible(){
     if (whiteScreenCheckEligible()) scheduleWhiteScreenCheck(WHITE_SCREEN_TIMEOUT);
   }
-  if (document.readyState === 'complete') scheduleWhiteScreenCheck(WHITE_SCREEN_TIMEOUT);
+  window.addEventListener('message', function(event){
+    var data = event && event.data;
+    if (!data || data.type !== HOST_STATE_TYPE || typeof data.active !== 'boolean') return;
+    if (hostActive === data.active) return;
+    hostActive = data.active;
+    if (!hostActive) {
+      clearWhiteScreenTimers();
+      return;
+    }
+    scheduleWhiteScreenCheckWhenEligible();
+  });
+  if (document.readyState === 'complete') scheduleWhiteScreenCheckWhenEligible();
   else window.addEventListener('load', scheduleWhiteScreenCheckWhenEligible, { once: true });
   document.addEventListener('visibilitychange', scheduleWhiteScreenCheckWhenEligible);
   window.addEventListener('resize', scheduleWhiteScreenCheckWhenEligible);
