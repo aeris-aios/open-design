@@ -407,7 +407,7 @@ describe("pricing contract", () => {
     assert.equal(proUnlimitedModels.includes("MiniMax M2.7"), false);
   });
 
-  it("leads the comparison with Go unlimited models and keeps ample access check-only", async () => {
+  it("groups the Pro unlimited models together and keeps ample access check-only", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
     const comparisonBlock = individualPlans.match(
       /const comparisonPopular = \[([\s\S]*?)\]\.map/,
@@ -415,8 +415,15 @@ describe("pricing contract", () => {
 
     assert.ok(comparisonBlock);
     assert.deepEqual(
-      Array.from(comparisonBlock.matchAll(/'([^']+)'/g), (match) => match[1]).slice(0, 3),
-      ["DeepSeek V4 Flash", "DeepSeek V4 Pro", "GLM-5.2"],
+      Array.from(comparisonBlock.matchAll(/'([^']+)'/g), (match) => match[1]).slice(0, 6),
+      [
+        "DeepSeek V4 Flash",
+        "DeepSeek V4 Pro",
+        "GLM-5.2",
+        "Kimi K2.7 Code",
+        "MiMo V2.5 Pro",
+        "MiniMax M2.7",
+      ],
     );
     assert.match(
       individualPlans,
