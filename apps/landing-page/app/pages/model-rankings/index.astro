@@ -58,6 +58,15 @@ const efficiencyX = (model: Model) => Math.max(5, Math.min(95, 5 + (model.time /
 const efficiencyY = (model: Model) => Math.max(6, Math.min(94, 6 + ((model.pdr - 65) / 25) * 88));
 const requirementX = (model: Model) => 7 + ((model.d1 - 50) / 12) * 86;
 const requirementY = (model: Model) => 8 + ((model.d2 - 25) / 8) * 82;
+const signalModels = models.slice(0, 8);
+const averageTime = signalModels.reduce((sum, model) => sum + model.time, 0) / signalModels.length;
+const averageCost = signalModels.reduce((sum, model) => sum + model.cost, 0) / signalModels.length;
+const maxTime = Math.max(...signalModels.map((model) => model.time));
+const maxCost = Math.max(...signalModels.map((model) => model.cost));
+const heatTone = (value: number) => {
+  const alpha = Math.max(.1, Math.min(.82, .1 + value / 100 * .72));
+  return `rgba(64, 126, 103, ${alpha.toFixed(2)})`;
+};
 
 const title = 'AI Design Model Rankings | OpenDesign';
 const description = 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.';
@@ -130,9 +139,84 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
       </div>
     </section>
 
+    <section class="model-section signals-section" aria-labelledby="signals-title">
+      <div class="section-heading signals-heading">
+        <div>
+          <span class="section-index">02 / Signals</span>
+          <h2 id="signals-title">More ways to read the models</h2>
+          <p>Compact views of score composition and execution efficiency. All values below use the same preview evaluation run as the leaderboard.</p>
+        </div>
+        <p class="signals-disclosure"><strong>Benchmark signals</strong>Real-world reach and daily usage will only be published after telemetry reaches a reliable sample size.</p>
+      </div>
+
+      <div class="signal-card-rail" aria-label="Supplementary model signals">
+        <article class="signal-card signal-profile-card">
+          <header class="signal-card-header">
+            <div><span>Score composition</span><h3>Evaluation profile</h3><p>How the leading models perform across the three evaluation dimensions.</p></div>
+            <b>01</b>
+          </header>
+          <div class="profile-table" role="table" aria-label="Evaluation profile by model">
+            <div class="signal-table-head" role="row"><span>#</span><span>Model</span><span>D0</span><span>D1</span><span>D2</span></div>
+            {signalModels.map((model, index) => (
+              <div class="profile-row" role="row">
+                <span>{index + 1}</span>
+                <span class="signal-model-name"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><strong>{model.name}</strong></span>
+                <b style={`--heat:${heatTone(model.d0)}`}>{model.d0.toFixed(1)}</b>
+                <b style={`--heat:${heatTone(model.d1 / 65 * 100)}`}>{model.d1.toFixed(1)}</b>
+                <b style={`--heat:${heatTone(model.d2 / 35 * 100)}`}>{model.d2.toFixed(1)}</b>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article class="signal-card signal-ranking-card">
+          <header class="signal-card-header">
+            <div><span>Lower is better</span><h3>Runtime efficiency</h3><p>Total time needed to complete the same general-difficulty design session.</p></div>
+            <b>02</b>
+          </header>
+          <div class="signal-ranking-head"><span># &nbsp;&nbsp;&nbsp; Model</span><span>Vs. average</span></div>
+          <ol class="signal-ranking-list">
+            {[...signalModels].sort((a, b) => a.time - b.time).map((model, index) => {
+              const delta = (averageTime - model.time) / averageTime * 100;
+              return (
+                <li>
+                  <i>{index + 1}</i>
+                  <span class="signal-model-name"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><strong>{model.name}</strong></span>
+                  <span class:list={['signal-delta', { negative: delta < 0 }]}><strong>{delta >= 0 ? '+' : ''}{delta.toFixed(1)}%</strong><small>{model.time}s</small></span>
+                  <span class="signal-mini-track"><i style={`width:${Math.max(12, 100 - model.time / maxTime * 70)}%`}></i><b style={`left:${Math.min(94, averageTime / maxTime * 100)}%`}></b></span>
+                </li>
+              );
+            })}
+          </ol>
+        </article>
+
+        <article class="signal-card signal-ranking-card">
+          <header class="signal-card-header">
+            <div><span>Cost + tool calls</span><h3>Resource efficiency</h3><p>Session cost compared with the cohort average, with tool calls shown alongside it.</p></div>
+            <b>03</b>
+          </header>
+          <div class="signal-ranking-head"><span># &nbsp;&nbsp;&nbsp; Model</span><span>Vs. average</span></div>
+          <ol class="signal-ranking-list">
+            {[...signalModels].sort((a, b) => a.cost - b.cost).map((model, index) => {
+              const delta = (averageCost - model.cost) / averageCost * 100;
+              return (
+                <li>
+                  <i>{index + 1}</i>
+                  <span class="signal-model-name"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><strong>{model.name}</strong></span>
+                  <span class:list={['signal-delta', { negative: delta < 0 }]}><strong>{delta >= 0 ? '+' : ''}{delta.toFixed(1)}%</strong><small>${model.cost.toFixed(2)} · {model.calls.toFixed(1)} calls</small></span>
+                  <span class="signal-mini-track"><i style={`width:${Math.max(12, 100 - model.cost / maxCost * 70)}%`}></i><b style={`left:${Math.min(94, averageCost / maxCost * 100)}%`}></b></span>
+                </li>
+              );
+            })}
+          </ol>
+        </article>
+      </div>
+      <div class="signal-rail-note"><span></span><p>Swipe to compare on smaller screens</p></div>
+    </section>
+
     <section class="model-section task-section" aria-labelledby="task-title">
       <div class="section-heading">
-        <div><span class="section-index">02 / Tasks</span><h2 id="task-title">Top models by task</h2><p>Each design task's Top 1 model, ranked by PDR on OpenDesign.</p></div>
+        <div><span class="section-index">03 / Tasks</span><h2 id="task-title">Top models by task</h2><p>Each design task's Top 1 model, ranked by PDR on OpenDesign.</p></div>
       </div>
       <div class="task-map">
         {taskWinners.map((task) => (
@@ -152,7 +236,7 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
 
     <section class="model-section efficiency-section" aria-labelledby="efficiency-title">
       <div class="section-heading">
-        <div><span class="section-index">03 / Efficiency</span><h2 id="efficiency-title">Model efficiency frontier</h2><p>Compare design performance against speed, cost, and tool calls across three task difficulty levels.</p></div>
+        <div><span class="section-index">04 / Efficiency</span><h2 id="efficiency-title">Model efficiency frontier</h2><p>Compare design performance against speed, cost, and tool calls across three task difficulty levels.</p></div>
       </div>
       <div class="efficiency-explorer" data-efficiency>
         <div class="efficiency-toolbar">
@@ -206,7 +290,7 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
     </section>
 
     <section class="model-section benchmark-section" aria-labelledby="benchmark-title">
-      <div class="section-heading"><div><span class="section-index">04 / Quality frontier</span><h2 id="benchmark-title">Requirement × Design</h2><p>See which models balance requirement fulfillment (D1) with design quality (D2).</p></div></div>
+      <div class="section-heading"><div><span class="section-index">05 / Quality frontier</span><h2 id="benchmark-title">Requirement × Design</h2><p>See which models balance requirement fulfillment (D1) with design quality (D2).</p></div></div>
       <div class="benchmark-controls">
         <div class="benchmark-axis-legend">
           <div class="axis-key"><b>X</b><span><small>D1</small>Requirement fulfillment</span></div>
@@ -232,7 +316,7 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
     </section>
 
     <section class="model-section method-section" aria-labelledby="method-title">
-      <div class="section-heading"><div><span class="section-index">05 / Method</span><h2 id="method-title">Evaluation framework</h2><p>One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.</p></div></div>
+      <div class="section-heading"><div><span class="section-index">06 / Method</span><h2 id="method-title">Evaluation framework</h2><p>One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.</p></div></div>
       <div class="method-overview">
         <div class="method-primary"><span>Primary metric</span><div><strong>PDR</strong><h3>Primary Design Result</h3></div><p>The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.</p></div>
         <ol class="method-flow" aria-label="Evaluation sequence">
