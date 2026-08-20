@@ -10977,7 +10977,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('opens annotation parameters and comments on click only', async () => {
+  it('opens the comment composer on click only', async () => {
     render(
       <FileViewer
         projectId="project-1"
@@ -11021,11 +11021,8 @@ describe('FileViewer tweaks toolbar', () => {
       data: { ...target, type: 'od:comment-target' },
     }));
 
-    const summary = await screen.findByTestId('comment-popover-style-summary');
-    expect(summary.textContent).toContain('Color');
-    expect(summary.textContent).toContain('#1A1916');
-    expect(summary.textContent).toContain('13.5px');
     expect(await screen.findByTestId('comment-popover-input')).toBeTruthy();
+    expect(screen.queryByTestId('comment-popover-style-summary')).toBeNull();
     expect(screen.queryByTestId('comment-target-overlay')).toBeNull();
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('inspect-panel')).toBeNull();

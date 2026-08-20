@@ -686,9 +686,11 @@ export function BoardComposerPopover({
           outside this box (see below) so a height-clamped card can never push
           the buttons out of view. */}
       <div className="comment-popover-body">
-        <section className="comment-popover-section comment-popover-section-params">
-          <AnnotationStyleSummary target={target} testId="comment-popover-style-summary" />
-        </section>
+        {isPodSelection ? (
+          <section className="comment-popover-section comment-popover-section-params">
+            <AnnotationStyleSummary target={target} testId="comment-popover-style-summary" />
+          </section>
+        ) : null}
         {podMembers.length > 0 ? (
           <div className="board-pod-summary">
             <strong>{t('chat.comments.capturedItems', { n: target.memberCount || podMembers.length })}</strong>
