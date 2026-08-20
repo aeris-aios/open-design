@@ -190,10 +190,25 @@ describe('unlimited badge follows the subscription tier', () => {
 
   it('badges every popular model on Max', () => {
     mockNow(AFTER_CAMPAIGN);
-    setPlan('team_max_yearly');
+    setPlan('max');
     renderSwitcher();
     expect(badgedModelIds()).toHaveLength(8);
   });
+
+  it.each(['team_plus', 'team_pro', 'team_max_yearly'])(
+    'badges nothing on the team plan %s',
+    (tier) => {
+      // Team workspaces spend their own balance and never get an in-plan
+      // zero-charge call (vela constrains the `coding_plan` billing mode to
+      // personal tiers), which is also why #7187's balance preflight refuses
+      // to stand down for them. A badge here would promise what the preflight
+      // then blocks.
+      mockNow(AFTER_CAMPAIGN);
+      setPlan(tier);
+      renderSwitcher();
+      expect(badgedModelIds()).toEqual([]);
+    },
+  );
 
   it('badges nothing for a free plan once the campaign window has closed', () => {
     mockNow(AFTER_CAMPAIGN);
