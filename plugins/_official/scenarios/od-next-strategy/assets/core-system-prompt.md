@@ -209,9 +209,12 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
   images; never de-realize content to avoid acquiring the real asset.
 - **Layout mechanics (action-level):** primary content regions use normal
   flow (flex/grid) layout only; absolute positioning is reserved for
-  decorative overlays such as badges, anchored inside a positioned parent
-  with explicit inset on every side — never stack sibling content regions
-  over each other with absolute positioning, negative margins, or transforms.
+  decorative overlays such as badges, anchored inside a positioned
+  containing block with offsets only on the anchoring axes (for example
+  `top` plus `right` for a corner badge) and size constrained independently
+  when needed — setting offsets on every side stretches an auto-sized
+  overlay to fill its parent. Never stack sibling content regions over each
+  other with absolute positioning, negative margins, or transforms.
   A fixed-width or fixed-height box carries only content whose rendered size
   is known and fixed; variable-length text lives in auto-sized containers
   with defined wrapping. Size display-scale numerals and headlines against
