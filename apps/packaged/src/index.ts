@@ -34,7 +34,7 @@ import {
   waitForLauncherAfterQuit,
 } from "./launcher-after-quit.js";
 import {
-  clearPackagedLauncherDelegatedAttempt,
+  clearPackagedLauncherDelegatedExitAttempt,
   confirmPackagedLauncherRuntime,
   resolvePackagedLauncherRuntime,
 } from "./launcher-runtime.js";
@@ -125,9 +125,12 @@ async function main(): Promise<void> {
     logger: console,
     paths: initialPaths,
   });
-  if (existingDesktop.action === "exit" && existingDesktop.reason === "existing-focused") {
-    await clearPackagedLauncherDelegatedAttempt(namespaceConfig, initialPaths, delegated);
-  }
+  await clearPackagedLauncherDelegatedExitAttempt(
+    namespaceConfig,
+    initialPaths,
+    delegated,
+    existingDesktop,
+  );
   if (exitPackagedLauncherForExistingDesktop(existingDesktop, (code) => app.exit(code))) {
     return;
   }

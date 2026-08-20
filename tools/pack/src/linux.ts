@@ -23,7 +23,7 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "./config.js";
-import { createToolPackControl, stopToolPackServices } from "./control.js";
+import { convergeToolPackServices, createToolPackControl, stopToolPackServices } from "./control.js";
 import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
 import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources.js";
 import { copyOptionalVelaCliBinary } from "./vela-cli.js";
@@ -932,7 +932,7 @@ async function waitForMarker(markerPath: string, timeoutMs: number): Promise<boo
 
 async function fetchDesktopStatus(config: ToolPackConfig): Promise<DesktopStatusSnapshot | null> {
   try {
-    const desktop = await createToolPackControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
+    const desktop = await createToolPackControl(config, "desktop").connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
     return await desktop.call("status", {}, { timeoutMs: 2_000 });
   } catch {
     return null;
@@ -956,7 +956,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
 
   // Resolve and converge the exact live generation before clearing its product
   // identity. Clearing first would make control fall back to cold generation 0.
-  await stopToolPackServices(createToolPackControl(config));
+  await convergeToolPackServices(createToolPackControl(config, "desktop"));
   await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
 
   // --appimage-extract-and-run bypasses FUSE-mounted SquashFS, which is too slow
@@ -1012,7 +1012,7 @@ async function teardownOrphanedStart(rootPid: number): Promise<void> {
 }
 
 export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const results = await stopToolPackServices(createToolPackControl(config));
+  const results = await stopToolPackServices(createToolPackControl(config, "desktop"));
   const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
   const remainingPids = [...new Set(results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
   const stoppedPids = [...new Set(results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
@@ -1050,7 +1050,8 @@ export async function inspectPackedLinuxApp(
     throw new Error("linux inspect --headless supports status only; omit --expr and --path");
   }
 
-  const desktop = await createToolPackControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP).catch(() => null);
+  const controlMode = options.headless === true ? "headless" : "desktop";
+  const desktop = await createToolPackControl(config, controlMode).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP).catch(() => null);
   const status = await desktop?.call("status", {}, { timeoutMs: 2000 }).catch(() => null) ?? null;
 
   if (options.headless === true) {
@@ -1313,7 +1314,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   }
 
   const nodeCommand = (await pathExists(nodePath)) ? nodePath : process.execPath;
-  await stopToolPackServices(createToolPackControl(config));
+  await convergeToolPackServices(createToolPackControl(config, "headless"));
   const logPath = headlessLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
@@ -1375,7 +1376,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
 }
 
 export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const results = await stopToolPackServices(createToolPackControl(config));
+  const results = await stopToolPackServices(createToolPackControl(config, "headless"));
   const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
   const remainingPids = [...new Set(results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
   const stoppedPids = [...new Set(results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];

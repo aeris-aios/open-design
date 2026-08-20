@@ -25,6 +25,7 @@ import {
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 
 import type { PackagedConfig, PackagedWebOutputMode, RawPackagedConfig } from "./config.js";
+import type { LauncherExistingDesktopGateResult } from "./launcher-after-quit.js";
 import type { PackagedNamespacePaths } from "./paths.js";
 
 type LauncherPayloadManifest = {
@@ -620,16 +621,17 @@ export async function recordPackagedLauncherRuntimeFailedAttempt(
 
 /**
  * Clear only the attempt pre-armed by the launcher that delegated this exact
- * payload pointer. A payload candidate can focus an already-running owner and
- * exit before resolving its own runtime; without this boundary the fresh
- * attempt would be misread as a failed generation on the next cold start.
+ * payload pointer whenever the delegated candidate exits without ownership.
+ * Whether focus succeeds or fails, leaving the fresh attempt behind would be
+ * misread as a failed generation on the next cold start.
  */
-export async function clearPackagedLauncherDelegatedAttempt(
+export async function clearPackagedLauncherDelegatedExitAttempt(
   config: PackagedConfig,
   paths: PackagedNamespacePaths,
   delegated: LauncherVersionPointer | null,
+  result: LauncherExistingDesktopGateResult,
 ): Promise<boolean> {
-  if (delegated == null) return false;
+  if (result.action !== "exit" || delegated == null) return false;
   const channel = inferLauncherChannel(config);
   const launcherPaths = resolveLauncherPaths({
     channel,

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -157,7 +157,7 @@ describe("tools-pack control scope", () => {
         },
       }));
 
-      expect(createToolPackControl(config).scope).toEqual({
+      expect(createToolPackControl(config, "desktop").scope).toEqual({
         channel: "beta",
         generation: 7,
         namespace: config.namespace,
@@ -167,7 +167,7 @@ describe("tools-pack control scope", () => {
     }
   });
 
-  it("targets the newer headless generation instead of a stale desktop identity", () => {
+  it("keeps desktop and headless control scopes mode-owned when both identities are valid", () => {
     const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
     const config = resolveToolPackConfig("linux", {
       appVersion: "0.19.4-beta.30",
@@ -193,10 +193,12 @@ describe("tools-pack control scope", () => {
           namespace: config.namespace,
         },
       }));
-      utimesSync(desktopIdentityPath, new Date(1_000), new Date(1_000));
-      utimesSync(headlessIdentityPath, new Date(2_000), new Date(2_000));
-
-      expect(createToolPackControl(config).scope).toEqual({
+      expect(createToolPackControl(config, "desktop").scope).toEqual({
+        channel: "beta",
+        generation: 3,
+        namespace: config.namespace,
+      });
+      expect(createToolPackControl(config, "headless").scope).toEqual({
         channel: "beta",
         generation: 11,
         namespace: config.namespace,

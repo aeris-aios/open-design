@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PackagedConfig } from "../src/config.js";
 import {
-  clearPackagedLauncherDelegatedAttempt,
+  clearPackagedLauncherDelegatedExitAttempt,
   confirmPackagedLauncherRuntime,
   type PackagedLauncherRuntime,
   resolvePackagedLauncherRuntime,
@@ -56,18 +56,26 @@ describe("resolvePackagedLauncherRuntime", () => {
       await mkdir(dirname(runtime.launcherPaths.attemptsPath), { recursive: true });
       await writeFile(runtime.launcherPaths.attemptsPath, `${JSON.stringify(attempt)}\n`);
 
-      await expect(clearPackagedLauncherDelegatedAttempt(config, paths, {
-        generation: 1,
-        version: "1.2.3-beta.5",
-      })).resolves.toBe(false);
+      await expect(clearPackagedLauncherDelegatedExitAttempt(config, paths, {
+        generation: 2,
+        version: "1.2.3-beta.6",
+      }, { action: "continue", reason: "not-running" })).resolves.toBe(false);
       await expect(readFile(runtime.launcherPaths.attemptsPath, "utf8")).resolves.toContain(
         "1.2.3-beta.6",
       );
 
-      await expect(clearPackagedLauncherDelegatedAttempt(config, paths, {
+      await expect(clearPackagedLauncherDelegatedExitAttempt(config, paths, {
+        generation: 1,
+        version: "1.2.3-beta.5",
+      }, { action: "exit", reason: "existing-focused" })).resolves.toBe(false);
+      await expect(readFile(runtime.launcherPaths.attemptsPath, "utf8")).resolves.toContain(
+        "1.2.3-beta.6",
+      );
+
+      await expect(clearPackagedLauncherDelegatedExitAttempt(config, paths, {
         generation: 2,
         version: "1.2.3-beta.6",
-      })).resolves.toBe(true);
+      }, { action: "exit", reason: "existing-focus-failed" })).resolves.toBe(true);
       await expect(readFile(runtime.launcherPaths.attemptsPath, "utf8")).rejects.toThrow();
     } finally {
       await rm(root, { force: true, recursive: true });

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -344,6 +344,77 @@ describe("independent sidecar controller and body", () => {
     expect(left.pid).toBe(right.pid);
     await expect(left.client.call("echo", { value: "left" })).resolves.toEqual({ value: "left" });
     await expect(right.client.call("echo", { value: "right" })).resolves.toEqual({ value: "right" });
+  });
+
+  it("does not spawn when an adopted identity exists but its peer is unprobeable", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const holder = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      holder.once("error", rejectSpawn);
+      holder.once("spawn", resolveSpawn);
+    });
+    const holderPid = holder.pid;
+    if (holderPid == null) throw new Error("unprobeable peer fixture did not report a pid");
+    cleanups.push(async () => {
+      if (holder.exitCode == null && holder.signalCode == null) holder.kill("SIGKILL");
+      await new Promise<void>((resolveExit) => {
+        if (holder.exitCode != null || holder.signalCode != null) resolveExit();
+        else holder.once("exit", () => resolveExit());
+      });
+    });
+
+    const metadata = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    await writePrivateReadyDescriptorForTest(metadata, holderPid);
+    const spawnMarker = join(roots.runtimeRoot, "unexpected-spawn");
+
+    await expect(controller.launch<DemoMethods>({
+      args: [
+        "-e",
+        "require('node:fs').writeFileSync(process.argv[1], 'spawned')",
+        spawnMarker,
+      ],
+      executable: process.execPath,
+      existing: "adopt",
+      readyTimeoutMs: 200,
+      service: "daemon",
+    })).rejects.toMatchObject({ code: "peer-unavailable" });
+    await expect(access(spawnMarker)).rejects.toThrow();
+  });
+
+  it("reclaims an adopted identity whose recorded process has exited", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const metadata = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    await writePrivateReadyDescriptorForTest(metadata, 2_147_483_647);
+
+    const launch = await controller.launch<DemoMethods>({
+      args: ["--import", "tsx", join(import.meta.dirname, "fixtures", "control-child.ts")],
+      executable: process.execPath,
+      existing: "adopt",
+      readyTimeoutMs: 5_000,
+      service: "daemon",
+    });
+    cleanups.push(async () => {
+      await launch.stop();
+    });
+
+    await expect(launch.client.call("echo", { value: "reclaimed" })).resolves.toEqual({
+      value: "reclaimed",
+    });
   });
 
   it("agree on normalized identity, roots and caller-owned methods", async () => {

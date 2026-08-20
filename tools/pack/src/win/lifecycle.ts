@@ -24,7 +24,7 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "../config.js";
-import { createToolPackControl, stopToolPackServices } from "../control.js";
+import { convergeToolPackServices, createToolPackControl, stopToolPackServices } from "../control.js";
 import { resolveToolPackLauncherLayout } from "../launcher-layout.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
@@ -62,7 +62,7 @@ const PACKAGED_CONFIG_PATH_ENV = "OD_PACKAGED_CONFIG_PATH";
 const UPDATE_ACTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 function controlForConfig(config: ToolPackConfig): SidecarControlAccess {
-  return createToolPackControl(config);
+  return createToolPackControl(config, "desktop");
 }
 
 function desktopLogPath(config: ToolPackConfig): string {
@@ -264,7 +264,7 @@ async function resolveStartTarget(config: ToolPackConfig): Promise<{ configPath:
 export async function startPackedWinApp(config: ToolPackConfig, options: { waitForStatus?: boolean } = {}): Promise<WinStartResult> {
   const target = await resolveStartTarget(config);
   const control = controlForConfig(config);
-  await stopToolPackServices(control);
+  await convergeToolPackServices(control);
   const logPath = desktopLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");

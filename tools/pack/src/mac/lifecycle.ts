@@ -21,7 +21,7 @@ import {
   spawnLoggedProcess,
 } from "@open-design/platform";
 import type { ToolPackConfig } from "../config.js";
-import { createToolPackControl, stopToolPackServices } from "../control.js";
+import { convergeToolPackServices, createToolPackControl, stopToolPackServices } from "../control.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
@@ -42,7 +42,7 @@ async function waitForDesktopStatus(config: ToolPackConfig, timeoutMs = 45_000):
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const desktop = await createToolPackControl(config).connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
+      const desktop = await createToolPackControl(config, "desktop").connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
       return await desktop.call("status", {}, { timeoutMs: 1000 });
     } catch {
       await new Promise((resolveWait) => setTimeout(resolveWait, 200));
@@ -343,8 +343,8 @@ export async function installPackedMacDmg(config: ToolPackConfig): Promise<MacIn
 
 export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStartResult> {
   const target = await resolvePackedMacStartTarget(config);
-  const control = createToolPackControl(config);
-  await stopToolPackServices(control);
+  const control = createToolPackControl(config, "desktop");
+  await convergeToolPackServices(control);
   const logPath = desktopLogPath(config);
   const launchConfigPath = await writeLaunchPackagedConfig(config, target.appPath);
   await mkdir(dirname(logPath), { recursive: true });
@@ -413,7 +413,7 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
 }
 
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
-  const stopped = await stopToolPackServices(createToolPackControl(config));
+  const stopped = await stopToolPackServices(createToolPackControl(config, "desktop"));
   const pids = [...new Set(stopped.flatMap((result) => result.pid == null ? [] : [result.pid]))];
   const remainingPids = [...new Set(stopped.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
   const stoppedPids = [...new Set(stopped.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
@@ -449,7 +449,7 @@ function resolveUpdateAction(value: string | undefined): DesktopUpdateAction | n
 }
 
 export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string; updateAction?: string }): Promise<MacInspectResult> {
-  const control = createToolPackControl(config);
+  const control = createToolPackControl(config, "desktop");
   const desktop = await control.connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP).catch(() => null);
   const status = await desktop?.call("status", {}, { timeoutMs: 2000 }).catch(() => null) ?? null;
   const updateAction = resolveUpdateAction(options.updateAction);

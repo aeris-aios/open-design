@@ -529,17 +529,20 @@ export function bootstrapControlPlane({
       throw new SidecarControlError("invalid-input", "sidecar existing launch mode must be adopt or replace");
     }
     if (existing === "adopt") {
+      let current: PrivateReadyDescriptor | null = null;
       try {
-        const current = await readCurrentDescriptor(
+        current = await readCurrentDescriptor(
           descriptor.identity,
           descriptor.roots,
           descriptor.projection,
         );
+      } catch (error) {
+        if (!(error instanceof SidecarControlError) || error.code !== "peer-unavailable") throw error;
+      }
+      if (current != null && processAlive(current.pid)) {
         const client = createClient<TMethods>(current);
         await client.probe();
         return adoptedLaunch({ peer: { client, descriptor: current }, stopTimeoutMs });
-      } catch (error) {
-        if (!(error instanceof SidecarControlError) || error.code !== "peer-unavailable") throw error;
       }
     } else {
       const converged = await stop(options.service, { graceMs: stopTimeoutMs });

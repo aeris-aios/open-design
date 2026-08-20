@@ -98,6 +98,31 @@ afterEach(() => {
 });
 
 describe("startPackedMacApp", () => {
+  it("does not spawn a replacement when a service stop is unproven", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
+    try {
+      const config = makeConfig(root);
+      const paths = resolveMacPaths(config);
+      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Open Design");
+      await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
+      await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");
+      await chmod(executablePath, 0o755);
+      stopControl.mockImplementation(async (service) => ({
+        code: 0,
+        pid: service === "web" ? 4321 : null,
+        signal: null,
+        stopped: service !== "web",
+      }));
+
+      await expect(startPackedMacApp(config)).rejects.toThrow(
+        "failed to converge one or more packaged services",
+      );
+      expect(spawnLoggedProcess).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("accepts a clean launcher exit when the delegated desktop becomes healthy", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
     try {
