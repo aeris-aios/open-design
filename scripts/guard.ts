@@ -1299,15 +1299,13 @@ async function checkCiTopology(): Promise<boolean> {
   const errors = [
     ...validatePlaywrightSuiteTopology(),
     ...[
-      "run: node --experimental-strip-types scripts/scopes.ts github-output",
-      "ci_mode: ${{ steps.detect.outputs.ci_mode }}",
-      "ui_p0_validation_required: ${{ steps.detect.outputs.ui_p0_validation_required }}",
-      "run_ui_p0: ${{ steps.detect.outputs.run_ui_p0 }}",
-      "ui_p0_matrix: ${{ steps.detect.outputs.ui_p0_matrix }}",
-      "visual_matrix: ${{ steps.detect.outputs.visual_matrix }}",
-      "include: ${{ fromJSON(needs.scopes.outputs.ui_p0_matrix) }}",
-      "include: ${{ fromJSON(needs.scopes.outputs.visual_matrix) }}",
-      "needs.scopes.outputs.run_ui_p0 == 'true'",
+      "run: python3 .github/scripts/scopes.py github-output --output \"$RUNNER_TEMP/scope-plan.json\"",
+      "python3 .github/scripts/hash.py github-output",
+      "run: ${{ steps.hash.outputs.run }}",
+      "scopes: ${{ steps.scopes.outputs.scopes }}",
+      "include: ${{ fromJSON(needs.plan.outputs.ui_p0_matrix) }}",
+      "include: ${{ fromJSON(needs.plan.outputs.visual_matrix) }}",
+      "if: ${{ fromJSON(needs.plan.outputs.run).ui_p0 }}",
       "pnpm -C e2e exec tsx scripts/playwright.ts run-ui-group critical-extras",
       "pnpm -C e2e exec tsx scripts/playwright.ts run-ui-group ${{ matrix.shard }}",
     ]

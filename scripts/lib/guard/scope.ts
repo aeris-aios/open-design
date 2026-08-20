@@ -3,16 +3,12 @@ import path from "node:path";
 
 import { uiP0CiMatrix } from "../../../e2e/lib/playwright/suites.ts";
 import {
-  CERTAIN_DAEMON_CORE_EXCLUDED_EXACT,
-  CERTAIN_DAEMON_CORE_EXCLUDED_PREFIXES,
-  CERTAIN_DAEMON_CORE_PREFIXES,
-  DAEMON_RUNTIME_DEFINITION_EXACT,
-  DAEMON_RUNTIME_DEFINITION_PREFIXES,
+  configuredMatch,
   evaluateScopeOutputs,
-  evaluateUiP0Shadow,
+  matchingScopeRules,
   matchesRuleMatch,
-  scopeRules,
-} from "../../scopes.ts";
+  scopeConfig,
+} from "../scope-config.ts";
 import type { GuardContext } from "./core.ts";
 
 const fullMatrixNames = [
@@ -38,14 +34,28 @@ function sameValues(actual: readonly string[], expected: readonly string[]): boo
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
+const daemonRuntimeMatch = configuredMatch("daemon-runtime-definition");
+const daemonCoreMatch = configuredMatch("daemon-core");
+
+function evaluateUiP0Shadow(files: readonly string[], filesResolved = true) {
+  const candidate = filesResolved && files.length > 0 && files.every((file) => matchesRuleMatch(file, daemonRuntimeMatch));
+  const names = new Set(scopeConfig.uiP0Shadow.matrixNames);
+  return {
+    mode: candidate ? "candidate" : "full-fallback",
+    capability: candidate ? "daemon-runtime-definition" : null,
+    reason: !filesResolved ? "files-unresolved" : candidate ? "capability-match" : "outside-capability",
+    matrix: candidate ? uiP0CiMatrix.filter((entry) => names.has(entry.name)) : uiP0CiMatrix,
+  } as const;
+}
+
 export function uiP0ShadowContractErrors(): string[] {
   const errors: string[] = [];
   if (!sameValues(matrixNames(uiP0CiMatrix), fullMatrixNames)) {
     errors.push("the applied UI P0 matrix is no longer the guarded full six-domain matrix");
   }
 
-  const sourceSample = `${DAEMON_RUNTIME_DEFINITION_PREFIXES[0]}example.ts`;
-  const testSample = DAEMON_RUNTIME_DEFINITION_EXACT.find((file) => file.includes("/tests/"));
+  const sourceSample = `${daemonRuntimeMatch.prefixes?.[0]}example.ts`;
+  const testSample = daemonRuntimeMatch.exact?.find((file) => file.includes("/tests/"));
   const candidate = evaluateUiP0Shadow(testSample == null ? [sourceSample] : [sourceSample, testSample]);
   if (
     candidate.mode !== "candidate" ||
@@ -101,15 +111,15 @@ const daemonCoreEffects = [
 ] as const;
 
 function matchingRuleIds(file: string): string[] {
-  return scopeRules.filter((rule) => matchesRuleMatch(file, rule.match)).map((rule) => rule.id);
+  return matchingScopeRules(file).map((rule) => rule.id);
 }
 
 export function daemonCoreScopeContractErrors(): string[] {
   const errors: string[] = [];
   const samples = [
-    `${CERTAIN_DAEMON_CORE_PREFIXES[0]}server.ts`,
-    `${CERTAIN_DAEMON_CORE_PREFIXES[0]}policy.md`,
-    `${CERTAIN_DAEMON_CORE_PREFIXES[1]}server.test.ts`,
+    `${daemonCoreMatch.prefixes?.[0]}server.ts`,
+    `${daemonCoreMatch.prefixes?.[0]}policy.md`,
+    `${daemonCoreMatch.prefixes?.[1]}server.test.ts`,
   ];
 
   for (const sample of samples) {
@@ -119,9 +129,7 @@ export function daemonCoreScopeContractErrors(): string[] {
     }
   }
 
-  const evaluation = evaluateScopeOutputs(samples, "certain", {
-    deriveWorkspaceValidationFromTestScopes: true,
-  });
+  const evaluation = evaluateScopeOutputs(samples, "certain");
   const enabledEffects = Object.entries(evaluation.outputs)
     .filter(([, enabled]) => enabled)
     .map(([effect]) => effect);
@@ -133,14 +141,12 @@ export function daemonCoreScopeContractErrors(): string[] {
   }
 
   for (const outsideFile of [
-    `${CERTAIN_DAEMON_CORE_EXCLUDED_PREFIXES[0]}server.ts`,
-    `${DAEMON_RUNTIME_DEFINITION_PREFIXES[0]}example.ts`,
-    CERTAIN_DAEMON_CORE_EXCLUDED_EXACT[0],
+    "apps/daemon/src/sidecar/server.ts",
+    `${daemonRuntimeMatch.prefixes?.[0]}example.ts`,
+    daemonRuntimeMatch.exact?.[0] ?? "",
     "apps/daemon/package.json",
   ]) {
-    const outside = evaluateScopeOutputs([outsideFile], "certain", {
-      deriveWorkspaceValidationFromTestScopes: true,
-    });
+    const outside = evaluateScopeOutputs([outsideFile], "certain");
     if (!outside.decisions[0]?.escalated || matchingRuleIds(outsideFile).includes(daemonCoreRuleId)) {
       errors.push(`${outsideFile} no longer stays outside the certain daemon core`);
     }
@@ -204,10 +210,10 @@ async function daemonCoreRepositoryContractErrors(repoRoot: string): Promise<str
   }
 
   for (const needle of [
-    "needs.scopes.outputs.run_e2e_vitest == 'true'",
-    "needs.scopes.outputs.run_ui_p0 == 'true'",
+    "fromJSON(needs.plan.outputs.run).e2e_vitest",
+    "fromJSON(needs.plan.outputs.run).ui_p0",
     "pnpm --filter @open-design/e2e test",
-    "include: ${{ fromJSON(needs.scopes.outputs.ui_p0_matrix) }}",
+    "include: ${{ fromJSON(needs.plan.outputs.ui_p0_matrix) }}",
   ]) {
     if (!ciWorkflow.includes(needle)) {
       errors.push(`CI workflow no longer preserves daemon-core coverage: missing ${needle}`);

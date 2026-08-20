@@ -3,10 +3,10 @@ import path from "node:path";
 import ts from "typescript";
 
 import {
-  CERTAIN_PACKAGED_LEAF_PREFIXES,
+  configuredMatch,
   evaluateScopeOutputs,
-  SCOPE_EFFECTS,
-} from "./scopes.ts";
+  scopeConfig,
+} from "./lib/scope-config.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const checkedRoots = ["apps", "packages", "tools", "e2e"] as const;
@@ -23,6 +23,7 @@ const skippedDirectories = new Set([
   "vendor",
 ]);
 const leafPackages = ["@open-design/desktop", "@open-design/packaged", "@open-design/tools-pack"] as const;
+const packagedLeafPrefixes = configuredMatch("packaged-leaf").prefixes ?? [];
 
 const allowedConsumerPrefixes = new Map([
   [
@@ -66,15 +67,15 @@ const allowedConsumers = new Map([
   ],
 ]);
 
-const requiredWorkspaceUnitBlock = `if [ "\${{ needs.scopes.outputs.tools_dev_tests_required }}" = "true" ]; then
+const requiredWorkspaceUnitBlock = `if [ "\${{ fromJSON(needs.plan.outputs.scopes).tools_dev_tests_required }}" = "true" ]; then
             pnpm --filter @open-design/tools-dev test
           fi
-          if [ "\${{ needs.scopes.outputs.tools_pack_tests_required }}" = "true" ]; then
+          if [ "\${{ fromJSON(needs.plan.outputs.scopes).tools_pack_tests_required }}" = "true" ]; then
             pnpm --filter @open-design/desktop build
             pnpm --filter @open-design/desktop test
             pnpm --filter @open-design/packaged test
             pnpm --filter @open-design/tools-pack test
-            if [ "\${{ needs.scopes.outputs.run_e2e_vitest }}" != "true" ]; then
+            if [ "\${{ fromJSON(needs.plan.outputs.run).e2e_vitest }}" != "true" ]; then
               pnpm --filter @open-design/e2e test tests/packaged-launcher-update-loop.test.ts
             fi
           fi`;
@@ -90,7 +91,7 @@ function repositoryPath(filePath: string): string {
 }
 
 function landsInPackagedLeaf(value: string): boolean {
-  return CERTAIN_PACKAGED_LEAF_PREFIXES.some(
+  return packagedLeafPrefixes.some(
     (prefix) => value === prefix.slice(0, -1) || value.startsWith(prefix),
   );
 }
@@ -219,11 +220,9 @@ function scopeBoundaryErrors(): string[] {
     "tools/pack/tests/index.test.ts",
     "tools/pack/resources/linux/open-design.desktop.template",
   ]) {
-    const evaluation = evaluateScopeOutputs([filePath], "certain", {
-      deriveWorkspaceValidationFromTestScopes: true,
-    });
+    const evaluation = evaluateScopeOutputs([filePath], "certain");
     const decision = evaluation.decisions[0];
-    const actualEffects = SCOPE_EFFECTS.filter((effect) => evaluation.outputs[effect]);
+    const actualEffects = scopeConfig.effects.filter((effect) => evaluation.outputs[effect]);
     if (
       decision?.escalated !== false ||
       decision.matchedRules.length !== 1 ||

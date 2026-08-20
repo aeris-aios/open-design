@@ -5,11 +5,10 @@ import ts from "typescript";
 import type { GuardContext } from "./core.ts";
 
 const suiteModule = "e2e/lib/playwright/suites.ts";
-const scopesModule = "scripts/scopes.ts";
 const guardModule = "scripts/guard.ts";
 const guardLibraryPrefix = "scripts/lib/guard/";
 const scopePolicyModule = `${guardLibraryPrefix}scope.ts`;
-const scopeLibraryPrefix = "scripts/lib/scope/";
+const scopeConfigModule = "scripts/lib/scope-config.ts";
 
 function repositoryPath(filePath: string): string {
   return filePath.split(path.sep).join("/");
@@ -132,8 +131,7 @@ export function scriptsArchitectureErrors(sources: ReadonlyMap<string, string>):
       if (
         dependency == null ||
         (!dependency.startsWith(guardLibraryPrefix) &&
-          (module !== scopePolicyModule ||
-            (dependency !== scopesModule && dependency !== suiteModule)))
+          (module !== scopePolicyModule || ![suiteModule, scopeConfigModule].includes(dependency)))
       ) {
         errors.push(`${module} imports ${specifier} outside the guard library closure`);
       }
@@ -148,33 +146,8 @@ export function scriptsArchitectureErrors(sources: ReadonlyMap<string, string>):
     }
   }
 
-  const scopeClosure = new Set<string>();
-  const visitScope = (module: string): void => {
-    if (scopeClosure.has(module)) return;
-    scopeClosure.add(module);
-    const source = sources.get(module);
-    if (source == null) {
-      errors.push(`${module} is missing from the preinstall scope closure`);
-      return;
-    }
-    for (const specifier of importsFrom(source)) {
-      if (specifier.startsWith("node:")) continue;
-      const dependency = resolveImport(module, specifier, sources);
-      if (
-        dependency == null ||
-        (dependency !== suiteModule && !dependency.startsWith(scopeLibraryPrefix))
-      ) {
-        errors.push(`${module} imports ${specifier} outside the install-independent scope closure`);
-        continue;
-      }
-      visitScope(dependency);
-    }
-  };
-  visitScope(scopesModule);
-
   errors.push(
     ...cycleErrors(graph, [
-      scopesModule,
       ...[...sources.keys()].filter((module) => module.startsWith("scripts/lib/")),
     ]),
   );
@@ -188,6 +161,6 @@ export async function checkScriptsLibraryArchitecture(context: GuardContext): Pr
     for (const error of errors) console.error(`- ${error}`);
     return false;
   }
-  console.log("Scripts library architecture check passed: scope startup and guard internals stay layered.");
+  console.log("Scripts library architecture check passed: workflow control and guard internals stay layered.");
   return true;
 }

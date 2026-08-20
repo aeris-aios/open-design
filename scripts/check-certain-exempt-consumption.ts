@@ -2,13 +2,16 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
 
-import {
-  CERTAIN_DAEMON_CORE_EXACT,
-  CERTAIN_EXEMPT_EXACT,
-  CERTAIN_EXEMPT_PREFIXES,
-} from "./scopes.ts";
+import { configuredMatch } from "./lib/scope-config.ts";
 
-// Guard for the certain-tier exempt core in `scripts/scopes.ts` (rule
+const certainExempt = configuredMatch("certain-exempt");
+const CERTAIN_EXEMPT_PREFIXES = certainExempt.prefixes ?? [];
+const CERTAIN_EXEMPT_EXACT = certainExempt.exact ?? [];
+const CERTAIN_DAEMON_CORE_EXACT = configuredMatch("daemon-doc").exact ?? [];
+const guardedDaemonDocument = CERTAIN_DAEMON_CORE_EXACT[0];
+if (guardedDaemonDocument == null) throw new Error("daemon-doc must contain one guarded exact path");
+
+// Guard for the certain-tier exempt core in `.github/config/scopes.json` (rule
 // `certain-exempt-surface`; methodology in `specs/current/ci.md`).
 //
 // Boundary invariant: no source that a *skippable* merge-gate lane executes may
@@ -113,7 +116,7 @@ const allowedConsumerTargets = new Map<string, ReadonlyMap<string, string>>([
     "apps/daemon/tests/runtimes/trae-cli.test.ts",
     new Map([
       [
-        CERTAIN_DAEMON_CORE_EXACT[0],
+        guardedDaemonDocument,
         "the exact consumed document is daemon core, so producer and consumer run the same suite",
       ],
     ]),

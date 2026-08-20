@@ -1,7 +1,7 @@
 # CI scope confidence methodology
 
 This is the current authority for CI scope confidence rules in
-`scripts/scopes.ts`, their guard requirements, and their evidence recipes.
+`.github/config/scopes.json`, their guard requirements, and their evidence recipes.
 Workflow topology and the capability/handoff architecture stay owned by
 `.github/AGENTS.md`; do not restate them here.
 
@@ -14,7 +14,7 @@ that change history.
 ## The model in three paragraphs
 
 Every changed file is classified by the additive rule table in
-`scripts/scopes.ts`: effects union across matched rules, confidence is the
+`.github/config/scopes.json`: effects union across matched rules, confidence is the
 minimum across matched rules. Each evaluation context brings a trust threshold:
 PR and manual-hot runs believe `medium`, the merge queue believes only
 `certain`, manual-full runs believe nothing. Renames contribute both the
@@ -22,19 +22,47 @@ current and previous filename so moving a file cannot discard the source
 path's validation effects. A file below threshold — or
 matching no rule — escalates fail-closed to the full radius.
 
-The policy floor never moves: `run_preflight` is true in every plan, and its
-workspace setup, `pnpm guard`, and i18n structure check always execute. Broad
+The scope policy floor never moves: `preflight` is enabled in every scope plan.
+Its current `"*"` hash declaration makes workspace setup, `pnpm guard`, and
+i18n structure checks execute for every new tracked tree, while an identical
+cached invocation may skip the whole job. Broad
 app declaration builds, workspace typecheck, and `run_workspace_unit_tests`
 may skip only for a merge-queue plan whose certain-tier evaluation claims zero
 validation effects. PR, manual-hot, forced-full, and escalated queue plans keep
 all broad workspace validation.
 
-`scripts/scopes.ts` remains an install-independent preinstall entrypoint.
+`.github/scripts/scopes.py` is the install-independent, Linux workflow-control entrypoint.
+Its rule and matrix data lives in `.github/config/scopes.json`; it never imports
+workspace code. `.github/scripts/runners.py` and `.github/scripts/hash.py` share
+the same stdlib-only cold-start boundary.
 `scripts/guard.ts` is the postinstall policy-floor entrypoint and composes its
 shared mechanism and scope contracts from `scripts/lib/guard/`. The
 `scripts library architecture` guard keeps those layers acyclic, prevents
-scope startup from reaching guard or third-party dependencies, and keeps CLI
-process control out of the library closure.
+workflow control from reaching guard or third-party dependencies, and keeps CLI
+process control out of the guard library closure.
+
+## Orthogonal hash composition
+
+The scope planner answers whether a workload is relevant to the changed-file
+context. The hash register answers whether that workload's declared Git input
+combination differs from the previous invocation on the branch. CI runs a
+workload only when `scope_enabled && !hash_equal`; fine-grained commands inside
+the workload remain a separate business-layer concern.
+
+Declarations live in `.github/config/hash.json`. A declaration may contain Git
+paths/globs, `suite://<name>` reusable path groups, `key://<workflow>/<identity>`
+dependencies, or `"*"` for the entire tracked tree. Cycles, dangling references,
+unsafe paths, empty matches, schema drift, and scope/hash identity drift fail at
+the Linux plan entrypoint before workload dispatch. The initial contract uses
+`"*"` for every identity; narrow closures require high-confidence evidence and
+may be introduced independently later.
+
+Actions cache stores only the previous identity-to-hash map. `hash.py` reads it,
+computes and compares every current identity, then atomically replaces it before
+workloads run. The map carries no job-success, artifact, retry, or reliability
+meaning. Restore/save failures are non-fatal and therefore start cold; invalid
+configuration is fatal. Only `if: ${{ fromJSON(needs.plan.outputs.run).<identity> }}`
+in `ci.yml` turns the static comparison into a skip.
 
 The error cost is asymmetric by tier. A wrong `medium` rule under-arms a PR
 run and gets caught by the merge queue's stricter threshold — cost: one queue
@@ -220,7 +248,7 @@ The `daemon-runtime-definition` capability matches changes confined to:
 - `capabilities.ts`, `local-profiles.ts`, `metadata.ts`, and `registry.ts`
   directly under `apps/daemon/src/runtimes/`;
 - the explicit companion-test list in
-  `DAEMON_RUNTIME_DEFINITION_EXACT` (`scripts/scopes.ts`).
+  the `daemon-runtime-definition` exact list (`.github/config/scopes.json`).
 
 Its candidate keeps `entry-settings`, `project-workspace`, and
 `project-runtime`, and omits only `workspace-restoration`. The project
@@ -265,7 +293,7 @@ window).
 ## Evidence recipes
 
 Design rule: shell only fetches file lists and extracts logs; every scope
-judgment goes through `scripts/scopes.ts plan`. Never reimplement rule
+judgment goes through `.github/scripts/scopes.py plan`. Never reimplement rule
 semantics in a pipeline.
 
 Replay recent merges through the evaluator (candidate tonnage):
@@ -273,7 +301,7 @@ Replay recent merges through the evaluator (candidate tonnage):
 ```bash
 git log --first-parent -400 --pretty=%H origin/main | while read -r sha; do
   git diff-tree -r --name-only --no-commit-id "$sha^" "$sha" |
-    node --experimental-strip-types scripts/scopes.ts plan \
+    python3 .github/scripts/scopes.py plan \
       --context merge-queue --files-from - |
     node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));
       console.log(d.trace.escalations.length === 0 ? "PURE" : "ESCALATED")'
@@ -283,7 +311,7 @@ done | sort | uniq -c
 Classify one change set offline (PR-side view, prints `{ plan, trace }`):
 
 ```bash
-node --experimental-strip-types scripts/scopes.ts plan --context pr \
+python3 .github/scripts/scopes.py plan --context pr \
   --files apps/web/src/App.tsx docs/architecture.md
 ```
 

@@ -40,7 +40,7 @@ import { describe, expect, it } from 'vitest';
  * incidental:
  *
  * - Any change under `apps/daemon/src/` matches the `certain-daemon-core` rule
- *   in `scripts/scopes.ts`, whose effects include `ui_p0_validation_required`;
+ *   in `.github/config/scopes.json`, whose effects include `ui_p0_validation_required`;
  *   `run_e2e_vitest` is `isFull || web_tests_required ||
  *   ui_p0_validation_required`. So a `server.ts`-only change arms the `E2E
  *   Vitest` lane even at the merge queue's `certain` threshold — the strictest
@@ -48,8 +48,9 @@ import { describe, expect, it } from 'vitest';
  *   which arms it too.
  * - That wiring cannot rot silently. The `daemon core boundary` guard
  *   (`scripts/lib/guard/scope.ts`) asserts `ci.yml` still contains both
- *   `run_e2e_vitest == 'true'` and `pnpm --filter @open-design/e2e test`, and
- *   it runs in the always-on policy floor.
+ *   the `e2e_vitest` hash-run identity and `pnpm --filter @open-design/e2e test`, and
+ *   it is scope-enabled in the policy floor and its current `"*"` declaration
+ *   invalidates on every new tracked tree.
  *
  * The placement also follows the root `AGENTS.md` boundary rule — cross-app and
  * repository-resource consistency checks belong here, not inside an app package
