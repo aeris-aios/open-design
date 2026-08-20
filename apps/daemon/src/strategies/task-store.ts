@@ -431,6 +431,17 @@ export function getStrategyTaskExecutionByRunId(
   return row ? rowToTask(db, row) : null;
 }
 
+/** One assistant message's place in its logical task, for rendering. */
+export interface StrategyTaskTurnProjection {
+  taskExecutionId: string;
+  taskRunIndex: number;
+  /** The task settled `completed` — deliverable verified. Carried because the
+   *  messages table has no strategy column, so a reload has no other way to
+   *  learn the verdict, and surfaces keyed off the agent's TodoWrite snapshot
+   *  (the "continue remaining tasks" offer) would resurrect on every reload. */
+  delivered: boolean;
+}
+
 /**
  * Map physical Run ids to the logical task turn they belong to.
  *
@@ -447,8 +458,8 @@ export function getStrategyTaskExecutionByRunId(
 export function strategyTaskTurnsForRunIds(
   db: SqliteDb,
   runIds: readonly string[],
-): Map<string, { taskExecutionId: string; taskRunIndex: number }> {
-  const turns = new Map<string, { taskExecutionId: string; taskRunIndex: number }>();
+): Map<string, StrategyTaskTurnProjection> {
+  const turns = new Map<string, StrategyTaskTurnProjection>();
   const unique = [...new Set(runIds.filter((id) => typeof id === 'string' && id))];
   if (unique.length === 0) return turns;
   try {
@@ -456,11 +467,17 @@ export function strategyTaskTurnsForRunIds(
     for (let index = 0; index < unique.length; index += CHUNK) {
       const chunk = unique.slice(index, index + CHUNK);
       const rows = db.prepare(`
-        SELECT run_id AS runId,
-               task_execution_id AS taskExecutionId,
-               task_run_index AS taskRunIndex
-          FROM strategy_task_runs
-         WHERE run_id IN (${chunk.map(() => '?').join(', ')})
+        SELECT r.run_id AS runId,
+               r.task_execution_id AS taskExecutionId,
+               r.task_run_index AS taskRunIndex,
+               t.outcome AS outcome
+          FROM strategy_task_runs r
+          -- LEFT so a mapping whose task row is gone still yields its turn
+          -- position: losing that would un-fold an already-rendered Full Plan
+          -- turn into orphan answers, a worse failure than a missing verdict.
+          LEFT JOIN strategy_task_executions t
+            ON t.task_execution_id = r.task_execution_id
+         WHERE r.run_id IN (${chunk.map(() => '?').join(', ')})
       `).all(...chunk) as DbRow[];
       for (const row of rows) {
         if (
@@ -471,6 +488,7 @@ export function strategyTaskTurnsForRunIds(
         turns.set(row['runId'], {
           taskExecutionId: row['taskExecutionId'],
           taskRunIndex: row['taskRunIndex'],
+          delivered: row['outcome'] === 'completed',
         });
       }
     }

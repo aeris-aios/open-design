@@ -195,6 +195,10 @@ Meet the following in one pass, while writing the source:
 
 - Font references resolve; layout carries no overflow or clipping risk;
   alignment structure is complete.
+- Image geometry holds: containers for localized images take their ratio from
+  the measured intrinsic dimensions and render the full frame; cover-cropping
+  is reserved for decorative backdrops, and no content-bearing image is
+  cropped or distorted.
 - Layout mechanics hold: sibling content regions (headers, pills, cards)
   never overlap and stay in normal flow; a stat numeral and its unit (e.g.
   82%) render on one line inside an auto-sized or clamp()-sized container,

@@ -82,8 +82,8 @@ import { useT } from "../i18n";
 import { deriveFileOps, type FileOpEntry } from "../runtime/file-ops";
 import { dedupeToolUsesById } from "../runtime/tool-events";
 import {
+  continuableUnfinishedTodos,
   isTodoWriteToolName,
-  unfinishedTodosFromEvents,
   type TodoItem,
 } from "../runtime/todos";
 import type { Dict } from "../i18n/types";
@@ -758,7 +758,12 @@ function AssistantMessageImpl({
           }),
     [message.content, nextStepVariant, projectMetadata, streaming],
   );
-  const unfinishedTodos = streaming ? [] : unfinishedTodosFromEvents(events);
+  // A settled `completed` strategy verdict outranks a stale TodoWrite snapshot:
+  // the deliverable was verified on disk, so the footer must not report the
+  // turn as stopped with unfinished work (and must not withhold next steps).
+  const unfinishedTodos = streaming
+    ? []
+    : continuableUnfinishedTodos({ events, strategyTaskDelivered: message.strategyTaskDelivered });
   const hasTodoSnapshot = events.some(
     (event) => event.kind === "tool_use" && isTodoWriteToolName(event.name),
   );
