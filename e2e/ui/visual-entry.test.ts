@@ -269,11 +269,18 @@ async function expectInsideViewport(
   locator: import('@playwright/test').Locator,
 ): Promise<void> {
   const viewport = page.viewportSize();
-  const box = await locator.boundingBox();
   expect(viewport).not.toBeNull();
-  expect(box).not.toBeNull();
-  expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
-  expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
-  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual((viewport?.width ?? 0) + 1);
-  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual((viewport?.height ?? 0) + 1);
+  await expect.poll(async () => {
+    const box = await locator.boundingBox();
+    if (!box || !viewport) return null;
+    return {
+      left: Math.max(0, -box.x),
+      top: Math.max(0, -box.y),
+      right: Math.max(0, box.x + box.width - (viewport.width + 1)),
+      bottom: Math.max(0, box.y + box.height - (viewport.height + 1)),
+    };
+  }, {
+    message: 'expected locator bounds to settle inside the viewport',
+    timeout: T.short,
+  }).toEqual({ left: 0, top: 0, right: 0, bottom: 0 });
 }
