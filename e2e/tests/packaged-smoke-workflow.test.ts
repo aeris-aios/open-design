@@ -1280,6 +1280,40 @@ process.stdin.on("end", () => {
     await expect(validateGatePasses(workflow, needsWithFailedWeb)).resolves.toBe(false);
   });
 
+  it("[P1] publishes hash state only after the workspace gate succeeds", async () => {
+    const workflow = await readFile(ciWorkflowPath, "utf8");
+    const plan = sectionBetween(workflow, "  plan:", "  static_gate:");
+    const validate = sectionBetween(workflow, "  validate:", "  runtime_summary:");
+
+    expect(plan).toContain("Upload pending hash map");
+    expect(plan).not.toContain("actions/cache/save");
+    expect(validate).toContain("Download pending hash map");
+    expect(validate).toContain("Save successful hash map");
+    expect(validate.indexOf("Save successful hash map")).toBeGreaterThan(
+      validate.indexOf("Check workspace validation jobs"),
+    );
+    expect(validate.indexOf("Save successful hash map")).toBeGreaterThan(
+      validate.indexOf("Block merge while a merge-blocking label is present"),
+    );
+
+    const run = {
+      static_gate: false,
+      preflight: false,
+      workspace_unit_tests: false,
+      daemon_unit_tests: false,
+      windows_tools_pack_payload_tests: false,
+      web_workspace_tests: false,
+      e2e_vitest: true,
+      playwright_critical: false,
+      ui_p0: false,
+      playwright_visual: false,
+    };
+    await expect(validateGatePasses(workflow, {
+      plan: { result: "success", outputs: { run: JSON.stringify(run) } },
+      e2e_vitest: { result: "failure" },
+    })).resolves.toBe(false);
+  });
+
   it("[P1] includes launcher protocol in the Nix daemon workspace build", async () => {
     const flake = await readFile(flakePath, "utf8");
     const daemonWorkspaces = sectionBetween(flake, "      daemonWorkspacePaths = [", "      ];");

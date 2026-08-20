@@ -58,11 +58,14 @@ the Linux plan entrypoint before workload dispatch. The initial contract uses
 may be introduced independently later.
 
 Actions cache stores only the previous identity-to-hash map. `hash.py` reads it,
-computes and compares every current identity, then atomically replaces it before
-workloads run. The map carries no job-success, artifact, retry, or reliability
-meaning. Restore/save failures are non-fatal and therefore start cold; invalid
-configuration is fatal. Only `if: ${{ fromJSON(needs.plan.outputs.run).<identity> }}`
-in `ci.yml` turns the static comparison into a skip.
+computes and compares every current identity, then atomically replaces the local
+state before workloads run. The plan transfers that pending map to `validate`,
+which publishes it to Actions cache only after the gate succeeds. The map carries
+no job-success, retry, or reliability meaning; success controls publication, not
+payload. Restore, transfer, and save failures are non-fatal and therefore start
+cold; invalid configuration is fatal. Only
+`if: ${{ fromJSON(needs.plan.outputs.run).<identity> }}` in `ci.yml` turns the
+static comparison into a skip.
 
 The error cost is asymmetric by tier. A wrong `medium` rule under-arms a PR
 run and gets caught by the merge queue's stricter threshold — cost: one queue

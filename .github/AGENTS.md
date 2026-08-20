@@ -61,8 +61,11 @@ a workload.
 
 `hash.py` is a static comparison register, not a success cache. It reads the
 previous identity-to-hash map restored by Actions cache, computes the current
-map from Git inputs, and replaces the state immediately. Only a workload's YAML
-`if` gives the comparison skip semantics; cache loss or corruption starts cold.
+map from Git inputs, and replaces the local state immediately. The plan carries
+that pending map to `validate`, which publishes it only after the gate succeeds;
+a failed run therefore cannot authorize identical-input skips on a fresh retry.
+Only a workload's YAML `if` gives the comparison skip semantics; cache loss or
+corruption starts cold.
 
 ## Handoff contract
 

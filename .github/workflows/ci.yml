@@ -98,14 +98,17 @@ jobs:
           --scope-plan "$RUNNER_TEMP/scope-plan.json"
           --state "$RUNNER_TEMP/hash-state.json"
 
-      # This saves the freshly computed map before any workload runs. It is a
-      # comparison register, not a record that the downstream work succeeded.
-      - name: Save current hash map
+      # Carry the freshly computed comparison register to the gate without
+      # publishing it as reusable cache state. A failed gate must leave the
+      # previously successful map in place so an identical retry runs again.
+      - name: Upload pending hash map
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/upload-artifact@v4
         with:
+          name: ci-hash-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/hash-state.json
-          key: ci-hash-${{ runner.os }}-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Create visual report handoff
         id: visual_report_handoff
@@ -891,6 +894,23 @@ jobs:
         with:
           name: ${{ steps.merge_blocking_label_gate.outputs.comment_name }}
           path: ${{ steps.merge_blocking_label_gate.outputs.comment_path }}
+
+      - name: Download pending hash map
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: ci-hash-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+
+      # Publish only after every merge-gating step has passed. The cache still
+      # contains only the identity-to-hash comparison register; successful gate
+      # completion controls publication rather than becoming cache payload.
+      - name: Save successful hash map
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/hash-state.json
+          key: ci-hash-${{ runner.os }}-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   runtime_summary:
     name: Runtime summary
