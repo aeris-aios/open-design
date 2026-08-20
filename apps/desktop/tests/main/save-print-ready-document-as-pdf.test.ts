@@ -13,9 +13,10 @@
 // the only render path is `printToPdf()`, so the regression cannot be
 // reintroduced without a type error.
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
+  PRINTABLE_CONTENT_WAIT_TIMEOUT_MS,
   inferPageSize,
   pdfFilenameFromDocument,
   savePrintReadyDocumentAsPdf,
@@ -328,5 +329,72 @@ describe('waitForPrintableContent', () => {
     expect(scripts[0]).toContain('style.borderImageSource');
     expect(scripts[0]).toContain('style.listStyleImage');
     expect(scripts[0]).toContain('.then(nextFrame)');
+  });
+
+  // Regression boundary for the packaged export hang.
+  //
+  // The injected script waits on `document.fonts.ready`, every `<img>`'s
+  // load/error, and a `new Image()` per CSS url() background. Under `od://`
+  // any of those can stall forever — a font or image URL that never settles
+  // fires neither `load` nor `error`, so the page-side promise never
+  // resolves. Nothing here bounded that wait, so the hang propagated all the
+  // way up: daemon -> desktop IPC has a 600s ceiling, and PostHog shows 122
+  // of 142 `DESKTOP_RENDERER_UNAVAILABLE` export failures sitting at exactly
+  // ~10 minutes before the user finally sees an error.
+  //
+  // The sibling `waitForPrintReadyHandshake` in this same module already
+  // guards itself with a 30s race for exactly this reason; this one was
+  // missed. Resource waiting is best-effort by design (the script resolves on
+  // `error` too, i.e. "a resource that failed still lets us capture"), so the
+  // bound resolves rather than rejects: capturing with a missing image beats
+  // failing ten minutes later.
+  test('[P0] gives up waiting instead of hanging when the page-side wait never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const window = {
+        webContents: {
+          // Models the packaged failure: the injected promise never resolves.
+          async executeJavaScript(_script: string) {
+            return new Promise<boolean>(() => {});
+          },
+        },
+      };
+
+      const pending = waitForPrintableContent(
+        window as unknown as Parameters<typeof waitForPrintableContent>[0],
+      ).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(PRINTABLE_CONTENT_WAIT_TIMEOUT_MS + 1_000);
+      await pending;
+
+      expect(
+        settled,
+        'waitForPrintableContent must bound its wait; an unbounded one becomes a 10-minute export hang',
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('bounds the page-side waits from inside the injected script too', async () => {
+    const scripts: string[] = [];
+    const window = {
+      webContents: {
+        async executeJavaScript(script: string) {
+          scripts.push(script);
+          return true;
+        },
+      },
+    };
+
+    await waitForPrintableContent(window as Parameters<typeof waitForPrintableContent>[0]);
+
+    // The in-page bound matters independently of the outer race: it lets a
+    // stalled single resource drop out while the rest of the page still
+    // finishes normally, instead of every export paying the full outer bound.
+    expect(scripts[0]).toContain('setTimeout');
   });
 });
