@@ -170,6 +170,62 @@ describe('OD Next machine protocol stream', () => {
     );
   });
 
+  it('recovers a repair anchor from prose wrapped around the contract', () => {
+    // The whole-body fence pattern only matches a block that is nothing but a
+    // fence. An agent that narrates either side of its JSON produced no anchor
+    // at all, so the one allowed serialization repair could not engage and the
+    // task went straight to a terminal block.
+    const stream = new OdNextMachineProtocolStream();
+    stream.push([
+      '<open-design-plan-contract>',
+      'Here is the plan:',
+      '```json',
+      JSON.stringify(plan),
+      '```',
+      'Let me know if you want changes.',
+      '</open-design-plan-contract>',
+      machineBlock('open-design-runtime-state', state),
+    ].join('\n'));
+    const result = stream.finish();
+
+    expect(result.planContract).toBeUndefined();
+    expect(result.repairPlanContract).toEqual(plan);
+  });
+
+  it('does not recover an anchor from a body that carries no complete object', () => {
+    // Fail closed: a truncated block must stay unrecovered rather than have a
+    // partial object mistaken for a declaration.
+    const stream = new OdNextMachineProtocolStream();
+    stream.push([
+      '<open-design-plan-contract>',
+      JSON.stringify(plan).slice(0, 60),
+      '</open-design-plan-contract>',
+      machineBlock('open-design-runtime-state', state),
+    ].join('\n'));
+    const result = stream.finish();
+
+    expect(result.planContract).toBeUndefined();
+    expect(result.repairPlanContract).toBeUndefined();
+  });
+
+  it('does not end the recovered object on a brace inside a string value', () => {
+    const withBrace = {
+      ...plan,
+      taskProfile: { ...plan.taskProfile, goal: 'Build a prototype using { and } in prose' },
+    };
+    const stream = new OdNextMachineProtocolStream();
+    stream.push([
+      '<open-design-plan-contract>',
+      'plan follows',
+      JSON.stringify(withBrace),
+      '</open-design-plan-contract>',
+      machineBlock('open-design-runtime-state', state),
+    ].join('\n'));
+    const result = stream.finish();
+
+    expect(result.repairPlanContract).toEqual(withBrace);
+  });
+
   it('suppresses malformed and oversized reserved blocks instead of leaking them', () => {
     const stream = new OdNextMachineProtocolStream({ maxMachineBlockBytes: 64 });
     const visible = stream.push(

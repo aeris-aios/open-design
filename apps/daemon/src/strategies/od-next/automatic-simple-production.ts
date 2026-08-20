@@ -21,6 +21,7 @@ import {
   finalizeStrategyPlanningResult,
   type OdNextCoordinatorResult,
   odNextTurnMayInferDirectEditCompletion,
+  odNextTurnMayInferProductionCompletion,
 } from './coordinator.js';
 import type { OdNextMachineProtocolStream } from './protocol.js';
 import type { OdNextExecutionPreflightInput } from './resolver.js';
@@ -612,4 +613,4 @@ export function blockAutomaticContinuation(db: SqliteDb, input: {
   });
 }
 
-export { odNextTurnMayInferDirectEditCompletion };
+export { odNextTurnMayInferDirectEditCompletion, odNextTurnMayInferProductionCompletion };

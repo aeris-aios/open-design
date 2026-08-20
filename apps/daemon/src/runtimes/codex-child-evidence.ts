@@ -82,6 +82,8 @@ export interface CollectCodexChildEvidenceInput {
 export interface CodexChildEvidenceCollection {
   availability: 'complete' | 'partial' | 'unavailable';
   source: 'codex_rollout';
+  /** Distinct Child agents observed, not invocations. See `knownChildCount`. */
+  knownChildCount: number;
   observations: NormalizedAgentObservationV1[];
   limitations: string[];
   diagnostics: CodexChildEvidenceDiagnostic[];
@@ -795,6 +797,7 @@ export async function collectCodexChildEvidence(
     return {
       availability: 'unavailable',
       source: 'codex_rollout',
+      knownChildCount: 0,
       observations: [],
       limitations: ['codex_parent_session_not_declared'],
       diagnostics: [{ code: reason, count: 1 }],
@@ -820,6 +823,7 @@ export async function collectCodexChildEvidence(
     return {
       availability: 'unavailable',
       source: 'codex_rollout',
+      knownChildCount: 0,
       observations: [],
       limitations: ['codex_parent_rollout_unavailable'],
       diagnostics: [{ code: root.reason, count: 1 }],
@@ -829,6 +833,7 @@ export async function collectCodexChildEvidence(
     return {
       availability: 'unavailable',
       source: 'codex_rollout',
+      knownChildCount: 0,
       observations: [],
       limitations: ['codex_parent_metadata_conflict'],
       diagnostics: [{ code: 'parent_declaration_conflict', count: 1 }],
@@ -847,6 +852,7 @@ export async function collectCodexChildEvidence(
     return {
       availability: 'unavailable',
       source: 'codex_rollout',
+      knownChildCount: 0,
       observations: [],
       limitations: ['codex_parent_turn_not_uniquely_mapped'],
       diagnostics: [{ code: 'parent_turn_not_mapped', count: 1 }],
@@ -858,6 +864,7 @@ export async function collectCodexChildEvidence(
     return {
       availability: 'unavailable',
       source: 'codex_rollout',
+      knownChildCount: 0,
       observations: [],
       limitations: ['codex_parent_turn_window_unavailable'],
       diagnostics: [{ code: 'parent_turn_window_unavailable', count: 1 }],
@@ -951,12 +958,31 @@ export async function collectCodexChildEvidence(
         recordDiagnostic('child_turn_not_observed');
         continue;
       }
-      if (ownTurns.length > 1) {
-        limitations.add('codex_child_turn_ambiguous');
-        recordDiagnostic('child_turn_ambiguous');
-        continue;
+      // Attribute each parent activity to the Child turn it happened in.
+      //
+      // A Codex sub-agent is re-invoked by its parent, and every invocation
+      // opens another turn in the Child's own rollout, so `started` followed by
+      // N-1 `interacted` is the ordinary shape of one delegated package rather
+      // than an ambiguity — rejecting it discarded every Child of a real
+      // complex Run. Terminals still have to be read per turn: handing the
+      // whole session's activity list to each one would let a single parent
+      // record terminate them all and stamp them with one `endedAtMs`.
+      const orderedTurns = [...ownTurns].sort((a, b) => (
+        (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0)
+      ));
+      const activitiesByTurn = new Map<string, ChildActivity[]>();
+      for (const activity of activities) {
+        const owner = [...orderedTurns].reverse().find((candidate) => (
+          candidate.startedAtMs !== undefined
+          && activity.atMs !== undefined
+          && activity.atMs >= candidate.startedAtMs - 2_000
+        )) ?? orderedTurns[0];
+        if (!owner) continue;
+        const bucket = activitiesByTurn.get(owner.turnId) ?? [];
+        bucket.push(activity);
+        activitiesByTurn.set(owner.turnId, bucket);
       }
-      for (const turn of ownTurns) {
+      for (const turn of orderedTurns) {
         const visitKey = `${childSessionId}\u0000${turn.turnId}`;
         if (visitedSessionTurns.has(visitKey)) {
           limitations.add('codex_child_turn_duplicate_rejected');
@@ -975,7 +1001,10 @@ export async function collectCodexChildEvidence(
         ];
         const usage = normalizedUsage(usageValues, turnLimitations);
         const prompt = normalizedPrompt(turn.promptIdentities);
-        const terminal = terminalFromEvidence({ turn, activities });
+        const terminal = terminalFromEvidence({
+          turn,
+          activities: activitiesByTurn.get(turn.turnId) ?? [],
+        });
         if (terminal.conflict) recordDiagnostic('child_terminal_status_conflict');
         const startedTiming = runningTiming(turn.startedAtMs);
         const completedTiming = terminalTiming(
@@ -1121,11 +1150,25 @@ export async function collectCodexChildEvidence(
   ));
   if (hasIncompleteChild) limitations.add('codex_child_terminal_not_observed');
 
+  // One Child agent, however many times its parent re-invoked it.
+  //
+  // Codex opens a new turn in the Child's rollout per invocation, and the
+  // per-turn observation identity above is what keeps each invocation's
+  // lifecycle separate. The coverage figure answers a different question —
+  // "how many Children ran" — which is the one OpenCode's `knownChildIds.size`
+  // answers too. Counting observation ids here instead reported three
+  // sub-agents as four and left the two runtimes' figures incomparable.
+  const knownChildCount = new Set(observations
+    .filter((observation) => observation.kind === 'child_agent')
+    .map((observation) => observation.identity.runtimeSessionId)
+    .filter((sessionId): sessionId is string => typeof sessionId === 'string')).size;
+
   return {
     availability: limitations.size > 0 || diagnostics.size > 0
         ? 'partial'
         : 'complete',
     source: 'codex_rollout',
+    knownChildCount,
     observations,
     limitations: [...limitations].sort(codePointCompare),
     diagnostics: diagnosticList(diagnostics),

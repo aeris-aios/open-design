@@ -9,6 +9,7 @@ import {
   type OdNextStrategyRequestRecipeV2,
 } from '../src/prompts/od-next-strategy.js';
 import {
+  FullPlanV2Schema,
   OD_NEXT_PLAN_CONTRACT_BLOCK,
   OD_NEXT_RUNTIME_STATE_BLOCK,
   OpenDesignPlanContractV2Schema,
@@ -46,6 +47,96 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
 };
 
 describe('OD Next V2 prompt recipe', () => {
+  it('states the deliverable rules that only bite once a plan declares more than one', () => {
+    // The canonical Plan Contract example carries a single deliverable whose id
+    // equals `canonicalDeliverable.id`, so the membership rule reads as a
+    // coincidence of the one-item example rather than an invariant. A complex
+    // plan naturally declares one deliverable per page and picks one as
+    // canonical, at which point codex emitted a canonical id that appeared
+    // nowhere in requiredDeliverables and terminated on
+    // `taskProfile.requiredDeliverables: The canonical deliverable must be part
+    // of requiredDeliverables.`
+    const prompt = composeOdNextStrategyRequestPromptV2(recipe);
+    const contract = OpenDesignPlanContractV2Schema.parse(
+      parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK),
+    );
+    const multiDeliverable = {
+      ...contract,
+      taskProfile: {
+        ...contract.taskProfile,
+        canonicalDeliverable: { ...contract.taskProfile.canonicalDeliverable, id: 'home' },
+        requiredDeliverables: [
+          { id: 'pricing', kind: contract.taskProfile.canonicalDeliverable.kind },
+          { id: 'about', kind: contract.taskProfile.canonicalDeliverable.kind },
+        ],
+      },
+    };
+    const rejected = OpenDesignPlanContractV2Schema.safeParse(multiDeliverable);
+    expect(rejected.success).toBe(false);
+    expect(JSON.stringify(rejected.error?.issues)).toContain(
+      'The canonical deliverable must be part of requiredDeliverables.',
+    );
+    expect(prompt).toContain(
+      'taskProfile.canonicalDeliverable.id must itself appear as one of the requiredDeliverables ids',
+    );
+    expect(prompt).toContain('Ids must be unique within requiredDeliverables and within buildRequirements');
+  });
+
+  it('spells out the Build Package shape that only a complex plan ever emits', () => {
+    // The canonical Plan Contract example is a SIMPLE plan, and the schema
+    // rejects a simple plan that carries Build Packages, so that example's
+    // `buildPackages` is necessarily `[]`. It left the one array unique to
+    // complex mode with neither a template nor a prose shape, while
+    // `buildRequirements` and `readinessArtifacts` both got spelled out. A
+    // model asked for complex therefore had to invent seven `.strict()` field
+    // names: codex and opencode independently guessed `dependencies` plus a
+    // stray `boundary`, and both terminated on
+    // `od_next_protocol_plan_contract_invalid_schema`.
+    const buildPackage = FullPlanV2Schema.parse({
+      executionMode: 'complex',
+      steps: [
+        { id: 'shell', objective: 'Build the shared shell.', outputs: ['shell'] },
+        { id: 'flow', objective: 'Build the primary flow.', outputs: ['flow'], dependsOn: ['shell'] },
+      ],
+      readinessArtifacts: [],
+      buildPackages: [
+        {
+          id: 'shell',
+          objective: 'Build the shared shell.',
+          inputs: [],
+          outputs: ['shell'],
+          sharedConstraints: ['Use the frozen type and spacing tokens.'],
+          dependsOn: [],
+          allowedResources: ['project-source'],
+        },
+        {
+          id: 'flow',
+          objective: 'Build the primary flow.',
+          inputs: ['shell'],
+          outputs: ['flow'],
+          sharedConstraints: ['Use the frozen type and spacing tokens.'],
+          dependsOn: ['shell'],
+          allowedResources: ['project-source'],
+        },
+      ],
+    }).buildPackages[0]!;
+
+    const prompt = composeOdNextStrategyRequestPromptV2(recipe);
+    // Naming every accepted key means a new schema field cannot land without
+    // the contract prose growing to describe it.
+    for (const field of Object.keys(buildPackage)) {
+      expect(prompt).toContain(field);
+    }
+    expect(prompt).toContain(
+      'Every buildPackages entry is an object with exactly id, objective, inputs, outputs, '
+      + 'sharedConstraints, dependsOn, and allowedResources',
+    );
+    expect(prompt).toContain(
+      'a complex plan needs at least two Build Packages, an acyclic dependsOn graph, '
+      + 'and exactly one owning Build Package per output',
+    );
+  });
+
   it('tells the request stage the canonical-deliverable rule that judges a Direct Edit completion', () => {
     // A Direct Edit turn declares `outcome: completed` on the REQUEST stage and
     // is then judged by `validateRunDeliverable` — the same entry-resolution
@@ -109,6 +200,7 @@ describe('OD Next V2 prompt recipe', () => {
         inputRefs: ['request'],
         productionRoutes: ['html', 'prototype-html'],
         outputKinds: ['prototype', 'html'],
+        nativeChildLifecycleVerified: true,
       },
     });
     const contract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);
@@ -134,12 +226,18 @@ describe('OD Next V2 prompt recipe', () => {
         inputRefs: ['request'],
         productionRoutes: ['html', 'prototype-html'],
         outputKinds: ['prototype', 'html'],
+        nativeChildLifecycleVerified: true,
       },
     });
     expect(facts).toContain(`"capabilitySnapshotHash": "${B}"`);
     expect(facts).toContain('"allowedProductionRoutes": [');
     expect(facts).toContain('"prototype-html"');
     expect(facts).toContain(`"appliedSnapshot": "${recipe.snapshotId}"`);
+    // The core strategy makes verified structured native Child lifecycle a
+    // precondition for locking complex mode. Asked to judge a capability it
+    // cannot observe, an Agent can only guess, and the safe guess is simple —
+    // so the answer has to travel with the other runtime-owned facts.
+    expect(facts).toContain('"nativeChildLifecycleVerified": true');
   });
 
   it('renders real stable request facts through the shared recipe owner', () => {

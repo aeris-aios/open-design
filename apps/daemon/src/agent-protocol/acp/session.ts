@@ -1096,10 +1096,31 @@ export function attachAcpSession({
     clientInfo: { name: clientName, version: clientVersion },
   }, 'initialize');
 
+  /**
+   * The prompt request resolved without a fatal protocol/transport error and
+   * without an abort. Any other ending may have dropped ACP updates that were
+   * still in flight, so evidence collected in this run cannot claim to be
+   * complete.
+   */
+  const promptCompletedCleanly = () => finished && !fatal && !aborted;
+
   return {
     /** Returns `true` when the session ended with a fatal protocol or transport error, allowing the caller to surface the failure. */
     hasFatalError() {
       return fatal;
+    },
+    /**
+     * Child-evidence coverage for this ACP run, or `undefined` when the agent
+     * is not the AMR-discriminated runtime and therefore has no child-evidence
+     * consumer. The daemon publishes this as the `child_evidence_coverage_v1`
+     * diagnostic at child close; without it every AMR task aggregates as
+     * `child_lifecycle_unavailable_not_zero`, which cannot distinguish a run
+     * that had no Child agents from a run nobody was observing.
+     */
+    childEvidenceCoverage() {
+      return velaChildEvidenceConsumer?.childEvidenceCoverage({
+        sessionComplete: promptCompletedCleanly(),
+      });
     },
     // The durable upstream session handle to persist for resume, or null when
     // none was reported (older agents, or a handshake that never established a
@@ -1114,7 +1135,7 @@ export function attachAcpSession({
       // and was not aborted. The chat consumer treats this as a successful
       // run even if the child process subsequently exited via SIGTERM
       // (which is expected for agents that don't shut down on stdin.end()).
-      return finished && !fatal && !aborted;
+      return promptCompletedCleanly();
     },
     /**
      * Aborts an in-progress ACP session. Sends `session/cancel` when a session

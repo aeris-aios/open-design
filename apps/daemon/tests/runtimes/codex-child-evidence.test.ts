@@ -509,7 +509,7 @@ describe('collectCodexChildEvidence', () => {
     expect(siblingLifecycle.map((observation) => observation.status)).toEqual(['running']);
   });
 
-  it('rejects ambiguous multi-turn child sessions instead of double-terminating them', async () => {
+  it('gives every turn of a re-invoked child its own lifecycle instead of one shared terminal', async () => {
     const home = await codexHome();
     await writeRollout(home, PARENT, [
       metadata(PARENT),
@@ -531,9 +531,28 @@ describe('collectCodexChildEvidence', () => {
 
     const result = await collectCodexChildEvidence(collectInput(home));
 
-    expect(result.observations).toEqual([]);
-    expect(result.limitations).toContain('codex_child_turn_ambiguous');
-    expect(result.diagnostics).toContainEqual({ code: 'child_turn_ambiguous', count: 1 });
+    // A parent re-invokes a sub-agent, and each invocation opens another turn
+    // in the child's rollout, so this is the ordinary shape of one delegated
+    // package. Treating it as ambiguous discarded every Child of a real complex
+    // Run. Each turn still has to read its OWN terminal: the parent recorded a
+    // single `completed`, which belongs to the turn it landed in, while the
+    // earlier turn takes the terminal its own rollout recorded.
+    const lifecycles = new Map<string, string[]>();
+    for (const observation of result.observations) {
+      if (observation.kind !== 'child_agent') continue;
+      const key = observation.identity.observationId;
+      lifecycles.set(key, [...(lifecycles.get(key) ?? []), observation.status]);
+    }
+    expect(lifecycles.size).toBe(2);
+    for (const statuses of lifecycles.values()) {
+      expect(statuses).toEqual(['running', 'completed']);
+    }
+    expect(result.limitations).not.toContain('codex_child_turn_ambiguous');
+    expect(result.diagnostics).toEqual([]);
+    // Two turns, one Child. `knownChildCount` answers "how many Children ran",
+    // the same question OpenCode's `knownChildIds.size` answers, so a Child its
+    // parent re-entered must not inflate it.
+    expect(result.knownChildCount).toBe(1);
   });
 
   it('fails closed on undeclared roots, unsafe files, ambiguous rotation, and scan bounds', async () => {

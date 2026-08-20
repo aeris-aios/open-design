@@ -458,7 +458,6 @@ import {
 } from './strategies/od-next/native-build-package.js';
 import {
   resolveAutomaticContinuationEvidence,
-  childCoverageGapJustifiesRolloutStop,
   rolloutStopSignalForBlockedContinuation,
   type OdNextComplexProductionResolver,
   type OdNextExecutionPreflightResolver,
@@ -495,6 +494,7 @@ import {
   prepareAutomaticStrategyContinuation,
   projectStrategyTask,
   odNextTurnMayInferDirectEditCompletion,
+  odNextTurnMayInferProductionCompletion,
 } from './strategies/od-next/automatic-simple-production.js';
 import {
   odNextRolloutSignalForRun,
@@ -548,6 +548,10 @@ import { reconcileDurableRunTerminals } from './runtimes/run-terminal-reconcilia
 import { createTaskObservationRolloutService } from './observability/task-observation-rollout.js';
 import { strategyTaskRunObservationId } from './observability/task-observation-aggregation.js';
 import { collectCodexChildEvidence } from './runtimes/codex-child-evidence.js';
+import {
+  collectOpenCodeChildEvidenceFacts,
+  createOpenCodeSanitizedExportLoader,
+} from './runtimes/opencode-child-evidence.js';
 import {
   InvalidOdNextExactSendPromptError,
   bindOdNextExactSendPromptEvidence,
@@ -12908,6 +12912,10 @@ export async function startServer({
     let acpSession = null;
     let writePromptToChildStdin = false;
     let spawnedAgentEnv = null;
+    // The stream handler is block-scoped to its parser branch, but the OpenCode
+    // post-run child export runs in the shared close handler below — after the
+    // stream that produced the candidates is gone.
+    let jsonEventStreamHandler: ReturnType<typeof createJsonEventStreamHandler> | null = null;
     let agentStdoutTail = '';
     let agentStderrTail = '';
     const agentStderrFilter = createAgentStderrVisibilityFilter(agentId);
@@ -13756,29 +13764,6 @@ export async function startServer({
       plaintextStdoutBuffer.length = 0;
       return true;
     };
-    /**
-     * A child-evidence coverage gap only justifies the daemon-wide rollout stop
-     * for a COMPLEX task.
-     *
-     * `evaluateOdNextComplexProduction` is the only consumer that requires
-     * per-child coverage; the simple lane never reads it
-     * (`automatic-simple-production.ts` has no child-coverage reference at all).
-     * A simple task has no Child agents by construction, so `unavailable`
-     * coverage is accurate missingness, not a contract failure. Latching on it
-     * disabled OD Next for every agent and every task type after a single
-     * ordinary simple Run, and only an operator `od strategy rollout reset`
-     * could restore it. The stop signal is even named `complex_child_unverified`.
-     *
-     * The coverage diagnostic itself is still emitted in both modes so task
-     * observability keeps recording the missingness.
-     */
-    const latchRolloutOnChildCoverageGap = (availability = 'unavailable') => {
-      if (!childCoverageGapJustifiesRolloutStop({
-        executionMode: strategyTaskAtStart?.executionMode,
-        availability,
-      })) return;
-      latchOdNextRolloutForRun(run, 'observe', 'complex_child_unverified');
-    };
     const publishRuntimeChildEvidenceCoverage = (coverage) => {
       if (!strategyTaskAtStart || !coverage) return;
       sendAgentEvent({
@@ -13786,7 +13771,6 @@ export async function startServer({
         name: 'child_evidence_coverage_v1',
         coverage,
       });
-      latchRolloutOnChildCoverageGap(coverage.availability);
     };
 
     if (def.streamFormat === 'claude-stream-json') {
@@ -14141,6 +14125,19 @@ export async function startServer({
         },
         ...(acpStageTimeoutMs !== undefined ? { stageTimeoutMs: acpStageTimeoutMs } : {}),
       });
+      // Publish AMR/vela child-evidence coverage at child close. Without it the
+      // ACP runtime emits no `child_evidence_coverage_v1` at all and every AMR
+      // task aggregates as `child_lifecycle_unavailable_not_zero`, which cannot
+      // tell "this run had no Child agents" from "nobody was observing".
+      //
+      // Registration order is load-bearing: `attachAcpSession` installs its own
+      // close handler above, so the session has already settled
+      // finished/fatal/aborted by the time this one reads it and the coverage
+      // reflects how the turn actually ended. A non-AMR ACP agent has no vela
+      // consumer and yields undefined, which the publisher already ignores.
+      child.on('close', () => {
+        publishRuntimeChildEvidenceCoverage(acpSession?.childEvidenceCoverage?.());
+      });
     } else if (def.streamFormat === 'dsh-profile-jsonl') {
       trackingSubstantiveOutput = true;
       acpSession = attachDshProfileSession({
@@ -14220,6 +14217,7 @@ export async function startServer({
             }
           : {},
       );
+      jsonEventStreamHandler = handler;
       child.stdout.on('data', (chunk) => handler.feed(chunk));
       child.on('close', (code, signal) => {
         handler.flush();
@@ -14371,9 +14369,11 @@ export async function startServer({
                 observation,
               });
             }
-            const knownChildCount = new Set(childEvidence.observations
-              .filter((observation) => observation.kind === 'child_agent')
-              .map((observation) => observation.identity.observationId)).size;
+            // The adapter owns this figure: Codex identifies a Child
+            // observation per (session, turn), so deriving the count from
+            // observation ids here reported one re-invoked Child once per
+            // invocation, which no other runtime does.
+            const { knownChildCount } = childEvidence;
             sendAgentEvent({
               type: 'diagnostic',
               name: 'child_evidence_coverage_v1',
@@ -14386,7 +14386,6 @@ export async function startServer({
                 diagnosticCounts: childEvidence.diagnostics,
               },
             });
-            latchRolloutOnChildCoverageGap(childEvidence.availability);
           } catch (error) {
             console.warn('[observability] Codex child evidence unavailable', String(error));
             sendAgentEvent({
@@ -14401,10 +14400,41 @@ export async function startServer({
                 diagnosticCounts: [{ code: 'collector_exception', count: 1 }],
               },
             });
-            latchRolloutOnChildCoverageGap();
           }
         }
       }
+      // Native OpenCode filters child-session events out of the root JSON
+      // stream, so the live stream can only produce a terminal-only L1
+      // candidate — which fails the evidence graph on `child_started_missing`
+      // and refuses every COMPLEX task on this runtime. `opencode export
+      // --sanitize` is the only surface that pairs a child's `parentID` with
+      // its own transcript, and it can only be read once the child has exited.
+      // Any failure here publishes nothing, leaving the L1 candidate in place.
+      if (def.id === 'opencode' && strategyTaskAtStart) {
+        const launchPath = agentLaunch.launchPath;
+        const candidates = jsonEventStreamHandler?.childEvidenceCandidates() ?? [];
+        if (launchPath && spawnedAgentEnv && candidates.length > 0) {
+          try {
+            const facts = await collectOpenCodeChildEvidenceFacts({
+              candidates,
+              loadSanitizedExport: createOpenCodeSanitizedExportLoader({
+                launchPath,
+                env: spawnedAgentEnv,
+              }),
+            });
+            for (const fact of facts) {
+              sendAgentEvent({
+                type: 'diagnostic',
+                name: 'opencode_child_runtime_fact',
+                ...fact,
+              });
+            }
+          } catch (error) {
+            console.warn('[observability] OpenCode child export unavailable', String(error));
+          }
+        }
+      }
+
       // Resume-target-missing recovery runs BEFORE the generic fatal/stream-error
       // short-circuits. The signal arrives differently per adapter: codex reports
       // "no rollout found for thread id" as a stream `error` event, while AMR/vela
@@ -14974,9 +15004,15 @@ export async function startServer({
         // inference has nothing to accept and correct work is discarded.
         const mayInferDirectEditCompletion = Boolean(
           strategyTaskAtStart
-          && odNextTurnMayInferDirectEditCompletion(
-            strategyTaskAtStart,
-            strategyProtocolResult,
+          && (
+            odNextTurnMayInferDirectEditCompletion(
+              strategyTaskAtStart,
+              strategyProtocolResult,
+            )
+            || odNextTurnMayInferProductionCompletion(
+              strategyTaskAtStart,
+              strategyProtocolResult,
+            )
           ),
         );
         if (

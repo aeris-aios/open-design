@@ -158,6 +158,24 @@ export function evaluateOdNextComplexChildEvidence(input: {
   }
   const observations = parsed.flatMap((result) => result.success ? [result.data] : []);
   const reasonCodes: OdNextComplexProductionReasonCode[] = [];
+  // Verify Build Package ownership only when the evidence actually carries it.
+  //
+  // Ownership rides on Claude's `--agents` / structured `subagent_type`
+  // transport, so `attributes.buildPackageId` is a best-effort attribute that
+  // most runtimes simply cannot produce. Demanding it from all of them refused
+  // every complex run on Codex, native OpenCode and AMR at the completion turn,
+  // after a full production Run had already been spent — and the blocked
+  // verdict then latched OD Next off for the whole daemon.
+  //
+  // Keying on the evidence rather than on an agent allowlist means a runtime
+  // that starts stamping ownership is verified the moment it does, one whose
+  // Children never name a package is simply not held to it, and a Claude turn
+  // whose model slipped degrades to the same best-effort footing instead of
+  // destroying a finished task. Every lifecycle, graph, parent and ordering
+  // assertion below applies unconditionally either way.
+  const childObservations = observations.filter((item) => item.kind === 'child_agent');
+  const verifiesBuildPackageOwnership = childObservations.length > 0
+    && childObservations.every((item) => buildPackageId(item) !== undefined);
   if (observations.some((observation) => (
     observation.identity.taskExecutionId !== input.taskExecutionId
     || observation.identity.runId !== input.runId
@@ -167,7 +185,15 @@ export function evaluateOdNextComplexChildEvidence(input: {
   }
 
   const graph = evaluateRuntimeEvidenceGraphV1(observations);
-  if (!graph.valid || (graph.evidenceLevel !== 'L2' && graph.evidenceLevel !== 'L3')) {
+  // Say which of the two it is. The daemon-owned resolver always brackets the
+  // Child list with a running/completed root pair, so the empty-set branch
+  // above is unreachable in production and a Run that observed no Child at all
+  // still arrives here with two valid observations. Reporting that as
+  // malformed evidence sends whoever debugs it looking for a corrupt payload,
+  // when the honest finding is that nothing was ever observed.
+  if (graph.valid && childObservations.length === 0) {
+    reasonCodes.push('od_next_complex_child_evidence_missing');
+  } else if (!graph.valid || (graph.evidenceLevel !== 'L2' && graph.evidenceLevel !== 'L3')) {
     reasonCodes.push('od_next_complex_child_evidence_invalid');
     if (graph.issues.some((issue) => (
       issue.code === 'child_started_missing' || issue.code === 'status_regression'
@@ -230,29 +256,31 @@ export function evaluateOdNextComplexChildEvidence(input: {
     if (!rootId || parentIds.size !== 1 || !parentIds.has(rootId)) {
       reasonCodes.push('od_next_complex_child_parent_mismatch');
     }
-    const assignedPackages = new Set(sequence.flatMap(({ observation }) => {
-      const packageId = buildPackageId(observation);
-      return packageId ? [packageId] : [];
-    }));
-    if (sequence.some(({ observation }) => buildPackageId(observation) === undefined)) {
-      reasonCodes.push('od_next_complex_child_package_missing');
+    if (verifiesBuildPackageOwnership) {
+      const assignedPackages = new Set(sequence.flatMap(({ observation }) => {
+        const packageId = buildPackageId(observation);
+        return packageId ? [packageId] : [];
+      }));
+      if (sequence.some(({ observation }) => buildPackageId(observation) === undefined)) {
+        reasonCodes.push('od_next_complex_child_package_missing');
+      }
+      if (assignedPackages.size === 0) {
+        reasonCodes.push('od_next_complex_child_package_missing');
+        continue;
+      }
+      if (assignedPackages.size !== 1) {
+        reasonCodes.push('od_next_complex_child_package_mismatch');
+        continue;
+      }
+      const packageId = [...assignedPackages][0]!;
+      if (!packageIds.has(packageId)) {
+        reasonCodes.push('od_next_complex_child_package_unknown');
+        continue;
+      }
+      const owners = packageToChildren.get(packageId) ?? new Set<string>();
+      owners.add(childId);
+      packageToChildren.set(packageId, owners);
     }
-    if (assignedPackages.size === 0) {
-      reasonCodes.push('od_next_complex_child_package_missing');
-      continue;
-    }
-    if (assignedPackages.size !== 1) {
-      reasonCodes.push('od_next_complex_child_package_mismatch');
-      continue;
-    }
-    const packageId = [...assignedPackages][0]!;
-    if (!packageIds.has(packageId)) {
-      reasonCodes.push('od_next_complex_child_package_unknown');
-      continue;
-    }
-    const owners = packageToChildren.get(packageId) ?? new Set<string>();
-    owners.add(childId);
-    packageToChildren.set(packageId, owners);
 
     const started = sequence.find(({ observation }) => observation.status === 'running');
     const completed = sequence.filter(({ observation }) => (
@@ -272,7 +300,9 @@ export function evaluateOdNextComplexChildEvidence(input: {
     if (completed) childCompletedAt.set(childId, completed.index);
   }
 
-  for (const buildPackage of input.plan.fullPlan.buildPackages) {
+  for (const buildPackage of verifiesBuildPackageOwnership
+    ? input.plan.fullPlan.buildPackages
+    : []) {
     const owners = packageToChildren.get(buildPackage.id);
     if (!owners || owners.size === 0) {
       reasonCodes.push('od_next_complex_child_package_missing');

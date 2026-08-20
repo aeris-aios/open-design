@@ -5,10 +5,13 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { ChildEvidenceCoverageV1Schema } from '@open-design/contracts';
+
 import { safeTaskObservationRuntimeVersions } from '../../src/observability/task-observation-aggregation.js';
 import {
   VELA_CHILD_EVIDENCE_ADAPTER_VERSION,
   VELA_CHILD_EVIDENCE_CANDIDATE,
+  VELA_CHILD_EVIDENCE_COVERAGE_SOURCE,
   VELA_CHILD_EVIDENCE_EXTENSION,
   VELA_CHILD_EVIDENCE_SCHEMA_VERSION,
   adaptVelaChildRuntimeFactV1,
@@ -85,7 +88,7 @@ describe('Vela OpenCode child evidence adapter', () => {
       published: false,
       bestEffortEvidenceVerified: true,
       verifiedOpenCodeVersion: '1.18.18',
-      verifiedRuntimeSupport: false,
+      verifiedRuntimeSupport: true,
     });
     expect(negotiateVelaChildEvidence(resultOf(fixture()[0]!))).toMatchObject({
       advertised: true,
@@ -200,7 +203,7 @@ describe('Vela OpenCode child evidence adapter', () => {
     ]);
     expect(VELA_CHILD_EVIDENCE_CANDIDATE).toMatchObject({
       bestEffortEvidenceVerified: true,
-      verifiedRuntimeSupport: false,
+      verifiedRuntimeSupport: true,
       published: false,
     });
   });
@@ -651,5 +654,159 @@ describe('Vela OpenCode child evidence adapter', () => {
       accepted: false,
       reason: 'invalid_wire_shape',
     });
+  });
+});
+
+describe('Vela OpenCode child evidence coverage', () => {
+  function validCoverage(
+    consumer: ReturnType<typeof createVelaChildEvidenceConsumer>,
+    sessionComplete: boolean,
+  ) {
+    const coverage = consumer.childEvidenceCoverage({ sessionComplete });
+    // The published diagnostic is only useful if downstream aggregation can
+    // parse it; an invalid payload degrades back to "unavailable".
+    expect(ChildEvidenceCoverageV1Schema.parse(coverage)).toEqual(coverage);
+    expect(coverage.source).toBe(VELA_CHILD_EVIDENCE_COVERAGE_SOURCE);
+    return coverage;
+  }
+
+  it('reports unavailable, never complete, when the capability was never negotiated', () => {
+    const consumer = createVelaChildEvidenceConsumer({ now: () => 9_999 });
+
+    const coverage = validCoverage(consumer, true);
+    expect(coverage).toMatchObject({
+      availability: 'unavailable',
+      knownChildCount: 0,
+      explicitZero: false,
+      limitations: ['vela_child_evidence_capability_not_negotiated'],
+    });
+    expect(coverage.diagnosticCounts).toContainEqual({
+      code: 'child_evidence_capability_not_negotiated',
+      count: 1,
+    });
+  });
+
+  it('reports unavailable when the producer advertised an unsupported schema', () => {
+    const consumer = createVelaChildEvidenceConsumer({ now: () => 9_999 });
+    consumer.negotiate({
+      agentCapabilities: {
+        extensions: { [VELA_CHILD_EVIDENCE_EXTENSION]: { schemaVersion: 2 } },
+      },
+    });
+
+    expect(validCoverage(consumer, true)).toMatchObject({
+      availability: 'unavailable',
+      explicitZero: false,
+      limitations: ['vela_child_evidence_schema_unsupported'],
+      diagnosticCounts: [{ code: 'child_evidence_schema_unsupported', count: 1 }],
+    });
+  });
+
+  it('reports complete with explicitZero once a negotiated run closes with no child', () => {
+    const consumer = newConsumer();
+
+    expect(validCoverage(consumer, true)).toEqual({
+      availability: 'complete',
+      source: VELA_CHILD_EVIDENCE_COVERAGE_SOURCE,
+      knownChildCount: 0,
+      explicitZero: true,
+      limitations: [],
+      diagnosticCounts: [],
+    });
+  });
+
+  it('reports complete for one fully observed child lifecycle', () => {
+    const consumer = newConsumer();
+    expect(observe(consumer, updateOf(fixture()[1]!)).accepted).toBe(true);
+    expect(observe(consumer, updateOf(fixture()[2]!)).accepted).toBe(true);
+
+    expect(validCoverage(consumer, true)).toEqual({
+      availability: 'complete',
+      source: VELA_CHILD_EVIDENCE_COVERAGE_SOURCE,
+      knownChildCount: 1,
+      explicitZero: false,
+      limitations: [],
+      diagnosticCounts: [],
+    });
+  });
+
+  it('reports partial while a registered child never reached a terminal', () => {
+    const consumer = newConsumer();
+    expect(observe(consumer, updateOf(fixture()[1]!)).accepted).toBe(true);
+    expect(observe(consumer, updateOf(fixture()[3]!)).accepted).toBe(true);
+    expect(observe(consumer, updateOf(fixture()[4]!)).accepted).toBe(true);
+
+    const coverage = validCoverage(consumer, true);
+    expect(coverage).toMatchObject({
+      availability: 'partial',
+      knownChildCount: 2,
+      explicitZero: false,
+      limitations: ['vela_child_terminal_unobserved'],
+      diagnosticCounts: [{ code: 'child_terminal_unobserved', count: 1 }],
+    });
+  });
+
+  it('never claims complete when the ACP turn did not close cleanly', () => {
+    const consumer = newConsumer();
+    expect(observe(consumer, updateOf(fixture()[1]!)).accepted).toBe(true);
+    expect(observe(consumer, updateOf(fixture()[2]!)).accepted).toBe(true);
+
+    expect(validCoverage(consumer, false)).toMatchObject({
+      availability: 'partial',
+      knownChildCount: 1,
+      explicitZero: false,
+      limitations: ['vela_child_stream_incomplete'],
+      diagnosticCounts: [{ code: 'child_stream_incomplete', count: 1 }],
+    });
+
+    const childless = newConsumer();
+    expect(validCoverage(childless, false)).toMatchObject({
+      availability: 'unavailable',
+      knownChildCount: 0,
+      explicitZero: false,
+    });
+  });
+
+  it('carries every rejection reason into diagnosticCounts', () => {
+    const consumer = newConsumer();
+    expect(observe(consumer, updateOf(fixture()[1]!)).accepted).toBe(true);
+    expect(observe(consumer, updateOf(fixture()[2]!)).accepted).toBe(true);
+    expect(observe(consumer, updateOf(fixture()[3]!), 'other-acp-session'))
+      .toMatchObject({ accepted: false, reason: 'acp_session_mismatch' });
+    expect(observe(consumer, { ...updateOf(fixture()[3]!), startedAtMs: 'nope' }))
+      .toMatchObject({ accepted: false, reason: 'invalid_wire_shape' });
+    expect(observe(consumer, {
+      ...updateOf(fixture()[3]!),
+      evidenceId: 'unrelated-root',
+      parentSessionId: 'other-root',
+    })).toMatchObject({ accepted: false, reason: 'root_session_conflict' });
+
+    const coverage = validCoverage(consumer, true);
+    expect(coverage.availability).toBe('partial');
+    expect(coverage.knownChildCount).toBe(1);
+    expect(coverage.explicitZero).toBe(false);
+    expect(coverage.diagnosticCounts).toEqual([
+      { code: 'child_evidence_rejected_acp_session_mismatch', count: 1 },
+      { code: 'child_evidence_rejected_invalid_wire_shape', count: 1 },
+      { code: 'child_evidence_rejected_root_session_conflict', count: 1 },
+    ]);
+    expect(coverage.limitations).toEqual([
+      'vela_child_evidence_rejected_acp_session_mismatch',
+      'vela_child_evidence_rejected_invalid_wire_shape',
+      'vela_child_evidence_rejected_root_session_conflict',
+    ]);
+  });
+
+  it('counts a repeated rejection reason instead of collapsing it', () => {
+    const consumer = createVelaChildEvidenceConsumer({ now: () => 9_999 });
+    expect(observe(consumer, updateOf(fixture()[1]!)))
+      .toMatchObject({ accepted: false, reason: 'capability_not_negotiated' });
+    expect(observe(consumer, updateOf(fixture()[3]!)))
+      .toMatchObject({ accepted: false, reason: 'capability_not_negotiated' });
+
+    expect(validCoverage(consumer, true).diagnosticCounts).toEqual([
+      { code: 'child_evidence_capability_not_negotiated', count: 1 },
+      { code: 'child_evidence_rejected_capability_not_negotiated', count: 2 },
+    ]);
   });
 });

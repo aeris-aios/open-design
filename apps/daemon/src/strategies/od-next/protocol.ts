@@ -93,7 +93,49 @@ function longestReservedPrefixSuffix(value: string, candidates = RESERVED_PREFIX
 function stripSingleJsonFence(value: string): string {
   const trimmed = value.trim();
   const match = /^```(?:json)?\s*\n([\s\S]*?)\n```$/iu.exec(trimmed);
-  return match?.[1]?.trim() ?? trimmed;
+  if (match?.[1]) return match[1].trim();
+  return firstBalancedJsonObject(trimmed) ?? trimmed;
+}
+
+/**
+ * Recover the machine block's JSON object when the agent wrapped it in
+ * something the whole-body fence pattern cannot match — prose either side of
+ * the block, a fence that carries trailing text, a missing newline before the
+ * closing fence.
+ *
+ * That is the same class of wrapper defect the fence strip already exists to
+ * undo, and the anchor it produces is held to exactly the same bar: it must
+ * still satisfy the block's full schema, and it is only ever usable as the one
+ * allowed serialization-repair anchor, never accepted as wire output. A wrong
+ * extraction therefore fails validation and yields nothing rather than being
+ * mistaken for a declaration.
+ *
+ * Hand-scanned rather than matched with a regex so a pathological body cannot
+ * cause catastrophic backtracking, and string literals are tracked so a brace
+ * inside a value cannot end the object early.
+ */
+function firstBalancedJsonObject(value: string): string | null {
+  const start = value.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return value.slice(start, index + 1);
+    }
+  }
+  return null;
 }
 
 function jsonValue(value: string): { ok: true; value: unknown } | { ok: false } {
@@ -110,6 +152,33 @@ function jsonValue(value: string): { ok: true; value: unknown } | { ok: false } 
  * The boundary deliberately has no ordinary-Run auto-detection: Task10 owns
  * activation from the durable task/run mapping.
  */
+/**
+ * Name the fields a machine block got wrong, not just the first message.
+ *
+ * Zod's bare message for an absent required field is the word "Required", which
+ * on its own cannot tell an operator WHICH field the agent omitted — and that is
+ * the single most common way a Plan Contract or Runtime State is refused. The
+ * path is what makes the report actionable, so carry it.
+ *
+ * Only Zod's own structural vocabulary is emitted — field paths and validator
+ * messages. No agent prose, Prompt body, or user content reaches this string,
+ * and it stays bounded so a pathological error cannot flood the daemon log.
+ */
+function describeMachineSchemaFailure(
+  tag: string,
+  error: { issues: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }> },
+): string {
+  const described = error.issues.slice(0, 4).map((issue) => {
+    const path = issue.path.join('.');
+    return path ? `${path}: ${issue.message}` : issue.message;
+  });
+  if (described.length === 0) return `${tag} failed schema validation.`;
+  const more = error.issues.length > described.length
+    ? ` (+${error.issues.length - described.length} more)`
+    : '';
+  return `${tag} failed schema validation — ${described.join('; ')}${more}`.slice(0, 400);
+}
+
 export class OdNextMachineProtocolStream {
   private readonly maxMachineBlockBytes: number;
   private pending = '';
@@ -368,7 +437,7 @@ export class OdNextMachineProtocolStream {
         if (parsed.success) return { strict: parsed.data as Parsed };
         issues.push({
           code: metadata.schemaCode,
-          detail: parsed.error.issues[0]?.message ?? `${metadata.tag} failed schema validation.`,
+          detail: describeMachineSchemaFailure(metadata.tag, parsed.error),
         });
         return {};
       }

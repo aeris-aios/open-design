@@ -348,6 +348,31 @@ describe('OD Next complex production enforcement', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it('reports a Run that observed no Child as missing evidence, not malformed evidence', () => {
+    // The daemon-owned resolver always brackets the Child list with a
+    // running/completed root pair, so a Run whose Children were never observed
+    // still reaches the graph check with two perfectly valid observations. It
+    // used to be reported as `..._invalid`, which sent whoever debugged it
+    // hunting a corrupt payload — the codex collector had simply never run, so
+    // there was nothing malformed to find and nothing observed either.
+    const capability = capabilitySnapshot();
+    const plan = planContract(snapshot, capability, true);
+    expect(evaluateOdNextComplexChildEvidence({
+      plan,
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      observations: [
+        observation({ id: ROOT_OBSERVATION_ID, status: 'running' }),
+        observation({ id: ROOT_OBSERVATION_ID, status: 'completed' }),
+      ],
+      taskRunObservationId: ROOT_OBSERVATION_ID,
+    })).toEqual({
+      eligible: false,
+      reasonCodes: ['od_next_complex_child_evidence_missing'],
+    });
+  });
+
   it('accepts structured serial and parallel package lifecycles without parsing prose', () => {
     const capability = capabilitySnapshot();
     for (const dependent of [true, false]) {
@@ -361,6 +386,72 @@ describe('OD Next complex production enforcement', () => {
         taskRunObservationId: ROOT_OBSERVATION_ID,
       })).toEqual({ eligible: true, reasonCodes: [] });
     }
+  });
+
+  it('finishes a complex task whose Children cannot name a Build Package', () => {
+    // Ownership rides on Claude's `--agents` / `subagent_type` transport, so
+    // `buildPackageId` is best-effort — most runtimes cannot produce it at all.
+    // Demanding it from everyone refused every complex run on Codex, native
+    // OpenCode and AMR at the completion turn, after a full production Run had
+    // been spent, and the blocked verdict then latched OD Next off daemon-wide.
+    const plan = planContract(snapshot, capabilitySnapshot());
+    const unowned = successfulEvidence().map((item) => (
+      item.kind === 'child_agent'
+        ? observation({
+            id: item.identity.observationId,
+            kind: 'child_agent',
+            status: item.status as 'running' | 'completed' | 'failed' | 'canceled',
+            parentId: ROOT_OBSERVATION_ID,
+          })
+        : item
+    ));
+    expect(evaluateOdNextComplexChildEvidence({
+      plan,
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      observations: unowned,
+      taskRunObservationId: ROOT_OBSERVATION_ID,
+    })).toEqual({ eligible: true, reasonCodes: [] });
+
+    // Dropping ownership must not turn the gate into a rubber stamp.
+    const noTerminal = unowned.filter((item) => (
+      !(item.kind === 'child_agent' && item.status === 'completed')
+    ));
+    expect(evaluateOdNextComplexChildEvidence({
+      plan,
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      observations: noTerminal,
+      taskRunObservationId: ROOT_OBSERVATION_ID,
+    }).reasonCodes).toContain('od_next_complex_child_terminal_missing');
+  });
+
+  it('still verifies ownership when the evidence carries it', () => {
+    // The judgement follows the evidence, not an agent allowlist: a runtime
+    // that starts stamping ownership is held to it the moment it does, with no
+    // list to maintain.
+    const plan = planContract(snapshot, capabilitySnapshot());
+    const wrongPackage = successfulEvidence().map((item) => (
+      item.kind === 'child_agent' && item.identity.observationId === 'child-flow'
+        ? observation({
+            id: 'child-flow',
+            kind: 'child_agent',
+            status: item.status as 'running' | 'completed' | 'failed' | 'canceled',
+            parentId: ROOT_OBSERVATION_ID,
+            packageId: 'not-a-declared-package',
+          })
+        : item
+    ));
+    expect(evaluateOdNextComplexChildEvidence({
+      plan,
+      taskExecutionId: TASK_ID,
+      runId: PRODUCTION_RUN_ID,
+      taskRunIndex: 1,
+      observations: wrongPackage,
+      taskRunObservationId: ROOT_OBSERVATION_ID,
+    }).reasonCodes).toContain('od_next_complex_child_package_unknown');
   });
 
   it('ignores later runtime-version drift when resolving automatic complex eligibility', async () => {

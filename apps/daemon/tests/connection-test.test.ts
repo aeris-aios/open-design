@@ -3864,18 +3864,22 @@ process.stdin.on('end', () => {
             sample: 'ok',
           });
 
-          await expect(fsp.readFile(argvFile, 'utf8')).resolves.toBe(
-            JSON.stringify([
-              'run',
-              '--format',
-              'json',
-              '-m',
-              'github-copilot/gpt-4o',
-              '--pure',
-              '--title',
-              'Connection test',
-            ]),
-          );
+          // `--dir` pins OpenCode's workspace to the probe's own temp cwd, so
+          // a connection test cannot adopt the repository root as its
+          // worktree. The path is minted per probe; everything around it still
+          // has to match byte-for-byte, since the 1.3 compatibility this test
+          // guards is a property of the argument ORDER.
+          const argv = JSON.parse(await fsp.readFile(argvFile, 'utf8')) as string[];
+          expect(argv.slice(0, 3)).toEqual(['run', '--format', 'json']);
+          expect(argv[3]).toBe('--dir');
+          expect(path.isAbsolute(argv[4] ?? '')).toBe(true);
+          expect(argv.slice(5)).toEqual([
+            '-m',
+            'github-copilot/gpt-4o',
+            '--pure',
+            '--title',
+            'Connection test',
+          ]);
           await expect(fsp.readFile(stdinFile, 'utf8')).resolves.toBe('Reply with only: ok');
         },
       );
