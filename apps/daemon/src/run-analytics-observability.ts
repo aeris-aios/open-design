@@ -285,6 +285,47 @@ function measuredStatus(values: Array<number | undefined>): TrackingRunPhaseTimi
   return measured === values.length ? 'complete' : 'partial';
 }
 
+// Wall-clock occupancy of tool work inside a window: the union of tool
+// intervals, clipped to [windowStart, windowEnd].
+//
+// This is deliberately NOT `tool_duration_ms`, which sums each paired
+// tool_use -> tool_result span. That sum is the right published answer to "how
+// much tool work happened", but it is not elapsed time and so cannot be a
+// phase:
+//   - two tools running in parallel sum to more than the clock they occupy;
+//   - `run.events` is never cleared between retry attempts, so a retried run
+//     carries the previous attempt's tool spans while the phase anchor comes
+//     from the current attempt's lifecycle marks;
+//   - ACP producers supply their own `startedAt`, which can predate the anchor
+//     when their clock differs from ours.
+// Each of those inflates the tool phase past the window it sits in, letting it
+// win `bottleneck_phase` with a duration longer than the run was even active.
+function toolOccupancyWithin(
+  intervals: Array<{ start: number; end: number }>,
+  windowStart: number | undefined,
+  windowEnd: number | undefined,
+): number {
+  if (windowStart === undefined || windowEnd === undefined) return 0;
+  if (windowEnd <= windowStart) return 0;
+  const clipped = intervals
+    .map((interval) => ({
+      start: Math.max(interval.start, windowStart),
+      end: Math.min(interval.end, windowEnd),
+    }))
+    .filter((interval) => interval.end > interval.start)
+    .sort((a, b) => a.start - b.start);
+  let total = 0;
+  let cursor = Number.NEGATIVE_INFINITY;
+  for (const interval of clipped) {
+    const start = Math.max(interval.start, cursor);
+    if (interval.end > start) {
+      total += interval.end - start;
+      cursor = interval.end;
+    }
+  }
+  return Math.round(total);
+}
+
 // Bumped when phase BOUNDARY definitions change in a way that makes new rows
 // incomparable with old ones, so a dashboard can filter to one definition
 // instead of averaging two.
@@ -931,6 +972,7 @@ export function summarizeRunTimingAnalytics(args: {
   const runEndAt = args.runUpdatedAt;
   let toolCallCount = 0;
   let toolDurationMs = 0;
+  const toolIntervals: Array<{ start: number; end: number }> = [];
   let firstToolUseAt: number | undefined;
   let firstObservedModelEventType: TrackingFirstModelEventType | undefined;
   let lastToolActivityAt: number | undefined;
@@ -1010,6 +1052,7 @@ export function summarizeRunTimingAnalytics(args: {
       const startedAt = openTools.get(data.toolUseId);
       if (startedAt !== undefined && ts >= startedAt) {
         toolDurationMs += ts - startedAt;
+        toolIntervals.push({ start: startedAt, end: ts });
         lastToolActivityAt = ts;
         const name = openToolNames.get(data.toolUseId);
         if (
@@ -1088,19 +1131,22 @@ export function summarizeRunTimingAnalytics(args: {
   const generationDuration = durationBetween(telemetry.firstTokenAt, runEndAt);
   if (generationDuration !== undefined) result.generation_duration_ms = generationDuration;
   const modelActiveDuration = durationBetween(phaseAnchorAt, runEndAt);
+  // Tool occupancy inside the model-active window. `stream_output` and
+  // `tool_execution` are then two halves of that window by construction, so
+  // they partition it exactly instead of double-counting the tool loop.
+  const toolOccupancyMs = toolOccupancyWithin(toolIntervals, phaseAnchorAt, runEndAt);
   if (modelActiveDuration !== undefined) {
     result.model_active_duration_ms = modelActiveDuration;
     phaseDurations.push({
       phase: 'stream_output',
-      // Floored: tool spans can overlap (parallel calls) or carry a
-      // producer-supplied `startedAt` from another clock, either of which can
-      // push the sum past the model-active window.
-      duration: Math.max(0, modelActiveDuration - Math.round(toolDurationMs)),
+      duration: Math.max(0, modelActiveDuration - toolOccupancyMs),
     });
   }
+  // Published field keeps summing paired spans; only the PHASE switches to
+  // occupancy, because only the phase has to add up to elapsed time.
   if (toolCallCount > 0) result.tool_duration_ms = Math.round(toolDurationMs);
   if (toolCallCount > 0) {
-    phaseDurations.push({ phase: 'tool_execution', duration: Math.round(toolDurationMs) });
+    phaseDurations.push({ phase: 'tool_execution', duration: toolOccupancyMs });
   }
   setMeasuredDuration(result, 'artifact_write_duration_ms', phaseDurations, 'artifact_write', firstArtifactWriteToolStartedAt, firstArtifactWriteToolEndedAt ?? firstArtifactWriteAt);
   setMeasuredDuration(result, 'finalize_duration_ms', phaseDurations, 'finalize', runEndAt, args.analyticsCapturedAt);

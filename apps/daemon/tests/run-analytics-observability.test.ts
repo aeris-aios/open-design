@@ -1648,3 +1648,113 @@ describe('summarizeRunTimingAnalytics phase anchoring', () => {
     expect(result.model_active_duration_ms).toBe(1_000);
   });
 });
+
+describe('summarizeRunTimingAnalytics tool phase occupancy', () => {
+  // Phase durations have to partition elapsed time. `tool_duration_ms` sums
+  // each paired tool_use -> tool_result span, which is the right definition
+  // for a published "how much tool work happened" metric but the wrong one for
+  // a phase: parallel calls, a retried run's earlier attempt, and a
+  // producer-supplied `startedAt` from another clock all push the sum past the
+  // wall clock it is supposed to occupy.
+
+  it('uses wall-clock occupancy, not summed tool work, for the tool phase', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 16_000,
+      analyticsCapturedAt: 16_050,
+      telemetry: {
+        startRequestedAt: 1_100,
+        startChatRunStartedAt: 8_000,
+        processSpawnedAt: 8_500,
+        stdinWriteEndAt: 9_000,
+        firstModelEventAt: 10_000,
+        firstModelEventType: 'tool_use' as const,
+        firstTokenAt: 15_800,
+        attemptIndex: 1,
+        attemptStartedAt: 8_000,
+      },
+      events: [
+        // Two overlapping tools: 4s and 5s of work, but only 5.5s of wall
+        // clock (10.0s -> 15.5s).
+        { id: 1, event: 'agent', timestamp: 10_000, data: { type: 'tool_use', id: 't1', name: 'Read' } },
+        { id: 2, event: 'agent', timestamp: 10_500, data: { type: 'tool_use', id: 't2', name: 'Bash' } },
+        { id: 3, event: 'agent', timestamp: 14_000, data: { type: 'tool_result', toolUseId: 't1' } },
+        { id: 4, event: 'agent', timestamp: 15_500, data: { type: 'tool_result', toolUseId: 't2' } },
+      ],
+    });
+
+    // The model was active for 6s total, so no phase inside that window can
+    // exceed 6s. Summing gives 9s, which would beat the genuine 7s queue wait
+    // and report the wrong bottleneck.
+    expect(result.model_active_duration_ms).toBe(6_000);
+    expect(result.bottleneck_phase).toBe('queued');
+    // The published metric keeps summing paired spans.
+    expect(result.tool_duration_ms).toBe(9_000);
+  });
+
+  it('ignores a previous attempt\'s tool work when the anchor is from this attempt', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 25_000,
+      analyticsCapturedAt: 25_100,
+      telemetry: {
+        // A retry clears lifecycle telemetry down to `startRequestedAt`, so
+        // every mark here belongs to attempt 2.
+        startRequestedAt: 1_100,
+        stdinWriteEndAt: 19_000,
+        firstModelEventAt: 20_000,
+        firstModelEventType: 'tool_use' as const,
+        firstTokenAt: 24_000,
+        attemptIndex: 2,
+        attemptStartedAt: 18_000,
+      },
+      events: [
+        // `run.events` is never cleared between attempts, so attempt 1's 10s
+        // tool is still in the list even though the anchor is at 20s.
+        { id: 1, event: 'agent', timestamp: 3_000, data: { type: 'tool_use', id: 'a1', name: 'Bash' } },
+        { id: 2, event: 'agent', timestamp: 13_000, data: { type: 'tool_result', toolUseId: 'a1' } },
+        { id: 3, event: 'agent', timestamp: 21_000, data: { type: 'tool_use', id: 'a2', name: 'Read' } },
+        { id: 4, event: 'agent', timestamp: 22_000, data: { type: 'tool_result', toolUseId: 'a2' } },
+      ],
+    });
+
+    // Attempt 2 was active for 5s and spent 1s of it in a tool. Counting
+    // attempt 1's 10s tool here reports 11s of tool execution inside a 5s
+    // window and blames tooling for work that predates the anchor.
+    expect(result.model_active_duration_ms).toBe(5_000);
+    expect(result.bottleneck_phase).toBe('stream_output');
+    // Whole-run tool work is unchanged: the published metric is not
+    // attempt-scoped.
+    expect(result.tool_duration_ms).toBe(11_000);
+  });
+
+  it('clips a producer-supplied tool start that predates the anchor', () => {
+    const result = summarizeRunTimingAnalytics({
+      runCreatedAt: 1_000,
+      runUpdatedAt: 10_000,
+      analyticsCapturedAt: 10_050,
+      telemetry: {
+        startRequestedAt: 1_050,
+        startChatRunStartedAt: 1_100,
+        stdinWriteEndAt: 1_200,
+        firstModelEventAt: 5_000,
+        firstModelEventType: 'tool_use' as const,
+        firstTokenAt: 9_000,
+        attemptIndex: 1,
+        attemptStartedAt: 1_100,
+      },
+      events: [
+        // ACP producers supply their own `startedAt`; here it is 4s earlier
+        // than the anchor, which cannot be time this run spent in a tool.
+        { id: 1, event: 'agent', timestamp: 6_000, data: { type: 'tool_use', id: 't1', name: 'Read', startedAt: 1_000 } },
+        { id: 2, event: 'agent', timestamp: 8_000, data: { type: 'tool_result', toolUseId: 't1' } },
+      ],
+    });
+
+    // Only 5.0s -> 8.0s falls inside the model-active window, so runtime init
+    // (3.8s) is the real bottleneck. The unclipped 7s span would outrank it.
+    expect(result.model_active_duration_ms).toBe(5_000);
+    expect(result.bottleneck_phase).toBe('runtime_init');
+    expect(result.tool_duration_ms).toBe(7_000);
+  });
+});
