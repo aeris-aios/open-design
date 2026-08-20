@@ -128,7 +128,9 @@ const jsonLd = [
   }] : []),
   // HowTo mirrors the real five-step walkthrough (install → download →
   // detect → connect → first task) so "how to" queries and AI answers can
-  // cite the exact sequence; every step points at its section anchor.
+  // cite the exact sequence; every step points at its section anchor and
+  // carries the section's lead paragraph as its instructional text
+  // (markdown links/code stripped — schema text is plain).
   ...(rich ? [{
     '@context': 'https://schema.org',
     '@type': 'HowTo',
@@ -137,14 +139,17 @@ const jsonLd = [
     step: ['setup', 'open-design', 'detect-harness', 'connect-profile', 'first-design-task']
       .map((id, index) => {
         const section = rich.sections.find((candidate) => candidate.id === id);
-        return section
-          ? {
-              '@type': 'HowToStep',
-              position: index + 1,
-              name: section.heading,
-              url: `${pageUrl}#${id}`,
-            }
-          : null;
+        if (!section) return null;
+        const lead = section.blocks.find((block) => block.kind === 'p');
+        const plainText = (value: string) =>
+          value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/`/g, '');
+        return {
+          '@type': 'HowToStep',
+          position: index + 1,
+          name: section.heading,
+          text: lead && lead.kind === 'p' ? plainText(lead.text) : section.heading,
+          url: `${pageUrl}#${id}`,
+        };
       })
       .filter((step) => step !== null),
   }] : []),
