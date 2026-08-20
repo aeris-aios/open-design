@@ -2250,13 +2250,14 @@ function OnboardingView({
       : { status: 'idle' as const };
   const canTestAgent = Boolean(selectedAgent) && daemonLive;
   const runtimeSetupStep = step === 2;
-  const byokConnectionVerified =
-    visibleProviderTestState.status === 'done' && visibleProviderTestState.result.ok;
-  const localConnectionVerified =
-    visibleAgentTestState.status === 'done' && visibleAgentTestState.result.ok;
+  const localRuntimeConfigured = selectedAgent?.available === true;
+  const byokRuntimeConfigured = canTestProvider;
   const connectStepRuntimeReady =
-    (runtime === 'local' && selectedAgent !== null && localConnectionVerified) ||
-    (runtime === 'byok' && byokConnectionVerified);
+    (runtime === 'local' && localRuntimeConfigured) ||
+    (runtime === 'byok' && byokRuntimeConfigured);
+  const connectStepTestRunning =
+    (runtime === 'local' && visibleAgentTestState.status === 'running') ||
+    (runtime === 'byok' && visibleProviderTestState.status === 'running');
   const connectStepBlocked = runtimeSetupStep && !connectStepRuntimeReady;
   const connectGateReason: 'no_runtime' | 'local_agent_unavailable' | 'byok_unverified' | null =
     !runtimeSetupStep
@@ -2725,8 +2726,13 @@ function OnboardingView({
     setStep(2);
   }
   async function handlePrimaryAction() {
-    if (connectStepBlocked) return;
+    if (connectStepBlocked || connectStepTestRunning) return;
     if (runtime === 'local' && selectedAgent) {
+      const testResult =
+        visibleAgentTestState.status === 'done' && visibleAgentTestState.result.ok
+          ? visibleAgentTestState.result
+          : await testAgentInline();
+      if (!testResult?.ok) return;
       await onConfigPersist({
         ...config,
         mode: 'daemon',
@@ -2737,6 +2743,11 @@ function OnboardingView({
       return;
     }
     if (runtime === 'byok') {
+      const testResult =
+        visibleProviderTestState.status === 'done' && visibleProviderTestState.result.ok
+          ? visibleProviderTestState.result
+          : await testProviderInline();
+      if (!testResult?.ok) return;
       await onConfigPersist({ ...config, mode: 'api' });
       emitOnboardingClick('continue', 'continue', { runtime_type: 'byok' });
       completeStreamlinedOnboarding('byok');
@@ -3076,8 +3087,8 @@ function OnboardingView({
     }
   }
 
-  async function testProviderInline() {
-    if (!canTestProvider || providerTestState.status === 'running') return;
+  async function testProviderInline(): Promise<ConnectionTestResponse | null> {
+    if (!canTestProvider || providerTestState.status === 'running') return null;
     const inputKey = providerTestInputKey;
     providerAutoTestKeyRef.current = inputKey;
     setProviderTestState({ status: 'running', inputKey });
@@ -3093,23 +3104,22 @@ function OnboardingView({
             : undefined,
       });
       setProviderTestState({ status: 'done', inputKey, result });
+      return result;
     } catch (error) {
-      setProviderTestState({
-        status: 'done',
-        inputKey,
-        result: {
-          ok: false,
-          kind: 'unknown',
-          latencyMs: 0,
-          model: config.model,
-          detail: error instanceof Error ? error.message : 'Test request failed',
-        },
-      });
+      const result: ConnectionTestResponse = {
+        ok: false,
+        kind: 'unknown',
+        latencyMs: 0,
+        model: config.model,
+        detail: error instanceof Error ? error.message : 'Test request failed',
+      };
+      setProviderTestState({ status: 'done', inputKey, result });
+      return result;
     }
   }
 
-  async function testAgentInline() {
-    if (!selectedAgent || !canTestAgent || agentTestState.status === 'running') return;
+  async function testAgentInline(): Promise<ConnectionTestResponse | null> {
+    if (!selectedAgent || !canTestAgent || agentTestState.status === 'running') return null;
     const inputKey = agentTestInputKey;
     const agent = selectedAgent;
     const model = selectedAgentTestModel;
@@ -3123,19 +3133,18 @@ function OnboardingView({
         agentCliEnv: config.agentCliEnv ?? {},
       });
       setAgentTestState({ status: 'done', inputKey, result });
+      return result;
     } catch (error) {
-      setAgentTestState({
-        status: 'done',
-        inputKey,
-        result: {
-          ok: false,
-          kind: 'unknown',
-          latencyMs: 0,
-          model: model || 'default',
-          agentName: agent.name,
-          detail: error instanceof Error ? error.message : 'Test request failed',
-        },
-      });
+      const result: ConnectionTestResponse = {
+        ok: false,
+        kind: 'unknown',
+        latencyMs: 0,
+        model: model || 'default',
+        agentName: agent.name,
+        detail: error instanceof Error ? error.message : 'Test request failed',
+      };
+      setAgentTestState({ status: 'done', inputKey, result });
+      return result;
     }
   }
 
@@ -3620,7 +3629,7 @@ function OnboardingView({
               type="button"
               className={`onboarding-view__primary${connectGateTooltip ? ' od-tooltip' : ''}`}
               onClick={handlePrimaryAction}
-              disabled={amrLoginPending || amrLoginCancelPending}
+              disabled={amrLoginPending || amrLoginCancelPending || connectStepTestRunning}
               aria-disabled={connectStepBlocked || undefined}
               data-tooltip={connectGateTooltip ?? undefined}
               data-tooltip-placement="top"
