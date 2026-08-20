@@ -321,6 +321,31 @@ describe("independent sidecar controller and body", () => {
     });
   });
 
+  it("adopts the winner when two cold launches race for one service identity", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const childEntry = join(import.meta.dirname, "fixtures", "control-delayed-child.ts");
+    const launchOptions = {
+      args: ["--import", "tsx", childEntry],
+      executable: process.execPath,
+      existing: "adopt",
+      readyTimeoutMs: 5_000,
+      service: "daemon",
+    } as const;
+
+    const [left, right] = await Promise.all([
+      controller.launch<DemoMethods>(launchOptions),
+      controller.launch<DemoMethods>(launchOptions),
+    ]);
+    cleanups.push(async () => {
+      await Promise.allSettled([left.stop(), right.stop()]);
+    });
+
+    expect(left.pid).toBe(right.pid);
+    await expect(left.client.call("echo", { value: "left" })).resolves.toEqual({ value: "left" });
+    await expect(right.client.call("echo", { value: "right" })).resolves.toEqual({ value: "right" });
+  });
+
   it("agree on normalized identity, roots and caller-owned methods", async () => {
     const { roots, scope } = await createFixture();
     const launch = createPrivateLaunchForTest({

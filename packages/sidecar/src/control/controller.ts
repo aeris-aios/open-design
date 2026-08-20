@@ -311,16 +311,22 @@ async function convergeExitedLaunch(descriptor: PrivateLaunchMetadata): Promise<
   await removeFile(descriptorPath);
 }
 
-async function waitForLaunchedClient<TMethods>(input: {
+type ReadyPeer<TMethods> = Readonly<{
+  client: SidecarControlClient<TMethods>;
+  descriptor: PrivateReadyDescriptor;
+}>;
+
+async function waitForReadyPeer<TMethods>(input: {
+  acceptIncarnation: (incarnation: string) => boolean;
   descriptor: PrivateLaunchMetadata;
-  exited: Promise<SidecarExit>;
+  exited?: Promise<SidecarExit>;
   timeoutMs: number;
-}): Promise<SidecarControlClient<TMethods>> {
+}): Promise<ReadyPeer<TMethods>> {
   const { descriptorPath } = privateControlPaths(input.descriptor.identity, input.descriptor.roots);
   const descriptorRoot = dirname(descriptorPath);
   await mkdir(descriptorRoot, { recursive: true });
 
-  return await new Promise<SidecarControlClient<TMethods>>((resolveReady, rejectReady) => {
+  return await new Promise<ReadyPeer<TMethods>>((resolveReady, rejectReady) => {
     let checking = false;
     let checkAgain = false;
     let poll: NodeJS.Timeout | null = null;
@@ -348,10 +354,10 @@ async function waitForLaunchedClient<TMethods>(input: {
           input.descriptor.roots,
           input.descriptor.projection,
         );
-        if (descriptor.incarnation !== input.descriptor.incarnation) return;
+        if (!input.acceptIncarnation(descriptor.incarnation)) return;
         const client = createClient<TMethods>(descriptor);
         await client.probe();
-        settle(() => resolveReady(client));
+        settle(() => resolveReady({ client, descriptor }));
       } catch {
         // Descriptor creation and socket readiness are separate writes. A later
         // filesystem event, child exit, or the deadline gives the next signal.
@@ -381,20 +387,86 @@ async function waitForLaunchedClient<TMethods>(input: {
         ),
       );
     }, input.timeoutMs);
-    void input.exited.then(
-      (exit) => {
-        settle(() =>
-          rejectReady(
-            new SidecarControlError(
-              "peer-unavailable",
-              `sidecar exited before readiness: code=${String(exit.code)} signal=${String(exit.signal)}`,
+    if (input.exited != null) {
+      void input.exited.then(
+        (exit) => {
+          settle(() =>
+            rejectReady(
+              new SidecarControlError(
+                "peer-unavailable",
+                `sidecar exited before readiness: code=${String(exit.code)} signal=${String(exit.signal)}`,
+              ),
             ),
-          ),
-        );
-      },
-      (error) => settle(() => rejectReady(error)),
-    );
+          );
+        },
+        (error) => settle(() => rejectReady(error)),
+      );
+    }
     void check();
+  });
+}
+
+function waitForPeerDeparture(descriptor: PrivateReadyDescriptor): Promise<SidecarExit> {
+  return new Promise<SidecarExit>((resolveExit) => {
+    let settled = false;
+    const check = async () => {
+      if (settled) return;
+      if (!processAlive(descriptor.pid)) {
+        settled = true;
+        resolveExit({ code: null, signal: null });
+        return;
+      }
+      try {
+        const current = await readCurrentDescriptor(
+          descriptor.identity,
+          descriptor.roots,
+          descriptor.projection,
+        );
+        if (current.incarnation === descriptor.incarnation) await createClient(current).probe();
+      } catch {
+        // Descriptor/control departure can precede process exit. Keep
+        // observing the captured PID, but never signal it from an adopted
+        // handle because PID liveness alone is not an ownership witness.
+      }
+      const timer = setTimeout(() => void check(), 100);
+      timer.unref();
+    };
+    void check();
+  });
+}
+
+function adoptedLaunch<TMethods>(input: {
+  peer: ReadyPeer<TMethods>;
+  stopTimeoutMs: number;
+}): SidecarLaunch<TMethods> {
+  const exited = waitForPeerDeparture(input.peer.descriptor);
+  let stopping: Promise<SidecarExit> | null = null;
+  return Object.freeze({
+    client: input.peer.client,
+    exited,
+    identity: input.peer.descriptor.identity,
+    pid: input.peer.descriptor.pid,
+    async stop() {
+      if (stopping != null) return await stopping;
+      stopping = (async () => {
+        await input.peer.client.requestStop().catch(() => undefined);
+        let timeout: NodeJS.Timeout | null = null;
+        try {
+          return await Promise.race([
+            exited,
+            new Promise<SidecarExit>((_resolveExit, rejectExit) => {
+              timeout = setTimeout(() => rejectExit(new SidecarControlError(
+                "peer-unavailable",
+                `adopted sidecar ${input.peer.descriptor.identity.service} did not stop within ${input.stopTimeoutMs}ms`,
+              )), input.stopTimeoutMs);
+            }),
+          ]);
+        } finally {
+          if (timeout != null) clearTimeout(timeout);
+        }
+      })();
+      return await stopping;
+    },
   });
 }
 
@@ -446,19 +518,39 @@ export function bootstrapControlPlane({
     }
     const readyTimeoutMs = normalizeTimeout(options.readyTimeoutMs, 5_000, "readyTimeoutMs");
     const stopTimeoutMs = normalizeTimeout(options.stopTimeoutMs, 1_500, "stopTimeoutMs");
-    const converged = await stop(options.service, { graceMs: stopTimeoutMs });
-    if (!converged.stopped) {
-      throw new SidecarControlError(
-        "peer-unavailable",
-        `sidecar ${options.service} could not be converged before launch`,
-      );
-    }
     const descriptor = createPrivateLaunchMetadata({
       projection,
       roots,
       scope,
       service: options.service,
     });
+    const existing = options.existing ?? "replace";
+    if (existing !== "adopt" && existing !== "replace") {
+      throw new SidecarControlError("invalid-input", "sidecar existing launch mode must be adopt or replace");
+    }
+    if (existing === "adopt") {
+      try {
+        const current = await readCurrentDescriptor(
+          descriptor.identity,
+          descriptor.roots,
+          descriptor.projection,
+        );
+        const client = createClient<TMethods>(current);
+        await client.probe();
+        return adoptedLaunch({ peer: { client, descriptor: current }, stopTimeoutMs });
+      } catch (error) {
+        if (!(error instanceof SidecarControlError) || error.code !== "peer-unavailable") throw error;
+      }
+    } else {
+      const converged = await stop(options.service, { graceMs: stopTimeoutMs });
+      if (!converged.stopped) {
+        throw new SidecarControlError(
+          "peer-unavailable",
+          `sidecar ${options.service} could not be converged before launch`,
+        );
+      }
+    }
+    const readyDeadline = Date.now() + readyTimeoutMs;
     const child = spawn(options.executable, [...(options.args ?? [])], {
       cwd: options.cwd,
       detached: options.detached ?? false,
@@ -476,24 +568,39 @@ export function bootstrapControlPlane({
       await convergeExitedLaunch(descriptor);
       return exit;
     });
-    let client: SidecarControlClient<TMethods>;
+    let readyPeer: ReadyPeer<TMethods>;
     try {
-      client = await waitForLaunchedClient<TMethods>({ descriptor, exited, timeoutMs: readyTimeoutMs });
+      readyPeer = await waitForReadyPeer<TMethods>({
+        acceptIncarnation: (incarnation) => incarnation === descriptor.incarnation,
+        descriptor,
+        exited,
+        timeoutMs: readyTimeoutMs,
+      });
     } catch (error) {
       child.kill("SIGKILL");
       await exited.catch(() => undefined);
-      throw error;
+      if (existing !== "adopt") throw error;
+      try {
+        const peer = await waitForReadyPeer<TMethods>({
+          acceptIncarnation: (incarnation) => incarnation !== descriptor.incarnation,
+          descriptor,
+          timeoutMs: Math.max(1, readyDeadline - Date.now()),
+        });
+        return adoptedLaunch({ peer, stopTimeoutMs });
+      } catch {
+        throw error;
+      }
     }
     let stopping: Promise<SidecarExit> | null = null;
     return Object.freeze({
-      client,
+      client: readyPeer.client,
       exited,
       identity: descriptor.identity,
-      pid: child.pid!,
+      pid: readyPeer.descriptor.pid,
       async stop() {
         if (stopping != null) return await stopping;
         stopping = (async () => {
-          await client.requestStop().catch(() => undefined);
+          await readyPeer.client.requestStop().catch(() => undefined);
           return await awaitExitOrTerminate({ child, exited, timeoutMs: stopTimeoutMs });
         })();
         return await stopping;

@@ -618,6 +618,36 @@ export async function recordPackagedLauncherRuntimeFailedAttempt(
   await armPackagedLauncherRuntimeAttempt(runtime);
 }
 
+/**
+ * Clear only the attempt pre-armed by the launcher that delegated this exact
+ * payload pointer. A payload candidate can focus an already-running owner and
+ * exit before resolving its own runtime; without this boundary the fresh
+ * attempt would be misread as a failed generation on the next cold start.
+ */
+export async function clearPackagedLauncherDelegatedAttempt(
+  config: PackagedConfig,
+  paths: PackagedNamespacePaths,
+  delegated: LauncherVersionPointer | null,
+): Promise<boolean> {
+  if (delegated == null) return false;
+  const channel = inferLauncherChannel(config);
+  const launcherPaths = resolveLauncherPaths({
+    channel,
+    namespace: config.namespace,
+    root: paths.installationRoot,
+  });
+  const attempt = await readLauncherAttempt(launcherPaths, channel, config.namespace).catch(() => null);
+  if (
+    attempt == null
+    || attempt.generation !== delegated.generation
+    || attempt.version !== delegated.version
+  ) {
+    return false;
+  }
+  await rm(launcherPaths.attemptsPath, { force: true });
+  return true;
+}
+
 export async function confirmPackagedLauncherRuntime(runtime: PackagedLauncherRuntime): Promise<void> {
   if (runtime.source !== "payload") return;
   if (!runtime.payloadDesktopProcess) return;

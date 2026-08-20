@@ -33,7 +33,11 @@ import {
   inspectExistingDesktopForLauncher,
   waitForLauncherAfterQuit,
 } from "./launcher-after-quit.js";
-import { confirmPackagedLauncherRuntime, resolvePackagedLauncherRuntime } from "./launcher-runtime.js";
+import {
+  clearPackagedLauncherDelegatedAttempt,
+  confirmPackagedLauncherRuntime,
+  resolvePackagedLauncherRuntime,
+} from "./launcher-runtime.js";
 import {
   applyPackagedElectronPathOverrides,
   claimPackagedSingleInstanceLock,
@@ -121,6 +125,9 @@ async function main(): Promise<void> {
     logger: console,
     paths: initialPaths,
   });
+  if (existingDesktop.action === "exit" && existingDesktop.reason === "existing-focused") {
+    await clearPackagedLauncherDelegatedAttempt(namespaceConfig, initialPaths, delegated);
+  }
   if (exitPackagedLauncherForExistingDesktop(existingDesktop, (code) => app.exit(code))) {
     return;
   }

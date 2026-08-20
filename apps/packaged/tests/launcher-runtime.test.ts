@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import {
   LAUNCHER_SCHEMA_VERSION,
@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PackagedConfig } from "../src/config.js";
 import {
+  clearPackagedLauncherDelegatedAttempt,
   confirmPackagedLauncherRuntime,
   type PackagedLauncherRuntime,
   resolvePackagedLauncherRuntime,
@@ -39,6 +40,40 @@ function fakeConfig(root: string, appVersion = "1.2.3-beta.4"): PackagedConfig {
 }
 
 describe("resolvePackagedLauncherRuntime", () => {
+  it("clears only the attempt matching the delegated payload pointer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-packaged-launcher-delegated-clear-"));
+    try {
+      const config = fakeConfig(root);
+      const paths = resolvePackagedNamespacePaths(config);
+      const runtime = await resolvePackagedLauncherRuntime(config, paths);
+      const attempt = {
+        channel: "beta",
+        generation: 2,
+        namespace: config.namespace,
+        schemaVersion: LAUNCHER_SCHEMA_VERSION,
+        version: "1.2.3-beta.6",
+      };
+      await mkdir(dirname(runtime.launcherPaths.attemptsPath), { recursive: true });
+      await writeFile(runtime.launcherPaths.attemptsPath, `${JSON.stringify(attempt)}\n`);
+
+      await expect(clearPackagedLauncherDelegatedAttempt(config, paths, {
+        generation: 1,
+        version: "1.2.3-beta.5",
+      })).resolves.toBe(false);
+      await expect(readFile(runtime.launcherPaths.attemptsPath, "utf8")).resolves.toContain(
+        "1.2.3-beta.6",
+      );
+
+      await expect(clearPackagedLauncherDelegatedAttempt(config, paths, {
+        generation: 2,
+        version: "1.2.3-beta.6",
+      })).resolves.toBe(true);
+      await expect(readFile(runtime.launcherPaths.attemptsPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("initializes launcher runtime state without replacing the current installed package", async () => {
     const root = await mkdtemp(join(tmpdir(), "od-packaged-launcher-runtime-"));
     try {

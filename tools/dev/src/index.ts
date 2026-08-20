@@ -343,6 +343,7 @@ async function spawnSidecarRuntime(request: {
   const spawned = await createToolsDevControl(request.config).launch({
     args: [request.config.tsxCliPath, sidecarConfig.sidecarEntryPath],
     executable: process.execPath,
+    existing: "adopt",
     cwd: request.config.workspaceRoot,
     detached: true,
     env: {
@@ -580,6 +581,7 @@ async function spawnDesktopRuntime(config: ToolDevConfig, options: CliOptions): 
     const spawned = await createToolsDevControl(config).launch<DesktopSidecarMethods>({
       args: [config.apps.desktop.mainEntryPath],
       executable: config.apps.desktop.electronBinaryPath,
+      existing: "adopt",
       cwd: config.workspaceRoot,
       detached: true,
       env: spawnEnv,

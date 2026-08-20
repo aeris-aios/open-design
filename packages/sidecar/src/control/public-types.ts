@@ -151,6 +151,8 @@ export type SidecarLaunchOptions = Readonly<{
   detached?: boolean;
   env?: NodeJS.ProcessEnv;
   executable: string;
+  /** Adopt an exact healthy peer for idempotent starts, or replace it. */
+  existing?: "adopt" | "replace";
   /** Inherit, ignore, or route stdout/stderr to an already-open file descriptor. */
   output?: "ignore" | "inherit" | number;
   readyTimeoutMs?: number;
