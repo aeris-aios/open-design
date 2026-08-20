@@ -31,6 +31,7 @@ import {
 import {
   canonicalizeToolAnalyticsName,
   type RunTelemetryTimestamps,
+  phaseAnchorFromMarks,
   type RunTimingAnalytics,
 } from './run-analytics-observability.js';
 import type { RunFailureClassification } from './run-failure-classification.js';
@@ -998,19 +999,6 @@ function buildArtifactWriteDiagnostics(
   };
 }
 
-// Earliest of the supplied marks, ignoring absent and non-finite values. Mirrors
-// how `summarizeRunTimingAnalytics` picks its phase anchor: the model cannot
-// have started responding after it emitted its first token, so a later mark is
-// always a producer bug rather than a later start.
-function earliestFiniteTimestamp(
-  ...values: Array<number | undefined>
-): number | undefined {
-  const finite = values.filter(
-    (value): value is number => typeof value === 'number' && Number.isFinite(value),
-  );
-  return finite.length > 0 ? Math.min(...finite) : undefined;
-}
-
 function buildSemanticPhaseDiagnostics(ctx: ReportContext): Record<string, unknown> {
   const marks = ctx.run.timingMarks ?? {};
   const measured: Record<string, unknown> = {};
@@ -1044,11 +1032,7 @@ function buildSemanticPhaseDiagnostics(ctx: ReportContext): Record<string, unkno
   // exactly -- earliest of the two marks, through run end -- because the whole
   // point of this entry is to be compared against that number. Deliberately
   // unlike its neighbours above, which end at `finalizeStartAt`.
-  addMeasured(
-    'model-active',
-    earliestFiniteTimestamp(marks.firstModelEventAt, marks.firstTokenAt),
-    ctx.run.endedAt,
-  );
+  addMeasured('model-active', phaseAnchorFromMarks(marks), ctx.run.endedAt);
   addMeasured('artifact-write', marks.firstArtifactWriteAt, marks.finalizeStartAt ?? ctx.run.endedAt);
   addMeasured('finalize', marks.finalizeStartAt, ctx.run.endedAt);
   return {

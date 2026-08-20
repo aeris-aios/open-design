@@ -965,6 +965,36 @@ function eventTimestamp(
   return readNumber(rec.timestamp);
 }
 
+/**
+ * When the model started responding, for phase-boundary purposes.
+ *
+ * Exported because two sinks report this window -- PostHog via
+ * `model_active_duration_ms` and the Langfuse phase diagnostics -- and they are
+ * only comparable if they anchor identically. Re-listing the marks at each call
+ * site is what let them drift apart before.
+ *
+ * Earliest of the three rather than a preference order: `firstModelResponseAt`
+ * carries a producer-supplied start (ACP emits its canonical `tool_use` when the
+ * call is terminal, so arrival is the tool's END), `firstModelEventAt` is our
+ * own arrival mark, and `firstTokenAt` covers producers that report neither. A
+ * mark later than another is a producer artefact, never a later start.
+ */
+export function phaseAnchorFromMarks(marks: {
+  firstModelResponseAt?: number;
+  firstModelEventAt?: number;
+  firstTokenAt?: number;
+}): number | undefined {
+  const candidates = [
+    marks.firstModelResponseAt,
+    marks.firstModelEventAt,
+    marks.firstTokenAt,
+  ].filter(
+    (value): value is number =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0,
+  );
+  return candidates.length > 0 ? Math.min(...candidates) : undefined;
+}
+
 export function summarizeRunTimingAnalytics(args: {
   runCreatedAt: number;
   runUpdatedAt: number;
@@ -1147,13 +1177,7 @@ export function summarizeRunTimingAnalytics(args: {
   // emitted its first token. A late mark is always a bug at the producer (a
   // daemon-generated finalizer event, a producer clock offset), and this keeps
   // one from dragging every boundary to the end of the run.
-  const phaseAnchorCandidates = [
-    telemetry.firstModelResponseAt,
-    telemetry.firstModelEventAt,
-    telemetry.firstTokenAt,
-  ].filter((value): value is number => value !== undefined && Number.isFinite(value));
-  const phaseAnchorAt =
-    phaseAnchorCandidates.length > 0 ? Math.min(...phaseAnchorCandidates) : undefined;
+  const phaseAnchorAt = phaseAnchorFromMarks(telemetry);
   // A run can end while a tool is still outstanding (crash, cancel, timeout),
   // leaving a tool_use with no tool_result. That span still occupied the clock,
   // so close it at run end for phase purposes.
