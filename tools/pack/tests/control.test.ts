@@ -1,9 +1,31 @@
 import type { SidecarControlAccess } from "@open-design/sidecar/control";
 import { describe, expect, it, vi } from "vitest";
 
-import { convergeToolPackServices, stopToolPackServices } from "../src/control.js";
+import {
+  convergeToolPackServices,
+  isToolPackStopSafeForRemoval,
+  stopToolPackServices,
+  summarizeToolPackStopResults,
+} from "../src/control.js";
 
 describe("tools-pack service convergence", () => {
+  it("keeps every unproven stop unsafe even when no PID was reported", () => {
+    const stop = summarizeToolPackStopResults("release-beta", [
+      { forced: false, pid: null, stopped: false },
+    ]);
+
+    expect(stop).toEqual({
+      gracefulRequested: false,
+      namespace: "release-beta",
+      remainingPids: [],
+      status: "partial",
+      stoppedPids: [],
+    });
+    expect(isToolPackStopSafeForRemoval(stop)).toBe(false);
+    expect(isToolPackStopSafeForRemoval({ status: "not-running" })).toBe(true);
+    expect(isToolPackStopSafeForRemoval({ status: "stopped" })).toBe(true);
+  });
+
   it.each(["desktop", "web"] as const)(
     "attempts every service before reporting a %s stop failure",
     async (failedService) => {

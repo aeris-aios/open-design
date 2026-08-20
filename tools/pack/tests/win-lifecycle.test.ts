@@ -65,9 +65,14 @@ vi.mock("../src/win/registry.js", async () => {
   };
 });
 
-const { diagnosePackedWinIpc, inspectPackedWinApp, installPackedWinApp, stopPackedWinApp } = await import(
-  "../src/win/lifecycle.js"
-);
+const {
+  cleanupPackedWinNamespace,
+  diagnosePackedWinIpc,
+  inspectPackedWinApp,
+  installPackedWinApp,
+  stopPackedWinApp,
+  uninstallPackedWinApp,
+} = await import("../src/win/lifecycle.js");
 const { resolveWinPaths } = await import("../src/win/paths.js");
 
 function createConfig(root: string): ToolPackConfig {
@@ -342,6 +347,56 @@ describe("stopPackedWinApp", () => {
         ["daemon"],
       ]);
     } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves install and namespace files when a stop is unproven without a PID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
+    const config = createConfig(root);
+    const paths = resolveWinPaths(config);
+    const installedSentinel = join(paths.installDir, "sentinel.txt");
+    const outputSentinel = join(config.roots.output.namespaceRoot, "output.txt");
+    const runtimeSentinel = join(config.roots.runtime.namespaceRoot, "runtime.txt");
+    try {
+      await mkdir(paths.installDir, { recursive: true });
+      await mkdir(config.roots.output.namespaceRoot, { recursive: true });
+      await mkdir(config.roots.runtime.namespaceRoot, { recursive: true });
+      await writeFile(installedSentinel, "installed", "utf8");
+      await writeFile(outputSentinel, "output", "utf8");
+      await writeFile(runtimeSentinel, "runtime", "utf8");
+      stopControl.mockImplementation(async (service) => ({
+        code: 0,
+        pid: null,
+        signal: null,
+        stopped: service !== "web",
+      }));
+      invokeNsis.mockClear();
+
+      await expect(uninstallPackedWinApp(config)).resolves.toMatchObject({
+        removedCacheRoot: false,
+        removedDataRoot: false,
+        removedLogsRoot: false,
+        removedProductUserDataRoot: false,
+        removedSidecarRoot: false,
+        skipped: true,
+        stop: { status: "partial" },
+      });
+      await expect(readFile(installedSentinel, "utf8")).resolves.toBe("installed");
+      expect(invokeNsis).not.toHaveBeenCalled();
+
+      await expect(cleanupPackedWinNamespace(config)).resolves.toMatchObject({
+        removedLauncherNamespaceRoot: false,
+        removedOutputRoot: false,
+        removedProductUserDataRoot: false,
+        removedRuntimeNamespaceRoot: false,
+        skipped: true,
+        stop: { status: "partial" },
+      });
+      await expect(readFile(outputSentinel, "utf8")).resolves.toBe("output");
+      await expect(readFile(runtimeSentinel, "utf8")).resolves.toBe("runtime");
+    } finally {
+      stopControl.mockResolvedValue({ code: 0, pid: null, signal: null, stopped: true });
       await rm(root, { force: true, recursive: true });
     }
   });

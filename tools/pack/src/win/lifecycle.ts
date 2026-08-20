@@ -24,7 +24,13 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "../config.js";
-import { convergeToolPackServices, createToolPackControl, stopToolPackServices } from "../control.js";
+import {
+  convergeToolPackServices,
+  createToolPackControl,
+  isToolPackStopSafeForRemoval,
+  stopToolPackServices,
+  summarizeToolPackStopResults,
+} from "../control.js";
 import { resolveToolPackLauncherLayout } from "../launcher-layout.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
@@ -296,18 +302,11 @@ async function findManagedDesktopProcessTree(config: ToolPackConfig): Promise<nu
 
 export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
   const stopped = await stopToolPackServices(controlForConfig(config));
-  const pids = [...new Set(stopped.flatMap((result) => result.pid == null ? [] : [result.pid]))];
-  const remainingPids = [...new Set(stopped.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
-  const stoppedPids = [...new Set(stopped.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
-  const allStopped = stopped.every((result) => result.stopped);
-  if (allStopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-  return {
-    gracefulRequested: pids.length > 0,
-    namespace: config.namespace,
-    remainingPids,
-    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
-    stoppedPids,
-  };
+  const stop = summarizeToolPackStopResults(config.namespace, stopped);
+  if (isToolPackStopSafeForRemoval(stop)) {
+    await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
+  }
+  return stop;
 }
 
 export async function readPackedWinLogs(config: ToolPackConfig) {
@@ -332,6 +331,31 @@ export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<Win
   const paths = resolveWinPaths(config);
   const registeredPaths = await measureLifecycleStep(lifecycleTimings, "resolve registered paths", async () => resolveWinRegisteredPaths(config, paths));
   const stop = await measureLifecycleStep(lifecycleTimings, "stop", async () => stopPackedWinApp(config));
+  const removalPlan = await measureLifecycleStep(lifecycleTimings, "create removal plan", async () => createWinRemovalPlan(config));
+  if (!isToolPackStopSafeForRemoval(stop)) {
+    return {
+      lifecycleTimings,
+      markerPath: paths.uninstallMarkerPath,
+      namespace: config.namespace,
+      nsisLogPath: paths.nsisLogPath,
+      removedCacheRoot: false,
+      registryResiduesRemoved: [],
+      removedDataRoot: false,
+      removedLogsRoot: false,
+      removedProductUserDataRoot: false,
+      removedSidecarRoot: false,
+      removalPlan,
+      residueObservation: await measureLifecycleStep(
+        lifecycleTimings,
+        "observe residues",
+        async () => observeWinResidues(config, registeredPaths),
+      ),
+      skipped: true,
+      stop,
+      timingPath: paths.uninstallTimingPath,
+      uninstallerPath: registeredPaths.uninstallerPath,
+    };
+  }
   if (await pathExists(registeredPaths.uninstallerPath)) {
     await measureLifecycleStep(lifecycleTimings, "nsis uninstall", async () => runTimed(paths.uninstallTimingPath, "uninstall", async () => {
       await invokeNsis(paths, registeredPaths.uninstallerPath, config.silent ? ["/S"] : [], "uninstall");
@@ -339,7 +363,6 @@ export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<Win
   }
   await measureLifecycleStep(lifecycleTimings, "remove install dir", async () => removeTree(registeredPaths.installDir));
   const registryResiduesRemoved = await measureLifecycleStep(lifecycleTimings, "cleanup registry residues", async () => cleanupWinRegistryResidues(registeredPaths, config));
-  const removalPlan = await measureLifecycleStep(lifecycleTimings, "create removal plan", async () => createWinRemovalPlan(config));
   await measureLifecycleStep(lifecycleTimings, "write uninstall marker", async () => writeJsonMarker(paths.uninstallMarkerPath, {
     namespace: config.namespace,
     removalPlan,
@@ -367,6 +390,7 @@ export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<Win
     removedSidecarRoot,
     removalPlan,
     residueObservation: await measureLifecycleStep(lifecycleTimings, "observe residues", async () => observeWinResidues(config, registeredPaths)),
+    skipped: false,
     stop,
     timingPath: paths.uninstallTimingPath,
     uninstallerPath: registeredPaths.uninstallerPath,
@@ -378,10 +402,24 @@ export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise
   const launcher = resolveToolPackLauncherLayout(config);
   const registeredPaths = await resolveWinRegisteredPaths(config, paths);
   const removalPlan = await createWinRemovalPlan(config);
-  if (await pathExists(registeredPaths.uninstallerPath)) {
-    await uninstallPackedWinApp(config);
+  const uninstall = await pathExists(registeredPaths.uninstallerPath)
+    ? await uninstallPackedWinApp(config)
+    : null;
+  const stop = uninstall?.stop ?? await stopPackedWinApp(config);
+  if (!isToolPackStopSafeForRemoval(stop)) {
+    return {
+      namespace: config.namespace,
+      removedLauncherNamespaceRoot: false,
+      removedCacheRoot: false,
+      removedOutputRoot: false,
+      removedProductUserDataRoot: false,
+      removedRuntimeNamespaceRoot: false,
+      removalPlan,
+      residueObservation: await observeWinResidues(config, registeredPaths),
+      skipped: true,
+      stop,
+    };
   }
-  const stop = await stopPackedWinApp(config);
   const removedOutputRoot = await pathExists(config.roots.output.namespaceRoot);
   const removedRuntimeNamespaceRoot = await pathExists(config.roots.runtime.namespaceRoot);
   const removedLauncherNamespaceRoot = await pathExists(launcher.paths.namespaceRoot);
@@ -403,6 +441,7 @@ export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise
     removedRuntimeNamespaceRoot,
     removalPlan,
     residueObservation: await observeWinResidues(config, registeredPaths),
+    skipped: false,
     stop,
   };
 }

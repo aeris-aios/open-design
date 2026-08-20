@@ -45,7 +45,12 @@ vi.mock("@open-design/platform", () => ({
   stopProcesses,
 }));
 
-const { startPackedMacApp, stopPackedMacApp } = await import("../src/mac/lifecycle.js");
+const {
+  cleanupPackedMacNamespace,
+  startPackedMacApp,
+  stopPackedMacApp,
+  uninstallPackedMacApp,
+} = await import("../src/mac/lifecycle.js");
 
 function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): ToolPackConfig {
   return {
@@ -291,6 +296,47 @@ describe("stopPackedMacApp", () => {
         ["web"],
         ["daemon"],
       ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves install and namespace files when a stop is unproven without a PID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
+    const config = makeConfig(root);
+    const paths = resolveMacPaths(config);
+    const installedSentinel = join(paths.installedAppPath, "sentinel.txt");
+    const outputSentinel = join(config.roots.output.namespaceRoot, "output.txt");
+    const runtimeSentinel = join(config.roots.runtime.namespaceRoot, "runtime.txt");
+    try {
+      await mkdir(paths.installedAppPath, { recursive: true });
+      await mkdir(config.roots.output.namespaceRoot, { recursive: true });
+      await mkdir(config.roots.runtime.namespaceRoot, { recursive: true });
+      await writeFile(installedSentinel, "installed", "utf8");
+      await writeFile(outputSentinel, "output", "utf8");
+      await writeFile(runtimeSentinel, "runtime", "utf8");
+      stopControl.mockImplementation(async (service) => ({
+        code: 0,
+        pid: null,
+        signal: null,
+        stopped: service !== "web",
+      }));
+
+      await expect(uninstallPackedMacApp(config)).resolves.toMatchObject({
+        removed: false,
+        skipped: true,
+        stop: { status: "partial" },
+      });
+      await expect(readFile(installedSentinel, "utf8")).resolves.toBe("installed");
+
+      await expect(cleanupPackedMacNamespace(config)).resolves.toMatchObject({
+        removedOutputRoot: false,
+        removedRuntimeNamespaceRoot: false,
+        skipped: true,
+        stop: { status: "partial" },
+      });
+      await expect(readFile(outputSentinel, "utf8")).resolves.toBe("output");
+      await expect(readFile(runtimeSentinel, "utf8")).resolves.toBe("runtime");
     } finally {
       await rm(root, { force: true, recursive: true });
     }

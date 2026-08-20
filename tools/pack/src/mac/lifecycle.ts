@@ -21,7 +21,13 @@ import {
   spawnLoggedProcess,
 } from "@open-design/platform";
 import type { ToolPackConfig } from "../config.js";
-import { convergeToolPackServices, createToolPackControl, stopToolPackServices } from "../control.js";
+import {
+  convergeToolPackServices,
+  createToolPackControl,
+  isToolPackStopSafeForRemoval,
+  stopToolPackServices,
+  summarizeToolPackStopResults,
+} from "../control.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
@@ -414,18 +420,11 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
 
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
   const stopped = await stopToolPackServices(createToolPackControl(config, "desktop"));
-  const pids = [...new Set(stopped.flatMap((result) => result.pid == null ? [] : [result.pid]))];
-  const remainingPids = [...new Set(stopped.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
-  const stoppedPids = [...new Set(stopped.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
-  const allStopped = stopped.every((result) => result.stopped);
-  if (allStopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-  return {
-    gracefulRequested: pids.length > 0,
-    namespace: config.namespace,
-    remainingPids,
-    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
-    stoppedPids,
-  };
+  const stop = summarizeToolPackStopResults(config.namespace, stopped);
+  if (isToolPackStopSafeForRemoval(stop)) {
+    await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
+  }
+  return stop;
 }
 
 export async function readPackedMacLogs(config: ToolPackConfig) {
@@ -473,6 +472,15 @@ export async function inspectPackedMacApp(config: ToolPackConfig, options: { exp
 export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<MacUninstallResult> {
   const paths = resolveMacPaths(config);
   const stop = await stopPackedMacApp(config);
+  if (!isToolPackStopSafeForRemoval(stop)) {
+    return {
+      installedAppPath: paths.installedAppPath,
+      namespace: config.namespace,
+      removed: false,
+      skipped: true,
+      stop,
+    };
+  }
   const removed = await pathExists(paths.installedAppPath);
   await rm(paths.installedAppPath, { force: true, recursive: true });
 
@@ -480,6 +488,7 @@ export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<Mac
     installedAppPath: paths.installedAppPath,
     namespace: config.namespace,
     removed,
+    skipped: false,
     stop,
   };
 }
@@ -487,6 +496,18 @@ export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<Mac
 export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise<MacCleanupResult> {
   const paths = resolveMacPaths(config);
   const stop = await stopPackedMacApp(config);
+  if (!isToolPackStopSafeForRemoval(stop)) {
+    return {
+      detachedMount: false,
+      namespace: config.namespace,
+      outputRoot: config.roots.output.namespaceRoot,
+      removedOutputRoot: false,
+      removedRuntimeNamespaceRoot: false,
+      runtimeNamespaceRoot: config.roots.runtime.namespaceRoot,
+      skipped: true,
+      stop,
+    };
+  }
   const detachedMount = await detachMount(paths.mountPoint);
   const removedOutputRoot = await pathExists(config.roots.output.namespaceRoot);
   const removedRuntimeNamespaceRoot = await pathExists(config.roots.runtime.namespaceRoot);
@@ -501,6 +522,7 @@ export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise
     removedOutputRoot,
     removedRuntimeNamespaceRoot,
     runtimeNamespaceRoot: config.roots.runtime.namespaceRoot,
+    skipped: false,
     stop,
   };
 }

@@ -12,6 +12,7 @@ import type { ToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapsh
 import type { ToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import type { CacheReport } from "../cache.js";
 import type { ToolPackConfig } from "../config.js";
+import type { ToolPackStopResult } from "../control.js";
 import type { INTERNAL_PACKAGES } from "./constants.js";
 
 export type PackedTarballInfo = {
@@ -247,13 +248,7 @@ export type WinIpcDiagnoseResult = {
   traceEnabled: boolean;
 };
 
-export type WinStopResult = {
-  gracefulRequested: boolean;
-  namespace: string;
-  remainingPids: number[];
-  status: "not-running" | "partial" | "stopped";
-  stoppedPids: number[];
-};
+export type WinStopResult = ToolPackStopResult;
 
 export type WinUninstallResult = {
   lifecycleTimings: WinLifecycleTiming[];
@@ -269,6 +264,7 @@ export type WinUninstallResult = {
   removalPlan: WinRemovalTarget[];
   residueObservation: WinResidueObservation;
   stop: WinStopResult;
+  skipped: boolean;
   timingPath: string;
   uninstallerPath: string;
 };
@@ -283,6 +279,7 @@ export type WinCleanupResult = {
   removalPlan: WinRemovalTarget[];
   residueObservation: WinResidueObservation;
   stop: WinStopResult;
+  skipped: boolean;
 };
 
 export type WindowsUninstallRegistryEntry = {

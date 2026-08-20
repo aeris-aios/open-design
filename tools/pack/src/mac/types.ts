@@ -1,6 +1,7 @@
 import type { DesktopEvalResult, DesktopScreenshotResult, DesktopStatusSnapshot, DesktopUpdateResult } from "@open-design/host/sidecar";
 import type { CacheReport } from "../cache.js";
 import type { ToolPackBuildOutput, ToolPackConfig } from "../config.js";
+import type { ToolPackStopResult } from "../control.js";
 import type { ToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
 import type { ToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import type { INTERNAL_PACKAGES } from "./constants.js";
@@ -90,13 +91,7 @@ export type MacInspectResult = {
   update?: DesktopUpdateResult;
 };
 
-export type MacStopResult = {
-  gracefulRequested: boolean;
-  namespace: string;
-  remainingPids: number[];
-  status: "not-running" | "partial" | "stopped";
-  stoppedPids: number[];
-};
+export type MacStopResult = ToolPackStopResult;
 
 export type MacInstallResult = {
   detached: boolean;
@@ -110,6 +105,7 @@ export type MacUninstallResult = {
   installedAppPath: string;
   namespace: string;
   removed: boolean;
+  skipped: boolean;
   stop: MacStopResult;
 };
 
@@ -120,6 +116,7 @@ export type MacCleanupResult = {
   removedOutputRoot: boolean;
   removedRuntimeNamespaceRoot: boolean;
   runtimeNamespaceRoot: string;
+  skipped: boolean;
   stop: MacStopResult;
 };
 

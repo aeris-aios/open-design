@@ -20,6 +20,14 @@ import type { ToolPackConfig } from "./config.js";
 
 export type ToolPackControlMode = "desktop" | "headless";
 
+export type ToolPackStopResult = {
+  gracefulRequested: boolean;
+  namespace: string;
+  remainingPids: number[];
+  status: "not-running" | "partial" | "stopped";
+  stoppedPids: number[];
+};
+
 const TOOL_PACK_SERVICE_STOPS = [
   { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
   { service: APP_KEYS.WEB },
@@ -97,4 +105,31 @@ export async function convergeToolPackServices(
     throw new AggregateError(failures, "failed to converge one or more packaged services");
   }
   return results;
+}
+
+export function summarizeToolPackStopResults(
+  namespace: string,
+  results: readonly SidecarConvergeResult[],
+): ToolPackStopResult {
+  const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
+  const remainingPids = [...new Set(
+    results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []),
+  )];
+  const stoppedPids = [...new Set(
+    results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []),
+  )];
+  const allStopped = results.every((result) => result.stopped);
+  return {
+    gracefulRequested: pids.length > 0,
+    namespace,
+    remainingPids,
+    status: allStopped ? (pids.length === 0 ? "not-running" : "stopped") : "partial",
+    stoppedPids,
+  };
+}
+
+export function isToolPackStopSafeForRemoval(
+  stop: Pick<ToolPackStopResult, "status">,
+): boolean {
+  return stop.status === "stopped" || stop.status === "not-running";
 }

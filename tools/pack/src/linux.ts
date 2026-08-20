@@ -23,7 +23,14 @@ import {
 } from "@open-design/platform";
 
 import type { ToolPackConfig } from "./config.js";
-import { convergeToolPackServices, createToolPackControl, stopToolPackServices } from "./control.js";
+import {
+  convergeToolPackServices,
+  createToolPackControl,
+  isToolPackStopSafeForRemoval,
+  stopToolPackServices,
+  summarizeToolPackStopResults,
+  type ToolPackStopResult,
+} from "./control.js";
 import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
 import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources.js";
 import { copyOptionalVelaCliBinary } from "./vela-cli.js";
@@ -892,13 +899,7 @@ export function shouldRejectLinuxHeadlessInspectOptions(options: {
   return options.expr != null || options.path != null;
 }
 
-export type LinuxStopResult = {
-  gracefulRequested: boolean;
-  namespace: string;
-  remainingPids: number[];
-  status: "not-running" | "partial" | "stopped";
-  stoppedPids: number[];
-};
+export type LinuxStopResult = ToolPackStopResult;
 
 function desktopLogPath(config: ToolPackConfig): string {
   return join(config.roots.runtime.namespaceRoot, "logs", APP_KEYS.DESKTOP, "latest.log");
@@ -1013,18 +1014,11 @@ async function teardownOrphanedStart(rootPid: number): Promise<void> {
 
 export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
   const results = await stopToolPackServices(createToolPackControl(config, "desktop"));
-  const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
-  const remainingPids = [...new Set(results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
-  const stoppedPids = [...new Set(results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
-  const allStopped = results.every((result) => result.stopped);
-  if (allStopped) await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
-  return {
-    gracefulRequested: pids.length > 0,
-    namespace: config.namespace,
-    remainingPids,
-    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
-    stoppedPids,
-  };
+  const stop = summarizeToolPackStopResults(config.namespace, results);
+  if (isToolPackStopSafeForRemoval(stop)) {
+    await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
+  }
+  return stop;
 }
 
 export async function readPackedLinuxLogs(config: ToolPackConfig): Promise<{
@@ -1095,18 +1089,14 @@ async function tryRemove(path: string): Promise<"ok" | "already-removed"> {
 
 // "stopped" means we just brought the controlled process down cleanly.
 // "not-running" means there was nothing to stop in the first place.
-// Either state makes it safe to delete install files. "partial" means
-// remainingPids is non-empty, so destructive removal could leave broken file
-// handles and an orphan with stale state.
-function isSafeToRemoveInstallFiles(stop: LinuxStopResult): boolean {
-  return stop.status === "stopped" || stop.status === "not-running";
-}
-
+// Either state makes it safe to delete install files. "partial" means at least
+// one stop was not proven, even when that peer did not report a PID, so
+// destructive removal could leave an orphan with broken handles and stale state.
 export async function uninstallPackedLinuxApp(config: ToolPackConfig): Promise<LinuxUninstallResult> {
   const paths = resolveLinuxPaths(config);
   const stop = await stopPackedLinuxApp(config);
 
-  if (!isSafeToRemoveInstallFiles(stop)) {
+  if (!isToolPackStopSafeForRemoval(stop)) {
     return {
       namespace: config.namespace,
       removed: {
@@ -1151,7 +1141,7 @@ export async function uninstallPackedLinuxHeadless(
   const stop = await stopPackedLinuxHeadless(config);
   const launcherPath = headlessLauncherPath(config);
 
-  if (!isSafeToRemoveInstallFiles(stop)) {
+  if (!isToolPackStopSafeForRemoval(stop)) {
     return {
       launcherPath,
       namespace: config.namespace,
@@ -1377,21 +1367,12 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
 
 export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
   const results = await stopToolPackServices(createToolPackControl(config, "headless"));
-  const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
-  const remainingPids = [...new Set(results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []))];
-  const stoppedPids = [...new Set(results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []))];
-  const allStopped = results.every((result) => result.stopped);
-  if (allStopped) {
+  const stop = summarizeToolPackStopResults(config.namespace, results);
+  if (isToolPackStopSafeForRemoval(stop)) {
     await rm(headlessIdentityPath(config), { force: true }).catch(() => undefined);
     await rm(webIdentityPath(config), { force: true }).catch(() => undefined);
   }
-  return {
-    gracefulRequested: pids.length > 0,
-    namespace: config.namespace,
-    remainingPids,
-    status: pids.length === 0 ? "not-running" : allStopped ? "stopped" : "partial",
-    stoppedPids,
-  };
+  return stop;
 }
 
 export async function cleanupPackedLinuxNamespace(
@@ -1405,7 +1386,7 @@ export async function cleanupPackedLinuxNamespace(
   const outputRoot = config.roots.output.namespaceRoot;
   const runtimeNamespaceRoot = config.roots.runtime.namespaceRoot;
 
-  if (!isSafeToRemoveInstallFiles(stop)) {
+  if (!isToolPackStopSafeForRemoval(stop)) {
     return {
       namespace: config.namespace,
       outputRoot,
