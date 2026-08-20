@@ -128,19 +128,36 @@ export function agentBinEnvKey(agentId: string | undefined): string | null {
   return AGENT_BIN_ENV_KEYS.get(agentId) ?? null;
 }
 
-export function resolveOnPath(bin: string): string | null {
+// Every file named `bin` that exists on the search path, in resolution
+// order. Detection needs the whole list, not just the winner: a directory
+// that ranks earlier can hold a wrapper left behind by a half-finished
+// install, and executing it fails even though a working CLI of the same
+// name sits in a later directory. Resolution alone cannot tell the two
+// apart — only spawning can — so the caller walks candidates until one
+// actually runs.
+export function resolveAllOnPath(bin: string): string[] {
   const exts =
     process.platform === 'win32'
       ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')
       : [''];
   const dirs = resolvePathDirs();
+  const found: string[] = [];
+  const seen = new Set<string>();
   for (const dir of dirs) {
     for (const ext of exts) {
       const full = path.join(dir, bin + ext);
-      if (full && existsSync(full)) return full;
+      if (!full || seen.has(full)) continue;
+      if (existsSync(full)) {
+        seen.add(full);
+        found.push(full);
+      }
     }
   }
-  return null;
+  return found;
+}
+
+export function resolveOnPath(bin: string): string | null {
+  return resolveAllOnPath(bin)[0] ?? null;
 }
 
 function looksExecutableOnWindows(filePath: string): boolean {
@@ -339,6 +356,12 @@ export function resolveAgentExecutable(
 export function inspectAgentExecutableResolution(
   def: RuntimeAgentDef,
   configuredEnv: Record<string, string> = {},
+  // Paths already proven unusable by a spawn attempt. Only PATH-derived
+  // candidates are skippable: an explicit `*_BIN` override, a packaged
+  // built-in, and the Codex app bundle are deliberate selections, so a
+  // broken one must surface as an error rather than silently resolving to
+  // some other binary the user never pointed at.
+  options: { skipPathCandidates?: readonly string[] } = {},
 ): {
   configuredOverridePath: string | null;
   pathResolvedPath: string | null;
@@ -356,12 +379,13 @@ export function inspectAgentExecutableResolution(
     def.bin,
     ...(Array.isArray(def.fallbackBins) ? def.fallbackBins : []),
   ];
+  const skip = new Set(options.skipPathCandidates ?? []);
   let pathResolvedPath: string | null = null;
-  for (const bin of candidates) {
-    const resolved = resolveOnPath(bin);
-    if (resolved) {
+  outer: for (const bin of candidates) {
+    for (const resolved of resolveAllOnPath(bin)) {
+      if (skip.has(resolved)) continue;
       pathResolvedPath = resolved;
-      break;
+      break outer;
     }
   }
   const builtInPath = packagedBuiltInExecutable(def, configuredEnv);

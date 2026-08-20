@@ -46,6 +46,12 @@ export interface DetectedRuntimeVersions {
 // exact executable family without spawning another process on every turn.
 const detectedRuntimeVersions = new Map<string, DetectedRuntimeVersions>();
 
+// How many unusable binaries detection will walk past before giving up on an
+// agent. Each attempt costs one bounded `--version` spawn, and the healthy
+// case stops at the first candidate, so this only bounds the pathological
+// shape: the same CLI name shadowed in many search directories at once.
+const MAX_EXECUTABLE_ATTEMPTS = 8;
+
 export function getDetectedRuntimeVersions(
   agentId: string | null | undefined,
 ): DetectedRuntimeVersions | null {
@@ -256,11 +262,23 @@ async function probe(
   // If detection probes the shim but chat/run spawns the native binary, the
   // UI incorrectly reports "not installed" until the user pins CODEX_BIN by
   // hand even though the real launch path is healthy.
-  const launch = resolveAgentLaunch(def, configuredEnv);
-  if (!launch.selectedPath || !launch.launchPath) {
+  const initialLaunch = resolveAgentLaunch(def, configuredEnv);
+  if (!initialLaunch.selectedPath || !initialLaunch.launchPath) {
     return unavailableAgent(def, [buildExecutableDiagnostic(def, configuredEnv)]);
   }
-  const probeEnv = applyAgentLaunchEnv(
+  // Carry the narrowed pair explicitly: the candidate walk below reassigns
+  // this binding, which would otherwise discard the null-check above and
+  // force every downstream reader to re-prove the paths are present.
+  type ProbedLaunch = ReturnType<typeof resolveAgentLaunch> & {
+    selectedPath: string;
+    launchPath: string;
+  };
+  let launch: ProbedLaunch = {
+    ...initialLaunch,
+    selectedPath: initialLaunch.selectedPath,
+    launchPath: initialLaunch.launchPath,
+  };
+  let probeEnv = applyAgentLaunchEnv(
     spawnEnvForAgent(
       def.id,
       {
@@ -273,14 +291,68 @@ async function probe(
     ),
     launch,
   );
-  const outcome = await probeVersionAtPath(def, launch.launchPath, probeEnv);
+  let outcome = await probeVersionAtPath(def, launch.launchPath, probeEnv);
+  // Resolving a name on PATH only proves a file exists there, never that it
+  // runs. A directory that ranks earlier in the search order can hold a
+  // wrapper orphaned by a half-finished `npm i -g` — the shim survives, the
+  // package it points at does not — and stopping at that first hit hides a
+  // perfectly good CLI of the same name further down the list. Walk past
+  // every candidate that cannot be executed before declaring the agent
+  // unusable. Only spawn-level failures advance the walk: a version that
+  // parses badly, or a binary that runs and exits non-zero, is a real
+  // answer from the right binary and must not fall through to another one.
+  const attemptedPaths: string[] = [];
+  while (
+    outcome.kind === 'not-invocable' &&
+    attemptedPaths.length < MAX_EXECUTABLE_ATTEMPTS
+  ) {
+    const failedPath = launch.selectedPath;
+    if (!failedPath) break;
+    attemptedPaths.push(failedPath);
+    const next = resolveAgentLaunch(def, configuredEnv, {
+      skipPathCandidates: attemptedPaths,
+    });
+    // No candidate left, or the resolver handed back something already
+    // proven broken (an explicit override or packaged built-in, which are
+    // deliberately not skippable) — either way there is nothing new to try.
+    if (!next.selectedPath || !next.launchPath) break;
+    if (attemptedPaths.includes(next.selectedPath)) break;
+    launch = {
+      ...next,
+      selectedPath: next.selectedPath,
+      launchPath: next.launchPath,
+    };
+    probeEnv = applyAgentLaunchEnv(
+      spawnEnvForAgent(
+        def.id,
+        {
+          ...process.env,
+          ...(def.env || {}),
+        },
+        configuredEnv,
+        undefined,
+        { resolvedBin: next.selectedPath },
+      ),
+      next,
+    );
+    outcome = await probeVersionAtPath(def, next.launchPath, probeEnv);
+  }
   if (outcome.kind === 'not-invocable') {
-    return unavailableAgent(def, [
-      buildNotInvocableDiagnostic(def, launch, outcome.cause),
-    ]);
+    // Report the path that was actually tried. The agent picker only renders
+    // an unavailable agent when it carries a path (that is what makes the
+    // row actionable), so dropping it here erases the agent from the UI and
+    // leaves the user with no way to see or fix what went wrong.
+    return unavailableAgent(
+      def,
+      [buildNotInvocableDiagnostic(def, launch, outcome.cause)],
+      { path: launch.selectedPath },
+    );
   }
   if (def.versionPolicy?.requireVersion && !outcome.version) {
-    return unavailableAgent(def, [buildVersionDiagnostic(def, outcome.version)]);
+    return unavailableAgent(def, [buildVersionDiagnostic(def, outcome.version)], {
+      path: launch.selectedPath,
+      version: outcome.version,
+    });
   }
   let runtimeCompanionVersion: string | undefined;
   if (def.compatibilityProbe) {
