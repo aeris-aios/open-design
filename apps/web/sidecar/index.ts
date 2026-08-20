@@ -21,6 +21,7 @@ async function main(): Promise<void> {
     },
     async onStopRequested() {
       await server?.stop();
+      await server?.waitUntilStopped();
     },
   });
 

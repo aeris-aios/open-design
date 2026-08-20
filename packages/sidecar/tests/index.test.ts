@@ -20,6 +20,8 @@ describe("sidecar public utilities", () => {
       const path = join(root, "state", "pointer.json");
       await writeJsonFile(path, { runId: "current", value: 1 });
       await expect(readJsonFile(path)).resolves.toEqual({ runId: "current", value: 1 });
+      await writeJsonFile(path, { runId: "current", value: 2 });
+      await expect(readJsonFile(path)).resolves.toEqual({ runId: "current", value: 2 });
       await removePointerIfCurrent(path, "stale");
       await expect(readJsonFile(path)).resolves.not.toBeNull();
       await removePointerIfCurrent(path, "current");

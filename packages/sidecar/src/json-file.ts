@@ -8,8 +8,63 @@
  * `node:path`.
  */
 
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+
+const REPLACE_RETRY_ATTEMPTS = 8;
+const REPLACE_RETRY_DELAY_MS = 25;
+
+type JsonFileOperations = Readonly<{
+  delay: (milliseconds: number) => Promise<void>;
+  mkdir: typeof mkdir;
+  remove: typeof rm;
+  rename: typeof rename;
+  writeFile: typeof writeFile;
+}>;
+
+const jsonFileOperations: JsonFileOperations = {
+  delay: async (milliseconds) => await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
+  mkdir,
+  remove: rm,
+  rename,
+  writeFile,
+};
+
+function replaceRetryable(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "EACCES" || code === "EBUSY" || code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
+}
+
+async function replaceWrittenFile(
+  tmpPath: string,
+  filePath: string,
+  operations: JsonFileOperations,
+): Promise<void> {
+  try {
+    await operations.rename(tmpPath, filePath);
+    return;
+  } catch (error) {
+    if (!replaceRetryable(error)) throw error;
+  }
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < REPLACE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      // Windows rename does not replace an existing file. Removing the stale
+      // fenced descriptor first gives rename the same replacement semantics
+      // while bounded retries absorb short-lived scanner/reader locks.
+      await operations.remove(filePath, { force: true });
+      await operations.rename(tmpPath, filePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!replaceRetryable(error) || attempt === REPLACE_RETRY_ATTEMPTS - 1) throw error;
+      await operations.delay(REPLACE_RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
 
 /**
  * Read and parse a JSON file, swallowing any read/parse error.
@@ -28,10 +83,25 @@ export async function readJsonFile<T = any>(filePath: string): Promise<T | null>
  * creating the parent directory if needed.
  */
 export async function writeJsonFile(filePath: string, payload: unknown): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await rename(tmpPath, filePath);
+  await writeJsonFileWithOperations(filePath, payload, jsonFileOperations);
+}
+
+/** @internal Operation seam for deterministic replacement/cleanup tests. */
+export async function writeJsonFileWithOperations(
+  filePath: string,
+  payload: unknown,
+  operations: JsonFileOperations,
+): Promise<void> {
+  await operations.mkdir(dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await operations.writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    await replaceWrittenFile(tmpPath, filePath, operations);
+  } finally {
+    // A failed Windows replacement must not accumulate launch-blocking temp
+    // descriptors beside the authoritative path. Never mask the root error.
+    await operations.remove(tmpPath, { force: true }).catch(() => undefined);
+  }
 }
 
 /**
