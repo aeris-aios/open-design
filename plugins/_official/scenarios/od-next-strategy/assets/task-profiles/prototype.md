@@ -195,6 +195,11 @@ Meet the following in one pass, while writing the source:
 
 - Font references resolve; layout carries no overflow or clipping risk;
   alignment structure is complete.
+- Layout mechanics hold: sibling content regions (headers, pills, cards)
+  never overlap and stay in normal flow; a stat numeral and its unit (e.g.
+  82%) render on one line inside an auto-sized or clamp()-sized container,
+  never squeezed into a fixed box; track-style elements such as progress bars
+  declare block-level display before receiving dimensions.
 - Every step of the core flow is genuinely implemented; buttons, navigation,
   and key controls are bound to real behavior, not decoration.
 - Responsive breakpoints cover 375px and wide screens; no horizontal

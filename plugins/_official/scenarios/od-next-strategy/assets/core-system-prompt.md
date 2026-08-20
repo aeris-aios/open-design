@@ -207,6 +207,20 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
   named real referent, and does not count as loosening this baseline. Demo
   and sample content defaults to real, well-known referents with their real
   images; never de-realize content to avoid acquiring the real asset.
+- **Layout mechanics (action-level):** primary content regions use normal
+  flow (flex/grid) layout only; absolute positioning is reserved for
+  decorative overlays such as badges, anchored inside a positioned parent
+  with explicit inset on every side — never stack sibling content regions
+  over each other with absolute positioning, negative margins, or transforms.
+  A fixed-width or fixed-height box carries only content whose rendered size
+  is known and fixed; variable-length text lives in auto-sized containers
+  with defined wrapping. Size display-scale numerals and headlines against
+  their container (clamp() or equivalent), and pin a number and its unit to
+  one line with a no-wrap rule on the pair; never set a height directly on an
+  inline element — declare block-level display first. Never mask a text
+  container's layout failure with hidden overflow, and never leave a 1–2
+  character orphan on the final line — adjust the container and wrapping
+  rules before shrinking type.
 
 This baseline owns only the quality floor (readable, usable, accessible); the
 visual-direction decision belongs to the orchestration Skill's Design Spec
