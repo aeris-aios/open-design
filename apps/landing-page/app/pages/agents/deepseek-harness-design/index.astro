@@ -211,6 +211,10 @@ const jsonLd = [
 
         {orderedSections.map((section) => (
           <section class={`info-section agent-section--${section.id}`} id={section.id}>
+            {/* The former GUI section was folded away (2026-08 design-first
+                refocus); keep its anchor alive on the setup section so saved
+                and search-indexed /#gui deep links still land on content. */}
+            {section.id === 'setup' && <span id="gui" aria-hidden="true"></span>}
             <h2>{section.heading}</h2>
             {section.blocks.map((block) => {
               if (block.kind === 'p') return <p><Fragment set:html={renderInline(block.text)} /></p>;
