@@ -186,6 +186,35 @@ describe('checkAmrBalanceGate', () => {
     await expect(checkAmrBalanceGate()).resolves.toEqual({ kind: 'allow' });
   });
 
+  it.each([
+    ['plus', 'kimi-k2.7-code'],
+    ['pro', 'glm-5.2'],
+    ['max', 'minimax-m2.7'],
+  ])('does not soft-warn a %s unlimited model at low balance', async (plan, modelId) => {
+    const low = snapshot({
+      balanceUsd: '1.20',
+      user: { id: 'u1', email: 'user@example.com', plan },
+    });
+    mockedFetch.mockResolvedValueOnce(low);
+
+    await expect(checkAmrBalanceGate(undefined, modelId)).resolves.toEqual({
+      kind: 'allow',
+    });
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still soft-warns when a low-balance Pro account selects MiniMax M2.7', async () => {
+    const low = snapshot({
+      balanceUsd: '1.20',
+      user: { id: 'u1', email: 'user@example.com', plan: 'pro' },
+    });
+    mockedFetch.mockResolvedValueOnce(low);
+
+    await expect(
+      checkAmrBalanceGate(undefined, 'minimax-m2.7'),
+    ).resolves.toEqual({ kind: 'soft', snapshot: low });
+  });
+
   it('skips the soft warning once the user opted out — but never the hard block', async () => {
     expect(isAmrLowBalanceWarnOptedOut()).toBe(false);
     setAmrLowBalanceWarnOptedOut();
@@ -452,6 +481,32 @@ describe('checkAmrBalanceGate', () => {
         workspaceId: 'ws-personal-go',
         workspaceMemberId: 'wm-personal-go',
       }, 'deepseek-v4-pro'),
+    ).resolves.toEqual({ kind: 'allow' });
+  });
+
+  it('does not soft-warn an unlimited model in a low-balance personal workspace', async () => {
+    mockedFetch.mockResolvedValue(snapshot({
+      balanceUsd: '1.50',
+      user: { id: 'u1', email: 'user@example.com', plan: 'pro' },
+    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(
+        JSON.stringify(authoritativeWorkspaceBillingResponse(
+          'ws-personal-pro',
+          'wm-personal-pro',
+          '1.50',
+        )),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )),
+    );
+
+    await expect(
+      checkAmrBalanceGate({
+        workspaceType: 'personal',
+        workspaceId: 'ws-personal-pro',
+        workspaceMemberId: 'wm-personal-pro',
+      }, 'glm-5.2'),
     ).resolves.toEqual({ kind: 'allow' });
   });
 

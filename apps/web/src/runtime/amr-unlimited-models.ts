@@ -14,17 +14,17 @@ const PRO_UNLIMITED_MODELS = [
   'deepseek-v4-pro',
   'glm-5.2',
   'kimi-k2.7-code',
-  'minimax-m2.7',
   'mimo-v2.5-pro',
 ] as const;
 
 const MAX_UNLIMITED_MODELS = [
   ...PRO_UNLIMITED_MODELS,
+  'minimax-m2.7',
   'kimi-k2.6',
   'glm-5.1',
 ] as const;
 
-// This table only decides whether the client-side zero-balance preflight may
+// This table only decides whether the client-side balance preflight may
 // stand down. Vela remains authoritative for plan access and usage limits.
 const UNLIMITED_MODELS_BY_PLAN: Readonly<Record<string, ReadonlySet<string>>> = {
   go: new Set(GO_UNLIMITED_MODELS),

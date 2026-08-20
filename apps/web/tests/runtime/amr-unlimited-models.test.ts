@@ -9,7 +9,9 @@ describe('AMR unlimited model entitlements', () => {
     ['plus', 'minimax-m2.7', false],
     ['pro', 'glm-5.2', true],
     ['pro', 'mimo-v2.5-pro', true],
+    ['pro', 'minimax-m2.7', false],
     ['pro', 'kimi-k2.6', false],
+    ['max', 'minimax-m2.7', true],
     ['max', 'glm-5.1', true],
   ])('maps %s / %s to unlimited=%s', (plan, modelId, unlimited) => {
     expect(isUnlimitedAmrModelForPlan(plan, modelId)).toBe(unlimited);
