@@ -221,6 +221,17 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
   container's layout failure with hidden overflow, and never leave a 1–2
   character orphan on the final line — adjust the container and wrapping
   rules before shrinking type.
+- **Image geometry (measure, then size):** before writing styles for a
+  localized image, read its intrinsic width and height from the file — a
+  one-line shell probe during Build; probing an input asset is Build work,
+  inside the ship-on-write boundary's allowance for inputs. The container
+  adopts the image's intrinsic ratio: set aspect-ratio from the measured
+  values, or let width: 100% with height: auto flow naturally; never force a
+  content-bearing image into a container with a different fixed ratio.
+  object-fit: cover is reserved for deliberately croppable decorative fills
+  such as hero backdrops; content-bearing images — posters, covers, artwork,
+  product shots — render their full frame (object-fit: contain or natural
+  flow), and a container never locks both axes around variable-ratio content.
 
 This baseline owns only the quality floor (readable, usable, accessible); the
 visual-direction decision belongs to the orchestration Skill's Design Spec
