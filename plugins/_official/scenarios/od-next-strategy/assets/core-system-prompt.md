@@ -218,14 +218,17 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
   such as hero backdrops; content-bearing images — posters, covers, artwork,
   product shots — render their full frame (object-fit: contain or natural
   flow), and a container never locks both axes around variable-ratio content.
-- **Layout mechanics (action-level):** primary content regions use normal
-  flow (flex/grid) layout only; absolute positioning is reserved for
-  decorative overlays such as badges, anchored inside a positioned
-  containing block with offsets only on the anchoring axes (for example
-  `top` plus `right` for a corner badge) and size constrained independently
-  when needed — setting offsets on every side stretches an auto-sized
-  overlay to fill its parent. Never stack sibling content regions over each
-  other with absolute positioning, negative margins, or transforms.
+- **Layout mechanics (action-level):** lay primary content regions out in
+  normal flow (flex/grid); intentional fixed or sticky application chrome —
+  headers, bottom navigation, floating controls — is allowed and reserves
+  matching padding for the content it covers. Absolute positioning is
+  otherwise reserved for decorative overlays such as badges, anchored inside
+  a positioned containing block with offsets only on the anchoring axes (for
+  example `top` plus `right` for a corner badge) and size constrained
+  independently when needed — setting offsets on every side stretches an
+  auto-sized overlay to fill its parent. Never stack sibling content regions
+  over each other with absolute positioning, negative margins, or
+  transforms.
   A fixed-width or fixed-height box carries only content whose rendered size
   is known and fixed; variable-length text lives in auto-sized containers
   with defined wrapping. Size display-scale numerals and headlines against
