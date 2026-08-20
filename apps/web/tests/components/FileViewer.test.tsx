@@ -4040,6 +4040,93 @@ describe('FileViewer SVG artifacts', () => {
     expect(frame.srcdoc).toBe(transportBeforeSave);
   });
 
+  it('invalidates a saved-document adoption after an external revision before the saved bytes return', async () => {
+    const initialSource = '<html><body><p data-od-id="copy">Initial</p></body></html>';
+    const externalSource = '<html><body><p data-od-id="copy">External B</p></body></html>';
+    let persistedSource = initialSource;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: { method?: string; body?: BodyInit | null }) => {
+      const value = String(url);
+      if (value.includes('/files') && opts?.method === 'POST') {
+        persistedSource = (JSON.parse(String(opts.body)) as { content: string }).content;
+        return new Response(JSON.stringify({ file: { name: 'page.html', mtime: 2 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (value.includes('/raw/page.html')) return new Response(persistedSource, { status: 200 });
+      if (value.includes('/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+    const file = (mtime: number) => baseFile({
+      name: 'page.html',
+      path: 'page.html',
+      mime: 'text/html',
+      kind: 'html',
+      mtime,
+    });
+    const { rerender } = render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file(1)}
+        liveHtml={initialSource}
+      />,
+    );
+    const toggle = screen.getByTestId('manual-edit-mode-toggle');
+    fireEvent.click(toggle);
+    const frame = await waitFor(() => {
+      const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return active;
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od-edit-text-session', id: 'copy', active: true },
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od-edit-text-commit', id: 'copy', value: 'Saved A' },
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od-edit-text-session', id: 'copy', active: false, committed: true, changed: true },
+      }));
+    });
+    await waitFor(() => expect(persistedSource).toContain('Saved A'));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
+
+    rerender(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file(3)}
+        liveHtml={externalSource}
+      />,
+    );
+    await waitFor(() => expect(frame.srcdoc).toContain('External B'));
+
+    rerender(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file(4)}
+        liveHtml={persistedSource}
+      />,
+    );
+    await waitFor(() => expect(frame.srcdoc).toContain('Saved A'));
+  });
+
   it('waits for the opaque preview scroll snapshot before committing a content edit', async () => {
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);

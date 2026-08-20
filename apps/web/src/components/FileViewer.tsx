@@ -10081,6 +10081,19 @@ function HtmlViewer({
     && persistedManualEditDocument?.reloadKey === reloadKey
     && livePreviewSource != null
     && persistedManualEditDocument.sourceFingerprint === previewSourceFingerprint(livePreviewSource);
+  // Adoption is a one-revision latch, not a permanent fingerprint cache. Wait
+  // until Edit has closed (the save can render once before its source state is
+  // committed), then retire the latch as soon as a genuinely different live
+  // revision appears. A later external revert to the saved bytes must render
+  // as a new document instead of being mistaken for another watcher echo.
+  if (
+    !interactivePreviewModeActive
+    && persistedManualEditDocument
+    && livePreviewSource != null
+    && !canAdoptPersistedManualEditDocument
+  ) {
+    manualEditPersistedDocumentRef.current = null;
+  }
   if (!interactivePreviewModeActive && !canAdoptPersistedManualEditDocument) {
     frozenPreviewMeasurementDocumentEpochRef.current =
       previewContentMeasurementDocumentEpoch;
