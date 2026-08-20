@@ -11649,6 +11649,13 @@ function HtmlViewer({
     win.postMessage({ type: 'od-edit-preview-style', id, styles, version }, '*');
     return true;
   }, [workspaceActive]);
+  const previewTextToIframe = useCallback((id: string, value: string): boolean => {
+    if (!workspaceActive) return false;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return false;
+    win.postMessage({ type: 'od-edit-preview-text', id, value }, '*');
+    return true;
+  }, [workspaceActive]);
 
   function postSelectedManualEditTargetToIframe(id: string | null, target: HTMLIFrameElement | null = iframeRef.current) {
     if (!workspaceActive) return;
@@ -12553,6 +12560,22 @@ function HtmlViewer({
     else setManualEditPageStylesOpen(false);
   }
 
+  function syncRetainedTextDocument(savedSource: string, patch: ManualEditPatch): void {
+    if (patch.kind !== 'set-text') {
+      manualEditPersistedDocumentRef.current = null;
+      return;
+    }
+    const savedText = readManualEditFields(savedSource, patch.id).text;
+    if (savedText === undefined || !previewTextToIframe(patch.id, savedText)) {
+      manualEditPersistedDocumentRef.current = null;
+      return;
+    }
+    manualEditPersistedDocumentRef.current = {
+      sourceFingerprint: previewSourceFingerprint(savedSource),
+      reloadKey,
+    };
+  }
+
   async function resetManualEditPanelDraft() {
     if (manualEditTextSessionIdRef.current) await finishManualEditTextSession(false);
     cancelManualEditStyleDraft();
@@ -12646,10 +12669,13 @@ function HtmlViewer({
       setSource(result.source);
       sourceRef.current = result.source;
       setInlinedSource(null);
-      manualEditPersistedDocumentRef.current = {
-        sourceFingerprint: previewSourceFingerprint(result.source),
-        reloadKey,
-      };
+      // Inline text edits already changed the live DOM, while text entered in
+      // the inspector only exists in React state until Save. Apply the saved
+      // value through the bridge before adopting the retained document so the
+      // no-reload path never leaves the iframe one edit behind. Other content
+      // patch kinds do not yet have a live bridge equivalent; let those take
+      // the normal single document refresh instead of claiming stale DOM.
+      syncRetainedTextDocument(result.source, patch);
       if (patch.kind !== 'set-style') {
         setManualEditFrozenSource(result.source);
       }
@@ -12761,10 +12787,7 @@ function HtmlViewer({
       setSource(latest.beforeSource);
       sourceRef.current = latest.beforeSource;
       setInlinedSource(null);
-      manualEditPersistedDocumentRef.current = {
-        sourceFingerprint: previewSourceFingerprint(latest.beforeSource),
-        reloadKey,
-      };
+      syncRetainedTextDocument(latest.beforeSource, latest.patch);
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
       setManualEditUndone((current) => [latest, ...current]);
@@ -12804,10 +12827,7 @@ function HtmlViewer({
       setSource(latest.afterSource);
       sourceRef.current = latest.afterSource;
       setInlinedSource(null);
-      manualEditPersistedDocumentRef.current = {
-        sourceFingerprint: previewSourceFingerprint(latest.afterSource),
-        reloadKey,
-      };
+      syncRetainedTextDocument(latest.afterSource, latest.patch);
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
       setManualEditHistory((current) => [latest, ...current]);
