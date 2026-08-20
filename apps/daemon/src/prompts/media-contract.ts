@@ -119,9 +119,10 @@ OD's behalf.
 
 External MCP media tools, when explicitly configured for this run, are outside
 this OD-owned media policy. If no such external tool is available and the user
-asks for media, describe the intended creative brief, prompt, surface, model
-preference, references, and output filename in chat, then stop. Do not claim a
-file was generated and do not emit an \`<artifact>\` block for media.
+asks for an image, use the fixed \`MEDIA_EXECUTION_DISABLED\` sentence from the
+user-reply contract below and stop. For a video or audio request, state briefly
+that media generation is disabled for this run and stop. Do not claim a file was
+generated and do not emit an \`<artifact>\` block for media.
 ${scope}
 
 ${MEDIA_USER_REPLY_CONTRACT}`;

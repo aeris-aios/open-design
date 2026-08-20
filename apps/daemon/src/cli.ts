@@ -1787,7 +1787,7 @@ async function runMediaGenerate(rawArgs) {
       body: JSON.stringify(body),
     });
   } catch {
-    exitWithMediaError({
+    await exitWithMediaError({
       code: 'MEDIA_DISPATCHER_UNREACHABLE',
       message: 'local media dispatcher could not be reached',
     }, 3);
@@ -1810,14 +1810,14 @@ async function runMediaGenerate(rawArgs) {
   });
 }
 
-function exitWithMediaError(error, exitCode) {
+async function exitWithMediaError(error, exitCode) {
   const safeError = {
     code: error.code,
     message: error.message,
     ...(typeof error.retryable === 'boolean' ? { retryable: error.retryable } : {}),
   };
   process.stderr.write(JSON.stringify({ error: safeError }) + '\n');
-  process.exit(exitCode);
+  await flushStreamsAndExit(exitCode);
 }
 
 async function exitWithMediaHttpFailure(resp) {
@@ -1836,9 +1836,9 @@ async function exitWithMediaHttpFailure(resp) {
     && typeof error.message === 'string'
     && error.message.trim()
   ) {
-    exitWithMediaError(error, 4);
+    await exitWithMediaError(error, 4);
   }
-  exitWithMediaError({
+  await exitWithMediaError({
     code: 'MEDIA_DISPATCH_FAILED',
     message: 'media dispatcher failed before generation started',
   }, 4);

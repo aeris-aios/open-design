@@ -559,6 +559,7 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('OpenDesign-owned media execution is **disabled for this run**');
       expect(prompt).toContain('MEDIA_EXECUTION_DISABLED');
       expect(prompt).toContain('本次任务未启用图片生成');
+      expect(prompt).not.toContain('describe the intended creative brief');
       expect(prompt).not.toContain('## Media generation contract');
       expect(prompt).not.toContain('External MCP servers — already authenticated');
     });

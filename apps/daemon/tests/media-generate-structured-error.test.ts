@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const daemonRoot = fileURLToPath(new URL("..", import.meta.url));
 const cliEntry = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const LARGE_ERROR_MESSAGE = "x".repeat(2 * 1024 * 1024);
 
 let server: http.Server | undefined;
 let baseUrl = "";
@@ -39,7 +40,7 @@ afterEach(async () => {
   server = undefined;
 });
 
-async function runCli(): Promise<{
+async function runCli(options: { delayStderrReadMs?: number } = {}): Promise<{
   code: number;
   stdout: string;
   stderr: string;
@@ -73,7 +74,13 @@ async function runCli(): Promise<{
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => (stdout += chunk));
-    child.stderr.on("data", (chunk) => (stderr += chunk));
+    if ((options.delayStderrReadMs ?? 0) > 0) child.stderr.pause();
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    if ((options.delayStderrReadMs ?? 0) > 0) {
+      setTimeout(() => child.stderr.resume(), options.delayStderrReadMs);
+    }
     child.on("error", reject);
     child.on("close", (code) => resolve({ code: code ?? -1, stdout, stderr }));
   });
@@ -94,6 +101,27 @@ describe("od media generate structured daemon failures", () => {
     });
     expect(result.stderr).not.toContain("internalPath");
     expect(result.stderr).not.toContain("run-secret");
+  });
+
+  it("flushes a large structured error envelope before exiting", async () => {
+    responseBody = JSON.stringify({
+      error: {
+        code: "provider_error",
+        message: LARGE_ERROR_MESSAGE,
+        retryable: true,
+      },
+    });
+
+    const result = await runCli({ delayStderrReadMs: 100 });
+
+    expect(result.code).toBe(4);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: {
+        code: "provider_error",
+        message: LARGE_ERROR_MESSAGE,
+        retryable: true,
+      },
+    });
   });
 
   it("classifies an unstructured daemon failure without echoing its body", async () => {
