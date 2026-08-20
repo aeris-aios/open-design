@@ -256,11 +256,11 @@ const usageRows = [
 
 const comparisonPopular = [
   'DeepSeek V4 Flash',
-  'Kimi K2.7 Code',
   'DeepSeek V4 Pro',
+  'GLM-5.2',
+  'Kimi K2.7 Code',
   'MiniMax M2.7',
   'MiMo V2.5 Pro',
-  'GLM-5.2',
   'Kimi K2.6',
   'GLM-5.1',
 ].map((name) => popularModels.find((model) => model.name === name)!);
@@ -494,7 +494,6 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     </div>
     <div class="individual-usage-note">
       <p>{P.usageAllowanceNote}</p>
-      <p>{P.usagePeakNote}</p>
       <p>{P.usageEstimatesNote}</p>
     </div>
   </section>
@@ -543,7 +542,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   <td class="model-name-cell"><span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span><span>{model.name}</span></td>
                   {(['go', 'plus', 'pro', 'max'] as TierId[]).map((tier) => {
                     const status = accessStatus(category, model.name, tier);
-                    return <td><span class={`model-access-status ${status.kind}`}><i class:list={['status-icon', { infinity: status.kind === 'unlimited', check: status.kind === 'more-ample' }]}>{status.kind === 'unlimited' ? '∞' : ''}</i>{status.text}</span></td>;
+                    return status.kind === 'more-ample' ? (
+                      <td><span class={`model-access-status ${status.kind}`} aria-label={status.text}><i class="status-icon check"></i></span></td>
+                    ) : (
+                      <td><span class={`model-access-status ${status.kind}`}><i class:list={['status-icon', { infinity: status.kind === 'unlimited' }]}>{status.kind === 'unlimited' ? '∞' : ''}</i>{status.text}</span></td>
+                    );
                   })}
                 </tr>
               )),
@@ -1558,8 +1561,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     white-space: nowrap;
   }
 
-  .model-access-status.unlimited,
-  .model-access-status.more-ample { gap: 8px; }
+  .model-access-status.unlimited { gap: 8px; }
+  .model-access-status.more-ample {
+    width: 23px;
+    height: 23px;
+  }
   .model-access-status.resolution { font-weight: 500; }
 
   .status-icon {

@@ -123,7 +123,6 @@ export interface PersonalPricingCopy {
   estimatedRequests: string;
   estimatedRequestsAria: string;
   usageAllowanceNote: string;
-  usagePeakNote: string;
   usageEstimatesNote: string;
   comparisonTitle: string;
   category: string;
@@ -263,7 +262,6 @@ const PERSONAL_EN: PersonalPricingCopy = {
   estimatedRequests: 'Estimated requests every 5 hours',
   estimatedRequestsAria: 'Estimated model requests every 5 hours',
   usageAllowanceNote: 'Popular models include ample allowance, roughly equivalent to $16 every 5 hours · $40 weekly · $80 monthly. Actual usage varies by model and context length.',
-  usagePeakNote: 'DeepSeek V4 Flash / Pro estimates use off-peak pricing; unit usage counts ×2 during peak hours (Beijing time 09:00–12:00 and 14:00–18:00).',
   usageEstimatesNote: 'Estimated request counts by model may change with model pricing, usage patterns, and user feedback.',
   comparisonTitle: 'Compare every model across plans',
   category: 'Category',
@@ -309,7 +307,6 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   estimatedRequests: '每 5 小时预估可用次数',
   estimatedRequestsAria: '模型每 5 小时预估请求数',
   usageAllowanceNote: '热门模型提供充足额度，大致相当于每 5 小时 $16 · 每周 $40 · 每月 $80。实际用量因模型和上下文长度而异。',
-  usagePeakNote: 'DeepSeek V4 Flash / Pro 按非高峰价格估算；高峰时段（北京时间 09:00–12:00、14:00–18:00）单位消耗 ×2。',
   usageEstimatesNote: '各模型的预估次数可能随模型价格、使用情况与用户反馈调整。',
   comparisonTitle: '对比各套餐的全部模型',
   category: '分类',
@@ -355,7 +352,6 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   estimatedRequests: '每 5 小時預估可用次數',
   estimatedRequestsAria: '模型每 5 小時預估請求數',
   usageAllowanceNote: '熱門模型提供充足額度，大致相當於每 5 小時 $16 · 每週 $40 · 每月 $80。實際用量依模型與上下文長度而異。',
-  usagePeakNote: 'DeepSeek V4 Flash / Pro 依離峰價格估算；尖峰時段（北京時間 09:00–12:00、14:00–18:00）單位用量 ×2。',
   usageEstimatesNote: '各模型的預估次數可能依模型價格、使用情況與使用者回饋調整。',
   comparisonTitle: '比較各方案的全部模型',
   category: '分類',
@@ -401,7 +397,6 @@ const PERSONAL_ES: PersonalPricingCopy = {
   estimatedRequests: 'Solicitudes estimadas cada 5 horas',
   estimatedRequestsAria: 'Solicitudes de modelo estimadas cada 5 horas',
   usageAllowanceNote: 'Los modelos populares incluyen una capacidad amplia, equivalente aproximadamente a $16 cada 5 horas · $40 por semana · $80 al mes. El uso real varía según el modelo y la longitud del contexto.',
-  usagePeakNote: 'Las estimaciones de DeepSeek V4 Flash / Pro usan precios fuera de hora punta; el consumo por unidad se duplica en hora punta (hora de Pekín 09:00–12:00 y 14:00–18:00).',
   usageEstimatesNote: 'Las solicitudes estimadas pueden cambiar según el precio del modelo, los patrones de uso y los comentarios de los usuarios.',
   comparisonTitle: 'Compara todos los modelos entre planes',
   category: 'Categoría',
@@ -447,7 +442,6 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   estimatedRequests: 'Solicitações estimadas a cada 5 horas',
   estimatedRequestsAria: 'Solicitações de modelo estimadas a cada 5 horas',
   usageAllowanceNote: 'Os modelos populares incluem uma franquia ampla, aproximadamente equivalente a $16 a cada 5 horas · $40 por semana · $80 por mês. O uso real varia conforme o modelo e o tamanho do contexto.',
-  usagePeakNote: 'As estimativas do DeepSeek V4 Flash / Pro usam preços fora do horário de pico; o consumo por unidade dobra no pico (horário de Pequim 09:00–12:00 e 14:00–18:00).',
   usageEstimatesNote: 'As solicitações estimadas podem mudar conforme o preço do modelo, os padrões de uso e o feedback dos usuários.',
   comparisonTitle: 'Compare todos os modelos entre os planos',
   category: 'Categoria',
@@ -493,7 +487,6 @@ const PERSONAL_RU: PersonalPricingCopy = {
   estimatedRequests: 'Оценка запросов каждые 5 часов',
   estimatedRequestsAria: 'Оценка запросов к моделям каждые 5 часов',
   usageAllowanceNote: 'Популярные модели включают большой лимит, примерно равный $16 каждые 5 часов · $40 в неделю · $80 в месяц. Фактический расход зависит от модели и длины контекста.',
-  usagePeakNote: 'Оценки DeepSeek V4 Flash / Pro используют внепиковые цены; в часы пик (по пекинскому времени 09:00–12:00 и 14:00–18:00) расход единиц удваивается.',
   usageEstimatesNote: 'Оценка числа запросов может меняться вместе с ценой модели, характером использования и отзывами пользователей.',
   comparisonTitle: 'Сравните все модели во всех планах',
   category: 'Категория',
@@ -539,7 +532,6 @@ const PERSONAL_FR: PersonalPricingCopy = {
   estimatedRequests: 'Requêtes estimées toutes les 5 heures',
   estimatedRequestsAria: 'Requêtes de modèles estimées toutes les 5 heures',
   usageAllowanceNote: 'Les modèles populaires incluent un quota généreux, soit environ 16 $ toutes les 5 heures · 40 $ par semaine · 80 $ par mois. L’usage réel varie selon le modèle et la longueur du contexte.',
-  usagePeakNote: 'Les estimations DeepSeek V4 Flash / Pro utilisent les tarifs hors pointe ; la consommation unitaire est doublée aux heures de pointe (heure de Pékin 09:00–12:00 et 14:00–18:00).',
   usageEstimatesNote: 'Le nombre estimé de requêtes peut évoluer avec le prix des modèles, les usages et les retours des utilisateurs.',
   comparisonTitle: 'Comparez tous les modèles selon les offres',
   category: 'Catégorie',
@@ -585,7 +577,6 @@ const PERSONAL_KO: PersonalPricingCopy = {
   estimatedRequests: '5시간마다 예상 사용 횟수',
   estimatedRequestsAria: '5시간마다 예상 모델 요청 수',
   usageAllowanceNote: '인기 모델에는 넉넉한 한도가 포함되며, 대략 5시간마다 $16 · 주당 $40 · 월 $80에 해당합니다. 실제 사용량은 모델과 컨텍스트 길이에 따라 달라집니다.',
-  usagePeakNote: 'DeepSeek V4 Flash / Pro 예상치는 비혼잡 시간대 요금을 기준으로 하며, 혼잡 시간대(베이징 시간 09:00–12:00, 14:00–18:00)에는 단위 사용량이 2배입니다.',
   usageEstimatesNote: '모델별 예상 요청 수는 모델 가격, 사용 패턴, 사용자 피드백에 따라 조정될 수 있습니다.',
   comparisonTitle: '요금제별 전체 모델 비교',
   category: '분류',
@@ -631,7 +622,6 @@ const PERSONAL_DE: PersonalPricingCopy = {
   estimatedRequests: 'Geschätzte Anfragen alle 5 Stunden',
   estimatedRequestsAria: 'Geschätzte Modellanfragen alle 5 Stunden',
   usageAllowanceNote: 'Beliebte Modelle enthalten ein großzügiges Kontingent, ungefähr entsprechend $16 alle 5 Stunden · $40 pro Woche · $80 pro Monat. Die tatsächliche Nutzung variiert je nach Modell und Kontextlänge.',
-  usagePeakNote: 'Die Schätzungen für DeepSeek V4 Flash / Pro verwenden Nebenzeitenpreise; zu Spitzenzeiten (Peking-Zeit 09:00–12:00 und 14:00–18:00) zählt der Verbrauch doppelt.',
   usageEstimatesNote: 'Die geschätzten Anfragen pro Modell können sich mit Modellpreisen, Nutzungsmustern und Nutzerfeedback ändern.',
   comparisonTitle: 'Alle Modelle nach Tarif vergleichen',
   category: 'Kategorie',
@@ -677,7 +667,6 @@ const PERSONAL_JA: PersonalPricingCopy = {
   estimatedRequests: '5 時間ごとの推定リクエスト数',
   estimatedRequestsAria: '5 時間ごとのモデル推定リクエスト数',
   usageAllowanceNote: '人気モデルには十分な利用枠が含まれ、目安は 5 時間ごとに $16 · 週 $40 · 月 $80 相当です。実際の使用量はモデルとコンテキスト長によって異なります。',
-  usagePeakNote: 'DeepSeek V4 Flash / Pro の推定値はオフピーク料金を使用します。ピーク時間（北京時間 09:00–12:00、14:00–18:00）は単位使用量が 2 倍になります。',
   usageEstimatesNote: 'モデル別の推定回数は、モデル価格、利用状況、ユーザーフィードバックに応じて変更される場合があります。',
   comparisonTitle: 'プラン別に全モデルを比較',
   category: 'カテゴリー',

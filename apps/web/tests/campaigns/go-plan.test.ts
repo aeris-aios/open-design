@@ -33,8 +33,23 @@ describe('Go plan touchpoints', () => {
   });
 
   it('keeps the confirmed Chinese lightweight-entry copy', () => {
-    expect(getGoPlanCampaignCopy('zh-CN').workbenchBadge).toBe('Go 首月 $5 · 无限用');
-    expect(getGoPlanCampaignCopy('en').workbenchBadge).toBe('Go first month $5 · unlimited use');
+    const chinese = getGoPlanCampaignCopy('zh-CN');
+    const english = getGoPlanCampaignCopy('en');
+
+    expect(chinese.workbenchBadge).toBe('全新 Go 套餐 · 首月 ¥5 · 模型无限用');
+    expect(chinese.headline).toBe('人人可用的低成本设计方案');
+    expect(chinese.description).toBe(
+      '以更低成本使用专业设计模型，让每一个想法更快成为作品。',
+    );
+    expect(chinese.cta).toBe('查看 Go 套餐 · 限时 5 折');
+    expect(english.workbenchBadge).toBe(
+      'The new Go Plan · ¥5 for the first month · Unlimited model usage',
+    );
+    expect(english.headline).toBe('Low-cost design plan for everyone');
+    expect(english.description).toBe(
+      'Professional design intelligence at a lower cost—so every idea moves faster from prompt to finished work.',
+    );
+    expect(english.cta).toBe('View Go plan · Limited-time 50% off');
   });
 
   it('ships localized modal and workbench copy for every supported locale', () => {

@@ -1139,14 +1139,17 @@ const jsonLd = [
   /* ---- Shared hosted multimodal benefit ---- */
   .pr-multimodal {
     position: relative;
+    left: 50%;
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(420px, 1fr);
     gap: 36px;
     align-items: center;
-    max-width: 1280px;
+    width: min(1160px, calc(100vw - 48px));
+    max-width: none;
     margin: 28px auto 0;
     padding: 30px 34px;
     overflow: hidden;
+    transform: translateX(-50%);
     border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
     border-radius: 18px;
     background:

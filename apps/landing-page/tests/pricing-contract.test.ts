@@ -36,6 +36,10 @@ const PRICING_INDIVIDUAL_PATH = new URL(
   "../app/_components/pricing-individual-plans.astro",
   import.meta.url,
 );
+const PRICING_CONTENT_PATH = new URL(
+  "../app/_lib/pricing-content.ts",
+  import.meta.url,
+);
 const GO_PLAN_MIMO_LOGO_PATH = new URL(
   "../public/pricing-e-final/assets/mimo-logo-user-CWOWEwG5.png",
   import.meta.url,
@@ -382,6 +386,23 @@ describe("pricing contract", () => {
     );
   });
 
+  it("leads the comparison with Go unlimited models and keeps ample access check-only", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+    const comparisonBlock = individualPlans.match(
+      /const comparisonPopular = \[([\s\S]*?)\]\.map/,
+    )?.[1];
+
+    assert.ok(comparisonBlock);
+    assert.deepEqual(
+      Array.from(comparisonBlock.matchAll(/'([^']+)'/g), (match) => match[1]).slice(0, 3),
+      ["DeepSeek V4 Flash", "DeepSeek V4 Pro", "GLM-5.2"],
+    );
+    assert.match(
+      individualPlans,
+      /status\.kind === 'more-ample'\s*\?\s*\(\s*<td><span class=\{`model-access-status \$\{status\.kind\}`\} aria-label=\{status\.text\}><i class="status-icon check"><\/i><\/span><\/td>/s,
+    );
+  });
+
   it("renders paid flagship headings as one localized phrase", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
 
@@ -430,6 +451,15 @@ describe("pricing contract", () => {
       individualPlans,
       /data-benefits-expanded='false'\] \.plan-benefit-list li:nth-child\(n \+ 4\)/,
     );
+  });
+
+  it("omits the DeepSeek peak-pricing estimate note from Personal usage", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+    const pricingContent = await readFile(PRICING_CONTENT_PATH, "utf8");
+
+    assert.doesNotMatch(individualPlans, /usagePeakNote/);
+    assert.doesNotMatch(pricingContent, /usagePeakNote/);
+    assert.doesNotMatch(pricingContent, /DeepSeek V4 Flash \/ Pro estimates use off-peak pricing/);
   });
 
   it("keeps the DeepSeek plan benefits without a Pricing campaign banner", async () => {
@@ -594,6 +624,11 @@ describe("pricing contract", () => {
       page.match(/<section class="pr-multimodal"/g)?.length,
       1,
       "the retained Cloud capability section must render exactly once",
+    );
+    assert.match(
+      page,
+      /\.pr-multimodal\s*\{[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(1160px, calc\(100vw - 48px\)\);[\s\S]*?max-width:\s*none;[\s\S]*?transform:\s*translateX\(-50%\);/,
+      "the Cloud capability card must share the comparison table width",
     );
   });
 
