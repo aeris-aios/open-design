@@ -21,7 +21,7 @@
   display: grid;
   grid-template-columns: minmax(230px, .78fr) minmax(380px, 1.22fr);
   width: min(760px, 100%);
-  min-height: 430px;
+  min-height: min(430px, calc(100dvh - 48px));
   max-height: calc(100dvh - 48px);
   padding: 0;
   overflow: hidden;

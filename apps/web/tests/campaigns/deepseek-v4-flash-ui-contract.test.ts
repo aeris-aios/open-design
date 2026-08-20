@@ -62,6 +62,13 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
   });
 
   it('collapses the Go modal before its fixed tracks overflow and scrolls short viewports', () => {
+    const baseModalRule = campaignModalStyles.match(
+      /\.goWelcomeModal\s*\{([^}]*)\}/,
+    )?.[1];
+
+    expect(baseModalRule).toContain(
+      'min-height: min(430px, calc(100dvh - 48px))',
+    );
     expect(campaignModalStyles).toMatch(
       /@media \(max-width: 658px\)[\s\S]*?\.goWelcomeModal\s*\{[\s\S]*?grid-template-columns: 1fr;[\s\S]*?overflow: auto;/,
     );
