@@ -11,7 +11,6 @@ import LocaleSwitcherScript from '../_components/locale-switcher-script.astro';
 import PreciseLazyload from '../_components/precise-lazyload.astro';
 import DownloadEngagementPrompt from '../_components/download-engagement-prompt.astro';
 import GoBanner from '../_components/go-banner.astro';
-import HomeLaunchWeekFloat from '../_components/home-launch-week-float.astro';
 import {
   heroBgImage,
   heroBgSrcset,
@@ -243,7 +242,6 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
       </a>
       <button class="home-campaign-banner__close" type="button" aria-label={campaignCopy.closeLabel} data-home-campaign-close>×</button>
     </div>
-    <HomeLaunchWeekFloat locale={locale} />
     <Fragment set:html={pageHtml} />
     <DownloadEngagementPrompt locale={locale} />
     <style is:global>
@@ -2283,6 +2281,34 @@ const cobeEnhancerUrl = `/enhancers/cobe.js?v=${
           { rootMargin: '0px 0px 150% 0px' },
         );
         containers.forEach((container) => io.observe(container));
+      })();
+    </script>
+    <script is:inline>
+      // Hero video facade: swap the poster for the YouTube iframe on demand so
+      // the first screen ships no third-party script until the visitor asks.
+      (() => {
+        const frame = document.querySelector('[data-hero-video]');
+        if (!frame) return;
+        const id = frame.getAttribute('data-video-id');
+        if (!id) return;
+        const play = () => {
+          if (frame.classList.contains('is-playing')) return;
+          const iframe = document.createElement('iframe');
+          iframe.src =
+            'https://www.youtube-nocookie.com/embed/' +
+            encodeURIComponent(id) +
+            '?autoplay=1&rel=0&playsinline=1&modestbranding=1';
+          iframe.title = 'OpenDesign product walkthrough';
+          iframe.allow =
+            'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+          iframe.setAttribute('allowfullscreen', '');
+          iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+          frame.classList.add('is-playing');
+          frame.appendChild(iframe);
+        };
+        // Pointer: anywhere on the poster. Keyboard: the labelled <button> is
+        // the only focusable control and its native activation fires `click`.
+        frame.addEventListener('click', play);
       })();
     </script>
   </body>
