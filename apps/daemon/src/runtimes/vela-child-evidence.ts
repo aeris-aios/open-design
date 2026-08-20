@@ -25,9 +25,16 @@ export const VELA_CHILD_EVIDENCE_ADAPTER_VERSION =
 export const VELA_CHILD_EVIDENCE_COVERAGE_SOURCE = 'vela_opencode_acp' as const;
 
 /**
- * Review pin for the candidate wire fixture. It is deliberately not a
- * production capability-registry entry: X3 has not published this producer
- * and X1 has not supplied a sanitized real runtime fixture.
+ * Review pin for the candidate wire fixture, carried into every observation as
+ * `candidateCommit` so evidence stays attributable to the producer that emitted
+ * it.
+ *
+ * `published` stays false: the producer lives on an unmerged Vela branch, so a
+ * build carrying it is not something a user can install. `verifiedRuntimeSupport`
+ * is now true — a local Vela built from that branch negotiated the extension and
+ * drove a complex OD Next task to `availability: complete` with three observed
+ * Children, which is the claim this flag makes. Flip `published` and re-pin the
+ * commit once the producer lands on Vela's main.
  */
 export const VELA_CHILD_EVIDENCE_CANDIDATE = Object.freeze({
   repository: 'PowerformerAI/vela',
@@ -36,7 +43,7 @@ export const VELA_CHILD_EVIDENCE_CANDIDATE = Object.freeze({
   published: false,
   bestEffortEvidenceVerified: true,
   verifiedOpenCodeVersion: '1.18.18',
-  verifiedRuntimeSupport: false,
+  verifiedRuntimeSupport: true,
 });
 
 type RecordValue = Record<string, unknown>;

@@ -147,7 +147,16 @@ export const CLAUDE_2_1_233_BEST_EFFORT_MANIFEST =
  * complex execution to an agent whose evidence paths all pass, on the separate
  * grounds that the build is not yet immutable. Admit it, and re-pin
  * `agentCliVersion` here once Vela publishes a build that reports a stable
- * producer version.
+ * producer version — this field records which CLI the fixture was captured
+ * against, and nothing gates on it.
+ *
+ * Child evidence is reached by ACP capability negotiation, not by sniffing that
+ * version: a Vela without the `vela.opencode.child_agent_lifecycle` producer
+ * simply never advertises it, so a complex task blocks on honestly missing
+ * evidence, and one that does advertise it works the moment it is installed.
+ * That is why admitting the tuple cannot make an older Vela claim Children it
+ * never reported, and why no version pin has to be walked back when the
+ * producer ships.
  */
 export const VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST =
   RuntimeCapabilityFixtureManifestV1Schema.parse({

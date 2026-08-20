@@ -88,7 +88,7 @@ describe('Vela OpenCode child evidence adapter', () => {
       published: false,
       bestEffortEvidenceVerified: true,
       verifiedOpenCodeVersion: '1.18.18',
-      verifiedRuntimeSupport: false,
+      verifiedRuntimeSupport: true,
     });
     expect(negotiateVelaChildEvidence(resultOf(fixture()[0]!))).toMatchObject({
       advertised: true,
@@ -203,7 +203,7 @@ describe('Vela OpenCode child evidence adapter', () => {
     ]);
     expect(VELA_CHILD_EVIDENCE_CANDIDATE).toMatchObject({
       bestEffortEvidenceVerified: true,
-      verifiedRuntimeSupport: false,
+      verifiedRuntimeSupport: true,
       published: false,
     });
   });
