@@ -186,7 +186,7 @@ test('DeepSeek Harness page leads with the design search intent', () => {
   assert.ok(en?.rich, 'missing English DeepSeek Harness rich guide');
   assert.ok(zh?.rich, 'missing Chinese DeepSeek Harness rich guide');
 
-  assert.match(en.title, /DeepSeek Harness.*UI Design/);
+  assert.match(en.title, /Design with DeepSeek Harness/);
   assert.equal(en.heading, 'Design with DeepSeek Harness.');
   assert.equal(
     en.rich.sections.find(({ id }) => id === 'why-design')?.heading,

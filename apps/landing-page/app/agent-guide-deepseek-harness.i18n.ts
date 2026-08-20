@@ -65,9 +65,9 @@ const DEEPSEEK_HARNESS_HERO_ACTIONS_ZH = [
 ];
 
 export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
-  title: 'DeepSeek Harness GUI & Web UI: How to Use dsh for UI Design | OpenDesign',
+  title: 'How to Design with DeepSeek Harness: the dsh + OpenDesign Workflow | OpenDesign',
   description:
-    'Yes, DeepSeek Harness has a GUI: run dsh web for the official local Web UI, then connect dsh to OpenDesign for a visual design workspace with design systems, reusable skills, model sync, and local previews.',
+    'DeepSeek Harness can build and edit real interfaces. Connect dsh to OpenDesign to turn it into a complete design workflow: design systems, reusable skills, model sync, and local artifact previews.',
   breadcrumb: 'DeepSeek Harness',
   label: 'Agent · DeepSeek Harness',
   heading: 'Design with DeepSeek Harness.',
@@ -104,7 +104,6 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
     tocLabel: 'On this page',
     toc: [
       { id: 'why-design', label: 'Can DeepSeek Harness do design?' },
-      { id: 'gui', label: 'Is there a GUI for DeepSeek Harness?' },
       { id: 'setup', label: '1. Install and configure DeepSeek Harness' },
       { id: 'open-design', label: '2. Download OpenDesign' },
       { id: 'detect-harness', label: '3. Detect DeepSeek Harness' },
@@ -193,32 +192,6 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
           {
             kind: 'p',
             text: 'The important limit is the same for every agent: composability is not taste. Without deliberate typography, spacing, component, and interaction constraints, the runtime will faithfully automate a generic result. OpenDesign’s role is to supply and organize those design inputs.',
-          },
-        ],
-      },
-      {
-        id: 'gui',
-        heading: 'Is there a GUI for DeepSeek Harness?',
-        blocks: [
-          {
-            kind: 'p',
-            text: 'Yes. DeepSeek Harness ships with a graphical interface out of the box: run `dsh web` and the official local Web UI opens at `http://127.0.0.1:3080` with a workspace view, sessions, and a model selector. There is no separate desktop installer to download — the Web UI is part of the same `@deepseek-ai/dsh` package as the headless runtime.',
-          },
-          {
-            kind: 'p',
-            text: 'The built-in Web UI is a session console: the right place to configure providers, pick models, and watch runs. It is not a design surface — it has no artifact preview, no design-system rules, and no visual review. If you are looking for a DeepSeek Harness GUI because you want to see and steer what dsh builds, connect it to the [OpenDesign desktop app](/download/): OpenDesign runs your dsh installation as a first-party local agent and adds the visual design workspace around it.',
-          },
-          {
-            kind: 'ul',
-            items: [
-              '`dsh web` — the official built-in Web UI. A local session console for providers, models, sessions, and runs.',
-              'OpenDesign — an open-source (Apache-2.0), local-first visual workspace that wraps dsh: artifact previews, design systems, reusable skills, and review in one GUI.',
-              'Community desktop wrappers — unofficial projects that repackage the Web UI. They chase a fast-moving developer preview, so check maintenance and provenance before relying on one.',
-            ],
-          },
-          {
-            kind: 'p',
-            text: 'The rest of this guide uses the first two together: `dsh web` once for provider setup, then OpenDesign as the graphical workspace for the actual design work.',
           },
         ],
       },
@@ -528,10 +501,6 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
         text: 'Open a new terminal window first. OpenDesign scans the common user-level tool directories itself, so you normally do not need to edit PATH; if OpenDesign is already open, go to the Local Agent page and click Rescan. If detection still fails, confirm the installer’s final screen reported DeepSeek Harness as ready, then share that output together with OpenDesign’s test message when asking for support.',
       },
       {
-        name: 'Does DeepSeek Harness have a GUI or web UI?',
-        text: 'Yes. Run `dsh web` to start the official local Web UI at `http://127.0.0.1:3080` — a graphical session console for providers, models, sessions, and runs, included in the `@deepseek-ai/dsh` package. For a full graphical design workspace on top of dsh — visual artifact previews, design systems, skills, and review — connect it to the OpenDesign desktop app, which runs dsh as a first-party local agent.',
-      },
-      {
         name: 'Is DeepSeek Harness an official DeepSeek project?',
         text: 'Yes. The repository is published under the `deepseek-ai` GitHub organization and describes dsh as an agent harness developed by DeepSeek AI. It is MIT-licensed and explicitly marked developer preview.',
       },
@@ -628,9 +597,9 @@ export const DEEPSEEK_HARNESS_EN_GUIDE: AgentGuideCopy = {
 };
 
 export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
-  title: 'DeepSeek Harness 有图形界面吗？GUI、Web UI 与设计教程 | OpenDesign',
+  title: '用 DeepSeek Harness 做设计：dsh + OpenDesign 完整教程 | OpenDesign',
   description:
-    'DeepSeek Harness 自带图形界面：运行 dsh web 打开官方本地 Web UI；再把 dsh 接入 OpenDesign，获得带设计系统、可复用 Skill、模型同步与本地预览的可视化设计工作台。',
+    'DeepSeek Harness 能在真实项目里生成和修改界面。把 dsh 接入 OpenDesign，获得完整的设计工作流：设计系统、可复用 Skill、模型同步与本地产物预览。',
   breadcrumb: 'DeepSeek Harness',
   label: 'Agent · DeepSeek Harness',
   heading: '用 DeepSeek Harness 做设计。',
@@ -656,7 +625,6 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
     tocLabel: '本页目录',
     toc: [
       { id: 'why-design', label: 'DeepSeek Harness 能做设计吗？' },
-      { id: 'gui', label: 'DeepSeek Harness 有图形界面吗？' },
       { id: 'setup', label: '1. 安装并配置 DeepSeek Harness' },
       { id: 'open-design', label: '2. 下载 OpenDesign' },
       { id: 'detect-harness', label: '3. 探测 DeepSeek Harness' },
@@ -713,32 +681,6 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
             caption: 'Harness 承载输入；品味仍来自设计系统、聚焦的 Skill 与具体参考。',
           },
           { kind: 'p', text: '最重要的限制与所有 Agent 一样：可组合性不等于品味。没有明确的字体、间距、组件与交互约束，运行时只会忠实地自动化一套通用结果。OpenDesign 的角色就是提供并组织这些设计输入。' },
-        ],
-      },
-      {
-        id: 'gui',
-        heading: 'DeepSeek Harness 有图形界面吗？',
-        blocks: [
-          {
-            kind: 'p',
-            text: '有。DeepSeek Harness 自带图形界面：运行 `dsh web`，官方本地 Web UI 会在 `http://127.0.0.1:3080` 打开，提供工作区、会话和模型选择器。不需要单独下载桌面安装包——Web UI 和 headless 运行时同属 `@deepseek-ai/dsh` 一个包。',
-          },
-          {
-            kind: 'p',
-            text: '内置 Web UI 是一个会话控制台：适合配置 Provider、选模型、查看运行过程，但它不是设计界面——没有产物预览、没有设计系统规则、也没有可视化审阅。如果你搜"DeepSeek Harness GUI"是想直观地看到并把控 dsh 产出的界面，把它接入 [OpenDesign 桌面应用](/download/)：OpenDesign 把你已安装的 dsh 作为第一方本地 Agent 运行，并在外层补上完整的可视化设计工作台。',
-          },
-          {
-            kind: 'ul',
-            items: [
-              '`dsh web`——官方内置 Web UI，本地会话控制台，负责 Provider、模型、会话与运行。',
-              'OpenDesign——开源（Apache-2.0）、本地优先的可视化工作台，包住 dsh：产物预览、设计系统、可复用 Skill 与审阅集中在一个 GUI 里。',
-              '社区桌面壳——非官方项目，对 Web UI 重新打包；它们追的是一个快速迭代的开发者预览版，依赖前先确认维护状态与来源。',
-            ],
-          },
-          {
-            kind: 'p',
-            text: '本文后续把前两者搭配使用：先用 `dsh web` 完成一次性 Provider 配置，再用 OpenDesign 作为实际设计工作的图形界面。',
-          },
         ],
       },
       {
@@ -921,7 +863,6 @@ export const DEEPSEEK_HARNESS_ZH_GUIDE: AgentGuideCopy = {
       { name: '如何安装并运行 DeepSeek Harness？', text: "运行对应系统的一行安装命令——macOS/Linux：`curl -fsSL 'https://open-design.ai/install-dsh.sh?version=1' | sh`（PowerShell 与 CMD 的命令见上文安装小节）。不需要预装 Node.js、pnpm 或 dsh，也不需要 `sudo`。安装完成后安装器会直接打开 `dsh web`：通过“内测声明”后，进入“设置 → 模型 → DeepSeek → API 密钥”，只保存 Key 本身。确认供应方与模型正常后，用 `Ctrl+C` 关闭 Web UI。安装 OpenDesign 0.19.1 或更高版本，重新扫描本机 CLI Agent，连接 Harness 卡片并点击“测试”。" },
       { name: '安装器会覆盖我电脑上的 Node.js 吗？', text: '不会。缺少环境时，自动补齐的运行环境安装在当前用户的独立工具链目录，不修改系统 Node.js，也不替换其他项目使用的版本。已经安装过兼容的 Node.js、pnpm 和 dsh 时，安装器会先检测现有版本并直接复用，不会重复安装。' },
       { name: '为什么安装后终端里仍然找不到 dsh？', text: '先重新打开一个终端窗口。OpenDesign 会扫描常见的用户级工具目录，通常不需要手动修改 PATH；如果 OpenDesign 已经打开，请回到“本地 Agent”页面点击“重新扫描”。仍无法识别时，先确认安装命令最后显示 DeepSeek Harness 已就绪，再把安装器最后一屏输出和 OpenDesign 的测试提示一并反馈给支持人员。' },
-      { name: 'DeepSeek Harness 有 GUI 或 Web UI 吗？', text: '有。运行 `dsh web` 即可在 `http://127.0.0.1:3080` 启动官方本地 Web UI——一个覆盖供应方、模型、会话与运行过程的图形化会话控制台，随 `@deepseek-ai/dsh` 包一起提供。如果需要 dsh 之上完整的图形化设计工作台（产物预览、设计系统、Skill 与审阅），把它接入 OpenDesign 桌面应用，OpenDesign 会把 dsh 作为一等本地 Agent 运行。' },
       { name: 'DeepSeek Harness 是 DeepSeek 官方项目吗？', text: '是。仓库发布在 `deepseek-ai` GitHub 组织下，并明确说明 dsh 由 DeepSeek AI 开发。项目采用 MIT 许可，也明确标记为开发者预览版。' },
       { name: 'DeepSeek Harness 能根据截图构建 UI 吗？', text: '只有所选模型路由声明支持图片输入时才可以。dsh 中 DeepSeek 自身的 chat-completions 路由只支持文本；在纯文本路由中，Harness 会在发送前拒绝图片。截图任务请选择支持图片的供应方，或通过代码、DOM、token 与书面规格描述目标。' },
       { name: 'DeepSeek Harness 支持 AGENTS.md 与 Skill 吗？', text: '支持。它的指令插件会加载兼容 AGENTS.md 与 CLAUDE.md 的项目文件；文件系统 Skill 供应方会从 `.dsh/skills`、`.agents/skills` 以及配置的用户与内置目录中发现 Skill。' },
