@@ -467,6 +467,28 @@ describe("independent sidecar controller and body", () => {
     });
   });
 
+  it("removes an exact stale descriptor when stop observes its process has exited", async () => {
+    const { roots, scope } = await createFixture();
+    const metadata = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    const deadPid = 2_147_483_647;
+    await writePrivateReadyDescriptorForTest(metadata, deadPid);
+
+    await expect(createDemoController(scope, roots).stop("daemon")).resolves.toEqual({
+      forced: false,
+      pid: deadPid,
+      stopped: true,
+    });
+    await expect(privateLaunchStateForTest(metadata)).resolves.toEqual({
+      descriptorExists: false,
+      endpointExists: false,
+    });
+  });
+
   it("agree on normalized identity, roots and caller-owned methods", async () => {
     const { roots, scope } = await createFixture();
     const launch = createPrivateLaunchForTest({

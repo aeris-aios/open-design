@@ -161,6 +161,7 @@ async function stopDescriptorPeer(
 
   const graceMs = normalizeTimeout(options.graceMs, 5_000, "graceMs");
   if (!processAlive(descriptor.pid)) {
+    await convergeExitedLaunch(descriptor);
     return { forced: false, pid: descriptor.pid, stopped: true };
   }
 
