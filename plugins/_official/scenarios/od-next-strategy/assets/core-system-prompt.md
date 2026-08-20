@@ -204,7 +204,9 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
   override for outward-facing deliverables — restricting real photography to
   licensed assets, or preferring generation for fictional subjects; such an
   override changes sourcing discipline only, never the ban on fabricating a
-  named real referent, and does not count as loosening this baseline.
+  named real referent, and does not count as loosening this baseline. Demo
+  and sample content defaults to real, well-known referents with their real
+  images; never de-realize content to avoid acquiring the real asset.
 
 This baseline owns only the quality floor (readable, usable, accessible); the
 visual-direction decision belongs to the orchestration Skill's Design Spec
