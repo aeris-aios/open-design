@@ -65,9 +65,9 @@ import {
   isDesignSystemWorkspacePrompt,
 } from '../design-system-auto-prompt';
 import {
+  continuableUnfinishedTodos,
   isTodoWriteToolName,
   latestTodoWriteInputForPinnedCard,
-  unfinishedTodosFromEvents,
 } from '../runtime/todos';
 import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, DesignSystemSummary, PreviewComment, Project, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
 import { agentDisplayName } from '../utils/agentLabels';
@@ -866,6 +866,11 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
       // internal step, not the turn ending.
       runId: message.runId ?? head.runId,
       runStatus: message.runStatus ?? head.runStatus,
+      // Likewise the task verdict: only the final Run of the chain carries it,
+      // and the folded turn is what the pinned todo card reads.
+      ...(message.strategyTaskDelivered
+        ? { strategyTaskDelivered: message.strategyTaskDelivered }
+        : {}),
       ...(message.endedAt ? { endedAt: message.endedAt } : {}),
       ...(message.resultDeliveryState
         ? { resultDeliveryState: message.resultDeliveryState }
@@ -4103,7 +4108,7 @@ function PinnedTodoSlot({
       ? `${owner.id}:${ownerTodoEvent.id}`
       : null;
   if (snapshotKey != null && snapshotKey === dismissedSnapshotKey) return null;
-  const unfinishedTodos = owner ? unfinishedTodosFromEvents(owner.events) : [];
+  const unfinishedTodos = continuableUnfinishedTodos(owner);
 
   return (
     <div

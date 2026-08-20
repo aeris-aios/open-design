@@ -3,6 +3,7 @@ import type { ChatRunStatusResponse, StrategyTaskProjectionV2 } from '@open-desi
 import {
   resolveQuestionFormStrategyTaskExecutionId,
   strategyBlockedMessageFields,
+  strategySettledMessageFields,
 } from '../../src/runtime/strategy-question-continuation';
 
 describe('question-form strategy continuation handle recovery', () => {
@@ -100,5 +101,30 @@ describe('strategyBlockedMessageFields', () => {
       outcome: 'running',
       terminal: false,
     }))).toBeNull();
+  });
+});
+
+describe('strategySettledMessageFields', () => {
+  it('stamps a delivered flag for a completed task', () => {
+    expect(strategySettledMessageFields(blockedProjection({
+      outcome: 'completed',
+      terminal: true,
+      blockedContext: undefined,
+    }))).toEqual({ strategyTaskDelivered: true });
+  });
+
+  it('keeps the blocked stamp taking precedence', () => {
+    expect(strategySettledMessageFields(blockedProjection())).toMatchObject({
+      strategyTaskBlocked: true,
+    });
+  });
+
+  it('stamps nothing while the task is still running', () => {
+    expect(strategySettledMessageFields(blockedProjection({
+      outcome: 'running',
+      terminal: false,
+      blockedContext: undefined,
+    }))).toBeNull();
+    expect(strategySettledMessageFields(undefined)).toBeNull();
   });
 });

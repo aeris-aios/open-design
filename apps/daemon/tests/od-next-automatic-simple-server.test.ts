@@ -63,6 +63,7 @@ type RunStatus = {
   status: string;
   updatedAt: number;
   eventsLogPath: string;
+  endedWithUnfinishedWork?: boolean;
   error?: string | null;
   errorCode?: string | null;
   strategyTask?: {
@@ -1616,6 +1617,43 @@ describe('OD Next automatic production through the real server', () => {
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(invocationCount);
   });
 
+  it('does not report unfinished work when the task delivered under a stale plan', async () => {
+    // QA on project 3ffc55f1: the turn wrote its deliverable and OD Next
+    // settled the task `completed`, but the agent's last plan snapshot still
+    // showed pending items. The Run was stamped endedWithUnfinishedWork, so the
+    // chat offered to "continue remaining tasks" on finished work — and taking
+    // that offer opened a second task that could only block on `no_artifact`.
+    const fixture = await createFixture('repair');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, createRunRequest(fixture, 'Build the coach prototype.'));
+    const task = await waitForTask(fixture.taskExecutionId, 'completed');
+    const terminal = await waitForRunTerminal(started!.url, task.latestRunId);
+
+    expect(terminal).toMatchObject({
+      status: 'succeeded',
+      strategyTask: { outcome: 'completed', terminal: true },
+    });
+    // The stale snapshot really did reach the Run — otherwise this asserts nothing.
+    const events = await readFile(terminal.eventsLogPath, 'utf8');
+    expect(events).toContain('Deliver the runnable entry');
+    expect(terminal.endedWithUnfinishedWork).toBe(false);
+
+    // …and it must survive a reload. The delivered verdict lives only in the
+    // task store — the messages table has no strategy column — so the
+    // conversation read path has to project it, or reopening the project
+    // brings the bogus "continue remaining tasks" offer straight back.
+    const reloaded = await fetch(
+      `${started!.url}/api/projects/${fixture.projectId}/conversations/${fixture.conversationId}/messages`,
+    );
+    expect(reloaded.status).toBe(200);
+    const { messages } = await reloaded.json() as {
+      messages: Array<{ role: string; runId?: string; strategyTaskDelivered?: boolean }>;
+    };
+    const deliveredTurn = messages.find((message) => message.runId === task.latestRunId);
+    expect(deliveredTurn).toBeDefined();
+    expect(deliveredTurn!.strategyTaskDelivered).toBe(true);
+  });
+
   it('fails closed when daemon-owned execution preflight rejects', async () => {
     const fixture = await createFixture('repair');
     await stopServer(started);
@@ -2378,6 +2416,7 @@ if (fs.existsSync(logPath + '.fail-start')) {
 }
 let stdin = '';
 let finished = false;
+let staleTodoList = false;
 function finish() {
   if (finished) return;
   finished = true;
@@ -2407,6 +2446,7 @@ function finish() {
     text = ${JSON.stringify(repaired)};
   } else if (stdin.includes('native continuation — production')) {
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Production</title>');
+    staleTodoList = true;
     text = ${JSON.stringify(production)};
   } else {
     text = ${JSON.stringify(initialRepair)};
@@ -2427,6 +2467,14 @@ function finish() {
   }
   console.log(JSON.stringify({ type: 'thread.started', thread_id: ${JSON.stringify(THREAD_ID)} }));
   console.log(JSON.stringify({ type: 'turn.started' }));
+  if (staleTodoList) {
+    // Observed on real turns: the deliverable is written, but the LAST plan
+    // snapshot the agent emits still carries unchecked items.
+    console.log(JSON.stringify({ type: 'item.completed', item: { id: 'todo-1', type: 'todo_list', items: [
+      { text: 'Draft the layout', completed: true },
+      { text: 'Deliver the runnable entry', completed: false },
+    ] } }));
+  }
   console.log(JSON.stringify({ type: 'item.completed', item: { id: 'answer', type: 'agent_message', text } }));
   console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5 } }));
   setTimeout(() => process.exit(0), 5);

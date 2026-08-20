@@ -927,6 +927,14 @@ export interface ChatMessage {
   /** Agent-visible text persisted with the blocked verdict; preferred notice
    *  copy when present (null when the gate left no visible text). */
   strategyTaskBlockedText?: string | null;
+  /**
+   * True once this turn's strategy task settled `completed` — the daemon
+   * verified both a succeeded process and the canonical deliverable on disk.
+   * The turn's TodoWrite snapshot may still show pending items the agent forgot
+   * to flip; this flag is what lets the chat stop offering to "continue"
+   * already-delivered work (see continuableUnfinishedTodos).
+   */
+  strategyTaskDelivered?: boolean;
   /** Analytics-only task lineage persisted with the message so retries,
    *  resumes and clarification answers survive reloads without splitting one
    *  user intent into unrelated failures. */

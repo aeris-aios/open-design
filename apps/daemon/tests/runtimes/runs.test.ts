@@ -1537,3 +1537,87 @@ describe('run event log persistence', () => {
     expect(kept.length).toBe(ITER);
   });
 });
+
+describe('work completeness vs a settled OD Next verdict', () => {
+  function createRuns() {
+    return createChatRunService({
+      createSseResponse: () => ({ send: vi.fn(() => true), end: vi.fn(), cleanup: vi.fn() }),
+      createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
+      shutdownGraceMs: 10,
+      ttlMs: 60_000,
+    });
+  }
+
+  /** A settled OD Next task projection. `completed` is only reachable once the
+   *  coordinator saw BOTH a succeeded process AND a resolvable canonical
+   *  deliverable, so it is the strongest completion evidence the daemon holds. */
+  function completedStrategyTask() {
+    return {
+      taskExecutionId: 'odnext_8979d0a7452e4e65a51c666ad89f864d',
+      strategy: {
+        id: 'od-next-strategy',
+        version: '2.0.0',
+        packageHash: 'a'.repeat(64),
+        snapshotId: 'snapshot-1',
+      },
+      inputStage: 'production',
+      outcome: 'completed',
+      route: 'full_plan',
+      executionMode: 'simple',
+      activeRunId: 'run-1',
+      terminal: true,
+    };
+  }
+
+  it('does not report unfinished work when OD Next settled the task as completed', () => {
+    const runs = createRuns();
+    const run = runs.create({ projectId: 'p1', conversationId: 'c1' }) as any;
+    // The agent delivered index.html plus six images and declared the task
+    // complete, but its LAST TodoWrite snapshot still carried two pending
+    // items — the exact shape QA captured on project 3ffc55f1.
+    run.lastTodoSnapshot = [
+      { content: '生成品牌视觉资产', status: 'completed' },
+      { content: '写入响应式交互原型', status: 'pending' },
+      { content: '交付根目录运行入口', status: 'pending' },
+    ];
+    run.strategyTask = completedStrategyTask();
+    run.deliverableValid = true;
+
+    runs.finish(run, 'succeeded', 0, null);
+
+    expect(run.endedWithUnfinishedWork).toBe(false);
+  });
+
+  it('still reports unfinished work when the OD Next task did not complete', () => {
+    const runs = createRuns();
+    const run = runs.create({ projectId: 'p1', conversationId: 'c1' }) as any;
+    run.lastTodoSnapshot = [{ content: '写入响应式交互原型', status: 'pending' }];
+    run.strategyTask = { ...completedStrategyTask(), outcome: 'blocked' };
+
+    runs.finish(run, 'succeeded', 0, null);
+
+    expect(run.endedWithUnfinishedWork).toBe(true);
+  });
+
+  it('still reports unfinished work for a non-strategy run', () => {
+    const runs = createRuns();
+    const run = runs.create({ projectId: 'p1', conversationId: 'c1' }) as any;
+    run.lastTodoSnapshot = [{ content: 'ship it', status: 'in_progress' }];
+
+    runs.finish(run, 'succeeded', 0, null);
+
+    expect(run.endedWithUnfinishedWork).toBe(true);
+  });
+
+  it('keeps a max_tokens truncation unfinished even under a completed verdict', () => {
+    const runs = createRuns();
+    const run = runs.create({ projectId: 'p1', conversationId: 'c1' }) as any;
+    run.truncatedMidTurn = true;
+    run.strategyTask = completedStrategyTask();
+    run.deliverableValid = true;
+
+    runs.finish(run, 'succeeded', 0, null);
+
+    expect(run.endedWithUnfinishedWork).toBe(true);
+  });
+});

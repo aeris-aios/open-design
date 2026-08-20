@@ -15127,9 +15127,14 @@ export async function startServer({
       if (!retried && pendingStrategyContinuation) {
         const continuation = pendingStrategyContinuation;
         // This turn is not over: the daemon is about to run the next stage of
-        // the SAME logical task, with no user prompt of its own. Tell the
-        // client before the source stream closes, so it keeps one conversation
-        // turn open instead of drawing the continuation as a new answer.
+        // the SAME logical task, with no user prompt of its own. Record the
+        // hand-off on the source stream — it lands in the Run's event log,
+        // which is where a multi-Run turn is reconstructed when diagnosing one.
+        //
+        // Observability only. Do NOT drive rendering from it: the client keeps
+        // the turn whole through `strategyTaskRunIndex` (folded at render time),
+        // and a consumer that re-pointed the existing message at `nextRunId`
+        // instead would print the continuation's answer twice.
         const continuationTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
         design.runs.emit(run, 'diagnostic', {
           type: 'strategy_task_continuation',

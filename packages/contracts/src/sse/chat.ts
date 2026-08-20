@@ -166,9 +166,15 @@ export interface ChatSseDiagnosticPayload {
 /**
  * The daemon is continuing the SAME logical task in a new physical Run. A Full
  * Plan turn spans several Runs (request -> production) that the user asked for
- * once, and the continuation carries no user prompt, so the client keeps the
- * originating turn open and re-points it at `nextRunId` instead of rendering a
- * second answer.
+ * once, and the continuation carries no user prompt of its own.
+ *
+ * Observability only — it marks the hand-off in the source Run's event log so a
+ * multi-Run turn can be reconstructed when diagnosing one. Rendering does NOT
+ * read it: the client keeps the turn whole from each message's
+ * `strategyTaskRunIndex`, folding the task's messages at render time. A client
+ * that instead re-pointed the originating message at `nextRunId` would end up
+ * showing the continuation's answer twice, next to the row the daemon persists
+ * for that Run.
  */
 export interface StrategyTaskContinuationDiagnostic extends ChatSseDiagnosticPayload {
   type: 'strategy_task_continuation';

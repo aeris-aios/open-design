@@ -60,7 +60,7 @@ import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   resolveQuestionFormStrategyTaskExecutionId,
-  strategyBlockedMessageFields,
+  strategySettledMessageFields,
 } from '../runtime/strategy-question-continuation';
 import {
   hasCurrentAutomaticScenarioBinding,
@@ -469,10 +469,51 @@ export async function listConversationsWithRetry(
     : new Error('Could not load conversations for this project.');
 }
 
-function mergeServerMessageWithLocal(server: ChatMessage, local?: ChatMessage): ChatMessage {
+/**
+ * Server messages whose local copy is longer only because the live stream
+ * folded a LATER Run of the same logical task into it.
+ *
+ * A Full Plan turn spans several physical Runs. The live stream re-points one
+ * assistant message at each successor Run (`onRunCreated`), so that message
+ * accumulates every stage's output; the daemon meanwhile persists one message
+ * per Run. On the post-run refresh the two views meet, and the ordinary
+ * "longer local body is fresher" rule (#6396) reads the accumulation as
+ * freshness and keeps it — next to the successor's own row. The successor's
+ * answer then renders twice.
+ *
+ * Only a message with a LATER sibling in the same task qualifies: the task's
+ * final Run has nothing to have absorbed, and its local copy really is the
+ * freshest one.
+ */
+function messagesThatAbsorbedASuccessorRun(
+  serverMessages: readonly ChatMessage[],
+): Set<string> {
+  const lastRunIndexByTask = new Map<string, number>();
+  for (const message of serverMessages) {
+    const task = message.strategyTaskExecutionId;
+    if (!task) continue;
+    const runIndex = message.strategyTaskRunIndex ?? 0;
+    lastRunIndexByTask.set(task, Math.max(lastRunIndexByTask.get(task) ?? 0, runIndex));
+  }
+  const absorbed = new Set<string>();
+  for (const message of serverMessages) {
+    const task = message.strategyTaskExecutionId;
+    if (!task) continue;
+    if ((message.strategyTaskRunIndex ?? 0) < (lastRunIndexByTask.get(task) ?? 0)) {
+      absorbed.add(message.id);
+    }
+  }
+  return absorbed;
+}
+
+function mergeServerMessageWithLocal(
+  server: ChatMessage,
+  local?: ChatMessage,
+  absorbedASuccessorRun = false,
+): ChatMessage {
   if (!local) return server;
   const merged: ChatMessage = { ...server };
-  if (local.role === 'assistant' && server.role === 'assistant') {
+  if (local.role === 'assistant' && server.role === 'assistant' && !absorbedASuccessorRun) {
     if ((local.content?.length ?? 0) > (server.content?.length ?? 0)) {
       merged.content = local.content;
     }
@@ -507,8 +548,13 @@ export function mergeServerMessagesIntoConversation(
 ): ChatMessage[] {
   const currentById = new Map(current.map((message) => [message.id, message]));
   const serverIds = new Set(serverMessages.map((message) => message.id));
+  const absorbed = messagesThatAbsorbedASuccessorRun(serverMessages);
   const merged = serverMessages.map((message) =>
-    mergeServerMessageWithLocal(message, currentById.get(message.id)),
+    mergeServerMessageWithLocal(
+      message,
+      currentById.get(message.id),
+      absorbed.has(message.id),
+    ),
   );
   for (const message of current) {
     if (!serverIds.has(message.id)) merged.push(message);
@@ -5298,13 +5344,13 @@ export function ProjectView({
         if (status.strategyTask?.taskExecutionId) {
           // A blocked verdict is stamped alongside the task handle so the
           // turn's question form stays terminated after a reload.
-          const blockedFields = strategyBlockedMessageFields(status.strategyTask);
+          const settledFields = strategySettledMessageFields(status.strategyTask);
           updateMessageById(
             message.id,
             (prev) => ({
               ...prev,
               strategyTaskExecutionId: status.strategyTask!.taskExecutionId,
-              ...(blockedFields ?? {}),
+              ...(settledFields ?? {}),
             }),
             true,
           );
@@ -5739,11 +5785,11 @@ export function ProjectView({
             authoritativeReattachArtifactPaths = paths;
           },
           onStrategyTaskSettled: (strategyTask) => {
-            const blockedFields = strategyBlockedMessageFields(strategyTask);
-            if (!blockedFields) return;
+            const settledFields = strategySettledMessageFields(strategyTask);
+            if (!settledFields) return;
             updateMessageById(
               message.id,
-              (prev) => ({ ...prev, ...blockedFields }),
+              (prev) => ({ ...prev, ...settledFields }),
               true,
             );
           },
@@ -8085,12 +8131,12 @@ export function ProjectView({
             : {}),
           ...(runAnalyticsHints ? { analyticsHints: runAnalyticsHints } : {}),
           onStrategyTaskSettled: (strategyTask) => {
-            const blockedFields = strategyBlockedMessageFields(strategyTask);
-            if (!blockedFields) return;
-            latestAssistantMsg = { ...latestAssistantMsg, ...blockedFields };
+            const settledFields = strategySettledMessageFields(strategyTask);
+            if (!settledFields) return;
+            latestAssistantMsg = { ...latestAssistantMsg, ...settledFields };
             updateMessageById(
               assistantId,
-              (prev) => ({ ...prev, ...blockedFields }),
+              (prev) => ({ ...prev, ...settledFields }),
               true,
             );
           },

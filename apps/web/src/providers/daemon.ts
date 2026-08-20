@@ -371,16 +371,6 @@ export interface DaemonStreamOptions {
   /** Called once the daemon projects the logical strategy task as terminal
    *  (completed / blocked / canceled), with the terminal projection. */
   onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
-  /**
-   * The daemon is continuing the SAME logical task in a new physical Run, with
-   * no user prompt of its own. The turn stays open: the consumer re-points the
-   * existing assistant message at `nextRunId` instead of starting a new one.
-   */
-  onStrategyTaskContinuation?: (continuation: {
-    taskExecutionId: string | null;
-    sourceRunId: string;
-    nextRunId: string;
-  }) => void;
 }
 
 export interface DaemonReattachOptions {
@@ -404,16 +394,6 @@ export interface DaemonReattachOptions {
   /** Called once the daemon projects the logical strategy task as terminal
    *  (completed / blocked / canceled), with the terminal projection. */
   onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
-  /**
-   * The daemon is continuing the SAME logical task in a new physical Run, with
-   * no user prompt of its own. The turn stays open: the consumer re-points the
-   * existing assistant message at `nextRunId` instead of starting a new one.
-   */
-  onStrategyTaskContinuation?: (continuation: {
-    taskExecutionId: string | null;
-    sourceRunId: string;
-    nextRunId: string;
-  }) => void;
 }
 
 export const RUNS_CHANGED_EVENT = 'open-design:runs-changed';
@@ -767,7 +747,6 @@ export async function streamViaDaemon({
   analyticsHints,
   taskExecutionId,
   onStrategyTaskSettled,
-  onStrategyTaskContinuation,
 }: DaemonStreamOptions): Promise<void> {
   const emitRunStatus = (status: ChatRunStatus) => {
     onRunStatus?.(status);
@@ -1320,7 +1299,6 @@ async function consumeDaemonPhysicalRun({
   workspaceContext,
   publishRunFinishedEvent,
   onStrategyTaskSettled,
-  onStrategyTaskContinuation,
 }: DaemonReattachOptions): Promise<DaemonPhysicalRunResult | void> {
   let acc = '';
   let stderrBuf = '';
@@ -1502,26 +1480,6 @@ async function consumeDaemonPhysicalRun({
             // later successful retry frames arrive. Cache the structured error
             // and let the terminal `end` event or the post-stream status
             // fallback below decide whether it should be surfaced.
-            continue;
-          }
-
-          if (
-            event.event === 'diagnostic'
-            && (event.data as { type?: unknown }).type === 'strategy_task_continuation'
-          ) {
-            const data = event.data as {
-              taskExecutionId?: unknown;
-              sourceRunId?: unknown;
-              nextRunId?: unknown;
-            };
-            if (typeof data.nextRunId === 'string' && data.nextRunId) {
-              onStrategyTaskContinuation?.({
-                taskExecutionId:
-                  typeof data.taskExecutionId === 'string' ? data.taskExecutionId : null,
-                sourceRunId: typeof data.sourceRunId === 'string' ? data.sourceRunId : '',
-                nextRunId: data.nextRunId,
-              });
-            }
             continue;
           }
 

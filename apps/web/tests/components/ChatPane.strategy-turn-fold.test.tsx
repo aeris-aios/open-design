@@ -81,3 +81,48 @@ describe('foldStrategyTaskTurns', () => {
     expect(assistants[0]!.content).not.toContain('T2_');
   });
 });
+
+describe('foldStrategyTaskTurns settlement', () => {
+  it('carries the final Run\'s delivered verdict onto the folded turn', () => {
+    // Only the production Run settles the task, but the pinned todo card reads
+    // the folded turn — so without this the card keeps offering "continue" on
+    // work the daemon already verified as delivered.
+    const folded = foldStrategyTaskTurns([
+      assistant({
+        id: 'a-plan',
+        content: 'PLAN',
+        strategyTaskExecutionId: 'odnext_1',
+        strategyTaskRunIndex: 0,
+      }),
+      assistant({
+        id: 'a-production',
+        content: 'BUILT',
+        strategyTaskExecutionId: 'odnext_1',
+        strategyTaskRunIndex: 1,
+        strategyTaskDelivered: true,
+      }),
+    ]);
+
+    expect(folded).toHaveLength(1);
+    expect(folded[0]!.strategyTaskDelivered).toBe(true);
+  });
+
+  it('leaves the turn unsettled while the task is still running', () => {
+    const folded = foldStrategyTaskTurns([
+      assistant({
+        id: 'a-plan',
+        content: 'PLAN',
+        strategyTaskExecutionId: 'odnext_1',
+        strategyTaskRunIndex: 0,
+      }),
+      assistant({
+        id: 'a-production',
+        content: 'BUILDING',
+        strategyTaskExecutionId: 'odnext_1',
+        strategyTaskRunIndex: 1,
+      }),
+    ]);
+
+    expect(folded[0]!.strategyTaskDelivered).toBeUndefined();
+  });
+});
