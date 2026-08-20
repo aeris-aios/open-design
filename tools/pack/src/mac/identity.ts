@@ -1,7 +1,6 @@
 import { OPEN_DESIGN_RUNTIME_DEFAULTS } from "@open-design/contracts/runtime/sidecars";
 import {
-  releaseChannelFromNamespace,
-  releaseChannelFromVersion,
+  releaseChannelFromIdentity,
   releaseInstallIdentity,
 } from "@open-design/release";
 
@@ -23,8 +22,11 @@ function sanitizeNamespace(value: string): string {
 
 export function resolveMacInstallIdentity(config: Pick<ToolPackConfig, "namespace" | "appVersion">): MacInstallIdentity {
   const namespaceToken = sanitizeNamespace(config.namespace);
-  const channel = releaseChannelFromVersion(config.appVersion)
-    ?? releaseChannelFromNamespace(config.namespace, OPEN_DESIGN_RUNTIME_DEFAULTS.namespace);
+  const channel = releaseChannelFromIdentity(
+    config.appVersion,
+    config.namespace,
+    OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
+  );
   const channelIdentity = channel == null
     ? { appId: "io.open-design.desktop", productName: PRODUCT_NAME }
     : releaseInstallIdentity(channel);

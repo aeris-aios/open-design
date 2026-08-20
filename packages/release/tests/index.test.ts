@@ -6,6 +6,7 @@ import {
   parseReleaseBaseVersion,
   parseReleaseVersion,
   releaseChannelDescriptor,
+  releaseChannelFromIdentity,
   releaseChannelFromNamespace,
   releaseChannelFromVersion,
   releaseInstallIdentity,
@@ -83,6 +84,13 @@ describe("@open-design/release", () => {
     expect(releaseChannelFromNamespace("open-design")).toBe("stable");
     expect(releaseChannelFromNamespace("beta-local-flow")).toBeNull();
     expect(releaseChannelFromNamespace("release-local")).toBeNull();
+  });
+
+  it("resolves one channel identity from version then namespace", () => {
+    expect(releaseChannelFromIdentity("1.2.3-beta.1", "release-preview", "default")).toBe("beta");
+    expect(releaseChannelFromIdentity("1.2.3", "default", "default")).toBe("stable");
+    expect(releaseChannelFromIdentity(null, "release-beta-linux", "default")).toBe("beta");
+    expect(releaseChannelFromIdentity(null, "local-smoke", "default")).toBeNull();
   });
 
   it("derives Windows release identity from the same namespace token", () => {

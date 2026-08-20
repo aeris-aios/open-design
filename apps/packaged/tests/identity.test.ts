@@ -51,6 +51,21 @@ describe("packaged identity markers", () => {
     expect(result.runtime).toMatchObject(result.control.scope);
   });
 
+  it.each([
+    { appVersion: "1.2.3", channel: "stable", namespace: "default" },
+    { appVersion: "1.2.3", channel: "stable", namespace: "release-stable" },
+    { appVersion: null, channel: "beta", namespace: "release-beta-linux" },
+  ] as const)(
+    "resolves $channel control identity for version=$appVersion namespace=$namespace",
+    ({ appVersion, channel, namespace }) => {
+      const paths = fakePaths(join(tmpdir(), `od-packaged-control-${process.pid}-${namespace}`));
+      const result = createPackagedControl(appVersion, 0, namespace, paths);
+
+      expect(result.control.scope).toEqual({ channel, generation: 0, namespace });
+      expect(result.runtime).toMatchObject(result.control.scope);
+    },
+  );
+
   it("can write and close the desktop identity shape at the headless marker path", async () => {
     const root = join(tmpdir(), `od-packaged-identity-${process.pid}-${Date.now()}`);
     const paths = fakePaths(root);

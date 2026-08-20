@@ -1,10 +1,11 @@
 import {
   createOpenDesignRuntimeProjection,
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
   OPEN_DESIGN_RUNTIME_MODES,
   OPEN_DESIGN_RUNTIME_SOURCES,
   type OpenDesignRuntimeContext,
 } from "@open-design/contracts/runtime/sidecars";
-import { releaseChannelFromVersion } from "@open-design/release";
+import { releaseChannelFromIdentity } from "@open-design/release";
 import { bootstrapControlPlane, type SidecarControlPlane } from "@open-design/sidecar/control";
 
 import type { PackagedNamespacePaths } from "./paths.js";
@@ -15,7 +16,11 @@ export function createPackagedControl(
   namespace: string,
   paths: PackagedNamespacePaths,
 ): { control: SidecarControlPlane; runtime: OpenDesignRuntimeContext } {
-  const channel = appVersion == null ? "local" : releaseChannelFromVersion(appVersion) ?? "local";
+  const channel = releaseChannelFromIdentity(
+    appVersion,
+    namespace,
+    OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
+  ) ?? "local";
   const projection = createOpenDesignRuntimeProjection(
     OPEN_DESIGN_RUNTIME_MODES.RUNTIME,
     OPEN_DESIGN_RUNTIME_SOURCES.PACKAGED,

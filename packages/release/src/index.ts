@@ -126,6 +126,16 @@ export function releaseChannelFromNamespace(namespace: string, defaultNamespace 
   return isReleaseChannel(match?.[1]) ? match[1] : null;
 }
 
+/** Resolve one release channel identity with version precedence and namespace fallback. */
+export function releaseChannelFromIdentity(
+  version: string | null | undefined,
+  namespace: string,
+  defaultNamespace = DEFAULT_NAMESPACE,
+): ReleaseChannel | null {
+  return releaseChannelFromVersion(version)
+    ?? releaseChannelFromNamespace(namespace, defaultNamespace);
+}
+
 export function isReleaseChannelNamespace(namespace: string, channel: ReleaseChannel): boolean {
   return new RegExp(`^release-${channel}(?:$|[-_.])`, "i").test(namespace);
 }

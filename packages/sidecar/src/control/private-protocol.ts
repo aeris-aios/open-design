@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { SidecarControlError, type SidecarControlErrorCode } from "./error.js";
@@ -13,6 +12,8 @@ import type {
 
 const CONTROL_SCHEMA_VERSION = 1 as const;
 const CONTROL_BOOTSTRAP_ENV = "OD_SIDECAR_CONTROL_BOOTSTRAP_V1";
+// Launch environments may be exact allowlists, so endpoint identity cannot depend on TMPDIR.
+const POSIX_CONTROL_ROOT = "/tmp";
 const CONTROL_TOKEN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
 const CONTROL_NAMESPACE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
 
@@ -214,7 +215,7 @@ export function privateControlPaths(
     endpointPath:
       process.platform === "win32"
         ? `\\\\.\\pipe\\open-design-sidecar-${key}`
-        : join(tmpdir(), `od-sidecar-${key}.sock`),
+        : join(POSIX_CONTROL_ROOT, `od-sidecar-${key}.sock`),
   };
 }
 
@@ -303,11 +304,10 @@ export function installPrivateLaunchMetadata(
 
 export function createPrivateLaunchEnv(
   metadata: PrivateLaunchMetadata,
-  extraEnv: NodeJS.ProcessEnv = {},
+  extraEnv?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   return {
-    ...process.env,
-    ...extraEnv,
+    ...(extraEnv ?? process.env),
     [CONTROL_BOOTSTRAP_ENV]: encodePrivateLaunchMetadata(metadata),
   };
 }

@@ -20,12 +20,13 @@ import {
   type LauncherRuntimeDescriptor,
   type LauncherVersionPointer,
 } from "@open-design/launcher-proto";
-import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
+import { releaseChannelFromIdentity } from "@open-design/release";
 import {
   readJsonFile,
   writeJsonFile,
 } from "@open-design/sidecar";
 import {
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
   OPEN_DESIGN_RUNTIME_SOURCES as SIDECAR_SOURCES,
   OPEN_DESIGN_SERVICES as APP_KEYS,
   type OpenDesignRuntimeSource as SidecarSource,
@@ -267,8 +268,11 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
   } catch {
     return { kind: "none", reason: "invalid-launcher-state" };
   }
-  const channel = releaseChannelFromVersion(appVersion)
-    ?? releaseChannelFromNamespace(options.namespace, "default")
+  const channel = releaseChannelFromIdentity(
+    appVersion,
+    options.namespace,
+    OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
+  )
     ?? "stable";
   const launcherPaths = resolveLauncherPaths({
     channel,

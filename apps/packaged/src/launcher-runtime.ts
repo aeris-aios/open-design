@@ -22,7 +22,8 @@ import {
   type LauncherAttemptDescriptor,
   type LauncherTargetSelection,
 } from "@open-design/launcher-proto";
-import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
+import { releaseChannelFromIdentity } from "@open-design/release";
+import { OPEN_DESIGN_RUNTIME_DEFAULTS } from "@open-design/contracts/runtime/sidecars";
 
 import type { PackagedConfig, PackagedWebOutputMode, RawPackagedConfig } from "./config.js";
 import type { LauncherExistingDesktopGateResult } from "./launcher-after-quit.js";
@@ -107,8 +108,11 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 function inferLauncherChannel(config: Pick<PackagedConfig, "appVersion" | "namespace">): LauncherChannel {
-  return releaseChannelFromVersion(config.appVersion)
-    ?? releaseChannelFromNamespace(config.namespace, "default")
+  return releaseChannelFromIdentity(
+    config.appVersion,
+    config.namespace,
+    OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
+  )
     ?? "stable";
 }
 

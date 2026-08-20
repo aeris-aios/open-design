@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import {
-  releaseChannelFromNamespace,
-  releaseChannelFromVersion,
+  releaseChannelFromIdentity,
 } from "@open-design/release";
 import {
+  OPEN_DESIGN_RUNTIME_DEFAULTS,
   OPEN_DESIGN_SERVICES as APP_KEYS,
 } from "@open-design/contracts/runtime/sidecars";
 import {
@@ -30,9 +30,11 @@ export function createToolPackControl(
   config: ToolPackConfig,
   mode: ToolPackControlMode,
 ): SidecarControlAccess {
-  const fallbackChannel = releaseChannelFromVersion(config.appVersion)
-    ?? releaseChannelFromNamespace(config.namespace, "default")
-    ?? "local";
+  const fallbackChannel = releaseChannelFromIdentity(
+    config.appVersion,
+    config.namespace,
+    OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
+  ) ?? "local";
   const namespaceRoot = resolve(config.roots.runtime.namespaceRoot);
   let scope: SidecarControlScope = { channel: fallbackChannel, generation: 0, namespace: config.namespace };
   const identityPath = join(namespaceRoot, "runtime", `${mode}-root.json`);

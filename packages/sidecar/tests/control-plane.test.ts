@@ -268,6 +268,56 @@ describe("independent sidecar controller and body", () => {
     await expect(controller.connect("daemon")).rejects.toThrow(/unavailable/);
   });
 
+  it("treats an explicit launch environment as complete and only inherits when omitted", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const childEntry = join(import.meta.dirname, "fixtures", "control-env-child.ts");
+    const ambientKey = "OD_SIDECAR_TEST_AMBIENT_SECRET";
+    const previousAmbient = process.env[ambientKey];
+    process.env[ambientKey] = "must-not-leak";
+    type EnvironmentMethods = {
+      readEnvironment: {
+        input: { key: string };
+        output: { value: string | null };
+      };
+    };
+
+    try {
+      const exact = await controller.launch<EnvironmentMethods>({
+        args: ["--import", "tsx", childEntry],
+        env: {
+          PATH: process.env.PATH,
+          ...(process.env.SystemRoot == null ? {} : { SystemRoot: process.env.SystemRoot }),
+        },
+        executable: process.execPath,
+        service: "web",
+      });
+      cleanups.push(async () => {
+        await exact.stop();
+      });
+      await expect(exact.client.call("readEnvironment", { key: ambientKey })).resolves.toEqual({
+        value: null,
+      });
+      expect(exact.client.environment({ PATH: "/bin" })[ambientKey]).toBeUndefined();
+      expect(exact.client.environment()[ambientKey]).toBe("must-not-leak");
+
+      const inherited = await controller.launch<EnvironmentMethods>({
+        args: ["--import", "tsx", childEntry],
+        executable: process.execPath,
+        service: "daemon",
+      });
+      cleanups.push(async () => {
+        await inherited.stop();
+      });
+      await expect(inherited.client.call("readEnvironment", { key: ambientKey })).resolves.toEqual({
+        value: "must-not-leak",
+      });
+    } finally {
+      if (previousAmbient == null) delete process.env[ambientKey];
+      else process.env[ambientKey] = previousAmbient;
+    }
+  });
+
   it("force-terminates an uncooperative body and converges its control state", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);

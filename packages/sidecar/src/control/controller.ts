@@ -229,7 +229,7 @@ function createClient<TMethods>(descriptor: PrivateLaunchMetadata): SidecarContr
         : options.timeoutMs;
       return (await invoke({ kind: "call", input, method }, timeoutMs)) as never;
     },
-    environment(extraEnv = {}) {
+    environment(extraEnv) {
       return createPrivateLaunchEnv(descriptor, extraEnv);
     },
     identity: descriptor.identity,

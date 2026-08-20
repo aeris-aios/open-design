@@ -1,7 +1,6 @@
 import { OPEN_DESIGN_RUNTIME_DEFAULTS } from "@open-design/contracts/runtime/sidecars";
 import {
-  releaseChannelFromNamespace,
-  releaseChannelFromVersion,
+  releaseChannelFromIdentity,
   releaseInstallIdentity,
   resolveWindowsReleaseNamespaceToken,
   resolveWindowsUninstallRegistryKey,
@@ -21,8 +20,11 @@ export type WinInstallIdentity = {
 
 export function resolveWinInstallIdentity(config: Pick<ToolPackConfig, "namespace" | "appVersion">): WinInstallIdentity {
   const namespaceToken = resolveWindowsReleaseNamespaceToken(config.namespace);
-  const channel = releaseChannelFromVersion(config.appVersion)
-    ?? releaseChannelFromNamespace(config.namespace, OPEN_DESIGN_RUNTIME_DEFAULTS.namespace);
+  const channel = releaseChannelFromIdentity(
+    config.appVersion,
+    config.namespace,
+    OPEN_DESIGN_RUNTIME_DEFAULTS.namespace,
+  );
   const displayName = channel == null ? `${PRODUCT_NAME} ${namespaceToken}` : releaseInstallIdentity(channel).productName;
 
   return {

@@ -104,7 +104,7 @@ export type SidecarCallOptions = Readonly<{
 
 export type SidecarControlClient<TMethods> = Readonly<{
   identity: SidecarControlIdentity;
-  /** Delegate this exact opaque service capability to a child process. */
+  /** Delegate this exact opaque service capability; a provided env is the complete base. */
   environment(extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   call<TMethod extends Extract<keyof TMethods, string>>(
     method: TMethod,
@@ -149,6 +149,7 @@ export type SidecarLaunchOptions = Readonly<{
   args?: readonly string[];
   cwd?: string;
   detached?: boolean;
+  /** Complete child environment when provided; omission inherits the controller environment. */
   env?: NodeJS.ProcessEnv;
   executable: string;
   /** Adopt an exact healthy peer for idempotent starts, or replace it. */
