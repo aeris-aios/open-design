@@ -1,7 +1,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ToolPackCache } from "../build-cache/cache.js";
+import type { ToolPackCache } from "../cache/index.js";
 import type { ToolPackConfig } from "../config/index.js";
 import { processWebSourcemaps } from "../web-sourcemaps.js";
 import { ensureWorkspaceBuildArtifacts } from "../workspace-build.js";

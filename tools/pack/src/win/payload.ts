@@ -9,7 +9,7 @@ import {
   resolveLauncherVersionPaths,
 } from "@open-design/launcher-proto";
 
-import { hashJson, hashPath, type ToolPackCache } from "../build-cache/cache.js";
+import { hashJson, hashPath, type ToolPackCache } from "../cache/index.js";
 import type { ToolPackConfig } from "../config/index.js";
 import { winResources } from "../resources/index.js";
 import { electronBuilderVersionForAppVersion } from "../versioning/index.js";

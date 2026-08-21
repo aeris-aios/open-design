@@ -42,14 +42,14 @@
     "packaged-leaf": {
       "prefixes": [
         "apps/desktop/src/", "apps/desktop/tests/", "apps/packaged/src/", "apps/packaged/tests/",
-        "tools/pack/src/build-cache/", "tools/pack/src/config/", "tools/pack/src/launcher/",
+        "tools/pack/src/cache/", "tools/pack/src/config/", "tools/pack/src/launcher/",
         "tools/pack/src/mac/", "tools/pack/src/resources/", "tools/pack/src/updates/",
         "tools/pack/src/versioning/", "tools/pack/src/win/", "tools/pack/tests/", "tools/pack/resources/"
       ]
     },
     "windows-launcher-payload": {
       "prefixes": [
-        "tools/pack/src/build-cache/", "tools/pack/src/config/", "tools/pack/src/launcher/",
+        "tools/pack/src/cache/", "tools/pack/src/config/", "tools/pack/src/launcher/",
         "tools/pack/src/resources/", "tools/pack/src/updates/", "tools/pack/src/versioning/",
         "tools/pack/src/win/", "tools/pack/tests/launcher/windows/", "tools/pack/resources/win/",
         "packages/launcher-proto/src/", "packages/sidecar-proto/src/"

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { ToolPackCache } from "../build-cache/cache.js";
+import { ToolPackCache } from "../cache/index.js";
 import type { ToolPackConfig } from "../config/index.js";
 import {
   collectWorkspaceTarballs,

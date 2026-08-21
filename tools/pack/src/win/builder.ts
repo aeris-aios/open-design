@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { hashJson, hashPath, type CacheNode, ToolPackCache } from "../build-cache/cache.js";
+import { hashJson, hashPath, type CacheNode, ToolPackCache } from "../cache/index.js";
 import type { ToolPackConfig } from "../config/index.js";
 import { domToPptxBundleResource } from "../dom-to-pptx-resource.js";
 import {

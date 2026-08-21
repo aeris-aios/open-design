@@ -1,4 +1,4 @@
-import { ToolPackCache } from "../build-cache/cache.js";
+import { ToolPackCache } from "../cache/index.js";
 import type { ToolPackConfig } from "../config/index.js";
 import { collectWorkspaceTarballs, copyResourceTree, writeAssembledApp } from "./app.js";
 import { seedPackagedAppConfig } from "./app-config.js";

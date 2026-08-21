@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { rebuild } from "@electron/rebuild";
 import { createCommandInvocation, createPackageManagerInvocation } from "@open-design/platform";
 
-import { hashJson, hashPath, ToolPackCache } from "../build-cache/cache.js";
+import { hashJson, hashPath, ToolPackCache } from "../cache/index.js";
 import type { ToolPackConfig } from "../config/index.js";
 import {
   prepareNodePtyRuntime,

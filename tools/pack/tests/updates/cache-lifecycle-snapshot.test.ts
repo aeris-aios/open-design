@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../../src/config/index.js";
-import { readToolPackUpdateCacheLifecycleSnapshot } from "../../src/updates/cache-lifecycle-snapshot.js";
+import type { ToolPackConfig } from "@/config/index.js";
+import { readToolPackUpdateCacheLifecycleSnapshot } from "@/updates/cache-lifecycle-snapshot.js";
 
 function makeConfig(root: string): Pick<ToolPackConfig, "platform" | "roots"> {
   return {
