@@ -1227,8 +1227,6 @@ const jsonLd = [
           let message = '';
           if (!pricingContext.current && !pricingContext.checkoutAllowed) {
             message = actionLabels.checkoutUnavailable;
-          } else if (pricingContext.current && pricingContext.cancelAtPeriodEnd) {
-            message = actionLabels.currentCanceling;
           } else if (pricingContext.pendingChange) {
             const plan = pricingContext.pendingChange.tier.charAt(0).toUpperCase()
               + pricingContext.pendingChange.tier.slice(1);
