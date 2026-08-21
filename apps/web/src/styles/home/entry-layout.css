@@ -419,17 +419,18 @@
   flex: 0 0 30px;
 }
 .entry-local-mode-tip {
-  position: absolute;
-  left: var(--spacing-8, 8px);
-  right: var(--spacing-8, 8px);
-  /* Anchored to the footer (position: relative), whose bottom edge sits the
-     panel's 5px bottom padding + 1px ring above the panel's visible edge —
-     3 + 5 + 1 = 9px, matching the sides' 8 + 1px ring inset. */
-  bottom: 3px;
+  /* In flow, not absolute. It used to be anchored to the footer's bottom edge
+     (position: absolute; bottom: 3px; z-index: 2), which was harmless while
+     the footer had nothing else in it. The footer now ends with the social
+     row, and an opaque card pinned over that same bottom strip hid the
+     Discord/Feishu, X and mail links from exactly the signed-out users this
+     card is shown to. Sitting in flow (order 2, above the social row's 3)
+     keeps both reachable and lets the footer size itself. */
+  order: 2;
   display: grid;
   gap: 8px;
-  width: auto;
-  margin: 0;
+  width: calc(100% - var(--spacing-16, 16px));
+  margin: 0 auto;
   padding: 8px;
   box-sizing: border-box;
   border: 1px solid var(--border);
