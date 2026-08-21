@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as publicControl from "../src/control/index.js";
 import {
   createPrivateLaunchForTest,
+  claimPrivateLaunchForTest,
   installPrivateLaunchForTest,
   privateLaunchStateForTest,
+  retirePrivateLaunchForTest,
   sendPrivateRequestForTest,
   writePrivateDescriptorTextForTest,
   writePrivateReadyDescriptorForTest,
+  writePrivateUnpublishedLeaseForTest,
 } from "../src/control/private-testing.js";
 import { attachDemoBody } from "./fixtures/control-body.js";
 import {
@@ -68,10 +71,11 @@ describe("sidecar ordered convergence", () => {
   it("attempts every requested service even when earlier stops reject", async () => {
     const calls: string[] = [];
     const control = {
+      async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
       async stop(service: string) {
         calls.push(service);
         if (service !== "daemon") throw new Error(`${service} failed`);
-        return { forced: false, pid: 42, state: "stopped" as const };
+        return { pid: 42, state: "stopped" as const };
       },
     };
 
@@ -90,12 +94,13 @@ describe("sidecar ordered convergence", () => {
     expect(calls).toEqual(["desktop", "web", "daemon"]);
   });
 
-  it("issues proof only when every requested service is absent or stopped", async () => {
+  it("reports completion only while every requested service is absent or stopped", async () => {
     const convergence = await publicControl.stopSidecarServices({
+      async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
       async stop(service: string) {
         return service === "desktop"
-          ? { forced: false, pid: 42, state: "stopped" as const }
-          : { forced: false, pid: null, state: "absent" as const };
+          ? { pid: 42, state: "stopped" as const }
+          : { pid: null, state: "absent" as const };
       },
     }, [
       { service: "desktop" },
@@ -103,8 +108,7 @@ describe("sidecar ordered convergence", () => {
     ]);
 
     expect(convergence).toMatchObject({ state: "complete" });
-    if (convergence.state !== "complete") throw new Error("expected convergence proof");
-    expect(convergence.proof.attempts).toBe(convergence.attempts);
+    expect(convergence).not.toHaveProperty("proof");
   });
 });
 
@@ -125,12 +129,61 @@ describe("sidecar control identity", () => {
       /generation/,
     );
   });
+
+  it("serializes lifecycle mutation across generations in one namespace", async () => {
+    const { roots, scope } = await createFixture();
+    const oldGeneration = createDemoController(scope, roots);
+    const nextGeneration = createDemoController({ ...scope, generation: scope.generation + 1 }, roots);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let nextEntered = false;
+
+    const first = oldGeneration.withLifecycleSession(async () => {
+      await gate;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    const second = nextGeneration.withLifecycleSession(async () => {
+      nextEntered = true;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 75));
+    expect(nextEntered).toBe(false);
+    release();
+    await Promise.all([first, second]);
+    expect(nextEntered).toBe(true);
+  });
 });
 
 describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
+  it("rejects a body that has no exact controller-created claim", async () => {
+    const { roots, scope } = await createFixture();
+    const launch = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "web",
+    });
+    const restore = installPrivateLaunchForTest(launch);
+    cleanups.push(restore);
+    await expect(attachDemoBody(() => undefined)).rejects.toMatchObject({ code: "peer-mismatch" });
+  });
+
+  it("never lets an old incarnation retire its successor", async () => {
+    const { roots, scope } = await createFixture();
+    const oldLease = createPrivateLaunchForTest({ projection: demoProjection, roots, scope, service: "web" });
+    await claimPrivateLaunchForTest(oldLease);
+    await expect(retirePrivateLaunchForTest(oldLease)).resolves.toBe(true);
+    const successor = createPrivateLaunchForTest({ projection: demoProjection, roots, scope, service: "web" });
+    await claimPrivateLaunchForTest(successor);
+
+    await expect(retirePrivateLaunchForTest(oldLease)).resolves.toBe(false);
+    await expect(privateLaunchStateForTest(successor)).resolves.toMatchObject({ descriptorExists: true });
+    await retirePrivateLaunchForTest(successor);
+  });
+
   it("exposes a caller-hosted semantic service through the same fenced control plane", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
+    expect(controller).not.toHaveProperty("requestStop");
     const hosted = await controller.expose<DemoMethods>({
       handlers: {
         context(_input, context) {
@@ -145,6 +198,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     cleanups.push(() => hosted.close());
 
     const client = await controller.connect<DemoMethods>("shell");
+    expect(client).not.toHaveProperty("requestStop");
     await expect(client.call("echo", { value: "capability" })).resolves.toEqual({
       value: "hosted:capability",
     });
@@ -155,6 +209,27 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
 
     await hosted.close();
+    await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
+  });
+
+  it("treats hosted shutdown, endpoint close and lease retirement as terminal stop", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    let shutdownFinished = false;
+    await controller.expose<DemoMethods>({
+      handlers: {
+        context(_input, context) { return context; },
+        echo(input) { return input; },
+      },
+      async onStopRequested() {
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        shutdownFinished = true;
+      },
+      service: "shell",
+    });
+
+    await expect(controller.stop("shell")).resolves.toMatchObject({ state: "stopped" });
+    expect(shutdownFinished).toBe(true);
     await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
   });
 
@@ -199,6 +274,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
     const restoreLaunch = installPrivateLaunchForTest(launch);
     cleanups.push(restoreLaunch);
+    await claimPrivateLaunchForTest(launch);
     let initialized = false;
     const body = await publicControl.attachSidecar<DemoMethods>({
       handlers: {
@@ -238,6 +314,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
     const restoreLaunch = installPrivateLaunchForTest(launch);
     cleanups.push(restoreLaunch);
+    await claimPrivateLaunchForTest(launch);
     let stopped = false;
 
     await expect(publicControl.attachSidecar<DemoMethods>({
@@ -526,7 +603,6 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     await writePrivateReadyDescriptorForTest(metadata, deadPid);
 
     await expect(createDemoController(scope, roots).stop("daemon")).resolves.toEqual({
-      forced: false,
       pid: deadPid,
       state: "stopped",
     });
@@ -546,6 +622,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
     const restoreLaunch = installPrivateLaunchForTest(launch);
     cleanups.push(restoreLaunch);
+    await claimPrivateLaunchForTest(launch);
     let observedContext: unknown = null;
     const body = await attachDemoBody((context) => {
       observedContext = context;
@@ -587,6 +664,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
       service: "web",
     });
     const restoreFirst = installPrivateLaunchForTest(firstLaunch);
+    await claimPrivateLaunchForTest(firstLaunch);
     const firstBody = await attachDemoBody(() => undefined);
     const staleClient = await controller.connect<DemoMethods>("web");
     await firstBody.close();
@@ -602,6 +680,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     expect(secondLaunch.incarnation).not.toBe(firstLaunch.incarnation);
     const restoreSecond = installPrivateLaunchForTest(secondLaunch);
     cleanups.push(restoreSecond);
+    await claimPrivateLaunchForTest(secondLaunch);
     const secondBody = await attachDemoBody(() => undefined);
     cleanups.push(() => secondBody.close());
 
@@ -625,6 +704,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
     const restoreLaunch = installPrivateLaunchForTest(launch);
     cleanups.push(restoreLaunch);
+    await claimPrivateLaunchForTest(launch);
     const body = await attachDemoBody(() => undefined);
     cleanups.push(() => body.close());
 
@@ -634,7 +714,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
 
     await expect(wrongChannel.connect("daemon")).rejects.toThrow(/unavailable/);
     await expect(wrongNamespace.connect("daemon")).rejects.toThrow(/unavailable/);
-    await expect(wrongGeneration.requestStop("daemon")).rejects.toThrow(/unavailable/);
+    await expect(wrongGeneration.stop("daemon")).resolves.toMatchObject({ state: "absent" });
 
     for (const identity of [
       { ...launch.identity, channel: "stable" },
@@ -668,6 +748,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
     const restoreLaunch = installPrivateLaunchForTest(launch);
     cleanups.push(restoreLaunch);
+    await claimPrivateLaunchForTest(launch);
     const body = await attachDemoBody(() => undefined);
     cleanups.push(() => body.close());
 
@@ -691,6 +772,26 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     await expect(access.stop("daemon")).rejects.toMatchObject({ code: "peer-mismatch" });
     await expect(createDemoController(scope, roots).stop("daemon")).rejects.toMatchObject({
       code: "peer-mismatch",
+    });
+  });
+
+  it("keeps an interrupted unpublished lease authoritative until session recovery", async () => {
+    const { roots, scope } = await createFixture();
+    const metadata = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    await writePrivateUnpublishedLeaseForTest(metadata);
+
+    await expect(privateLaunchStateForTest(metadata)).resolves.toMatchObject({ descriptorExists: true });
+    await expect(createDemoController(scope, roots).connect("daemon")).rejects.toMatchObject({
+      code: "peer-mismatch",
+    });
+    await expect(createDemoController(scope, roots).stop("daemon")).resolves.toEqual({
+      pid: null,
+      state: "absent",
     });
   });
 
@@ -736,7 +837,6 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
 
     const access = publicControl.accessControlPlane({ runtimeRoot: roots.runtimeRoot, scope });
     await expect(access.stop("daemon", { graceMs: 10 })).resolves.toEqual({
-      forced: false,
       pid: launch.pid,
       state: "alive",
     });
@@ -772,7 +872,6 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     await writePrivateReadyDescriptorForTest(launch, pid);
 
     await expect(createDemoController(scope, roots).stop("daemon", { graceMs: 2_000 })).resolves.toEqual({
-      forced: false,
       pid,
       state: "stopped",
     });
@@ -812,7 +911,6 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
 
     const access = publicControl.accessControlPlane({ runtimeRoot: roots.runtimeRoot, scope });
     await expect(access.stop("daemon", { graceMs: 10 })).resolves.toEqual({
-      forced: false,
       pid,
       state: "alive",
     });
@@ -820,7 +918,6 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
 
     const bootstrap = createDemoController(scope, roots);
     await expect(bootstrap.stop("daemon", { graceMs: 10 })).resolves.toEqual({
-      forced: false,
       pid,
       state: "alive",
     });
@@ -837,6 +934,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     });
     const restoreLaunch = installPrivateLaunchForTest(launch);
     cleanups.push(restoreLaunch);
+    await claimPrivateLaunchForTest(launch);
     const body = await attachDemoBody(() => undefined);
     cleanups.push(() => body.close());
 

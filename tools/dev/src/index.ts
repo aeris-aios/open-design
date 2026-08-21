@@ -61,7 +61,6 @@ import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
 import { createToolsDevControl } from "./control.js";
-import { startAfterConvergedStops } from "./restart-convergence.js";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -796,12 +795,12 @@ async function stopApp(config: ToolDevConfig, appName: ToolDevAppName) {
     status: converged.state === "absent" ? "not-running" : converged.state === "stopped" ? "stopped" : "partial",
     stop: {
       alreadyStopped: converged.state === "absent",
-      forcedPids: converged.forced && converged.pid != null ? [converged.pid] : [],
+      forcedPids: [],
       matchedPids,
       remainingPids: converged.state === "alive" ? matchedPids : [],
       stoppedPids: converged.state === "stopped" ? matchedPids : [],
     },
-    via: converged.forced ? "control+force" : "control",
+    via: "control",
   };
 }
 
@@ -845,17 +844,29 @@ async function status(config: ToolDevConfig, appName: string | undefined) {
 }
 
 async function restartTargets(config: ToolDevConfig, appName: string | undefined, options: CliOptions) {
-  const stopTargets = resolveStopApps(appName);
-  const startTargets = resolveStartApps(appName);
-  await resolveSharedPortsFromRunningState(startTargets, options, {
-    daemonUrl: async () => (await inspectDaemonRuntime(runtimeLookup(config)))?.url,
-    webUrl: async () => (await inspectWebRuntime(runtimeLookup(config)))?.url,
+  return await createToolsDevControl(config).withLifecycleSession(async () => {
+    const stopTargets = resolveStopApps(appName);
+    const startTargets = resolveStartApps(appName);
+    await resolveSharedPortsFromRunningState(startTargets, options, {
+      daemonUrl: async () => (await inspectDaemonRuntime(runtimeLookup(config)))?.url,
+      webUrl: async () => (await inspectWebRuntime(runtimeLookup(config)))?.url,
+    });
+    const stopped = await runSequential(stopTargets, (target) => stopApp(config, target));
+    const unproven = Object.values(stopped).filter((result) =>
+      result.status !== "not-running" && result.status !== "stopped"
+    );
+    if (unproven.length > 0) {
+      throw new AggregateError(
+        unproven.map((result) => new Error(`could not stop ${result.app}`)),
+        "refusing tools-dev restart after an unproven stop",
+      );
+    }
+    const started = await runSequential(
+      startTargets,
+      (target) => startApp(config, target, options, { targets: startTargets }),
+    );
+    return { start: started, stop: stopped };
   });
-  const stopped = await runSequential(stopTargets, (target) => stopApp(config, target));
-  const started = await startAfterConvergedStops(stopped, async () =>
-    await runSequential(startTargets, (target) => startApp(config, target, options, { targets: startTargets }))
-  );
-  return { start: started, stop: stopped };
 }
 
 async function readLogs(config: ToolDevConfig, appName: ToolDevAppName) {

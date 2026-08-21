@@ -51,6 +51,7 @@ async function main(): Promise<void> {
     },
     async onStopRequested() {
       await server?.stop();
+      await server?.waitUntilStopped();
     },
   });
 
@@ -71,7 +72,10 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
-  process.exit(1);
-});
+void main().then(
+  () => process.exit(0),
+  (error: unknown) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error));
+    process.exit(1);
+  },
+);

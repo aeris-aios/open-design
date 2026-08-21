@@ -68,14 +68,10 @@ export type SidecarProbeResult = Readonly<{
   projection: SidecarControlProjection;
 }>;
 
-export type SidecarStopResult = Readonly<{
-  accepted: true;
-}>;
-
 export type SidecarConvergeResult =
-  | Readonly<{ forced: false; pid: null; state: "absent" }>
-  | Readonly<{ forced: boolean; pid: number; state: "stopped" }>
-  | Readonly<{ forced: false; pid: number | null; state: "alive" }>;
+  | Readonly<{ pid: null; state: "absent" }>
+  | Readonly<{ pid: number; state: "stopped" }>
+  | Readonly<{ pid: number | null; state: "alive" }>;
 
 export type SidecarStopOptions = Readonly<{ graceMs?: number }>;
 
@@ -96,18 +92,9 @@ export type SidecarServiceStopAttempt =
       status: "rejected";
     }>;
 
-declare const convergenceProof: unique symbol;
-
-/** Opaque evidence that every requested identity is absent or stopped. */
-export type SidecarConvergenceProof = Readonly<{
-  attempts: readonly SidecarServiceStopAttempt[];
-  [convergenceProof]: true;
-}>;
-
 export type SidecarServicesConvergence =
   | Readonly<{
       attempts: readonly SidecarServiceStopAttempt[];
-      proof: SidecarConvergenceProof;
       state: "complete";
     }>
   | Readonly<{
@@ -116,7 +103,7 @@ export type SidecarServicesConvergence =
     }>;
 
 export type SidecarCallOptions = Readonly<{
-  /** `null` is reserved for lifecycle calls whose response is the terminal event itself. */
+  /** `null` disables the semantic call deadline. */
   timeoutMs?: number | null;
 }>;
 
@@ -130,7 +117,6 @@ export type SidecarControlClient<TMethods> = Readonly<{
     options?: SidecarCallOptions,
   ): Promise<MethodOutput<TMethods, TMethod>>;
   probe(): Promise<SidecarProbeResult>;
-  requestStop(): Promise<SidecarStopResult>;
 }>;
 
 export type SidecarControlPlane = Readonly<{
@@ -141,8 +127,8 @@ export type SidecarControlPlane = Readonly<{
   expose<TMethods>(options: SidecarExposeOptions<TMethods>): Promise<AttachedSidecar>;
   launch<TMethods>(options: SidecarLaunchOptions): Promise<SidecarLaunch<TMethods>>;
   probe(service: string): Promise<SidecarProbeResult>;
-  requestStop(service: string): Promise<SidecarStopResult>;
   stop(service: string, options?: SidecarStopOptions): Promise<SidecarConvergeResult>;
+  withLifecycleSession<T>(callback: () => Promise<T>): Promise<T>;
 }>;
 
 export type AccessControlPlaneOptions = Readonly<{
@@ -155,8 +141,8 @@ export type SidecarControlAccess = Readonly<{
   scope: SidecarControlScope;
   connect<TMethods>(service: string): Promise<SidecarControlClient<TMethods>>;
   probe(service: string): Promise<SidecarProbeResult>;
-  requestStop(service: string): Promise<SidecarStopResult>;
   stop(service: string, options?: SidecarStopOptions): Promise<SidecarConvergeResult>;
+  withLifecycleSession<T>(callback: () => Promise<T>): Promise<T>;
 }>;
 
 export type SidecarExposeOptions<TMethods> = AttachSidecarOptions<TMethods> & Readonly<{

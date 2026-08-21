@@ -10,7 +10,7 @@ import type { ToolPackConfig } from "../src/config.js";
 const requestJsonIpc = vi.hoisted(() => vi.fn());
 const stopControl = vi.hoisted(() => vi.fn<
   (service?: string, options?: { graceMs?: number }) => Promise<SidecarConvergeResult>
->(async () => ({ forced: false, pid: null, state: "absent" })));
+>(async () => ({ pid: null, state: "absent" })));
 const spawnBackgroundProcess = vi.hoisted(() => vi.fn(async () => ({ pid: 12345 })));
 const invokeNsis = vi.hoisted(() => vi.fn<typeof import("../src/win/nsis.js").invokeNsis>());
 const queryWinRegistryEntries = vi.hoisted(() =>
@@ -28,6 +28,7 @@ vi.mock("../src/control.js", async (importOriginal) => {
         call: async (method: string, input: unknown) => requestJsonIpc(service, { ...input as object, type: method }),
       }),
       stop: stopControl,
+      async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
     }),
   };
 });
@@ -193,8 +194,8 @@ describe("installPackedWinApp", () => {
         await writeFile(installedSentinel, "installed", "utf8");
         if (withUninstaller) await writeFile(paths.uninstallerPath, "uninstaller", "utf8");
         stopControl.mockImplementation(async (service) => service === "web"
-          ? { forced: false, pid: null, state: "alive" }
-          : { forced: false, pid: null, state: "absent" });
+          ? { pid: null, state: "alive" }
+          : { pid: null, state: "absent" });
         invokeNsis.mockReset();
 
         await expect(installPackedWinApp(config)).rejects.toThrow(
@@ -203,7 +204,7 @@ describe("installPackedWinApp", () => {
         await expect(readFile(installedSentinel, "utf8")).resolves.toBe("installed");
         expect(invokeNsis).not.toHaveBeenCalled();
       } finally {
-        stopControl.mockResolvedValue({ forced: false, pid: null, state: "absent" });
+        stopControl.mockResolvedValue({ pid: null, state: "absent" });
         await rm(root, { force: true, recursive: true });
       }
     },
@@ -312,7 +313,7 @@ describe("inspectPackedWinApp", () => {
       await writeFakeUnpackedExe(config);
       requestJsonIpc.mockReset();
       spawnBackgroundProcess.mockClear();
-      stopControl.mockResolvedValue({ forced: false, pid: null, state: "absent" });
+      stopControl.mockResolvedValue({ pid: null, state: "absent" });
       process.env.OD_JSON_IPC_TRACE = "already-on";
       requestJsonIpc.mockImplementation(async (ipc: string, payload: { type?: string }) => {
         if (payload.type === SIDECAR_MESSAGES.STATUS) {
@@ -356,8 +357,8 @@ describe("stopPackedWinApp", () => {
     try {
       stopControl.mockReset();
       stopControl.mockImplementation(async (service) => service === "daemon"
-        ? { forced: false, pid: 4242, state: "stopped" }
-        : { forced: false, pid: null, state: "absent" });
+        ? { pid: 4242, state: "stopped" }
+        : { pid: null, state: "absent" });
 
       await expect(stopPackedWinApp(config)).resolves.toEqual({
         gracefulRequested: true,
@@ -391,8 +392,8 @@ describe("stopPackedWinApp", () => {
       await writeFile(outputSentinel, "output", "utf8");
       await writeFile(runtimeSentinel, "runtime", "utf8");
       stopControl.mockImplementation(async (service) => service === "web"
-        ? { forced: false, pid: null, state: "alive" }
-        : { forced: false, pid: null, state: "absent" });
+        ? { pid: null, state: "alive" }
+        : { pid: null, state: "absent" });
       invokeNsis.mockClear();
 
       await expect(uninstallPackedWinApp(config)).resolves.toMatchObject({
@@ -418,7 +419,7 @@ describe("stopPackedWinApp", () => {
       await expect(readFile(outputSentinel, "utf8")).resolves.toBe("output");
       await expect(readFile(runtimeSentinel, "utf8")).resolves.toBe("runtime");
     } finally {
-      stopControl.mockResolvedValue({ forced: false, pid: null, state: "absent" });
+      stopControl.mockResolvedValue({ pid: null, state: "absent" });
       await rm(root, { force: true, recursive: true });
     }
   });

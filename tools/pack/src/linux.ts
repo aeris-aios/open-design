@@ -24,7 +24,7 @@ import {
 
 import type { ToolPackConfig } from "./config.js";
 import {
-  convergeToolPackServices,
+  withConvergedToolPackServices,
   createToolPackControl,
   isToolPackStopSafeForRemoval,
   stopToolPackServices,
@@ -940,7 +940,7 @@ async function fetchDesktopStatus(config: ToolPackConfig): Promise<DesktopStatus
   }
 }
 
-export async function startPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStartResult> {
+async function startPackedLinuxAppWithinLifecycleSession(config: ToolPackConfig): Promise<LinuxStartResult> {
   const paths = resolveLinuxPaths(config);
   const installed = await pathExists(paths.installAppImagePath);
   const built = !installed ? await findBuiltAppImage(paths) : null;
@@ -957,7 +957,6 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
 
   // Resolve and converge the exact live generation before clearing its product
   // identity. Clearing first would make control fall back to cold generation 0.
-  await convergeToolPackServices(createToolPackControl(config, "desktop"));
   await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
 
   // --appimage-extract-and-run bypasses FUSE-mounted SquashFS, which is too slow
@@ -1006,19 +1005,34 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   };
 }
 
+export async function startPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStartResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await withConvergedToolPackServices(
+    control,
+    async () => await startPackedLinuxAppWithinLifecycleSession(config),
+  );
+}
+
 async function teardownOrphanedStart(rootPid: number): Promise<void> {
   const snapshots = await listProcessSnapshots();
   const treePids = collectProcessTreePids(snapshots, [rootPid]);
   await stopProcesses(treePids);
 }
 
-export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
+async function stopPackedLinuxAppWithinLifecycleSession(config: ToolPackConfig): Promise<LinuxStopResult> {
   const results = await stopToolPackServices(createToolPackControl(config, "desktop"));
   const stop = summarizeToolPackStopResults(config.namespace, results);
   if (isToolPackStopSafeForRemoval(stop)) {
     await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   }
   return stop;
+}
+
+export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await control.withLifecycleSession(
+    async () => await stopPackedLinuxAppWithinLifecycleSession(config),
+  );
 }
 
 export async function readPackedLinuxLogs(config: ToolPackConfig): Promise<{
@@ -1092,7 +1106,7 @@ async function tryRemove(path: string): Promise<"ok" | "already-removed"> {
 // Either state makes it safe to delete install files. "partial" means at least
 // one stop was not proven, even when that peer did not report a PID, so
 // destructive removal could leave an orphan with broken handles and stale state.
-export async function uninstallPackedLinuxApp(config: ToolPackConfig): Promise<LinuxUninstallResult> {
+async function uninstallPackedLinuxAppWithinLifecycleSession(config: ToolPackConfig): Promise<LinuxUninstallResult> {
   const paths = resolveLinuxPaths(config);
   const stop = await stopPackedLinuxApp(config);
 
@@ -1128,6 +1142,13 @@ export async function uninstallPackedLinuxApp(config: ToolPackConfig): Promise<L
   };
 }
 
+export async function uninstallPackedLinuxApp(config: ToolPackConfig): Promise<LinuxUninstallResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await control.withLifecycleSession(
+    async () => await uninstallPackedLinuxAppWithinLifecycleSession(config),
+  );
+}
+
 export type LinuxHeadlessUninstallResult = {
   launcherPath: string;
   namespace: string;
@@ -1135,7 +1156,7 @@ export type LinuxHeadlessUninstallResult = {
   stop: LinuxStopResult;
 };
 
-export async function uninstallPackedLinuxHeadless(
+async function uninstallPackedLinuxHeadlessWithinLifecycleSession(
   config: ToolPackConfig,
 ): Promise<LinuxHeadlessUninstallResult> {
   const stop = await stopPackedLinuxHeadless(config);
@@ -1156,6 +1177,15 @@ export async function uninstallPackedLinuxHeadless(
     removed: await tryRemove(launcherPath),
     stop,
   };
+}
+
+export async function uninstallPackedLinuxHeadless(
+  config: ToolPackConfig,
+): Promise<LinuxHeadlessUninstallResult> {
+  const control = createToolPackControl(config, "headless");
+  return await control.withLifecycleSession(
+    async () => await uninstallPackedLinuxHeadlessWithinLifecycleSession(config),
+  );
 }
 
 export type LinuxCleanupResult = {
@@ -1292,7 +1322,7 @@ export async function installPackedLinuxHeadless(config: ToolPackConfig): Promis
 
 // Waits up to 35s for the desktop identity marker, then up to 60s for the
 // web identity (95s total).
-export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxHeadlessStartResult> {
+async function startPackedLinuxHeadlessWithinLifecycleSession(config: ToolPackConfig): Promise<LinuxHeadlessStartResult> {
   const paths = resolveLinuxPaths(config);
   const entryPath = resolveHeadlessEntryPath(paths);
   const nodePath = resolveHeadlessBundledNodePath(paths);
@@ -1304,7 +1334,6 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   }
 
   const nodeCommand = (await pathExists(nodePath)) ? nodePath : process.execPath;
-  await convergeToolPackServices(createToolPackControl(config, "headless"));
   const logPath = headlessLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
@@ -1365,7 +1394,15 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   };
 }
 
-export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
+export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxHeadlessStartResult> {
+  const control = createToolPackControl(config, "headless");
+  return await withConvergedToolPackServices(
+    control,
+    async () => await startPackedLinuxHeadlessWithinLifecycleSession(config),
+  );
+}
+
+async function stopPackedLinuxHeadlessWithinLifecycleSession(config: ToolPackConfig): Promise<LinuxStopResult> {
   const results = await stopToolPackServices(createToolPackControl(config, "headless"));
   const stop = summarizeToolPackStopResults(config.namespace, results);
   if (isToolPackStopSafeForRemoval(stop)) {
@@ -1375,7 +1412,14 @@ export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<L
   return stop;
 }
 
-export async function cleanupPackedLinuxNamespace(
+export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
+  const control = createToolPackControl(config, "headless");
+  return await control.withLifecycleSession(
+    async () => await stopPackedLinuxHeadlessWithinLifecycleSession(config),
+  );
+}
+
+async function cleanupPackedLinuxNamespaceWithinLifecycleSession(
   config: ToolPackConfig,
   options: { headless?: boolean } = {},
 ): Promise<LinuxCleanupResult> {
@@ -1413,4 +1457,15 @@ export async function cleanupPackedLinuxNamespace(
     skipped: false,
     stop,
   };
+}
+
+export async function cleanupPackedLinuxNamespace(
+  config: ToolPackConfig,
+  options: { headless?: boolean } = {},
+): Promise<LinuxCleanupResult> {
+  const mode = resolveLinuxLifecycleMode(options, "cleanup");
+  const control = createToolPackControl(config, mode === "headless" ? "headless" : "desktop");
+  return await control.withLifecycleSession(
+    async () => await cleanupPackedLinuxNamespaceWithinLifecycleSession(config, options),
+  );
 }

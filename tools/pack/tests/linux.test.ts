@@ -23,7 +23,8 @@ vi.mock("../src/control.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/control.js")>(),
   createToolPackControl: () => ({
     connect: async () => ({ call: async () => controlCall() }),
-    stop: async () => ({ forced: false, pid: null, state: "absent" }),
+    stop: async () => ({ pid: null, state: "absent" }),
+    async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
   }),
 }));
 

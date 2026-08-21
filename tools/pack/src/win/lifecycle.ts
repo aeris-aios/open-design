@@ -25,7 +25,7 @@ import {
 
 import type { ToolPackConfig } from "../config.js";
 import {
-  convergeToolPackServices,
+  withConvergedToolPackServices,
   createToolPackControl,
   isToolPackStopSafeForRemoval,
   stopToolPackServices,
@@ -274,10 +274,8 @@ async function resolveStartTarget(config: ToolPackConfig): Promise<{ configPath:
   throw new Error(`no windows app executable found for namespace=${config.namespace}; run tools-pack win build first or tools-pack win install after building an NSIS installer`);
 }
 
-export async function startPackedWinApp(config: ToolPackConfig, options: { waitForStatus?: boolean } = {}): Promise<WinStartResult> {
+async function startPackedWinAppWithinLifecycleSession(config: ToolPackConfig, options: { waitForStatus?: boolean } = {}): Promise<WinStartResult> {
   const target = await resolveStartTarget(config);
-  const control = controlForConfig(config);
-  await convergeToolPackServices(control);
   const logPath = desktopLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
@@ -302,18 +300,33 @@ export async function startPackedWinApp(config: ToolPackConfig, options: { waitF
   };
 }
 
+export async function startPackedWinApp(config: ToolPackConfig, options: { waitForStatus?: boolean } = {}): Promise<WinStartResult> {
+  const control = controlForConfig(config);
+  return await withConvergedToolPackServices(
+    control,
+    async () => await startPackedWinAppWithinLifecycleSession(config, options),
+  );
+}
+
 async function findManagedDesktopProcessTree(config: ToolPackConfig): Promise<number[]> {
   const status = await waitForDesktopStatus(config, 500);
   return typeof status?.pid === "number" ? [status.pid] : [];
 }
 
-export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
+async function stopPackedWinAppWithinLifecycleSession(config: ToolPackConfig): Promise<WinStopResult> {
   const stopped = await stopToolPackServices(controlForConfig(config));
   const stop = summarizeToolPackStopResults(config.namespace, stopped);
   if (isToolPackStopSafeForRemoval(stop)) {
     await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   }
   return stop;
+}
+
+export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
+  const control = controlForConfig(config);
+  return await control.withLifecycleSession(
+    async () => await stopPackedWinAppWithinLifecycleSession(config),
+  );
 }
 
 export async function readPackedWinLogs(config: ToolPackConfig) {
@@ -333,7 +346,7 @@ export async function readPackedWinLogs(config: ToolPackConfig) {
   };
 }
 
-export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<WinUninstallResult> {
+async function uninstallPackedWinAppWithinLifecycleSession(config: ToolPackConfig): Promise<WinUninstallResult> {
   const lifecycleTimings: WinLifecycleTiming[] = [];
   const paths = resolveWinPaths(config);
   const registeredPaths = await measureLifecycleStep(lifecycleTimings, "resolve registered paths", async () => resolveWinRegisteredPaths(config, paths));
@@ -404,7 +417,14 @@ export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<Win
   };
 }
 
-export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise<WinCleanupResult> {
+export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<WinUninstallResult> {
+  const control = controlForConfig(config);
+  return await control.withLifecycleSession(
+    async () => await uninstallPackedWinAppWithinLifecycleSession(config),
+  );
+}
+
+async function cleanupPackedWinNamespaceWithinLifecycleSession(config: ToolPackConfig): Promise<WinCleanupResult> {
   const paths = resolveWinPaths(config);
   const launcher = resolveToolPackLauncherLayout(config);
   const registeredPaths = await resolveWinRegisteredPaths(config, paths);
@@ -451,6 +471,13 @@ export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise
     skipped: false,
     stop,
   };
+}
+
+export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise<WinCleanupResult> {
+  const control = controlForConfig(config);
+  return await control.withLifecycleSession(
+    async () => await cleanupPackedWinNamespaceWithinLifecycleSession(config),
+  );
 }
 
 export async function listPackedWinNamespaces(config: ToolPackConfig): Promise<WinListResult> {

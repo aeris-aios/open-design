@@ -9,14 +9,15 @@ import { requestJsonIpc } from "../json-ipc.js";
 import { SidecarControlError } from "./error.js";
 import { attachSidecarWithMetadata } from "./body.js";
 import {
-  acquireControlLeaseLock,
   beginProcessLease,
+  claimControlLease,
   markStoppingLease,
   processAlive,
   readControlLease,
-  removeControlLeaseIfCurrent,
-  writeControlLease,
+  recoverUnpublishedControlLease,
+  retireControlLeaseIfCurrent,
 } from "./lease-store.js";
+import { withLifecycleSession } from "./lifecycle-session.js";
 import {
   assertPrivateResponse,
   createPrivateLaunchEnv,
@@ -31,6 +32,7 @@ import {
   normalizeControlProjection,
   normalizePrivateReadyDescriptor,
   privateControlPaths,
+  privateLifecycleEndpointPath,
   readPrivateLaunchMetadata,
   sameControlIdentity,
   sameControlProjection,
@@ -56,7 +58,6 @@ import type {
   SidecarLaunch,
   SidecarLaunchOptions,
   SidecarProbeResult,
-  SidecarStopResult,
   SidecarStopOptions,
 } from "./public-types.js";
 
@@ -158,57 +159,64 @@ function childExit(child: ReturnType<typeof spawn>): Promise<SidecarExit> {
 
 async function stopDescriptorPeer(
   leaseFor: () => Promise<PrivateControlLease>,
-  lock: Readonly<{
-    identity: SidecarControlIdentity;
-    roots: Pick<BootstrapControlPlaneOptions["roots"], "runtimeRoot">;
-  }>,
   options: SidecarStopOptions = {},
 ): Promise<SidecarConvergeResult> {
   const graceMs = normalizeTimeout(options.graceMs, 5_000, "graceMs");
-  const operation = await acquireControlLeaseLock(lock.identity, lock.roots, graceMs + 5_000);
+  let lease: PrivateControlLease;
   try {
-    let lease: PrivateControlLease;
-    try {
-      lease = await leaseFor();
-    } catch (error) {
-      if (error instanceof SidecarControlError && error.code === "peer-unavailable") {
-        return { forced: false, pid: null, state: "absent" };
-      }
-      throw error;
+    lease = await leaseFor();
+  } catch (error) {
+    if (error instanceof SidecarControlError && error.code === "peer-unavailable") {
+      return { pid: null, state: "absent" };
     }
-
-    return await convergeLeaseWhileLocked(lease, graceMs);
-  } finally {
-    await operation.release();
+    throw error;
   }
+  return await convergeLeaseWithinSession(lease, graceMs);
 }
 
-async function convergeLeaseWhileLocked(
+async function waitForLeaseRetirement(metadata: PrivateLaunchMetadata, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = await readControlLease(metadata.identity, metadata.roots);
+    if (current == null || current.incarnation !== metadata.incarnation) return true;
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  const current = await readControlLease(metadata.identity, metadata.roots);
+  return current == null || current.incarnation !== metadata.incarnation;
+}
+
+async function convergeLeaseWithinSession(
   lease: PrivateControlLease,
   graceMs: number,
 ): Promise<SidecarConvergeResult> {
   if (lease.state === "claiming") {
     if (!processAlive(lease.ownerPid)) {
-      await removeControlLeaseIfCurrent(lease);
-      return { forced: false, pid: null, state: "absent" };
+      await retireControlLeaseIfCurrent(lease);
+      return { pid: null, state: "absent" };
     }
-    return { forced: false, pid: null, state: "alive" };
+    return { pid: null, state: "alive" };
   }
-  if (!processAlive(lease.pid)) {
+  if (!processAlive(lease.processPid)) {
     await convergeExitedLaunch(lease);
-    return { forced: false, pid: lease.pid, state: "stopped" };
+    return { pid: lease.pid, state: "stopped" };
   }
 
   await markStoppingLease(lease);
-  await createClient(lease).requestStop().catch(() => undefined);
-  const stopped = await waitForStopped(lease.pid, graceMs);
+  await createPrivateClient(lease).requestStop().catch(() => undefined);
+  const stopped = lease.terminal === "hosted"
+    ? await waitForLeaseRetirement(lease, graceMs)
+    : await waitForStopped(lease.processPid, graceMs);
   if (stopped) await convergeExitedLaunch(lease);
   return stopped
-    ? { forced: false, pid: lease.pid, state: "stopped" }
-    : { forced: false, pid: lease.pid, state: "alive" };
+    ? { pid: lease.pid, state: "stopped" }
+    : { pid: lease.pid, state: "alive" };
 }
 
-function createClient<TMethods>(descriptor: PrivateLaunchMetadata): SidecarControlClient<TMethods> {
+type PrivateControlClient<TMethods> = SidecarControlClient<TMethods> & Readonly<{
+  requestStop(): Promise<Readonly<{ accepted: true }>>;
+}>;
+
+function createPrivateClient<TMethods>(descriptor: PrivateLaunchMetadata): PrivateControlClient<TMethods> {
   const invoke = async (
     operation: Parameters<typeof createPrivateRequest>[1],
     timeoutMs?: number | null,
@@ -242,8 +250,17 @@ function createClient<TMethods>(descriptor: PrivateLaunchMetadata): SidecarContr
       return (await invoke({ kind: "probe" })) as SidecarProbeResult;
     },
     async requestStop() {
-      return (await invoke({ kind: "request-stop" })) as SidecarStopResult;
+      return (await invoke({ kind: "request-stop" })) as Readonly<{ accepted: true }>;
     },
+  });
+}
+
+function publicClient<TMethods>(client: PrivateControlClient<TMethods>): SidecarControlClient<TMethods> {
+  return Object.freeze({
+    call: client.call,
+    environment: client.environment,
+    identity: client.identity,
+    probe: client.probe,
   });
 }
 
@@ -251,9 +268,9 @@ function createClient<TMethods>(descriptor: PrivateLaunchMetadata): SidecarContr
 export async function connectSidecar<TMethods>(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<SidecarControlClient<TMethods>> {
-  const client = createClient<TMethods>(readPrivateLaunchMetadata(env));
+  const client = createPrivateClient<TMethods>(readPrivateLaunchMetadata(env));
   await client.probe();
-  return client;
+  return publicClient(client);
 }
 
 /** Copy the opaque bootstrap capability into an explicitly constructed child environment. */
@@ -284,32 +301,36 @@ export function resumeControlPlane(context: SidecarControlContext): SidecarContr
 export function accessControlPlane(options: AccessControlPlaneOptions): SidecarControlAccess {
   const scope = normalizeControlScope(options.scope);
   const runtimeRoot = normalizeControlRuntimeRoot(options.runtimeRoot);
+  const runLifecycleSession = async <T>(callback: () => Promise<T>): Promise<T> =>
+    await withLifecycleSession(privateLifecycleEndpointPath(scope, { runtimeRoot }), callback);
   const descriptorFor = async (service: string) => {
     const identity = normalizeControlIdentity({ ...scope, service });
     return await readAccessibleDescriptor(identity, runtimeRoot);
   };
   const connect = async <TMethods>(service: string): Promise<SidecarControlClient<TMethods>> => {
-    const client = createClient<TMethods>(await descriptorFor(service));
+    const client = createPrivateClient<TMethods>(await descriptorFor(service));
     await client.probe();
-    return client;
+    return publicClient(client);
   };
   return Object.freeze({
     connect,
     async probe(service) {
       return await (await connect(service)).probe();
     },
-    async requestStop(service) {
-      return await (await connect(service)).requestStop();
-    },
     scope,
     async stop(service, stopOptions = {}) {
       const identity = normalizeControlIdentity({ ...scope, service });
-      return await stopDescriptorPeer(
-        () => readAccessibleLease(identity, runtimeRoot),
-        { identity, roots: { runtimeRoot } },
-        stopOptions,
+      return await runLifecycleSession(
+        async () => {
+          await recoverUnpublishedControlLease(identity, { runtimeRoot });
+          return await stopDescriptorPeer(
+            () => readAccessibleLease(identity, runtimeRoot),
+            stopOptions,
+          );
+        },
       );
     },
+    withLifecycleSession: runLifecycleSession,
   });
 }
 
@@ -318,11 +339,11 @@ async function convergeExitedLaunch(descriptor: PrivateLaunchMetadata): Promise<
   const current = await readControlLease(descriptor.identity, descriptor.roots);
   if (current?.incarnation !== descriptor.incarnation) return;
   if (!isWindowsNamedPipePath(endpointPath)) await removeFile(endpointPath);
-  await removeControlLeaseIfCurrent(descriptor);
+  await retireControlLeaseIfCurrent(descriptor);
 }
 
 type ReadyPeer<TMethods> = Readonly<{
-  client: SidecarControlClient<TMethods>;
+  client: PrivateControlClient<TMethods>;
   descriptor: PrivateReadyDescriptor;
 }>;
 
@@ -332,8 +353,8 @@ async function waitForReadyPeer<TMethods>(input: {
   exited?: Promise<SidecarExit>;
   timeoutMs: number;
 }): Promise<ReadyPeer<TMethods>> {
-  const { descriptorPath } = privateControlPaths(input.descriptor.identity, input.descriptor.roots);
-  const descriptorRoot = dirname(descriptorPath);
+  const { leasePath } = privateControlPaths(input.descriptor.identity, input.descriptor.roots);
+  const descriptorRoot = dirname(leasePath);
   await mkdir(descriptorRoot, { recursive: true });
 
   return await new Promise<ReadyPeer<TMethods>>((resolveReady, rejectReady) => {
@@ -365,7 +386,7 @@ async function waitForReadyPeer<TMethods>(input: {
           input.descriptor.projection,
         );
         if (!input.acceptIncarnation(descriptor.incarnation)) return;
-        const client = createClient<TMethods>(descriptor);
+        const client = createPrivateClient<TMethods>(descriptor);
         await client.probe();
         settle(() => resolveReady({ client, descriptor }));
       } catch {
@@ -421,7 +442,7 @@ function waitForPeerDeparture(descriptor: PrivateReadyDescriptor): Promise<Sidec
     let settled = false;
     const check = async () => {
       if (settled) return;
-      if (!processAlive(descriptor.pid)) {
+      if (!processAlive(descriptor.processPid)) {
         settled = true;
         resolveExit({ code: null, signal: null });
         return;
@@ -432,7 +453,7 @@ function waitForPeerDeparture(descriptor: PrivateReadyDescriptor): Promise<Sidec
           descriptor.roots,
           descriptor.projection,
         );
-        if (current.incarnation === descriptor.incarnation) await createClient(current).probe();
+        if (current.incarnation === descriptor.incarnation) await createPrivateClient(current).probe();
       } catch {
         // Descriptor/control departure can precede process exit. Keep
         // observing the captured PID, but never signal it from an adopted
@@ -453,7 +474,7 @@ function adoptedLaunch<TMethods>(input: {
   const exited = waitForPeerDeparture(input.peer.descriptor);
   let stopping: Promise<SidecarExit> | null = null;
   return Object.freeze({
-    client: input.peer.client,
+    client: publicClient(input.peer.client),
     exited,
     identity: input.peer.descriptor.identity,
     pid: input.peer.descriptor.pid,
@@ -516,21 +537,27 @@ export function bootstrapControlPlane({
   const roots = normalizeControlRoots(rootsInput);
   const projection = createControlProjection(projectionInput);
   const scope = normalizeControlScope(scopeInput);
+  const runLifecycleSession = async <T>(callback: () => Promise<T>): Promise<T> =>
+    await withLifecycleSession(privateLifecycleEndpointPath(scope, roots), callback);
   const connect = async <TMethods>(service: string): Promise<SidecarControlClient<TMethods>> => {
     const identity = normalizeControlIdentity({ ...scope, service });
-    const client = createClient<TMethods>(await readCurrentDescriptor(identity, roots, projection));
+    const client = createPrivateClient<TMethods>(await readCurrentDescriptor(identity, roots, projection));
     await client.probe();
-    return client;
+    return publicClient(client);
   };
   const stop = async (
     service: string,
     options: SidecarStopOptions = {},
   ): Promise<SidecarConvergeResult> => {
     const identity = normalizeControlIdentity({ ...scope, service });
-    return await stopDescriptorPeer(
-      () => readCurrentLease(identity, roots, projection),
-      { identity, roots },
-      options,
+    return await runLifecycleSession(
+      async () => {
+        await recoverUnpublishedControlLease(identity, roots);
+        return await stopDescriptorPeer(
+          () => readCurrentLease(identity, roots, projection),
+          options,
+        );
+      },
     );
   };
   const launch = async <TMethods>(options: SidecarLaunchOptions): Promise<SidecarLaunch<TMethods>> => {
@@ -549,12 +576,8 @@ export function bootstrapControlPlane({
     if (existing !== "adopt" && existing !== "replace") {
       throw new SidecarControlError("invalid-input", "sidecar existing launch mode must be adopt or replace");
     }
-    const operation = await acquireControlLeaseLock(
-      descriptor.identity,
-      roots,
-      readyTimeoutMs + stopTimeoutMs + 5_000,
-    );
-    try {
+    return await runLifecycleSession(async () => {
+      await recoverUnpublishedControlLease(descriptor.identity, roots);
       let current: PrivateControlLease | null = null;
       try {
         current = await readCurrentLease(
@@ -566,29 +589,30 @@ export function bootstrapControlPlane({
         if (!(error instanceof SidecarControlError) || error.code !== "peer-unavailable") throw error;
       }
       if (current?.state === "claiming" && !processAlive(current.ownerPid)) {
-        await removeControlLeaseIfCurrent(current);
+        await retireControlLeaseIfCurrent(current);
         current = null;
-      } else if (current != null && current.state !== "claiming" && !processAlive(current.pid)) {
+      } else if (current != null && current.state !== "claiming" && !processAlive(current.processPid)) {
         await convergeExitedLaunch(current);
         current = null;
       }
 
       if (current != null) {
         if (existing === "adopt") {
-          if (current.state !== "ready") throw peerUnavailable(descriptor.identity);
-          const client = createClient<TMethods>(current);
+          if (current.state !== "ready" || current.terminal !== "process") {
+            throw peerUnavailable(descriptor.identity);
+          }
+          const client = createPrivateClient<TMethods>(current);
           await client.probe();
           return adoptedLaunch({
             peer: { client, descriptor: current },
             stopPeer: () => stopDescriptorPeer(
               () => readCurrentLease(descriptor.identity, roots, projection),
-              { identity: descriptor.identity, roots },
               { graceMs: stopTimeoutMs },
             ),
             stopTimeoutMs,
           });
         }
-        const converged = await convergeLeaseWhileLocked(current, stopTimeoutMs);
+        const converged = await convergeLeaseWithinSession(current, stopTimeoutMs);
         if (converged.state === "alive") {
           throw new SidecarControlError(
             "peer-unavailable",
@@ -596,7 +620,7 @@ export function bootstrapControlPlane({
           );
         }
       }
-      await writeControlLease({ ...descriptor, ownerPid: process.pid, state: "claiming" });
+      await claimControlLease(descriptor, "process");
 
       const child = spawn(options.executable, [...(options.args ?? [])], {
         cwd: options.cwd,
@@ -611,10 +635,13 @@ export function bootstrapControlPlane({
         windowsHide: true,
       });
       if (options.detached === true) child.unref();
-      const exited = childExit(child).then(async (exit) => {
-        await convergeExitedLaunch(descriptor);
-        return exit;
-      });
+      const exited = childExit(child);
+      // Unexpected exits retire under a fresh namespace session. This cleanup
+      // must not delay the captured exit promise: owner stop already holds the
+      // session while awaiting that same terminal event.
+      void exited.then(async () => {
+        await runLifecycleSession(async () => await convergeExitedLaunch(descriptor));
+      }).catch(() => undefined);
       let readyPeer: ReadyPeer<TMethods>;
       try {
         if (child.pid == null) {
@@ -630,46 +657,39 @@ export function bootstrapControlPlane({
       } catch (error) {
         child.kill("SIGKILL");
         await exited.catch(() => undefined);
-        await removeControlLeaseIfCurrent(descriptor).catch(() => undefined);
+        await retireControlLeaseIfCurrent(descriptor).catch(() => undefined);
         throw error;
       }
       let stopping: Promise<SidecarExit> | null = null;
       return Object.freeze({
-        client: readyPeer.client,
+        client: publicClient(readyPeer.client),
         exited,
         identity: descriptor.identity,
         pid: readyPeer.descriptor.pid,
         async stop() {
           if (stopping != null) return await stopping;
           stopping = (async () => {
-            if (!processAlive(readyPeer.descriptor.pid)) return await exited;
-            const stopOperation = await acquireControlLeaseLock(
-              descriptor.identity,
-              roots,
-              stopTimeoutMs + 5_000,
-            );
-            try {
+            if (!processAlive(readyPeer.descriptor.processPid)) return await exited;
+            return await runLifecycleSession(async () => {
               let lease: PrivateControlLease;
               try {
                 lease = await readCurrentLease(descriptor.identity, roots, projection);
               } catch (error) {
-                if (!processAlive(readyPeer.descriptor.pid)) return await exited;
+                if (!processAlive(readyPeer.descriptor.processPid)) return await exited;
                 throw error;
               }
               if (lease.incarnation !== descriptor.incarnation) throw peerUnavailable(descriptor.identity);
               await markStoppingLease(lease);
               await readyPeer.client.requestStop().catch(() => undefined);
-              return await awaitExitOrTerminate({ child, exited, timeoutMs: stopTimeoutMs });
-            } finally {
-              await stopOperation.release();
-            }
+              const exit = await awaitExitOrTerminate({ child, exited, timeoutMs: stopTimeoutMs });
+              await convergeExitedLaunch(descriptor);
+              return exit;
+            });
           })();
           return await stopping;
         },
       });
-    } finally {
-      await operation.release();
-    }
+    });
   };
 
   return Object.freeze({
@@ -681,27 +701,27 @@ export function bootstrapControlPlane({
         scope,
         service: options.service,
       });
-      const operation = await acquireControlLeaseLock(metadata.identity, roots, 10_000);
-      try {
+      return await runLifecycleSession(async () => {
+        await recoverUnpublishedControlLease(metadata.identity, roots);
         const current = await readControlLease(metadata.identity, roots);
         if (current != null) {
           const alive = current.state === "claiming"
             ? processAlive(current.ownerPid)
-            : processAlive(current.pid);
+            : processAlive(current.processPid);
           if (alive) throw peerUnavailable(metadata.identity);
           await convergeExitedLaunch(current);
         }
-        await writeControlLease({ ...metadata, ownerPid: process.pid, state: "claiming" });
-        return await attachSidecarWithMetadata(metadata, options, {
-          claimOwnedByBody: true,
-          releaseLeaseOnClose: true,
-        });
-      } catch (error) {
-        await removeControlLeaseIfCurrent(metadata).catch(() => undefined);
-        throw error;
-      } finally {
-        await operation.release();
-      }
+        await claimControlLease(metadata, "hosted");
+        await beginProcessLease(metadata, process.pid);
+        try {
+          return await attachSidecarWithMetadata(metadata, options, {
+            releaseLeaseOnClose: true,
+          });
+        } catch (error) {
+          await retireControlLeaseIfCurrent(metadata).catch(() => undefined);
+          throw error;
+        }
+      });
     },
     launch,
     projection,
@@ -710,9 +730,7 @@ export function bootstrapControlPlane({
     async probe(service) {
       return await (await connect(service)).probe();
     },
-    async requestStop(service) {
-      return await (await connect(service)).requestStop();
-    },
     stop,
+    withLifecycleSession: runLifecycleSession,
   });
 }

@@ -48,7 +48,6 @@ function control(input: {
     const error = input.stopErrors?.[service];
     if (error != null) throw error;
     return {
-      forced: false,
       pid: 1234,
       state: input.stopped === false ? "alive" as const : "stopped" as const,
     };
@@ -71,7 +70,15 @@ function control(input: {
       };
     },
   }));
-  return { control: { connect, stop } as never, show, stop };
+  return {
+    control: {
+      connect,
+      stop,
+      async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
+    } as never,
+    show,
+    stop,
+  };
 }
 
 describe("packaged launcher convergence", () => {

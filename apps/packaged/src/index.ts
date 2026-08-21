@@ -119,6 +119,13 @@ async function main(): Promise<void> {
     app.exit(1);
     return;
   }
+  const startupSessionControl = createPackagedControl(
+    namespaceConfig.appVersion,
+    0,
+    namespace,
+    initialPaths,
+  ).control;
+  await startupSessionControl.withLifecycleSession(async () => {
   const existingDesktop = await inspectExistingDesktopForLauncher(namespace, {
     deeplinkUrl: findPackagedDeeplinkArg(process.argv),
     incomingVersion: namespaceConfig.appVersion,
@@ -330,6 +337,7 @@ async function main(): Promise<void> {
   }, {
     control,
     expose: async (options) => await control.expose({ service: OPEN_DESIGN_SERVICES.DESKTOP, ...options }),
+  });
   });
 }
 

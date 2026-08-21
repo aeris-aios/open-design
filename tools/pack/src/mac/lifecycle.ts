@@ -22,7 +22,7 @@ import {
 } from "@open-design/platform";
 import type { ToolPackConfig } from "../config.js";
 import {
-  convergeToolPackServices,
+  withConvergedToolPackServices,
   createToolPackControl,
   isToolPackStopSafeForRemoval,
   stopToolPackServices,
@@ -347,10 +347,8 @@ export async function installPackedMacDmg(config: ToolPackConfig): Promise<MacIn
   };
 }
 
-export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStartResult> {
+async function startPackedMacAppWithinLifecycleSession(config: ToolPackConfig): Promise<MacStartResult> {
   const target = await resolvePackedMacStartTarget(config);
-  const control = createToolPackControl(config, "desktop");
-  await convergeToolPackServices(control);
   const logPath = desktopLogPath(config);
   const launchConfigPath = await writeLaunchPackagedConfig(config, target.appPath);
   await mkdir(dirname(logPath), { recursive: true });
@@ -418,13 +416,28 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   };
 }
 
-export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
+export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStartResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await withConvergedToolPackServices(
+    control,
+    async () => await startPackedMacAppWithinLifecycleSession(config),
+  );
+}
+
+async function stopPackedMacAppWithinLifecycleSession(config: ToolPackConfig): Promise<MacStopResult> {
   const stopped = await stopToolPackServices(createToolPackControl(config, "desktop"));
   const stop = summarizeToolPackStopResults(config.namespace, stopped);
   if (isToolPackStopSafeForRemoval(stop)) {
     await rm(desktopIdentityPath(config), { force: true }).catch(() => undefined);
   }
   return stop;
+}
+
+export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await control.withLifecycleSession(
+    async () => await stopPackedMacAppWithinLifecycleSession(config),
+  );
 }
 
 export async function readPackedMacLogs(config: ToolPackConfig) {
@@ -469,7 +482,7 @@ export async function inspectPackedMacApp(config: ToolPackConfig, options: { exp
   };
 }
 
-export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<MacUninstallResult> {
+async function uninstallPackedMacAppWithinLifecycleSession(config: ToolPackConfig): Promise<MacUninstallResult> {
   const paths = resolveMacPaths(config);
   const stop = await stopPackedMacApp(config);
   if (!isToolPackStopSafeForRemoval(stop)) {
@@ -493,7 +506,14 @@ export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<Mac
   };
 }
 
-export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise<MacCleanupResult> {
+export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<MacUninstallResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await control.withLifecycleSession(
+    async () => await uninstallPackedMacAppWithinLifecycleSession(config),
+  );
+}
+
+async function cleanupPackedMacNamespaceWithinLifecycleSession(config: ToolPackConfig): Promise<MacCleanupResult> {
   const paths = resolveMacPaths(config);
   const stop = await stopPackedMacApp(config);
   if (!isToolPackStopSafeForRemoval(stop)) {
@@ -525,4 +545,11 @@ export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise
     skipped: false,
     stop,
   };
+}
+
+export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise<MacCleanupResult> {
+  const control = createToolPackControl(config, "desktop");
+  return await control.withLifecycleSession(
+    async () => await cleanupPackedMacNamespaceWithinLifecycleSession(config),
+  );
 }

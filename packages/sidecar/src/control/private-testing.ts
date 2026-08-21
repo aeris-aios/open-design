@@ -2,7 +2,6 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { isWindowsNamedPipePath } from "../ipc-path.js";
-import { writeJsonFile } from "../json-file.js";
 import {
   createPrivateRequest,
   createPrivateLaunchMetadata,
@@ -12,9 +11,13 @@ import {
   type PrivateLaunchMetadata,
   type PrivateControlOperation,
   type PrivateControlResponse,
-  type PrivateReadyDescriptor,
 } from "./private-protocol.js";
 import { requestJsonIpc } from "../json-ipc.js";
+import {
+  beginProcessLease,
+  claimControlLease,
+  retireControlLeaseIfCurrent,
+} from "./lease-store.js";
 import type {
   SidecarControlIdentity,
   SidecarControlJsonValue,
@@ -35,21 +38,44 @@ export function installPrivateLaunchForTest(metadata: PrivateLaunchMetadata): ()
   return installPrivateLaunchMetadata(metadata);
 }
 
+export async function claimPrivateLaunchForTest(metadata: PrivateLaunchMetadata): Promise<void> {
+  await claimControlLease(metadata, "hosted");
+  await beginProcessLease(metadata, process.pid);
+}
+
+export async function retirePrivateLaunchForTest(metadata: PrivateLaunchMetadata): Promise<boolean> {
+  return await retireControlLeaseIfCurrent(metadata);
+}
+
 export async function writePrivateReadyDescriptorForTest(
   metadata: PrivateLaunchMetadata,
   pid: number,
 ): Promise<void> {
-  const { descriptorPath } = privateControlPaths(metadata.identity, metadata.roots);
-  await writeJsonFile(descriptorPath, { ...metadata, pid, state: "ready" } satisfies PrivateReadyDescriptor);
+  const paths = privateControlPaths(metadata.identity, metadata.roots);
+  await mkdir(paths.leasePath, { recursive: true });
+  await writeFile(
+    paths.leaseMetadataPath,
+    `${JSON.stringify({ ...metadata, ownerPid: process.pid, terminal: "process" }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(paths.leaseProcessPath, `${JSON.stringify({ pid })}\n`, "utf8");
+  await writeFile(paths.leaseBodyPath, `${JSON.stringify({ pid })}\n`, "utf8");
+  await writeFile(paths.readyMarkerPath, "", "utf8");
 }
 
 export async function writePrivateDescriptorTextForTest(
   metadata: PrivateLaunchMetadata,
   text: string,
 ): Promise<void> {
-  const { descriptorPath } = privateControlPaths(metadata.identity, metadata.roots);
-  await mkdir(dirname(descriptorPath), { recursive: true });
-  await writeFile(descriptorPath, text, "utf8");
+  const { leaseMetadataPath, leasePath } = privateControlPaths(metadata.identity, metadata.roots);
+  await mkdir(leasePath, { recursive: true });
+  await writeFile(leaseMetadataPath, text, "utf8");
+}
+
+export async function writePrivateUnpublishedLeaseForTest(
+  metadata: PrivateLaunchMetadata,
+): Promise<void> {
+  await mkdir(privateControlPaths(metadata.identity, metadata.roots).leasePath, { recursive: true });
 }
 
 export async function sendPrivateRequestForTest(
@@ -81,7 +107,7 @@ export async function privateLaunchStateForTest(metadata: PrivateLaunchMetadata)
 }> {
   const paths = privateControlPaths(metadata.identity, metadata.roots);
   return {
-    descriptorExists: await pathExists(paths.descriptorPath),
+    descriptorExists: await pathExists(paths.leasePath),
     endpointExists: isWindowsNamedPipePath(paths.endpointPath)
       ? false
       : await pathExists(paths.endpointPath),

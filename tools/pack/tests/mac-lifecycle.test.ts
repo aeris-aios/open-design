@@ -13,7 +13,7 @@ import { resolveMacPaths } from "../src/mac/paths.js";
 
 const requestJsonIpc = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
 const stopControl = vi.fn<(service?: string, options?: { graceMs?: number }) => Promise<SidecarConvergeResult>>(
-  async () => ({ forced: false, pid: null, state: "absent" }),
+  async () => ({ pid: null, state: "absent" }),
 );
 const collectProcessTreePids = vi.fn(
   (_processes: unknown[], rootPids: Array<number | null>) =>
@@ -34,6 +34,7 @@ vi.mock("../src/control.js", async (importOriginal) => ({
   createToolPackControl: () => ({
     connect: async () => ({ call: requestJsonIpc }),
     stop: stopControl,
+    async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
   }),
 }));
 
@@ -100,7 +101,7 @@ afterEach(() => {
       rootPids.filter((pid): pid is number => typeof pid === "number"),
   );
   stopProcesses.mockImplementation(async (pids: number[]) => ({ remainingPids: [], stoppedPids: pids }));
-  stopControl.mockResolvedValue({ forced: false, pid: null, state: "absent" });
+  stopControl.mockResolvedValue({ pid: null, state: "absent" });
 });
 
 describe("startPackedMacApp", () => {
@@ -114,8 +115,8 @@ describe("startPackedMacApp", () => {
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");
       await chmod(executablePath, 0o755);
       stopControl.mockImplementation(async (service) => service === "web"
-        ? { forced: false, pid: 4321, state: "alive" }
-        : { forced: false, pid: null, state: "absent" });
+        ? { pid: 4321, state: "alive" }
+        : { pid: null, state: "absent" });
 
       await expect(startPackedMacApp(config)).rejects.toThrow(
         "failed to converge one or more packaged services",
@@ -276,8 +277,8 @@ describe("stopPackedMacApp", () => {
     const config = makeConfig(root);
     try {
       stopControl.mockImplementation(async (service) => service === "daemon"
-        ? { forced: false, pid: 4242, state: "stopped" }
-        : { forced: false, pid: null, state: "absent" });
+        ? { pid: 4242, state: "stopped" }
+        : { pid: null, state: "absent" });
 
       await expect(stopPackedMacApp(config)).resolves.toMatchObject({
         gracefulRequested: true,
@@ -311,8 +312,8 @@ describe("stopPackedMacApp", () => {
       await writeFile(outputSentinel, "output", "utf8");
       await writeFile(runtimeSentinel, "runtime", "utf8");
       stopControl.mockImplementation(async (service) => service === "web"
-        ? { forced: false, pid: null, state: "alive" }
-        : { forced: false, pid: null, state: "absent" });
+        ? { pid: null, state: "alive" }
+        : { pid: null, state: "absent" });
 
       await expect(uninstallPackedMacApp(config)).resolves.toMatchObject({
         removed: false,

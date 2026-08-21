@@ -411,7 +411,7 @@ async function waitForOuterConfirm(
   return "outer-not-confirmed";
 }
 
-export async function executeLegacyPayloadDesktopHandoff(
+async function executeLegacyPayloadDesktopHandoffWithinLifecycleSession(
   prepared: PreparedLegacyPayloadDesktopHandoff,
   options: {
     confirmTimeoutMs?: number;
@@ -425,7 +425,11 @@ export async function executeLegacyPayloadDesktopHandoff(
 ): Promise<LegacyPayloadDesktopHandoffResult> {
   const requestDesktop = options.requestDesktop ?? (async (message) => {
     if (options.control == null) throw new Error("desktop control plane is required");
-    if (message === "shutdown") return await options.control.requestStop(APP_KEYS.DESKTOP);
+    if (message === "shutdown") {
+      const stopped = await options.control.stop(APP_KEYS.DESKTOP, { graceMs: 15_000 });
+      if (stopped.state === "alive") throw new Error("desktop did not reach terminal stop");
+      return stopped;
+    }
     const desktop = await options.control.connect<DesktopSidecarMethods>(APP_KEYS.DESKTOP);
     return await desktop.call("status", {}, { timeoutMs: 800 });
   });
@@ -519,4 +523,25 @@ export async function executeLegacyPayloadDesktopHandoff(
   await writeJsonFile(prepared.launcherPaths.runtimePath, runtime);
 
   return { kind: "scheduled", target };
+}
+
+export async function executeLegacyPayloadDesktopHandoff(
+  prepared: PreparedLegacyPayloadDesktopHandoff,
+  options: {
+    confirmTimeoutMs?: number;
+    env?: NodeJS.ProcessEnv;
+    now?: () => Date;
+    requestDesktop?: (message: "shutdown" | "status") => Promise<unknown>;
+    control?: SidecarControlPlane;
+    sleep?: (durationMs: number) => Promise<unknown>;
+    spawn?: typeof spawn;
+  } = {},
+): Promise<LegacyPayloadDesktopHandoffResult> {
+  const execute = async () => await executeLegacyPayloadDesktopHandoffWithinLifecycleSession(
+    prepared,
+    options,
+  );
+  return options.control == null
+    ? await execute()
+    : await options.control.withLifecycleSession(execute);
 }

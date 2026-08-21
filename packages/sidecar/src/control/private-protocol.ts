@@ -10,9 +10,9 @@ import type {
   SidecarControlScope,
 } from "./public-types.js";
 
-export const PRIVATE_CONTROL_SCHEMA_VERSION = 2 as const;
+export const PRIVATE_CONTROL_SCHEMA_VERSION = 3 as const;
 const CONTROL_SCHEMA_VERSION = PRIVATE_CONTROL_SCHEMA_VERSION;
-const CONTROL_BOOTSTRAP_ENV = "OD_SIDECAR_CONTROL_BOOTSTRAP_V2";
+const CONTROL_BOOTSTRAP_ENV = "OD_SIDECAR_CONTROL_BOOTSTRAP_V3";
 // Launch environments may be exact allowlists, so endpoint identity cannot depend on TMPDIR.
 const POSIX_CONTROL_ROOT = "/tmp";
 const CONTROL_TOKEN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
@@ -50,15 +50,16 @@ export type PrivateControlResponse = Readonly<{
   status: "error" | "ok";
 }>;
 
-export type PrivateClaimingLease = PrivateLaunchMetadata & Readonly<{
+export type PrivateLeaseMetadata = PrivateLaunchMetadata & Readonly<{
   ownerPid: number;
-  state: "claiming";
+  terminal: "hosted" | "process";
 }>;
 
 type PrivateProcessLeaseFor<TState extends "ready" | "starting" | "stopping"> =
-  PrivateLaunchMetadata & Readonly<{
-  pid: number;
-  state: TState;
+  PrivateLeaseMetadata & Readonly<{
+    pid: number;
+    processPid: number;
+    state: TState;
 }>;
 
 export type PrivateReadyDescriptor = PrivateProcessLeaseFor<"ready">;
@@ -66,6 +67,7 @@ export type PrivateProcessLease =
   | PrivateReadyDescriptor
   | PrivateProcessLeaseFor<"starting">
   | PrivateProcessLeaseFor<"stopping">;
+export type PrivateClaimingLease = PrivateLeaseMetadata & Readonly<{ state: "claiming" }>;
 export type PrivateControlLease = PrivateClaimingLease | PrivateProcessLease;
 
 function invalid(label: string, detail: string): never {
@@ -221,20 +223,55 @@ function controlKey(
     .slice(0, 32);
 }
 
+function lifecycleKey(
+  scope: Pick<SidecarControlScope, "channel" | "namespace">,
+  roots: Pick<SidecarControlRoots, "runtimeRoot">,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([scope.channel, scope.namespace, roots.runtimeRoot]))
+    .digest("hex")
+    .slice(0, 32);
+}
+
 export function privateControlPaths(
   identity: SidecarControlIdentity,
   roots: Pick<SidecarControlRoots, "runtimeRoot">,
-): Readonly<{ descriptorPath: string; endpointPath: string; operationLockPath: string }> {
+): Readonly<{
+  endpointPath: string;
+  leaseBodyPath: string;
+  leaseMetadataPath: string;
+  leasePath: string;
+  leaseProcessPath: string;
+  readyMarkerPath: string;
+  retiredRoot: string;
+  stoppingMarkerPath: string;
+}> {
   const key = controlKey(identity, roots);
   const controlRoot = join(roots.runtimeRoot, ".sidecar-control");
+  const leasePath = join(controlRoot, `${key}.lease`);
   return {
-    descriptorPath: join(controlRoot, `${key}.json`),
     endpointPath:
       process.platform === "win32"
         ? `\\\\.\\pipe\\open-design-sidecar-${key}`
         : join(POSIX_CONTROL_ROOT, `od-sidecar-${key}.sock`),
-    operationLockPath: join(controlRoot, `${key}.lock`),
+    leaseBodyPath: join(leasePath, "body.json"),
+    leaseMetadataPath: join(leasePath, "metadata.json"),
+    leasePath,
+    leaseProcessPath: join(leasePath, "process.json"),
+    readyMarkerPath: join(leasePath, "ready"),
+    retiredRoot: join(controlRoot, "retired"),
+    stoppingMarkerPath: join(leasePath, "stopping"),
   };
+}
+
+export function privateLifecycleEndpointPath(
+  scope: Pick<SidecarControlScope, "channel" | "namespace">,
+  roots: Pick<SidecarControlRoots, "runtimeRoot">,
+): string {
+  const key = lifecycleKey(scope, roots);
+  return process.platform === "win32"
+    ? `\\\\.\\pipe\\open-design-sidecar-session-${key}`
+    : join(POSIX_CONTROL_ROOT, `od-sidecar-session-${key}.sock`);
 }
 
 export function createPrivateLaunchMetadata(input: {
@@ -381,11 +418,19 @@ export function normalizePrivateControlLease(value: unknown): PrivateControlLeas
       ? Buffer.from(JSON.stringify(value), "utf8").toString("base64url")
       : value,
   );
+  if (!Number.isSafeInteger(record?.ownerPid) || (record?.ownerPid as number) <= 0) {
+    invalid("sidecar claim ownerPid", "must be a positive safe integer");
+  }
+  if (record?.terminal !== "hosted" && record?.terminal !== "process") {
+    invalid("sidecar lease terminal", "is unsupported");
+  }
+  const metadata = {
+    ...descriptor,
+    ownerPid: record.ownerPid as number,
+    terminal: record.terminal,
+  } as const;
   if (record?.state === "claiming") {
-    if (!Number.isSafeInteger(record.ownerPid) || (record.ownerPid as number) <= 0) {
-      invalid("sidecar claim ownerPid", "must be a positive safe integer");
-    }
-    return Object.freeze({ ...descriptor, ownerPid: record.ownerPid as number, state: "claiming" });
+    return Object.freeze({ ...metadata, state: "claiming" });
   }
   if (record?.state !== "starting" && record?.state !== "ready" && record?.state !== "stopping") {
     invalid("sidecar lease state", "is unsupported");
@@ -393,7 +438,15 @@ export function normalizePrivateControlLease(value: unknown): PrivateControlLeas
   if (!Number.isSafeInteger(record.pid) || (record.pid as number) <= 0) {
     invalid("sidecar lease pid", "must be a positive safe integer");
   }
-  return Object.freeze({ ...descriptor, pid: record.pid as number, state: record.state });
+  if (!Number.isSafeInteger(record.processPid) || (record.processPid as number) <= 0) {
+    invalid("sidecar lease processPid", "must be a positive safe integer");
+  }
+  return Object.freeze({
+    ...metadata,
+    pid: record.pid as number,
+    processPid: record.processPid as number,
+    state: record.state,
+  });
 }
 
 export function normalizePrivateReadyDescriptor(value: unknown): PrivateReadyDescriptor {

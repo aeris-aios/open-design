@@ -2,17 +2,17 @@ import type { SidecarControlAccess } from "@open-design/sidecar/control";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  convergeToolPackServices,
   isToolPackStopSafeForRemoval,
   stopToolPackServices,
   summarizeToolPackStopResults,
+  withConvergedToolPackServices,
 } from "../src/control.js";
 
 describe("tools-pack service convergence", () => {
   it("keeps every unproven stop unsafe even when no PID was reported", () => {
     const stop = summarizeToolPackStopResults("release-beta", {
       attempts: [{
-        result: { forced: false, pid: null, state: "alive" },
+        result: { pid: null, state: "alive" },
         service: "daemon",
         status: "fulfilled",
       }],
@@ -36,9 +36,12 @@ describe("tools-pack service convergence", () => {
     async (failedService) => {
       const stop = vi.fn(async (service: string) => {
         if (service === failedService) throw new Error(`${service} failed`);
-        return { forced: false, pid: null, state: "absent" as const };
+        return { pid: null, state: "absent" as const };
       });
-      const control = { stop } as unknown as SidecarControlAccess;
+      const control = {
+        stop,
+        async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
+      } as unknown as SidecarControlAccess;
 
       await expect(stopToolPackServices(control)).resolves.toMatchObject({ state: "incomplete" });
       expect(stop.mock.calls).toEqual([
@@ -53,13 +56,15 @@ describe("tools-pack service convergence", () => {
     "refuses replacement when the %s stop is not proven",
     async (unstoppedService) => {
       const stop = vi.fn(async (service: string) => ({
-        forced: false,
         pid: service === unstoppedService ? 42 : null,
         state: service === unstoppedService ? "alive" as const : "absent" as const,
       }));
-      const control = { stop } as unknown as SidecarControlAccess;
+      const control = {
+        stop,
+        async withLifecycleSession<T>(callback: () => Promise<T>) { return await callback(); },
+      } as unknown as SidecarControlAccess;
 
-      await expect(convergeToolPackServices(control)).rejects.toThrow(
+      await expect(withConvergedToolPackServices(control, async () => undefined)).rejects.toThrow(
         "failed to converge one or more packaged services",
       );
       expect(stop.mock.calls).toEqual([

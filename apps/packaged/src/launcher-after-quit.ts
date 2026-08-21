@@ -106,7 +106,7 @@ async function restartExistingDesktop(input: {
     .map((attempt) => attempt.service);
   await writeLauncherAfterQuitLog(
     input.paths,
-    `inspect-found-existing namespace=${input.namespace} shutdown=${convergence.state === "complete" ? "exited" : "failed"} reason=${input.reason} pid=${desktopResult?.pid ?? "unknown"} forced=${desktopResult?.forced ?? false} failedServices=${failedServices.join(",") || "none"}`,
+    `inspect-found-existing namespace=${input.namespace} shutdown=${convergence.state === "complete" ? "exited" : "failed"} reason=${input.reason} pid=${desktopResult?.pid ?? "unknown"} failedServices=${failedServices.join(",") || "none"}`,
   );
   return convergence.state === "complete";
 }

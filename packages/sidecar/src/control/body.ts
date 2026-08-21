@@ -1,11 +1,14 @@
 import { createJsonIpcServer } from "../json-ipc.js";
 import { SidecarControlError } from "./error.js";
+import { withLifecycleSession } from "./lifecycle-session.js";
 import {
   publishReadyLease,
-  removeControlLeaseIfCurrent,
+  readControlLease,
+  retireControlLeaseIfCurrent,
 } from "./lease-store.js";
 import {
   PRIVATE_CONTROL_SCHEMA_VERSION,
+  privateLifecycleEndpointPath,
   privateResponse,
   readPrivateLaunchMetadata,
   sameControlIdentity,
@@ -19,7 +22,6 @@ import type {
   SidecarControlContext,
   SidecarMethodHandlers,
   SidecarProbeResult,
-  SidecarStopResult,
 } from "./public-types.js";
 
 function requestFailure(
@@ -71,7 +73,6 @@ export async function attachSidecarWithMetadata<TMethods>(
     onStopRequested,
   }: AttachSidecarOptions<TMethods>,
   internal: Readonly<{
-    claimOwnedByBody?: boolean;
     releaseLeaseOnClose?: boolean;
   }> = {},
 ): Promise<AttachedSidecar> {
@@ -81,13 +82,28 @@ export async function attachSidecarWithMetadata<TMethods>(
     roots: metadata.roots,
   });
   let closing: Promise<void> | null = null;
+  let beginExternalStop: () => void = () => undefined;
   let stopRequested = false;
   let closeServerAndDescriptor: () => Promise<void> = async () => undefined;
+
+  const claim = await readControlLease(metadata.identity, metadata.roots);
+  if (
+    claim?.incarnation !== metadata.incarnation
+    || claim.state === "claiming"
+  ) {
+    throw new SidecarControlError("peer-mismatch", "sidecar body requires its exact captured launch claim");
+  }
+  if (internal.releaseLeaseOnClose == null) {
+    internal = { releaseLeaseOnClose: claim.terminal === "hosted" };
+  }
 
   try {
     await initialize?.(context);
   } catch (error) {
     await Promise.resolve().then(() => onStopRequested?.()).catch(() => undefined);
+    if (internal.releaseLeaseOnClose === true) {
+      await retireControlLeaseIfCurrent(metadata).catch(() => undefined);
+    }
     throw error;
   }
 
@@ -123,15 +139,10 @@ export async function attachSidecarWithMetadata<TMethods>(
       if (request.operation.kind === "request-stop") {
         if (!stopRequested) {
           stopRequested = true;
-          queueMicrotask(() => {
-            void Promise.resolve()
-              .then(() => onStopRequested?.())
-              .catch(() => undefined)
-              .finally(() => closeServerAndDescriptor());
-          });
+          beginExternalStop();
         }
         return privateResponse(request, metadata, {
-          result: { accepted: true } satisfies SidecarStopResult,
+          result: { accepted: true },
           status: "ok",
         });
       }
@@ -163,26 +174,36 @@ export async function attachSidecarWithMetadata<TMethods>(
     throw error;
   });
 
-  closeServerAndDescriptor = async () => {
+  const closeServerAndLease = async () => {
+    await server.close();
+    if (internal.releaseLeaseOnClose === true) await retireControlLeaseIfCurrent(metadata);
+  };
+  const closeWithinSession = async () => {
     if (closing != null) return await closing;
-    closing = (async () => {
-      await server.close();
-      if (internal.releaseLeaseOnClose === true) await removeControlLeaseIfCurrent(metadata);
-    })();
+    closing = closeServerAndLease();
     return await closing;
   };
-  try {
-    const externallyLaunched = await publishReadyLease(
-      metadata,
-      process.pid,
-      internal.claimOwnedByBody,
+  beginExternalStop = () => {
+    if (closing != null) return;
+    closing = Promise.resolve()
+      .then(() => onStopRequested?.())
+      .catch(() => undefined)
+      .then(closeServerAndLease);
+  };
+  closeServerAndDescriptor = async () => {
+    if (closing != null) return await closing;
+    return await withLifecycleSession(
+      privateLifecycleEndpointPath(metadata.identity, metadata.roots),
+      closeWithinSession,
     );
-    if (internal.releaseLeaseOnClose == null) {
-      internal = { releaseLeaseOnClose: !externallyLaunched };
-    }
+  };
+  try {
+    await publishReadyLease(metadata, process.pid);
   } catch (error) {
     await server.close();
-    await removeControlLeaseIfCurrent(metadata).catch(() => undefined);
+    if (internal.releaseLeaseOnClose === true) {
+      await retireControlLeaseIfCurrent(metadata).catch(() => undefined);
+    }
     await Promise.resolve().then(() => onStopRequested?.()).catch(() => undefined);
     throw error;
   }

@@ -12,7 +12,6 @@ import {
   accessControlPlane,
   stopSidecarServices,
   type SidecarControlAccess,
-  type SidecarConvergenceProof,
   type SidecarControlScope,
   type SidecarServicesConvergence,
 } from "@open-design/sidecar/control";
@@ -103,11 +102,11 @@ export async function stopToolPackServices(
   return await stopSidecarServices(control, TOOL_PACK_SERVICE_STOPS);
 }
 
-export async function convergeToolPackServices(
+async function requireToolPackConvergence(
   control: SidecarControlAccess,
-): Promise<SidecarConvergenceProof> {
+): Promise<void> {
   const convergence = await stopToolPackServices(control);
-  if (convergence.state === "complete") return convergence.proof;
+  if (convergence.state === "complete") return;
   const failures = convergence.attempts.flatMap((attempt) => {
     if (attempt.status === "rejected") {
       return [new Error(`failed to stop ${attempt.service}`, { cause: attempt.error })];
@@ -120,6 +119,17 @@ export async function convergeToolPackServices(
       : [];
   });
   throw new AggregateError(failures, "failed to converge one or more packaged services");
+}
+
+/** Keep the namespace session through both convergence and caller-owned mutation. */
+export async function withConvergedToolPackServices<T>(
+  control: SidecarControlAccess,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return await control.withLifecycleSession(async () => {
+    await requireToolPackConvergence(control);
+    return await callback();
+  });
 }
 
 export function summarizeToolPackStopResults(
