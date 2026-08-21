@@ -37,8 +37,10 @@ rule table look complete. A useful iteration follows this sequence:
    cost, and maintenance clarity are useful but distinct benefits.
 3. **Decompose only as far as execution needs.** Name the source unit and test
    set needed for this slice. Split source or tests only when the resulting set
-   can be scheduled and validated independently. Avoid per-file taxonomies and
-   repository-wide cleanup campaigns.
+   can be scheduled and validated independently. If the route needs a long list
+   of scattered files, first ask whether the source tree is hiding the real
+   responsibility boundary. Avoid per-file taxonomies and repository-wide
+   cleanup campaigns.
 4. **Add the narrowest useful route.** Map the source unit to a validation
    effect, the effect to one test set, and the test set to an execution
    workload. Preserve broad handling for manifests, lockfiles, mixed changes,
@@ -76,6 +78,32 @@ These layers may remain coarse where finer scheduling has no measured value.
 When a high-cost or platform-specific workload validates only part of a broad
 package, an independent effect and test set are preferred over treating every
 package change as platform relevant.
+
+### Mapping shape is architecture feedback
+
+Plan is deliberately a weak architecture constraint. It does not prescribe
+source layout, reject existing mixed directories, or require unrelated changes
+to repay historical debt. It does make the cost of an unclear boundary visible
+when an optimization tries to name that boundary.
+
+A stable responsibility usually produces a short composition of directory
+prefixes and a few genuine entrypoints. A growing exact-file list, repeated
+negative exclusions, or a hand-maintained transitive closure is a signal that
+the source or test hierarchy does not express the responsibility being
+scheduled. The mapping is then diagnosing architecture debt; adding more
+planner precision does not resolve it.
+
+An iteration encountering that signal has three honest choices:
+
+1. Refactor the local source or test hierarchy until the responsibility has a
+   stable boundary.
+2. Accept a broader route and its execution cost.
+3. Defer active omission while retaining full fallback.
+
+Do not create a fourth choice by using a fragile enumeration to manufacture
+`certain` confidence. This feedback remains local to the slice under active CI
+optimization, so it can guide gradual improvement without turning plan into a
+repository-wide architecture gate.
 
 ### One-way planning authority
 
@@ -185,7 +213,10 @@ An active `certain` omission requires:
 
 1. **A conservative rule-table boundary.** Promoted matches stay explicit and
    narrow. Unknown or mixed changes, empty, unresolved, or invalid change
-   resolution, and below-threshold inputs select the full plan.
+   resolution, and below-threshold inputs select the full plan. An enumerated
+   dependency closure may be promoted only when unmapped sibling changes fall
+   back to broader coverage; a broad `certain` parent must not silently absorb
+   future dependencies outside the enumeration.
 2. **Planner-owned validation.** `scopes.py validate` rejects schema drift,
    unknown effects, invalid regexes, match cycles, malformed or duplicate
    matrices, and invalid UI P0 shadow references before dispatch.
@@ -272,6 +303,13 @@ workload outside forced-full plans. The source unit includes the Windows
 tools-pack implementation and resources, its explicit shared-module closure,
 the Windows-only test file, launcher-proto and sidecar-proto sources, and the
 narrow platform/release/sidecar exports consumed by that closure.
+
+That exact shared-module closure is also a diagnostic signal: the flat
+`tools/pack/src/` root does not yet expose stable core, launcher, and
+platform-specific source units. The enumeration records the current dependency
+shape, but it is not a durable pattern to copy or a substitute for decomposing
+that source hierarchy. Until the source boundary or its conservative fallback
+is strengthened, this route remains an active migration surface.
 
 Desktop, packaged-runtime, mac-only, and unrelated tools-pack changes retain
 Linux package coverage without starting a Windows runner. Package manifests,
