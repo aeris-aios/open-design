@@ -151,57 +151,66 @@ CI-related GitHub automation uses a two-layer architecture:
 
 Do not add a new business-named follow-on workflow such as `foo.comment.atom.yml` or `bar.autofix.atom.yml` without first trying to express the flow as a `ci.yml` producer plus the existing `comment`, `autofix`, or `report` capability. Keep artifact naming, storage layout, and parser behavior centralized in `.github/scripts/handoff.py`; do not let individual workflows invent parallel handoff conventions.
 
-## CI test-set orchestration
+## CI test-set orchestration guidance
 
-CI selection follows one direction: changed paths → source units → test sets →
-execution workloads. The `plan` job runs before and governs every downstream
-job, including repository guards, so only the planner may authorize omission.
-A downstream job may reject an unknown or malformed selection, but its success
-must never be treated as evidence that an earlier omission was safe.
+Use the following as a recommended convergence model, not a repository-wide
+conformance gate. Existing workflows and coarse test lanes may remain while
+their boundaries are understood. Do not block an unrelated change or require it
+to repay adjacent orchestration debt solely because it touches an existing
+lane. Apply these recommendations incrementally when the local scope and
+measured scheduling benefit justify the migration.
 
-Keep the model split into three responsibilities:
+Prefer one selection direction: changed paths → source units → test sets →
+execution workloads. Because the `plan` job runs before and governs downstream
+jobs, new omission policy should live in the planner rather than rely on a
+downstream guard to justify it after scheduling has already occurred.
+
+When a CI area is being reorganized, prefer three named responsibilities:
 
 - **Source units** name stable ownership or behavior boundaries in production,
-  test, fixture, and control-plane paths. Compose repeated selectors under a
-  named unit instead of copying the same prefixes into unrelated rules.
+  test, fixture, and control-plane paths. Prefer composing repeated selectors
+  under a named unit instead of copying prefixes into unrelated rules.
 - **Test sets** name independently useful semantic validation groups. Their
-  membership and execution contract belong to one authoritative declaration;
-  do not duplicate a matrix or file list between planner configuration,
-  workflow YAML, and a framework-local registry.
+  membership and execution contract should converge on one authoritative
+  declaration instead of accumulating more matrix or file-list copies across
+  planner configuration, workflow YAML, and framework-local registries.
 - **Routes** map source units to the test sets required to validate them. Routes
-  express impact, not runner mechanics; runner image, setup, sharding, and job
-  packing remain execution concerns derived after selection.
+  should express impact rather than runner mechanics; runner image, setup,
+  sharding, and job packing can remain execution concerns derived after
+  selection.
 
-Split a source unit or test set only when the boundary is stable, changes the
-work that can actually be omitted, and has enough runtime cost or diagnostic
-value to justify another scheduling identity. Directory size, file count, or
-the ability to write a narrower glob is not sufficient. Prefer a small number
-of composable semantic units over per-file mappings, exception lists, or
-negative-rule forests. Existing duplicated or implicit declarations are
-migration surfaces, not patterns to extend.
+Good split candidates have a stable boundary, change work that can actually be
+omitted, and carry enough runtime cost or diagnostic value to justify another
+scheduling identity. Directory size, file count, or the ability to write a
+narrower glob is weak evidence on its own. Prefer a small number of composable
+semantic units over per-file mappings, exception lists, or negative-rule
+forests. Treat existing duplicated or implicit declarations as migration
+surfaces without requiring every nearby change to remove them.
 
-Every orchestration change must preserve these fallbacks:
+Before promoting a new route from observation to active omission, retain
+conservative behavior such as:
 
 - unknown, mixed, unresolved, invalid, or below-threshold input selects the
   conservative full plan;
 - editing a test, fixture, or suite manifest selects the test set that consumes
   it; shared harness, contract, setup, or lockfile changes fan out to every
   affected set;
-- a selected test-set identifier that the executor cannot run fails visibly
-  instead of being ignored;
+- making a selected test-set identifier that the executor cannot run fail
+  visibly instead of being ignored;
 - direct planner tests cover representative in-bound, out-of-bound, mixed, and
   fallback inputs without reimplementing the evaluator in another language.
 
-Scope routing and hash invalidation remain orthogonal. Scope answers which test
-sets are necessary for a change; hash answers whether the selected workload's
-declared inputs equal a previous invocation. Do not use hash equality to weaken
-source-to-test coverage, or copy route policy into `.github/config/hash.json`.
+Keep scope routing and hash invalidation conceptually orthogonal: scope answers
+which test sets are necessary for a change, while hash answers whether the
+selected workload's declared inputs equal a previous invocation. New designs
+should not use hash equality to weaken source-to-test coverage or copy route
+policy into `.github/config/hash.json`.
 
-Before adding routes, inventory the complete current chain from changed path to
-match, effect, workload, job command, and concrete test cases. Remove or name
-implicit joins before making them finer. Changes under `.github/` must also
-follow `.github/AGENTS.md` and the current confidence methodology in
-`specs/current/ci.md`.
+For work whose purpose is CI orchestration, start by inventorying the current
+chain from changed path to match, effect, workload, job command, and concrete
+test cases. Prefer naming or removing implicit joins before making them finer.
+Changes under `.github/` must also follow `.github/AGENTS.md` and the current
+confidence methodology in `specs/current/ci.md`.
 
 ## Release channel model
 
