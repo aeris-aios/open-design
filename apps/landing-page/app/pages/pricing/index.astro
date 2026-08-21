@@ -202,7 +202,6 @@ const jsonLd = [
     data-upgrade-plan-label={planActionLabels.upgrade}
     data-interval-upgrade-label={planActionLabels.intervalUpgrade}
     data-switch-back-interval-label={planActionLabels.switchBackToInterval}
-    data-manage-billing-label={planActionLabels.manageBilling}
     data-interval-downgrade-unavailable-label={planActionLabels.intervalDowngradeUnavailable}
     data-checkout-unavailable-label={planActionLabels.checkoutUnavailable}
     data-scheduled-plan-label={planActionLabels.scheduled}
@@ -1138,7 +1137,6 @@ const jsonLd = [
         upgrade: pricingRoot.getAttribute('data-upgrade-plan-label') || '',
         intervalUpgrade: pricingRoot.getAttribute('data-interval-upgrade-label') || '',
         switchBack: pricingRoot.getAttribute('data-switch-back-interval-label') || '',
-        manageBilling: pricingRoot.getAttribute('data-manage-billing-label') || '',
         intervalDowngradeUnavailable:
           pricingRoot.getAttribute('data-interval-downgrade-unavailable-label') || '',
         checkoutUnavailable: pricingRoot.getAttribute('data-checkout-unavailable-label') || '',
@@ -1195,10 +1193,6 @@ const jsonLd = [
               pricingContext.current?.interval ?? interval;
             text = fillActionLabel(actionLabels.switchBack, {
               interval: intervalLabels[currentInterval],
-            });
-          } else if (action.kind === 'manage_billing') {
-            text = fillActionLabel(actionLabels.manageBilling, {
-              interval: intervalLabels[interval],
             });
           } else if (action.kind === 'interval_downgrade_unavailable') {
             text = fillActionLabel(actionLabels.intervalDowngradeUnavailable, {

@@ -163,7 +163,7 @@ test('allows a higher tier on the current billing interval', () => {
   );
 });
 
-test('routes a yearly-to-monthly interval downgrade to billing management', () => {
+test('blocks a yearly-to-monthly interval change until cancellation', () => {
   assert.deepEqual(
     resolvePersonalPlanAction(
       {
@@ -176,7 +176,7 @@ test('routes a yearly-to-monthly interval downgrade to billing management', () =
       },
       { tier: 'pro', interval: 'monthly' },
     ),
-    { kind: 'manage_billing', enabled: true },
+    { kind: 'interval_downgrade_unavailable', enabled: false },
   );
 });
 

@@ -28,7 +28,6 @@ export type PersonalPlanActionKind =
   | 'new_checkout'
   | 'current'
   | 'upgrade'
-  | 'manage_billing'
   | 'downgrade_unavailable'
   | 'scheduled'
   | 'current_canceling'
@@ -121,9 +120,7 @@ export function resolvePersonalPlanAction(
     context.current.interval === 'yearly' &&
     target.interval === 'monthly'
   ) {
-    return context.billingPortalAvailable
-      ? { kind: 'manage_billing', enabled: true }
-      : { kind: 'interval_downgrade_unavailable', enabled: false };
+    return { kind: 'interval_downgrade_unavailable', enabled: false };
   }
   if (personalPlanRelation(target.tier, context.current.tier) === 'lower') {
     return { kind: 'downgrade_unavailable', enabled: false };

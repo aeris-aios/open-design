@@ -913,7 +913,7 @@ describe("pricing contract", () => {
     assert.match(page, /loadPersonalPricingContext\(apiOrigin\)/);
     assert.match(page, /resolvePersonalPlanAction\(pricingContext/);
     assert.match(page, /action\.kind === 'dual_change'/);
-    assert.match(page, /action\.kind === 'manage_billing'/);
+    assert.doesNotMatch(page, /action\.kind === 'manage_billing'/);
     assert.match(page, /action\.kind === 'scheduled'/);
     assert.match(page, /pricing:set-interval/);
     assert.match(page, /data-first-month-intro-eligible/);
@@ -921,6 +921,10 @@ describe("pricing contract", () => {
     assert.match(page, /cta\.setAttribute\('tabindex', '-1'\)/);
     assert.match(page, /cta\.removeAttribute\('href'\)/);
     assert.match(page, /cta\.hasAttribute\('data-subscription-disabled'\)/);
+    assert.equal(
+      getPricingPlanActionLabels("zh").intervalDowngradeUnavailable,
+      "取消订阅后可变更套餐",
+    );
     assert.match(
       individualPlans,
       /\.pricing-card-cta\[aria-disabled='true'\][\s\S]*?cursor:\s*not-allowed;/,
