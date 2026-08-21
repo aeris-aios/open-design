@@ -414,6 +414,76 @@ describe('waitForPrintableContent', () => {
     }
   });
 
+  // Review catch (PR #7182): keying cancellation off the OUTER timer alone
+  // missed the ordinary case. When the renderer is healthy the in-page
+  // per-resource deadline (10s) fires first, the script returns on time, and
+  // the outer 15s timer never runs — yet the abandoned requests are still in
+  // flight, which is precisely the state that makes every later
+  // executeJavaScript crawl. The script now reports that it gave up, and that
+  // must cancel the loads too.
+  test('[P0] cancels the loads when the page reports it abandoned a resource, before the outer timeout', async () => {
+    let stopped = 0;
+    const window = {
+      webContents: {
+        async executeJavaScript(_script: string) {
+          // Back well inside the outer bound, but having given up on something.
+          return { stalled: true };
+        },
+        stop() {
+          stopped += 1;
+        },
+      },
+    };
+
+    await waitForPrintableContent(
+      window as unknown as Parameters<typeof waitForPrintableContent>[0],
+    );
+
+    expect(
+      stopped,
+      'an in-page deadline that fired leaves requests in flight just as the outer one does',
+    ).toBe(1);
+  });
+
+  test('does not cancel when the page reports every resource settled', async () => {
+    let stopped = 0;
+    const window = {
+      webContents: {
+        async executeJavaScript(_script: string) {
+          return { stalled: false };
+        },
+        stop() {
+          stopped += 1;
+        },
+      },
+    };
+
+    await waitForPrintableContent(
+      window as unknown as Parameters<typeof waitForPrintableContent>[0],
+    );
+
+    expect(stopped).toBe(0);
+  });
+
+  test('the injected script reports whether it abandoned anything', async () => {
+    const scripts: string[] = [];
+    const window = {
+      webContents: {
+        async executeJavaScript(script: string) {
+          scripts.push(script);
+          return { stalled: false };
+        },
+      },
+    };
+
+    await waitForPrintableContent(
+      window as unknown as Parameters<typeof waitForPrintableContent>[0],
+    );
+
+    expect(scripts[0]).toContain('stalledCount');
+    expect(scripts[0]).toContain('stalled: stalledCount > 0');
+  });
+
   test('leaves the loads alone when the page settles on its own', async () => {
     let stopped = 0;
     const window = {

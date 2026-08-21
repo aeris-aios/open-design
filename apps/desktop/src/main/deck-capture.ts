@@ -184,27 +184,49 @@ export const ARTIFACT_DOCUMENT_LOAD_TIMEOUT_MS = 15_000;
  * subresources is `waitForPrintableContent`'s job, and it bounds itself. The
  * listener is attached before `loadURL` so a fast `data:` URL cannot fire it
  * before we are listening.
+ *
+ * A real load failure still fails: `did-fail-load` reaching us before
+ * dom-ready rethrows, so `renderDeckSlides` reports RENDER_FAILED exactly as
+ * it did when this was a bare `await window.loadURL(...)`.
  */
+type ArtifactLoadOutcome =
+  | { readonly kind: "loaded" }
+  | { readonly kind: "dom-ready" }
+  | { readonly kind: "timeout" }
+  | { readonly kind: "failed"; readonly error: unknown };
+
 export async function loadArtifactDocument(window: BrowserWindow, url: string): Promise<void> {
-  const domReady = new Promise<void>((resolve) => {
-    window.webContents.once("dom-ready", () => resolve());
+  const domReady = new Promise<ArtifactLoadOutcome>((resolve) => {
+    window.webContents.once("dom-ready", () => resolve({ kind: "dom-ready" }));
   });
-  // Keep the rejection handled: a genuine `did-fail-load` must not surface as
-  // an unhandled rejection just because the race already settled on dom-ready.
-  const finished = window.loadURL(url).catch(() => undefined);
+  // Settle the load into a tagged outcome rather than catching it away. A
+  // `did-fail-load` that beats dom-ready is a genuine main-document failure and
+  // must still propagate — swallowing it would let the pipeline go on to
+  // capture Chromium's error page and report a successful-but-wrong export,
+  // which is worse than the hang this function exists to prevent. Attaching
+  // handlers here (rather than leaving the promise bare) also means a rejection
+  // arriving AFTER dom-ready has already won stays handled instead of surfacing
+  // as an unhandled rejection.
+  const finished = window.loadURL(url).then<ArtifactLoadOutcome, ArtifactLoadOutcome>(
+    () => ({ kind: "loaded" }),
+    (error: unknown) => ({ error, kind: "failed" }),
+  );
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let outcome: ArtifactLoadOutcome;
   try {
-    await Promise.race([
+    outcome = await Promise.race([
       finished,
       domReady,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, ARTIFACT_DOCUMENT_LOAD_TIMEOUT_MS);
+      new Promise<ArtifactLoadOutcome>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: "timeout" }), ARTIFACT_DOCUMENT_LOAD_TIMEOUT_MS);
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+
+  if (outcome.kind === "failed") throw outcome.error;
 }
 
 export async function renderDeckSlides(

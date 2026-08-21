@@ -31,11 +31,13 @@ type DomReadyListener = () => void;
 function createWindowStub(options: {
   /** Resolve `loadURL` (i.e. did-finish-load fired). Default: never resolves. */
   finishLoad?: boolean;
-  /** Reject `loadURL` (i.e. did-fail-load). */
+  /** Reject `loadURL` immediately (i.e. did-fail-load beats dom-ready). */
   failLoad?: boolean;
+  /** Hold the rejection until the test calls `rejectLoad()`. */
+  failLoadAfterDomReady?: boolean;
 }) {
   const listeners: DomReadyListener[] = [];
-  let loadRejected: Promise<unknown> | null = null;
+  let rejectLoad: (() => void) | undefined;
   const window = {
     webContents: {
       once(event: string, listener: DomReadyListener) {
@@ -43,9 +45,11 @@ function createWindowStub(options: {
       },
     },
     loadURL(_url: string) {
-      if (options.failLoad) {
-        loadRejected = Promise.reject(new Error('did-fail-load'));
-        return loadRejected;
+      if (options.failLoad) return Promise.reject(new Error('did-fail-load'));
+      if (options.failLoadAfterDomReady) {
+        return new Promise<void>((_resolve, reject) => {
+          rejectLoad = () => reject(new Error('did-fail-load'));
+        });
       }
       if (options.finishLoad) return Promise.resolve();
       return new Promise<void>(() => {});
@@ -55,9 +59,7 @@ function createWindowStub(options: {
     window: window as unknown as Parameters<typeof loadArtifactDocument>[0],
     fireDomReady: () => listeners.forEach((listener) => listener()),
     domReadyListenerCount: () => listeners.length,
-    get loadRejected() {
-      return loadRejected;
-    },
+    rejectLoad: () => rejectLoad?.(),
   };
 }
 
@@ -103,13 +105,43 @@ describe('loadArtifactDocument', () => {
     ).resolves.toBeUndefined();
   });
 
-  test('a did-fail-load rejection does not escape as an unhandled rejection', async () => {
+  // Review catch (PR #7182): the first version swallowed this with
+  // `.catch(() => undefined)`, which turned a genuine main-document failure
+  // into an immediately-resolved race winner. The pipeline would then capture
+  // Chromium's error page and report a successful-but-wrong export — worse
+  // than the hang this function exists to prevent. A failure that beats
+  // dom-ready must still propagate, exactly as the bare `await loadURL` did.
+  test('[P0] propagates a did-fail-load that arrives before dom-ready', async () => {
     const stub = createWindowStub({ failLoad: true });
-    // The race settles on the handled rejection rather than propagating it;
-    // the caller continues and captures whatever rendered.
     await expect(
       loadArtifactDocument(stub.window, 'data:text/html,<p>hi'),
-    ).resolves.toBeUndefined();
-    await expect(stub.loadRejected).rejects.toThrow('did-fail-load');
+    ).rejects.toThrow('did-fail-load');
+  });
+
+  // ...but once dom-ready has won, the document is usable and a late
+  // rejection must not take the export down — nor escape unhandled.
+  test('[P0] ignores a late did-fail-load once dom-ready already won', async () => {
+    const stub = createWindowStub({ failLoadAfterDomReady: true });
+
+    const orphaned: unknown[] = [];
+    const onUnhandled = (reason: unknown) => orphaned.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const pending = loadArtifactDocument(stub.window, 'data:text/html,<p>hi');
+      stub.fireDomReady();
+      await expect(pending).resolves.toBeUndefined();
+
+      // The load fails only now, after the race is already over.
+      stub.rejectLoad();
+      // Let the microtask queue drain; an unattached handler would surface here.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        orphaned,
+        'the late rejection must stay handled — attaching onRejected up front is the point',
+      ).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });
