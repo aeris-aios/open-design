@@ -2691,6 +2691,24 @@ export function HomeView({
       submittedActive,
       submittedRouteChipId,
     );
+    // The Mobile surface takes the Prototype route with the official
+    // `mobile-app` example riding along as its user-selected scaffold (device
+    // frame, screen layouts, anti-fake-device rules). An explicit example pick
+    // wins; a missing local record degrades to the plain route, never blocks.
+    const mobileScaffoldReference =
+      !submittedExampleReference
+      && automaticStrategyTaskProfile === 'prototype'
+      && submittedRouteChipId === 'mobile'
+        ? (() => {
+            const record = plugins.find((plugin) => plugin.id === 'mobile-app');
+            const source = record?.source?.trim();
+            return record && source
+              ? { pluginId: record.id, source }
+              : null;
+          })()
+        : null;
+    const submittedExampleOrScaffold =
+      submittedExampleReference ?? mobileScaffoldReference;
     // Pre-empt the run only when the user could actually fix it here. On the
     // seeded-brief 「使用」 path there is no field to fill, so we let the send
     // through and report whatever the daemon decides (below).
@@ -2857,8 +2875,8 @@ export function HomeView({
         ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
         // Rides only where the automatic route is actually claimed: an example
         // reference is meaningless without the route it belongs to.
-        ...(automaticStrategyTaskProfile && submittedExampleReference
-          ? { exampleReference: submittedExampleReference }
+        ...(automaticStrategyTaskProfile && submittedExampleOrScaffold
+          ? { exampleReference: submittedExampleOrScaffold }
           : {}),
         ...(!automaticStrategyTaskProfile && submittedActive?.record.source
           ? { pluginSource: submittedActive.record.source }

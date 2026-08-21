@@ -19,19 +19,19 @@ import {
 } from '../src/plugins/scenario-defaults.js';
 
 describe('automaticStrategyTaskProfileForRouteId', () => {
-  it('recognizes only the four product-owned OD Next routes', () => {
+  it('recognizes the product-owned OD Next routes, including the Mobile surface', () => {
     expect(automaticStrategyTaskProfileForRouteId('prototype')).toBe('prototype');
     expect(automaticStrategyTaskProfileForRouteId('deck')).toBe('ppt');
     expect(automaticStrategyTaskProfileForRouteId('marketing')).toBe('marketing');
     expect(automaticStrategyTaskProfileForRouteId('hyperframes')).toBe('hyperframes');
 
     expect(automaticStrategyTaskProfileForRouteId('wireframe')).toBeNull();
-    expect(automaticStrategyTaskProfileForRouteId('mobile')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('mobile')).toBe('prototype');
     expect(automaticStrategyTaskProfileForRouteId('image')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId(undefined)).toBeNull();
   });
 
-  it('validates exact project metadata without admitting Wireframe or Mobile aliases', () => {
+  it('validates exact project metadata, admitting Mobile but not the Wireframe alias', () => {
     expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'prototype' })).toBe('prototype');
     expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'deck' })).toBe('ppt');
     expect(automaticStrategyTaskProfileForProjectMetadata({
@@ -51,7 +51,7 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
       kind: 'prototype',
       platform: 'auto',
       platformTargets: ['mobile-ios', 'mobile-android'],
-    })).toBeNull();
+    })).toBe('prototype');
 
     expect(defaultScenarioTaskProfileForProjectMetadata({
       kind: 'prototype',
@@ -60,7 +60,7 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
     expect(defaultScenarioTaskProfileForProjectMetadata({
       kind: 'prototype',
       platformTargets: ['mobile-ios'],
-    }, 'example-web-prototype')).toBeNull();
+    }, 'example-web-prototype')).toBe('prototype');
   });
 
   it('recognizes only an exact daemon-owned strategy binding as current automatic routing', () => {

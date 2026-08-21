@@ -18,9 +18,18 @@ describe('EntryShell automatic strategy routing', () => {
     });
   });
 
+  it('accepts a prototype claim for mobile-targeted metadata', () => {
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'prototype',
+      skillId: 'ordinary-default-skill',
+    }, { kind: 'prototype', platformTargets: ['mobile-ios'] })).toEqual({
+      skillId: null,
+      automaticStrategyTaskProfile: 'prototype',
+    });
+  });
+
   it.each([
     { kind: 'prototype' as const, fidelity: 'wireframe' as const },
-    { kind: 'prototype' as const, platformTargets: ['mobile-ios' as const] },
   ])('rejects a prototype claim for non-OD-Next metadata and preserves ordinary defaults', (metadata) => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: 'prototype',

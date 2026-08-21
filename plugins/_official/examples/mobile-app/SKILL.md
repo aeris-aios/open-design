@@ -92,6 +92,14 @@ Run through `references/checklist.md`. Pay extra attention to:
 
 One sentence before describing what's there. Stop after `</artifact>`.
 
+> **Delivery channel note.** The `<artifact>` wrapper above is the legacy
+> chat-delivery convention. When this Skill travels as reference material
+> inside a strategy run whose contract delivers by writing files (e.g. a root
+> `index.html` resolved as the runnable entry), follow that run's delivery
+> contract: write the file, do not emit an `<artifact>` wrapper. Everything
+> else in this Skill — the seed, layouts, and Hard rules below — applies
+> unchanged.
+
 ## Hard rules
 
 - **The phone is real.** Dynamic Island gap, SVG status icons, home indicator. The seed protects all three — don't rewrite the frame.

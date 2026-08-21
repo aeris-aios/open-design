@@ -1077,16 +1077,63 @@ describe('HomeView prompt handoff', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it.each([
-    {
-      subtype: 'mobile',
-      prompt: 'Design a mobile checkout flow.',
-      metadata: {
+  it('routes the mobile Prototype scene onto the automatic OD Next route with the mobile-app scaffold', async () => {
+    const MOBILE_APP_PLUGIN = {
+      ...WEB_PROTOTYPE_PLUGIN,
+      id: 'mobile-app',
+      title: 'Mobile App',
+      source: '/tmp/mobile-app',
+      fsPath: '/tmp/mobile-app',
+    };
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(
+          JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN, MOBILE_APP_PLUGIN] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    const onSubmit = vi.fn();
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={onSubmit}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    await clearActiveTypeChip();
+    await pickHomeTemplate('prototype');
+    const subtypeChip = await screen.findByTestId('home-hero-subtype-mobile');
+    fireEvent.click(subtypeChip);
+    await waitFor(() => {
+      expect(subtypeChip.getAttribute('aria-selected')).toBe('true');
+    });
+
+    await setPromptAndSettle('Design a mobile checkout flow.');
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      exampleReference: { pluginId: 'mobile-app', source: '/tmp/mobile-app' },
+      projectKind: 'prototype',
+      projectMetadata: expect.objectContaining({
         kind: 'prototype',
         platform: 'auto',
         platformTargets: ['mobile-ios', 'mobile-android'],
-      },
-    },
+      }),
+    })));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
+    expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pluginInputs');
+  });
+
+  it.each([
     {
       subtype: 'wireframe',
       prompt: 'Sketch a low-fidelity account setup flow.',

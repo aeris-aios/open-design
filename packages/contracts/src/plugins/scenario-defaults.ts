@@ -59,6 +59,10 @@ export const DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID =
 
 const AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID = {
   prototype: 'prototype',
+  // Mobile is a Prototype surface variant: it takes the same OD Next route,
+  // and the official `mobile-app` example rides along as a user-selected
+  // Skill so the profile gains the device frame and screen-layout scaffold.
+  mobile: 'prototype',
   deck: 'ppt',
   marketing: 'marketing',
   hyperframes: 'hyperframes',
@@ -84,8 +88,11 @@ export function automaticStrategyTaskProfileForRouteId(
  * Validate the daemon-owned route against exact project metadata.
  *
  * This helper is intentionally stricter than the ordinary scenario resolver:
- * broad prototype metadata must not let the Wireframe or Mobile aliases claim
- * the OD Next Prototype route.
+ * broad prototype metadata must not let the Wireframe alias claim the OD Next
+ * Prototype route. Mobile-targeted prototypes take the route: the prototype
+ * profile carries the mobile environment rules, and the official `mobile-app`
+ * example travels alongside as a user-selected Skill (device frame, screen
+ * layouts, anti-fake-device rules).
  */
 export function automaticStrategyTaskProfileForProjectMetadata(
   metadata: Pick<ProjectMetadata, 'kind' | 'intent' | 'fidelity' | 'platform' | 'platformTargets'>
@@ -101,11 +108,6 @@ export function automaticStrategyTaskProfileForProjectMetadata(
   if (metadata?.intent != null) return null;
   if (metadata?.kind === 'deck') return 'ppt';
   if (metadata?.kind !== 'prototype' || metadata.fidelity === 'wireframe') return null;
-  const mobileTargets = new Set(['mobile-ios', 'mobile-android']);
-  if (
-    (metadata.platform && mobileTargets.has(metadata.platform))
-    || metadata.platformTargets?.some((target) => mobileTargets.has(target))
-  ) return null;
   return 'prototype';
 }
 
