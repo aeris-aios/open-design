@@ -391,6 +391,37 @@ describe("pricing contract", () => {
     );
   });
 
+  it("explains delayed client entitlement display on every localized plan card", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+    const expectedNotes = {
+      en: "Model entitlements take effect after subscribing. They may appear with a delay in the client and will display normally after updating to the latest version.",
+      zh: "模型权益订阅后均已生效，客户端可能延迟展示，版本升级后会正常展示。",
+      "zh-tw": "模型權益訂閱後均已生效，客戶端可能延遲顯示，版本升級後會正常顯示。",
+      es: "Los beneficios de los modelos se activan al suscribirte. Es posible que tarden en aparecer en el cliente; se mostrarán correctamente después de actualizar a la última versión.",
+      "pt-br": "Os benefícios dos modelos entram em vigor após a assinatura. Pode haver atraso na exibição no cliente; eles aparecerão normalmente após a atualização para a versão mais recente.",
+      ru: "Права на модели активируются после подписки. В клиенте они могут появиться с задержкой и будут отображаться корректно после обновления до последней версии.",
+      fr: "Les droits d’accès aux modèles prennent effet après l’abonnement. Leur affichage peut être retardé dans le client et redeviendra normal après la mise à jour vers la dernière version.",
+      ko: "모델 이용 권한은 구독 후 적용됩니다. 클라이언트에는 늦게 표시될 수 있으며 최신 버전으로 업데이트하면 정상적으로 표시됩니다.",
+      de: "Die Modellberechtigungen werden nach dem Abonnement aktiviert. Im Client können sie verzögert erscheinen und werden nach dem Update auf die neueste Version korrekt angezeigt.",
+      ja: "モデルの利用権はサブスクリプション登録後に有効になります。クライアントへの表示が遅れる場合がありますが、最新版へアップデートすると正常に表示されます。",
+    } as const;
+
+    for (const [locale, expected] of Object.entries(expectedNotes)) {
+      assert.equal(
+        getPricingContent(locale as keyof typeof expectedNotes).personal.modelEntitlementActivationNote,
+        expected,
+      );
+    }
+    assert.match(
+      individualPlans,
+      /<details class="plan-model-help">\s*<summary aria-label=\{P\.aboutModelEntitlements\}>\?<\/summary>\s*<span class="plan-model-help-copy">\{P\.modelEntitlementActivationNote\}<\/span>\s*<\/details>/s,
+    );
+    assert.match(
+      individualPlans,
+      /\.pricing-card:has\(\.plan-model-help\[open\]\),\s*\.pricing-card:has\(\.plan-model-help:hover\),\s*\.pricing-card:has\(\.plan-model-help:focus-within\)\s*\{\s*z-index:\s*20;/s,
+    );
+  });
+
   it("keeps the Max wordmark readable on its dark card", async () => {
     const [individualPlans, logo] = await Promise.all([
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),

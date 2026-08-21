@@ -189,11 +189,13 @@ export interface PersonalPricingCopy {
   estimatedRequestsAria: string;
   usageAllowanceNote: string;
   usageEstimatesNote: string;
+  modelEntitlementActivationNote: string;
   comparisonTitle: string;
   category: string;
   model: string;
   tierUse: Record<'go' | PlanTierId, string>;
   aboutPopularAllowance: string;
+  aboutModelEntitlements: string;
   otherModelsTitle: string;
   otherModelsDescription: string;
 }
@@ -328,6 +330,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   estimatedRequestsAria: 'Estimated model requests every 5 hours',
   usageAllowanceNote: 'Popular models include ample allowance, roughly equivalent to $16 every 5 hours · $40 weekly · $80 monthly. Actual usage varies by model and context length.',
   usageEstimatesNote: 'Estimated request counts by model may change with model pricing, usage patterns, and user feedback.',
+  modelEntitlementActivationNote: 'Model entitlements take effect after subscribing. They may appear with a delay in the client and will display normally after updating to the latest version.',
   comparisonTitle: 'Compare every model across plans',
   category: 'Category',
   model: 'Model',
@@ -338,6 +341,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
     max: 'High volume',
   },
   aboutPopularAllowance: 'About popular model allowance',
+  aboutModelEntitlements: 'About model entitlement activation',
   otherModelsTitle: 'Other available models',
   otherModelsDescription: 'Flagship and other models use monthly credits and are billed by usage. Cost varies by model and task. Available to Plus, Pro, and Max in the app.',
 };
@@ -373,6 +377,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   estimatedRequestsAria: '模型每 5 小时预估请求数',
   usageAllowanceNote: '热门模型提供充足额度，大致相当于每 5 小时 $16 · 每周 $40 · 每月 $80。实际用量因模型和上下文长度而异。',
   usageEstimatesNote: '各模型的预估次数可能随模型价格、使用情况与用户反馈调整。',
+  modelEntitlementActivationNote: '模型权益订阅后均已生效，客户端可能延迟展示，版本升级后会正常展示。',
   comparisonTitle: '对比各套餐的全部模型',
   category: '分类',
   model: '模型',
@@ -383,6 +388,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
     max: '高频生产',
   },
   aboutPopularAllowance: '查看热门模型额度说明',
+  aboutModelEntitlements: '查看模型权益生效说明',
   otherModelsTitle: '其他可用模型',
   otherModelsDescription: '旗舰及其他模型均按用量扣除每月模型额度，费用取决于模型和任务。Plus、Pro 和 Max 可在应用内任选。',
 };
@@ -418,6 +424,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   estimatedRequestsAria: '模型每 5 小時預估請求數',
   usageAllowanceNote: '熱門模型提供充足額度，大致相當於每 5 小時 $16 · 每週 $40 · 每月 $80。實際用量依模型與上下文長度而異。',
   usageEstimatesNote: '各模型的預估次數可能依模型價格、使用情況與使用者回饋調整。',
+  modelEntitlementActivationNote: '模型權益訂閱後均已生效，客戶端可能延遲顯示，版本升級後會正常顯示。',
   comparisonTitle: '比較各方案的全部模型',
   category: '分類',
   model: '模型',
@@ -428,6 +435,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
     max: '高頻製作',
   },
   aboutPopularAllowance: '查看熱門模型額度說明',
+  aboutModelEntitlements: '查看模型權益生效說明',
   otherModelsTitle: '其他可用模型',
   otherModelsDescription: '旗艦及其他模型皆依用量扣除每月模型額度，費用取決於模型與任務。Plus、Pro 和 Max 可在應用程式內任選。',
 };
@@ -463,6 +471,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   estimatedRequestsAria: 'Solicitudes de modelo estimadas cada 5 horas',
   usageAllowanceNote: 'Los modelos populares incluyen una capacidad amplia, equivalente aproximadamente a $16 cada 5 horas · $40 por semana · $80 al mes. El uso real varía según el modelo y la longitud del contexto.',
   usageEstimatesNote: 'Las solicitudes estimadas pueden cambiar según el precio del modelo, los patrones de uso y los comentarios de los usuarios.',
+  modelEntitlementActivationNote: 'Los beneficios de los modelos se activan al suscribirte. Es posible que tarden en aparecer en el cliente; se mostrarán correctamente después de actualizar a la última versión.',
   comparisonTitle: 'Compara todos los modelos entre planes',
   category: 'Categoría',
   model: 'Modelo',
@@ -473,6 +482,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
     max: 'Alto volumen',
   },
   aboutPopularAllowance: 'Acerca de la capacidad de modelos populares',
+  aboutModelEntitlements: 'Acerca de la activación de los beneficios de los modelos',
   otherModelsTitle: 'Otros modelos disponibles',
   otherModelsDescription: 'Los modelos insignia y otros modelos consumen los créditos mensuales según el uso. El coste varía según el modelo y la tarea. Disponibles en la aplicación con Plus, Pro y Max.',
 };
@@ -508,6 +518,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   estimatedRequestsAria: 'Solicitações de modelo estimadas a cada 5 horas',
   usageAllowanceNote: 'Os modelos populares incluem uma franquia ampla, aproximadamente equivalente a $16 a cada 5 horas · $40 por semana · $80 por mês. O uso real varia conforme o modelo e o tamanho do contexto.',
   usageEstimatesNote: 'As solicitações estimadas podem mudar conforme o preço do modelo, os padrões de uso e o feedback dos usuários.',
+  modelEntitlementActivationNote: 'Os benefícios dos modelos entram em vigor após a assinatura. Pode haver atraso na exibição no cliente; eles aparecerão normalmente após a atualização para a versão mais recente.',
   comparisonTitle: 'Compare todos os modelos entre os planos',
   category: 'Categoria',
   model: 'Modelo',
@@ -518,6 +529,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
     max: 'Alto volume',
   },
   aboutPopularAllowance: 'Sobre a franquia dos modelos populares',
+  aboutModelEntitlements: 'Sobre a ativação dos benefícios dos modelos',
   otherModelsTitle: 'Outros modelos disponíveis',
   otherModelsDescription: 'Modelos de ponta e outros modelos usam os créditos mensais conforme o consumo. O custo varia por modelo e tarefa. Disponíveis no aplicativo para Plus, Pro e Max.',
 };
@@ -553,6 +565,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   estimatedRequestsAria: 'Оценка запросов к моделям каждые 5 часов',
   usageAllowanceNote: 'Популярные модели включают большой лимит, примерно равный $16 каждые 5 часов · $40 в неделю · $80 в месяц. Фактический расход зависит от модели и длины контекста.',
   usageEstimatesNote: 'Оценка числа запросов может меняться вместе с ценой модели, характером использования и отзывами пользователей.',
+  modelEntitlementActivationNote: 'Права на модели активируются после подписки. В клиенте они могут появиться с задержкой и будут отображаться корректно после обновления до последней версии.',
   comparisonTitle: 'Сравните все модели во всех планах',
   category: 'Категория',
   model: 'Модель',
@@ -563,6 +576,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
     max: 'Высокая нагрузка',
   },
   aboutPopularAllowance: 'О лимите популярных моделей',
+  aboutModelEntitlements: 'Об активации прав на модели',
   otherModelsTitle: 'Другие доступные модели',
   otherModelsDescription: 'Флагманские и другие модели расходуют ежемесячные кредиты по факту использования. Стоимость зависит от модели и задачи. Доступны в приложении на Plus, Pro и Max.',
 };
@@ -598,6 +612,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   estimatedRequestsAria: 'Requêtes de modèles estimées toutes les 5 heures',
   usageAllowanceNote: 'Les modèles populaires incluent un quota généreux, soit environ 16 $ toutes les 5 heures · 40 $ par semaine · 80 $ par mois. L’usage réel varie selon le modèle et la longueur du contexte.',
   usageEstimatesNote: 'Le nombre estimé de requêtes peut évoluer avec le prix des modèles, les usages et les retours des utilisateurs.',
+  modelEntitlementActivationNote: 'Les droits d’accès aux modèles prennent effet après l’abonnement. Leur affichage peut être retardé dans le client et redeviendra normal après la mise à jour vers la dernière version.',
   comparisonTitle: 'Comparez tous les modèles selon les offres',
   category: 'Catégorie',
   model: 'Modèle',
@@ -608,6 +623,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
     max: 'Volume élevé',
   },
   aboutPopularAllowance: 'À propos du quota des modèles populaires',
+  aboutModelEntitlements: 'À propos de l’activation des droits d’accès aux modèles',
   otherModelsTitle: 'Autres modèles disponibles',
   otherModelsDescription: 'Les modèles phares et les autres modèles consomment les crédits mensuels selon l’usage. Le coût varie selon le modèle et la tâche. Disponibles dans l’application avec Plus, Pro et Max.',
 };
@@ -643,6 +659,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   estimatedRequestsAria: '5시간마다 예상 모델 요청 수',
   usageAllowanceNote: '인기 모델에는 넉넉한 한도가 포함되며, 대략 5시간마다 $16 · 주당 $40 · 월 $80에 해당합니다. 실제 사용량은 모델과 컨텍스트 길이에 따라 달라집니다.',
   usageEstimatesNote: '모델별 예상 요청 수는 모델 가격, 사용 패턴, 사용자 피드백에 따라 조정될 수 있습니다.',
+  modelEntitlementActivationNote: '모델 이용 권한은 구독 후 적용됩니다. 클라이언트에는 늦게 표시될 수 있으며 최신 버전으로 업데이트하면 정상적으로 표시됩니다.',
   comparisonTitle: '요금제별 전체 모델 비교',
   category: '분류',
   model: '모델',
@@ -653,6 +670,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
     max: '대량 작업',
   },
   aboutPopularAllowance: '인기 모델 한도 안내',
+  aboutModelEntitlements: '모델 이용 권한 적용 안내',
   otherModelsTitle: '기타 사용 가능 모델',
   otherModelsDescription: '플래그십 및 기타 모델은 사용량에 따라 월간 모델 크레딧을 차감합니다. 비용은 모델과 작업에 따라 달라집니다. Plus, Pro, Max에서 앱 내 선택이 가능합니다.',
 };
@@ -688,6 +706,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   estimatedRequestsAria: 'Geschätzte Modellanfragen alle 5 Stunden',
   usageAllowanceNote: 'Beliebte Modelle enthalten ein großzügiges Kontingent, ungefähr entsprechend $16 alle 5 Stunden · $40 pro Woche · $80 pro Monat. Die tatsächliche Nutzung variiert je nach Modell und Kontextlänge.',
   usageEstimatesNote: 'Die geschätzten Anfragen pro Modell können sich mit Modellpreisen, Nutzungsmustern und Nutzerfeedback ändern.',
+  modelEntitlementActivationNote: 'Die Modellberechtigungen werden nach dem Abonnement aktiviert. Im Client können sie verzögert erscheinen und werden nach dem Update auf die neueste Version korrekt angezeigt.',
   comparisonTitle: 'Alle Modelle nach Tarif vergleichen',
   category: 'Kategorie',
   model: 'Modell',
@@ -698,6 +717,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
     max: 'Hohes Volumen',
   },
   aboutPopularAllowance: 'Zum Kontingent beliebter Modelle',
+  aboutModelEntitlements: 'Zur Aktivierung der Modellberechtigungen',
   otherModelsTitle: 'Weitere verfügbare Modelle',
   otherModelsDescription: 'Flaggschiff- und andere Modelle verbrauchen monatliche Credits nach Nutzung. Die Kosten hängen von Modell und Aufgabe ab. In der App für Plus, Pro und Max verfügbar.',
 };
@@ -733,6 +753,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   estimatedRequestsAria: '5 時間ごとのモデル推定リクエスト数',
   usageAllowanceNote: '人気モデルには十分な利用枠が含まれ、目安は 5 時間ごとに $16 · 週 $40 · 月 $80 相当です。実際の使用量はモデルとコンテキスト長によって異なります。',
   usageEstimatesNote: 'モデル別の推定回数は、モデル価格、利用状況、ユーザーフィードバックに応じて変更される場合があります。',
+  modelEntitlementActivationNote: 'モデルの利用権はサブスクリプション登録後に有効になります。クライアントへの表示が遅れる場合がありますが、最新版へアップデートすると正常に表示されます。',
   comparisonTitle: 'プラン別に全モデルを比較',
   category: 'カテゴリー',
   model: 'モデル',
@@ -743,6 +764,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
     max: '大量制作',
   },
   aboutPopularAllowance: '人気モデルの利用枠について',
+  aboutModelEntitlements: 'モデル利用権の有効化について',
   otherModelsTitle: 'その他の利用可能なモデル',
   otherModelsDescription: 'フラッグシップおよびその他のモデルは、使用量に応じて毎月のモデルクレジットを消費します。料金はモデルとタスクによって異なります。Plus、Pro、Max ではアプリ内で選択できます。',
 };
