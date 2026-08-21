@@ -9,12 +9,12 @@ const execFileAsync = promisify(execFile);
 const toolPackRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("built tools-pack CLI", () => {
-  it("resolves workspace configuration from the bundled bin entry", async () => {
+  it("resolves workspace configuration from the bundled entry", async () => {
     await execFileAsync(process.execPath, ["esbuild.config.mjs"], { cwd: toolPackRoot });
 
     const invocation = execFileAsync(
       process.execPath,
-      ["bin/tools-pack.mjs", "linux", "unsupported-built-smoke"],
+      ["dist/index.mjs", "linux", "unsupported-built-smoke"],
       { cwd: toolPackRoot },
     );
 
