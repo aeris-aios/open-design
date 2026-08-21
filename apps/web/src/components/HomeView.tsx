@@ -13,6 +13,7 @@ import type {
   ApplyResult,
   ChatSessionMode,
   ConnectorDetail,
+  CreateProjectExampleReference,
   InputFieldSpec,
   McpServerConfig,
   InstalledPluginRecord,
@@ -199,6 +200,17 @@ export interface ActivePlugin {
   // legitimately equal the chip's default plugin id (e.g. the prototype rail's
   // `example-web-prototype`).
   explicitPick: boolean;
+  // True when this pick came from an OFFICIAL EXAMPLE CARD on a task type's
+  // example rail, as opposed to the Community grid / details modal / plugins-
+  // page hand-off. Always accompanies `explicitPick` — an example card is an
+  // explicit pick for every UI purpose — and narrows it for exactly one
+  // decision: routing. See `examplePickReference`.
+  //
+  // The discriminator has to be the CALL SITE, not the record: the very same
+  // `InstalledPluginRecord` (`example-web-prototype`) is simultaneously an
+  // example card, a chip's default scenario plugin, and a Community entry, and
+  // nothing in its data tells the three apart.
+  examplePick: boolean;
 }
 
 // `inlineBacked` distinguishes a context inserted as an inline `@mention` pill
@@ -1394,6 +1406,10 @@ export function HomeView({
       // or Community card / detail modal) rather than a type chip's default
       // plugin. Stored on `active.explicitPick`; gates the chip's clear button.
       explicitPick?: boolean;
+      // True when the explicit pick came from a task type's official example
+      // rail rather than the Community grid / details modal. Stored on
+      // `active.examplePick`; narrows `explicitPick` for routing only.
+      examplePick?: boolean;
     },
     // Resolves true when the bound plugin left the composer submittable
     // (inputs valid, apply not failed/superseded) — callers use this to
@@ -1463,6 +1479,7 @@ export function HomeView({
       preserveInputFields: options?.preserveInputFields === true,
       suppressPromptSync: suppressPromptUpdate,
       explicitPick: options?.explicitPick === true,
+      examplePick: options?.examplePick === true,
     });
     setFallbackProjectKind(null);
     setFallbackProjectMetadata(null);
@@ -1951,6 +1968,9 @@ export function HomeView({
       projectMetadata: active?.projectMetadata ?? null,
       deferApply: true,
       explicitPick: true,
+      // An example card is the ONE explicit pick that is a choice of look
+      // rather than of strategy — see `examplePickReference`.
+      examplePick: true,
     }).then((submittable) => {
       if (submittable) inputRef.current?.pulseSend();
     });
@@ -2661,9 +2681,16 @@ export function HomeView({
       ?? submittedActive?.chipId
       ?? null;
     const automaticStrategyTaskProfile = sessionMode === 'design'
-      && submittedActive?.explicitPick !== true
+      && !pinsPluginOverAutomaticRoute(submittedActive, submittedRouteChipId)
       ? automaticStrategyTaskProfileForRouteId(submittedRouteChipId)
       : null;
+    // The example's identity, sent in place of a plugin pin. Non-null only on
+    // the same picks the gate above releases to the automatic route, so it can
+    // never accompany a pinned plugin.
+    const submittedExampleReference = examplePickReference(
+      submittedActive,
+      submittedRouteChipId,
+    );
     // Pre-empt the run only when the user could actually fix it here. On the
     // seeded-brief 「使用」 path there is no field to fill, so we let the send
     // through and report whatever the daemon decides (below).
@@ -2804,7 +2831,7 @@ export function HomeView({
         : null;
       const productAutomaticScenario = submittedChip?.action.kind === 'apply-scenario'
         && submittedChip.action.automaticDefault === true
-        && submittedActive?.explicitPick !== true;
+        && !pinsPluginOverAutomaticRoute(submittedActive, submittedRouteChipId);
       const routedPluginId =
         automaticStrategyTaskProfile
           ? null
@@ -2828,6 +2855,11 @@ export function HomeView({
         pluginId: routedPluginId,
         ...(pluginSelectionProvenance ? { pluginSelectionProvenance } : {}),
         ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
+        // Rides only where the automatic route is actually claimed: an example
+        // reference is meaningless without the route it belongs to.
+        ...(automaticStrategyTaskProfile && submittedExampleReference
+          ? { exampleReference: submittedExampleReference }
+          : {}),
         ...(!automaticStrategyTaskProfile && submittedActive?.record.source
           ? { pluginSource: submittedActive.record.source }
           : {}),
@@ -3365,6 +3397,51 @@ function defaultPluginIdForChip(chipId: string | null): string | null {
     return chip.action.pluginId;
   }
   return null;
+}
+
+/**
+ * The official-example identity an active pick hands to the daemon INSTEAD of
+ * pinning its plugin — `null` when this pick has no such identity to offer.
+ *
+ * An official example card under a task type names a LOOK, not a STRATEGY. It
+ * is an explicit pick for every UI purpose (its own chip, its own title, its
+ * own clear ×) yet it must not displace the product's automatic OD Next route:
+ * the user asked for that reference output, not for a different pipeline. When
+ * the pick can be named honestly — it came from an example rail, the task type
+ * it sits under owns an OD Next route, and the record carries the exact local
+ * catalogue `source` the daemon re-resolves it by (the same identity
+ * `/apply-local` looks it up with) — the example travels as this reference and
+ * the automatic route survives.
+ *
+ * Everything else has no honest reference to make and keeps pinning its plugin
+ * exactly as before: a Community card, the details modal, or a plugins-page
+ * hand-off (all strategy choices); an example under a task type with no OD Next
+ * route (Wireframe, Mobile, Image, Document, …), where there is nothing to hand
+ * the routing back to; and a record whose source we cannot name, which would
+ * otherwise lose its material silently.
+ */
+function examplePickReference(
+  active: ActivePlugin | null | undefined,
+  routeChipId: string | null,
+): CreateProjectExampleReference | null {
+  if (active?.examplePick !== true) return null;
+  if (automaticStrategyTaskProfileForRouteId(routeChipId) === null) return null;
+  const source = active.record.source?.trim();
+  if (!source) return null;
+  return { pluginId: active.record.id, source };
+}
+
+/**
+ * True when this pick pins its own plugin and therefore suppresses the
+ * product's automatic OD Next route. The single gate both routing decisions in
+ * `submit()` read; see `examplePickReference` for why `explicitPick` alone is
+ * not the answer.
+ */
+function pinsPluginOverAutomaticRoute(
+  active: ActivePlugin | null | undefined,
+  routeChipId: string | null,
+): boolean {
+  return active?.explicitPick === true && examplePickReference(active, routeChipId) === null;
 }
 
 export function shouldShowActivePluginChip(active: ActivePlugin | null): boolean {

@@ -11,7 +11,6 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 
-import { assertOdNextPlanningBuildOnlyV2 } from '@open-design/contracts';
 import type Database from 'better-sqlite3';
 
 import { parseFrontmatter } from '../../design-systems/frontmatter.js';
@@ -34,6 +33,16 @@ const MAX_SIDE_FILE_BYTES = 256 * 1024;
 const MAX_PACKAGE_BYTES = 1024 * 1024;
 const READ_CHUNK_BYTES = 64 * 1024;
 const SIDE_FILE_REFERENCE = /\b(?:assets|references|scripts|examples)\/[A-Za-z0-9._/-]+\b/g;
+/**
+ * Shape a canonical id must have before it may be adopted from a manifest the
+ * caller resolved itself (see `ResolvedFrozenSkillSourceV1`).
+ *
+ * The Bundle joins selected ids with `,` into one `skill_names` attribute and
+ * the parser splits them back on `,`, so an adopted id carrying a comma or
+ * whitespace would silently round-trip as two names. Catalogue ids keep their
+ * existing looser rule: they were already minted by `listSkills`.
+ */
+const ADOPTABLE_CANONICAL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export interface FrozenSkillFileV1 {
   path: string;
@@ -108,14 +117,107 @@ export async function captureFrozenSkillPackage(input: {
   ioHooks?: FrozenSkillCaptureIoHooks;
 }): Promise<FrozenSkillPackageV1> {
   const ids = normalizeSelectedSkillIds(input);
-  const selections: FrozenSkillSelectionV1[] = [];
-  let packageBytes = 0;
+  const targets: FrozenSkillCaptureTarget[] = [];
   for (const canonicalId of ids) {
     const skill = findSkillById(input.catalog, canonicalId);
     if (!skill) {
       throw new InvalidFrozenSkillPackageError(`Selected Skill ${canonicalId} is unavailable.`);
     }
-    const selection = await captureSelection(skill, input.ioHooks);
+    targets.push({
+      dir: skill.dir,
+      label: `Selected Skill ${skill.id}`,
+      name: skill.name,
+      identity: { kind: 'catalog', canonicalId: skill.id },
+    });
+  }
+  return captureTargets(targets, input.ioHooks);
+}
+
+/**
+ * A skill-like folder the caller has already resolved, for entry points whose
+ * material does not live in a Skill catalogue.
+ *
+ * The official example cards are the first such entry point. Their folders sit
+ * under `plugins/_official/examples/`, deliberately outside the skill-like
+ * roots, so the 183 shipped examples never appear in the Skill picker or in
+ * any other consumer of that catalogue. Capture therefore takes the resolved
+ * folder rather than an id plus a catalogue to look it up in — a new entry
+ * point adds a resolver, not a catalogue root.
+ *
+ * The canonical id is ADOPTED from the folder's own SKILL.md, by exactly the
+ * rule `listSkills` uses (`frontmatter.name` falling back to the folder
+ * basename, then alias resolution). It is deliberately NOT the caller's
+ * catalogue id: those are two namespaces. An example card's plugin id is
+ * `example-web-prototype` while its SKILL.md declares `web-prototype`, so
+ * forcing the plugin id onto the selection would reject every shipped example.
+ * The plugin id belongs on `metadata.exampleBinding.pluginId`; the id the model
+ * sees in `skill_names` is the Skill's own name.
+ *
+ * Adoption does not weaken the freeze. The catalogue entry point cross-checks
+ * the declared name because the caller's id came from an earlier, separate
+ * listing pass — that check catches a folder swapped between listing and
+ * capture. Here the caller hands over the directory itself, and the read is
+ * already bracketed by the realpath / `O_NOFOLLOW` / dev-ino fencing below, so
+ * the manifest is read inside the fence rather than claimed outside it.
+ * `expectedManifestDigest` is the caller's optional stronger check.
+ */
+export interface ResolvedFrozenSkillSourceV1 {
+  /** Absolute path of the directory that holds SKILL.md. */
+  dir: string;
+  /** Display name recorded on the selection and used as its body heading. */
+  name: string;
+  /**
+   * sha256 (`sha256:<hex>`) of the raw SKILL.md bytes the caller read when it
+   * resolved this source. When present, capture refuses a manifest whose bytes
+   * no longer reproduce it: the caller's binding pinned a specific example and
+   * a changed manifest is a stale binding, not a silent substitution. Omit it
+   * only when the caller never recorded one.
+   */
+  expectedManifestDigest?: string;
+  /** Human label used in this source's error messages. */
+  label?: string;
+}
+
+/**
+ * Capture already-resolved skill-like folders into a frozen package.
+ *
+ * Sibling of `captureFrozenSkillPackage`: same bounds, same digests, same
+ * `O_NOFOLLOW` / TOCTOU guarantees, same package identity — only the way a
+ * selection is named differs (see `ResolvedFrozenSkillSourceV1`).
+ */
+export async function captureFrozenSkillPackageFromSources(input: {
+  sources: readonly ResolvedFrozenSkillSourceV1[];
+  ioHooks?: FrozenSkillCaptureIoHooks;
+}): Promise<FrozenSkillPackageV1> {
+  if (input.sources.length > MAX_SKILL_COUNT) {
+    throw new InvalidFrozenSkillPackageError(
+      `OD Next accepts at most ${MAX_SKILL_COUNT} explicitly selected Skills.`,
+    );
+  }
+  return captureTargets(
+    input.sources.map((source) => ({
+      dir: source.dir,
+      label: source.label ?? `Selected Skill source ${path.basename(source.dir)}`,
+      name: source.name,
+      identity: {
+        kind: 'declared' as const,
+        ...(source.expectedManifestDigest
+          ? { expectedManifestDigest: source.expectedManifestDigest }
+          : {}),
+      },
+    })),
+    input.ioHooks,
+  );
+}
+
+async function captureTargets(
+  targets: readonly FrozenSkillCaptureTarget[],
+  ioHooks?: FrozenSkillCaptureIoHooks,
+): Promise<FrozenSkillPackageV1> {
+  const selections: FrozenSkillSelectionV1[] = [];
+  let packageBytes = 0;
+  for (const target of targets) {
+    const selection = await captureSelection(target, ioHooks);
     packageBytes += selection.bodyByteLength;
     packageBytes += selection.files.reduce((sum, file) => sum + file.byteLength, 0);
     if (packageBytes > MAX_PACKAGE_BYTES) {
@@ -293,72 +395,219 @@ export async function materializeFrozenSkillPackage(input: {
   return materialized;
 }
 
+interface FrozenSkillCaptureTarget {
+  /** Absolute directory that holds SKILL.md. */
+  dir: string;
+  /** Human label used in every error message raised for this capture. */
+  label: string;
+  /** Display name recorded on the selection. */
+  name: string;
+  /**
+   * How this capture establishes the selection's canonical id.
+   *
+   * `catalog` — the caller looked the Skill up in a catalogue keyed by id, so
+   * the manifest must still declare that id; a folder swapped between the
+   * listing pass and this read is caught here.
+   *
+   * `declared` — the caller resolved the folder itself, so there is no earlier
+   * claim to cross-check and the id is adopted from the manifest read inside
+   * the fence. See `ResolvedFrozenSkillSourceV1`.
+   */
+  identity:
+    | { kind: 'catalog'; canonicalId: string }
+    | { kind: 'declared'; expectedManifestDigest?: string };
+}
+
 async function captureSelection(
-  skill: SkillInfo,
+  target: FrozenSkillCaptureTarget,
   ioHooks?: FrozenSkillCaptureIoHooks,
 ): Promise<FrozenSkillSelectionV1> {
-  const rootStat = await lstat(skill.dir).catch(() => null);
+  const rootStat = await lstat(target.dir).catch(() => null);
   if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} root is not a real directory.`);
+    throw new InvalidFrozenSkillPackageError(`${target.label} root is not a real directory.`);
   }
   let canonicalParent: string;
   let root: string;
   try {
     [canonicalParent, root] = await Promise.all([
-      realpath(path.dirname(skill.dir)),
-      realpath(skill.dir),
+      realpath(path.dirname(target.dir)),
+      realpath(target.dir),
     ]);
   } catch {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} root is unavailable.`);
+    throw new InvalidFrozenSkillPackageError(`${target.label} root is unavailable.`);
   }
-  const rootAfter = await lstat(skill.dir).catch(() => null);
+  const rootAfter = await lstat(target.dir).catch(() => null);
   if (
-    root !== path.join(canonicalParent, path.basename(skill.dir))
+    root !== path.join(canonicalParent, path.basename(target.dir))
     || !rootAfter?.isDirectory()
     || rootAfter.isSymbolicLink()
     || !sameFileSnapshot(rootStat, rootAfter)
   ) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} root changed while freezing.`);
+    throw new InvalidFrozenSkillPackageError(`${target.label} root changed while freezing.`);
   }
   const manifestPath = path.join(root, 'SKILL.md');
-  const raw = (await readBoundedNoFollow({
+  const rawBytes = await readBoundedNoFollow({
     root,
     rootIdentity: rootStat,
     filePath: manifestPath,
     maxBytes: MAX_SKILL_MANIFEST_BYTES,
-    label: `Selected Skill ${skill.id} manifest`,
+    label: `${target.label} manifest`,
     ...(ioHooks ? { ioHooks } : {}),
-  })).toString('utf8');
-  const parsed = parseFrontmatter(raw);
-  const declaredId = typeof parsed.data.name === 'string' && parsed.data.name.trim()
+  });
+  const parsed = parseFrontmatter(rawBytes.toString('utf8'));
+  const declaredName = typeof parsed.data.name === 'string' && parsed.data.name.trim()
     ? parsed.data.name.trim()
-    : skill.id;
-  const manifestOwnerId = splitDerivedSkillId(skill.id)?.parentId ?? skill.id;
-  if (resolveSkillId(declaredId) !== manifestOwnerId) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} identity changed while freezing.`);
-  }
+    : null;
+  const canonicalId = target.identity.kind === 'catalog'
+    ? verifiedCatalogCanonicalId(target.identity.canonicalId, declaredName, target.label)
+    : adoptedCanonicalId({
+        declaredName,
+        root,
+        rawBytes,
+        label: target.label,
+        ...(target.identity.expectedManifestDigest
+          ? { expectedManifestDigest: target.identity.expectedManifestDigest }
+          : {}),
+      });
   const body = parsed.body;
   const bodyBytes = Buffer.byteLength(body, 'utf8');
   if (bodyBytes > MAX_SKILL_BODY_BYTES) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} body is too large.`);
+    throw new InvalidFrozenSkillPackageError(`${target.label} body is too large.`);
   }
-  assertOdNextPlanningBuildOnlyV2(body, `user-selected Skill ${skill.id}`);
+  // NO CONTENT GUARD HERE, DELIBERATELY.
+  //
+  // This body is user-chosen material, not a first-party strategy asset. The
+  // planning/Build-only guard (`assertOdNextPlanningBuildOnlyV2`) used to run
+  // on it and was removed, because measured against real content it protected
+  // almost nothing while rejecting most of the corpus it was applied to:
+  //
+  //  - It is 15 English regexes. The same sentence passes or fails purely on
+  //    language: "After the build, run through the checklist and fix any
+  //    defects." is rejected; its exact Chinese translation is accepted.
+  //  - It false-positives on prose that merely names a banned word. The
+  //    shipped `html-ppt` manifest says NOT to repeat a form as a markdown
+  //    checklist, and is rejected for saying so. 47 of the 183 shipped example
+  //    manifests trip it, including all three default cards.
+  //  - It only ever saw SKILL.md. `captureSideFile` never checked side files,
+  //    so a `references/checklist.md` — the actual shape of the default cards
+  //    — always bypassed it anyway.
+  //
+  // Nothing downstream depended on it: the serializer asserts only that
+  // `userSelectedSkills` names at least one Skill and has a non-empty body.
+  // The guard stays where its corpus is controlled and it does work — the
+  // first-party recipe assets, via `verifyOdNextRecipeV2`.
+  //
+  // Instruction conflicts between a user-selected Skill and the strategy are
+  // resolved by the priority order stated in the core system prompt
+  // (`plugins/_official/scenarios/od-next-strategy/assets/core-system-prompt.md`),
+  // not by filtering tokens at assembly time.
   const roster = explicitSideFileRoster(body);
   if (roster.length > MAX_SIDE_FILE_COUNT) {
-    throw new InvalidFrozenSkillPackageError(`Selected Skill ${skill.id} references too many side files.`);
+    throw new InvalidFrozenSkillPackageError(`${target.label} references too many side files.`);
   }
   const files: FrozenSkillFileV1[] = [];
   for (const relativePath of roster) {
+    if (await sideFileIsSkippable(root, relativePath)) continue;
     files.push(await captureSideFile(root, rootStat, relativePath, ioHooks));
   }
   return {
-    canonicalId: skill.id,
-    name: skill.name,
+    canonicalId,
+    name: target.name,
     body,
     bodyByteLength: bodyBytes,
     bodyDigest: digestUtf8(body),
     files,
   };
+}
+
+function verifiedCatalogCanonicalId(
+  canonicalId: string,
+  declaredName: string | null,
+  label: string,
+): string {
+  const declaredId = declaredName ?? canonicalId;
+  const manifestOwnerId = splitDerivedSkillId(canonicalId)?.parentId ?? canonicalId;
+  if (resolveSkillId(declaredId) !== manifestOwnerId) {
+    throw new InvalidFrozenSkillPackageError(`${label} identity changed while freezing.`);
+  }
+  return canonicalId;
+}
+
+function adoptedCanonicalId(input: {
+  declaredName: string | null;
+  root: string;
+  rawBytes: Buffer;
+  label: string;
+  expectedManifestDigest?: string;
+}): string {
+  if (
+    input.expectedManifestDigest
+    && digestBytes(input.rawBytes) !== input.expectedManifestDigest
+  ) {
+    throw new InvalidFrozenSkillPackageError(
+      `${input.label} manifest no longer matches the digest recorded when it was bound.`,
+    );
+  }
+  // Same derivation `listSkills` uses, so a folder outside the skill-like
+  // roots gets the id it would have had inside them.
+  const adopted = resolveSkillId(input.declaredName ?? path.basename(input.root));
+  if (typeof adopted !== 'string' || !ADOPTABLE_CANONICAL_ID.test(adopted)) {
+    throw new InvalidFrozenSkillPackageError(
+      `${input.label} declares no usable Skill name.`,
+    );
+  }
+  return adopted;
+}
+
+/**
+ * Should this referenced side file be left out rather than carried?
+ *
+ * The side-file roster is regex-derived from prose, so a Skill can name a path
+ * it does not actually ship: a stale link, an illustrative path, a filename
+ * inside a code sample. `example-hyperframes` does exactly that today — its
+ * SKILL.md links `references/transitions/catalog.md`, which now ships
+ * flattened as `references/transitions.md`.
+ *
+ * Two conditions mean "not carryable", and neither is a signal about this
+ * Skill's safety:
+ *
+ * - **Absent.** A path that resolves to nothing was never part of the Skill.
+ * - **Over budget.** A file past {@link MAX_SIDE_FILE_BYTES} is a bundled
+ *   binary the roster happened to name — `example-open-design-landing` links a
+ *   multi-hundred-KB `assets/hero.png`. It is too large to carry, which says
+ *   nothing about whether the Skill's prose is worth carrying.
+ *
+ * Either way the file is skipped, because one dead link or one oversized
+ * screenshot must not delete the entire Skill from the task. A path that IS
+ * there and within budget but is a symlink, sits behind a symlinked directory,
+ * or changes while being read is a tamper signal and still fails the whole
+ * capture through `captureSideFile` — the size read here is a cheap pre-check,
+ * never the authority: `readBoundedNoFollow` re-enforces the same limit on the
+ * bytes it actually reads.
+ *
+ * Anything this probe cannot classify is reported as carryable, so that real
+ * bounded no-follow read — not this pre-check — makes the decision.
+ */
+async function sideFileIsSkippable(root: string, relativePath: string): Promise<boolean> {
+  const segments = relativePath.split('/');
+  let cursor = root;
+  for (const [index, segment] of segments.entries()) {
+    cursor = path.join(cursor, segment);
+    let stat;
+    try {
+      stat = await lstat(cursor);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return true;
+      return false;
+    }
+    // A symlink anywhere on the path is a tamper signal, never an absence.
+    if (stat.isSymbolicLink()) return false;
+    const isLast = index === segments.length - 1;
+    if (isLast ? !stat.isFile() : !stat.isDirectory()) return true;
+    if (isLast && stat.size > MAX_SIDE_FILE_BYTES) return true;
+  }
+  return false;
 }
 
 async function captureSideFile(

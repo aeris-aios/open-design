@@ -17,6 +17,7 @@ import type {
   CollabProjectBootstrapResponse,
   CreateConversationRequest,
   CreateDesignSystemProjectFromProjectResponse,
+  CreateProjectExampleReference,
   DuplicateProjectResponse,
   CreatePluginShareProjectResponse,
   CreateTerminalRequest,
@@ -785,6 +786,12 @@ export async function createProject(
     appliedPluginSnapshotId?: string;
     pluginInputs?: Record<string, unknown>;
     automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
+    /**
+     * Identity of the official example card the user picked under an automatic
+     * OD Next route. A claim, not content: the daemon re-resolves it through
+     * the local catalogue. Never accompanies `pluginId`/`appliedPluginSnapshotId`.
+     */
+    exampleReference?: CreateProjectExampleReference;
     workspaceContext?: WorkspaceCollabContext | null;
   },
   retryOptions: CreateProjectRetryOptions = {},

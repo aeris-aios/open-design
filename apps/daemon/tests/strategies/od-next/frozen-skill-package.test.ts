@@ -171,14 +171,22 @@ describe('OD Next frozen user-selected Skill package', () => {
     })).rejects.toThrow(/path changed while freezing/i);
   });
 
-  it('rejects a side file above the pre-read byte cap', async () => {
+  it('leaves a side file above the byte cap out of the package instead of failing', async () => {
+    // The cap exists so oversized bytes are never read into memory, and that
+    // still holds: the file is skipped before any read, and `readBoundedNoFollow`
+    // re-enforces the same limit on whatever it does read. What must NOT follow
+    // is deleting the Skill — `example-open-design-landing` links a bundled
+    // `assets/hero.png`, and rejecting the capture over one screenshot dropped
+    // every word of that card's prose.
     const skill = await fixtureSkill();
     await writeFile(
       path.join(skill.dir, 'references', 'guide.md'),
       Buffer.alloc(256 * 1024 + 1, 0x61),
     );
-    await expect(captureFrozenSkillPackage({ skillId: skill.id, catalog: [skill] }))
-      .rejects.toThrow(/byte limit/i);
+    const frozen = await captureFrozenSkillPackage({ skillId: skill.id, catalog: [skill] });
+    expect(frozen.selections[0]?.files).toEqual([]);
+    // The oversized bytes reached neither the package nor its byte budget.
+    expect(JSON.stringify(frozen).length).toBeLessThan(256 * 1024);
   });
 
   it('does not scan unreferenced files into the explicit roster', async () => {

@@ -25,6 +25,7 @@ import {
 import type {
   AmrModelsResponse,
   ChatSessionMode,
+  CreateProjectExampleReference,
   LocalCatalogScope,
   RunContextSelection,
   TeamProject,
@@ -252,6 +253,8 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
+  /** Official example card the user picked under the automatic route. */
+  exampleReference?: CreateProjectExampleReference;
   initialRunContext?: RunContextSelection | null;
   conversationMode?: ChatSessionMode;
   autoSendFirstMessage?: boolean;
@@ -3028,6 +3031,9 @@ function AppInner() {
           ...(input.pluginInputs ? { pluginInputs: input.pluginInputs } : {}),
           ...(input.automaticStrategyTaskProfile
             ? { automaticStrategyTaskProfile: input.automaticStrategyTaskProfile }
+            : {}),
+          ...(input.exampleReference
+            ? { exampleReference: input.exampleReference }
             : {}),
           workspaceContext: createWorkspaceContext,
         });

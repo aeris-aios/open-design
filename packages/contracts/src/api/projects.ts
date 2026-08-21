@@ -74,6 +74,28 @@ export interface ProjectStrategyBinding {
   boundAt: number;
 }
 
+/**
+ * Daemon-owned identity of the official example card that seeded this project.
+ *
+ * An example card is a task-type entry point, not a plugin the user chose to
+ * run: it keeps the automatic OD Next route and contributes its material as a
+ * user-selected Skill. So this binding deliberately carries no `snapshotId`
+ * and is never fed into the explicit-plugin tests — naming it must not move
+ * the task onto the ordinary route.
+ *
+ * `pluginSource` is the exact local catalogue identity the daemon re-resolved
+ * the record through, and `manifestSourceDigest` pins the bytes it read. A
+ * later read that cannot reproduce both is stale and carries no authority.
+ */
+export interface ProjectExampleBinding {
+  schemaVersion: 1;
+  provenance: 'example_card';
+  pluginId: string;
+  pluginSource: string;
+  manifestSourceDigest: string;
+  boundAt: number;
+}
+
 export type ProjectDisplayStatus =
   | 'not_started'
   | 'queued'
@@ -271,6 +293,8 @@ export interface ProjectMetadata {
   scenarioBinding?: ProjectScenarioBinding;
   /** Daemon-owned automatic OD Next route, independent of plugin selection. */
   strategyBinding?: ProjectStrategyBinding;
+  /** Daemon-owned identity of the official example card that seeded this project. */
+  exampleBinding?: ProjectExampleBinding;
   // Stored on design-system projects so the review overview can remember
   // which generated sections were accepted or sent back for another pass.
   designSystemReview?: Record<string, DesignSystemReviewEntry>;
@@ -383,6 +407,17 @@ export interface Conversation {
   };
 }
 
+/**
+ * Exact local catalogue identity of an official example card, as claimed by
+ * the client. Both fields are required: the daemon looks the record up by
+ * `source` — the same lookup `/api/plugins/:id/apply-local` performs — and
+ * rejects the request when the resolved record's id disagrees with `pluginId`.
+ */
+export interface CreateProjectExampleReference {
+  pluginId: string;
+  source: string;
+}
+
 export interface CreateProjectRequest {
   name: string;
   /** Optional project library location id. Omit or use `default` for .od/projects. */
@@ -402,6 +437,17 @@ export interface CreateProjectRequest {
   pluginInputs?: Record<string, unknown>;
   /** Product-owned automatic OD Next route. The daemon validates and stamps it. */
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
+  /**
+   * The official example card the user picked under a task type.
+   *
+   * A claim about an identity, never content: the daemon re-resolves the
+   * record through the local catalogue and reads the example's material from
+   * disk. Unlike `pluginId`/`appliedPluginSnapshotId` this does not make the
+   * project an explicit plugin pin, so the automatic OD Next route stays in
+   * force and the example travels as a user-selected Skill instead of
+   * replacing the strategy.
+   */
+  exampleReference?: CreateProjectExampleReference;
   /** Session mode for the default conversation seeded with the project. */
   conversationMode?: ChatSessionMode;
   customInstructions?: string;

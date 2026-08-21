@@ -1334,7 +1334,7 @@ describe('HomeView prompt handoff', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('uses example preset cards as plain-text prompt fillers while preserving selected chip inputs', async () => {
+  it('keeps an official example card under 原型 on the automatic OD Next route and sends its example reference', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -1385,6 +1385,10 @@ describe('HomeView prompt handoff', () => {
       typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
     ))).toBe(false);
     expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
+    // Yielding the ROUTE to OD Next does not change the composer chrome: the
+    // example is still an explicit pick, so its own plugin badge (and clear ×)
+    // renders exactly as it did when the pick pinned a plugin.
+    expect(screen.getByTestId('home-hero-active-plugin').textContent).toContain('Web Prototype');
     // The design-system picker is now the persistent control below the composer.
     expect(
       screen.getByTestId('home-hero-design-system-trigger').textContent,
@@ -1404,6 +1408,144 @@ describe('HomeView prompt handoff', () => {
 
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
+    // The example card names a LOOK, not a strategy: 原型 keeps its automatic
+    // OD Next route and the example's identity rides along as
+    // `exampleReference` for the daemon to re-resolve. No plugin pin, so no
+    // snapshot to resolve and no `/apply-local` roundtrip at all.
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      appliedPluginSnapshotId: null,
+      pluginTitle: null,
+      taskKind: null,
+      skillId: null,
+      exampleReference: {
+        pluginId: 'example-web-prototype',
+        source: '/tmp/web-prototype',
+      },
+      projectKind: 'prototype',
+      prompt: 'Build a high-fidelity web prototype for product evaluators using the active project design system from the bundled web prototype seed.',
+      designSystemId: 'ds-refly',
+      projectMetadata: expect.objectContaining({
+        kind: 'prototype',
+      }),
+    })));
+    const [submittedPreset] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submittedPreset).not.toHaveProperty('pluginInputs');
+    expect(submittedPreset).not.toHaveProperty('pluginSource');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
+  });
+
+  it('keeps a deck example card on the automatic ppt route and sends its example reference', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [SIMPLE_DECK_PLUGIN] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url.includes('/apply-local')) {
+        return new Response(JSON.stringify(SIMPLE_DECK_APPLY_RESULT), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    const onSubmit = vi.fn();
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={onSubmit}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    await clearActiveTypeChip();
+    await pickHomeTemplate('deck');
+    fireEvent.click(
+      (await screen.findAllByTestId('home-hero-plugin-preset')).find(
+        (item) => item.getAttribute('data-plugin-id') === 'example-simple-deck',
+      )!,
+    );
+
+    await waitFor(() => expect(homeHeroPromptText().length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: null,
+      automaticStrategyTaskProfile: 'ppt',
+      appliedPluginSnapshotId: null,
+      pluginTitle: null,
+      taskKind: null,
+      skillId: null,
+      exampleReference: {
+        pluginId: 'example-simple-deck',
+        source: '/tmp/simple-deck',
+      },
+      projectKind: 'deck',
+    })));
+    const [submittedDeck] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submittedDeck).not.toHaveProperty('pluginInputs');
+    expect(submittedDeck).not.toHaveProperty('pluginSource');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
+  });
+
+  it('keeps an example card under a nested Prototype scene on its explicit plugin pin', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url.includes('/apply-local')) {
+        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    const onSubmit = vi.fn();
+
+    render(
+      <HomeView
+        projects={[]}
+        designSystems={[REFLY_DESIGN_SYSTEM]}
+        defaultDesignSystemId="ds-refly"
+        onSubmit={onSubmit}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    await clearActiveTypeChip();
+    await pickHomeTemplate('prototype');
+    fireEvent.click(await screen.findByTestId('home-hero-subtype-wireframe'));
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-subtype-wireframe').getAttribute('aria-selected'))
+        .toBe('true');
+    });
+    fireEvent.click(
+      (await screen.findAllByTestId('home-hero-plugin-preset')).find(
+        (item) => item.getAttribute('data-plugin-id') === 'example-web-prototype',
+      )!,
+    );
+
+    await waitFor(() => expect(homeHeroPromptText().length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    // 线框图 is not an OD Next route, so there is no automatic profile for the
+    // example to hand its routing back to: it stays an ordinary explicit pin
+    // and still resolves its snapshot through `/apply-local` on submit,
+    // preserving the chip's structured inputs.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/plugins/example-web-prototype/apply-local',
       expect.anything(),
@@ -1427,13 +1569,69 @@ describe('HomeView prompt handoff', () => {
     });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'example-web-prototype',
+      appliedPluginSnapshotId: 'snap-web-prototype',
       projectKind: 'prototype',
-      prompt: 'Build a high-fidelity web prototype for product evaluators using the active project design system from the bundled web prototype seed.',
-      designSystemId: 'ds-refly',
-      projectMetadata: expect.objectContaining({
-        kind: 'prototype',
-      }),
+      projectMetadata: expect.objectContaining({ kind: 'prototype', fidelity: 'wireframe' }),
     })));
+    const [submittedScene] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submittedScene).not.toHaveProperty('exampleReference');
+    expect(submittedScene).not.toHaveProperty('automaticStrategyTaskProfile');
+    expect(submittedScene).toHaveProperty('pluginInputs');
+  });
+
+  it('still pins the plugin for a Community "Use" pick made under the same OD Next task type', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url.includes('/apply-local')) {
+        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    const onSubmit = vi.fn();
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={onSubmit}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+        promptHandoff={createPluginUseHandoff(21, 'example-web-prototype', {
+          action: 'use',
+          chipId: 'prototype',
+          projectKind: 'prototype',
+        })}
+      />,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/plugins/example-web-prototype/apply-local',
+      expect.anything(),
+    ));
+    await setPromptAndSettle('Use the Community pick as the driver');
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    // The SAME record reaches Home's example rail and the Community grid. The
+    // call site — not the record — decides: a Community / details "Use" is a
+    // strategy choice and keeps pinning its plugin even under 原型.
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'example-web-prototype',
+      appliedPluginSnapshotId: 'snap-web-prototype',
+      pluginSource: '/tmp/web-prototype',
+    })));
+    const [submittedUse] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submittedUse).not.toHaveProperty('exampleReference');
+    expect(submittedUse).not.toHaveProperty('automaticStrategyTaskProfile');
+    expect(submittedUse).toHaveProperty('pluginInputs');
   });
 
   it('binds the picked preset plugin on submit while preserving the chip metadata', async () => {

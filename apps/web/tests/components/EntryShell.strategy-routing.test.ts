@@ -31,4 +31,32 @@ describe('EntryShell automatic strategy routing', () => {
       pluginInputs: { legacy: true },
     });
   });
+
+  it('carries the official example reference on the surviving automatic branch', () => {
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'prototype',
+      exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
+      skillId: 'implicit-default-skill',
+    }, { kind: 'prototype' })).toEqual({
+      skillId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
+    });
+  });
+
+  it('drops the example reference when the claimed automatic route fails re-validation', () => {
+    // Fail-closed: the reference only means anything alongside the route it was
+    // claimed for. Collapsing to the ordinary plugin branch must not smuggle it
+    // through — the daemon would otherwise resolve example material for a
+    // project that is no longer on an OD Next route.
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'prototype',
+      exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
+      skillId: 'ordinary-default-skill',
+      pluginInputs: { legacy: true },
+    }, { kind: 'prototype', fidelity: 'wireframe' })).toEqual({
+      skillId: 'ordinary-default-skill',
+      pluginInputs: { legacy: true },
+    });
+  });
 });

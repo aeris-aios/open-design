@@ -1,11 +1,14 @@
 import {
   automaticStrategyTaskProfileForProjectMetadata,
+  type CreateProjectExampleReference,
   type ProjectMetadata,
   type ProjectScenarioTaskProfile,
 } from '@open-design/contracts';
 
 interface EntryStrategyRoutingInput {
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile | null;
+  /** Official example card picked under an automatic OD Next route. */
+  exampleReference?: CreateProjectExampleReference | null;
   skillId?: string | null;
   pluginInputs?: Record<string, unknown> | null;
 }
@@ -13,6 +16,7 @@ interface EntryStrategyRoutingInput {
 export type EntryStrategyRoutingFields = {
   skillId: string | null;
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
+  exampleReference?: CreateProjectExampleReference;
   pluginInputs?: Record<string, unknown>;
 };
 
@@ -20,6 +24,11 @@ export type EntryStrategyRoutingFields = {
  * Keep the Home-to-create handoff fail-closed: a claimed automatic route is
  * accepted only when the exact project metadata describes the same OD Next
  * task. Ordinary routes retain the existing Skill/plugin-input behavior.
+ *
+ * An `exampleReference` only means anything alongside the route it was claimed
+ * for, so it rides the automatic branch exclusively — when re-validation
+ * collapses the claim, the reference is dropped with it rather than smuggled
+ * onto a project that is no longer on an OD Next route.
  */
 export function entryStrategyRoutingFields(
   input: EntryStrategyRoutingInput,
@@ -34,6 +43,7 @@ export function entryStrategyRoutingFields(
     return {
       skillId: null,
       automaticStrategyTaskProfile,
+      ...(input.exampleReference ? { exampleReference: input.exampleReference } : {}),
     };
   }
   return {

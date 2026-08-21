@@ -342,6 +342,56 @@ describe('OD Next V2 prompt recipe', () => {
     expect(factualPrompt).toContain('<od-next-context kind="fact" name="active-design-system-fixture">');
   });
 
+  it('names the example card and its build brief as reference facts', () => {
+    // The composer seed is deliberately only the card's short description
+    // (`presetSeedPrompt.ts`), so `od.useCase.query` is the only place the run
+    // can learn the actual assignment. Carrying it as `kind="fact"` also means
+    // an example brief phrased as a post-Build instruction cannot smuggle a
+    // stage past the planning/Build-only guard.
+    const prompt = composeOdNextStrategyRequestPromptV2(recipe, {
+      exampleReference: {
+        pluginId: 'example-simple-deck',
+        title: '\u50cf\u514b\u5236\u7684 COO \u4e00\u6837\u5199\u7ecf\u8425\u590d\u76d8',
+        brief: 'Review the deck, then fix any defects you find.',
+      },
+    });
+
+    expect(prompt).toContain('<od-next-context kind="fact" name="example-reference">');
+    expect(prompt).toContain('example-simple-deck');
+    expect(prompt).toContain('Review the deck, then fix any defects you find.');
+    expect(prompt).not.toContain('<od-next-context kind="instruction" name="example-reference">');
+  });
+
+  it('keeps the machine example binding out of the project-metadata fact', () => {
+    // The binding is an absolute local catalogue path plus a digest: unusable
+    // to the model and not something it should act on. `example-reference` is
+    // the only place an example is named.
+    const prompt = composeOdNextStrategyRequestPromptV2(recipe, {
+      metadata: {
+        kind: 'prototype',
+        exampleBinding: {
+          schemaVersion: 1,
+          provenance: 'example_card',
+          pluginId: 'example-web-prototype',
+          pluginSource: '/private/operational-path/plugins/_official/examples/web-prototype',
+          manifestSourceDigest: `sha256:${'0'.repeat(64)}`,
+          boundAt: 1,
+        },
+      },
+    });
+    expect(prompt).toContain('<od-next-context kind="fact" name="project-metadata">');
+    expect(prompt).not.toContain('exampleBinding');
+    expect(prompt).not.toContain('/private/operational-path');
+  });
+
+  it('omits the example-reference fact when no example named the task', () => {
+    expect(composeOdNextStrategyRequestPromptV2(recipe, {}))
+      .not.toContain('name="example-reference"');
+    expect(composeOdNextStrategyRequestPromptV2(recipe, {
+      exampleReference: { pluginId: '   ' },
+    })).not.toContain('name="example-reference"');
+  });
+
   it('prints wrapper protocol examples that remain valid against the exact V2 schemas', () => {
     const prompt = composeOdNextStrategyRequestPromptV2(recipe, { agentId: 'codex' });
     const planContract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);

@@ -27,6 +27,7 @@ import {
   type AmrWalletSnapshot,
   type ChatSessionMode,
   type ConnectorDetail,
+  type CreateProjectExampleReference,
   type InstalledPluginRecord,
   type RunContextSelection,
   type ProjectScenarioTaskProfile,
@@ -306,6 +307,8 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
+  /** Official example card the user picked under the automatic route. */
+  exampleReference?: CreateProjectExampleReference;
   initialRunContext?: RunContextSelection | null;
   conversationMode?: ChatSessionMode;
   autoSendFirstMessage?: boolean;

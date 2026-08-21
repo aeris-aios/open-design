@@ -388,6 +388,7 @@ import {
   pluginPromptBlock,
   pruneExpiredSnapshots,
   readPluginLockfile,
+  readVerifiedProjectExampleBinding,
   registerBuiltInAtomWorkers,
   registerBundledPlugins,
   registryRootsForDataDir,
@@ -511,6 +512,7 @@ import {
   materializeFrozenSkillPackage,
   renderFrozenSkillRosterContext,
 } from './strategies/od-next/frozen-skill-package.js';
+import { odNextExampleReferenceFact } from './strategies/od-next/example-skill-source.js';
 import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
@@ -9838,6 +9840,34 @@ export async function startServer({
       // do NOT carry this flip into a PR against main.
       promptCoreVariant: process.env.OD_PROMPT_CORE === 'classic' ? undefined : 'slim',
     };
+    // The example card the project was seeded from contributes reference
+    // material, never authority: its SKILL.md rides in
+    // `session_skills/user_selected_skills`, and its identity plus its
+    // manifest build brief ride here as a `kind="fact"` block. Re-resolved
+    // through the same exact local lookup that bound it, so an example that
+    // was removed or replaced simply goes unnamed instead of letting another
+    // same-id record speak for it.
+    let odNextExampleReference;
+    if (odNextStrategyRecipe) {
+      const odNextExampleBinding = readVerifiedProjectExampleBinding(metadata);
+      if (odNextExampleBinding) {
+        try {
+          odNextExampleReference = odNextExampleReferenceFact({
+            binding: odNextExampleBinding,
+            record: await getLocalPluginBySource(
+              db,
+              odNextExampleBinding.pluginId,
+              odNextExampleBinding.pluginSource,
+            ),
+            locale: typeof locale === 'string' ? locale : undefined,
+          });
+        } catch (err) {
+          console.warn(
+            `[od-next-example] example reference fact unavailable: ${err?.message ?? err}`,
+          );
+        }
+      }
+    }
     const odNextStableRequestContext = odNextStrategyRecipe
       ? {
           agentId,
@@ -9845,6 +9875,7 @@ export async function startServer({
           executionProfile: executionProfileFromStreamFormat(streamFormat),
           metadata,
           template,
+          exampleReference: odNextExampleReference,
           designSystemBody,
           designSystemTitle,
           designSystemUsageMd,
@@ -9876,6 +9907,7 @@ export async function startServer({
         project_and_design_context: {
           metadata,
           template,
+          exampleReference: odNextExampleReference,
           designSystemBody,
           designSystemTitle,
           craftBody,
@@ -15464,6 +15496,7 @@ export async function startServer({
       firePipelineForRun,
       loadPluginRegistryView,
       renderPluginBriefTemplate,
+      getLocalPluginBySource: (id, source) => getLocalPluginBySource(db, id, source),
       authorizePluginRequest: async (req, res, pluginId) => {
         const authority = resolveOptionalLocalWorkspaceRequestAuthority(req);
         if (!authority.ok) {

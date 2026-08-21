@@ -98,10 +98,11 @@ import {
   prepareStrategyIntake,
 } from '../strategies/od-next/coordinator.js';
 import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
+import { InvalidFrozenSkillPackageError } from '../strategies/od-next/frozen-skill-package.js';
 import {
-  createEmptyFrozenSkillPackage,
-  InvalidFrozenSkillPackageError,
-} from '../strategies/od-next/frozen-skill-package.js';
+  captureProjectExampleSkillPackage,
+  type ResolvedExamplePluginRecord,
+} from '../strategies/od-next/example-skill-source.js';
 import {
   buildOdNextTaskConfigurationV1,
   createOdNextTaskInputSnapshot,
@@ -660,6 +661,15 @@ export interface RegisterRunRoutesDeps {
       workspaceMemberId?: string | null;
     }) => Promise<Parameters<typeof resolvePluginSnapshot>[0]['registry']>;
     renderPluginBriefTemplate: (template: string, inputs?: Record<string, unknown>) => string;
+    /**
+     * Exact local catalogue lookup, the same one `/api/plugins/:id/apply-local`
+     * and project create use. Run start re-resolves a project's example
+     * binding through it instead of trusting the stored path.
+     */
+    getLocalPluginBySource?: (
+      id: string,
+      source: string,
+    ) => Promise<ResolvedExamplePluginRecord | null>;
     /**
      * Fail-closed request-scoped plugin lookup. The catalog API and the run
      * API must use the same Workspace/member visibility rules; otherwise a
@@ -2634,7 +2644,15 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       // Skills are ordinary-route authority above; an admitted strategy task
       // therefore persists an empty package solely to keep restart/continuation
       // identity deterministic.
-      frozenSkillPackage = createEmptyFrozenSkillPackage();
+      //
+      // The one exception is an official example card. Picking one is a more
+      // specific choice inside the same task type, not a claim on the strategy,
+      // so it keeps this automatic route and rides along in
+      // `session_skills/user_selected_skills` instead of pinning a plugin.
+      frozenSkillPackage = await captureProjectExampleSkillPackage({
+        metadata: runProject?.metadata as ContractProjectMetadata | null | undefined,
+        getLocalPluginBySource: ctx.plugins.getLocalPluginBySource,
+      });
     }
     const fingerprintSnapshot = clarificationTask
       ? getSnapshot(db, clarificationTask.snapshotId)

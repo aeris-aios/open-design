@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ApplyResult,
   ChatSessionMode,
+  CreateProjectExampleReference,
   InstalledPluginRecord,
   ProjectKind,
   ProjectMetadata,
@@ -35,6 +36,12 @@ export interface PluginLoopSubmit {
   pluginSelectionProvenance?: 'automatic-default';
   /** Exact product-owned OD Next route; absent for ordinary plugin routing. */
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile | null;
+  /**
+   * Identity of the official example card the user picked under a task type.
+   * Sent INSTEAD of `pluginId`/`appliedPluginSnapshotId`, and only alongside
+   * `automaticStrategyTaskProfile` — the example is a look, not a strategy.
+   */
+  exampleReference?: CreateProjectExampleReference | null;
   /** Exact identity of the local catalogue record selected by the user. */
   pluginSource?: string | null;
   // Marketplace trust of the routed plugin (official / community / …), used

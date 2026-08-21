@@ -76,6 +76,24 @@ export interface OdNextStrategyStableRequestContextV2 {
   designSystemFixtureHtml?: string | undefined;
   designSystemPullIndex?: string | undefined;
   designSystemImportMode?: 'normalized' | 'hybrid' | 'verbatim' | undefined;
+  /**
+   * The official example card this task was started from.
+   *
+   * The card's SKILL.md already travels as a user-selected Skill, but that
+   * body says how to build things of its kind — it never says which card the
+   * user actually pointed at, nor what that card is for. `brief` closes the
+   * larger gap: the composer seeds only the card's short description, while
+   * the real build brief lives in the manifest's `od.useCase.query`. Without
+   * carrying it here the run keeps the craft and loses the assignment.
+   *
+   * A fact, not an instruction: it is quoted product metadata, and it must not
+   * be able to add stages or redefine the route.
+   */
+  exampleReference?: {
+    pluginId: string;
+    title?: string | undefined;
+    brief?: string | undefined;
+  } | undefined;
   craftBody?: string | undefined;
   craftSections?: string[] | undefined;
   memoryBody?: string | undefined;
@@ -358,6 +376,11 @@ const OMITTED_PROJECT_METADATA_KEYS = new Set([
   'sharedProjectPlaceholderAt',
   'contextMcpServers',
   'contextConnectors',
+  // Machine provenance for the example card, carrying an absolute local
+  // catalogue path and a digest. The example is named for the model by the
+  // `example-reference` fact below; dumping the raw binding would add a
+  // filesystem path the model cannot use and must not act on.
+  'exampleBinding',
 ]);
 
 function stableJson(value: unknown): string {
@@ -447,6 +470,17 @@ export function composeOdNextStrategyStableRequestContextV2(
   }
   if (context.template) {
     factualStructured('project-template', planningTemplate(context.template));
+  }
+  if (context.exampleReference?.pluginId?.trim()) {
+    factualStructured('example-reference', {
+      pluginId: context.exampleReference.pluginId.trim(),
+      ...(context.exampleReference.title?.trim()
+        ? { title: context.exampleReference.title.trim() }
+        : {}),
+      ...(context.exampleReference.brief?.trim()
+        ? { brief: context.exampleReference.brief.trim() }
+        : {}),
+    });
   }
   instructionText('personal-memory', context.memoryBody);
   instructionText('user-custom-instructions', context.userInstructions);
