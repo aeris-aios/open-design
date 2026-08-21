@@ -667,7 +667,8 @@ describe("packaged smoke workflow", () => {
               html_url: `https://github.com/nexu-io/open-design/actions/runs/${runId}/job/103`,
               steps: [{ name: "Block merge while a merge-blocking label is present", conclusion: mergePolicyConclusion }],
             },
-            { id: 104, name: "Validate workspace", conclusion: null, html_url: "", steps: [] },
+            // Replaying a completed run reports the gate itself as failed; it must never be listed.
+            { id: 104, name: "Validate workspace", conclusion: "failure", html_url: "", steps: [] },
           ],
         },
         compare: {
@@ -688,7 +689,9 @@ const argv = process.argv.slice(2);
 const args = argv.join(" ");
 const hasEscapeFlag = argv.includes("--allow-escape-sequences");
 if (args === "--version") process.stdout.write(supportsEscapeFlag ? "gh version 2.98.0 (fake)\\n" : "gh version 2.87.3 (fake)\\n");
-else if (args === "api --help") process.stdout.write(supportsEscapeFlag ? "      --allow-escape-sequences   Allow printing terminal escape sequences\\n" : "      --cache duration           Cache the response\\n");
+// Real help text is long: a probe that lets grep exit early would SIGPIPE gh and, under
+// pipefail, read as "flag unsupported". Pad well past the pipe buffer so that stays red.
+else if (args === "api --help") process.stdout.write((supportsEscapeFlag ? "      --allow-escape-sequences   Allow printing terminal escape sequences\\n" : "      --cache duration           Cache the response\\n") + "      --padding\\n".repeat(8192));
 else if (hasEscapeFlag && !supportsEscapeFlag) { process.stderr.write("unknown flag: --allow-escape-sequences\\n"); process.exit(1); }
 else if (/\\/pulls\\/6214$/.test(args)) process.stdout.write(JSON.stringify(fixtures.pull));
 else if (/\\/actions\\/runs\\/${runId}\\/jobs/.test(args)) process.stdout.write(JSON.stringify(fixtures.jobs));
@@ -715,6 +718,7 @@ else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit
               BASE_SHA: prBase,
               HEAD_SHA: groupHead,
               LABEL_NOTICE_EMITTED: args.labelNoticeEmitted ?? "",
+              SELF_JOB_NAME: "Validate workspace",
               GITHUB_OUTPUT: outputPath,
               GITHUB_SERVER_URL: "https://github.com",
               RUNNER_TEMP: runnerTemp,
