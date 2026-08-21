@@ -10,7 +10,6 @@ import {
   SIDECAR_MODES,
   SIDECAR_SOURCES,
 } from '@open-design/sidecar-proto';
-import { requestJsonIpc } from '@open-design/sidecar';
 
 const stopRuntime = vi.fn(async () => undefined);
 const startDaemonRuntime = vi.fn(async () => ({
@@ -73,11 +72,10 @@ describe('daemon sidecar startup', () => {
   it('registers the live packaged web URL after daemon startup and replaces it on restart', async () => {
     const { startDaemonSidecar } = await import('../src/sidecar/server.js');
     const root = await mkdtemp(join(tmpdir(), 'od-daemon-sidecar-web-url-'));
-    const ipc = join(root, 'daemon.sock');
     const handle = await startDaemonSidecar({
       app: APP_KEYS.DAEMON,
       base: root,
-      ipc,
+      ipc: join(root, 'daemon.sock'),
       mode: SIDECAR_MODES.RUNTIME,
       namespace: 'packaged-web-url',
       source: SIDECAR_SOURCES.PACKAGED,
@@ -86,25 +84,11 @@ describe('daemon sidecar startup', () => {
     try {
       expect((await handle.status()).trustedWebOriginPort).toBeNull();
 
-      await requestJsonIpc(
-        ipc,
-        {
-          input: { url: 'http://127.0.0.1:64248' },
-          type: SIDECAR_MESSAGES.REGISTER_WEB_URL,
-        },
-        { timeoutMs: 1_000 },
-      );
+      await handle.invoke(SIDECAR_MESSAGES.REGISTER_WEB_URL, { url: 'http://127.0.0.1:64248' });
       expect(process.env.OD_WEB_PORT).toBe('64248');
       expect((await handle.status()).trustedWebOriginPort).toBe(64248);
 
-      await requestJsonIpc(
-        ipc,
-        {
-          input: { url: 'http://127.0.0.1:53421' },
-          type: SIDECAR_MESSAGES.REGISTER_WEB_URL,
-        },
-        { timeoutMs: 1_000 },
-      );
+      await handle.invoke(SIDECAR_MESSAGES.REGISTER_WEB_URL, { url: 'http://127.0.0.1:53421' });
       expect(process.env.OD_WEB_PORT).toBe('53421');
       expect((await handle.status()).trustedWebOriginPort).toBe(53421);
     } finally {

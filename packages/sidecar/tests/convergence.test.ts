@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import {
   normalizeSidecarStamp,
+  bootstrapSidecarProcess,
   findSidecarProcesses,
   launchSidecar,
+  registerSidecarProcess,
   readCurrentSidecarStamp,
   SidecarFactory,
   SIDECAR_STAMP_FIELDS,
@@ -25,7 +27,12 @@ const stamp: SidecarStamp = {
   app: "daemon",
 };
 
-function installCurrentProcess(stampValue: SidecarStamp, resources = { dataRoot: "/tmp/open-design-test-data", port: 0 }): void {
+function installCurrentProcess(stampValue: SidecarStamp, resources = {
+  dataRoot: "/tmp/open-design-test-data",
+  ownerPid: null,
+  port: 0,
+  runtimeRoot: "/tmp/open-design-test-runtime",
+}): void {
   process.argv = [
     process.execPath,
     "/tmp/sidecar-entry.js",
@@ -54,6 +61,30 @@ describe("five-field argv identity", () => {
     expect(() => readCurrentSidecarStamp()).toThrow(/five-field sidecar argv stamp/);
   });
 
+  it("refuses to fake registration by mutating an unstamped process argv", () => {
+    process.argv = [process.execPath, "/tmp/packaged-entry.js"];
+    expect(() => registerSidecarProcess(stamp, {
+      dataRoot: "/tmp/data",
+      ownerPid: null,
+      port: 0,
+      runtimeRoot: "/tmp/runtime",
+    })).toThrow("current process is missing its sidecar argv stamp");
+    expect(process.argv).toEqual([process.execPath, "/tmp/packaged-entry.js"]);
+  });
+
+  it("bootstraps an unstamped root through the launch atomic", async () => {
+    process.argv = [process.execPath, "/tmp/packaged-entry.js", "--headless"];
+    const launch = vi.fn(async () => ({ pid: 4321 }));
+    const resources = { dataRoot: "/tmp/data", ownerPid: null, port: 0, runtimeRoot: "/tmp/runtime" };
+    await expect(bootstrapSidecarProcess(stamp, resources, { launch })).resolves.toBe(true);
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      args: ["/tmp/packaged-entry.js", "--headless"],
+      command: process.execPath,
+      resources,
+      stamp,
+    }));
+  });
+
   it("rejects partial matching and derived identity fields", () => {
     expect(() => normalizeSidecarStamp({ ...stamp, ipc: "/tmp/not-identity.sock" })).toThrow(/unsupported fields: ipc/);
     expect(() => normalizeSidecarStamp({ app: stamp.app, namespace: stamp.namespace })).toThrow(/channel/);
@@ -62,7 +93,12 @@ describe("five-field argv identity", () => {
 
 describe("normalized sidecar client", () => {
   it("is the only layer that receives OS resources and implements IPC/lifecycle", async () => {
-    installCurrentProcess(stamp, { dataRoot: "/tmp/open-design-data", port: 4173 });
+    installCurrentProcess(stamp, {
+      dataRoot: "/tmp/open-design-data",
+      ownerPid: null,
+      port: 4173,
+      runtimeRoot: "/tmp/open-design-runtime",
+    });
     const events: string[] = [];
     let receivedResources: SidecarResources | null = null;
     const client = SidecarFactory.create({
@@ -87,14 +123,27 @@ describe("normalized sidecar client", () => {
       },
     });
 
-    expect(client.resources).toEqual({ dataRoot: "/tmp/open-design-data", pid: process.pid, port: 4173 });
+    const inheritedEnv = SidecarFactory.inheritedEnvironment();
+    expect(Object.keys(inheritedEnv)).toHaveLength(1);
+    expect(client.resources).toEqual({
+      dataRoot: "/tmp/open-design-data",
+      ownerPid: null,
+      pid: process.pid,
+      port: 4173,
+      runtimeRoot: "/tmp/open-design-runtime",
+    });
     await client.start();
+    const inherited = SidecarFactory.connectInherited(inheritedEnv);
+    expect(inherited).not.toBeNull();
+    await expect(inherited?.status("daemon")).resolves.toEqual({ ready: true });
+    await expect(inherited?.invoke("daemon", "echo", { inherited: true })).resolves.toEqual({ inherited: true });
     await expect(client.invoke("daemon", "echo", { ok: true })).resolves.toEqual({ ok: true });
     await client.stop();
     await client.waitUntilStopped();
+    expect(SidecarFactory.inheritedEnvironment()).toEqual({});
 
     expect(receivedResources).toEqual(client.resources);
-    expect(events).toEqual(["start", "handler", "stop"]);
+    expect(events).toEqual(["start", "handler", "handler", "stop"]);
   });
 
   it("does not accept argv, socket paths, or capability declarations", () => {
@@ -120,13 +169,13 @@ describe("server-side atomic operations", () => {
     await launchSidecar({
       args: [fixture],
       command: process.execPath,
-      resources: { dataRoot: "/tmp/open-design-stable", port: 0 },
+      resources: { dataRoot: "/tmp/open-design-stable", ownerPid: null, port: 0, runtimeRoot: "/tmp/open-design-stable-runtime" },
       stamp: stable,
     });
     await launchSidecar({
       args: [fixture],
       command: process.execPath,
-      resources: { dataRoot: "/tmp/open-design-beta", port: 0 },
+      resources: { dataRoot: "/tmp/open-design-beta", ownerPid: null, port: 0, runtimeRoot: "/tmp/open-design-beta-runtime" },
       stamp: beta,
     });
 

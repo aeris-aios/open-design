@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ToolPackConfig } from "../src/config.js";
 
-const requestJsonIpc = vi.hoisted(() => vi.fn());
+const requestSidecar = vi.hoisted(() => vi.fn());
 const listProcessSnapshots = vi.hoisted(() =>
   vi.fn<typeof import("@open-design/platform").listProcessSnapshots>(async () => []),
 );
@@ -28,7 +28,17 @@ vi.mock("@open-design/sidecar", async () => {
   const actual = await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar");
   return {
     ...actual,
-    requestJsonIpc,
+    getSidecarStatus: async (stamp: { app: string }) => await requestSidecar(stamp.app, { type: SIDECAR_MESSAGES.STATUS }),
+    invokeSidecar: async (stamp: { app: string }, action: string, input: unknown) => await requestSidecar(stamp.app, { input, type: action }),
+    launchSidecar: spawnBackgroundProcess,
+    stopSidecar: async (stamp: { source: string }) => ({
+      alreadyStopped: stamp.source !== "packaged",
+      forcedPids: [],
+      gracefulAccepted: stamp.source === "packaged",
+      matchedPids: stamp.source === "packaged" ? [4242] : [],
+      remainingPids: [],
+      stoppedPids: stamp.source === "packaged" ? [4242] : [],
+    }),
   };
 });
 
@@ -177,11 +187,11 @@ describe("inspectPackedWinApp", () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
 
     try {
-      requestJsonIpc.mockReset();
-      requestJsonIpc.mockImplementation(async (ipc: string, payload: { type?: string }) => {
+      requestSidecar.mockReset();
+      requestSidecar.mockImplementation(async (app: string, payload: { type?: string }) => {
         if (payload.type === SIDECAR_MESSAGES.STATUS) {
-          if (ipc.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
-          if (ipc.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
+          if (app.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
+          if (app.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
           return { state: "running", url: "od://app/" };
         }
         if (payload.type === SIDECAR_MESSAGES.EVAL) {
@@ -210,11 +220,11 @@ describe("inspectPackedWinApp", () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
 
     try {
-      requestJsonIpc.mockReset();
-      requestJsonIpc.mockImplementation(async (ipc: string, payload: { type?: string }) => {
+      requestSidecar.mockReset();
+      requestSidecar.mockImplementation(async (app: string, payload: { type?: string }) => {
         if (payload.type === SIDECAR_MESSAGES.STATUS) {
-          if (ipc.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
-          if (ipc.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
+          if (app.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
+          if (app.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
           throw new Error("IPC request timed out: test-pipe");
         }
         throw new Error(`unexpected IPC message: ${String(payload.type)}`);
@@ -237,11 +247,11 @@ describe("inspectPackedWinApp", () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
 
     try {
-      requestJsonIpc.mockReset();
-      requestJsonIpc.mockImplementation(async (ipc: string, payload: { type?: string }) => {
+      requestSidecar.mockReset();
+      requestSidecar.mockImplementation(async (app: string, payload: { type?: string }) => {
         if (payload.type === SIDECAR_MESSAGES.STATUS) {
-          if (ipc.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
-          if (ipc.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
+          if (app.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
+          if (app.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
           throw new Error("IPC request timed out: test-pipe");
         }
         throw new Error(`unexpected IPC message: ${String(payload.type)}`);
@@ -272,15 +282,15 @@ describe("inspectPackedWinApp", () => {
 
     try {
       await writeFakeUnpackedExe(config);
-      requestJsonIpc.mockReset();
+      requestSidecar.mockReset();
       spawnBackgroundProcess.mockClear();
       stopProcesses.mockClear();
       listProcessSnapshots.mockClear();
       process.env.OD_JSON_IPC_TRACE = "already-on";
-      requestJsonIpc.mockImplementation(async (ipc: string, payload: { type?: string }) => {
+      requestSidecar.mockImplementation(async (app: string, payload: { type?: string }) => {
         if (payload.type === SIDECAR_MESSAGES.STATUS) {
-          if (ipc.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
-          if (ipc.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
+          if (app.includes("daemon")) return { state: "running", url: "http://127.0.0.1:1234" };
+          if (app.includes("web")) return { state: "running", url: "http://127.0.0.1:5678" };
           return { state: "running", url: "od://app/" };
         }
         if (payload.type === SIDECAR_MESSAGES.SHUTDOWN) return { accepted: true };
@@ -319,22 +329,8 @@ describe("stopPackedWinApp", () => {
     const payloadDesktop = { command: "payload-desktop", pid: 4242, ppid: 1 };
 
     try {
-      requestJsonIpc.mockReset();
-      requestJsonIpc.mockResolvedValue({ accepted: true });
-      listProcessSnapshots.mockReset();
-      listProcessSnapshots
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([]);
-      matchesStampedProcess.mockReset();
-      matchesStampedProcess.mockImplementation((processInfo, criteria) => {
-        const sidecarCriteria = criteria as { namespace?: string; source?: string };
-        return (
-          processInfo.command === payloadDesktop.command &&
-          sidecarCriteria.namespace === config.namespace &&
-          sidecarCriteria.source === "packaged"
-        );
-      });
+      requestSidecar.mockReset();
+      requestSidecar.mockResolvedValue({ accepted: true });
       stopProcesses.mockClear();
 
       await expect(stopPackedWinApp(config)).resolves.toEqual({
@@ -344,7 +340,6 @@ describe("stopPackedWinApp", () => {
         status: "stopped",
         stoppedPids: [payloadDesktop.pid],
       });
-      expect(listProcessSnapshots).toHaveBeenCalledTimes(3);
       expect(stopProcesses).not.toHaveBeenCalled();
     } finally {
       await rm(root, { force: true, recursive: true });

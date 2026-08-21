@@ -10,9 +10,7 @@ import type { DesktopStatusSnapshot } from "@open-design/sidecar-proto";
 import type { ToolPackConfig } from "../src/config.js";
 import { resolveMacPaths } from "../src/mac/paths.js";
 
-const requestJsonIpc = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
-const resolveAppIpcPath = vi.fn(() => "/tmp/open-design/ipc/test/desktop.sock");
-const createSidecarLaunchEnv = vi.fn(({ extraEnv }: { extraEnv: NodeJS.ProcessEnv }) => extraEnv);
+const getSidecarStatus = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
 const collectProcessTreePids = vi.fn(
   (_processes: unknown[], rootPids: Array<number | null>) =>
     rootPids.filter((pid): pid is number => typeof pid === "number"),
@@ -27,11 +25,20 @@ const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => 
     unref: vi.fn(),
   }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
 });
+const stopSidecar = vi.fn(async (stamp: { source: string }) => ({
+  alreadyStopped: stamp.source !== "packaged",
+  forcedPids: [],
+  gracefulAccepted: stamp.source === "packaged",
+  matchedPids: stamp.source === "packaged" ? [4242] : [],
+  remainingPids: [],
+  stoppedPids: stamp.source === "packaged" ? [4242] : [],
+}));
 
-vi.mock("@open-design/sidecar", () => ({
-  createSidecarLaunchEnv,
-  requestJsonIpc,
-  resolveAppIpcPath,
+vi.mock("@open-design/sidecar", async () => ({
+  ...(await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar")),
+  getSidecarStatus,
+  spawnSidecar: spawnLoggedProcess,
+  stopSidecar,
 }));
 
 vi.mock("@open-design/platform", () => ({
@@ -87,7 +94,7 @@ function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): Tool
 
 afterEach(() => {
   vi.clearAllMocks();
-  requestJsonIpc.mockResolvedValue({ state: "running" });
+  getSidecarStatus.mockResolvedValue({ state: "running" });
   listProcessSnapshots.mockResolvedValue([]);
   matchesStampedProcess.mockReturnValue(false);
   collectProcessTreePids.mockImplementation(
@@ -109,7 +116,7 @@ describe("startPackedMacApp", () => {
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");
       await chmod(executablePath, 0o755);
-      requestJsonIpc.mockResolvedValue({ pid: delegatedPid, state: "running" });
+      getSidecarStatus.mockResolvedValue({ pid: delegatedPid, state: "running" });
       spawnLoggedProcess.mockImplementationOnce(async ({ env }: { env: NodeJS.ProcessEnv }) => {
         const child = Object.assign(new EventEmitter(), {
           env,
@@ -249,19 +256,7 @@ describe("stopPackedMacApp", () => {
     const payloadDesktop = { command: "payload-desktop", pid: 4242, ppid: 1 };
 
     try {
-      requestJsonIpc.mockResolvedValue({ state: "running" });
-      listProcessSnapshots
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([payloadDesktop])
-        .mockResolvedValueOnce([]);
-      matchesStampedProcess.mockImplementation((processInfo, criteria) => {
-        const sidecarCriteria = criteria as { namespace?: string; source?: string };
-        return (
-          processInfo.command === payloadDesktop.command &&
-          sidecarCriteria.namespace === config.namespace &&
-          sidecarCriteria.source === "packaged"
-        );
-      });
+      stopSidecar.mockClear();
 
       await expect(stopPackedMacApp(config)).resolves.toMatchObject({
         gracefulRequested: true,
@@ -270,12 +265,7 @@ describe("stopPackedMacApp", () => {
         status: "stopped",
         stoppedPids: [payloadDesktop.pid],
       });
-      expect(listProcessSnapshots).toHaveBeenCalledTimes(3);
-      expect(matchesStampedProcess).toHaveBeenCalledWith(
-        payloadDesktop,
-        expect.objectContaining({ namespace: config.namespace, source: "packaged" }),
-        expect.anything(),
-      );
+      expect(stopSidecar).toHaveBeenCalledWith(expect.objectContaining({ namespace: config.namespace, source: "packaged" }));
       expect(stopProcesses).not.toHaveBeenCalled();
     } finally {
       await rm(root, { force: true, recursive: true });

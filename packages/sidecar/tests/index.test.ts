@@ -3,12 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
+import { bootstrapSidecarRuntime, createSidecarLaunchEnv } from "../src/bootstrap.js";
+import { createJsonIpcServer, requestJsonIpc } from "../src/json-ipc.js";
+import { resolveAppIpcPath } from "../src/paths.js";
 import {
-  bootstrapSidecarRuntime,
-  createJsonIpcServer,
-  createSidecarLaunchEnv,
-  requestJsonIpc,
-  resolveAppIpcPath,
   resolveAppRuntimePath,
   resolveLogFilePath,
   resolveNamespace,
@@ -16,11 +14,10 @@ import {
   resolveRuntimeNamespaceRoot,
   resolveSidecarBase,
   resolveSourceRuntimeRoot,
-  type SidecarContractDescriptor,
-  type SidecarStampShape,
 } from "../src/index.js";
+import type { RuntimeLayoutStampShape, SidecarContractDescriptor } from "../src/types.js";
 
-type FakeStamp = SidecarStampShape & {
+type FakeStamp = RuntimeLayoutStampShape & {
   app: "api" | "ui";
   mode: "dev" | "prod";
   source: "tool" | "pack";
@@ -242,7 +239,6 @@ describe("generic sidecar bootstrap", () => {
     ).toEqual({
       app: "api",
       base: resolve("/runtime/base"),
-      ipc: stamp.ipc,
       mode: "dev",
       namespace: "alpha",
       source: "tool",

@@ -21,8 +21,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, posix } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createJsonIpcServer, resolveAppIpcPath } from '@open-design/sidecar';
-import { APP_KEYS, OPEN_DESIGN_SIDECAR_CONTRACT } from '@open-design/sidecar-proto';
+import type { SidecarStamp } from '@open-design/sidecar';
+import { APP_KEYS } from '@open-design/sidecar-proto';
 
 import {
   buildPackagedDaemonSpawnEnv,
@@ -41,6 +41,10 @@ import type { PackagedNamespacePaths } from '../src/paths.js';
 
 function slashPath(value: string): string {
   return value.replaceAll('\\', '/');
+}
+
+function testStamp(app: "daemon" | "web" = APP_KEYS.DAEMON): SidecarStamp {
+  return { app, channel: "stable", mode: "runtime", namespace: "test", source: "packaged" };
 }
 
 describe('resolveDaemonStatusTimeoutMs', () => {
@@ -111,37 +115,18 @@ describe('resolveDaemonStatusTimeoutMs', () => {
 
 describe('packaged web URL registration', () => {
   it('registers the current dynamic web URL with the daemon sidecar and supports a later port', async () => {
-    const namespace = `web-url-${process.pid}-${Date.now()}`;
-    const daemonIpc = resolveAppIpcPath({
-      app: APP_KEYS.DAEMON,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace,
-    });
     const received: unknown[] = [];
-    const server = await createJsonIpcServer({
-      socketPath: daemonIpc,
-      handler: async (message) => {
-        received.push(message);
-        return { accepted: true };
-      },
-    });
-
-    try {
-      await registerPackagedWebUrl(daemonIpc, 'http://127.0.0.1:64248');
-      await registerPackagedWebUrl(daemonIpc, 'http://127.0.0.1:53421');
-      expect(received).toEqual([
-        {
-          input: { url: 'http://127.0.0.1:64248' },
-          type: 'register-web-url',
-        },
-        {
-          input: { url: 'http://127.0.0.1:53421' },
-          type: 'register-web-url',
-        },
-      ]);
-    } finally {
-      await server.close();
-    }
+    const invoke = async (...args: unknown[]) => {
+      received.push(args);
+      return { accepted: true };
+    };
+    const daemonStamp = testStamp();
+    await registerPackagedWebUrl(daemonStamp, 'http://127.0.0.1:64248', invoke as never);
+    await registerPackagedWebUrl(daemonStamp, 'http://127.0.0.1:53421', invoke as never);
+    expect(received).toEqual([
+      [daemonStamp, 'register-web-url', { url: 'http://127.0.0.1:64248' }, { timeoutMs: 1200 }],
+      [daemonStamp, 'register-web-url', { url: 'http://127.0.0.1:53421' }, { timeoutMs: 1200 }],
+    ]);
   });
 });
 
@@ -407,12 +392,10 @@ describe('buildPackagedDaemonSpawnEnv', () => {
     return {
       cacheRoot: '/tmp/od-pkg/cache',
       dataRoot: '/tmp/od-pkg/data',
-      desktopIdentityPath: '/tmp/od-pkg/runtime/desktop-root.json',
       desktopLogPath: '/tmp/od-pkg/logs/desktop/latest.log',
       desktopLogsRoot: '/tmp/od-pkg/logs/desktop',
       electronSessionDataRoot: '/tmp/od-pkg/user-data/session',
       electronUserDataRoot: '/tmp/od-pkg/user-data',
-      headlessIdentityPath: '/tmp/od-pkg/runtime/headless-root.json',
       installationRoot: '/tmp/od-pkg/..',
       installerObservationRoot: '/tmp/od-pkg/data/observations/installer',
       logsRoot: '/tmp/od-pkg/logs',
@@ -420,7 +403,6 @@ describe('buildPackagedDaemonSpawnEnv', () => {
       resourceRoot: '/tmp/od-pkg/resources',
       runtimeRoot: '/tmp/od-pkg/runtime',
       updateRoot: '/tmp/od-pkg/updates',
-      webIdentityPath: '/tmp/od-pkg/runtime/web-root.json',
     };
   }
 
@@ -777,7 +759,7 @@ describe('waitForStatus child-exit fast-fail', () => {
 
     const startedAt = Date.now();
     const promise = waitForStatus<{ url: string | null }>(
-      ipcPath,
+      { label: 'daemon', read: async () => { throw new Error(`missing ${ipcPath}`); } },
       (status) => status.url != null,
       30 * 60 * 1000,
       { child, logPath },
@@ -820,7 +802,7 @@ describe('waitForStatus child-exit fast-fail', () => {
     let captured: unknown;
     try {
       await waitForStatus<{ url: string | null }>(
-        '/tmp/od-test-no-such-ipc-pre-' + Date.now(),
+        { label: 'daemon', read: async () => { throw new Error('missing'); } },
         (status) => status.url != null,
         30 * 60 * 1000,
         { child, logPath: '/tmp/od-test-daemon.log' },
@@ -839,26 +821,19 @@ describe('waitForStatus child-exit fast-fail', () => {
   it('does not accept ready status from a stale IPC endpoint owned by a different pid', async () => {
     const child = fakeChild();
     child.pid = 5678;
-    const ipcPath = resolveAppIpcPath({
-      app: APP_KEYS.WEB,
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      namespace: `stale-ipc-${process.pid}-${Date.now()}`,
-    });
-    const server = await createJsonIpcServer({
-      socketPath: ipcPath,
-      handler: async () => ({
+    const probe = {
+      label: 'web',
+      read: async () => ({
         pid: 1234,
         state: 'running',
         updatedAt: new Date().toISOString(),
         url: 'http://127.0.0.1:1234',
       }),
-    });
-
-    try {
+    };
       let captured: unknown;
       try {
         await waitForStatus<{ pid?: number | null; url: string | null }>(
-          ipcPath,
+          probe,
           (status) => status.url != null,
           250,
           { child, logPath: join(tmpdir(), 'od-test-web.log') },
@@ -869,9 +844,6 @@ describe('waitForStatus child-exit fast-fail', () => {
 
       expect(captured).toBeInstanceOf(Error);
       expect((captured as Error).message).toContain('sidecar status pid 1234 did not match spawned pid 5678');
-    } finally {
-      await server.close();
-    }
   });
 });
 
