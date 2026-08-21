@@ -177,6 +177,14 @@ describe("pricing contract", () => {
       plans,
       /\.individual-usage-meter b\s*\{[^}]*left:\s*clamp\(4px, calc\(2\.5769% - 10px\), 16px\);/s,
     );
+    assert.match(
+      plans,
+      /\.individual-usage-row\s*\{[^}]*grid-template-columns:\s*220px minmax\(0, 1fr\);/s,
+    );
+    assert.match(
+      plans,
+      /\.individual-usage-axis\s*\{[^}]*grid-template-columns:\s*220px minmax\(0, 1fr\);/s,
+    );
     assert.doesNotMatch(plans, /--usage-label/);
   });
 

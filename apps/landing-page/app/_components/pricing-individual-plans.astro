@@ -74,10 +74,8 @@ const imageModels: ModelItem[] = [
 const unlimitedByTier: Record<TierId, Set<string>> = {
   go: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2']),
   plus: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code']),
-  // Pro's fifth slot is GLM-5.2, not MiniMax M2.7: every tier from Go up
-  // carries GLM-5.2, and MiniMax M2.7 stays metered until Max. The two were
-  // swapped here, so the page promised Pro subscribers unlimited MiniMax while
-  // marking the GLM-5.2 they do get as metered.
+  // Pro includes GLM-5.2, not MiniMax M2.7: every tier from Go up carries
+  // GLM-5.2, while MiniMax M2.7 stays metered until Max.
   pro: new Set([
     'DeepSeek V4 Flash Vision Exp',
     'DeepSeek V4 Flash',
@@ -1272,7 +1270,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .individual-usage-row {
     display: grid;
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
     align-items: center;
     min-height: 48px;
     padding: 0 16px;
@@ -1351,7 +1349,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .individual-usage-axis {
     display: grid;
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
     align-items: start;
     min-height: 38px;
     padding: 0 16px;
