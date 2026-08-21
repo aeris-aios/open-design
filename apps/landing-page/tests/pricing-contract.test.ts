@@ -154,6 +154,11 @@ describe("pricing contract", () => {
       plans,
       /\.plan-max \.plan-model-module li\.model-with-status em\.unlimited,[\s\S]*?background:\s*rgba\(120, 234, 87, 0\.14\);/,
     );
+    assert.match(plans, /'long-model-name': model\.name\.length > 24/);
+    assert.match(
+      plans,
+      /\.plan-model-module li > span\.long-model-name\s*\{[^}]*font-size:\s*10\.5px;/s,
+    );
     assert.match(plans, /data-usage-module/);
     assert.match(plans, /new IntersectionObserver/);
     assert.match(plans, /threshold:\s*0\.22/);

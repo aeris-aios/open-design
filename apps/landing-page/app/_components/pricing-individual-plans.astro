@@ -400,7 +400,10 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       return (
                         <li class="model-with-status">
                           <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
-                          <span>{model.name}</span>
+                          <span
+                            class:list={{ 'long-model-name': model.name.length > 24 }}
+                            title={model.name}
+                          >{model.name}</span>
                           {popularStatus.kind === 'unlimited' && <em class={popularStatus.kind}>{popularStatus.text}</em>}
                         </li>
                       );
@@ -982,6 +985,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .plan-model-module li > span.long-model-name {
+    font-size: 10.5px;
+    letter-spacing: -0.015em;
   }
 
   .plan-model-module li:nth-child(n + 4) { display: none; }
