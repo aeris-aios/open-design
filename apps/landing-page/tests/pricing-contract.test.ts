@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 import {
+  CLOUD_CONSOLE_BASE_PARAM,
+  DEFAULT_CLOUD_CONSOLE_BASE_URL,
   CLOUD_CONSOLE_URL,
   GO_PLAN,
   PLANS_JSON_URL,
@@ -10,6 +12,7 @@ import {
   cloudSubscribeUrl,
   cloudTeamSubscribeUrl,
   formatUsd,
+  resolveCloudConsoleBase,
   scopedBillingPlanUrl,
   teamIntroTotalUsd,
   type PricingContract,
@@ -686,6 +689,58 @@ describe("pricing contract", () => {
       "https://open-design.ai/cloud/dashboard?billing=plan&workspaceId=workspace-a",
     );
     assert.equal(scopedBillingPlanUrl("  "), CLOUD_CONSOLE_URL);
+  });
+
+  it("returns Pricing selections to an allowlisted Cloud Console environment", async () => {
+    assert.equal(CLOUD_CONSOLE_BASE_PARAM, "cloud_console_base");
+    assert.equal(
+      resolveCloudConsoleBase(null),
+      DEFAULT_CLOUD_CONSOLE_BASE_URL,
+    );
+    assert.equal(
+      resolveCloudConsoleBase("https://vela.powerformer.net/"),
+      "https://vela.powerformer.net/",
+    );
+    assert.equal(
+      resolveCloudConsoleBase("https://amr-feature.powerformer.net/"),
+      "https://amr-feature.powerformer.net/",
+    );
+    assert.equal(
+      resolveCloudConsoleBase("http://127.0.0.1:5179/"),
+      "http://127.0.0.1:5179/",
+    );
+
+    for (const invalid of [
+      "https://evil.example/",
+      "https://open-design.ai/",
+      "https://user:password@vela.powerformer.net/",
+      "http://vela.powerformer.net/",
+      "http://localhost:5173/dashboard",
+      "javascript:alert(1)",
+    ]) {
+      assert.throws(() => resolveCloudConsoleBase(invalid), /Cloud Console base/);
+    }
+
+    const [page, individualPlans] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
+    ]);
+    assert.match(page, /inboundParams\.get\(cloudConsoleBaseParam\)/);
+    assert.match(page, /data-cloud-console-handoff-error/);
+    assert.match(page, /data-cloud-console-environment/);
+    assert.match(page, /cta\.setAttribute\('aria-disabled', 'true'\)/);
+    assert.match(
+      page,
+      /data-cloud-console-environment'\) === 'production'/,
+    );
+    assert.doesNotMatch(
+      individualPlans,
+      /href=\{cloudSubscribeUrl\([^)]*\)\}[^>]*data-pricing-cta/,
+    );
+    assert.doesNotMatch(
+      page,
+      /href=\{CLOUD_CONSOLE_URL\}[^>]*data-pricing-cta/,
+    );
   });
 
   it("recognizes only the signed-in account's current personal plan for CTA copy", async () => {

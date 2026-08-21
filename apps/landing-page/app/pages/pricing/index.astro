@@ -11,9 +11,12 @@
 import Layout from '../../_components/sub-page-layout.astro';
 import PricingIndividualPlans from '../../_components/pricing-individual-plans.astro';
 import {
-  PRICING_SNAPSHOT,
+  CLOUD_CONSOLE_BASE_PARAM,
   CLOUD_CONSOLE_URL,
+  DEFAULT_CLOUD_CONSOLE_BASE_URL,
   GO_PLAN,
+  HOSTED_CLOUD_CONSOLE_BASE_URLS,
+  PRICING_SNAPSHOT,
   cloudSubscribeUrl,
   formatUsd,
   teamIntroTotalUsd,
@@ -183,6 +186,7 @@ const jsonLd = [
     data-pricing-root
     data-audience="creator"
     data-interval="yearly"
+    data-cloud-console-environment="production"
     data-billing-api-origin={apiOrigin}
     data-current-plan-label={currentPlanLabel}
     data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt}
@@ -229,6 +233,9 @@ const jsonLd = [
         </div>
       </div>
     </header>
+    <p class="pr-handoff-error" data-cloud-console-handoff-error role="alert" hidden>
+      {L.checkoutDestinationUnavailable}
+    </p>
 
     <div
       id="pr-creator-panel"
@@ -400,7 +407,6 @@ const jsonLd = [
 
           <a
             class="btn btn-primary pr-team-checkout"
-            href={CLOUD_CONSOLE_URL}
             data-pricing-cta
             data-tier="team"
             data-team-checkout-total
@@ -465,7 +471,7 @@ const jsonLd = [
     </div>
   </div>
 
-  <script is:inline define:vars={{ labels: L, billingPlanUrl: CLOUD_CONSOLE_URL, teamTiers, teamCopy: teamContent }}>
+  <script is:inline define:vars={{ labels: L, defaultCloudConsoleBase: DEFAULT_CLOUD_CONSOLE_BASE_URL, hostedCloudConsoleBases: HOSTED_CLOUD_CONSOLE_BASE_URLS, cloudConsoleBaseParam: CLOUD_CONSOLE_BASE_PARAM, teamTiers, teamCopy: teamContent }}>
     (() => {
       const root = document.querySelector('[data-pricing-root]');
       if (!root) return;
@@ -528,7 +534,53 @@ const jsonLd = [
       // keeps the generic billing entry until a concrete Team tier is selected.
       const inboundParams = new URLSearchParams(window.location.search);
       const inboundWorkspaceId = inboundParams.get('workspaceId')?.trim();
+      const requestedCloudConsoleBase = inboundParams.get(cloudConsoleBaseParam);
+      const handoffError = root.querySelector('[data-cloud-console-handoff-error]');
+      let cloudConsoleBase = defaultCloudConsoleBase;
+      let cloudConsoleEnvironment = 'production';
+      let cloudConsoleHandoffValid = true;
+      try {
+        if (requestedCloudConsoleBase !== null) {
+          const candidate = new URL(requestedCloudConsoleBase.trim());
+          const normalized = candidate.toString();
+          const hosted = hostedCloudConsoleBases.includes(normalized);
+          const loopback =
+            candidate.protocol === 'http:' &&
+            (candidate.hostname === 'localhost' || candidate.hostname === '127.0.0.1') &&
+            candidate.port.length > 0 &&
+            candidate.pathname === '/';
+          if (
+            candidate.username ||
+            candidate.password ||
+            candidate.search ||
+            candidate.hash ||
+            (!hosted && !loopback)
+          ) {
+            throw new Error('cloud_console_base_not_allowed');
+          }
+          cloudConsoleBase = normalized;
+          cloudConsoleEnvironment =
+            normalized === defaultCloudConsoleBase ? 'production' : 'non-production';
+        }
+      } catch (error) {
+        cloudConsoleHandoffValid = false;
+        cloudConsoleEnvironment = 'invalid';
+        if (handoffError) handoffError.hidden = false;
+        console.error('Invalid Cloud Console Pricing handoff.', error);
+      }
+      root.setAttribute('data-cloud-console-environment', cloudConsoleEnvironment);
+      const cloudConsoleDashboardUrl = cloudConsoleHandoffValid
+        ? new URL('dashboard', cloudConsoleBase).toString()
+        : null;
+      const billingPlanUrl = cloudConsoleDashboardUrl
+        ? (() => {
+            const target = new URL(cloudConsoleDashboardUrl);
+            target.searchParams.set('billing', 'plan');
+            return target.toString();
+          })()
+        : null;
       const scopedBillingPlanUrl = () => {
+        if (!billingPlanUrl) throw new Error('Cloud Console Pricing handoff is unavailable.');
         const target = new URL(billingPlanUrl);
         if (inboundWorkspaceId) target.searchParams.set('workspaceId', inboundWorkspaceId);
         // od_campaign_id is intentionally NOT forwarded from the inbound URL:
@@ -569,13 +621,20 @@ const jsonLd = [
       const syncCtas = () => {
         const interval = root.getAttribute('data-interval') === 'monthly' ? 'monthly' : 'yearly';
         for (const cta of root.querySelectorAll('[data-pricing-cta]')) {
+          if (!cloudConsoleHandoffValid) {
+            cta.setAttribute('data-subscription-disabled', '');
+            cta.setAttribute('aria-disabled', 'true');
+            cta.setAttribute('tabindex', '-1');
+            cta.removeAttribute('href');
+            continue;
+          }
           if (cta.hasAttribute('data-subscription-disabled')) {
             cta.removeAttribute('href');
             continue;
           }
           const tier = cta.getAttribute('data-tier') || '';
           if (tier === 'free') {
-            cta.setAttribute('href', new URL('/cloud/dashboard', billingPlanUrl).toString());
+            cta.setAttribute('href', cloudConsoleDashboardUrl);
             continue;
           }
           if (tier === 'team') {
@@ -1016,7 +1075,7 @@ const jsonLd = [
     } from '../../_lib/pricing-current-plan';
 
     const pricingRoot = document.querySelector('[data-pricing-root]');
-    if (pricingRoot) {
+    if (pricingRoot?.getAttribute('data-cloud-console-environment') === 'production') {
       const apiOrigin = pricingRoot.getAttribute('data-billing-api-origin') || '';
       const currentPlanLabel = pricingRoot.getAttribute('data-current-plan-label') || '';
       void loadCurrentPersonalPlanTier(apiOrigin).then((currentTier) => {
@@ -1040,6 +1099,19 @@ const jsonLd = [
 
 <style>
   .pr-page [data-pricing-campaign-surface][hidden] { display: none !important; }
+  .pr-handoff-error {
+    margin: -20px auto 24px;
+    max-width: 720px;
+    border: 1px solid #c64b40;
+    border-radius: 10px;
+    background: #fff1ee;
+    padding: 12px 16px;
+    color: #8d271f;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+  }
   .pr-campaign-disclaimer {
     width: 100%;
     max-width: none;

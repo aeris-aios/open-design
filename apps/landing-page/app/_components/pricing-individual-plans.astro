@@ -2,7 +2,6 @@
 import {
   GO_PLAN,
   PRICING_SNAPSHOT,
-  cloudSubscribeUrl,
   formatUsd,
   type PlanTierConfig,
 } from '../_lib/pricing';
@@ -386,7 +385,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
               <small>{view.yearly.billed}</small>
             </div>
 
-            <a class="pricing-card-cta" href={cloudSubscribeUrl(tier, 'yearly')} data-pricing-cta data-tier={tier}>
+            <a class="pricing-card-cta" data-pricing-cta data-tier={tier}>
               <span>{tierCopy[tier].ctaLabel}</span>
             </a>
 
