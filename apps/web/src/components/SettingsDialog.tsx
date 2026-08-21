@@ -3893,16 +3893,6 @@ export function SettingsDialog({
     }
     return label || id;
   };
-  const agentModelSummary = (agent: AgentInfo) => {
-    if (!Array.isArray(agent.models) || agent.models.length === 0) return null;
-    const choice = effectiveAgentModelChoice(agent, cfg.agentModels?.[agent.id]) ?? cfg.agentModels?.[agent.id] ?? {};
-    const modelValue = choice.model ?? defaultAgentModelId(agent) ?? '';
-    if (!modelValue) return t('settings.modelCustom');
-    return agentModelOptionLabel(
-      agent.models.find((m) => m.id === modelValue),
-      modelValue,
-    );
-  };
   const renderAgentModelConfig = (selected: AgentInfo) => {
     const hasModels =
       Array.isArray(selected.models) && selected.models.length > 0;
@@ -4620,7 +4610,6 @@ export function SettingsDialog({
                           const description = AGENT_SHORT_DESCRIPTIONS[a.id];
                           const agentName = displayAgentName(a);
                           const diagnosticHandlers = diagnosticHandlersForAgent(a);
-                          const modelSummary = agentModelSummary(a);
                           const amrBenefits = [
                             t('settings.amrBenefitOfficial'),
                             t('settings.amrBenefitManyModels'),
@@ -4890,12 +4879,6 @@ export function SettingsDialog({
                                               </span>
                                             </span>
                                           ) : null}
-                                        </div>
-                                      ) : null}
-                                      {!active && modelSummary ? (
-                                        <div className="agent-card-model-summary">
-                                          <span>{t('settings.modelPicker')}</span>
-                                          <strong>{modelSummary}</strong>
                                         </div>
                                       ) : null}
                                   </div>

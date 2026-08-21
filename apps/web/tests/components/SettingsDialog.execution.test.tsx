@@ -2772,6 +2772,8 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
     ).toBeTruthy();
     expect(screen.getByText(en['settings.agentInstall.pathHint'])).toBeTruthy();
 
+    expect(within(codexCard).queryByText(en['settings.modelPicker'])).toBeNull();
+    expect(within(codexCard).queryByText(en['settings.modelUsesCliDefault'])).toBeNull();
     fireEvent.click(codexCard);
     const selectedCard = codexCard.closest('.agent-card') as HTMLElement;
     expect(selectedCard.classList.contains('active')).toBe(true);
