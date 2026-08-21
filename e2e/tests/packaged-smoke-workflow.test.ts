@@ -403,7 +403,7 @@ describe("packaged smoke workflow", () => {
     expect(workflow).not.toContain("OD_PACKAGED_E2E_");
   });
 
-  it("[P2] runs Windows launcher payload archive validation when tools-pack is touched", async () => {
+  it("[P2] runs the independent Windows launcher payload test set", async () => {
     const workflow = await readFile(ciWorkflowPath, "utf8");
     const job = sectionBetween(workflow, "  windows_tools_pack_payload_tests:", "  web_workspace_tests:");
     const validate = sectionBetween(workflow, "  validate:", "          if [ -n \"$failures\" ]; then");
@@ -411,7 +411,7 @@ describe("packaged smoke workflow", () => {
     expect(job).toContain("fromJSON(needs.runners.outputs.runs_on).windows_tools");
     expect(job).toContain("toJSON(fromJSON(needs.runners.outputs.runs_on).windows_tools)");
     expect(job).toContain("fromJSON(needs.plan.outputs.run).windows_tools_pack_payload_tests");
-    expect(job).toContain("pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload.test.ts");
+    expect(job).toContain("pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload-windows.test.ts");
     expect(validate).toContain("windows_tools_pack_payload_tests");
   });
 
@@ -1202,10 +1202,28 @@ process.stdin.on("end", () => {
       run_playwright_visual: false,
       run_ui_p0: false,
       run_web_workspace_tests: false,
-      run_windows_tools_pack_payload_tests: true,
+      run_windows_tools_pack_payload_tests: false,
       tools_dev_tests_required: true,
       tools_pack_tests_required: true,
+      windows_tools_pack_payload_tests_required: false,
       workspace_validation_required: true,
+    });
+
+    await expect(runScopesPrint("merge_group", mergeGroup, ["tools/pack/src/mac/app.ts"])).resolves.toMatchObject({
+      run_windows_tools_pack_payload_tests: false,
+      tools_pack_tests_required: true,
+      windows_tools_pack_payload_tests_required: false,
+    });
+
+    await expect(runScopesPrint("merge_group", mergeGroup, ["tools/pack/src/win/custom-installer.ts"])).resolves.toMatchObject({
+      run_windows_tools_pack_payload_tests: true,
+      tools_pack_tests_required: true,
+      windows_tools_pack_payload_tests_required: true,
+    });
+
+    await expect(runScopesPrint("merge_group", mergeGroup, ["packages/launcher-proto/src/index.ts"])).resolves.toMatchObject({
+      run_windows_tools_pack_payload_tests: true,
+      windows_tools_pack_payload_tests_required: true,
     });
 
     await expect(runScopesPrint("merge_group", mergeGroup, ["apps/desktop/package.json"])).resolves.toMatchObject({

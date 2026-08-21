@@ -135,9 +135,20 @@ Rule `certain-packaged-leaf-sources` covers only:
 It claims `tools_dev_tests_required`, `tools_pack_tests_required`, and
 `workspace_validation_required`. A pure matching merge group therefore keeps
 preflight/typecheck, workspace unit tests, desktop/packaged/tools-pack tests,
-the focused packaged launcher update-loop fallback, and Windows launcher
-payload tests. It skips web workspace tests, broad E2E Vitest, UI P0, critical
-Playwright, and visual Playwright.
+and the focused packaged launcher update-loop fallback. It skips web workspace
+tests, broad E2E Vitest, UI P0, critical Playwright, and visual Playwright.
+
+Windows launcher-payload validation is an independent test set. Rule
+`certain-windows-launcher-payload` maps the Windows pack source unit to
+`windows_tools_pack_payload_tests_required`, which alone arms the existing
+Windows workload outside forced-full plans. The source unit includes the
+Windows tools-pack implementation and resources, its explicit shared-module
+closure, the Windows-only test file, launcher-proto and sidecar-proto sources,
+and the narrow platform/release/sidecar exports consumed by that closure.
+Desktop, packaged-runtime, mac-only, and unrelated tools-pack changes retain
+their Linux package coverage without starting a Windows runner. Package
+manifests and workspace/lock configuration remain conservative broad inputs;
+unknown or below-threshold queue inputs still select the full plan.
 
 Package manifests, build configs, bins, vendor content, and files outside the
 listed core remain medium. A mixed queue group containing any medium file
@@ -146,10 +157,17 @@ effects and escalation behavior; they do not claim to prove every consumer.
 
 Current evidence:
 
-- The latest 400 first-parent merges contain 19 pure packaged-leaf groups.
-- All 19 have successful narrow PR validation paired with successful full
-  merge-queue validation; the active narrow plan additionally runs desktop,
-  packaged, and focused update-loop coverage absent from the historical plan.
+- The latest 400 first-parent merges contain 23 pure packaged-leaf groups.
+- Direct replay through `scopes.py plan --context merge-queue` retains the
+  Windows payload workload for 5 of those groups and omits it for 18. The
+  retained groups touch the Windows implementation closure; the omitted groups
+  are desktop, packaged-runtime, mac-only, or unrelated tools-pack changes.
+- Nineteen earlier pure-leaf groups have successful narrow PR validation paired
+  with successful full merge-queue validation. The narrow plan retains desktop,
+  packaged, tools-pack, and focused update-loop coverage.
+- Recent pure-leaf PR runs spend about 3.4–4.7 elapsed minutes in the Windows
+  payload job; it is longer than the Linux workspace-unit job and can determine
+  the validation critical path when the change has no Windows payload impact.
 - A current full merge-group run measures about 11.8 elapsed minutes and 68
   runner-minutes. A representative pure-leaf narrow PR run measures about 4.2
   elapsed minutes and 8.1 runner-minutes.
