@@ -49,9 +49,9 @@ The public API exposes only `stop()`:
   its attached endpoint closes and the exact lease is retired.
 
 A hosted shutdown callback may close its own attachment. That re-entrant close
-owns endpoint/lease teardown without waiting on the stop operation that is
-currently waiting for the callback; unrelated close callers still wait for the
-complete stop operation.
+closes the endpoint without waiting on the stop operation that is currently
+waiting for the callback; the lease is retired only after the callback finishes.
+Unrelated close callers still wait for the complete stop operation.
 
 The private wire request is only a step in that operation. Acceptance is not a
 public lifecycle result, PID liveness is not a hosted terminal condition, and

@@ -85,6 +85,7 @@ export async function attachSidecarWithMetadata<TMethods>(
   });
   const externalStopCallback = new AsyncLocalStorage<boolean>();
   let closing: Promise<void> | null = null;
+  let serverClosing: Promise<void> | null = null;
   let stopping: Promise<void> | null = null;
   let beginExternalStop: () => void = () => undefined;
   let stopRequested = false;
@@ -178,8 +179,13 @@ export async function attachSidecarWithMetadata<TMethods>(
     throw error;
   });
 
+  const closeServerOnce = async () => {
+    if (serverClosing != null) return await serverClosing;
+    serverClosing = server.close();
+    return await serverClosing;
+  };
   const closeServerAndLease = async () => {
-    await server.close();
+    await closeServerOnce();
     if (internal.releaseLeaseOnClose === true) await retireControlLeaseIfCurrent(metadata);
   };
   const closeServerAndLeaseOnce = async () => {
@@ -201,9 +207,9 @@ export async function attachSidecarWithMetadata<TMethods>(
     if (closing != null) return await closing;
     // The external controller already holds the namespace session while its
     // shutdown callback runs. A callback such as desktop shutdown may close
-    // its own attachment; let that reentrant close own teardown directly
-    // instead of waiting on the stop promise that is waiting on this callback.
-    if (externalStopCallback.getStore() === true) return await closeServerAndLeaseOnce();
+    // its own attachment; close the endpoint so that callback can finish, but
+    // retain the lease until the complete callback reaches terminal teardown.
+    if (externalStopCallback.getStore() === true) return await closeServerOnce();
     if (stopping != null) return await stopping;
     return await withLifecycleSession(
       privateLifecycleEndpointPath(metadata.identity, metadata.roots),

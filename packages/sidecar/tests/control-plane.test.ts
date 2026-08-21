@@ -237,6 +237,10 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
     let hosted: Awaited<ReturnType<typeof controller.expose<DemoMethods>>> | null = null;
+    let releaseShutdown!: () => void;
+    const shutdownCanFinish = new Promise<void>((resolve) => { releaseShutdown = resolve; });
+    let attachmentClosed!: () => void;
+    const attachmentWasClosed = new Promise<void>((resolve) => { attachmentClosed = resolve; });
     let shutdownFinished = false;
     hosted = await controller.expose<DemoMethods>({
       handlers: {
@@ -245,12 +249,20 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
       },
       async onStopRequested() {
         await hosted?.close();
+        attachmentClosed();
+        await shutdownCanFinish;
         shutdownFinished = true;
       },
       service: "shell",
     });
 
-    await expect(controller.stop("shell")).resolves.toMatchObject({ state: "stopped" });
+    let stopSettled = false;
+    const stopped = controller.stop("shell").finally(() => { stopSettled = true; });
+    await attachmentWasClosed;
+    expect(stopSettled).toBe(false);
+    await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
+    releaseShutdown();
+    await expect(stopped).resolves.toMatchObject({ state: "stopped" });
     expect(shutdownFinished).toBe(true);
     await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
   });
