@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
+import { load } from 'cheerio';
 import type { Express, Request, Response } from 'express';
 import type { LintArtifactRequest, LintArtifactResponse } from '@open-design/contracts';
 import {
@@ -120,6 +121,95 @@ import {
 import { localPluginRegistryScope } from '../../plugins/local-source.js';
 import type { WorkspaceDirectoryFetchResult } from '../../collab/vela-workspace-context.js';
 import { cancelRunsOwnedBy } from './cancel-owned-runs.js';
+
+export function rewriteOutsideExecutableHtmlRanges(
+  html: string,
+  rewriteChunk: (chunk: string) => string,
+): string {
+  const $ = load(html, { sourceCodeLocationInfo: true }, false);
+  const scriptRanges = $('script')
+    .toArray()
+    .flatMap((node) => {
+      const location = node.sourceCodeLocation;
+      if (!location?.startTag) return [];
+      const startTag = html.slice(location.startTag.startOffset, location.startTag.endOffset);
+      const isSelfClosingForeignScript = node.namespace !== 'http://www.w3.org/1999/xhtml'
+        && startTag.endsWith('/>');
+      return [{
+        start: location.startTag.endOffset,
+        end: location.endTag?.startOffset
+          ?? (isSelfClosingForeignScript ? location.startTag.endOffset : html.length),
+      }];
+    });
+  const executableAttributeRanges = $('*')
+    .toArray()
+    .flatMap((node) => {
+      const sourceLocation = node.sourceCodeLocation;
+      if (!sourceLocation || !('attrs' in sourceLocation)) return [];
+      const attributes = sourceLocation.attrs as Record<string, {
+        startOffset: number;
+        endOffset: number;
+      }> | undefined;
+      const element = node as Extract<typeof node, { attribs: Record<string, string> }>;
+      // parse5 stores namespaced values by local name and keeps their source prefix separately.
+      const valuesBySourceName = new Map(Object.entries(element.attribs).map(([localName, value]) => {
+        const prefix = element['x-attribsPrefix']?.[localName];
+        return [(prefix ? `${prefix}:${localName}` : localName).toLowerCase(), value] as const;
+      }));
+      return Object.entries(attributes ?? {}).flatMap(([name, location]) => {
+        const normalizedName = name.toLowerCase();
+        const value = valuesBySourceName.get(normalizedName) ?? '';
+        const normalizedSchemeValue = value.replace(/[\t\n\r]/g, '');
+        if (
+          normalizedName.startsWith('on')
+          || normalizedName === 'srcdoc'
+          || /^\s*(?:javascript|vbscript|data):/i.test(normalizedSchemeValue)
+        ) {
+          return [{ start: location.startOffset, end: location.endOffset }];
+        }
+        return [];
+      });
+    });
+  const protectedRanges = [...scriptRanges, ...executableAttributeRanges]
+    .sort((left, right) => left.start - right.start)
+    .reduce<Array<{ start: number; end: number }>>((ranges, range) => {
+      const previous = ranges.at(-1);
+      if (!previous || range.start > previous.end) {
+        ranges.push({ ...range });
+      } else {
+        previous.end = Math.max(previous.end, range.end);
+      }
+      return ranges;
+    }, []);
+
+  let markerPrefix: string | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const candidate = `__OD_PROTECTED_HTML_RANGE_${randomUUID()}_`;
+    if (!html.includes(candidate)) {
+      markerPrefix = candidate;
+      break;
+    }
+  }
+  if (!markerPrefix) throw new Error('Unable to allocate protected HTML marker');
+
+  const protectedValues: Array<{ marker: string; value: string }> = [];
+  let maskedHtml = '';
+  let cursor = 0;
+  for (const [index, range] of protectedRanges.entries()) {
+    const marker = `${markerPrefix}${index}__`;
+    maskedHtml += html.slice(cursor, range.start);
+    maskedHtml += marker;
+    protectedValues.push({ marker, value: html.slice(range.start, range.end) });
+    cursor = range.end;
+  }
+  maskedHtml += html.slice(cursor);
+
+  let rewrittenHtml = rewriteChunk(maskedHtml);
+  for (const { marker, value } of protectedValues) {
+    rewrittenHtml = rewrittenHtml.split(marker).join(value);
+  }
+  return rewrittenHtml;
+}
 
 function parseLocalCatalogScope(value: unknown, field: string): LocalCatalogScope | null {
   if (value === undefined || value === null) return null;
@@ -5411,42 +5501,46 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       return `${scoped}&${suffix.slice(1)}`;
     };
 
-    let next = html.replace(
-      assetAttr,
-      (match, space: string, name: string, eq: string, quote: string, value: string) => {
-        const rewritten = rewrite(value);
-        return rewritten === value ? match : `${space}${name}${eq}${quote}${rewritten}${quote}`;
-      },
-    );
-    next = next.replace(linkTag, (tag) =>
-      tag.replace(linkHref, (match, prefix: string, quote: string, value: string) => {
-        const rewritten = rewrite(value);
+    const rewriteChunk = (chunk: string): string => {
+      let next = chunk.replace(
+        assetAttr,
+        (match, space: string, name: string, eq: string, quote: string, value: string) => {
+          const rewritten = rewrite(value);
+          return rewritten === value ? match : `${space}${name}${eq}${quote}${rewritten}${quote}`;
+        },
+      );
+      next = next.replace(linkTag, (tag) =>
+        tag.replace(linkHref, (match, prefix: string, quote: string, value: string) => {
+          const rewritten = rewrite(value);
+          return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
+        }),
+      );
+      next = next.replace(srcsetAttr, (match, prefix: string, quote: string, value: string) => {
+        // A data URL contains an unescaped comma, so the lightweight candidate
+        // splitter below cannot safely rewrite a mixed data-URL srcset. Leave the
+        // whole attribute untouched rather than corrupting embedded bytes.
+        if (/(?:^|,\s*)data:/i.test(value)) return match;
+        const rewritten = value
+          .split(',')
+          .map((candidate) => {
+            const body = candidate.trim();
+            if (!body) return candidate;
+            const [url = '', ...descriptors] = body.split(/\s+/);
+            const rewrittenUrl = rewrite(url);
+            if (rewrittenUrl === url) return candidate;
+            const leading = candidate.match(/^\s*/)?.[0] ?? '';
+            return `${leading}${[rewrittenUrl, ...descriptors].join(' ')}`;
+          })
+          .join(',');
         return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
-      }),
-    );
-    next = next.replace(srcsetAttr, (match, prefix: string, quote: string, value: string) => {
-      // A data URL contains an unescaped comma, so the lightweight candidate
-      // splitter below cannot safely rewrite a mixed data-URL srcset. Leave the
-      // whole attribute untouched rather than corrupting embedded bytes.
-      if (/(?:^|,\s*)data:/i.test(value)) return match;
-      const rewritten = value
-        .split(',')
-        .map((candidate) => {
-          const body = candidate.trim();
-          if (!body) return candidate;
-          const [url = '', ...descriptors] = body.split(/\s+/);
-          const rewrittenUrl = rewrite(url);
-          if (rewrittenUrl === url) return candidate;
-          const leading = candidate.match(/^\s*/)?.[0] ?? '';
-          return `${leading}${[rewrittenUrl, ...descriptors].join(' ')}`;
-        })
-        .join(',');
-      return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
-    });
-    return next.replace(cssUrl, (match, quote: string, value: string) => {
-      const rewritten = rewrite(value);
-      return rewritten === value ? match : `url(${quote}${rewritten}${quote})`;
-    });
+      });
+      return next.replace(cssUrl, (match, quote: string, value: string) => {
+        const rewritten = rewrite(value);
+        return rewritten === value ? match : `url(${quote}${rewritten}${quote})`;
+      });
+    };
+
+    return rewriteOutsideExecutableHtmlRanges(html, rewriteChunk);
   }
 
   async function maybeResolveVitePreviewHtml({

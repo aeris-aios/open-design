@@ -140,10 +140,20 @@ test('DeepSeek Harness tutorial exposes the official resources and connection wa
 
     const setupSection = page.rich?.sections.find(({ id }) => id === 'setup');
     assert.ok(setupSection, `${code}: missing the local Harness setup section`);
+    // The one-line installers are published (open-design.ai/install-dsh.*
+    // went live 2026-08); the guide must teach them instead of the manual
+    // npm path that required a preinstalled Node.js toolchain.
+    for (const ext of ['sh', 'ps1', 'cmd'] as const) {
+      assert.match(
+        JSON.stringify(page.rich),
+        new RegExp(`open-design\\.ai/install-dsh\\.${ext}\\?version=1`),
+        `${code}: missing the ${ext} one-line installer command`,
+      );
+    }
     assert.doesNotMatch(
       JSON.stringify(page.rich),
-      /open-design\.ai\/install-dsh\.(?:sh|ps1|cmd)/,
-      `${code}: unpublished one-line installer leaked into the public tutorial`,
+      /npm install -g @deepseek-ai\/dsh/,
+      `${code}: manual npm install path resurfaced; the guide teaches the one-line installer`,
     );
     assert.ok(
       !setupSection.blocks.some(
@@ -156,9 +166,9 @@ test('DeepSeek Harness tutorial exposes the official resources and connection wa
     );
     assert.ok(
       setupSection.blocks.some(
-        (block) => block.kind === 'code' && block.code.includes('@deepseek-ai/dsh@0.1.0-rc.6'),
+        (block) => block.kind === 'code' && block.code.includes('install-dsh.sh?version=1'),
       ),
-      `${code}: missing the pinned local dsh install command`,
+      `${code}: missing the macOS/Linux one-line installer code block`,
     );
     const setupSteps = setupSection.blocks.find((block) => block.kind === 'steps');
     assert.equal(setupSteps?.items.length, 3, `${code}: expected three Harness setup steps`);
@@ -176,7 +186,7 @@ test('DeepSeek Harness page leads with the design search intent', () => {
   assert.ok(en?.rich, 'missing English DeepSeek Harness rich guide');
   assert.ok(zh?.rich, 'missing Chinese DeepSeek Harness rich guide');
 
-  assert.match(en.title, /DeepSeek Harness.*UI Design/);
+  assert.match(en.title, /Design with DeepSeek Harness/);
   assert.equal(en.heading, 'Design with DeepSeek Harness.');
   assert.equal(
     en.rich.sections.find(({ id }) => id === 'why-design')?.heading,
@@ -193,10 +203,10 @@ test('DeepSeek Harness page leads with the design search intent', () => {
   const zhSetup = zh.rich.sections.find(({ id }) => id === 'setup');
   assert.equal(enSetup?.heading, 'Step 1: Install and configure DeepSeek Harness');
   assert.equal(zhSetup?.heading, '第 1 步：安装并配置 DeepSeek Harness');
-  assert.match(JSON.stringify(enSetup), /API key and model/);
+  assert.match(JSON.stringify(enSetup), /API-key setup page/);
   assert.match(JSON.stringify(enSetup), /takes effect immediately/);
   assert.match(JSON.stringify(enSetup), /Ctrl\+C/);
-  assert.match(JSON.stringify(zhSetup), /API Key 与模型/);
+  assert.match(JSON.stringify(zhSetup), /API Key 配置页面/);
   assert.match(JSON.stringify(zhSetup), /立即生效/);
   assert.match(JSON.stringify(zhSetup), /Ctrl\+C/);
 

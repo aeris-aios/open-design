@@ -272,6 +272,8 @@ export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: st
 
 export interface DaemonStreamHandlers extends StreamHandlers {
   onAgentEvent: (ev: AgentEvent) => void;
+  /** Authoritative artifact count from the daemon's terminal run record. */
+  onArtifactCount?: (count: number) => void;
   /**
    * Live-only incremental tool-input fragment (Claude `input_json_delta`).
    * Kept off `AgentEvent`/`PersistedAgentEvent` because it is ephemeral and
@@ -1249,6 +1251,7 @@ async function consumeDaemonRun({
   const reportArtifactCount = (value: unknown) => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return;
     resolvedArtifactCount = value;
+    handlers.onArtifactCount?.(value);
   };
   const reportArtifactPaths = (value: unknown) => {
     if (!Array.isArray(value)) return;

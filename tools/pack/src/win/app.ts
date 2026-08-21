@@ -418,6 +418,7 @@ export async function createWinPackagedAppCacheKey(
   config: ToolPackConfig,
   tarballsKey: string,
   packedTarballs: PackedTarballInfo[],
+  runtimeDependencies: Readonly<Record<string, string>> = WIN_PREBUNDLE_RUNTIME_DEPENDENCIES,
 ): Promise<string> {
   return hashJson({
     arch: "x64",
@@ -427,7 +428,8 @@ export async function createWinPackagedAppCacheKey(
     packedTarballs,
     platform: "win32",
     prebundle: shouldUseWinStandalonePrebundle(config.webOutputMode),
-    schemaVersion: 3,
+    runtimeDependencies: shouldUseWinStandalonePrebundle(config.webOutputMode) ? runtimeDependencies : null,
+    schemaVersion: 4,
     tarballsKey,
     webOutputMode: config.webOutputMode,
   });

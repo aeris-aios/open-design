@@ -30,6 +30,7 @@ export type DeckThumbnailFallbackReason =
   | 'no-dom-parser'
   | 'no-slides'
   | 'no-styles'
+  | 'viewport-media-query'
   | 'external-stylesheet';
 
 /** One reconstructed wrapper element between the shadow root and the slide. */
@@ -76,7 +77,7 @@ const FONT_HOSTS = new Set([
 // must be an https URL whose HOST is exactly an approved font CDN — a substring
 // match would accept `https://evil.example/fonts.googleapis.com.css` and inject
 // arbitrary CSS into the app document.
-function isApprovedFontHref(href: string): boolean {
+export function isApprovedFontStylesheetHref(href: string): boolean {
   // Font-CDN links are always absolute https URLs; a relative href cannot be an
   // approved CDN and is correctly treated as an untrusted external stylesheet.
   let url: URL;
@@ -126,7 +127,7 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
     if (!/\bstylesheet\b/.test(rel)) continue;
     const href = link.getAttribute('href') || '';
     if (!href) continue;
-    if (isApprovedFontHref(href)) {
+    if (isApprovedFontStylesheetHref(href)) {
       if (!fontLinks.includes(href)) fontLinks.push(href);
     } else {
       return unrenderable('external-stylesheet');
@@ -163,6 +164,12 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
   }
   const rawStyle = stripCssComments(importedBlocks.map((imported) => imported.css).join('\n'));
   if (!rawStyle.trim()) return unrenderable('no-styles');
+  // A shadow-root thumbnail's @media rules evaluate against the Open Design
+  // host window, not the preview iframe. A deck can therefore take its desktop
+  // branch in the rail while the visible preview takes its mobile branch. Keep
+  // these decks on the isolated iframe fallback, whose viewport is explicitly
+  // matched to the live preview by DeckThumbnailRail.
+  if (hasViewportMediaQuery(rawStyle)) return unrenderable('viewport-media-query');
 
   const designSize = resolveDesignSize(doc, rawStyle);
 
@@ -195,6 +202,21 @@ export function parseDeckThumbnails(html: string, baseHref?: string): ParsedDeck
 }
 
 const VIEWPORT_UNIT_TOKEN_RE = /(-?\d*\.?\d+)\s*(vw|vh|vmin|vmax|svw|svh|lvw|lvh|dvw|dvh)\b/gi;
+const MEDIA_QUERY_PRELUDE_RE = /@media\s+([^{}]*)\{/gi;
+const VIEWPORT_MEDIA_FEATURE_PATTERNS = [
+  /\b(?:min|max)-(?:width|height)\b/i,
+  /\b(?:width|height|orientation|aspect-ratio)\b\s*:/i,
+  /\b(?:width|height|aspect-ratio)\b\s*(?:[<>]=?|=)/i,
+  /(?:[<>]=?|=)\s*\b(?:width|height|aspect-ratio)\b/i,
+] as const;
+
+function hasViewportMediaQuery(css: string): boolean {
+  for (const match of css.matchAll(MEDIA_QUERY_PRELUDE_RE)) {
+    const prelude = match[1] ?? '';
+    if (VIEWPORT_MEDIA_FEATURE_PATTERNS.some((pattern) => pattern.test(prelude))) return true;
+  }
+  return false;
+}
 
 // Replace each `<n><viewport-unit>` with `calc(<n> * <k>px)` where `k` is the
 // design canvas dimension / 100. Works inside `clamp()`/`min()`/`max()` and
@@ -446,7 +468,7 @@ function extractStylesheetImports(css: string): StylesheetImportExtraction {
     const match = CSS_IMPORT_HREF_RE.exec(statement);
     const href = match?.slice(1).find((value): value is string => typeof value === 'string')?.trim() ?? '';
     const condition = match ? statement.slice(match[0].length, -1).trim() : '';
-    if (!href || condition || !isApprovedFontHref(href)) unsafe = true;
+    if (!href || condition || !isApprovedFontStylesheetHref(href)) unsafe = true;
     else if (!fontLinks.includes(href)) fontLinks.push(href);
 
     chunks.push(css.slice(chunkStart, i));
