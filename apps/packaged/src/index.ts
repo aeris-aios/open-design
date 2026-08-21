@@ -344,13 +344,17 @@ async function main(): Promise<void> {
       return sidecars.daemon.url;
     },
     registerDesktopAuth: async (secret) => {
-      const result = await client.invoke<{ accepted: true }>(
-        APP_KEYS.DAEMON,
-        "register-desktop-auth",
-        { secret: secret.toString("base64") },
-        { timeoutMs: 800 },
-      );
-      return result.accepted === true;
+      try {
+        const result = await client.invoke<{ accepted: true }>(
+          APP_KEYS.DAEMON,
+          "register-desktop-auth",
+          { secret: secret.toString("base64") },
+          { timeoutMs: 800 },
+        );
+        return result.accepted === true;
+      } catch {
+        return false;
+      }
     },
     windowTitle: resolvePackagedWindowTitle(activeConfig),
     inviteProtocolClientPath:

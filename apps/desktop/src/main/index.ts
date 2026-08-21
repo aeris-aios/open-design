@@ -1026,16 +1026,32 @@ if (isDirectEntry()) {
           source: client.stamp.source,
         };
         const started = await runDesktopMain(runtime, {
-          discoverDaemonUrl: async () => (await client.status<DaemonStatusSnapshot>(APP_KEYS.DAEMON, { timeoutMs: 600 })).url,
-          discoverWebUrl: async () => (await client.status<WebStatusSnapshot>(APP_KEYS.WEB, { timeoutMs: 600 })).url,
+          discoverDaemonUrl: async () => {
+            try {
+              return (await client.status<DaemonStatusSnapshot>(APP_KEYS.DAEMON, { timeoutMs: 600 })).url ?? null;
+            } catch {
+              return null;
+            }
+          },
+          discoverWebUrl: async () => {
+            try {
+              return (await client.status<WebStatusSnapshot>(APP_KEYS.WEB, { timeoutMs: 600 })).url ?? null;
+            } catch {
+              return null;
+            }
+          },
           registerDesktopAuth: async (secret) => {
-            const result = await client.invoke<RegisterDesktopAuthResult>(
-              APP_KEYS.DAEMON,
-              SIDECAR_MESSAGES.REGISTER_DESKTOP_AUTH,
-              { secret: secret.toString("base64") },
-              { timeoutMs: REGISTER_DESKTOP_AUTH_TIMEOUT_MS },
-            );
-            return result.accepted === true;
+            try {
+              const result = await client.invoke<RegisterDesktopAuthResult>(
+                APP_KEYS.DAEMON,
+                SIDECAR_MESSAGES.REGISTER_DESKTOP_AUTH,
+                { secret: secret.toString("base64") },
+                { timeoutMs: REGISTER_DESKTOP_AUTH_TIMEOUT_MS },
+              );
+              return result.accepted === true;
+            } catch {
+              return false;
+            }
           },
         });
         runtimeHandle = started;

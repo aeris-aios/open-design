@@ -16,6 +16,7 @@ import {
   type DesktopUpdateResult,
 } from "@open-design/sidecar-proto";
 import {
+  findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
   spawnSidecar,
@@ -56,12 +57,18 @@ function convergedDesktopStamp(
   };
 }
 
+async function activeDesktopStamp(config: ToolPackConfig): Promise<ConvergedSidecarStamp> {
+  const toolsPackStamp = convergedDesktopStamp(config, SIDECAR_SOURCES.TOOLS_PACK);
+  return (await findSidecarProcesses(toolsPackStamp)).length > 0
+    ? toolsPackStamp
+    : convergedDesktopStamp(config, SIDECAR_SOURCES.PACKAGED);
+}
+
 async function waitForDesktopStatus(config: ToolPackConfig, timeoutMs = 45_000): Promise<DesktopStatusSnapshot | null> {
-  const stamp = convergedDesktopStamp(config);
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      return await getSidecarStatus<DesktopStatusSnapshot>(stamp, { timeoutMs: 1000 });
+      return await getSidecarStatus<DesktopStatusSnapshot>(await activeDesktopStamp(config), { timeoutMs: 1000 });
     } catch {
       await new Promise((resolveWait) => setTimeout(resolveWait, 200));
     }
@@ -475,7 +482,7 @@ function resolveUpdateAction(value: string | undefined): DesktopUpdateAction | n
 }
 
 export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string; updateAction?: string }): Promise<MacInspectResult> {
-  const stamp = convergedDesktopStamp(config);
+  const stamp = await activeDesktopStamp(config);
   const status = await getSidecarStatus<DesktopStatusSnapshot>(stamp, { timeoutMs: 2000 }).catch(() => null);
   const updateAction = resolveUpdateAction(options.updateAction);
 

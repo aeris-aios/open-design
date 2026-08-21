@@ -57,6 +57,17 @@ describe("desktop updater host boundary", () => {
     expect(main).not.toContain("createJsonIpcServer");
   });
 
+  it("keeps direct sidecar discovery and auth registration soft-failing", () => {
+    const main = source("src/main/index.ts");
+    const wiringStart = main.indexOf("discoverDaemonUrl: async () => {");
+    const wiringEnd = main.indexOf("const started = await runDesktopMain", wiringStart + 1);
+    expect(wiringStart).toBeGreaterThanOrEqual(0);
+    const wiring = main.slice(wiringStart, wiringEnd > wiringStart ? wiringEnd : undefined);
+    expect(wiring).toContain("catch {\n              return null;");
+    expect(wiring.match(/return null;/g)).toHaveLength(2);
+    expect(wiring).toContain("catch {\n              return false;");
+  });
+
   it("keeps obsolete installed-outer policy outside generic desktop while exposing the SHOW hook", () => {
     const main = source("src/main/index.ts");
     const showStart = main.indexOf("case SIDECAR_MESSAGES.SHOW:");
