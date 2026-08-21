@@ -263,6 +263,14 @@ set, enforces merge policy at convergence, and is the only successful publisher
 of pending hash state. Runner allocation failure and external cancellation are
 operational failures rather than alternate coverage policy.
 
+A merge-group failure at `Validate workspace` ejects the queued PR without any
+trace on the PR itself: the run executes on the queue's transient ref and the
+PR's own checks stay green. Two best-effort `handoff/comment` producers make the
+ejection visible through `comment.atom.yml`: `merge_policy` announces a
+blocking-label ejection, and `validate` announces every other failure (which
+jobs failed, a log excerpt, and the PRs batched ahead in the group) after the
+gate has already failed. Neither notice changes the gate result.
+
 ## Current references
 
 These sections describe active or observed applications of the method. They are
