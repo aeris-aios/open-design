@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { Button } from '@open-design/components';
@@ -457,6 +458,15 @@ const BROWSER_KEEPALIVE_CAP = 3;
 // it again even when `src` is byte-identical, so tab A -> tab B -> tab A used
 // to refetch both artifacts and briefly return to a blank/loading preview.
 const HTML_VIEWER_KEEPALIVE_CAP = 3;
+const RETAINED_VIEWER_INACTIVE_STYLE = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  overflow: 'hidden',
+  opacity: 0,
+  pointerEvents: 'none',
+} satisfies CSSProperties;
 const QUICK_SWITCHER_DOCUMENT_CLASS = 'od-quick-switcher-open';
 const SKETCH_AUTOSAVE_DELAY_MS = 800;
 
@@ -3041,15 +3051,11 @@ export function FileWorkspace({
   const htmlViewerFileSnapshots = htmlViewerFileSnapshotsRef.current.files;
   for (const candidate of visibleFiles) {
     if (candidate.kind !== 'html') continue;
-    // Hidden viewers keep the last file revision they actually rendered.
-    // Updating mtime under an inactive iframe changes its src and defeats the
-    // keep-alive. Adopt the newest revision exactly when that tab activates.
-    if (
-      candidate.name === activeHtmlViewerFile?.name
-      || !htmlViewerFileSnapshots.has(candidate.name)
-    ) {
-      htmlViewerFileSnapshots.set(candidate.name, candidate);
-    }
+    // Retained viewers stay mounted at the real viewport size, so let them
+    // consume file revisions while inactive. They can finish the one required
+    // navigation behind the active tab; activation then remains a pure
+    // visibility swap instead of combining resize + navigation in one frame.
+    htmlViewerFileSnapshots.set(candidate.name, candidate);
   }
   useEffect(() => {
     setLiveHtmlViewerFileNames([]);
@@ -4490,16 +4496,7 @@ export function FileWorkspace({
                 minHeight: 0,
                 ...(workspaceActive
                   ? {}
-                  : {
-                      position: 'absolute',
-                      left: '-100000px',
-                      top: 0,
-                      width: 1,
-                      height: 1,
-                      overflow: 'hidden',
-                      visibility: 'hidden',
-                      pointerEvents: 'none',
-                    }),
+                  : RETAINED_VIEWER_INACTIVE_STYLE),
               }}
             >
               {renderFileViewer(file, workspaceActive)}
@@ -4520,16 +4517,7 @@ export function FileWorkspace({
               minHeight: 0,
               ...(viewerFileActive
                 ? {}
-                : {
-                    position: 'absolute',
-                    left: '-100000px',
-                    top: 0,
-                    width: 1,
-                    height: 1,
-                    overflow: 'hidden',
-                    visibility: 'hidden',
-                    pointerEvents: 'none',
-                  }),
+                : RETAINED_VIEWER_INACTIVE_STYLE),
             }}
           >
             {renderFileViewer(viewerFile, viewerFileActive)}
