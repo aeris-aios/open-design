@@ -171,7 +171,12 @@ async function stopDescriptorPeer(
     return {
       forced: false,
       pid: descriptor.pid,
-      stopped: !processAlive(descriptor.pid),
+      // The peer closes its control endpoint as part of an accepted stop.
+      // If this request races that close, the captured and fenced peer may
+      // still need a short interval to finish exiting. Observing its PID for
+      // the caller's grace period is safe; unlike force-stop, this path never
+      // signals a process from PID liveness alone.
+      stopped: await waitForStopped(descriptor.pid, graceMs),
     };
   }
 

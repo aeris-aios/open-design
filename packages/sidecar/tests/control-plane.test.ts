@@ -652,6 +652,41 @@ describe("independent sidecar controller and body", () => {
     expect(() => process.kill(launch.pid, 0)).not.toThrow();
   });
 
+  it("waits for a captured peer to exit when its stop endpoint is already closing", async () => {
+    const { roots, scope } = await createFixture();
+    const exiting = spawn(process.execPath, ["-e", "setTimeout(() => {}, 250)"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      exiting.once("error", rejectSpawn);
+      exiting.once("spawn", resolveSpawn);
+    });
+    const pid = exiting.pid;
+    if (pid == null) throw new Error("closing peer fixture did not report a pid");
+    cleanups.push(async () => {
+      if (exiting.exitCode == null && exiting.signalCode == null) exiting.kill("SIGKILL");
+      await new Promise<void>((resolveExit) => {
+        if (exiting.exitCode != null || exiting.signalCode != null) resolveExit();
+        else exiting.once("exit", () => resolveExit());
+      });
+    });
+
+    const launch = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    await writePrivateReadyDescriptorForTest(launch, pid);
+
+    await expect(createDemoController(scope, roots).stop("daemon", { graceMs: 2_000 })).resolves.toEqual({
+      forced: false,
+      pid,
+      stopped: true,
+    });
+  });
+
   it("never signals a reused PID from a stale descriptor", async () => {
     const { roots, scope } = await createFixture();
     const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
