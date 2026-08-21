@@ -25,7 +25,11 @@ import type { OpenDesignHostUpdaterStatusSnapshot } from '@open-design/host';
 import { installMockOpenDesignHost } from '@open-design/host/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EntryNavRail, resetWorkspaceDirectoryCache } from '../../src/components/EntryNavRail';
+import {
+  EntryNavRail,
+  resetWorkspaceDirectoryCache,
+  WorkspaceTopRightAccountCluster,
+} from '../../src/components/EntryNavRail';
 import { UpdaterPopup } from '../../src/components/UpdaterPopup';
 import { I18nProvider } from '../../src/i18n';
 
@@ -42,6 +46,16 @@ function teamContext(): WorkspaceCollabContext {
     displayName: 'XINYU SHANG',
     seatSummary: { seatLimit: 5, usedSeats: 1, availableSeats: 4, isSeatFull: false },
     permissions: { canInviteMembers: true, canViewWorkspaceSettings: true },
+  } as unknown as WorkspaceCollabContext;
+}
+
+function freeContext(): WorkspaceCollabContext {
+  return {
+    ...teamContext(),
+    workspaceId: 'ws-free',
+    workspaceType: 'personal',
+    billingState: 'free',
+    planId: null,
   } as unknown as WorkspaceCollabContext;
 }
 
@@ -118,6 +132,7 @@ afterEach(() => {
   resetWorkspaceDirectoryCache();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 async function renderWithDownloadedUpdate(context: WorkspaceCollabContext | null = teamContext()) {
@@ -130,6 +145,42 @@ async function renderWithDownloadedUpdate(context: WorkspaceCollabContext | null
 }
 
 describe('updater rocket placement after the account avatar', () => {
+  it('shows the shared Go campaign badge on an unpaid project detail route', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T10:00:00.000Z'));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <WorkspaceTopRightAccountCluster
+          workspaceContextOverride={freeContext()}
+          amrLoggedIn
+          metricsConsent={false}
+          installationId="test-installation"
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByTestId('deepseek-campaign-pricing-badge').textContent).toContain(
+      '全新 Go 套餐 · 首月 ¥5 · 模型无限用',
+    );
+  });
+
+  it('keeps the project-detail updater slot in the shared account row', () => {
+    render(
+      <I18nProvider initial="zh-CN">
+        <WorkspaceTopRightAccountCluster
+          workspaceContextOverride={teamContext()}
+          updaterSlot={<span data-testid="project-updater-slot-content" />}
+        />
+      </I18nProvider>,
+    );
+
+    const trigger = screen.getByTestId('entry-nav-account');
+    const slot = screen.getByTestId('entry-nav-account-updater');
+    expect(screen.getByTestId('project-updater-slot-content')).toBeTruthy();
+    expect(trigger.nextElementSibling).toBe(slot);
+  });
+
   it('renders the rocket inline immediately after the avatar chip', async () => {
     await renderWithDownloadedUpdate();
 
