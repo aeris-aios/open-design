@@ -8,7 +8,7 @@ This file is the single source of truth for agents entering this repository. Rea
 - Contribution and environment: `CONTRIBUTING.md`, `docs/i18n/CONTRIBUTING.zh-CN.md`.
 - Architecture and protocols: `docs/architecture.md`, `docs/skills-protocol.md`, `docs/agent-adapters.md`, `docs/modes.md`.
 - Historical product baseline: `docs/spec.md`, `docs/roadmap.md` (both explicitly archived; do not treat their dated decisions as current behavior).
-- References and current plans: `docs/references.md`, `docs/code-review-guidelines.md`, `specs/current/maintainability-roadmap.md`, `specs/current/ci.md` (CI scope confidence methodology — required before changing confidence or guard fields in `scripts/scopes.ts`).
+- References and current plans: `docs/references.md`, `docs/code-review-guidelines.md`, `specs/current/maintainability-roadmap.md`, `specs/current/ci.md` (CI scope confidence methodology — required before changing planner confidence, routing, or omission policy in `.github/config/scopes.json` and `.github/scripts/scopes.py`).
 - Directory-level agent guidance: `.github/AGENTS.md`, `apps/AGENTS.md`, `packages/AGENTS.md`, `tools/AGENTS.md`, `e2e/AGENTS.md`.
 - Packaged auto-update architecture and high-confidence local harness: read `tools/pack/AGENTS.md` section "Packaged auto-update architecture and harness" before touching packaged updater code, release-channel identity, installer behavior, or updater UI.
 - Packaged build cache contract: `tools/pack/CACHE.md` (determinant rules, materialization-time parameters, confidence grading — required before changing any build-cache node key).
@@ -150,6 +150,58 @@ CI-related GitHub automation uses a two-layer architecture:
 - Atomic capability workflows own reusable trusted operations. `comment.atom.yml` publishes pure text PR comments, `autofix.atom.yml` applies same-repository patches, and `report.atom.yml` materializes advanced comments that need trusted dependencies, secrets, or report generation before upsert.
 
 Do not add a new business-named follow-on workflow such as `foo.comment.atom.yml` or `bar.autofix.atom.yml` without first trying to express the flow as a `ci.yml` producer plus the existing `comment`, `autofix`, or `report` capability. Keep artifact naming, storage layout, and parser behavior centralized in `.github/scripts/handoff.py`; do not let individual workflows invent parallel handoff conventions.
+
+## CI test-set orchestration
+
+CI selection follows one direction: changed paths → source units → test sets →
+execution workloads. The `plan` job runs before and governs every downstream
+job, including repository guards, so only the planner may authorize omission.
+A downstream job may reject an unknown or malformed selection, but its success
+must never be treated as evidence that an earlier omission was safe.
+
+Keep the model split into three responsibilities:
+
+- **Source units** name stable ownership or behavior boundaries in production,
+  test, fixture, and control-plane paths. Compose repeated selectors under a
+  named unit instead of copying the same prefixes into unrelated rules.
+- **Test sets** name independently useful semantic validation groups. Their
+  membership and execution contract belong to one authoritative declaration;
+  do not duplicate a matrix or file list between planner configuration,
+  workflow YAML, and a framework-local registry.
+- **Routes** map source units to the test sets required to validate them. Routes
+  express impact, not runner mechanics; runner image, setup, sharding, and job
+  packing remain execution concerns derived after selection.
+
+Split a source unit or test set only when the boundary is stable, changes the
+work that can actually be omitted, and has enough runtime cost or diagnostic
+value to justify another scheduling identity. Directory size, file count, or
+the ability to write a narrower glob is not sufficient. Prefer a small number
+of composable semantic units over per-file mappings, exception lists, or
+negative-rule forests. Existing duplicated or implicit declarations are
+migration surfaces, not patterns to extend.
+
+Every orchestration change must preserve these fallbacks:
+
+- unknown, mixed, unresolved, invalid, or below-threshold input selects the
+  conservative full plan;
+- editing a test, fixture, or suite manifest selects the test set that consumes
+  it; shared harness, contract, setup, or lockfile changes fan out to every
+  affected set;
+- a selected test-set identifier that the executor cannot run fails visibly
+  instead of being ignored;
+- direct planner tests cover representative in-bound, out-of-bound, mixed, and
+  fallback inputs without reimplementing the evaluator in another language.
+
+Scope routing and hash invalidation remain orthogonal. Scope answers which test
+sets are necessary for a change; hash answers whether the selected workload's
+declared inputs equal a previous invocation. Do not use hash equality to weaken
+source-to-test coverage, or copy route policy into `.github/config/hash.json`.
+
+Before adding routes, inventory the complete current chain from changed path to
+match, effect, workload, job command, and concrete test cases. Remove or name
+implicit joins before making them finer. Changes under `.github/` must also
+follow `.github/AGENTS.md` and the current confidence methodology in
+`specs/current/ci.md`.
 
 ## Release channel model
 
