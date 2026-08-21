@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import {
@@ -21,6 +21,10 @@ import type { ToolPackConfig } from "./config.js";
 
 export type ToolPackControlMode = "desktop" | "headless";
 
+type ToolPackControlAccess = SidecarControlAccess & Readonly<{
+  authority: "empty-namespace" | "mode-identity" | "unresolved";
+}>;
+
 export type ToolPackStopResult = {
   gracefulRequested: boolean;
   namespace: string;
@@ -38,7 +42,7 @@ const TOOL_PACK_SERVICE_STOPS = [
 export function createToolPackControl(
   config: ToolPackConfig,
   mode: ToolPackControlMode,
-): SidecarControlAccess {
+): ToolPackControlAccess {
   const fallbackChannel = releaseChannelFromIdentity(
     config.appVersion,
     config.namespace,
@@ -47,29 +51,50 @@ export function createToolPackControl(
   const namespaceRoot = resolve(config.roots.runtime.namespaceRoot);
   let scope: SidecarControlScope = { channel: fallbackChannel, generation: 0, namespace: config.namespace };
   const identityPath = join(namespaceRoot, "runtime", `${mode}-root.json`);
+  let authority: ToolPackControlAccess["authority"] = "mode-identity";
   try {
     const identity = JSON.parse(readFileSync(identityPath, "utf8")) as {
       runtime?: { channel?: unknown; generation?: unknown; namespace?: unknown };
     };
     if (
-      typeof identity.runtime?.channel === "string"
-      && Number.isSafeInteger(identity.runtime.generation)
-      && (identity.runtime.generation as number) >= 0
-      && identity.runtime.namespace === config.namespace
+      typeof identity.runtime?.channel !== "string"
+      || !Number.isSafeInteger(identity.runtime.generation)
+      || (identity.runtime.generation as number) < 0
+      || identity.runtime.namespace !== config.namespace
     ) {
-      scope = {
-        channel: identity.runtime.channel,
-        generation: identity.runtime.generation as number,
-        namespace: config.namespace,
-      };
+      throw new Error(`invalid ${mode} control identity`);
     }
-  } catch {
-    // A missing or invalid mode-owned identity does not define a live scope.
+    scope = {
+      channel: identity.runtime.channel,
+      generation: identity.runtime.generation as number,
+      namespace: config.namespace,
+    };
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+    authority = missing && !hasControlEvidence(namespaceRoot)
+      ? "empty-namespace"
+      : "unresolved";
   }
-  return accessControlPlane({
+  const control = accessControlPlane({
     runtimeRoot: join(namespaceRoot, "runtime"),
     scope,
   });
+  if (authority !== "unresolved") return Object.freeze({ ...control, authority });
+  return Object.freeze({
+    ...control,
+    authority,
+    async stop() {
+      throw new Error(`cannot prove ${mode} control identity from ${identityPath}`);
+    },
+  });
+}
+
+function hasControlEvidence(namespaceRoot: string): boolean {
+  try {
+    return readdirSync(join(namespaceRoot, "runtime", ".sidecar-control")).length > 0;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
 }
 
 export async function stopToolPackServices(

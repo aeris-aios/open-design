@@ -776,6 +776,10 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
       pid,
       state: "stopped",
     });
+    await expect(privateLaunchStateForTest(launch)).resolves.toEqual({
+      descriptorExists: false,
+      endpointExists: false,
+    });
   });
 
   it("never signals a reused PID from a stale descriptor", async () => {

@@ -138,6 +138,61 @@ describe("resolveToolPackConfig namespace defaults", () => {
 });
 
 describe("tools-pack control scope", () => {
+  it("uses generation zero only for a truly empty namespace", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
+    const config = resolveToolPackConfig("mac", {
+      appVersion: "0.19.4-beta.30",
+      dir: join(root, "tools-pack"),
+      namespace: "control-empty-test",
+    });
+    try {
+      expect(createToolPackControl(config, "desktop")).toMatchObject({
+        authority: "empty-namespace",
+        scope: { generation: 0, namespace: config.namespace },
+      });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed when mode identity is missing but control evidence remains", async () => {
+    const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
+    const config = resolveToolPackConfig("win", {
+      appVersion: "0.19.4-beta.30",
+      dir: join(root, "tools-pack"),
+      namespace: "control-gap-test",
+    });
+    const controlRoot = join(config.roots.runtime.namespaceRoot, "runtime", ".sidecar-control");
+    try {
+      mkdirSync(controlRoot, { recursive: true });
+      writeFileSync(join(controlRoot, "live-lease.json"), "{}", "utf8");
+      const control = createToolPackControl(config, "desktop");
+      expect(control.authority).toBe("unresolved");
+      await expect(control.stop("desktop")).rejects.toThrow(/cannot prove desktop control identity/);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed on a malformed mode identity even without lease evidence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
+    const config = resolveToolPackConfig("linux", {
+      appVersion: "0.19.4-beta.30",
+      dir: join(root, "tools-pack"),
+      namespace: "control-invalid-test",
+    });
+    const identityPath = join(config.roots.runtime.namespaceRoot, "runtime", "headless-root.json");
+    try {
+      mkdirSync(dirname(identityPath), { recursive: true });
+      writeFileSync(identityPath, "{ malformed", "utf8");
+      const control = createToolPackControl(config, "headless");
+      expect(control.authority).toBe("unresolved");
+      await expect(control.stop("daemon")).rejects.toThrow(/cannot prove headless control identity/);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("targets the live desktop generation instead of inventing a tools-pack generation", () => {
     const root = mkdtempSync(join(tmpdir(), "open-design-tools-pack-control-"));
     const config = resolveToolPackConfig("mac", {

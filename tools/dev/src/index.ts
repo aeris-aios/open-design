@@ -61,6 +61,7 @@ import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
 import { createToolsDevControl } from "./control.js";
+import { startAfterConvergedStops } from "./restart-convergence.js";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -850,10 +851,11 @@ async function restartTargets(config: ToolDevConfig, appName: string | undefined
     daemonUrl: async () => (await inspectDaemonRuntime(runtimeLookup(config)))?.url,
     webUrl: async () => (await inspectWebRuntime(runtimeLookup(config)))?.url,
   });
-  return {
-    stop: await runSequential(stopTargets, (target) => stopApp(config, target)),
-    start: await runSequential(startTargets, (target) => startApp(config, target, options, { targets: startTargets })),
-  };
+  const stopped = await runSequential(stopTargets, (target) => stopApp(config, target));
+  const started = await startAfterConvergedStops(stopped, async () =>
+    await runSequential(startTargets, (target) => startApp(config, target, options, { targets: startTargets }))
+  );
+  return { start: started, stop: stopped };
 }
 
 async function readLogs(config: ToolDevConfig, appName: ToolDevAppName) {
