@@ -7,8 +7,8 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DesktopStatusSnapshot } from "@open-design/sidecar-proto";
 
-import type { ToolPackConfig } from "../src/config.js";
-import { resolveMacPaths } from "../src/mac/paths.js";
+import type { ToolPackConfig } from "@/config/index.js";
+import { resolveMacPaths } from "@/mac/paths.js";
 
 const getSidecarStatus = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
 const collectProcessTreePids = vi.fn(
@@ -52,7 +52,7 @@ vi.mock("@open-design/platform", () => ({
   stopProcesses,
 }));
 
-const { startPackedMacApp, stopPackedMacApp } = await import("../src/mac/lifecycle.js");
+const { startPackedMacApp, stopPackedMacApp } = await import("@/mac/lifecycle.js");
 
 function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): ToolPackConfig {
   return {

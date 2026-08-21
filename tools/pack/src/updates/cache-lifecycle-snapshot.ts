@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { DesktopUpdateCacheLifecycleSummary } from "@open-design/sidecar-proto";
 
-import type { ToolPackConfig } from "./config.js";
+import type { ToolPackConfig } from "../config/index.js";
 
 const UPDATE_STATE_DIR = "state";
 const UPDATE_CLEANUP_FILE = "cleanup.json";

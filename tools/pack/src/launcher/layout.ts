@@ -12,7 +12,7 @@ import {
 import { SIDECAR_DEFAULTS } from "@open-design/sidecar-proto";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 
-import type { ToolPackConfig, ToolPackPlatform } from "./config.js";
+import type { ToolPackConfig, ToolPackPlatform } from "../config/index.js";
 
 export type ToolPackLauncherLayout = {
   channel: LauncherChannel;

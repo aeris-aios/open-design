@@ -103,6 +103,10 @@ const REPO_URL = 'https://github.com/nexu-io/open-design';
 const GITHUB_HELP_URL = `${REPO_URL}/issues/new`;
 const GITHUB_FEATURE_URL = `${REPO_URL}/pulls`;
 const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
+// Chinese-locale community entry. Discord is unreachable for most of that
+// audience, so the same social slot points at the Feishu (飞书) group invite.
+const FEISHU_URL =
+  'https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=866kece3-58ba-40fe-9fd4-6dc6a049f69b';
 const X_URL = 'https://x.com/OpenDesignHQ';
 const CONTACT_EMAIL_URL = 'mailto:support@open-design.ai';
 const externalLinkProps = { target: '_blank', rel: 'noreferrer noopener' } as const;
@@ -234,12 +238,9 @@ interface Props {
    * The update-ready host (`UpdaterPopup`), which renders nothing until the
    * updater reports a downloaded, unopened installer.
    *
-   * It rides the floating account module's row IMMEDIATELY AFTER the avatar
-   * chip (`.entry-nav-rail__account-updater`), per product: 升级提醒按钮跟在
-   * 头像后边，不再单独占一行。 Earlier homes — the rail footer (#5517) and a
-   * strip above the identity row — both detached the reminder from the
-   * avatar. The footer stays as the fallback home for the signed-out shell,
-   * which has no account row at all.
+   * It is an independent control immediately after the floating credits/avatar
+   * capsule (`.entry-nav-rail__account-updater`). The footer stays as the
+   * fallback home for the signed-out shell, which has no account capsule.
    */
   updaterSlot?: ReactNode;
   /** Optional notice shown above the footer controls. */
@@ -782,7 +783,8 @@ export function EntryTopRightCluster({
               The capsule owns the pill material; the segments inside are
               chrome-free click targets. */}
           {context ? (
-            <div className="entry-top-right-account-pill">
+            <>
+              <div className="entry-top-right-account-pill">
           {(billing || balanceLabel) && showCreditsBalance ? (
             <button
               type="button"
@@ -832,19 +834,6 @@ export function EntryTopRightCluster({
                   ) : null}
                 </span>
               </button>
-              {/* Update-ready rocket, riding the same row immediately AFTER the
-                  avatar chip. It is mounted unconditionally so the row's shape
-                  is stable, and it holds no element children until the updater
-                  actually has something to show; `:empty { display: none }` is
-                  what keeps an idle slot from reserving width (plus the row's
-                  6px gap) next to the avatar.
-
-                  The rocket must never be a DESCENDANT of the trigger above:
-                  a button inside the account button would be invalid markup and
-                  would make every rocket click toggle the account menu too. */}
-              <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
-                {updaterSlot}
-              </div>
               {accountOpen ? (
                 <>
                   {/* No backdrop here (unlike the team menu): hover-open relies
@@ -967,52 +956,10 @@ export function EntryTopRightCluster({
                     >
                       <Icon name="sparkles" size={15} /> {t('entry.accountFeatureRequest')}
                     </a>
-                    {/* #5517: the Discord/X/mail badges move off the rail footer
-                        into a compact social row inside the account menu. GitHub
-                        left the row for its own top-right cluster chip. */}
-                    <div className="entry-nav-rail__menu-social">
-                      <a
-                        className="entry-nav-rail__menu-social-btn"
-                        role="menuitem"
-                        href={DISCORD_URL}
-                        {...externalLinkProps}
-                        aria-label={t('entry.discordAria')}
-                        title={t('entry.discordAria')}
-                        onClick={() => {
-                          trackAccountAction('discord');
-                          setAccountOpen(false);
-                        }}
-                      >
-                        <Icon name="discord" size={15} />
-                      </a>
-                      <a
-                        className="entry-nav-rail__menu-social-btn"
-                        role="menuitem"
-                        href={X_URL}
-                        {...externalLinkProps}
-                        aria-label="@OpenDesignHQ"
-                        title="@OpenDesignHQ"
-                        onClick={() => {
-                          trackAccountAction('twitter');
-                          setAccountOpen(false);
-                        }}
-                      >
-                        <span className="entry-nav-rail__menu-x" aria-hidden>X</span>
-                      </a>
-                      <a
-                        className="entry-nav-rail__menu-social-btn"
-                        role="menuitem"
-                        href={CONTACT_EMAIL_URL}
-                        aria-label={t('entry.mailAria')}
-                        title={t('entry.mailAria')}
-                        onClick={() => {
-                          trackAccountAction('email');
-                          setAccountOpen(false);
-                        }}
-                      >
-                        <Icon name="mail" size={15} />
-                      </a>
-                    </div>
+                    {/* The Discord/X/mail social row used to sit here (#5517).
+                        It now lives in the nav rail's footer — see
+                        `RailSocialRow` — so the account menu stays a pure list
+                        of account actions. */}
                     <div className="entry-nav-rail__menu-divider" />
                     <button
                       type="button"
@@ -1056,8 +1003,16 @@ export function EntryTopRightCluster({
                   }}
                 />
               ) : null}
-            </div>
-            </div>
+              </div>
+              </div>
+              {/* Update-ready rocket: an independent control immediately after
+                  the credits/avatar capsule. The slot stays mounted so
+                  `:empty { display: none }` can remove it from cluster layout
+                  until an installer has downloaded. */}
+              <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
+                {updaterSlot}
+              </div>
+            </>
           ) : null}
         </div>,
         document.body,
@@ -1168,6 +1123,73 @@ export function WorkspaceTopRightAccountCluster({
       onOpenSettings={onOpenSettings}
       onSignedOut={onSignedOut}
     />
+  );
+}
+
+/**
+ * Community/contact links pinned to the bottom of the nav rail.
+ *
+ * The row's first slot is locale-switched: Chinese UIs get the Feishu group
+ * invite (Discord is effectively unreachable there), every other locale keeps
+ * Discord. X and mail are locale-independent. Analytics keeps reporting these
+ * under `area: 'account_menu'` so the existing funnel stays comparable across
+ * the move out of that menu.
+ */
+function RailSocialRow({
+  page,
+  dimensions,
+}: {
+  page: TrackingWorkspacePage;
+  dimensions: ReturnType<typeof workspaceAnalyticsDimensions>;
+}) {
+  const { t, locale } = useI18n();
+  const analytics = useAnalytics();
+  const isChinese = locale === 'zh-CN' || locale === 'zh-TW';
+  const communityUrl = isChinese ? FEISHU_URL : DISCORD_URL;
+  const communityLabel = isChinese ? t('entry.feishuAria') : t('entry.discordAria');
+
+  function track(element: AccountMenuClickProps['element']) {
+    trackAccountMenuClick(analytics.track, {
+      page_name: page,
+      area: 'account_menu',
+      element,
+      ...dimensions,
+    });
+  }
+
+  return (
+    <div className="entry-nav-rail__social" data-testid="entry-nav-rail-social">
+      <a
+        className="entry-nav-rail__social-btn"
+        href={communityUrl}
+        {...externalLinkProps}
+        aria-label={communityLabel}
+        title={communityLabel}
+        data-testid={isChinese ? 'entry-nav-rail-feishu' : 'entry-nav-rail-discord'}
+        onClick={() => track(isChinese ? 'feishu' : 'discord')}
+      >
+        <Icon name={isChinese ? 'feishu' : 'discord'} size={15} />
+      </a>
+      <a
+        className="entry-nav-rail__social-btn"
+        href={X_URL}
+        {...externalLinkProps}
+        aria-label="@OpenDesignHQ"
+        title="@OpenDesignHQ"
+        onClick={() => track('twitter')}
+      >
+        <span className="entry-nav-rail__menu-x" aria-hidden>X</span>
+      </a>
+      <a
+        className="entry-nav-rail__social-btn"
+        href={CONTACT_EMAIL_URL}
+        aria-label={t('entry.mailAria')}
+        title={t('entry.mailAria')}
+        onClick={() => track('email')}
+      >
+        <Icon name="mail" size={15} />
+      </a>
+    </div>
   );
 }
 
@@ -1811,19 +1833,18 @@ export function EntryNavRail({
           </>
         )}
       </div>
-      {/* Skip the footer entirely when it has nothing to show — an empty
-          shell here read as a dead white strip under the account row.
-          `footerUpdaterSlot` is only ever set in the signed-out shell: with a
-          cloud identity the updater host rides the account row instead (see
-          `updaterSlot`), so the footer must not render a second host. */}
-      {footerNotice || footerUpdaterSlot ? (
-        <div className="entry-nav-rail__footer">
-          {footerNotice}
-          {footerUpdaterSlot ? (
-            <div className="entry-rail-actions">{footerUpdaterSlot}</div>
-          ) : null}
-        </div>
-      ) : null}
+      {/* The footer always has the social row to show now, so it no longer
+          collapses to nothing. `footerUpdaterSlot` is only ever set in the
+          signed-out shell: with a cloud identity the updater host rides the
+          account row instead (see `updaterSlot`), so the footer must not
+          render a second host. */}
+      <div className="entry-nav-rail__footer">
+        {footerNotice}
+        {footerUpdaterSlot ? (
+          <div className="entry-rail-actions">{footerUpdaterSlot}</div>
+        ) : null}
+        <RailSocialRow page={analyticsPage} dimensions={workspaceDimensions} />
+      </div>
       </div>
 
       {/* Signed-out message-center panel + unread polling (the rail's bell

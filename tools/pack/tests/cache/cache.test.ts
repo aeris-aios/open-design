@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { ToolPackCache } from "../src/cache.js";
+import { ToolPackCache } from "@/cache/index.js";
 
 async function pathExists(path: string): Promise<boolean> {
   try {

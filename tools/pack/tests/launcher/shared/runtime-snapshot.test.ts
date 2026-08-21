@@ -8,8 +8,8 @@ import {
 } from "@open-design/launcher-proto";
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
-import { readToolPackLauncherRuntimeSnapshot } from "../src/launcher-runtime-snapshot.js";
+import type { ToolPackConfig } from "@/config/index.js";
+import { readToolPackLauncherRuntimeSnapshot } from "@/launcher/runtime-snapshot.js";
 
 describe("launcher runtime snapshot", () => {
   it("reports the validated desktop handoff journal with the launcher pointers", async () => {

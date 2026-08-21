@@ -175,7 +175,13 @@ const jsonLd = [
 ];
 ---
 
-<Layout title={title} description={description} active="pricing" jsonLd={jsonLd}>
+<Layout
+  title={title}
+  description={description}
+  active="pricing"
+  jsonLd={jsonLd}
+  showHeaderAccount
+>
   <nav class="breadcrumb" aria-label="Breadcrumb">
     <a href={href('/')}>OpenDesign</a>
     <span>/</span>
@@ -191,8 +197,16 @@ const jsonLd = [
     data-cloud-console-environment="production"
     data-billing-api-origin={apiOrigin}
     data-current-plan-label={planActionLabels.current}
+    data-current-canceling-label={planActionLabels.currentCanceling}
     data-downgrade-plan-label={planActionLabels.downgrade}
     data-upgrade-plan-label={planActionLabels.upgrade}
+    data-interval-upgrade-label={planActionLabels.intervalUpgrade}
+    data-switch-back-interval-label={planActionLabels.switchBackToInterval}
+    data-interval-downgrade-unavailable-label={planActionLabels.intervalDowngradeUnavailable}
+    data-checkout-unavailable-label={planActionLabels.checkoutUnavailable}
+    data-scheduled-plan-label={planActionLabels.scheduled}
+    data-monthly-label={L.monthly}
+    data-yearly-label={L.yearly}
     data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt}
     data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive}
   >
@@ -240,6 +254,7 @@ const jsonLd = [
     <p class="pr-handoff-error" data-cloud-console-handoff-error role="alert" hidden>
       {L.checkoutDestinationUnavailable}
     </p>
+    <p class="pr-subscription-status" data-personal-pricing-status role="status" hidden></p>
 
     <div
       id="pr-creator-panel"
@@ -313,7 +328,7 @@ const jsonLd = [
                 amount: initialTeamView.monthlyTeamTotal,
               })}
             </p>
-            <strong data-team-yearly-summary>
+            <strong data-team-yearly-summary data-when="yearly">
               {fillTemplate(teamContent.yearlyTotal, {
                 amount: initialTeamView.intervalTotal,
               })}
@@ -415,7 +430,7 @@ const jsonLd = [
             data-tier="team"
             data-team-checkout-total
           >
-            {fillTemplate(teamContent.checkout, { amount: initialTeamView.intervalTotal })}
+            {fillTemplate(teamContent.yearlyCheckout, { amount: initialTeamView.intervalTotal })}
           </a>
         </section>
 
@@ -673,7 +688,7 @@ const jsonLd = [
             const target = new URL(scopedBillingPlanUrl());
             target.searchParams.set('billing', 'plan');
             target.searchParams.set('plan', selectedTier.tier);
-            target.searchParams.set('interval', 'yearly');
+            target.searchParams.set('interval', interval);
             target.searchParams.set(
               'seats',
               String(Math.max(selectedTier.minSeats, selectedSeats)),
@@ -715,8 +730,6 @@ const jsonLd = [
       };
       const activateAudience = (audience, shouldTrackClick = true) => {
         root.setAttribute('data-audience', audience);
-        const billingToggle = root.querySelector('.pr-toggle');
-        if (billingToggle) billingToggle.hidden = audience === 'team';
         for (const button of root.querySelectorAll('[data-audience-btn]')) {
           const active = button.getAttribute('data-audience-btn') === audience;
           button.classList.toggle('is-active', active);
@@ -773,9 +786,9 @@ const jsonLd = [
       window.addEventListener('pagehide', () => window.clearInterval(campaignImpressionTimer), { once: true });
 
       // ── Billing interval toggle ──────────────────────────────────────────
-      // One entry point so the toggle button and the "save $X yearly" nudge
-      // share state updates AND emit one analytics event with the right source.
-      const activateInterval = (interval, via) => {
+      // One entry point so user clicks and subscription-state initialization
+      // share the same rendering path without misreporting initialization as a click.
+      const activateInterval = (interval, via, shouldTrack = true) => {
         root.setAttribute('data-interval', interval);
         for (const b of root.querySelectorAll('[data-interval-btn]')) {
           const on = b.getAttribute('data-interval-btn') === interval;
@@ -784,13 +797,24 @@ const jsonLd = [
         }
         updateTeamPlan();
         syncCtas();
-        track('ui_click', {
-          area: 'pricing_controls',
-          element: 'billing_interval',
-          interval,
-          via: via || 'toggle',
-        });
+        root.dispatchEvent(new CustomEvent('pricing:interval-changed', { detail: { interval } }));
+        if (shouldTrack) {
+          track('ui_click', {
+            area: 'pricing_controls',
+            element: 'billing_interval',
+            interval,
+            via: via || 'toggle',
+          });
+        }
       };
+
+      root.addEventListener('pricing:set-interval', (event) => {
+        const interval = event.detail?.interval;
+        if (interval === 'monthly' || interval === 'yearly') {
+          activateInterval(interval, 'subscription_state', false);
+        }
+      });
+      root.addEventListener('pricing:sync-ctas', syncCtas);
 
       for (const btn of root.querySelectorAll('[data-interval-btn]')) {
         btn.addEventListener('click', () => activateInterval(btn.getAttribute('data-interval-btn'), 'toggle'));
@@ -867,11 +891,11 @@ const jsonLd = [
         if (teamSeatsOutput) teamSeatsOutput.textContent = String(teamSeats);
         if (teamSeatsDec) teamSeatsDec.disabled = teamSeats <= tier.minSeats;
 
-        const interval = 'yearly';
+        const interval = root.getAttribute('data-interval') === 'monthly' ? 'monthly' : 'yearly';
         const selected = tier[interval];
         const months = interval === 'yearly' ? 12 : 1;
         const introSeatMonth = selected.introPriceUsd / months;
-        const listSeatMonth = tier.monthly.priceUsd;
+        const listSeatMonth = interval === 'yearly' ? tier.monthly.priceUsd : selected.priceUsd;
         const discountPct = Math.round((1 - introSeatMonth / listSeatMonth) * 100);
         const intervalTotal = selected.introPriceUsd * teamSeats;
         const monthlyTeamTotal = intervalTotal / months;
@@ -903,7 +927,10 @@ const jsonLd = [
         set(
           '[data-audience-panel="team"]',
           '[data-team-checkout-total]',
-          fillTeam(teamCopy.checkout, { amount: total }),
+          fillTeam(
+            interval === 'yearly' ? teamCopy.yearlyCheckout : teamCopy.monthlyCheckout,
+            { amount: total },
+          ),
         );
         set(
           '[data-audience-panel="team"]',
@@ -1090,39 +1117,131 @@ const jsonLd = [
   </script>
   <script>
     import {
-      loadCurrentPersonalPlanTier,
-      personalPlanRelation,
+      loadPersonalPricingContext,
+      resolvePersonalPlanAction,
+    } from '../../_lib/pricing-current-plan';
+    import type {
+      PersonalBillingInterval,
+      PersonalPlanTier,
+      PersonalPricingContext,
     } from '../../_lib/pricing-current-plan';
 
     const pricingRoot = document.querySelector('[data-pricing-root]');
     if (pricingRoot?.getAttribute('data-cloud-console-environment') === 'production') {
       const apiOrigin = pricingRoot.getAttribute('data-billing-api-origin') || '';
-      const currentPlanLabel = pricingRoot.getAttribute('data-current-plan-label') || '';
-      const downgradePlanLabel = pricingRoot.getAttribute('data-downgrade-plan-label') || '';
-      const upgradePlanLabel = pricingRoot.getAttribute('data-upgrade-plan-label') || '';
-      const fillPlanLabel = (template: string, plan: string) =>
-        template.replace('{plan}', plan);
-      void loadCurrentPersonalPlanTier(apiOrigin).then((currentTier) => {
-        if (!currentTier || !currentPlanLabel || !downgradePlanLabel || !upgradePlanLabel) return;
+      const personalTiers = new Set(['go', 'plus', 'pro', 'max']);
+      const actionLabels = {
+        current: pricingRoot.getAttribute('data-current-plan-label') || '',
+        currentCanceling: pricingRoot.getAttribute('data-current-canceling-label') || '',
+        downgrade: pricingRoot.getAttribute('data-downgrade-plan-label') || '',
+        upgrade: pricingRoot.getAttribute('data-upgrade-plan-label') || '',
+        intervalUpgrade: pricingRoot.getAttribute('data-interval-upgrade-label') || '',
+        switchBack: pricingRoot.getAttribute('data-switch-back-interval-label') || '',
+        intervalDowngradeUnavailable:
+          pricingRoot.getAttribute('data-interval-downgrade-unavailable-label') || '',
+        checkoutUnavailable: pricingRoot.getAttribute('data-checkout-unavailable-label') || '',
+        scheduled: pricingRoot.getAttribute('data-scheduled-plan-label') || '',
+      };
+      const intervalLabels = {
+        monthly: pricingRoot.getAttribute('data-monthly-label') || 'Monthly',
+        yearly: pricingRoot.getAttribute('data-yearly-label') || 'Yearly',
+      };
+      const fillActionLabel = (
+        template: string,
+        values: Record<string, string>,
+      ) => template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? `{${key}}`);
+      let pricingContext: PersonalPricingContext | null = null;
+
+      const applyIntroEligibility = () => {
+        if (!pricingContext) return;
+        const eligible = pricingContext.firstMonthIntroEligible;
+        pricingRoot.setAttribute('data-first-month-intro-eligible', eligible ? 'true' : 'false');
+        for (const amount of pricingRoot.querySelectorAll('[data-monthly-price]')) {
+          const value = amount.getAttribute(eligible ? 'data-intro-price' : 'data-regular-price');
+          if (value) amount.textContent = value;
+        }
+      };
+
+      const applyPersonalActions = () => {
+        if (!pricingContext) return;
+        const interval: PersonalBillingInterval = pricingRoot.getAttribute('data-interval') === 'monthly'
+          ? 'monthly'
+          : 'yearly';
         for (const cta of pricingRoot.querySelectorAll('[data-pricing-cta]')) {
           const tier = cta.getAttribute('data-tier') || '';
-          const relation = personalPlanRelation(tier, currentTier);
-          if (!relation) continue;
+          if (!personalTiers.has(tier)) continue;
           const label = cta.querySelector(':scope > span');
           const plan = cta.getAttribute('data-plan-name') || tier;
-          if (relation === 'higher') {
-            if (label) label.textContent = fillPlanLabel(upgradePlanLabel, plan);
-            continue;
+          const action = resolvePersonalPlanAction(pricingContext, {
+            tier: tier as PersonalPlanTier,
+            interval,
+          });
+          let text = cta.getAttribute('data-default-label') || plan;
+          if (action.kind === 'current') text = actionLabels.current;
+          else if (action.kind === 'current_canceling') text = actionLabels.currentCanceling;
+          else if (action.kind === 'scheduled') {
+            text = fillActionLabel(actionLabels.scheduled, { plan });
+          } else if (action.kind === 'upgrade') {
+            text = fillActionLabel(actionLabels.upgrade, { plan });
+          } else if (action.kind === 'interval_upgrade') {
+            text = fillActionLabel(actionLabels.intervalUpgrade, {
+              plan,
+              interval: intervalLabels[interval],
+            });
+          } else if (action.kind === 'dual_change') {
+            const currentInterval: PersonalBillingInterval =
+              pricingContext.current?.interval ?? interval;
+            text = fillActionLabel(actionLabels.switchBack, {
+              interval: intervalLabels[currentInterval],
+            });
+          } else if (action.kind === 'interval_downgrade_unavailable') {
+            text = fillActionLabel(actionLabels.intervalDowngradeUnavailable, {
+              interval: intervalLabels[interval],
+            });
+          } else if (action.kind === 'checkout_unavailable') {
+            text = actionLabels.checkoutUnavailable;
+          } else if (action.kind === 'downgrade_unavailable') {
+            text = fillActionLabel(actionLabels.downgrade, { plan });
           }
-          cta.setAttribute('data-subscription-disabled', '');
-          cta.setAttribute('aria-disabled', 'true');
-          cta.setAttribute('tabindex', '-1');
-          cta.removeAttribute('href');
-          if (label) {
-            label.textContent = relation === 'current'
-              ? currentPlanLabel
-              : fillPlanLabel(downgradePlanLabel, plan);
+          if (label) label.textContent = text;
+          if (action.enabled) {
+            cta.removeAttribute('data-subscription-disabled');
+            cta.removeAttribute('aria-disabled');
+            cta.removeAttribute('tabindex');
+          } else {
+            cta.setAttribute('data-subscription-disabled', '');
+            cta.setAttribute('aria-disabled', 'true');
+            cta.setAttribute('tabindex', '-1');
+            cta.removeAttribute('href');
           }
+        }
+        pricingRoot.dispatchEvent(new CustomEvent('pricing:sync-ctas'));
+        const status = pricingRoot.querySelector<HTMLElement>('[data-personal-pricing-status]');
+        if (status) {
+          let message = '';
+          if (!pricingContext.current && !pricingContext.checkoutAllowed) {
+            message = actionLabels.checkoutUnavailable;
+          } else if (pricingContext.pendingChange) {
+            const plan = pricingContext.pendingChange.tier.charAt(0).toUpperCase()
+              + pricingContext.pendingChange.tier.slice(1);
+            message = fillActionLabel(actionLabels.scheduled, { plan });
+          }
+          status.textContent = message;
+          status.hidden = !message;
+        }
+      };
+
+      pricingRoot.addEventListener('pricing:interval-changed', applyPersonalActions);
+      void loadPersonalPricingContext(apiOrigin).then((context) => {
+        if (!context) return;
+        pricingContext = context;
+        applyIntroEligibility();
+        if (context.current) {
+          pricingRoot.dispatchEvent(new CustomEvent('pricing:set-interval', {
+            detail: { interval: context.current.interval },
+          }));
+        } else {
+          applyPersonalActions();
         }
       });
     }
@@ -1131,6 +1250,20 @@ const jsonLd = [
 
 <style>
   .pr-page [data-pricing-campaign-surface][hidden] { display: none !important; }
+  .pr-page[data-first-month-intro-eligible='false'] [data-intro-only] { display: none !important; }
+  .pr-subscription-status {
+    max-width: 720px;
+    margin: -20px auto 24px;
+    padding: 11px 14px;
+    border: 1px solid color-mix(in srgb, var(--olive, #218c00) 28%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--olive, #218c00) 7%, white);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+  .pr-subscription-status[hidden] { display: none !important; }
   .pr-handoff-error {
     margin: -20px auto 24px;
     max-width: 720px;
@@ -1216,7 +1349,6 @@ const jsonLd = [
     background: #e8e9e3;
     border-radius: 999px;
   }
-  .pr-toggle[hidden] { display: none !important; }
   .pr-audience-toggle {
     grid-column: 3;
     position: relative;

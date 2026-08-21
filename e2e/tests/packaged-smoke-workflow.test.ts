@@ -411,7 +411,7 @@ describe("packaged smoke workflow", () => {
     expect(job).toContain("fromJSON(needs.runners.outputs.runs_on).windows_tools");
     expect(job).toContain("toJSON(fromJSON(needs.runners.outputs.runs_on).windows_tools)");
     expect(job).toContain("fromJSON(needs.plan.outputs.run).windows_tools_pack_payload_tests");
-    expect(job).toContain("pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload-windows.test.ts");
+    expect(job).toContain("pnpm --filter @open-design/tools-pack exec vitest run tests/launcher/windows/payload.test.ts");
     expect(validate).toContain("windows_tools_pack_payload_tests");
   });
 

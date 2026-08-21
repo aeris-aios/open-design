@@ -18,21 +18,57 @@ import type { LandingLocaleCode } from '../i18n';
 
 export interface PricingPlanActionLabels {
   current: string;
+  currentCanceling: string;
   downgrade: string;
   upgrade: string;
+  intervalUpgrade: string;
+  switchBackToInterval: string;
+  intervalDowngradeUnavailable: string;
+  checkoutUnavailable: string;
+  scheduled: string;
 }
 
-const PLAN_ACTION_LABELS: Partial<Record<LandingLocaleCode, PricingPlanActionLabels>> = {
-  en: { current: 'Current plan', downgrade: 'Downgrade to {plan}', upgrade: 'Upgrade to {plan}' },
-  zh: { current: '当前套餐', downgrade: '降级至 {plan}', upgrade: '升级至 {plan}' },
-  'zh-tw': { current: '目前方案', downgrade: '降級至 {plan}', upgrade: '升級至 {plan}' },
-  ja: { current: '現在のプラン', downgrade: '{plan} にダウングレード', upgrade: '{plan} にアップグレード' },
-  ko: { current: '현재 요금제', downgrade: '{plan}(으)로 다운그레이드', upgrade: '{plan}(으)로 업그레이드' },
-  de: { current: 'Aktueller Tarif', downgrade: 'Auf {plan} downgraden', upgrade: 'Auf {plan} upgraden' },
-  fr: { current: 'Offre actuelle', downgrade: 'Rétrograder vers {plan}', upgrade: 'Passer à {plan}' },
-  ru: { current: 'Текущий тариф', downgrade: 'Понизить до {plan}', upgrade: 'Повысить до {plan}' },
-  es: { current: 'Plan actual', downgrade: 'Bajar a {plan}', upgrade: 'Subir a {plan}' },
-  'pt-br': { current: 'Plano atual', downgrade: 'Fazer downgrade para {plan}', upgrade: 'Fazer upgrade para {plan}' },
+const EN_PLAN_ACTION_LABELS: PricingPlanActionLabels = {
+  current: 'Current plan',
+  currentCanceling: 'Current plan · Cancels at period end',
+  downgrade: 'Downgrade to {plan}',
+  upgrade: 'Upgrade to {plan}',
+  intervalUpgrade: 'Switch {plan} to {interval}',
+  switchBackToInterval: 'Switch back to {interval} before upgrading',
+  intervalDowngradeUnavailable: 'Cancel your subscription to change plans',
+  checkoutUnavailable: 'Personal checkout unavailable for this account',
+  scheduled: '{plan} · Scheduled',
+};
+
+const PLAN_ACTION_LABELS: Partial<Record<LandingLocaleCode, Partial<PricingPlanActionLabels>>> = {
+  en: EN_PLAN_ACTION_LABELS,
+  zh: {
+    current: '当前套餐', currentCanceling: '当前套餐 · 将在周期结束时取消', downgrade: '降级至 {plan}', upgrade: '升级至 {plan}', intervalUpgrade: '将 {plan} 改为{interval}', switchBackToInterval: '请先切回{interval}再升级', intervalDowngradeUnavailable: '取消订阅后可变更套餐', checkoutUnavailable: '此账户暂不能购买个人套餐', scheduled: '{plan} · 已安排',
+  },
+  'zh-tw': {
+    current: '目前方案', currentCanceling: '目前方案 · 將於週期結束時取消', downgrade: '降級至 {plan}', upgrade: '升級至 {plan}', intervalUpgrade: '將 {plan} 改為{interval}', switchBackToInterval: '請先切回{interval}再升級', intervalDowngradeUnavailable: '取消訂閱後可變更方案', checkoutUnavailable: '此帳戶暫不能購買個人方案', scheduled: '{plan} · 已排程',
+  },
+  ja: {
+    current: '現在のプラン', currentCanceling: '現在のプラン · 期間終了時に解約', downgrade: '{plan} にダウングレード', upgrade: '{plan} にアップグレード', intervalUpgrade: '{plan} を{interval}に変更', switchBackToInterval: 'アップグレードする前に{interval}へ戻してください', intervalDowngradeUnavailable: 'プランを変更するにはサブスクリプションを解約してください', checkoutUnavailable: 'このアカウントでは個人プランを購入できません', scheduled: '{plan} · 予約済み',
+  },
+  ko: {
+    current: '현재 요금제', currentCanceling: '현재 요금제 · 기간 종료 시 해지', downgrade: '{plan}(으)로 다운그레이드', upgrade: '{plan}(으)로 업그레이드', intervalUpgrade: '{plan}을(를) {interval}(으)로 변경', switchBackToInterval: '업그레이드 전에 {interval}(으)로 돌아가세요', intervalDowngradeUnavailable: '요금제를 변경하려면 구독을 취소하세요', checkoutUnavailable: '이 계정에서는 개인 요금제를 구매할 수 없습니다', scheduled: '{plan} · 예약됨',
+  },
+  de: {
+    current: 'Aktueller Tarif', currentCanceling: 'Aktueller Tarif · Endet zum Periodenende', downgrade: 'Auf {plan} downgraden', upgrade: 'Auf {plan} upgraden', intervalUpgrade: '{plan} auf {interval} umstellen', switchBackToInterval: 'Vor dem Upgrade zu {interval} zurückwechseln', intervalDowngradeUnavailable: 'Kündige dein Abonnement, um den Tarif zu wechseln', checkoutUnavailable: 'Persönliche Tarife sind für dieses Konto nicht verfügbar', scheduled: '{plan} · Geplant',
+  },
+  fr: {
+    current: 'Offre actuelle', currentCanceling: 'Offre actuelle · Résiliation en fin de période', downgrade: 'Rétrograder vers {plan}', upgrade: 'Passer à {plan}', intervalUpgrade: 'Passer {plan} en {interval}', switchBackToInterval: 'Revenez à {interval} avant la mise à niveau', intervalDowngradeUnavailable: 'Résiliez votre abonnement pour changer d’offre', checkoutUnavailable: 'Les offres personnelles sont indisponibles pour ce compte', scheduled: '{plan} · Planifié',
+  },
+  ru: {
+    current: 'Текущий тариф', currentCanceling: 'Текущий тариф · Отмена в конце периода', downgrade: 'Понизить до {plan}', upgrade: 'Повысить до {plan}', intervalUpgrade: 'Перевести {plan} на {interval}', switchBackToInterval: 'Перед повышением вернитесь на {interval}', intervalDowngradeUnavailable: 'Отмените подписку, чтобы изменить тариф', checkoutUnavailable: 'Личные тарифы недоступны для этого аккаунта', scheduled: '{plan} · Запланировано',
+  },
+  es: {
+    current: 'Plan actual', currentCanceling: 'Plan actual · Se cancela al final del periodo', downgrade: 'Bajar a {plan}', upgrade: 'Subir a {plan}', intervalUpgrade: 'Cambiar {plan} a {interval}', switchBackToInterval: 'Vuelve a {interval} antes de subir de plan', intervalDowngradeUnavailable: 'Cancela tu suscripción para cambiar de plan', checkoutUnavailable: 'Los planes personales no están disponibles para esta cuenta', scheduled: '{plan} · Programado',
+  },
+  'pt-br': {
+    current: 'Plano atual', currentCanceling: 'Plano atual · Cancela ao fim do período', downgrade: 'Fazer downgrade para {plan}', upgrade: 'Fazer upgrade para {plan}', intervalUpgrade: 'Mudar {plan} para {interval}', switchBackToInterval: 'Volte para {interval} antes de fazer upgrade', intervalDowngradeUnavailable: 'Cancele a assinatura para mudar de plano', checkoutUnavailable: 'Planos pessoais não estão disponíveis para esta conta', scheduled: '{plan} · Agendado',
+  },
 };
 
 export function getCurrentPlanLabel(locale: LandingLocaleCode): string {
@@ -40,7 +76,7 @@ export function getCurrentPlanLabel(locale: LandingLocaleCode): string {
 }
 
 export function getPricingPlanActionLabels(locale: LandingLocaleCode): PricingPlanActionLabels {
-  return PLAN_ACTION_LABELS[locale] ?? PLAN_ACTION_LABELS.en!;
+  return { ...EN_PLAN_ACTION_LABELS, ...(PLAN_ACTION_LABELS[locale] ?? {}) };
 }
 
 export type PlanTierId = 'plus' | 'pro' | 'max';

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ToolPackConfig } from "./config.js";
+import type { ToolPackConfig } from "../config/index.js";
 
 export async function readRuntimeAppVersion(config: ToolPackConfig): Promise<string> {
   if (config.appVersion != null) return config.appVersion;

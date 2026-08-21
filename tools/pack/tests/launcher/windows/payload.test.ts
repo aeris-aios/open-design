@@ -7,15 +7,15 @@ import { promisify } from "node:util";
 import { LAUNCHER_SCHEMA_VERSION } from "@open-design/launcher-proto";
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
-import { ToolPackCache } from "../src/cache.js";
-import { winResources } from "../src/resources.js";
+import type { ToolPackConfig } from "@/config/index.js";
+import { ToolPackCache } from "@/cache/index.js";
+import { winResources } from "@/resources/index.js";
 import {
   buildWinLauncherPayloadArchive,
   buildWinLauncherPayloadManifest,
   validateWinLauncherPayloadArchive,
-} from "../src/win/payload.js";
-import type { WinBuiltAppManifest, WinPaths } from "../src/win/types.js";
+} from "@/win/payload.js";
+import type { WinBuiltAppManifest, WinPaths } from "@/win/types.js";
 
 const execFileAsync = promisify(execFile);
 
