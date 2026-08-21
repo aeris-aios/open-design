@@ -1570,6 +1570,9 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   .model-access-status.more-ample,
   .model-access-status.ample,
   .model-access-status.included {
+    display: grid;
+    grid-template-columns: 1fr;
+    place-items: center;
     width: 104px;
     height: 23px;
   }
@@ -1615,7 +1618,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   .model-access-status.unavailable::after {
     position: absolute;
     top: 50%;
-    left: 11.5px;
+    left: 50%;
     width: 9px;
     height: 1.5px;
     content: '';

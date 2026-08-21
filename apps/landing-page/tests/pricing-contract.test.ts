@@ -462,6 +462,14 @@ describe("pricing contract", () => {
     assert.doesNotMatch(individualPlans, /\.model-access-status\.(?:ample|included)::after/);
     assert.match(
       individualPlans,
+      /\.model-access-status\.more-ample,\s*\.model-access-status\.ample,\s*\.model-access-status\.included\s*\{[^}]*grid-template-columns:\s*1fr;[^}]*place-items:\s*center;/s,
+    );
+    assert.match(
+      individualPlans,
+      /\.model-access-status\.unavailable::before,\s*\.model-access-status\.unavailable::after\s*\{[^}]*left:\s*50%;/s,
+    );
+    assert.match(
+      individualPlans,
       /\.model-access-status\s*\{[^}]*grid-template-columns:\s*23px max-content;[^}]*width:\s*104px;[^}]*margin:\s*0 auto;/s,
     );
   });
