@@ -11,6 +11,9 @@ import type { ToolPackConfig } from "@/config/index.js";
 import { resolveMacPaths } from "@/mac/paths.js";
 
 const getSidecarStatus = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
+const findSidecarProcesses = vi.fn(async (stamp: { source: string }) =>
+  stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
+);
 const collectProcessTreePids = vi.fn(
   (_processes: unknown[], rootPids: Array<number | null>) =>
     rootPids.filter((pid): pid is number => typeof pid === "number"),
@@ -36,6 +39,7 @@ const stopSidecar = vi.fn(async (stamp: { source: string }) => ({
 
 vi.mock("@open-design/sidecar", async () => ({
   ...(await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar")),
+  findSidecarProcesses,
   getSidecarStatus,
   spawnSidecar: spawnLoggedProcess,
   stopSidecar,
@@ -52,7 +56,7 @@ vi.mock("@open-design/platform", () => ({
   stopProcesses,
 }));
 
-const { startPackedMacApp, stopPackedMacApp } = await import("@/mac/lifecycle.js");
+const { inspectPackedMacApp, startPackedMacApp, stopPackedMacApp } = await import("@/mac/lifecycle.js");
 
 function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): ToolPackConfig {
   return {
@@ -95,6 +99,9 @@ function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): Tool
 afterEach(() => {
   vi.clearAllMocks();
   getSidecarStatus.mockResolvedValue({ state: "running" });
+  findSidecarProcesses.mockImplementation(async (stamp: { source: string }) =>
+    stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
+  );
   listProcessSnapshots.mockResolvedValue([]);
   matchesStampedProcess.mockReturnValue(false);
   collectProcessTreePids.mockImplementation(
@@ -117,6 +124,7 @@ describe("startPackedMacApp", () => {
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");
       await chmod(executablePath, 0o755);
       getSidecarStatus.mockResolvedValue({ pid: delegatedPid, state: "running" });
+      findSidecarProcesses.mockResolvedValue([]);
       spawnLoggedProcess.mockImplementationOnce(async ({ env }: { env: NodeJS.ProcessEnv }) => {
         const child = Object.assign(new EventEmitter(), {
           env,
@@ -131,6 +139,10 @@ describe("startPackedMacApp", () => {
 
       expect(result.pid).toBe(delegatedPid);
       expect(result.status).toEqual({ pid: delegatedPid, state: "running" });
+      expect(getSidecarStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ source: "packaged" }),
+        { timeoutMs: 1000 },
+      );
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -267,6 +279,24 @@ describe("stopPackedMacApp", () => {
       });
       expect(stopSidecar).toHaveBeenCalledWith(expect.objectContaining({ namespace: config.namespace, source: "packaged" }));
       expect(stopProcesses).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("inspectPackedMacApp", () => {
+  it("targets the packaged sidecar when no tools-pack desktop is running", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
+    try {
+      findSidecarProcesses.mockResolvedValue([]);
+
+      await inspectPackedMacApp(makeConfig(root), {});
+
+      expect(getSidecarStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ source: "packaged" }),
+        { timeoutMs: 2000 },
+      );
     } finally {
       await rm(root, { force: true, recursive: true });
     }

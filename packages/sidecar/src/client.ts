@@ -31,6 +31,7 @@ export type SidecarClientOptions<TRuntime> = {
 
 export type SidecarConnection = {
   invoke<TResult = unknown>(app: string, action: string, input: unknown, options?: { timeoutMs?: number }): Promise<TResult>;
+  requestStop(app: string, options?: { timeoutMs?: number }): Promise<{ accepted?: unknown }>;
   status<TResult = unknown>(app: string, options?: { timeoutMs?: number }): Promise<TResult>;
 };
 
@@ -107,8 +108,13 @@ export class SidecarClient<TRuntime> {
 
   start(): Promise<void> {
     if (this.#stopPromise != null) return Promise.reject(new Error("sidecar client is stopping"));
-    this.#startPromise ??= this.#start();
-    return this.#startPromise;
+    if (this.#startPromise != null) return this.#startPromise;
+    const attempt = this.#start();
+    this.#startPromise = attempt;
+    void attempt.catch(() => {
+      if (this.#startPromise === attempt) this.#startPromise = null;
+    });
+    return attempt;
   }
 
   async #start(): Promise<void> {
@@ -195,6 +201,11 @@ export class SidecarClient<TRuntime> {
     const target = normalizeSidecarStamp({ ...this.stamp, app });
     return await requestJsonIpc<TResult>(resolvePrivateIpcPath(target), { type: CONTROL_STATUS }, options);
   }
+
+  async requestStop(app: string, options?: { timeoutMs?: number }): Promise<{ accepted?: unknown }> {
+    const target = normalizeSidecarStamp({ ...this.stamp, app });
+    return await requestJsonIpc(resolvePrivateIpcPath(target), { type: CONTROL_STOP }, options);
+  }
 }
 
 export const SidecarFactory = Object.freeze({
@@ -204,6 +215,9 @@ export const SidecarFactory = Object.freeze({
     return {
       async invoke<TResult = unknown>(app: string, action: string, input: unknown, options?: { timeoutMs?: number }) {
         return await requestJsonIpc<TResult>(endpoint, { action, app, input, type: BUSINESS_INVOKE }, options);
+      },
+      async requestStop(_app: string, options?: { timeoutMs?: number }) {
+        return await requestJsonIpc<{ accepted?: unknown }>(endpoint, { type: CONTROL_STOP }, options);
       },
       async status<TResult = unknown>(_app: string, options?: { timeoutMs?: number }) {
         return await requestJsonIpc<TResult>(endpoint, { type: CONTROL_STATUS }, options);

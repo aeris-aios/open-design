@@ -8,6 +8,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { ToolPackConfig } from "@/config/index.js";
 
 const requestSidecar = vi.hoisted(() => vi.fn());
+const findSidecarProcesses = vi.hoisted(() => vi.fn(async (stamp: { source: string }) =>
+  stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
+));
 const listProcessSnapshots = vi.hoisted(() =>
   vi.fn<typeof import("@open-design/platform").listProcessSnapshots>(async () => []),
 );
@@ -28,8 +31,9 @@ vi.mock("@open-design/sidecar", async () => {
   const actual = await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar");
   return {
     ...actual,
-    getSidecarStatus: async (stamp: { app: string }) => await requestSidecar(stamp.app, { type: SIDECAR_MESSAGES.STATUS }),
-    invokeSidecar: async (stamp: { app: string }, action: string, input: unknown) => await requestSidecar(stamp.app, { input, type: action }),
+    findSidecarProcesses,
+    getSidecarStatus: async (stamp: { app: string; source: string }) => await requestSidecar(stamp.app, { type: SIDECAR_MESSAGES.STATUS }, stamp.source),
+    invokeSidecar: async (stamp: { app: string; source: string }, action: string, input: unknown) => await requestSidecar(stamp.app, { input, type: action }, stamp.source),
     launchSidecar: spawnBackgroundProcess,
     stopSidecar: async (stamp: { source: string }) => ({
       alreadyStopped: stamp.source !== "packaged",
@@ -183,6 +187,31 @@ describe("installPackedWinApp", () => {
 });
 
 describe("inspectPackedWinApp", () => {
+  it("targets packaged desktop and peer sidecars when no tools-pack desktop is running", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
+
+    try {
+      findSidecarProcesses.mockResolvedValue([]);
+      requestSidecar.mockReset();
+      requestSidecar.mockResolvedValue({ state: "running" });
+
+      await inspectPackedWinApp(createConfig(root), {});
+
+      expect(requestSidecar).toHaveBeenCalledWith(
+        expect.any(String),
+        { type: SIDECAR_MESSAGES.STATUS },
+        "packaged",
+      );
+      expect(requestSidecar.mock.calls.filter((call) => call[1]?.type === SIDECAR_MESSAGES.STATUS))
+        .toHaveLength(3);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+      findSidecarProcesses.mockImplementation(async (stamp: { source: string }) =>
+        stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
+      );
+    }
+  });
+
   it("returns status and diagnostics when eval IPC times out", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
 

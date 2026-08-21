@@ -185,6 +185,7 @@ export type WebStatusSnapshot = {
 export type DesktopRuntimeState = "idle" | "running" | "unknown";
 
 export type DesktopStatusSnapshot = {
+  executablePath?: string;
   pid?: number | null;
   state: DesktopRuntimeState;
   title?: string | null;

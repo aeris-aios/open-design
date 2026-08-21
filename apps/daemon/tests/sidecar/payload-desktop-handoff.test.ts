@@ -1,0 +1,169 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  LAUNCHER_SCHEMA_VERSION,
+  resolveLauncherPaths,
+  resolveLauncherVersionPaths,
+} from "@open-design/launcher-proto";
+import { SIDECAR_SOURCES } from "@open-design/sidecar-proto";
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  executeLegacyPayloadDesktopHandoff,
+  prepareLegacyPayloadDesktopHandoff,
+} from "../../src/sidecar/payload-desktop-handoff.js";
+
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), "od-daemon-payload-handoff-"));
+  const namespace = "release-beta";
+  const version = "1.2.3-beta.5";
+  const runtimeRoot = join(root, "namespaces", namespace, "runtime");
+  const launcherPaths = resolveLauncherPaths({ channel: "beta", namespace, root });
+  const versionPaths = resolveLauncherVersionPaths({ channel: "beta", namespace, root, version });
+  const outerExecutablePath = join(root, "installed", "Open Design Beta.app", "Contents", "MacOS", "Open Design Beta");
+  const payloadExecutablePath = join(versionPaths.payloadRoot, "Open Design Beta.app", "Contents", "MacOS", "Open Design Beta");
+  await mkdir(join(outerExecutablePath, ".."), { recursive: true });
+  await mkdir(join(payloadExecutablePath, ".."), { recursive: true });
+  await mkdir(runtimeRoot, { recursive: true });
+  await mkdir(launcherPaths.stateRoot, { recursive: true });
+  await writeFile(outerExecutablePath, "");
+  await writeFile(payloadExecutablePath, "");
+  await writeFile(versionPaths.manifestPath, JSON.stringify({
+    channel: "beta",
+    entry: { executable: "payload/Open Design Beta.app/Contents/MacOS/Open Design Beta" },
+    namespace,
+    platform: "darwin",
+    schemaVersion: LAUNCHER_SCHEMA_VERSION,
+    version,
+  }));
+  await writeFile(launcherPaths.runtimePath, JSON.stringify({
+    active: { generation: 1, version },
+    channel: "beta",
+    lastSuccessful: { generation: 0, version: "1.2.3-beta.4" },
+    namespace,
+    schemaVersion: LAUNCHER_SCHEMA_VERSION,
+  }));
+  await writeFile(launcherPaths.attemptsPath, JSON.stringify({
+    channel: "beta",
+    generation: 1,
+    namespace,
+    schemaVersion: LAUNCHER_SCHEMA_VERSION,
+    version,
+  }));
+  await writeFile(launcherPaths.installPath, JSON.stringify({
+    channel: "beta",
+    launchPath: join(root, "installed", "Open Design Beta.app"),
+    namespace,
+    schemaVersion: LAUNCHER_SCHEMA_VERSION,
+  }));
+  return { launcherPaths, namespace, outerExecutablePath, payloadExecutablePath, root, runtimeRoot, version };
+}
+
+describe("legacy payload desktop handoff", () => {
+  it("prepares from exact desktop status and arms through the sidecar launch boundary", async () => {
+    const value = await fixture();
+    try {
+      const prepared = await prepareLegacyPayloadDesktopHandoff({
+        dataRoot: join(value.root, "data"),
+        env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
+        namespace: value.namespace,
+        parentPid: 4321,
+        platform: "darwin",
+        randomId: () => "f5d4a712-8ba9-4c28-bcad-6dbed5db2d7c",
+        requestDesktopStatus: async () => ({
+          executablePath: value.outerExecutablePath,
+          pid: 4321,
+          state: "running",
+        }),
+        runtimeRoot: value.runtimeRoot,
+        source: SIDECAR_SOURCES.PACKAGED,
+      });
+      expect(prepared).toMatchObject({ kind: "prepared", descriptor: { state: "prepared" } });
+      if (prepared.kind !== "prepared") throw new Error("expected prepared handoff");
+
+      await writeFile(value.launcherPaths.runtimePath, JSON.stringify({
+        active: { generation: 1, version: value.version },
+        channel: "beta",
+        lastSuccessful: { generation: 1, version: value.version },
+        namespace: value.namespace,
+        schemaVersion: LAUNCHER_SCHEMA_VERSION,
+      }));
+      await rm(value.launcherPaths.attemptsPath, { force: true });
+
+      const launch = vi.fn(async () => ({ pid: 7654 }));
+      const requestDesktop = vi.fn(async (message: "shutdown" | "status") =>
+        message === "status"
+          ? { executablePath: value.outerExecutablePath, pid: 4321, state: "running" }
+          : { accepted: true });
+      await expect(executeLegacyPayloadDesktopHandoff(prepared, {
+        confirmTimeoutMs: 100,
+        launch,
+        now: () => new Date("2026-07-15T02:00:00.000Z"),
+        requestDesktop,
+        sleep: async () => undefined,
+      })).resolves.toMatchObject({
+        kind: "scheduled",
+        target: { generation: 2, version: value.version },
+      });
+
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+        command: value.payloadExecutablePath,
+        resources: {
+          dataRoot: join(value.root, "data"),
+          ownerPid: null,
+          port: 0,
+          runtimeRoot: value.runtimeRoot,
+        },
+        stamp: {
+          app: "desktop",
+          channel: "beta",
+          mode: "runtime",
+          namespace: value.namespace,
+          source: "packaged",
+        },
+      }));
+      expect(requestDesktop).toHaveBeenLastCalledWith("shutdown");
+      expect(JSON.parse(await readFile(value.launcherPaths.handoffPath, "utf8"))).toMatchObject({
+        state: "armed",
+        target: { generation: 2, version: value.version },
+      });
+    } finally {
+      await rm(value.root, { force: true, recursive: true });
+    }
+  });
+
+  it("does not prepare when the exact desktop endpoint reports the payload executable", async () => {
+    const value = await fixture();
+    try {
+      await expect(prepareLegacyPayloadDesktopHandoff({
+        dataRoot: join(value.root, "data"),
+        env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
+        namespace: value.namespace,
+        parentPid: 4321,
+        platform: "darwin",
+        requestDesktopStatus: async () => ({
+          executablePath: value.payloadExecutablePath,
+          pid: 4321,
+          state: "running",
+        }),
+        runtimeRoot: value.runtimeRoot,
+        source: SIDECAR_SOURCES.PACKAGED,
+      })).resolves.toEqual({ kind: "none", reason: "payload-desktop-active" });
+    } finally {
+      await rm(value.root, { force: true, recursive: true });
+    }
+  });
+
+  it("does nothing outside the packaged desktop runtime", async () => {
+    await expect(prepareLegacyPayloadDesktopHandoff({
+      dataRoot: "/tmp/open-design/data",
+      env: {},
+      namespace: "default",
+      platform: "darwin",
+      runtimeRoot: "/tmp/open-design/runtime",
+      source: SIDECAR_SOURCES.TOOLS_DEV,
+    })).resolves.toEqual({ kind: "none", reason: "not-packaged" });
+  });
+});
