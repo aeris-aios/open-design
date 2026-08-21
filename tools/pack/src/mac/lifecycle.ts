@@ -25,6 +25,7 @@ import {
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 import { isProcessAlive, readLogTail } from "@open-design/platform";
 import type { ToolPackConfig } from "../config/index.js";
+import { resolveToolPackLauncherLayout } from "../launcher/layout.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher/runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../updates/cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
@@ -526,18 +527,22 @@ export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<Mac
 
 export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise<MacCleanupResult> {
   const paths = resolveMacPaths(config);
+  const launcher = resolveToolPackLauncherLayout(config);
   const stop = await stopPackedMacApp(config);
   const detachedMount = await detachMount(paths.mountPoint);
   const removedOutputRoot = await pathExists(config.roots.output.namespaceRoot);
   const removedRuntimeNamespaceRoot = await pathExists(config.roots.runtime.namespaceRoot);
+  const removedLauncherNamespaceRoot = await pathExists(launcher.paths.namespaceRoot);
 
   await rm(config.roots.output.namespaceRoot, { force: true, recursive: true });
   await rm(config.roots.runtime.namespaceRoot, { force: true, recursive: true });
+  await rm(launcher.paths.namespaceRoot, { force: true, recursive: true });
 
   return {
     detachedMount,
     namespace: config.namespace,
     outputRoot: config.roots.output.namespaceRoot,
+    removedLauncherNamespaceRoot,
     removedOutputRoot,
     removedRuntimeNamespaceRoot,
     runtimeNamespaceRoot: config.roots.runtime.namespaceRoot,

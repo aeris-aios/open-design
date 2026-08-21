@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import linuxPack from "@/linux.ts?raw";
 import macBuild from "@/mac/build.ts?raw";
 import macFs from "@/mac/fs.ts?raw";
+import macLifecycle from "@/mac/lifecycle.ts?raw";
 import macWorkspace from "@/mac/workspace.ts?raw";
 import winApp from "@/win/app.ts?raw";
 import winLifecycle from "@/win/lifecycle.ts?raw";
@@ -173,6 +174,9 @@ describe("release workflows", () => {
     expect(winLifecycle).toContain("const launcher = resolveToolPackLauncherLayout(config)");
     expect(winLifecycle).toContain("await removeTree(launcher.paths.namespaceRoot)");
     expect(winLifecycle).toContain("removedLauncherNamespaceRoot");
+    expect(macLifecycle).toContain("const launcher = resolveToolPackLauncherLayout(config)");
+    expect(macLifecycle).toContain("await rm(launcher.paths.namespaceRoot, { force: true, recursive: true })");
+    expect(macLifecycle).toContain("removedLauncherNamespaceRoot");
     expect(buildWin).toContain('Measure-Step "validate launcher payload artifact"');
     expect(buildWin).toContain('Measure-Step "validate launcher payload update fixture"');
     expect(buildWin).toContain('Test-JsonString $manifest.entry.executable "entry.executable" "payload/Open Design.exe"');

@@ -117,6 +117,7 @@ export type MacCleanupResult = {
   detachedMount: boolean;
   namespace: string;
   outputRoot: string;
+  removedLauncherNamespaceRoot: boolean;
   removedOutputRoot: boolean;
   removedRuntimeNamespaceRoot: boolean;
   runtimeNamespaceRoot: string;
