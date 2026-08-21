@@ -35,6 +35,7 @@ interface ModelItem {
 const DEMO_ASSET_BASE = '/pricing-e-final/assets';
 
 const popularModels: ModelItem[] = [
+  { name: 'DeepSeek V4 Flash Vision Exp', icon: '/agents/deepseek.svg' },
   { name: 'DeepSeek V4 Flash', icon: '/agents/deepseek.svg' },
   { name: 'GLM-5.2', icon: `${DEMO_ASSET_BASE}/zai-logo-official-Byn-xbrp.png`, iconClass: 'model-logo-zhipu' },
   { name: 'Kimi K2.7 Code', icon: '/model-icons/kimi.svg', iconClass: 'model-logo-kimi' },
@@ -71,13 +72,14 @@ const imageModels: ModelItem[] = [
 ];
 
 const unlimitedByTier: Record<TierId, Set<string>> = {
-  go: new Set(['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2']),
-  plus: new Set(['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code']),
+  go: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2']),
+  plus: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code']),
   // Pro's fifth slot is GLM-5.2, not MiniMax M2.7: every tier from Go up
   // carries GLM-5.2, and MiniMax M2.7 stays metered until Max. The two were
   // swapped here, so the page promised Pro subscribers unlimited MiniMax while
   // marking the GLM-5.2 they do get as metered.
   pro: new Set([
+    'DeepSeek V4 Flash Vision Exp',
     'DeepSeek V4 Flash',
     'DeepSeek V4 Pro',
     'GLM-5.2',
@@ -88,6 +90,7 @@ const unlimitedByTier: Record<TierId, Set<string>> = {
 };
 
 const popularModelDisplayOrder = [
+  'DeepSeek V4 Flash Vision Exp',
   'DeepSeek V4 Flash',
   'DeepSeek V4 Pro',
   'GLM-5.2',
@@ -242,6 +245,7 @@ const popularModel = (name: string) => popularModels.find((model) => model.name 
 const usageRows = [
   { ...popularModel('DeepSeek V4 Flash'), value: 13000 },
   { ...popularModel('MiMo V2.5 Pro'), value: 11000 },
+  { ...popularModel('DeepSeek V4 Flash Vision Exp'), value: 8000 },
   { ...popularModel('DeepSeek V4 Pro'), value: 4300 },
   { ...popularModel('MiniMax M2.7'), value: 2800 },
   { ...popularModel('Kimi K2.6'), value: 1000 },
@@ -270,7 +274,7 @@ const comparisonFlagship = [
 const categoryCopy: Record<ModelCategory, { title: string; count: string }> = {
   popular: {
     title: P.popularModels,
-    count: fillTemplate(P.modelCount, { count: '8' }),
+    count: fillTemplate(P.modelCount, { count: String(comparisonPopular.length) }),
   },
   flagship: {
     title: P.flagshipModels,

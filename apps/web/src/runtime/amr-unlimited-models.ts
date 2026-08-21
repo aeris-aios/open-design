@@ -18,6 +18,7 @@
  * pinned to this file by `e2e/tests/pricing-unlimited-models.test.ts`.
  */
 const GO_UNLIMITED_MODELS = [
+  'deepseek-v4-flash-vision-exp',
   'deepseek-v4-flash',
   'deepseek-v4-pro',
   'glm-5.2',
@@ -29,6 +30,7 @@ const PLUS_UNLIMITED_MODELS = [
 ] as const;
 
 const PRO_UNLIMITED_MODELS = [
+  'deepseek-v4-flash-vision-exp',
   'deepseek-v4-flash',
   'deepseek-v4-pro',
   'glm-5.2',
