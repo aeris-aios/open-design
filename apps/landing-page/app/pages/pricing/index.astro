@@ -53,9 +53,10 @@ const apiOrigin =
   'https://amr-api.open-design.ai';
 
 // Footer line with the cloud-console link injected into the localized
-// template. Brand/URL only — safe to render as HTML.
+// template. Brand/marker only — safe to render as HTML; the validated URL is
+// attached in the handoff script below.
 const footnoteHtml = fillTemplate(L.footnote, {
-  console: `<a class="inline-link" href="${CLOUD_CONSOLE_URL}">${L.consoleLabel}</a>`,
+  console: `<a class="inline-link" data-cloud-console-link>${L.consoleLabel}</a>`,
 });
 
 const faqs = getFaqs(locale);
@@ -572,6 +573,15 @@ const jsonLd = [
       const cloudConsoleDashboardUrl = cloudConsoleHandoffValid
         ? new URL('dashboard', cloudConsoleBase).toString()
         : null;
+      for (const consoleLink of root.querySelectorAll('[data-cloud-console-link]')) {
+        if (cloudConsoleDashboardUrl) {
+          consoleLink.setAttribute('href', cloudConsoleDashboardUrl);
+        } else {
+          consoleLink.setAttribute('aria-disabled', 'true');
+          consoleLink.setAttribute('tabindex', '-1');
+          consoleLink.removeAttribute('href');
+        }
+      }
       const billingPlanUrl = cloudConsoleDashboardUrl
         ? (() => {
             const target = new URL(cloudConsoleDashboardUrl);

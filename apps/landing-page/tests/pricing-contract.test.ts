@@ -728,6 +728,11 @@ describe("pricing contract", () => {
     assert.match(page, /inboundParams\.get\(cloudConsoleBaseParam\)/);
     assert.match(page, /data-cloud-console-handoff-error/);
     assert.match(page, /data-cloud-console-environment/);
+    assert.match(page, /data-cloud-console-link/);
+    assert.match(
+      page,
+      /consoleLink\.setAttribute\('href', cloudConsoleDashboardUrl\)/,
+    );
     assert.match(page, /cta\.setAttribute\('aria-disabled', 'true'\)/);
     assert.match(
       page,
