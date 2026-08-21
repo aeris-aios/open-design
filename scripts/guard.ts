@@ -184,6 +184,11 @@ const residualAllowedPathPrefixes = [
 ];
 
 const residualAllowedPathPatterns: RegExp[] = [
+  // Vite-generated browser entry for the isolated Pricing review route. The
+  // checked-in static build is served verbatim by the landing-page wrapper,
+  // so its content-hashed JavaScript filename cannot be converted to a
+  // project-owned TypeScript source file.
+  /^apps\/landing-page\/public\/pricing-e-final\/assets\/index-[A-Za-z0-9_-]+\.js$/,
   // Vendored upstream Zara template runtimes — one design template per template,
   // name prefix `html-ppt-zhangzara-` (zarazhangrui/beautiful-html-templates).
   // Only the vendored deck-stage runtime asset is allowlisted; any other
