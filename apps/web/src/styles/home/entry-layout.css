@@ -363,8 +363,39 @@
 .entry-nav-rail__footer .entry-rail-actions:empty {
   display: none;
 }
-.entry-nav-rail__footer:has(> .entry-rail-actions:empty) {
-  padding-bottom: 0;
+/* Community/contact links (Discord-or-Feishu / X / mail), the footer's last
+   row. They moved here out of the account menu so the rail's bottom strip
+   carries something instead of reading as a dead white band. */
+.entry-nav-rail__social {
+  order: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 18px);
+  margin: 0 auto;
+  padding: 2px 0 2px;
+}
+.entry-nav-rail__social-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  color: var(--text-soft);
+  text-decoration: none;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.entry-nav-rail__social-btn:hover {
+  background: var(--vibrancy-fill-secondary);
+  color: var(--text);
+}
+.entry-nav-rail__social-btn svg,
+.entry-nav-rail__social-btn .od-icon { color: inherit; }
+.entry-nav-rail__social-btn .entry-nav-rail__menu-x {
+  flex: 0 0 auto;
+  color: inherit;
 }
 .entry-nav-rail__footer .entry-nav-rail__account {
   order: 2;
