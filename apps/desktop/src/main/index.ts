@@ -779,6 +779,7 @@ export async function runDesktopMain(
     const update = await snapshotUpdateForStatus();
     if (activeDesktop == null) {
       return {
+        executablePath: process.execPath,
         pid: process.pid,
         state: "idle",
         updatedAt: new Date().toISOString(),
@@ -787,7 +788,7 @@ export async function runDesktopMain(
         ...update,
       };
     }
-    return { ...activeDesktop.status(), ...update };
+    return { executablePath: process.execPath, ...activeDesktop.status(), ...update };
   }
 
   async function shutdown(): Promise<void> {

@@ -159,6 +159,37 @@ describe("normalized sidecar client", () => {
     SidecarFactory.create(options);
     expect(Object.keys(options).sort()).toEqual(["handlers", "lifecycle"]);
   });
+
+  it("retries startup after a transient IPC bind failure", async () => {
+    installCurrentProcess(stamp);
+    const blocker = SidecarFactory.create({
+      lifecycle: {
+        async start() { return {}; },
+        status() { return {}; },
+        async stop() {},
+      },
+    });
+    await blocker.start();
+
+    const events: string[] = [];
+    const client = SidecarFactory.create({
+      lifecycle: {
+        async start() {
+          events.push("start");
+          return {};
+        },
+        status() { return {}; },
+        async stop() { events.push("stop"); },
+      },
+    });
+    await expect(client.start()).rejects.toThrow();
+    expect(events).toEqual(["start", "stop"]);
+
+    await blocker.stop();
+    await expect(client.start()).resolves.toBeUndefined();
+    expect(events).toEqual(["start", "stop", "start"]);
+    await client.stop();
+  });
 });
 
 describe("server-side atomic operations", () => {
