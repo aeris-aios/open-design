@@ -173,6 +173,8 @@ describe("pricing contract", () => {
 
   it("matches the demo's individual taglines and compact billing copy", async () => {
     const content = getPricingContent("en");
+    const zhContent = getPricingContent("zh");
+    const zhTwContent = getPricingContent("zh-tw");
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
 
     assert.deepEqual(
@@ -189,6 +191,17 @@ describe("pricing contract", () => {
         "High-volume creation · Consistent output",
       ],
     );
+    for (const localizedContent of [zhContent, zhTwContent]) {
+      assert.deepEqual(
+        [
+          localizedContent.go.tagline,
+          localizedContent.plans.plus.tagline,
+          localizedContent.plans.pro.tagline,
+          localizedContent.plans.max.tagline,
+        ].some((tagline) => tagline.includes("零配置即用")),
+        false,
+      );
+    }
     assert.equal(content.labels.monthlyRenewal, "First-month price");
     assert.equal(content.labels.yearlySubline, "Billed {totalUsd}/year");
     assert.deepEqual(
@@ -421,28 +434,27 @@ describe("pricing contract", () => {
 
   it("uses the reviewed popular-model order and keeps ample access check-only", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
-    const comparisonBlock = individualPlans.match(
-      /const comparisonPopular = \[([\s\S]*?)\]\.map/,
+    const displayOrderBlock = individualPlans.match(
+      /const popularModelDisplayOrder = \[([\s\S]*?)\];/,
     )?.[1];
 
-    assert.ok(comparisonBlock);
+    assert.ok(displayOrderBlock);
     const reviewedOrder = [
       "DeepSeek V4 Flash",
       "DeepSeek V4 Pro",
       "GLM-5.2",
       "Kimi K2.7 Code",
+      "MiMo V2.5 Pro",
       "MiniMax M2.7",
       "Kimi K2.6",
-      "MiMo V2.5 Pro",
       "GLM-5.1",
     ];
     assert.deepEqual(
-      Array.from(comparisonBlock.matchAll(/'([^']+)'/g), (match) => match[1]),
+      Array.from(displayOrderBlock.matchAll(/'([^']+)'/g), (match) => match[1]),
       reviewedOrder,
     );
-    assert.match(individualPlans, /go:\s*\[[\s\S]*?'GLM-5\.1',\s*\],\s*plus:/);
-    assert.match(individualPlans, /plus:\s*\['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5\.2', 'Kimi K2\.7 Code'\]/);
-    assert.match(individualPlans, /pro:\s*\[[\s\S]*?'MiniMax M2\.7',\s*\],\s*max:/);
+    assert.match(individualPlans, /const comparisonPopular = orderedPopularModels\(\);/);
+    assert.match(individualPlans, /const popular = orderedPopularModels\(\);/);
     assert.match(
       individualPlans,
       /status\.kind === 'more-ample'\s*\?\s*\(\s*<td><span class=\{`model-access-status \$\{status\.kind\}`\} aria-label=\{status\.text\}><i class="status-icon check"><\/i><\/span><\/td>/s,

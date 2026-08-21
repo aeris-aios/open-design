@@ -832,14 +832,14 @@ const ZH_CN: PricingContent = {
     features: ['BYOK 自带密钥，支持本地 Coding Agent', '社区支持'],
   },
   go: {
-    tagline: '轻量需求，轻松交付 · 零配置即用',
+    tagline: '轻量需求，轻松交付',
     ctaLabel: '订阅 Go',
     allowance: '8 个热门模型 · 充裕额度',
     features: ['完整设计与 Coding 能力', '无需配置供应商 API Key', '额度自动恢复'],
   },
   plans: {
     plus: {
-      tagline: '独立项目、零散需求，单人交付 · 零配置即用',
+      tagline: '独立项目、零散需求，单人交付',
       ctaLabel: '升级 Plus',
       concurrency: '2 个任务并发',
       features: [
@@ -850,7 +850,7 @@ const ZH_CN: PricingContent = {
       ],
     },
     pro: {
-      tagline: '一个人产出整个设计团队的活 · 零配置即用',
+      tagline: '一个人产出整个设计团队的活',
       ctaLabel: '升级 Pro',
       concurrency: '5 个任务并发',
       features: [
@@ -861,7 +861,7 @@ const ZH_CN: PricingContent = {
       ],
     },
     max: {
-      tagline: '把外包设计费砸到零头 · 零配置即用',
+      tagline: '把外包设计费砸到零头',
       ctaLabel: '升级 Max',
       concurrency: '10 个任务并发',
       features: [
@@ -913,14 +913,14 @@ const ZH_TW: PricingContent = {
     features: ['BYOK 自帶密鑰，支援本機 Coding Agent', '社群支援'],
   },
   go: {
-    tagline: '輕量需求，輕鬆交付 · 零配置即用',
+    tagline: '輕量需求，輕鬆交付',
     ctaLabel: '訂閱 Go',
     allowance: '8 個熱門模型 · 充裕額度',
     features: ['完整設計與 Coding 能力', '無需配置供應商 API Key', '額度自動恢復'],
   },
   plans: {
     plus: {
-      tagline: '獨立專案、零散需求，單人交付 · 零配置即用',
+      tagline: '獨立專案、零散需求，單人交付',
       ctaLabel: '升級 Plus',
       concurrency: '2 個任務並行',
       features: [
@@ -931,7 +931,7 @@ const ZH_TW: PricingContent = {
       ],
     },
     pro: {
-      tagline: '一個人產出整個設計團隊的活 · 零配置即用',
+      tagline: '一個人產出整個設計團隊的活',
       ctaLabel: '升級 Pro',
       concurrency: '5 個任務並行',
       features: [
@@ -942,7 +942,7 @@ const ZH_TW: PricingContent = {
       ],
     },
     max: {
-      tagline: '把外包設計費砍到零頭 · 零配置即用',
+      tagline: '把外包設計費砍到零頭',
       ctaLabel: '升級 Max',
       concurrency: '10 個任務並行',
       features: [

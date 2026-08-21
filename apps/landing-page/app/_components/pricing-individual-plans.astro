@@ -88,44 +88,19 @@ const unlimitedByTier: Record<TierId, Set<string>> = {
   max: new Set(popularModels.map((model) => model.name)),
 };
 
-const popularOrderByTier: Record<TierId, string[]> = {
-  go: [
-    'DeepSeek V4 Flash',
-    'DeepSeek V4 Pro',
-    'GLM-5.2',
-    'Kimi K2.7 Code',
-    'MiniMax M2.7',
-    'Kimi K2.6',
-    'MiMo V2.5 Pro',
-    'GLM-5.1',
-  ],
-  plus: ['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code'],
-  pro: [
-    'DeepSeek V4 Flash',
-    'DeepSeek V4 Pro',
-    'GLM-5.2',
-    'Kimi K2.7 Code',
-    'MiniMax M2.7',
-  ],
-  max: [
-    'DeepSeek V4 Flash',
-    'DeepSeek V4 Pro',
-    'GLM-5.2',
-    'Kimi K2.7 Code',
-    'MiniMax M2.7',
-    'Kimi K2.6',
-    'MiMo V2.5 Pro',
-    'GLM-5.1',
-  ],
-};
+const popularModelDisplayOrder = [
+  'DeepSeek V4 Flash',
+  'DeepSeek V4 Pro',
+  'GLM-5.2',
+  'Kimi K2.7 Code',
+  'MiMo V2.5 Pro',
+  'MiniMax M2.7',
+  'Kimi K2.6',
+  'GLM-5.1',
+];
 
-const popularOrderForTier = (tier: TierId) => {
-  const lead = popularOrderByTier[tier];
-  return [
-    ...lead.map((name) => popularModels.find((model) => model.name === name)!),
-    ...popularModels.filter((model) => !lead.includes(model.name)),
-  ];
-};
+const orderedPopularModels = () =>
+  popularModelDisplayOrder.map((name) => popularModels.find((model) => model.name === name)!);
 
 const renderCatalogLabel = (label: string) => fillTemplate(label, {
   skillsCount,
@@ -274,16 +249,7 @@ const usageRows = [
   { ...popularModel('GLM-5.1'), value: 670 },
 ];
 
-const comparisonPopular = [
-  'DeepSeek V4 Flash',
-  'DeepSeek V4 Pro',
-  'GLM-5.2',
-  'Kimi K2.7 Code',
-  'MiniMax M2.7',
-  'Kimi K2.6',
-  'MiMo V2.5 Pro',
-  'GLM-5.1',
-].map((name) => popularModels.find((model) => model.name === name)!);
+const comparisonPopular = orderedPopularModels();
 
 const comparisonFlagship = [
   'Kimi-K3',
@@ -357,7 +323,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   <div class="benefits-summary-stage">
     <div class="four-tier-grid decision-grid">
       {cardData.map(({ tier, logo, view }) => {
-        const popular = popularOrderForTier(tier);
+        const popular = orderedPopularModels();
         const flagship = tier === 'plus' ? plusFlagshipModels : flagshipModels;
         const imageResolution = tier === 'plus' ? '1K' : tier === 'pro' ? '2K' : '4K';
         const bonusPct = tier === 'go' ? null : CREDIT_BONUS_PCT[tier];
