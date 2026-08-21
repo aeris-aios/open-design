@@ -431,7 +431,8 @@ describe("pricing contract", () => {
       proUnlimitedBlock.matchAll(/'([^']+)'/g),
       (match) => match[1],
     );
-    assert.equal(proUnlimitedModels.length, 5);
+    assert.equal(proUnlimitedModels.length, 6);
+    assert.ok(proUnlimitedModels.includes("DeepSeek V4 Flash Vision Exp"));
     assert.ok(proUnlimitedModels.includes("GLM-5.2"));
     assert.equal(proUnlimitedModels.includes("MiniMax M2.7"), false);
   });
@@ -444,6 +445,7 @@ describe("pricing contract", () => {
 
     assert.ok(displayOrderBlock);
     const reviewedOrder = [
+      "DeepSeek V4 Flash Vision Exp",
       "DeepSeek V4 Flash",
       "DeepSeek V4 Pro",
       "GLM-5.2",
@@ -475,6 +477,15 @@ describe("pricing contract", () => {
     assert.match(
       individualPlans,
       /\.model-access-status\s*\{[^}]*grid-template-columns:\s*23px max-content;[^}]*width:\s*104px;[^}]*margin:\s*0 auto;/s,
+    );
+  });
+
+  it("keeps the confirmed vision-model usage estimate in descending order", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.match(
+      individualPlans,
+      /popularModel\('MiMo V2\.5 Pro'\), value: 11000[\s\S]*popularModel\('DeepSeek V4 Flash Vision Exp'\), value: 8000[\s\S]*popularModel\('DeepSeek V4 Pro'\), value: 4300/,
     );
   });
 
