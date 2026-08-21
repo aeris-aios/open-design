@@ -247,7 +247,7 @@ describe("pricing contract", () => {
     );
     assert.match(
       individualPlans,
-      /\.new-plan-ribbon\s*\{[^}]*background:\s*#d8ffb5;/s,
+      /\.new-plan-ribbon\s*\{[^}]*background:\s*var\(--pricing-accent\);/s,
     );
     assert.match(
       individualPlans,
@@ -465,7 +465,7 @@ describe("pricing contract", () => {
     );
   });
 
-  it("matches the legal footnote size to the model allowance note", async () => {
+  it("makes only the English legal footnote 2pt larger than the model allowance note", async () => {
     const [page, individualPlans] = await Promise.all([
       readFile(PRICING_PAGE_PATH, "utf8"),
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
@@ -473,6 +473,11 @@ describe("pricing contract", () => {
 
     assert.match(individualPlans, /\.individual-usage-note p\s*\{[^}]*font-size:\s*10\.5px;/s);
     assert.match(page, /\.pr-foot\s*\{[^}]*font-size:\s*10\.5px;/s);
+    assert.match(page, /data-pricing-locale=\{locale\}/);
+    assert.match(
+      page,
+      /\.pr-page\[data-pricing-locale='en'\] \.pr-foot\s*\{[^}]*font-size:\s*calc\(10\.5px \+ 2pt\);/s,
+    );
   });
 
   it("renders paid flagship headings as one localized phrase", async () => {

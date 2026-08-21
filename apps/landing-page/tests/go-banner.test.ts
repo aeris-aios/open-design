@@ -45,6 +45,7 @@ test('homepage mounts Go ahead of the existing paid-user DeepSeek banner', () =>
   assert.match(home, /import GoBanner from ['"]\.\.\/_components\/go-banner\.astro['"]/);
   assert.match(home, /<GoBanner locale=\{locale\} \/>[\s\S]*data-home-campaign-banner/);
   assert.match(banner, /html\.go-banner-active \.home-campaign-banner/);
+  assert.match(banner, /\.go-banner\s*\{[^}]*background:\s*#d8ffb5;/s);
 });
 
 test('Go banner keeps its sticky height in flow without double-offsetting the mobile hero', () => {

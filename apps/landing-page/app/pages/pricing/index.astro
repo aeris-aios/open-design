@@ -181,6 +181,7 @@ const jsonLd = [
   <article
     class="info-page pr-page"
     data-pricing-root
+    data-pricing-locale={locale}
     data-audience="creator"
     data-interval="yearly"
     data-billing-api-origin={apiOrigin}
@@ -1335,6 +1336,9 @@ const jsonLd = [
     font-size: 10.5px;
     line-height: 1.6;
     color: var(--ink-soft, #666);
+  }
+  .pr-page[data-pricing-locale='en'] .pr-foot {
+    font-size: calc(10.5px + 2pt);
   }
 
   /* ---- Team / Enterprise plans ---- */
