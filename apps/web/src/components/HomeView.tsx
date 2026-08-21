@@ -368,6 +368,13 @@ interface HomeComposerChipDraft {
   pluginId: string;
   projectKind: ProjectKind | null;
   prototypeSubtypeId?: string | null;
+  // How the pick was made, not just what was picked. Without these two the
+  // restore below rebuilds every pick as a bare type-chip binding, which
+  // silently drops an official example's `exampleReference` and turns its
+  // dismiss (×) into a full composer reset. Provenance is part of the pick's
+  // identity, so it is persisted with it.
+  explicitPick?: boolean;
+  examplePick?: boolean;
 }
 // `EntryShell` keeps `HomeView` permanently mounted and toggles it with CSS
 // visibility instead of unmounting it on every Home/Community/... view
@@ -446,6 +453,10 @@ function readHomeComposerChipDraft(): HomeComposerChipDraft | null {
       pluginId: parsed.pluginId,
       projectKind: typeof parsed.projectKind === 'string' ? (parsed.projectKind as ProjectKind) : null,
       prototypeSubtypeId: parsedPrototypeSubtype?.slug ?? legacyPrototypeSubtype?.slug ?? null,
+      // Drafts written before provenance was persisted carry neither flag;
+      // they restore as the plain type-chip binding they always did.
+      explicitPick: parsed.explicitPick === true,
+      examplePick: parsed.examplePick === true,
     };
   } catch {
     return null;
@@ -736,6 +747,8 @@ export function HomeView({
             ...(active.prototypeSubtypeId
               ? { prototypeSubtypeId: active.prototypeSubtypeId }
               : {}),
+            ...(active.explicitPick ? { explicitPick: true } : {}),
+            ...(active.examplePick ? { examplePick: true } : {}),
           }
         : null,
     );
@@ -1636,6 +1649,11 @@ export function HomeView({
       replaceWithoutConfirmation?: boolean;
       suppressPromptUpdate?: boolean;
       deferApply?: boolean;
+      // Forwarded verbatim to `usePlugin` — see its option docs. The restore
+      // path needs them so a re-resolved pick keeps the provenance it was
+      // made with.
+      explicitPick?: boolean;
+      examplePick?: boolean;
     },
   ) {
     const inputFields = options?.inputFields ?? record.manifest?.od?.inputs ?? [];
@@ -1873,6 +1891,12 @@ export function HomeView({
       replaceWithoutConfirmation: true,
       suppressPromptUpdate: true,
       deferApply: true,
+      // A restored pick is the SAME pick: an official example card still hands
+      // its identity to the automatic route (`exampleReference`) and a
+      // Community pick still pins its plugin. Rebuilding it as a bare type-chip
+      // binding would quietly change what the next Send does.
+      explicitPick: restore.explicitPick === true,
+      examplePick: restore.examplePick === true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChipRestore, pluginsLoading, plugins, active, pendingPluginUseHandoff]);
@@ -2233,11 +2257,28 @@ export function HomeView({
     }
   }
 
+  /**
+   * Dismiss the active pick (the × on the composer's plugin pill).
+   *
+   * INVARIANT: dismissing a picked skill/example returns the composer to its
+   * TASK TYPE. It drops the pick, never the session — the task type stays
+   * selected with its scene, its scenario binding, and the automatic OD Next
+   * route that task type owns, and the user's draft is left exactly as typed.
+   * Dropping a look the user no longer wants must never cost them the route.
+   *
+   * The fallback is therefore keyed on `active.chipId` — the task type there is
+   * to return to — and NOT on `explicitPick`. `explicitPick` records how the
+   * pick was made; it is reconstructed state that a round trip through the
+   * persisted composer draft can degrade, and a product route may not depend on
+   * that. Only a pick that never named a task type (a Community / plugins-page
+   * hand-off) has nothing to fall back to, and only that case resets the
+   * composer — including the plugin-seeded prompt that came with it.
+   */
   function clearActivePlugin() {
-    if (active?.explicitPick && active.chipId) {
-      // Dropping the explicit pick falls back to the task type the user chose,
-      // with its scene still selected — the scene refines that chip's action,
-      // it never stands in for a different one.
+    if (active?.chipId) {
+      // Dropping the pick falls back to the task type the user chose, with its
+      // scene still selected — the scene refines that chip's action, it never
+      // stands in for a different one.
       const chip = findChip(active.chipId);
       const prototypeSubtype = chip?.id === 'prototype'
         ? prototypeSubChipForSlug(active.prototypeSubtypeId)

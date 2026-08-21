@@ -923,6 +923,11 @@ describe('HomeView prompt handoff', () => {
       chipId: 'prototype',
       pluginId: 'example-web-prototype',
       projectKind: 'prototype',
+      // A "Use" hand-off is an explicit pick, and the draft is the only thing
+      // that survives a Home unmount — so it carries HOW the pick was made,
+      // not just what was picked. Restoring it as a bare type-chip binding
+      // would un-pin the plugin this hand-off exists to pin.
+      explicitPick: true,
     });
   });
 
