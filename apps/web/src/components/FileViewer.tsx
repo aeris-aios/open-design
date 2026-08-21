@@ -124,6 +124,7 @@ import {
   liveArtifactPreviewUrl,
   projectFileUrl,
   projectRawUrl,
+  renewProjectPreviewBaseScope,
   publishProjectFilePublic,
   unpublishProjectFilePublic,
   LiveArtifactRefreshError,
@@ -136,6 +137,7 @@ import {
   type WebDeployProjectFileResponse,
   type WebDeployProviderId,
   type WebUpdateDeployConfigRequest,
+  type ProjectPreviewBaseScope,
   writeProjectTextFile,
   writeProjectTextFileDetailed,
 } from '../providers/registry';
@@ -642,6 +644,8 @@ const SRC_DOC_ACTIVATION_RECOVERY_TIMEOUT_MS = 1500;
 const SRC_DOC_READY_PROBE_TIMEOUT_MS = 1500;
 const SRC_DOC_PARSING_RECHECK_MS = 1500;
 const SRC_DOC_PARSING_COMPLETION_TIMEOUT_MS = 10_000;
+const PREVIEW_SCOPE_RENEW_MARGIN_MS = 5 * 60 * 1000;
+const PREVIEW_SCOPE_RETRY_MS = 15 * 1000;
 const SRC_DOC_PREVIEW_FRAME_NAME_PREFIX = 'od-artifact-preview-srcdoc-';
 const SRC_DOC_PREVIEW_FAILURE_FRESHNESS_MS = 10_000;
 const MAX_CACHED_SRC_DOC_TRANSPORTS = 128;
@@ -7800,12 +7804,28 @@ function HtmlViewer({
   );
   const [scopedSrcDocPreviewBase, setScopedSrcDocPreviewBase] = useState<{
     identity: string;
-    href: string;
+    scope: ProjectPreviewBaseScope;
+  } | null>(null);
+  const activeSrcDocPreviewBaseRef = useRef<{
+    identity: string;
+    scope: ProjectPreviewBaseScope;
   } | null>(null);
   const effectiveScopedSrcDocPreviewBase =
     scopedSrcDocPreviewBase?.identity === srcDocPreviewBaseIdentity
-      ? scopedSrcDocPreviewBase.href
+      ? scopedSrcDocPreviewBase.scope
       : null;
+  const [auxiliarySrcDocPreviewBase, setAuxiliarySrcDocPreviewBase] = useState<{
+    identity: string;
+    href: string;
+  } | null>(null);
+  const [urlLoadedPreviewBase, setUrlLoadedPreviewBase] = useState<{
+    identity: string;
+    scope: ProjectPreviewBaseScope;
+  } | null>(null);
+  const urlLoadedPreviewBaseRef = useRef<{
+    identity: string;
+    scope: ProjectPreviewBaseScope;
+  } | null>(null);
   const [serverPoweredPreviewRequired, setServerPoweredPreviewRequired] = useState(false);
   const [previewAssetWarning, setPreviewAssetWarning] = useState<PreviewAssetWarning | null>(null);
   const [inlinedSource, setInlinedSource] = useState<string | null>(null);
@@ -8329,6 +8349,7 @@ function HtmlViewer({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const urlPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const srcDocPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const viewerRootRef = useRef<HTMLDivElement | null>(null);
   const srcDocNavigationCommittedRef = useRef<{
     frame: HTMLIFrameElement;
     generation: string;
@@ -10061,9 +10082,12 @@ function HtmlViewer({
     ) return;
     let cancelled = false;
     const identity = srcDocPreviewBaseIdentity;
-    void fetchProjectPreviewBaseHref(projectId, file.name).then((href) => {
-      if (cancelled || !href) return;
-      setScopedSrcDocPreviewBase({ identity, href });
+    void fetchProjectPreviewBaseHref(projectId, file.name).then((scope) => {
+      if (cancelled || !scope) return;
+      const next = { identity, scope };
+      activeSrcDocPreviewBaseRef.current = next;
+      setScopedSrcDocPreviewBase(next);
+      setAuxiliarySrcDocPreviewBase({ identity, href: scope.href });
     });
     return () => {
       cancelled = true;
@@ -10078,6 +10102,140 @@ function HtmlViewer({
     useUrlLoadPreview,
     workspaceActive,
     workspaceContext,
+  ]);
+  const urlPreviewBaseIdentity = `url\0${srcDocPreviewBaseIdentity}`;
+  const effectiveUrlLoadedPreviewBase =
+    urlLoadedPreviewBase?.identity === urlPreviewBaseIdentity
+      ? urlLoadedPreviewBase.scope
+      : null;
+  useEffect(() => {
+    if (!workspaceActive) return;
+    const frame = urlPreviewIframeRef.current;
+    function onMessage(ev: MessageEvent) {
+      if (ev.source !== frame?.contentWindow) return;
+      const data = ev.data as {
+        type?: unknown;
+        href?: unknown;
+        expiresAt?: unknown;
+      } | null;
+      if (
+        data?.type !== 'od:preview-base-scope'
+        || typeof data.href !== 'string'
+        || typeof data.expiresAt !== 'number'
+        || !Number.isFinite(data.expiresAt)
+      ) return;
+      let matchesProject = false;
+      try {
+        const parsed = new URL(data.href, window.location.href);
+        matchesProject = parsed.pathname.startsWith(
+          `/api/projects/${encodeURIComponent(projectId)}/preview/`,
+        );
+      } catch { /* invalid preview base */ }
+      if (!matchesProject) return;
+      const next = {
+        identity: urlPreviewBaseIdentity,
+        scope: { href: data.href, expiresAt: data.expiresAt },
+      };
+      urlLoadedPreviewBaseRef.current = next;
+      setUrlLoadedPreviewBase(next);
+    }
+    window.addEventListener('message', onMessage);
+    frame?.contentWindow?.postMessage({ type: 'od:preview-base-scope-probe' }, '*');
+    return () => window.removeEventListener('message', onMessage);
+  }, [projectId, urlPreviewBaseIdentity, workspaceActive]);
+  const postPreviewBaseUpdate = useCallback((href: string) => {
+    const requestId = `preview-base-${Date.now()}`;
+    const message = { type: 'od:preview-base-update', requestId, href };
+    const frames = viewerRootRef.current?.querySelectorAll('iframe') ?? [];
+    for (const frame of frames) frame.contentWindow?.postMessage(message, '*');
+    const presenter = presenterWindowRef.current;
+    if (presenter && !presenter.closed) {
+      try {
+        for (const frame of presenter.document.querySelectorAll('iframe')) {
+          frame.contentWindow?.postMessage(message, '*');
+        }
+      } catch { /* presenter may already be closing */ }
+    }
+  }, []);
+  useEffect(() => {
+    let renewableScope: ProjectPreviewBaseScope | null = null;
+    if (useUrlLoadPreview) {
+      renewableScope = effectiveUrlLoadedPreviewBase;
+    } else if (authoredSrcDocBase === false) {
+      renewableScope = effectiveScopedSrcDocPreviewBase;
+    }
+    if (
+      !workspaceActive
+      || mode !== 'preview'
+      || !renewableScope
+      || projectResourceReadBlocked
+    ) return;
+    const identity = useUrlLoadPreview
+      ? urlPreviewBaseIdentity
+      : srcDocPreviewBaseIdentity;
+    let cancelled = false;
+    let timeout: number | null = null;
+
+    const schedule = (scope: ProjectPreviewBaseScope, retry = false) => {
+      if (cancelled) return;
+      const delay = retry
+        ? PREVIEW_SCOPE_RETRY_MS
+        : Math.max(0, scope.expiresAt - Date.now() - PREVIEW_SCOPE_RENEW_MARGIN_MS);
+      timeout = window.setTimeout(() => void refresh(scope), delay);
+    };
+    const refresh = async (scope: ProjectPreviewBaseScope) => {
+      const renewedExpiresAt = await renewProjectPreviewBaseScope(projectId, scope.href);
+      if (cancelled) return;
+      if (renewedExpiresAt !== null) {
+        const renewed = { href: scope.href, expiresAt: renewedExpiresAt };
+        if (useUrlLoadPreview) {
+          urlLoadedPreviewBaseRef.current = { identity, scope: renewed };
+        } else {
+          activeSrcDocPreviewBaseRef.current = { identity, scope: renewed };
+        }
+        schedule(renewed);
+        return;
+      }
+
+      // A daemon restart or a suspended browser can invalidate the in-memory
+      // capability. Replace only the live <base>; do not navigate the iframe.
+      const replacement = await fetchProjectPreviewBaseHref(projectId, file.name);
+      if (cancelled) return;
+      if (!replacement) {
+        schedule(scope, true);
+        return;
+      }
+      if (useUrlLoadPreview) {
+        urlLoadedPreviewBaseRef.current = { identity, scope: replacement };
+      } else {
+        activeSrcDocPreviewBaseRef.current = { identity, scope: replacement };
+        setAuxiliarySrcDocPreviewBase({ identity, href: replacement.href });
+      }
+      postPreviewBaseUpdate(replacement.href);
+      schedule(replacement);
+    };
+
+    const active = useUrlLoadPreview
+      ? urlLoadedPreviewBaseRef.current
+      : activeSrcDocPreviewBaseRef.current;
+    schedule(active?.identity === identity ? active.scope : renewableScope);
+    return () => {
+      cancelled = true;
+      if (timeout !== null) window.clearTimeout(timeout);
+    };
+  }, [
+    authoredSrcDocBase,
+    effectiveScopedSrcDocPreviewBase,
+    effectiveUrlLoadedPreviewBase,
+    file.name,
+    mode,
+    postPreviewBaseUpdate,
+    projectId,
+    projectResourceReadBlocked,
+    srcDocPreviewBaseIdentity,
+    useUrlLoadPreview,
+    urlPreviewBaseIdentity,
+    workspaceActive,
   ]);
   const basePreviewSrcUrl = useMemo(
     () => appendResourceQuery(
@@ -10412,8 +10570,35 @@ function HtmlViewer({
     workspaceContext,
   ]);
 
-  const srcDocBaseHref = effectiveScopedSrcDocPreviewBase
+  const srcDocBaseSeedHref = effectiveScopedSrcDocPreviewBase?.href
     ?? projectRawUrl(projectId, baseDirFor(file.name), workspaceContext);
+  const srcDocBaseSelectionIdentity = [
+    srcDocPreviewBaseIdentity,
+    sourceSnapshotRefreshKey,
+    reloadKey,
+    transportPreviewMeasurementDocumentEpoch,
+    effectiveDeck ? 'deck' : 'html',
+    previewSource === null ? 'pending' : previewSourceFingerprint(previewSource),
+    srcDocBaseSeedHref,
+  ].join('\0');
+  const srcDocBaseSelectionRef = useRef({ identity: '', href: srcDocBaseSeedHref });
+  if (srcDocBaseSelectionRef.current.identity !== srcDocBaseSelectionIdentity) {
+    const active = activeSrcDocPreviewBaseRef.current;
+    srcDocBaseSelectionRef.current = {
+      identity: srcDocBaseSelectionIdentity,
+      href: active?.identity === srcDocPreviewBaseIdentity
+        ? active.scope.href
+        : srcDocBaseSeedHref,
+    };
+  }
+  // A replacement capability updates the already-running document through
+  // postMessage. Pinning this build-time value prevents unrelated React
+  // renders (slide state, toolbar state, comments) from changing srcdoc.
+  const srcDocBaseHref = srcDocBaseSelectionRef.current.href;
+  const latestSrcDocPreviewBaseHref =
+    auxiliarySrcDocPreviewBase?.identity === srcDocPreviewBaseIdentity
+      ? auxiliarySrcDocPreviewBase.href
+      : srcDocBaseHref;
   const srcDocTransportIdentity = [
     srcDocPreviewBaseIdentity,
     transportSourceSnapshotRefreshKey,
@@ -10645,7 +10830,7 @@ function HtmlViewer({
   const presentationSrcDoc = useMemo(
     () => (deckVisualSource && inTabPresent ? buildSrcdoc(deckVisualSource, {
       deck: effectiveDeck,
-      baseHref: srcDocBaseHref,
+      baseHref: latestSrcDocPreviewBaseHref,
       initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
       hideDeckChrome: effectiveDeck,
       deckClickNavigation: effectiveDeck,
@@ -10658,7 +10843,7 @@ function HtmlViewer({
       projectId,
       file.name,
       previewStateKey,
-      srcDocBaseHref,
+      latestSrcDocPreviewBaseHref,
     ],
   );
   // Per-slide thumbnail documents are built lazily by DeckThumbnailRail, one
@@ -10670,13 +10855,13 @@ function HtmlViewer({
   const buildDeckThumbnailSrcDoc = useCallback(
     (index: number) => buildSrcdoc(deckVisualSource ?? '', {
       deck: true,
-      baseHref: srcDocBaseHref,
+      baseHref: latestSrcDocPreviewBaseHref,
       initialSlideIndex: index,
       hideDeckChrome: true,
       previewFocusGuard: true,
       freezeMotion: true,
     }),
-    [deckVisualSource, srcDocBaseHref],
+    [deckVisualSource, latestSrcDocPreviewBaseHref],
   );
   // Parse the deck once per source into per-slide shadow-root render data. When
   // renderable, DeckThumbnailRail mounts a single cloned slide per thumbnail
@@ -10688,10 +10873,10 @@ function HtmlViewer({
     if (!effectiveDeck || !deckVisualSource) return null;
     const parsed = parseDeckThumbnails(
       deckVisualSource,
-      srcDocBaseHref,
+      latestSrcDocPreviewBaseHref,
     );
     return parsed.renderable ? parsed : null;
-  }, [effectiveDeck, deckVisualSource, srcDocBaseHref]);
+  }, [effectiveDeck, deckVisualSource, latestSrcDocPreviewBaseHref]);
   // Stable thunk so HtmlViewer's frequent re-renders (slide state, streaming
   // edits) never invalidate the memoized rail; the ref always calls the
   // freshest goToSlide closure.
@@ -13015,7 +13200,7 @@ function HtmlViewer({
     const count = Math.max(deckSlideCount, speakerNotes.length, 1);
     const presenterPreviewHtmlBySlide = Array.from({ length: count }, (_, index) => buildSrcdoc(deckVisualSource, {
       deck: true,
-      baseHref: srcDocBaseHref,
+      baseHref: latestSrcDocPreviewBaseHref,
       initialSlideIndex: index,
       hideDeckChrome: true,
       previewFocusGuard: true,
@@ -13435,7 +13620,7 @@ function HtmlViewer({
     if (!source) return;
     openSandboxedPreviewInNewTab(source, exportTitle, {
       deck: effectiveDeck,
-      baseHref: srcDocBaseHref,
+      baseHref: latestSrcDocPreviewBaseHref,
       initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
       hideDeckChrome: effectiveDeck,
       deckClickNavigation: effectiveDeck,
@@ -15513,7 +15698,7 @@ function HtmlViewer({
   ) : null;
 
   return (
-    <div className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
+    <div ref={viewerRootRef} className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
       <div className="viewer-toolbar" style={workspaceActive ? undefined : { visibility: 'hidden' }}>
         <div className="viewer-toolbar-left">
           {showDeckThumbnailRail ? (

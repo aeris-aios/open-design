@@ -22,7 +22,10 @@ import {
   DECK_STRUCTURED_SLIDE_SELECTOR,
   injectDeckStageFallback,
 } from '@open-design/contracts/runtime/deck-stage-fallback';
-import { buildPreviewObservabilityBridge } from '@open-design/contracts/runtime/preview-observability';
+import {
+  buildPreviewBaseHrefBridge,
+  buildPreviewObservabilityBridge,
+} from '@open-design/contracts/runtime/preview-observability';
 
 import {
   buildManualEditBridge,
@@ -399,11 +402,14 @@ export function buildSrcdoc(
   const withOdIds = annotateMissingOdIds(withSafeTitle);
   const withSourcePaths = options.editBridge ? annotateManualEditSourcePaths(withOdIds) : withOdIds;
   const withBase = options.baseHref ? injectBaseHref(withSourcePaths, options.baseHref) : withSourcePaths;
-  const withDeferredFonts = options.deferFontStylesheets
-    ? deferTrustedFontStylesheets(withBase)
+  const withPreviewBaseBridge = options.baseHref
+    ? injectPreviewBaseHrefBridge(withBase)
     : withBase;
+  const withDeferredFonts = options.deferFontStylesheets
+    ? deferTrustedFontStylesheets(withPreviewBaseBridge)
+    : withPreviewBaseBridge;
   const withShim = injectSandboxShim(withDeferredFonts);
-  const blockLoadTimeScriptRedirect = htmlHasLoadTimeLocationNavigation(withBase);
+  const blockLoadTimeScriptRedirect = htmlHasLoadTimeLocationNavigation(withPreviewBaseBridge);
   // Always on: a redirect loop can freeze ANY previewed artifact, and the guard
   // is inert on documents that never self-redirect. Injected right after the
   // sandbox shim so it is installed before any author script or meta refresh.
@@ -1419,7 +1425,7 @@ export function htmlHasAuthoredBase(doc: string): boolean {
 function injectBaseHref(doc: string, baseHref: string): string {
   if (htmlHasAuthoredBase(doc)) return doc;
   const safeHref = escapeAttr(baseHref);
-  const tag = `<base href="${safeHref}">`;
+  const tag = `<base href="${safeHref}" data-od-project-preview-base>`;
   if (/<head[^>]*>/i.test(doc)) {
     return doc.replace(/<head[^>]*>/i, (m) => `${m}${tag}`);
   }
@@ -1427,6 +1433,10 @@ function injectBaseHref(doc: string, baseHref: string): string {
     return doc.replace(/<html[^>]*>/i, (m) => `${m}<head>${tag}</head>`);
   }
   return tag + doc;
+}
+
+function injectPreviewBaseHrefBridge(doc: string): string {
+  return injectAfterHeadOpen(doc, buildPreviewBaseHrefBridge());
 }
 
 function escapeAttr(value: string): string {

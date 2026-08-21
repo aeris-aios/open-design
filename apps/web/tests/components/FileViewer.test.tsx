@@ -7995,7 +7995,7 @@ describe('FileViewer tweaks toolbar', () => {
       const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
       expect(activeFrame.srcdoc).toContain(
-        '<base href="/api/projects/project-1/preview/scope-1/">',
+        '<base href="http://localhost:3000/api/projects/project-1/preview/scope-1/" data-od-project-preview-base>',
       );
       return activeFrame;
     });
@@ -8021,7 +8021,7 @@ describe('FileViewer tweaks toolbar', () => {
       const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
       expect(activeFrame.srcdoc).toContain(
-        '<base href="/api/projects/project-1/preview/scope-1/">',
+        '<base href="http://localhost:3000/api/projects/project-1/preview/scope-1/" data-od-project-preview-base>',
       );
     });
     expect(fetchMock.mock.calls.filter(([input]) => (
@@ -8091,7 +8091,7 @@ describe('FileViewer tweaks toolbar', () => {
       const scopedFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(scopedFrame).toBe(initialFrame);
       expect(scopedFrame.srcdoc).toContain(
-        '<base href="/api/projects/project-1/preview/scope-1/">',
+        '<base href="http://localhost:3000/api/projects/project-1/preview/scope-1/" data-od-project-preview-base>',
       );
       const scopedGeneration = scopedFrame.srcdoc.match(
         /data-od-srcdoc-transport-activation>[\s\S]*?var generation = "([^"]+)";/,

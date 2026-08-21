@@ -15,6 +15,66 @@ export const PREVIEW_OBSERVABILITY_PROTOCOL_VERSION = 1;
 export const PREVIEW_OBSERVABILITY_BRIDGE_MARKER = 'data-od-preview-observability';
 export const PREVIEW_WHITE_SCREEN_TIMEOUT_MS = 5_000;
 export const PREVIEW_WHITE_SCREEN_CONFIRMATION_MS = 1_500;
+export const PREVIEW_BASE_SCOPE_MESSAGE_TYPE = 'od:preview-base-scope';
+export const PREVIEW_BASE_UPDATE_MESSAGE_TYPE = 'od:preview-base-update';
+
+export interface PreviewBaseScopeMessage {
+  type: typeof PREVIEW_BASE_SCOPE_MESSAGE_TYPE;
+  href: string;
+  expiresAt: number;
+}
+
+export function buildPreviewBaseHrefBridge(
+  initialScope?: { readonly href: string; readonly expiresAt: number },
+): string {
+  const initialScopeJson = initialScope
+    ? JSON.stringify(initialScope).replace(/</g, '\\u003c')
+    : 'null';
+  return `<script data-od-preview-base-bridge>(function(){
+  if (window.__odPreviewBaseBridge) return;
+  window.__odPreviewBaseBridge = true;
+  var initialScope = ${initialScopeJson};
+  function announce(){
+    if (!initialScope) return;
+    try {
+      window.parent.postMessage({
+        type: '${PREVIEW_BASE_SCOPE_MESSAGE_TYPE}',
+        href: initialScope.href,
+        expiresAt: initialScope.expiresAt
+      }, '*');
+    } catch (_) {}
+  }
+  window.addEventListener('message', function(ev){
+    if (ev.source !== window.parent) return;
+    var data = ev && ev.data;
+    if (data && data.type === 'od:preview-base-scope-probe') {
+      announce();
+      return;
+    }
+    if (!data || data.type !== '${PREVIEW_BASE_UPDATE_MESSAGE_TYPE}' || typeof data.href !== 'string') return;
+    try {
+      var current = new URL(document.baseURI);
+      var next = new URL(data.href, current);
+      var sameOrigin = next.origin !== 'null' || current.origin !== 'null'
+        ? next.origin === current.origin
+        : next.protocol === current.protocol && next.host === current.host;
+      if (!sameOrigin) return;
+      var parts = next.pathname.split('/');
+      if (parts[1] !== 'api' || parts[2] !== 'projects' || !parts[3] || parts[4] !== 'preview' || !parts[5]) return;
+      if (next.pathname.charAt(next.pathname.length - 1) !== '/') return;
+      var base = document.querySelector('base[data-od-project-preview-base]');
+      if (!base) return;
+      base.setAttribute('href', next.href);
+      window.parent.postMessage({
+        type: 'od:preview-base-updated',
+        requestId: typeof data.requestId === 'string' ? data.requestId : '',
+        href: next.href
+      }, '*');
+    } catch (_) {}
+  });
+  announce();
+})();</script>`;
+}
 
 export type PreviewObservabilityEvent =
   | 'runtime_error'
