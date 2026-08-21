@@ -19,7 +19,7 @@
 - The full comparison shows nine popular models and marks the new row unlimited for every personal tier.
 - Free, Team, and unknown plans remain excluded.
 - Do not change Vela backend pricing, billing, or quota behavior.
-- Do not add the usage-estimate chart row until the user supplies its exact per-five-hour value.
+- Add the usage-estimate chart row with the confirmed value `8,000` per five hours, ordered between MiMo V2.5 Pro (`11,000`) and DeepSeek V4 Pro (`4,300`).
 
 ---
 
@@ -30,6 +30,7 @@
 - Modify: `e2e/tests/pricing-unlimited-models.test.ts:150-169`
 - Modify: `apps/web/tests/runtime/amr-unlimited-models.plan-tier.test.ts:54-78`
 - Modify: `apps/web/tests/runtime/amr-unlimited-models.plan-tier.test.ts:99-133`
+- Modify: `apps/landing-page/tests/pricing-contract.test.ts:423-459`
 
 **Interfaces:**
 - Consumes: Pricing display names from `popularModels` and runtime model IDs from `UNLIMITED_MODELS_BY_PLAN`.
@@ -77,13 +78,23 @@ it('badges DeepSeek V4 Flash Vision Exp on every personal tier only', () => {
 });
 ```
 
+Add `DeepSeek V4 Flash Vision Exp` first to the reviewed Pricing order, update the Pro unlimited-set length to `6`, and assert the usage rows contain this literal sequence:
+
+```ts
+assert.match(
+  individualPlans,
+  /popularModel\('MiMo V2\.5 Pro'\), value: 11000[\s\S]*popularModel\('DeepSeek V4 Flash Vision Exp'\), value: 8000[\s\S]*popularModel\('DeepSeek V4 Pro'\), value: 4300/,
+);
+```
+
 - [ ] **Step 3: Run the focused tests and verify they fail for the intended reasons**
 
 Run:
 
 ```bash
 pnpm --dir e2e test tests/pricing-unlimited-models.test.ts
-pnpm --filter @open-design/web test -- tests/runtime/amr-unlimited-models.plan-tier.test.ts
+pnpm --dir apps/web exec vitest run -c vitest.config.ts tests/runtime/amr-unlimited-models.plan-tier.test.ts
+pnpm --filter @open-design/landing-page test
 ```
 
 Expected: the e2e contract reports the old `3 / 4 / 5 / 8` sets or missing first model, and the web runtime reports the new ID is not unlimited.
@@ -91,7 +102,7 @@ Expected: the e2e contract reports the old `3 / 4 / 5 / 8` sets or missing first
 - [ ] **Step 4: Commit the red tests**
 
 ```bash
-git add e2e/tests/pricing-unlimited-models.test.ts apps/web/tests/runtime/amr-unlimited-models.plan-tier.test.ts
+git add e2e/tests/pricing-unlimited-models.test.ts apps/web/tests/runtime/amr-unlimited-models.plan-tier.test.ts apps/landing-page/tests/pricing-contract.test.ts
 git commit -m "test(pricing): cover vision model entitlement"
 ```
 
@@ -99,6 +110,7 @@ git commit -m "test(pricing): cover vision model entitlement"
 
 **Files:**
 - Modify: `apps/landing-page/app/_components/pricing-individual-plans.astro:37-102`
+- Modify: `apps/landing-page/app/_components/pricing-individual-plans.astro:241-251`
 - Modify: `apps/landing-page/app/_components/pricing-individual-plans.astro:270-274`
 - Modify: `apps/web/src/runtime/amr-unlimited-models.ts:20-44`
 
@@ -134,18 +146,27 @@ This keeps the category label synchronized with the nine rendered comparison row
 
 Insert `deepseek-v4-flash-vision-exp` first in both `GO_UNLIMITED_MODELS` and `PRO_UNLIMITED_MODELS`. Plus inherits Go; Max inherits Pro. Do not change Team handling or ID normalization.
 
-- [ ] **Step 5: Run the focused tests and verify they pass**
+- [ ] **Step 5: Add the confirmed usage estimate**
+
+Insert the new row between MiMo V2.5 Pro and DeepSeek V4 Pro:
+
+```ts
+{ ...popularModel('DeepSeek V4 Flash Vision Exp'), value: 8000 },
+```
+
+- [ ] **Step 6: Run the focused tests and verify they pass**
 
 Run:
 
 ```bash
 pnpm --dir e2e test tests/pricing-unlimited-models.test.ts
-pnpm --filter @open-design/web test -- tests/runtime/amr-unlimited-models.plan-tier.test.ts
+pnpm --dir apps/web exec vitest run -c vitest.config.ts tests/runtime/amr-unlimited-models.plan-tier.test.ts
+pnpm --filter @open-design/landing-page test
 ```
 
 Expected: both test files pass with `4 / 5 / 6 / 9`, first-position ordering, and personal-only unlimited status.
 
-- [ ] **Step 6: Commit the implementation**
+- [ ] **Step 7: Commit the implementation**
 
 ```bash
 git add apps/landing-page/app/_components/pricing-individual-plans.astro apps/web/src/runtime/amr-unlimited-models.ts
@@ -176,7 +197,7 @@ Expected: all Landing Page tests pass and Astro reports no type errors.
 - [ ] **Step 2: Run web runtime tests and type checking**
 
 ```bash
-pnpm --filter @open-design/web test -- tests/runtime/amr-unlimited-models.plan-tier.test.ts
+pnpm --dir apps/web exec vitest run -c vitest.config.ts tests/runtime/amr-unlimited-models.plan-tier.test.ts
 pnpm --filter @open-design/web typecheck
 ```
 
@@ -192,6 +213,6 @@ git status --short --branch
 
 Expected: the contract passes, diff check emits no errors, and only intentional committed changes remain.
 
-- [ ] **Step 4: Hold PR creation until the usage-estimate value is supplied**
+- [ ] **Step 4: Push the branch and create the PR**
 
-Do not invent a chart value. Once the user supplies the number, extend `usageRows` in descending order, rerun the validation above, push `codex/pricing-deepseek-vision-exp`, and open a PR targeting `main` with the repository PR template completed.
+Push `codex/pricing-deepseek-vision-exp` and open a PR targeting `main` with the repository PR template completed. The PR must state that the runtime ID is temporarily assumed to be `deepseek-v4-flash-vision-exp` and that Vela remains authoritative for actual entitlement enforcement.
