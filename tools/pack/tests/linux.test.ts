@@ -25,7 +25,7 @@ vi.mock("@open-design/sidecar", async (importOriginal) => {
   };
 });
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import {
   buildDockerArgs,
   cleanupPackedLinuxNamespace,

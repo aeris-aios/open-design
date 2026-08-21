@@ -1,28 +1,29 @@
 import { readFile } from "node:fs/promises";
 
-import type { ToolPackConfig } from "./config.js";
+import type { ToolPackConfig } from "../config/index.js";
 
-export const WIN_PREBUNDLED_APP_DIR_NAME = "prebundled";
-export const WIN_PREBUNDLE_META_DIR_NAME = "prebundle-meta";
-export const WIN_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH = "app/prebundled/packaged-main.mjs";
-export const WIN_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH = "app/prebundled/web-sidecar.mjs";
-export const WIN_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH = "app/prebundled/daemon/daemon-cli.mjs";
-export const WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH = "app/prebundled/daemon/daemon-sidecar.mjs";
-export const WIN_PREBUNDLE_ESBUILD_TARGET = "node24";
-export const WIN_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER =
+export const MAC_PREBUNDLED_APP_DIR_NAME = "prebundled";
+export const MAC_PREBUNDLE_META_DIR_NAME = "prebundle-meta";
+export const MAC_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH = "app/prebundled/packaged-main.mjs";
+export const MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH = "app/prebundled/web-sidecar.mjs";
+export const MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH = "app/prebundled/daemon/daemon-cli.mjs";
+export const MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH = "app/prebundled/daemon/daemon-sidecar.mjs";
+export const MAC_PREBUNDLE_ESBUILD_TARGET = "node24";
+export const MAC_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER =
   'import { createRequire as __odCreateRequire } from "node:module"; const require = __odCreateRequire(import.meta.url);';
-export const WIN_PREBUNDLE_ENTRYPOINTS_DIR_NAME = "prebundle-entrypoints";
+export const MAC_PREBUNDLE_ENTRYPOINTS_DIR_NAME = "prebundle-entrypoints";
 
 // Runtime externals the prebundled daemon loads from node_modules at boot
-// (see the `externals` in WIN_PREBUNDLE_POLICIES below). Their pinned versions
-// MUST stay in lockstep with apps/daemon/package.json / the pnpm lockfile: the
-// app is assembled with these as its declared deps (win/app.ts), and
+// (see the `externals` in MAC_PREBUNDLE_POLICIES below). Their pinned versions
+// MUST stay in lockstep with apps/daemon/package.json and its transitive native
+// dependencies in the pnpm lockfile: the
+// app is assembled with these as its declared deps (mac/app.ts), and
 // electron-builder 26's pnpm node_modules collector DROPS a dependency whose
 // pin doesn't semver-satisfy the version resolvable on disk — silently
-// shipping an app whose daemon dies at boot with `ERR_MODULE_NOT_FOUND`
+// shipping a mac app whose daemon dies at boot with `ERR_MODULE_NOT_FOUND`
 // (issue #4638). A stale `12.9.0` pin here vs `12.10.0` on disk did exactly
 // that. Keep every entry equal to the daemon's corresponding exact pin.
-export const WIN_PREBUNDLE_RUNTIME_DEPENDENCIES = {
+export const MAC_PREBUNDLE_RUNTIME_DEPENDENCIES = {
   "better-sqlite3": "12.10.0",
   "blake3-wasm": "2.1.5",
   "hyperframes": "0.8.1",
@@ -30,7 +31,15 @@ export const WIN_PREBUNDLE_RUNTIME_DEPENDENCIES = {
   "sharp": "0.35.3",
 } as const;
 
-export const WIN_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES = [
+// npm 11 synthesizes a `node-gyp rebuild` install step for fsevents even
+// though its published package already contains a universal prebuilt binding
+// and no binding.gyp. Keep it optional during npm assembly, then copy the
+// pnpm-materialized package into the app after install (mac/app.ts).
+export const MAC_PREBUNDLE_COPIED_RUNTIME_DEPENDENCIES = {
+  "fsevents": "2.3.3",
+} as const;
+
+export const MAC_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES = [
   "@open-design/daemon",
   "@open-design/desktop",
   "@open-design/launcher-proto",
@@ -40,7 +49,7 @@ export const WIN_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES = [
   "@open-design/web",
 ] as const;
 
-export const WIN_PREBUNDLE_POLICIES = {
+export const MAC_PREBUNDLE_POLICIES = {
   packagedMain: {
     externals: ["electron"],
     forbiddenInputs: [
@@ -54,12 +63,13 @@ export const WIN_PREBUNDLE_POLICIES = {
     label: "packaged main",
   },
   daemonCli: {
-    externals: ["better-sqlite3", "blake3-wasm", "hyperframes", "node-pty"],
+    externals: ["better-sqlite3", "blake3-wasm", "fsevents", "hyperframes", "node-pty"],
     forbiddenInputs: [
       "/node_modules/@open-design/daemon/",
       "/node_modules/better-sqlite3/",
       "/node_modules/blake3-wasm/",
       "/node_modules/electron/",
+      "/node_modules/fsevents/",
       "/node_modules/hyperframes/",
       "/node_modules/next/",
       "/node_modules/node-pty/",
@@ -70,12 +80,13 @@ export const WIN_PREBUNDLE_POLICIES = {
     label: "daemon cli",
   },
   daemonSidecar: {
-    externals: ["better-sqlite3", "blake3-wasm", "hyperframes", "node-pty"],
+    externals: ["better-sqlite3", "blake3-wasm", "fsevents", "hyperframes", "node-pty"],
     forbiddenInputs: [
       "/node_modules/@open-design/daemon/",
       "/node_modules/better-sqlite3/",
       "/node_modules/blake3-wasm/",
       "/node_modules/electron/",
+      "/node_modules/fsevents/",
       "/node_modules/hyperframes/",
       "/node_modules/next/",
       "/node_modules/node-pty/",
@@ -97,27 +108,27 @@ export const WIN_PREBUNDLE_POLICIES = {
   },
 } as const;
 
-export type WinPrebundlePolicyName = keyof typeof WIN_PREBUNDLE_POLICIES;
+export type MacPrebundlePolicyName = keyof typeof MAC_PREBUNDLE_POLICIES;
 
 function toPosixPath(value: string): string {
   return value.replaceAll("\\", "/");
 }
 
-export function shouldUseWinStandalonePrebundle(webOutputMode: ToolPackConfig["webOutputMode"]): boolean {
+export function shouldUseMacStandalonePrebundle(webOutputMode: ToolPackConfig["webOutputMode"]): boolean {
   return webOutputMode === "standalone";
 }
 
-export function shouldInstallInternalPackageForWinPrebundle(options: {
+export function shouldInstallInternalPackageForMacPrebundle(options: {
   packageName: string;
   webOutputMode: ToolPackConfig["webOutputMode"];
 }): boolean {
-  if (!shouldUseWinStandalonePrebundle(options.webOutputMode)) return true;
-  return !WIN_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES.includes(
-    options.packageName as (typeof WIN_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES)[number],
+  if (!shouldUseMacStandalonePrebundle(options.webOutputMode)) return true;
+  return !MAC_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES.includes(
+    options.packageName as (typeof MAC_STANDALONE_PREBUNDLE_EXCLUDED_INTERNAL_PACKAGES)[number],
   );
 }
 
-export function findForbiddenWinPrebundleInputs(options: {
+export function findForbiddenMacPrebundleInputs(options: {
   forbiddenInputs: readonly string[];
   inputs: readonly string[];
 }): string[] {
@@ -126,13 +137,13 @@ export function findForbiddenWinPrebundleInputs(options: {
     .filter((input) => options.forbiddenInputs.some((forbidden) => input.includes(forbidden)));
 }
 
-export async function assertWinPrebundleMetafile(options: {
+export async function assertMacPrebundleMetafile(options: {
   metafilePath: string;
-  policyName: WinPrebundlePolicyName;
+  policyName: MacPrebundlePolicyName;
 }): Promise<void> {
-  const policy = WIN_PREBUNDLE_POLICIES[options.policyName];
+  const policy = MAC_PREBUNDLE_POLICIES[options.policyName];
   const metafile = JSON.parse(await readFile(options.metafilePath, "utf8")) as { inputs?: Record<string, unknown> };
-  const matched = findForbiddenWinPrebundleInputs({
+  const matched = findForbiddenMacPrebundleInputs({
     forbiddenInputs: policy.forbiddenInputs,
     inputs: Object.keys(metafile.inputs ?? {}),
   });
@@ -141,7 +152,7 @@ export async function assertWinPrebundleMetafile(options: {
   }
 }
 
-export function renderWinPackagedMainEntry(usePrebundle: boolean): string {
+export function renderMacPackagedMainEntry(usePrebundle: boolean): string {
   return usePrebundle
     ? 'import("./prebundled/packaged-main.mjs").catch((error) => {\n  console.error("packaged entry failed", error);\n  process.exit(1);\n});\n'
     : 'import("@open-design/packaged").catch((error) => {\n  console.error("packaged entry failed", error);\n  process.exit(1);\n});\n';

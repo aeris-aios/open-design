@@ -42,25 +42,19 @@
     "packaged-leaf": {
       "prefixes": [
         "apps/desktop/src/", "apps/desktop/tests/", "apps/packaged/src/", "apps/packaged/tests/",
-        "tools/pack/src/", "tools/pack/tests/", "tools/pack/resources/"
+        "tools/pack/src/build-cache/", "tools/pack/src/config/", "tools/pack/src/launcher/",
+        "tools/pack/src/mac/", "tools/pack/src/resources/", "tools/pack/src/updates/",
+        "tools/pack/src/versioning/", "tools/pack/src/win/", "tools/pack/tests/", "tools/pack/resources/"
       ]
     },
     "windows-launcher-payload": {
       "prefixes": [
-        "tools/pack/src/win/", "tools/pack/resources/win/",
+        "tools/pack/src/build-cache/", "tools/pack/src/config/", "tools/pack/src/launcher/",
+        "tools/pack/src/resources/", "tools/pack/src/updates/", "tools/pack/src/versioning/",
+        "tools/pack/src/win/", "tools/pack/tests/launcher/windows/", "tools/pack/resources/win/",
         "packages/launcher-proto/src/", "packages/sidecar-proto/src/"
       ],
       "exact": [
-        "tools/pack/src/cache.ts",
-        "tools/pack/src/config.ts",
-        "tools/pack/src/launcher-layout.ts",
-        "tools/pack/src/launcher-runtime-snapshot.ts",
-        "tools/pack/src/lock.ts",
-        "tools/pack/src/resources.ts",
-        "tools/pack/src/update-cache-lifecycle-snapshot.ts",
-        "tools/pack/src/versions.ts",
-        "tools/pack/src/win-prebundle.ts",
-        "tools/pack/tests/launcher-payload-windows.test.ts",
         "packages/platform/src/command.ts",
         "packages/platform/src/index.ts",
         "packages/release/src/index.ts",
@@ -147,6 +141,12 @@
       "match": { "include": ["match://windows-launcher-payload"] },
       "effects": ["windows_tools_pack_payload_tests_required"],
       "confidence": "certain"
+    },
+    {
+      "id": "tools-pack-root-source-fallback",
+      "match": { "regexes": ["^tools/pack/src/[^/]+\\.ts$"] },
+      "effects": ["tools_dev_tests_required", "tools_pack_tests_required", "windows_tools_pack_payload_tests_required", "workspace_validation_required"],
+      "confidence": "medium"
     },
     {
       "id": "tools-pack-sources",

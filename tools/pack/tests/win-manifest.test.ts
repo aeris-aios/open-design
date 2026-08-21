@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { readBuiltAppManifest, writePackagedConfigFile } from "../src/win/manifest.js";
 import type { WinBuiltAppManifest, WinPaths } from "../src/win/types.js";
 

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { SIDECAR_MESSAGES } from "@open-design/sidecar-proto";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 
 const requestJsonIpc = vi.hoisted(() => vi.fn());
 const listProcessSnapshots = vi.hoisted(() =>

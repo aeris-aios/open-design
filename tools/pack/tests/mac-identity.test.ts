@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { resolveMacInstallIdentity } from "../src/mac/identity.js";
 import { resolveMacPaths } from "../src/mac/paths.js";
 

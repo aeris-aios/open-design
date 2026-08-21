@@ -17,7 +17,7 @@ import {
   renderWinPackagedMainEntry,
   shouldInstallInternalPackageForWinPrebundle,
   shouldUseWinStandalonePrebundle,
-} from "../src/win-prebundle.js";
+} from "../../src/win/prebundle.js";
 
 describe("win standalone prebundle policy", () => {
   it("is enabled only for standalone web output", () => {

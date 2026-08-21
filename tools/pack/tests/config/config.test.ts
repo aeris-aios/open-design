@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { join, resolve } from "node:path";
 
-import { resolveToolPackConfig, WORKSPACE_ROOT } from "../src/config.js";
+import { resolveToolPackConfig, WORKSPACE_ROOT } from "../../src/config/index.js";
 
 const savedTelemetryRelayUrl = process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
 const savedPosthogKey = process.env.POSTHOG_KEY;

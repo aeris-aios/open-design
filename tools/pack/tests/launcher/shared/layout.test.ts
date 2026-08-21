@@ -2,16 +2,16 @@ import { dirname, join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig, ToolPackPlatform } from "../src/config.js";
+import type { ToolPackConfig, ToolPackPlatform } from "../../../src/config/index.js";
 import {
   buildInitialLauncherRuntimeDescriptor,
   payloadArchiveExtension,
   resolveToolPackLauncherChannel,
   resolveToolPackLauncherLayout,
   resolveToolPackLauncherPayloadLayout,
-} from "../src/launcher-layout.js";
-import { resolveMacPaths } from "../src/mac/paths.js";
-import { resolveWinPaths } from "../src/win/paths.js";
+} from "../../../src/launcher/layout.js";
+import { resolveMacPaths } from "../../../src/mac/paths.js";
+import { resolveWinPaths } from "../../../src/win/paths.js";
 
 const TEST_WORKSPACE_ROOT = resolve("/work");
 

@@ -12,7 +12,7 @@ import { releaseChannelFromVersion, releaseNamespace } from "@open-design/releas
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const WORKSPACE_ROOT = resolve(__dirname, "../../..");
+export const WORKSPACE_ROOT = resolve(__dirname, "../../../..");
 
 export type ToolPackPlatform = "mac" | "win" | "linux";
 export type ToolPackBuildOutput = "all" | "app" | "appimage" | "dir" | "dmg" | "nsis" | "zip";

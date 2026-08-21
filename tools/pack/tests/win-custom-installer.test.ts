@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { buildCustomWinNsisInstaller } from "../src/win/custom-installer.js";
 import { resolveWinPaths } from "../src/win/paths.js";
 

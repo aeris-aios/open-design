@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { INTERNAL_PACKAGES } from "../src/win/constants.js";
 import { createWinPackagedAppCacheKey, createWorkspaceTarballsCacheKey } from "../src/win/app.js";
 import type { PackedTarballInfo } from "../src/win/types.js";

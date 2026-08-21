@@ -14,9 +14,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
 
-import { domToPptxBundleResource } from "../src/dom-to-pptx-resource.js";
-import { copyBundledResourceTrees } from "../src/resources.js";
-import { copyOptionalVelaCliBinary, resolveOptionalVelaCliBinary } from "../src/vela-cli.js";
+import { domToPptxBundleResource } from "../../src/dom-to-pptx-resource.js";
+import { copyBundledResourceTrees } from "../../src/resources/index.js";
+import { copyOptionalVelaCliBinary, resolveOptionalVelaCliBinary } from "../../src/vela-cli.js";
 
 async function writeFakeOpenCodeCompanion(
   source: string,
@@ -31,7 +31,7 @@ async function writeFakeOpenCodeCompanion(
 
 async function pinnedVelaCliVersion(): Promise<string> {
   const manifest = JSON.parse(
-    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
   ) as {
     optionalDependencies?: Record<string, string>;
   };

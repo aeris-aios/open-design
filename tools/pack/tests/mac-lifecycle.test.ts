@@ -7,7 +7,7 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DesktopStatusSnapshot } from "@open-design/sidecar-proto";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { resolveMacPaths } from "../src/mac/paths.js";
 
 const requestJsonIpc = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));

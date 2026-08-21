@@ -4,8 +4,8 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { ToolPackCache } from "../src/cache.js";
-import type { ToolPackConfig } from "../src/config.js";
+import { ToolPackCache } from "../src/build-cache/cache.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { prepareResourceTree } from "../src/win/resources.js";
 import type { WinPaths } from "../src/win/types.js";
 

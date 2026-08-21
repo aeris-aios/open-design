@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { ToolPackCache } from "../src/cache.js";
-import type { ToolPackConfig } from "../src/config.js";
+import { ToolPackCache } from "../src/build-cache/cache.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import { ensureWorkspaceBuildArtifacts } from "../src/workspace-build.js";
 
 const PACKAGE_DIRS = [

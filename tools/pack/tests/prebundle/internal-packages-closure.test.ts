@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { INTERNAL_PACKAGES as LINUX_INTERNAL_PACKAGES } from "../src/linux.js";
-import { INTERNAL_PACKAGES as MAC_INTERNAL_PACKAGES } from "../src/mac/constants.js";
-import { shouldInstallInternalPackageForMacPrebundle } from "../src/mac-prebundle.js";
-import { INTERNAL_PACKAGES as WIN_INTERNAL_PACKAGES } from "../src/win/constants.js";
-import { shouldInstallInternalPackageForWinPrebundle } from "../src/win-prebundle.js";
+import { INTERNAL_PACKAGES as LINUX_INTERNAL_PACKAGES } from "../../src/linux.js";
+import { INTERNAL_PACKAGES as MAC_INTERNAL_PACKAGES } from "../../src/mac/constants.js";
+import { shouldInstallInternalPackageForMacPrebundle } from "../../src/mac/prebundle.js";
+import { INTERNAL_PACKAGES as WIN_INTERNAL_PACKAGES } from "../../src/win/constants.js";
+import { shouldInstallInternalPackageForWinPrebundle } from "../../src/win/prebundle.js";
 
-const workspaceRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const workspaceRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
 type PackageEntry = { readonly directory: string; readonly name: string };
 

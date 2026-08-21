@@ -5,7 +5,7 @@ import process from "node:process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
+import type { ToolPackConfig } from "../src/config/index.js";
 import {
   copyMacPrebundleRuntimeDependencies,
   copyResourceTree,
