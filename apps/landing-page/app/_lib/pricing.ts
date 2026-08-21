@@ -85,12 +85,22 @@ export const CLOUD_CONSOLE_BASE_PARAM = 'cloud_console_base';
 /** Production Cloud Console used for direct public Pricing visits. */
 export const DEFAULT_CLOUD_CONSOLE_BASE_URL = 'https://open-design.ai/cloud/';
 
-/** Hosted Cloud Console deployments allowed to receive a Pricing handoff. */
-export const HOSTED_CLOUD_CONSOLE_BASE_URLS = [
-  DEFAULT_CLOUD_CONSOLE_BASE_URL,
-  'https://vela.powerformer.net/',
-  'https://amr-feature.powerformer.net/',
+/** Hosted domains (including their subdomains) allowed to receive a Pricing handoff. */
+export const HOSTED_CLOUD_CONSOLE_DOMAINS = [
+  'open-design.ai',
+  'powerformer.net',
 ] as const;
+
+function isHostedCloudConsole(url: URL): boolean {
+  return (
+    url.protocol === 'https:' &&
+    url.port.length === 0 &&
+    url.pathname.endsWith('/') &&
+    HOSTED_CLOUD_CONSOLE_DOMAINS.some(
+      (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+    )
+  );
+}
 
 function isLoopbackCloudConsole(url: URL): boolean {
   return (
@@ -122,10 +132,7 @@ export function resolveCloudConsoleBase(rawValue: string | null): string {
   }
 
   const normalized = url.toString();
-  if (
-    !(HOSTED_CLOUD_CONSOLE_BASE_URLS as readonly string[]).includes(normalized) &&
-    !isLoopbackCloudConsole(url)
-  ) {
+  if (!isHostedCloudConsole(url) && !isLoopbackCloudConsole(url)) {
     throw new RangeError('Invalid Cloud Console base: destination is not allowlisted');
   }
   return normalized;

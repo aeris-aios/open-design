@@ -15,7 +15,7 @@ import {
   CLOUD_CONSOLE_URL,
   DEFAULT_CLOUD_CONSOLE_BASE_URL,
   GO_PLAN,
-  HOSTED_CLOUD_CONSOLE_BASE_URLS,
+  HOSTED_CLOUD_CONSOLE_DOMAINS,
   PRICING_SNAPSHOT,
   cloudSubscribeUrl,
   formatUsd,
@@ -472,7 +472,7 @@ const jsonLd = [
     </div>
   </div>
 
-  <script is:inline define:vars={{ labels: L, defaultCloudConsoleBase: DEFAULT_CLOUD_CONSOLE_BASE_URL, hostedCloudConsoleBases: HOSTED_CLOUD_CONSOLE_BASE_URLS, cloudConsoleBaseParam: CLOUD_CONSOLE_BASE_PARAM, teamTiers, teamCopy: teamContent }}>
+  <script is:inline define:vars={{ labels: L, defaultCloudConsoleBase: DEFAULT_CLOUD_CONSOLE_BASE_URL, hostedCloudConsoleDomains: HOSTED_CLOUD_CONSOLE_DOMAINS, cloudConsoleBaseParam: CLOUD_CONSOLE_BASE_PARAM, teamTiers, teamCopy: teamContent }}>
     (() => {
       const root = document.querySelector('[data-pricing-root]');
       if (!root) return;
@@ -544,7 +544,14 @@ const jsonLd = [
         if (requestedCloudConsoleBase !== null) {
           const candidate = new URL(requestedCloudConsoleBase.trim());
           const normalized = candidate.toString();
-          const hosted = hostedCloudConsoleBases.includes(normalized);
+          const hosted =
+            candidate.protocol === 'https:' &&
+            candidate.port.length === 0 &&
+            candidate.pathname.endsWith('/') &&
+            hostedCloudConsoleDomains.some(
+              (domain) =>
+                candidate.hostname === domain || candidate.hostname.endsWith(`.${domain}`),
+            );
           const loopback =
             candidate.protocol === 'http:' &&
             (candidate.hostname === 'localhost' || candidate.hostname === '127.0.0.1') &&

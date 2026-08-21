@@ -706,13 +706,22 @@ describe("pricing contract", () => {
       "https://amr-feature.powerformer.net/",
     );
     assert.equal(
+      resolveCloudConsoleBase("https://preview-42.open-design.ai/cloud/"),
+      "https://preview-42.open-design.ai/cloud/",
+    );
+    assert.equal(
+      resolveCloudConsoleBase("https://powerformer.net/vela/"),
+      "https://powerformer.net/vela/",
+    );
+    assert.equal(
       resolveCloudConsoleBase("http://127.0.0.1:5179/"),
       "http://127.0.0.1:5179/",
     );
 
     for (const invalid of [
       "https://evil.example/",
-      "https://open-design.ai/",
+      "https://open-design.ai.evil.example/",
+      "https://evilpowerformer.net/",
       "https://user:password@vela.powerformer.net/",
       "http://vela.powerformer.net/",
       "http://localhost:5173/dashboard",
@@ -726,6 +735,11 @@ describe("pricing contract", () => {
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
     ]);
     assert.match(page, /inboundParams\.get\(cloudConsoleBaseParam\)/);
+    assert.match(page, /hostedCloudConsoleDomains\.some/);
+    assert.match(
+      page,
+      /candidate\.hostname\.endsWith\(`\.\$\{domain\}`\)/,
+    );
     assert.match(page, /data-cloud-console-handoff-error/);
     assert.match(page, /data-cloud-console-environment/);
     assert.match(page, /data-cloud-console-link/);
