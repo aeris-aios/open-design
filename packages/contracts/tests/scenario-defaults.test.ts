@@ -25,13 +25,22 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
     expect(automaticStrategyTaskProfileForRouteId('marketing')).toBe('marketing');
     expect(automaticStrategyTaskProfileForRouteId('hyperframes')).toBe('hyperframes');
 
+    // Task types that own no OD Next route stay unrouted. `wireframe` and
+    // `mobile` are catalog action ids, never route ids — the surfaces fold
+    // them onto their parent Prototype route before asking.
     expect(automaticStrategyTaskProfileForRouteId('wireframe')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId('mobile')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId('image')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('web-clone')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('document')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('webgl')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('live-artifact')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('figma')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('template')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId(undefined)).toBeNull();
   });
 
-  it('validates exact project metadata without admitting Wireframe or Mobile aliases', () => {
+  it('admits the Prototype route for the Wireframe and Mobile refinements', () => {
     expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'prototype' })).toBe('prototype');
     expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'deck' })).toBe('ppt');
     expect(automaticStrategyTaskProfileForProjectMetadata({
@@ -43,24 +52,51 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
       intent: 'hyperframes',
     })).toBe('hyperframes');
 
+    // A second-level scene refines WHAT to build, never WHETHER the parent's
+    // automatic route applies: the Prototype task profile already branches on
+    // fidelity and on platform targets.
     expect(automaticStrategyTaskProfileForProjectMetadata({
       kind: 'prototype',
       fidelity: 'wireframe',
-    })).toBeNull();
+    })).toBe('prototype');
     expect(automaticStrategyTaskProfileForProjectMetadata({
       kind: 'prototype',
       platform: 'auto',
       platformTargets: ['mobile-ios', 'mobile-android'],
-    })).toBeNull();
+    })).toBe('prototype');
 
     expect(defaultScenarioTaskProfileForProjectMetadata({
       kind: 'prototype',
       fidelity: 'wireframe',
-    }, 'example-web-prototype')).toBeNull();
+    }, 'example-web-prototype')).toBe('prototype');
     expect(defaultScenarioTaskProfileForProjectMetadata({
       kind: 'prototype',
       platformTargets: ['mobile-ios'],
-    }, 'example-web-prototype')).toBeNull();
+    }, 'example-web-prototype')).toBe('prototype');
+    // The profile stays pinned to the plugin that owns it.
+    expect(defaultScenarioTaskProfileForProjectMetadata({
+      kind: 'prototype',
+      fidelity: 'wireframe',
+    }, 'example-simple-deck')).toBeNull();
+  });
+
+  it('keeps non-OD-Next project metadata unrouted', () => {
+    for (const metadata of [
+      { kind: 'prototype' as const, intent: 'web-clone' as const },
+      { kind: 'prototype' as const, intent: 'live-artifact' as const },
+      { kind: 'prototype' as const, intent: 'webgl-experience' as const },
+      { kind: 'other' as const, intent: 'document' as const },
+      { kind: 'other' as const },
+      { kind: 'image' as const },
+      { kind: 'video' as const },
+      { kind: 'audio' as const },
+      { kind: 'template' as const },
+      { kind: 'brand' as const },
+    ]) {
+      expect(automaticStrategyTaskProfileForProjectMetadata(metadata)).toBeNull();
+    }
+    expect(automaticStrategyTaskProfileForProjectMetadata(null)).toBeNull();
+    expect(automaticStrategyTaskProfileForProjectMetadata(undefined)).toBeNull();
   });
 
   it('recognizes only an exact daemon-owned strategy binding as current automatic routing', () => {
@@ -78,9 +114,16 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
       metadata,
       appliedPluginSnapshotId: null,
     })).toBe(true);
+    // A Wireframe refinement stays on the same Prototype route, so its
+    // binding remains current.
     expect(hasCurrentAutomaticStrategyBinding({
       ...metadata,
       fidelity: 'wireframe' as const,
+    })).toBe(true);
+    // Metadata that owns no OD Next route does invalidate the binding.
+    expect(hasCurrentAutomaticStrategyBinding({
+      ...metadata,
+      intent: 'web-clone' as const,
     })).toBe(false);
   });
 });

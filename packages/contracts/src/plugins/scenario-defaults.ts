@@ -67,9 +67,11 @@ const AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID = {
 /**
  * Resolve the product-owned OD Next route selected by a task-type surface.
  *
- * This is deliberately keyed by the exact UI/product route, not by broad
- * project kind. Wireframe and Mobile projects still use `kind: 'prototype'`
- * for rendering, but are not automatic OD Next Prototype routes.
+ * Keyed by the exact first-level task type, not by broad project kind and not
+ * by second-level scene. A second-level scene refines WHAT to build, never
+ * WHETHER the parent task type's route applies, so surfaces fold a nested
+ * scene onto its parent before asking: `wireframe` and `mobile` are catalog
+ * action ids, never route ids, and stay unrouted here on purpose.
  */
 export function automaticStrategyTaskProfileForRouteId(
   routeId: string | null | undefined,
@@ -81,11 +83,24 @@ export function automaticStrategyTaskProfileForRouteId(
 }
 
 /**
- * Validate the daemon-owned route against exact project metadata.
+ * Re-derive the OD Next route from exact project metadata alone.
  *
- * This helper is intentionally stricter than the ordinary scenario resolver:
- * broad prototype metadata must not let the Wireframe or Mobile aliases claim
- * the OD Next Prototype route.
+ * This is the fail-closed half of the routing contract: the web hand-off and
+ * the daemon both run it against the metadata a create actually carries, so a
+ * claimed route survives only when the metadata independently describes the
+ * same OD Next task.
+ *
+ * `intent` is the only field that can move a project OFF a route, because it
+ * is the only one that names a different pipeline (`web-clone`,
+ * `live-artifact`, `webgl-experience`, `document`, …); the two intents that own
+ * their own route are admitted explicitly and every other intent is unrouted.
+ *
+ * A second-level scene deliberately does NOT narrow the route. `fidelity` and
+ * `platformTargets` describe WHAT a Prototype should be — the Prototype task
+ * profile already branches on wireframe/lo-fi fidelity and on mobile platform
+ * targets — so the Wireframe and Mobile scenes ride the Prototype route with
+ * their refinements intact. They stay in the parameter type to record that the
+ * route decision has seen them and chosen not to gate on them.
  */
 export function automaticStrategyTaskProfileForProjectMetadata(
   metadata: Pick<ProjectMetadata, 'kind' | 'intent' | 'fidelity' | 'platform' | 'platformTargets'>
@@ -100,12 +115,7 @@ export function automaticStrategyTaskProfileForProjectMetadata(
   }
   if (metadata?.intent != null) return null;
   if (metadata?.kind === 'deck') return 'ppt';
-  if (metadata?.kind !== 'prototype' || metadata.fidelity === 'wireframe') return null;
-  const mobileTargets = new Set(['mobile-ios', 'mobile-android']);
-  if (
-    (metadata.platform && mobileTargets.has(metadata.platform))
-    || metadata.platformTargets?.some((target) => mobileTargets.has(target))
-  ) return null;
+  if (metadata?.kind !== 'prototype') return null;
   return 'prototype';
 }
 

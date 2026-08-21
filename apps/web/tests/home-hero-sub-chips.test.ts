@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { InstalledPluginRecord } from '@open-design/contracts';
+import { automaticStrategyTaskProfileForRouteId } from '@open-design/contracts';
 import {
   filterPluginsBySubChip,
   isSubChipParent,
   subChipsForChip,
+  taskTypeChipIdForChipId,
 } from '../src/components/home-hero/sub-chips';
+import { HOME_HERO_CHIPS } from '../src/components/home-hero/chips';
 
 // Minimal record whose facet derivation lands in a known prototype scene.
 // `byMode('prototype')` keys off manifest.od.mode; subcategory tests key off
@@ -24,6 +27,9 @@ describe('subChipsForChip', () => {
     expect(subChipsForChip('video', records)).toEqual([]);
     expect(subChipsForChip('audio', records)).toEqual([]);
     expect(subChipsForChip('live-artifact', records)).toEqual([]);
+    // Neighbour witness: HyperFrames owns no second-level rail at all, so it
+    // has no nested scene that could ever swap its route.
+    expect(subChipsForChip('hyperframes', records)).toEqual([]);
     expect(subChipsForChip(null, records)).toEqual([]);
   });
 
@@ -77,5 +83,56 @@ describe('isSubChipParent', () => {
     expect(isSubChipParent('deck')).toBe(true);
     expect(isSubChipParent('image')).toBe(false);
     expect(isSubChipParent(null)).toBe(false);
+  });
+});
+
+describe('taskTypeChipIdForChipId', () => {
+  it('folds the Mobile and Wireframe catalog actions back onto their Prototype parent', () => {
+    // A second-level scene refines WHAT to build; it never decides WHETHER the
+    // parent task type's product route applies.
+    expect(taskTypeChipIdForChipId('mobile')).toBe('prototype');
+    expect(taskTypeChipIdForChipId('wireframe')).toBe('prototype');
+    expect(taskTypeChipIdForChipId('prototype')).toBe('prototype');
+  });
+
+  it('leaves every other chip id — and no id at all — untouched', () => {
+    for (const chipId of [
+      'deck',
+      'hyperframes',
+      'web-clone',
+      'webgl',
+      'live-artifact',
+      'document',
+      'image',
+      'video',
+      'audio',
+      'figma',
+      'template',
+      'create-plugin',
+      'create-brand-kit',
+    ]) {
+      expect(taskTypeChipIdForChipId(chipId)).toBe(chipId);
+    }
+    expect(taskTypeChipIdForChipId(null)).toBeNull();
+  });
+
+  it('routes exactly the product-owned OD Next task types and nothing else', () => {
+    // Full catalog sweep: the automatic route set must not silently grow when a
+    // chip is added or a nested scene is introduced.
+    const routed = HOME_HERO_CHIPS
+      .filter((chip) => automaticStrategyTaskProfileForRouteId(
+        taskTypeChipIdForChipId(chip.id),
+      ) !== null)
+      .map((chip) => chip.id)
+      .sort();
+    expect(routed).toEqual(['deck', 'hyperframes', 'mobile', 'prototype', 'wireframe']);
+    expect(
+      HOME_HERO_CHIPS
+        .filter((chip) => automaticStrategyTaskProfileForRouteId(
+          taskTypeChipIdForChipId(chip.id),
+        ) === 'prototype')
+        .map((chip) => chip.id)
+        .sort(),
+    ).toEqual(['mobile', 'prototype', 'wireframe']);
   });
 });

@@ -102,6 +102,7 @@ import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips'
 import {
   prototypeSubChipForActionChipId,
   prototypeSubChipForSlug,
+  taskTypeChipIdForChipId,
   type HomeHeroSubChip,
 } from './home-hero/sub-chips';
 import { homeHeroChipLabel } from './home-hero/chip-labels';
@@ -2671,15 +2672,13 @@ export function HomeView({
       element: 'send_button',
     });
     let submittedActive = active;
-    // The OD Next automatic route is keyed by the exact product route, not by
-    // the top-level chip: a nested Prototype scene that carries its own catalog
-    // action (Mobile / Wireframe) is that action's route, so it must not be
-    // laundered into the automatic Prototype route. Mirrors the effective-chip
-    // resolution in `clearActivePlugin`.
-    const submittedRouteChipId =
-      prototypeSubChipForSlug(submittedActive?.prototypeSubtypeId ?? null)?.actionChipId
-      ?? submittedActive?.chipId
-      ?? null;
+    // The OD Next automatic route is owned by the first-level task type. A
+    // nested Prototype scene (Mobile / Wireframe) refines the brief it hands the
+    // agent — platform targets, lo-fi fidelity — and the Prototype task profile
+    // already branches on both, so the scene must not be able to swap the route
+    // its parent chose. Reading the task type rather than the bound chip's own
+    // catalog id makes that structural.
+    const submittedRouteChipId = taskTypeChipIdForChipId(submittedActive?.chipId ?? null);
     const automaticStrategyTaskProfile = sessionMode === 'design'
       && !pinsPluginOverAutomaticRoute(submittedActive, submittedRouteChipId)
       ? automaticStrategyTaskProfileForRouteId(submittedRouteChipId)
@@ -3416,9 +3415,13 @@ function defaultPluginIdForChip(chipId: string | null): string | null {
  * Everything else has no honest reference to make and keeps pinning its plugin
  * exactly as before: a Community card, the details modal, or a plugins-page
  * hand-off (all strategy choices); an example under a task type with no OD Next
- * route (Wireframe, Mobile, Image, Document, …), where there is nothing to hand
- * the routing back to; and a record whose source we cannot name, which would
- * otherwise lose its material silently.
+ * route (Image, Document, WebGL, Website clone, …), where there is nothing to
+ * hand the routing back to; and a record whose source we cannot name, which
+ * would otherwise lose its material silently.
+ *
+ * `routeChipId` is the FIRST-LEVEL task type (see `taskTypeChipIdForChipId`),
+ * so an example picked under a nested Prototype scene — 移动应用, 线框图 — is
+ * judged by the route 原型 owns, exactly like one picked on 原型 itself.
  */
 function examplePickReference(
   active: ActivePlugin | null | undefined,

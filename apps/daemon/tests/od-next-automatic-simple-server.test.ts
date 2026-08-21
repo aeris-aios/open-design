@@ -475,6 +475,9 @@ describe('OD Next automatic production through the real server', () => {
       await waitForRunTerminal(started.url, explicitRun.runId as string);
     }
 
+    // A second-level Prototype scene (Wireframe / Mobile) refines WHAT to build,
+    // never WHETHER the parent's automatic route applies. The daemon must accept
+    // the Prototype claim for that metadata and run OD Next for it.
     for (const [label, metadata] of [
       ['wireframe', { kind: 'prototype', fidelity: 'wireframe' }],
       [
@@ -486,6 +489,7 @@ describe('OD Next automatic production through the real server', () => {
         },
       ],
     ] as const) {
+      // No claim made → the project still binds the ordinary scenario plugin.
       const ordinary = await createProjectForScenario(
         started.url,
         `ordinary-${label}`,
@@ -497,6 +501,49 @@ describe('OD Next automatic production through the real server', () => {
         pluginId: 'example-web-prototype',
       });
 
+      const refined = await createProjectForScenario(
+        started.url,
+        `refined-${label}`,
+        metadata,
+        undefined,
+        'prototype',
+      );
+      expect(refined.metadata?.strategyBinding).toMatchObject({
+        schemaVersion: 1,
+        provenance: 'automatic_default',
+        taskProfile: 'prototype',
+      });
+      expect(refined.metadata?.scenarioBinding).toBeUndefined();
+      expect(refined.appliedPluginSnapshotId).toBeUndefined();
+
+      const refinedRun = await postRun(started.url, publicRunRequest(
+        refined,
+        `Hold the ${label} rollout run open until canceled.`,
+        `refined-${label}`,
+      ));
+      expect(refinedRun.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+      expect(await readDurableRunState(refinedRun.runId as string)).toMatchObject({
+        strategyRolloutDecision: {
+          schemaVersion: 1,
+          decisionClass: 'active',
+          taskType: 'prototype',
+          primaryReasonCode: 'od_next_rollout_eligible',
+        },
+      });
+      await fetch(`${started.url}/api/runs/${encodeURIComponent(refinedRun.runId as string)}/cancel`, {
+        method: 'POST',
+      });
+      await waitForRunTerminal(started.url, refinedRun.runId as string);
+    }
+
+    // Fail-closed is unchanged for metadata that genuinely owns no OD Next
+    // route: a claim the exact metadata cannot back is a 400, never a silent
+    // downgrade.
+    for (const [label, metadata] of [
+      ['web-clone', { kind: 'prototype', intent: 'web-clone' }],
+      ['live-artifact', { kind: 'prototype', intent: 'live-artifact' }],
+      ['image', { kind: 'image' }],
+    ] as const) {
       const rejected = await fetch(`${started.url}/api/projects`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

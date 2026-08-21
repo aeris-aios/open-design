@@ -20,7 +20,26 @@ describe('EntryShell automatic strategy routing', () => {
 
   it.each([
     { kind: 'prototype' as const, fidelity: 'wireframe' as const },
-    { kind: 'prototype' as const, platformTargets: ['mobile-ios' as const] },
+    { kind: 'prototype' as const, platform: 'auto' as const, platformTargets: ['mobile-ios' as const, 'mobile-android' as const] },
+  ])('accepts a prototype claim for a second-level scene that only refines the brief', (metadata) => {
+    // 移动应用 / 线框图 are refinements of 原型, not separate task types: the
+    // Prototype task profile already branches on fidelity and platform, so the
+    // fail-closed re-derivation must agree with the claim rather than collapse it.
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'prototype',
+      skillId: 'implicit-default-skill',
+      pluginInputs: { legacy: true },
+    }, metadata)).toEqual({
+      skillId: null,
+      automaticStrategyTaskProfile: 'prototype',
+    });
+  });
+
+  it.each([
+    { kind: 'prototype' as const, intent: 'web-clone' as const },
+    { kind: 'prototype' as const, intent: 'live-artifact' as const },
+    { kind: 'other' as const },
+    { kind: 'image' as const },
   ])('rejects a prototype claim for non-OD-Next metadata and preserves ordinary defaults', (metadata) => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: 'prototype',
@@ -44,6 +63,22 @@ describe('EntryShell automatic strategy routing', () => {
     });
   });
 
+  it('carries the example reference for an example picked under a second-level scene', () => {
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'prototype',
+      exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
+      skillId: 'implicit-default-skill',
+    }, {
+      kind: 'prototype',
+      platform: 'auto',
+      platformTargets: ['mobile-ios', 'mobile-android'],
+    })).toEqual({
+      skillId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
+    });
+  });
+
   it('drops the example reference when the claimed automatic route fails re-validation', () => {
     // Fail-closed: the reference only means anything alongside the route it was
     // claimed for. Collapsing to the ordinary plugin branch must not smuggle it
@@ -54,7 +89,7 @@ describe('EntryShell automatic strategy routing', () => {
       exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
       skillId: 'ordinary-default-skill',
       pluginInputs: { legacy: true },
-    }, { kind: 'prototype', fidelity: 'wireframe' })).toEqual({
+    }, { kind: 'prototype', intent: 'web-clone' })).toEqual({
       skillId: 'ordinary-default-skill',
       pluginInputs: { legacy: true },
     });

@@ -92,6 +92,24 @@ export function isSubChipParent(chipId: string | null): chipId is SubChipParentI
   return chipId === 'prototype' || chipId === 'deck';
 }
 
+/**
+ * The first-level task type a chip id belongs to.
+ *
+ * A second-level scene refines WHAT to build — Mobile stamps platform targets,
+ * Wireframe stamps a lo-fi fidelity — and never decides WHETHER the parent task
+ * type's product route applies. Mobile and Wireframe survive as executable
+ * catalog actions (they used to be top-level chips), so fold them back onto
+ * Prototype here; every other chip already IS its own task type.
+ *
+ * Routing decisions read this instead of the raw chip id, which makes the
+ * invariant structural: a nested scene has no id of its own to route by, so a
+ * scene added later cannot silently strand its parent's route.
+ */
+export function taskTypeChipIdForChipId(chipId: string | null): string | null {
+  if (!chipId) return null;
+  return prototypeSubChipForActionChipId(chipId) ? 'prototype' : chipId;
+}
+
 // Sub-types for a first-level chip, drawn from the Community facet catalog so
 // the labels, set, AND order match the Community section exactly. The display
 // order is whatever `SUBCATEGORIES` (in `plugins-home/facets.ts`) declares for
