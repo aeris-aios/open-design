@@ -163,7 +163,7 @@ describe("normalized sidecar client", () => {
 
 describe("server-side atomic operations", () => {
   it("keeps distribution channels isolated and force-stops only an exact argv stamp", async () => {
-    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.mjs", import.meta.url));
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
     const stable = { ...stamp, channel: "stable", namespace: `isolation-${process.pid}` };
     const beta = { ...stable, channel: "beta" };
     await launchSidecar({
