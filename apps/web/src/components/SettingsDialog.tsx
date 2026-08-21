@@ -4750,6 +4750,14 @@ export function SettingsDialog({
                                 setHoveredAgentCardId(null);
                               }}
                             >
+                              {active ? (
+                                <span
+                                  className="agent-card-active-badge"
+                                  aria-hidden="true"
+                                >
+                                  {t('common.active')}
+                                </span>
+                              ) : null}
                               <div className="agent-card-main">
                                 <button
                                   type="button"
@@ -5011,6 +5019,7 @@ export function SettingsDialog({
                                       diagnostic={diagnostic}
                                       handlers={diagnosticHandlers}
                                       className="agent-card-diagnostic"
+                                      compact
                                     />
                                   ))
                                 : null}

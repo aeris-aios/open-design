@@ -2774,6 +2774,8 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
 
     fireEvent.click(codexCard);
     const selectedCard = codexCard.closest('.agent-card') as HTMLElement;
+    expect(selectedCard.classList.contains('active')).toBe(true);
+    expect(within(selectedCard).getByText(en['common.active'])).toBeTruthy();
     const selectedModelPicker = within(selectedCard).getByRole('combobox', {
       name: en['settings.modelPicker'],
     });
