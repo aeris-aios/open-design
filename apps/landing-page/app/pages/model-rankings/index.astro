@@ -1,6 +1,50 @@
 ---
 import Layout from '../../_components/sub-page-layout.astro';
+import { localeFromPath } from '../../i18n';
 import './model-rankings.css';
+
+const locale = localeFromPath(Astro.url.pathname);
+const isZh = locale === 'zh';
+
+const copy = isZh ? {
+  title: 'AI 设计模型排行榜 | OpenDesign',
+  description: '面向设计任务的独立模型排行榜，所有模型均使用 OpenDesign 同一套私有基准和评分框架进行评测。',
+  kicker: 'OpenDesign 模型指数',
+  heading: 'AI 设计模型排行榜',
+  intro: '使用同一套私有基准与评分框架，比较主流模型在 OpenDesign 中完成真实设计任务的表现。',
+  preview: '预览数据',
+  previewNote: '正式发布时将替换为完整评测数据，页面结构与指标口径保持不变。',
+  overallIndex: '01 / 综合排名',
+  leaderboard: '模型排行榜',
+  leaderboardDesc: '基于 OpenDesign 评测基准的综合排名。PDR 是主指标，D0、D1 和 D2 用于解释分数构成。',
+  metricAria: '排行榜指标',
+  metrics: [['pdr', 'PDR', '综合表现'], ['d0', 'D0', '可渲染性'], ['d1', 'D1', '需求实现'], ['d2', 'D2', '设计质量']],
+  scoreAria: '评测分数说明',
+  primer: [['PDR', '综合结果'], ['D0', '可渲染门槛'], ['D1 · 65', '需求实现度'], ['D2 · 35', '设计质量'], ['EFF', '单独报告']],
+  valueFormatAria: '排行榜数值格式', percentage: '百分比', score: '原始分', model: '模型',
+  taskIndex: '02 / 分任务最佳', taskHeading: '不同任务的最佳模型', taskDesc: '不只看综合第一，进一步了解每类设计任务中表现最好的模型。', taskLegendAria: '任务类型占比',
+  taskGroups: { Visual: '视觉设计', Product: '产品设计', Interface: '界面设计', Data: '数据设计' },
+  analysisIndex: '03 / 深入对比', analysisHeading: '探索模型的能力取舍', analysisDesc: '对比分数构成、效率，以及需求实现度与设计质量之间的平衡。',
+  analysisAria: '模型分析视图', profile: '分数构成', speed: '速度', cost: '成本', calls: '工具调用', balance: 'D1 × D2',
+  difficulty: '任务难度', simple: '简单', general: '一般', difficult: '困难',
+  profileEyebrow: '分数构成', profileHeading: '评测结果概览', profileDesc: '对比所有参评模型的 D0 可渲染性、D1 需求实现度与 D2 设计质量。', profileAria: '各模型评测结果',
+  lowerBetter: '数值越低越好', pdrVsSpeed: 'PDR × 速度', chartDesc: '左上象限代表设计表现更强、效率更高的模型。', pdrHigher: 'PDR（越高越好 ↑）', runtimeSlower: '运行时间（越右越慢 →）', idealZone: '高 PDR · 高效率', models: '模型',
+  requirement: '需求实现度', design: '设计质量', showPareto: '显示帕累托前沿', topModels: '综合表现前 10 的模型', higherBetter: '越高越好 ↗', balancedLeaders: '均衡领先区',
+  methodIndex: '04 / 评测方法', methodHeading: '评测框架', methodDesc: '用一个端到端综合分数表达模型表现，并通过三个评测维度解释分数来源。模型效率单独报告。',
+  primaryMetric: '主指标', pdrName: '主要设计结果', pdrDesc: '模型在 OpenDesign 评测基准上完成端到端设计任务的归一化综合指数。D0、D1 和 D2 用于解释这一结果的构成。',
+  flowAria: '评测流程',
+  flow: [['运行', '使用同一套私有任务集和 OpenDesign harness'], ['门槛', 'D0 检查结果是否能正常渲染'], ['评分', 'D1 需求实现 65 分 · D2 设计质量 35 分'], ['报告', 'PDR 排名与单独的效率指标']],
+  methods: [
+    ['D0', '硬性门槛', 'HTML 可渲染性', '在评估质量前，先确认生成结果能够作为可用网页正常打开。', ['HTML 加载成功', '无空白或被阻断的结果', '无致命运行错误']],
+    ['D1', '65 分', '需求实现度', '评估用户要求的产品功能和交互需求是否被真正实现。', ['页面与模块覆盖', '必要内容与界面状态', '交互行为与约束']],
+    ['D2', '35 分', '设计质量', '评估最终渲染结果的可见质量、完成度与可用性。', ['信息层级与构图', '排版与视觉完成度', '可读性与响应式表现']],
+    ['EFF', '单独报告', '模型效率', '展示模型获得当前结果所需的资源，不会增加或降低 PDR。', ['单次设计任务成本', '工具调用次数', '不同难度任务的总运行时间']],
+  ],
+  disclosures: [['公平对比', '所有模型均通过同一套 OpenDesign harness、私有基准和评分框架运行。'], ['基准边界', '任务集保持私有，以降低数据污染。排行榜仅公布模型级结果，不公开基准提示词。'], ['如何解读', '分数描述指定版本模型在 OpenDesign 中的表现，不代表通用智能水平排名。']],
+} : {
+  title: 'AI Design Model Rankings | OpenDesign', description: 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.', kicker: 'OpenDesign Model Index', heading: 'AI Design Model Rankings', intro: 'One private benchmark and one scoring framework, comparing leading models on real design work in OpenDesign.', preview: 'Preview data', previewNote: 'Final launch scores will replace the demonstration dataset without changing this page structure.', overallIndex: '01 / Overall', leaderboard: 'Model Leaderboard', leaderboardDesc: 'Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.', metricAria: 'Ranking metric', metrics: [['pdr', 'PDR', 'Overall'], ['d0', 'D0', 'Renderability'], ['d1', 'D1', 'Requirement'], ['d2', 'D2', 'Design quality']], scoreAria: 'How to read the evaluation scores', primer: [['PDR', 'Headline result'], ['D0', 'Renderability gate'], ['D1 · 65', 'Requirement fulfillment'], ['D2 · 35', 'Design quality'], ['EFF', 'Reported separately']], valueFormatAria: 'Leaderboard value format', percentage: 'Percentage', score: 'Score', model: 'Model', taskIndex: '02 / Best by task', taskHeading: 'Top models by task', taskDesc: 'Go beyond the overall winner. See which model leads each design task on OpenDesign.', taskLegendAria: 'Task category share', taskGroups: { Visual: 'Visual', Product: 'Product', Interface: 'Interface', Data: 'Data' }, analysisIndex: '03 / Deep dive', analysisHeading: 'Explore model trade-offs', analysisDesc: 'Compare score composition, efficiency, and the balance between requirement fulfillment and design quality.', analysisAria: 'Model analysis view', profile: 'Score profile', speed: 'Speed', cost: 'Cost', calls: 'Tool calls', balance: 'D1 × D2', difficulty: 'Task difficulty', simple: 'Simple', general: 'General', difficult: 'Difficult', profileEyebrow: 'Score composition', profileHeading: 'Evaluation profile', profileDesc: 'Compare D0 renderability, D1 requirement fulfillment, and D2 design quality across all evaluated models.', profileAria: 'Evaluation profile by model', lowerBetter: 'lower is better', pdrVsSpeed: 'PDR vs Speed', chartDesc: 'Top-left quadrant shows models with stronger design performance and better efficiency.', pdrHigher: 'PDR (higher ↑)', runtimeSlower: 'Runtime (slower →)', idealZone: 'High PDR · High efficiency', models: 'Models', requirement: 'Requirement fulfillment', design: 'Design quality', showPareto: 'Show Pareto', topModels: 'Top 10 evaluated models', higherBetter: 'Higher is better ↗', balancedLeaders: 'Balanced leaders', methodIndex: '04 / Method', methodHeading: 'Evaluation framework', methodDesc: 'One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.', primaryMetric: 'Primary metric', pdrName: 'Primary Design Result', pdrDesc: "The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.", flowAria: 'Evaluation sequence', flow: [['Run', 'Same private task set and OpenDesign harness'], ['Gate', 'D0 checks whether the result can render'], ['Score', 'D1 requirement, 65 points · D2 design, 35 points'], ['Report', 'PDR ranking plus separate efficiency metrics']], methods: [['D0', 'Hard gate', 'HTML renderability', 'Confirms that the generated result opens as a usable webpage before quality is judged.', ['HTML loads successfully', 'No blank or blocked result', 'No fatal runtime failure']], ['D1', '65 points', 'Requirement fulfillment', 'Measures whether the requested product and interaction requirements are actually implemented.', ['Page and module coverage', 'Required content and states', 'Interactions and constraints']], ['D2', '35 points', 'Design quality', 'Reviews the visible quality and usability of the final rendered experience.', ['Hierarchy and composition', 'Typography and visual finish', 'Readability and responsive behavior']], ['EFF', 'Separate', 'Model efficiency', 'Shows the resources required to reach the result and does not increase or reduce PDR.', ['Cost per design session', 'Tool-call count', 'Total runtime by task difficulty']]], disclosures: [['Fair comparison', 'Models run through the same OpenDesign harness, private benchmark, and scoring framework.'], ['Benchmark boundary', 'Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.'], ['How to interpret it', 'Scores describe the evaluated model version in OpenDesign. This is not a general intelligence ranking.']],
+};
+const methodCards = copy.methods as Array<[string, string, string, string, string[]]>;
 
 type Model = {
   name: string;
@@ -29,322 +73,273 @@ const models: Model[] = [
   { name: 'DeepSeek V4', maker: 'DeepSeek', icon: '/agents/deepseek.svg', color: '#5277f6', pdr: 68.6, d0: 94.4, d1: 51.8, d2: 26.6, time: 83, cost: 0.48, calls: 10.1 },
 ];
 
-const tasks = [
-  { id: 'landing', label: 'Landing Page', group: 'Visual', color: '#ff7c43', area: '1 / 1 / 3 / 3' },
-  { id: 'commerce', label: 'Commerce', group: 'Visual', color: '#ed743a', area: '1 / 3 / 2 / 4' },
-  { id: 'content', label: 'Content & Media', group: 'Visual', color: '#dd6936', area: '2 / 3 / 3 / 4' },
-  { id: 'dashboard', label: 'Dashboard', group: 'Product', color: '#7761e8', area: '1 / 4 / 3 / 6' },
-  { id: 'prototype', label: 'Product Prototype', group: 'Product', color: '#6753d2', area: '3 / 4 / 4 / 5' },
-  { id: 'workflow', label: 'Workflow', group: 'Product', color: '#5d4bc4', area: '3 / 5 / 4 / 6' },
-  { id: 'mobile', label: 'Mobile UI', group: 'Interface', color: '#3ab375', area: '1 / 6 / 3 / 8' },
-  { id: 'responsive', label: 'Responsive', group: 'Interface', color: '#30a96d', area: '3 / 6 / 4 / 7' },
-  { id: 'designsystem', label: 'Design System', group: 'Interface', color: '#289b62', area: '3 / 7 / 4 / 8' },
-  { id: 'data', label: 'Data Visualization', group: 'Data', color: '#158bf0', area: '1 / 8 / 3 / 9' },
-  { id: 'form', label: 'Forms', group: 'Data', color: '#087bd9', area: '3 / 8 / 4 / 9' },
-  { id: 'editorial', label: 'Editorial', group: 'Visual', color: '#d96334', area: '3 / 1 / 4 / 4' },
+const defaultLeaderboard = [...models].sort((a, b) => (b.d1 + b.d2) - (a.d1 + a.d2));
+
+const scenarios = [
+  { id: 'landing', label: isZh ? '落地页' : 'Landing page', detail: isZh ? '品牌表达与转化路径' : 'Brand expression and conversion', color: '#ef7442', area: '1 / 1 / 3 / 4' },
+  { id: 'dashboard', label: isZh ? '数据看板' : 'Dashboard', detail: isZh ? '信息密度与数据层级' : 'Information density and hierarchy', color: '#6756d8', area: '1 / 4 / 2 / 7' },
+  { id: 'prototype', label: isZh ? '产品原型' : 'Product prototype', detail: isZh ? '流程、状态与交互闭环' : 'Flows, states and interactions', color: '#4f43bb', area: '2 / 4 / 3 / 7' },
+  { id: 'mobile', label: isZh ? '移动端界面' : 'Mobile UI', detail: isZh ? '触控体验与响应式布局' : 'Touch and responsive layout', color: '#319d6a', area: '1 / 7 / 3 / 9' },
+  { id: 'data', label: isZh ? '数据可视化' : 'Data visualization', detail: isZh ? '图表编码与可读性' : 'Chart encoding and readability', color: '#1589e8', area: '1 / 9 / 3 / 11' },
 ];
 
-const taskScore = (model: Model, taskIndex: number, modelIndex: number) =>
-  Number(Math.max(55, Math.min(94, model.pdr + ((taskIndex * 7 + modelIndex * 5) % 13) - 6)).toFixed(1));
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const scenarioOffset = (scenarioIndex: number, modelIndex: number) => ((scenarioIndex * 11 + modelIndex * 7) % 15) - 7;
+const scenarioResults = models.map((model, modelIndex) => ({
+  ...model,
+  scenarios: scenarios.map((scenario, scenarioIndex) => {
+    const offset = scenarioOffset(scenarioIndex, modelIndex);
+    const d1 = Number(clamp(model.d1 + offset * .34, 42, 65).toFixed(1));
+    const d2 = Number(clamp(model.d2 + offset * .19, 20, 35).toFixed(1));
+    const score = Number((d1 + d2).toFixed(1));
+    return {
+      id: scenario.id,
+      d1,
+      d2,
+      score,
+      pdr: Number(clamp(model.pdr + offset * .48, 55, 96).toFixed(1)),
+      time: Number((model.time * (1 + scenarioIndex * .08 + Math.max(0, offset) * .008)).toFixed(0)),
+      cost: Number((model.cost * (1 + scenarioIndex * .07 + Math.max(0, offset) * .006)).toFixed(2)),
+      calls: Number((model.calls * (1 + scenarioIndex * .06 + Math.max(0, offset) * .007)).toFixed(1)),
+    };
+  }),
+}));
 
-const taskWinners = tasks.map((task, taskIndex) => {
-  const winner = models
-    .map((model, modelIndex) => ({ ...model, taskValue: taskScore(model, taskIndex, modelIndex) }))
-    .sort((a, b) => b.taskValue - a.taskValue)[0]!;
-  return { ...task, winner };
+const scenarioWinners = scenarios.map((scenario, scenarioIndex) => {
+  const winner = [...scenarioResults].sort((a, b) => b.scenarios[scenarioIndex]!.score - a.scenarios[scenarioIndex]!.score)[0]!;
+  return { ...scenario, winner, result: winner.scenarios[scenarioIndex]! };
 });
 
 const efficiencyX = (model: Model) => Math.max(5, Math.min(95, 5 + (model.time / 340) * 90));
 const efficiencyY = (model: Model) => Math.max(6, Math.min(94, 6 + ((model.pdr - 65) / 25) * 88));
-const requirementX = (model: Model) => 7 + ((model.d1 - 50) / 12) * 86;
-const requirementY = (model: Model) => 8 + ((model.d2 - 25) / 8) * 82;
-const signalModels = models.slice(0, 8);
-const averageTime = signalModels.reduce((sum, model) => sum + model.time, 0) / signalModels.length;
-const averageCost = signalModels.reduce((sum, model) => sum + model.cost, 0) / signalModels.length;
-const maxTime = Math.max(...signalModels.map((model) => model.time));
-const maxCost = Math.max(...signalModels.map((model) => model.cost));
-const heatTone = (value: number) => {
-  const alpha = Math.max(.1, Math.min(.82, .1 + value / 100 * .72));
-  return `rgba(64, 126, 103, ${alpha.toFixed(2)})`;
-};
 
-const title = 'AI Design Model Rankings | OpenDesign';
-const description = 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.';
-const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
+const title = copy.title;
+const description = copy.description;
+const modelsJson = JSON.stringify(scenarioResults).replace(/</g, '\\u003c');
+const scenariosJson = JSON.stringify(scenarios).replace(/</g, '\\u003c');
+const clientCopyJson = JSON.stringify({
+  percentage: copy.percentage,
+  score: copy.score,
+  scale: isZh ? '刻度' : 'scale',
+  module: {
+    speed: { title: isZh ? 'PDR × 速度' : 'PDR vs Speed', xLabel: copy.runtimeSlower, suffix: isZh ? '秒' : 's' },
+    cost: { title: isZh ? 'PDR × 成本' : 'PDR vs Cost', xLabel: isZh ? '单次任务成本（越右越高 →）' : 'Cost per session (higher →)' },
+    calls: { title: isZh ? 'PDR × 工具调用' : 'PDR vs Tool Calls', xLabel: isZh ? '工具调用次数（越右越多 →）' : 'Tool calls (more →)', suffix: isZh ? '次' : ' calls' },
+  },
+  scenario: isZh ? '场景' : 'scenario',
+  allScenarios: isZh ? '综合' : 'Overall',
+  quality: isZh ? '原始分' : 'Score',
+  pdr: 'PDR',
+  lowerBetter: copy.lowerBetter,
+}).replace(/</g, '\\u003c');
 ---
 
 <Layout
   title={title}
   description={description}
   active="resources"
-  localeCanonicalOnly
   mainClassName="model-index-main"
 >
   <article class="model-index-page" data-model-index>
     <header class="model-index-intro">
-      <p class="model-index-kicker">OpenDesign Model Index</p>
-      <h1>AI Design Model Rankings</h1>
-      <p>Independent model rankings for design work. Models are evaluated on OpenDesign using the same private benchmark and scoring framework.</p>
-      <div class="model-index-note"><span>Preview data</span><p>Final launch scores will replace the demonstration dataset without changing this page structure.</p></div>
+      <p class="model-index-kicker">{copy.kicker}</p>
+      <h1>{copy.heading}</h1>
+      <p>{copy.intro}</p>
+      <div class="model-index-note"><span>{copy.preview}</span><p>{copy.previewNote}</p></div>
     </header>
 
     <section class="model-section leaderboard-section" aria-labelledby="leaderboard-title">
       <div class="section-heading">
         <div>
-          <span class="section-index">01 / Overall</span>
-          <h2 id="leaderboard-title">Model Leaderboard</h2>
-          <p>Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.</p>
+          <h2 id="leaderboard-title">{copy.leaderboard}</h2>
+          <p>{copy.leaderboardDesc}</p>
         </div>
-        <div class="leaderboard-metric-tabs" role="tablist" aria-label="Ranking metric">
-          {[
-            ['pdr', 'PDR', 'Overall'],
-            ['d0', 'D0', 'Renderability'],
-            ['d1', 'D1', 'Requirement'],
-            ['d2', 'D2', 'Design quality'],
-          ].map(([id, code, label], index) => (
-            <button type="button" role="tab" aria-selected={index === 0 ? 'true' : 'false'} class:list={{ active: index === 0 }} data-metric={id}>
-              <strong>{code}</strong><span>{label}</span>
-            </button>
-          ))}
-        </div>
+      </div>
+
+      <div class="score-primer" aria-label={copy.scoreAria}>
+        {copy.primer.map(([code, label], index) => index < copy.metrics.length ? (
+          <button
+            type="button"
+            class:list={{ active: index === 0 }}
+            aria-pressed={index === 0 ? 'true' : 'false'}
+            data-primer-metric={copy.metrics[index]![0]}
+          >
+            <strong>{code}</strong><small>{label}</small>
+          </button>
+        ) : (
+          <a href="#analysis-title"><strong>{code}</strong><small>{label}</small></a>
+        ))}
       </div>
 
       <div class="leaderboard-bars">
         <div class="bar-view-toolbar">
-          <div class="bar-display-tabs" role="tablist" aria-label="Leaderboard value format">
-            <button type="button" role="tab" aria-selected="true" class="active" data-view="percentage">Percentage</button>
-            <button type="button" role="tab" aria-selected="false" data-view="score">Score</button>
+          <div class="bar-display-tabs" role="tablist" aria-label={copy.valueFormatAria}>
+            <button type="button" role="tab" aria-selected="true" class="active" data-view="score">{copy.score}</button>
+            <button type="button" role="tab" aria-selected="false" data-view="percentage">{copy.percentage}</button>
           </div>
         </div>
         <div class="bar-head">
-          <span>Model</span>
-          <div class="bar-scale" aria-label="Percentage scale">
-            <span>0</span><span>25</span><span>50</span><span>75</span><span>100%</span>
+          <span>{copy.model}</span>
+          <div class="bar-scale" aria-label={`${copy.score} ${isZh ? '刻度' : 'scale'}`}>
+            <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
           </div>
-          <span class="bar-head-value">Percentage</span>
+          <span class="bar-head-value">{copy.score}</span>
         </div>
         <div class="bar-list">
-          {models.map((model, index) => (
+          {defaultLeaderboard.map((model, index) => (
             <div class="leaderboard-bar-row" data-model={model.name}>
               <span class="bar-model">
                 <i data-rank>{index + 1}</i>
                 <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
                 <span><strong>{model.name}</strong><small>{model.maker}</small></span>
               </span>
-              <span class="bar-track"><span class="bar-fill" style={`width:${model.pdr}%;background:${model.color}`}></span></span>
-              <span class="bar-value"><strong>{model.pdr.toFixed(1)}%</strong><small></small></span>
+              <span class="bar-track"><span class="bar-fill" style={`width:${model.d1 + model.d2}%;background:${model.color}`}></span></span>
+              <span class="bar-value"><strong>{(model.d1 + model.d2).toFixed(1)}</strong><small>/ 100</small></span>
             </div>
           ))}
         </div>
       </div>
-    </section>
-
-    <section class="model-section signals-section" aria-labelledby="signals-title">
-      <div class="section-heading signals-heading">
-        <div>
-          <span class="section-index">02 / Signals</span>
-          <h2 id="signals-title">More ways to read the models</h2>
-          <p>Compact views of score composition and execution efficiency. All values below use the same preview evaluation run as the leaderboard.</p>
-        </div>
-        <p class="signals-disclosure"><strong>Benchmark signals</strong>Real-world reach and daily usage will only be published after telemetry reaches a reliable sample size.</p>
-      </div>
-
-      <div class="signal-card-rail" aria-label="Supplementary model signals">
-        <article class="signal-card signal-profile-card">
-          <header class="signal-card-header">
-            <div><span>Score composition</span><h3>Evaluation profile</h3><p>How the leading models perform across the three evaluation dimensions.</p></div>
-            <b>01</b>
-          </header>
-          <div class="profile-table" role="table" aria-label="Evaluation profile by model">
-            <div class="signal-table-head" role="row"><span>#</span><span>Model</span><span>D0</span><span>D1</span><span>D2</span></div>
-            {signalModels.map((model, index) => (
-              <div class="profile-row" role="row">
-                <span>{index + 1}</span>
-                <span class="signal-model-name"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><strong>{model.name}</strong></span>
-                <b style={`--heat:${heatTone(model.d0)}`}>{model.d0.toFixed(1)}</b>
-                <b style={`--heat:${heatTone(model.d1 / 65 * 100)}`}>{model.d1.toFixed(1)}</b>
-                <b style={`--heat:${heatTone(model.d2 / 35 * 100)}`}>{model.d2.toFixed(1)}</b>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article class="signal-card signal-ranking-card">
-          <header class="signal-card-header">
-            <div><span>Lower is better</span><h3>Runtime efficiency</h3><p>Total time needed to complete the same general-difficulty design session.</p></div>
-            <b>02</b>
-          </header>
-          <div class="signal-ranking-head"><span># &nbsp;&nbsp;&nbsp; Model</span><span>Vs. average</span></div>
-          <ol class="signal-ranking-list">
-            {[...signalModels].sort((a, b) => a.time - b.time).map((model, index) => {
-              const delta = (averageTime - model.time) / averageTime * 100;
-              return (
-                <li>
-                  <i>{index + 1}</i>
-                  <span class="signal-model-name"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><strong>{model.name}</strong></span>
-                  <span class:list={['signal-delta', { negative: delta < 0 }]}><strong>{delta >= 0 ? '+' : ''}{delta.toFixed(1)}%</strong><small>{model.time}s</small></span>
-                  <span class="signal-mini-track"><i style={`width:${Math.max(12, 100 - model.time / maxTime * 70)}%`}></i><b style={`left:${Math.min(94, averageTime / maxTime * 100)}%`}></b></span>
-                </li>
-              );
-            })}
-          </ol>
-        </article>
-
-        <article class="signal-card signal-ranking-card">
-          <header class="signal-card-header">
-            <div><span>Cost + tool calls</span><h3>Resource efficiency</h3><p>Session cost compared with the cohort average, with tool calls shown alongside it.</p></div>
-            <b>03</b>
-          </header>
-          <div class="signal-ranking-head"><span># &nbsp;&nbsp;&nbsp; Model</span><span>Vs. average</span></div>
-          <ol class="signal-ranking-list">
-            {[...signalModels].sort((a, b) => a.cost - b.cost).map((model, index) => {
-              const delta = (averageCost - model.cost) / averageCost * 100;
-              return (
-                <li>
-                  <i>{index + 1}</i>
-                  <span class="signal-model-name"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><strong>{model.name}</strong></span>
-                  <span class:list={['signal-delta', { negative: delta < 0 }]}><strong>{delta >= 0 ? '+' : ''}{delta.toFixed(1)}%</strong><small>${model.cost.toFixed(2)} · {model.calls.toFixed(1)} calls</small></span>
-                  <span class="signal-mini-track"><i style={`width:${Math.max(12, 100 - model.cost / maxCost * 70)}%`}></i><b style={`left:${Math.min(94, averageCost / maxCost * 100)}%`}></b></span>
-                </li>
-              );
-            })}
-          </ol>
-        </article>
-      </div>
-      <div class="signal-rail-note"><span></span><p>Swipe to compare on smaller screens</p></div>
     </section>
 
     <section class="model-section task-section" aria-labelledby="task-title">
       <div class="section-heading">
-        <div><span class="section-index">03 / Tasks</span><h2 id="task-title">Top models by task</h2><p>Each design task's Top 1 model, ranked by PDR on OpenDesign.</p></div>
+        <div><h2 id="task-title">{isZh ? '五个场景，各自谁最强' : 'The strongest model in each scene'}</h2><p>{isZh ? '先用 Treemap 看每个场景的领先者，再用热力矩阵展开所有模型的场景表现。' : 'Start with the scene leaders, then expand every model across all five scenes in the heatmap.'}</p></div>
       </div>
       <div class="task-map">
-        {taskWinners.map((task) => (
+        {scenarioWinners.map((task) => (
           <div class="task-tile" style={`background:${task.color};grid-area:${task.area}`}>
-            <span>{task.label}</span><small>{task.group}</small>
+            <span>{task.label}</span><small>{task.detail}</small>
             <div class="task-winner">
               <span class="model-icon"><img src={task.winner.icon} alt="" width="24" height="24" /></span>
-              <strong>{task.winner.name}</strong><b>{task.winner.taskValue}%</b>
+              <strong>{task.winner.name}</strong><b>{task.result.score}<small>/100</small></b>
             </div>
           </div>
         ))}
       </div>
-      <div class="task-legend" aria-label="Task category share">
-        <span><i class="visual"></i>Visual 31.4%</span><span><i class="product"></i>Product 28.7%</span><span><i class="interface"></i>Interface 27.6%</span><span><i class="data"></i>Data 12.3%</span>
+
+      <div class="scene-matrix" data-scene-matrix>
+        <div class="scene-matrix-heading">
+          <div><span>{isZh ? '场景热力矩阵' : 'Scene heatmap'}</span><h3>{isZh ? '展开每个模型的五场景表现' : 'Every model across five scenes'}</h3><p>{isZh ? '默认显示 D1 与 D2 合计的原始分，也可以切换查看 PDR、需求完成度和设计质量。' : 'Raw D1 plus D2 score is the default. Switch to PDR, requirement fulfillment, or design quality.'}</p></div>
+          <div class="matrix-tabs" role="tablist" aria-label={isZh ? '热力矩阵指标' : 'Heatmap metric'}>
+            <button type="button" class="active" role="tab" aria-selected="true" data-matrix-metric="score">{isZh ? '原始分' : 'Score'}</button>
+            <button type="button" role="tab" aria-selected="false" data-matrix-metric="pdr">PDR</button>
+            <button type="button" role="tab" aria-selected="false" data-matrix-metric="d1">D1</button>
+            <button type="button" role="tab" aria-selected="false" data-matrix-metric="d2">D2</button>
+          </div>
+        </div>
+        <div class="scene-matrix-scroll">
+          <div class="scene-matrix-table" role="table" aria-label={isZh ? '五场景模型表现' : 'Model performance across five scenes'}>
+            <div class="scene-matrix-row scene-matrix-head" role="row">
+              <span role="columnheader">{copy.model}</span>
+              {scenarios.map((scenario) => <span role="columnheader"><i style={`background:${scenario.color}`}></i>{scenario.label}</span>)}
+              <span role="columnheader">{isZh ? '平均' : 'Average'}</span>
+            </div>
+            {scenarioResults.map((model) => (
+              <div class="scene-matrix-row" role="row" data-matrix-row={model.name}>
+                <span class="scene-model" role="rowheader"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><span><strong>{model.name}</strong><small>{model.maker}</small></span></span>
+                {model.scenarios.map((result) => <b role="cell" data-scene={result.id} data-score={result.score} data-pdr={result.pdr} data-d1={result.d1} data-d2={result.d2}>{result.score.toFixed(1)}</b>)}
+                <strong class="scene-average" role="cell" data-matrix-average>{(model.scenarios.reduce((sum, result) => sum + result.score, 0) / model.scenarios.length).toFixed(1)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="model-section efficiency-section" aria-labelledby="efficiency-title">
+    <section class="model-section analysis-section" aria-labelledby="analysis-title">
       <div class="section-heading">
-        <div><span class="section-index">04 / Efficiency</span><h2 id="efficiency-title">Model efficiency frontier</h2><p>Compare design performance against speed, cost, and tool calls across three task difficulty levels.</p></div>
+        <div><h2 id="analysis-title">{isZh ? '效率取舍' : 'Efficiency trade-offs'}</h2><p>{isZh ? '在综合或单个场景中，对照模型原始分与速度、成本、工具调用的关系。' : 'Compare score against speed, cost, and tool calls overall or within a single scene.'}</p></div>
       </div>
-      <div class="efficiency-explorer" data-efficiency>
-        <div class="efficiency-toolbar">
-          <div class="efficiency-module-tabs" role="tablist" aria-label="Efficiency metric">
-            <button type="button" role="tab" aria-selected="true" class="active" data-efficiency-module="speed"><span>01</span><strong>Speed</strong></button>
-            <button type="button" role="tab" aria-selected="false" data-efficiency-module="cost"><span>02</span><strong>Cost</strong></button>
-            <button type="button" role="tab" aria-selected="false" data-efficiency-module="calls"><span>03</span><strong>Tool calls</strong></button>
+      <div class="analysis-explorer" data-analysis>
+        <div class="analysis-toolbar">
+          <div class="analysis-tabs" role="tablist" aria-label={copy.analysisAria}>
+            <button type="button" role="tab" aria-selected="true" aria-controls="analysis-efficiency" class="active" data-analysis-view="speed"><strong>{copy.speed}</strong></button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="analysis-efficiency" data-analysis-view="cost"><strong>{copy.cost}</strong></button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="analysis-efficiency" data-analysis-view="calls"><strong>{copy.calls}</strong></button>
           </div>
-          <div class="difficulty-control"><span>Task difficulty</span>
-            <div class="difficulty-tabs" role="group" aria-label="Task difficulty">
-              <span class="difficulty-indicator" aria-hidden="true"></span>
-              <button type="button" data-difficulty="simple" aria-pressed="false">Simple</button>
-              <button type="button" data-difficulty="general" aria-pressed="true" class="active">General</button>
-              <button type="button" data-difficulty="difficult" aria-pressed="false">Difficult</button>
-            </div>
+          <div class="efficiency-quality-tabs" role="group" aria-label={isZh ? '纵轴分数' : 'Quality axis'}>
+            <button type="button" class="active" aria-pressed="true" data-efficiency-quality="score">{isZh ? '原始分' : 'Score'}</button>
+            <button type="button" aria-pressed="false" data-efficiency-quality="pdr">PDR</button>
           </div>
         </div>
-        <div class="efficiency-chart-shell">
-          <div class="efficiency-chart-main">
-            <div class="efficiency-chart-copy"><span data-efficiency-eyebrow>General tasks · lower is better</span><h3 data-efficiency-title>PDR vs Speed</h3><p>Top-left quadrant shows models with stronger design performance and better efficiency.</p></div>
-            <div class="efficiency-chart-stage">
-              <span class="efficiency-y-title">PDR (higher ↑)</span><span class="efficiency-x-title" data-efficiency-x-label>Runtime (slower →)</span>
-              <div class="efficiency-y-ticks" aria-hidden="true"><span>90</span><span>82</span><span>74</span><span>66</span></div>
-              <div class="efficiency-x-ticks" aria-hidden="true"><span>0s</span><span>85s</span><span>170s</span><span>255s</span><span>340s</span></div>
-              <div class="efficiency-plot">
-                <div class="efficiency-ideal-zone"><span>High PDR · High efficiency</span></div>
-                <svg class="efficiency-frontier" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points=""></polyline></svg>
-                {models.map((model, index) => (
-                  <div class:list={['efficiency-point', { 'is-highlighted': index < 4 }]} data-efficiency-point={model.name} style={`left:${efficiencyX(model)}%;bottom:${efficiencyY(model)}%;--point-color:${model.color}`}>
+        <div class="scenario-filter" role="group" aria-label={isZh ? '选择评测场景' : 'Select evaluation scene'}>
+          <button type="button" class="active" aria-pressed="true" data-efficiency-scenario="overall">{isZh ? '综合' : 'Overall'}</button>
+          {scenarios.map((scenario) => <button type="button" aria-pressed="false" data-efficiency-scenario={scenario.id}><i style={`background:${scenario.color}`}></i>{scenario.label}</button>)}
+        </div>
+
+        <div id="analysis-efficiency" class="analysis-panel" role="tabpanel" data-analysis-panel="efficiency">
+          <div class="efficiency-chart-shell">
+            <div class="efficiency-chart-main">
+              <div class="efficiency-chart-copy"><span data-efficiency-eyebrow>{isZh ? '综合表现 · 数值越低越好' : 'Overall · lower is better'}</span><h3 data-efficiency-title>{isZh ? '原始分 × 速度' : 'Score vs Speed'}</h3><p>{copy.chartDesc}</p></div>
+              <div class="efficiency-chart-stage">
+                <span class="efficiency-y-title" data-efficiency-y-label>{isZh ? '原始分（越高越好 ↑）' : 'Score (higher ↑)'}</span><span class="efficiency-x-title" data-efficiency-x-label>{copy.runtimeSlower}</span>
+                <div class="efficiency-y-ticks" aria-hidden="true" data-efficiency-y-ticks><span>95</span><span>85</span><span>75</span><span>65</span></div>
+                <div class="efficiency-x-ticks" aria-hidden="true"><span>0s</span><span>85s</span><span>170s</span><span>255s</span><span>340s</span></div>
+                <div class="efficiency-plot">
+                  <div class="efficiency-ideal-zone"><span>{isZh ? '高分 · 高效率' : 'High score · High efficiency'}</span></div>
+                  <svg class="efficiency-frontier" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points=""></polyline></svg>
+                  {scenarioResults.map((model, index) => (
+                    <div class:list={['efficiency-point', { 'is-highlighted': index < 4 }]} data-efficiency-point={model.name} style={`left:${efficiencyX(model)}%;bottom:${efficiencyY(model)}%;--point-color:${model.color}`}>
+                      <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
+                      <span class="efficiency-point-label"><strong>{model.name}</strong><small>{model.time}s · {(model.d1 + model.d2).toFixed(1)}</small></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <aside class="efficiency-model-index">
+              <div class="model-index-heading"><span>{copy.models}</span><strong data-model-count>{models.length}</strong></div>
+              <div class="efficiency-model-list">
+                {models.map((model) => (
+                  <div class="efficiency-model-row" data-efficiency-row={model.name}>
                     <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
-                    <span class="efficiency-point-label"><strong>{model.name}</strong><small>{model.time}s · {model.pdr}%</small></span>
+                    <span><strong>{model.name}</strong><small>{model.maker}</small></span><b>{model.time}s</b>
                   </div>
                 ))}
               </div>
-            </div>
+            </aside>
           </div>
-          <aside class="efficiency-model-index">
-            <div class="model-index-heading"><span>Models</span><strong data-model-count>{models.length}</strong></div>
-            <label><span class="sr-only">Search models</span><input type="search" data-model-search placeholder="Search models" /></label>
-            <div class="efficiency-model-list">
-              {models.map((model) => (
-                <div class="efficiency-model-row" data-efficiency-row={model.name}>
-                  <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
-                  <span><strong>{model.name}</strong><small>{model.maker}</small></span><b>{model.time}s</b>
-                </div>
-              ))}
-            </div>
-          </aside>
         </div>
       </div>
     </section>
 
-    <section class="model-section benchmark-section" aria-labelledby="benchmark-title">
-      <div class="section-heading"><div><span class="section-index">05 / Quality frontier</span><h2 id="benchmark-title">Requirement × Design</h2><p>See which models balance requirement fulfillment (D1) with design quality (D2).</p></div></div>
-      <div class="benchmark-controls">
-        <div class="benchmark-axis-legend">
-          <div class="axis-key"><b>X</b><span><small>D1</small>Requirement fulfillment</span></div>
-          <div class="axis-key"><b>Y</b><span><small>D2</small>Design quality</span></div>
-        </div>
-        <label class="pareto-toggle"><input type="checkbox" data-pareto /><span></span>Show Pareto</label>
+    <section class="model-section compare-section" aria-labelledby="compare-title">
+      <div class="section-heading"><div><h2 id="compare-title">{isZh ? '模型对比' : 'Compare models'}</h2><p>{isZh ? '选择二到三个模型，把综合分、三项核心指标与五场景表现放在同一视图中比较。' : 'Select two or three models to compare overall results, core metrics, and all five scenes.'}</p></div></div>
+      <div class="compare-picker" role="group" aria-label={isZh ? '选择对比模型' : 'Select models to compare'}>
+        {scenarioResults.map((model, index) => <button type="button" class:list={{ active: index < 3 }} aria-pressed={index < 3 ? 'true' : 'false'} data-compare-model={model.name}><span class="model-icon"><img src={model.icon} alt="" width="22" height="22" /></span>{model.name}</button>)}
       </div>
-      <div class="plot-card">
-        <div class="plot-card-head"><span>Top 10 evaluated models</span><strong>Higher is better ↗</strong></div>
-        <div class="plot-y">D2 · Design quality</div><div class="plot-x">D1 · Requirement fulfillment</div>
-        <div class="plot-y-ticks" aria-hidden="true"><span>35</span><span>30</span><span>25</span></div>
-        <div class="plot-x-ticks" aria-hidden="true"><span>50</span><span>54</span><span>58</span><span>62</span></div>
-        <div class="plot-grid">
-          <div class="plot-ideal-zone"><span>Balanced leaders</span></div><div class="pareto-area" hidden></div>
-          {models.map((model, index) => (
-            <div class:list={['plot-point', { 'is-leading': index < 3 }]} style={`left:${requirementX(model)}%;bottom:${requirementY(model)}%;--point-color:${model.color}`}>
-              <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
-              <span class="plot-point-label">{model.name}<small>D1 {model.d1} · D2 {model.d2}</small></span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <div class="compare-grid" data-compare-grid></div>
     </section>
 
     <section class="model-section method-section" aria-labelledby="method-title">
-      <div class="section-heading"><div><span class="section-index">06 / Method</span><h2 id="method-title">Evaluation framework</h2><p>One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.</p></div></div>
+      <div class="section-heading"><div><h2 id="method-title">{copy.methodHeading}</h2><p>{copy.methodDesc}</p></div></div>
       <div class="method-overview">
-        <div class="method-primary"><span>Primary metric</span><div><strong>PDR</strong><h3>Primary Design Result</h3></div><p>The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.</p></div>
-        <ol class="method-flow" aria-label="Evaluation sequence">
-          <li><b>01</b><span><strong>Run</strong><small>Same private task set and OpenDesign harness</small></span></li>
-          <li><b>02</b><span><strong>Gate</strong><small>D0 checks whether the result can render</small></span></li>
-          <li><b>03</b><span><strong>Score</strong><small>D1 requirement, 65 points · D2 design, 35 points</small></span></li>
-          <li><b>04</b><span><strong>Report</strong><small>PDR ranking plus separate efficiency metrics</small></span></li>
+        <div class="method-primary"><span>{copy.primaryMetric}</span><div><strong>PDR</strong><h3>{copy.pdrName}</h3></div><p>{copy.pdrDesc}</p></div>
+        <ol class="method-flow" aria-label={copy.flowAria}>
+          {copy.flow.map(([title, detail]) => <li><span><strong>{title}</strong><small>{detail}</small></span></li>)}
         </ol>
       </div>
       <div class="method-table">
-        <article><header><span>D0</span><em>Hard gate</em></header><h3>HTML renderability</h3><p>Confirms that the generated result opens as a usable webpage before quality is judged.</p><ul><li>HTML loads successfully</li><li>No blank or blocked result</li><li>No fatal runtime failure</li></ul></article>
-        <article><header><span>D1</span><em>65 points</em></header><h3>Requirement fulfillment</h3><p>Measures whether the requested product and interaction requirements are actually implemented.</p><ul><li>Page and module coverage</li><li>Required content and states</li><li>Interactions and constraints</li></ul></article>
-        <article><header><span>D2</span><em>35 points</em></header><h3>Design quality</h3><p>Reviews the visible quality and usability of the final rendered experience.</p><ul><li>Hierarchy and composition</li><li>Typography and visual finish</li><li>Readability and responsive behavior</li></ul></article>
-        <article><header><span>EFF</span><em>Separate</em></header><h3>Model efficiency</h3><p>Shows the resources required to reach the result and does not increase or reduce PDR.</p><ul><li>Cost per design session</li><li>Tool-call count</li><li>Total runtime by task difficulty</li></ul></article>
+        {methodCards.map(([code, badge, heading, body, bullets]) => (
+          <article><header><span>{code}</span><em>{badge}</em></header><h3>{heading}</h3><p>{body}</p><ul>{bullets.map((bullet) => <li>{bullet}</li>)}</ul></article>
+        ))}
       </div>
       <div class="method-disclosure">
-        <div><strong>Fair comparison</strong><p>Models run through the same OpenDesign harness, private benchmark, and scoring framework.</p></div>
-        <div><strong>Benchmark boundary</strong><p>Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.</p></div>
-        <div><strong>How to interpret it</strong><p>Scores describe the evaluated model version in OpenDesign—not a general intelligence ranking.</p></div>
+        {copy.disclosures.map(([heading, body]) => <div><strong>{heading}</strong><p>{body}</p></div>)}
       </div>
     </section>
   </article>
   <script is:inline type="application/json" id="model-rankings-data" set:html={modelsJson}></script>
+  <script is:inline type="application/json" id="model-rankings-scenarios" set:html={scenariosJson}></script>
+  <script is:inline type="application/json" id="model-rankings-copy" set:html={clientCopyJson}></script>
   <script>
     type Metric = 'pdr' | 'd0' | 'd1' | 'd2';
     type ViewMode = 'percentage' | 'score';
     type EfficiencyModule = 'speed' | 'cost' | 'calls';
-    type Difficulty = 'simple' | 'general' | 'difficult';
+    type MatrixMetric = 'score' | 'pdr' | 'd1' | 'd2';
+    type QualityMetric = 'score' | 'pdr';
+    type ScenarioId = 'overall' | string;
+    type ScenarioResult = { id: string; d1: number; d2: number; score: number; pdr: number; time: number; cost: number; calls: number };
     type ClientModel = {
       name: string;
       maker: string;
@@ -357,14 +352,31 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
       time: number;
       cost: number;
       calls: number;
+      scenarios: ScenarioResult[];
+    };
+    type ClientScenario = { id: string; label: string; color: string };
+    type ClientCopy = {
+      percentage: string;
+      score: string;
+      scale: string;
+      module: Record<EfficiencyModule, { title: string; xLabel: string; suffix?: string }>;
+      scenario: string;
+      allScenarios: string;
+      quality: string;
+      pdr: string;
+      lowerBetter: string;
     };
 
     const root = document.querySelector<HTMLElement>('[data-model-index]');
     const dataElement = document.querySelector<HTMLScriptElement>('#model-rankings-data');
-    if (root && dataElement) {
+    const scenariosElement = document.querySelector<HTMLScriptElement>('#model-rankings-scenarios');
+    const copyElement = document.querySelector<HTMLScriptElement>('#model-rankings-copy');
+    if (root && dataElement && scenariosElement && copyElement) {
       const modelData = JSON.parse(dataElement.textContent || '[]') as ClientModel[];
+      const scenarioData = JSON.parse(scenariosElement.textContent || '[]') as ClientScenario[];
+      const clientCopy = JSON.parse(copyElement.textContent || '{}') as ClientCopy;
       let activeMetric: Metric = 'pdr';
-      let activeView: ViewMode = 'percentage';
+      let activeView: ViewMode = 'score';
 
       const maximumFor = (metric: Metric) => metric === 'd1' ? 65 : metric === 'd2' ? 35 : 100;
       const scoreFor = (model: ClientModel, metric: Metric) => metric === 'pdr' ? model.d1 + model.d2 : model[metric];
@@ -383,8 +395,8 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
         if (!list || !scale || !valueHead) return;
         const scaleMaximum = activeView === 'percentage' ? 100 : scoreMaximum;
         scale.innerHTML = [0, .25, .5, .75, 1].map((step, index) => `<span>${formatTick(scaleMaximum * step)}${activeView === 'percentage' && index === 4 ? '%' : ''}</span>`).join('');
-        scale.setAttribute('aria-label', `${activeView === 'percentage' ? 'Percentage' : 'Score'} scale`);
-        valueHead.textContent = activeView === 'percentage' ? 'Percentage' : 'Score';
+        scale.setAttribute('aria-label', `${activeView === 'percentage' ? clientCopy.percentage : clientCopy.score} ${clientCopy.scale}`);
+        valueHead.textContent = activeView === 'percentage' ? clientCopy.percentage : clientCopy.score;
 
         sorted.forEach((model, index) => {
           const row = list.querySelector<HTMLElement>(`[data-model="${CSS.escape(model.name)}"]`);
@@ -402,14 +414,18 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
         });
       };
 
-      root.querySelectorAll<HTMLButtonElement>('[data-metric]').forEach((button) => button.addEventListener('click', () => {
-        activeMetric = button.dataset.metric as Metric;
-        root.querySelectorAll<HTMLButtonElement>('[data-metric]').forEach((item) => {
-          const selected = item === button;
+      const setLeaderboardMetric = (metric: Metric) => {
+        activeMetric = metric;
+        root.querySelectorAll<HTMLButtonElement>('[data-primer-metric]').forEach((item) => {
+          const selected = item.dataset.primerMetric === metric;
           item.classList.toggle('active', selected);
-          item.setAttribute('aria-selected', String(selected));
+          item.setAttribute('aria-pressed', String(selected));
         });
         renderLeaderboard();
+      };
+
+      root.querySelectorAll<HTMLButtonElement>('[data-primer-metric]').forEach((button) => button.addEventListener('click', () => {
+        setLeaderboardMetric(button.dataset.primerMetric as Metric);
       }));
       root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => button.addEventListener('click', () => {
         activeView = button.dataset.view as ViewMode;
@@ -421,91 +437,168 @@ const modelsJson = JSON.stringify(models).replace(/</g, '\\u003c');
         renderLeaderboard();
       }));
 
-      const moduleConfig = {
-        speed: { title: 'PDR vs Speed', xLabel: 'Runtime (slower →)', maximum: 340, ticks: [0, 85, 170, 255, 340], format: (value: number) => `${Math.round(value)}s` },
-        cost: { title: 'PDR vs Cost', xLabel: 'Cost per session (higher →)', maximum: 6.25, ticks: [0, 1.5, 3, 4.5, 6], format: (value: number) => `$${value.toFixed(2)}` },
-        calls: { title: 'PDR vs Tool Calls', xLabel: 'Tool calls (more →)', maximum: 36, ticks: [0, 9, 18, 27, 36], format: (value: number) => `${Math.round(value)} calls` },
-      } satisfies Record<EfficiencyModule, { title: string; xLabel: string; maximum: number; ticks: number[]; format: (value: number) => string }>;
-      const difficultyConfig = {
-        simple: { label: 'Simple', cost: .48, calls: .55, time: .62 },
-        general: { label: 'General', cost: 1, calls: 1, time: 1 },
-        difficult: { label: 'Difficult', cost: 2.65, calls: 1.9, time: 1.78 },
-      } satisfies Record<Difficulty, { label: string; cost: number; calls: number; time: number }>;
-      let activeModule: EfficiencyModule = 'speed';
-      let activeDifficulty: Difficulty = 'general';
+      let activeMatrixMetric: MatrixMetric = 'score';
+      const matrixMaximum = (metric: MatrixMetric) => metric === 'd1' ? 65 : metric === 'd2' ? 35 : 100;
+      const renderMatrix = () => {
+        const maximum = matrixMaximum(activeMatrixMetric);
+        const columns = scenarioData.map((scenario) => {
+          const values = modelData.map((model) => model.scenarios.find((item) => item.id === scenario.id)?.[activeMatrixMetric] || 0);
+          return Math.max(...values);
+        });
+        root.querySelectorAll<HTMLElement>('[data-matrix-row]').forEach((row) => {
+          const values: number[] = [];
+          row.querySelectorAll<HTMLElement>('[data-scene]').forEach((cell, index) => {
+            const value = Number(cell.dataset[activeMatrixMetric] || 0);
+            values.push(value);
+            const ratio = value / maximum;
+            cell.textContent = `${value.toFixed(1)}${activeMatrixMetric === 'pdr' ? '%' : ''}`;
+            cell.style.setProperty('--matrix-alpha', String(.07 + ratio * .76));
+            cell.classList.toggle('is-column-leader', Math.abs(value - columns[index]!) < .01);
+          });
+          const average = row.querySelector<HTMLElement>('[data-matrix-average]');
+          if (average) average.textContent = `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}${activeMatrixMetric === 'pdr' ? '%' : ''}`;
+        });
+      };
+      root.querySelectorAll<HTMLButtonElement>('[data-matrix-metric]').forEach((button) => button.addEventListener('click', () => {
+        activeMatrixMetric = button.dataset.matrixMetric as MatrixMetric;
+        root.querySelectorAll<HTMLButtonElement>('[data-matrix-metric]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-selected', String(selected));
+        });
+        renderMatrix();
+      }));
 
+      const moduleConfig = {
+        speed: { label: clientCopy.module.speed.title.replace('PDR', ''), xLabel: clientCopy.module.speed.xLabel, maximum: 340, ticks: [0, 85, 170, 255, 340], format: (value: number) => `${Math.round(value)}${clientCopy.module.speed.suffix}` },
+        cost: { label: clientCopy.module.cost.title.replace('PDR', ''), xLabel: clientCopy.module.cost.xLabel, maximum: 4.8, ticks: [0, 1.2, 2.4, 3.6, 4.8], format: (value: number) => `$${value.toFixed(2)}` },
+        calls: { label: clientCopy.module.calls.title.replace('PDR', ''), xLabel: clientCopy.module.calls.xLabel, maximum: 32, ticks: [0, 8, 16, 24, 32], format: (value: number) => `${value.toFixed(1)}${clientCopy.module.calls.suffix}` },
+      } satisfies Record<EfficiencyModule, { label: string; xLabel: string; maximum: number; ticks: number[]; format: (value: number) => string }>;
+      let activeModule: EfficiencyModule = 'speed';
+      let activeScenario: ScenarioId = 'overall';
+      let activeQuality: QualityMetric = 'score';
+
+      const resultFor = (model: ClientModel) => activeScenario === 'overall' ? model : model.scenarios.find((result) => result.id === activeScenario) || model;
+      const qualityFor = (model: ClientModel) => {
+        const result = resultFor(model) as ClientModel | ScenarioResult;
+        return activeQuality === 'pdr' ? result.pdr : ('score' in result ? result.score : result.d1 + result.d2);
+      };
       const valueFor = (model: ClientModel) => {
-        const multiplier = difficultyConfig[activeDifficulty];
-        if (activeModule === 'speed') return model.time * multiplier.time;
-        if (activeModule === 'cost') return model.cost * multiplier.cost;
-        return model.calls * multiplier.calls;
+        const result = resultFor(model) as ClientModel | ScenarioResult;
+        if (activeModule === 'speed') return result.time;
+        if (activeModule === 'cost') return result.cost;
+        return result.calls;
       };
       const renderEfficiency = () => {
         const config = moduleConfig[activeModule];
-        const difficulty = difficultyConfig[activeDifficulty];
+        const scene = activeScenario === 'overall' ? clientCopy.allScenarios : scenarioData.find((item) => item.id === activeScenario)?.label || activeScenario;
+        const qualityLabel = activeQuality === 'score' ? clientCopy.quality : clientCopy.pdr;
         const eyebrow = root.querySelector<HTMLElement>('[data-efficiency-eyebrow]');
         const titleNode = root.querySelector<HTMLElement>('[data-efficiency-title]');
+        const yLabel = root.querySelector<HTMLElement>('[data-efficiency-y-label]');
         const xLabel = root.querySelector<HTMLElement>('[data-efficiency-x-label]');
-        const ticks = root.querySelector<HTMLElement>('.efficiency-x-ticks');
-        if (eyebrow) eyebrow.textContent = `${difficulty.label} tasks · lower is better`;
-        if (titleNode) titleNode.textContent = config.title;
+        const xTicks = root.querySelector<HTMLElement>('.efficiency-x-ticks');
+        const yTicks = root.querySelector<HTMLElement>('[data-efficiency-y-ticks]');
+        if (eyebrow) eyebrow.textContent = `${scene} · ${clientCopy.lowerBetter}`;
+        if (titleNode) titleNode.textContent = `${qualityLabel} × ${config.label.replace(/^[ ×]+|[ ×]+$/g, '')}`;
+        if (yLabel) yLabel.textContent = `${qualityLabel} (${activeQuality === 'pdr' ? '%' : '/100'})`;
         if (xLabel) xLabel.textContent = config.xLabel;
-        if (ticks) ticks.innerHTML = config.ticks.map((tick) => `<span>${config.format(tick)}</span>`).join('');
-        const points = modelData.map((model) => ({ model, value: valueFor(model), x: Math.max(5, Math.min(95, 5 + valueFor(model) / config.maximum * 90)), y: Math.max(6, Math.min(94, 6 + (model.pdr - 65) / 25 * 88)) }));
-        points.forEach(({ model, value, x, y }) => {
+        if (xTicks) xTicks.innerHTML = config.ticks.map((tick) => `<span>${config.format(tick)}</span>`).join('');
+        if (yTicks) yTicks.innerHTML = (activeQuality === 'pdr' ? [95, 85, 75, 65] : [96, 86, 76, 66]).map((tick) => `<span>${tick}</span>`).join('');
+        const points = modelData.map((model) => {
+          const value = valueFor(model);
+          const quality = qualityFor(model);
+          return { model, value, quality, x: Math.max(5, Math.min(95, 5 + value / config.maximum * 90)), y: Math.max(6, Math.min(94, 6 + (quality - 62) / 35 * 88)) };
+        });
+        points.forEach(({ model, value, quality, x, y }) => {
           const point = root.querySelector<HTMLElement>(`[data-efficiency-point="${CSS.escape(model.name)}"]`);
           const row = root.querySelector<HTMLElement>(`[data-efficiency-row="${CSS.escape(model.name)}"]`);
           if (point) {
-            point.style.left = `${x}%`; point.style.bottom = `${y}%`;
+            point.style.left = `${x}%`;
+            point.style.bottom = `${y}%`;
             const label = point.querySelector<HTMLElement>('small');
-            if (label) label.textContent = `${config.format(value)} · ${model.pdr}%`;
+            if (label) label.textContent = `${config.format(value)} · ${quality.toFixed(1)}${activeQuality === 'pdr' ? '%' : ''}`;
           }
           const rowValue = row?.querySelector<HTMLElement>('b');
           if (rowValue) rowValue.textContent = config.format(value);
         });
         let best = -Infinity;
         const frontier = [...points].sort((a, b) => a.value - b.value).filter((point) => {
-          if (point.model.pdr <= best) return false;
-          best = point.model.pdr; return true;
+          if (point.quality <= best) return false;
+          best = point.quality;
+          return true;
         });
         const polyline = root.querySelector<SVGPolylineElement>('.efficiency-frontier polyline');
         if (polyline) polyline.setAttribute('points', frontier.map((point) => `${point.x},${100 - point.y}`).join(' '));
       };
 
-      root.querySelectorAll<HTMLButtonElement>('[data-efficiency-module]').forEach((button) => button.addEventListener('click', () => {
-        activeModule = button.dataset.efficiencyModule as EfficiencyModule;
-        root.querySelectorAll<HTMLButtonElement>('[data-efficiency-module]').forEach((item) => {
-          const selected = item === button; item.classList.toggle('active', selected); item.setAttribute('aria-selected', String(selected));
+      root.querySelectorAll<HTMLButtonElement>('[data-analysis-view]').forEach((button) => button.addEventListener('click', () => {
+        activeModule = button.dataset.analysisView as EfficiencyModule;
+        root.querySelectorAll<HTMLButtonElement>('[data-analysis-view]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-selected', String(selected));
         });
         renderEfficiency();
       }));
-      root.querySelectorAll<HTMLButtonElement>('[data-difficulty]').forEach((button, index) => button.addEventListener('click', () => {
-        activeDifficulty = button.dataset.difficulty as Difficulty;
-        root.querySelectorAll<HTMLButtonElement>('[data-difficulty]').forEach((item) => {
-          const selected = item === button; item.classList.toggle('active', selected); item.setAttribute('aria-pressed', String(selected));
+      root.querySelectorAll<HTMLButtonElement>('[data-efficiency-scenario]').forEach((button) => button.addEventListener('click', () => {
+        activeScenario = button.dataset.efficiencyScenario || 'overall';
+        root.querySelectorAll<HTMLButtonElement>('[data-efficiency-scenario]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-pressed', String(selected));
         });
-        root.querySelector<HTMLElement>('.difficulty-tabs')?.style.setProperty('--indicator-x', `${index * 100}%`);
         renderEfficiency();
       }));
-      root.querySelector<HTMLInputElement>('[data-model-search]')?.addEventListener('input', (event) => {
-        const query = (event.currentTarget as HTMLInputElement).value.trim().toLowerCase();
-        let count = 0;
-        modelData.forEach((model) => {
-          const matches = !query || model.name.toLowerCase().includes(query) || model.maker.toLowerCase().includes(query);
-          root.querySelector<HTMLElement>(`[data-efficiency-row="${CSS.escape(model.name)}"]`)?.toggleAttribute('hidden', !matches);
-          root.querySelector<HTMLElement>(`[data-efficiency-point="${CSS.escape(model.name)}"]`)?.classList.toggle('is-muted', !matches);
-          if (matches) count += 1;
+      root.querySelectorAll<HTMLButtonElement>('[data-efficiency-quality]').forEach((button) => button.addEventListener('click', () => {
+        activeQuality = button.dataset.efficiencyQuality as QualityMetric;
+        root.querySelectorAll<HTMLButtonElement>('[data-efficiency-quality]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-pressed', String(selected));
         });
-        const countNode = root.querySelector<HTMLElement>('[data-model-count]');
-        if (countNode) countNode.textContent = String(count);
-      });
-      root.querySelector<HTMLInputElement>('[data-pareto]')?.addEventListener('change', (event) => {
-        const area = root.querySelector<HTMLElement>('.pareto-area');
-        if (area) area.hidden = !(event.currentTarget as HTMLInputElement).checked;
-      });
+        renderEfficiency();
+      }));
+
+      let comparedModels = modelData.slice(0, 3).map((model) => model.name);
+      const renderCompare = () => {
+        const grid = root.querySelector<HTMLElement>('[data-compare-grid]');
+        if (!grid) return;
+        grid.innerHTML = comparedModels.map((name) => {
+          const model = modelData.find((item) => item.name === name)!;
+          const sceneRows = model.scenarios.map((result) => {
+            const scenario = scenarioData.find((item) => item.id === result.id)!;
+            return `<div><span><i style="background:${scenario.color}"></i>${scenario.label}</span><b>${result.score.toFixed(1)}</b></div>`;
+          }).join('');
+          return `<article class="compare-card" style="--compare-color:${model.color}">
+            <header><span class="model-icon"><img src="${model.icon}" alt="" width="28" height="28"></span><span><strong>${model.name}</strong><small>${model.maker}</small></span></header>
+            <div class="compare-headline"><span>PDR <strong>${model.pdr.toFixed(1)}%</strong></span><span>${clientCopy.quality} <strong>${(model.d1 + model.d2).toFixed(1)}</strong></span></div>
+            <div class="compare-metrics"><div><small>D1</small><strong>${model.d1.toFixed(1)}<i>/65</i></strong></div><div><small>D2</small><strong>${model.d2.toFixed(1)}<i>/35</i></strong></div><div><small>Speed</small><strong>${model.time}s</strong></div><div><small>Cost</small><strong>$${model.cost.toFixed(2)}</strong></div><div><small>Calls</small><strong>${model.calls.toFixed(1)}</strong></div></div>
+            <div class="compare-scenes">${sceneRows}</div>
+          </article>`;
+        }).join('');
+        root.querySelectorAll<HTMLButtonElement>('[data-compare-model]').forEach((button) => {
+          const selected = comparedModels.includes(button.dataset.compareModel || '');
+          button.classList.toggle('active', selected);
+          button.setAttribute('aria-pressed', String(selected));
+        });
+      };
+      root.querySelectorAll<HTMLButtonElement>('[data-compare-model]').forEach((button) => button.addEventListener('click', () => {
+        const name = button.dataset.compareModel || '';
+        if (comparedModels.includes(name)) {
+          if (comparedModels.length > 2) comparedModels = comparedModels.filter((item) => item !== name);
+        } else if (comparedModels.length < 3) {
+          comparedModels = [...comparedModels, name];
+        } else {
+          comparedModels = [...comparedModels.slice(1), name];
+        }
+        renderCompare();
+      }));
 
       renderLeaderboard();
+      renderMatrix();
       renderEfficiency();
+      renderCompare();
     }
   </script>
 </Layout>
