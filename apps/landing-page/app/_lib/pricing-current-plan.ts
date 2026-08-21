@@ -31,6 +31,20 @@ export function isPersonalPlanAtOrBelow(
   );
 }
 
+export function personalPlanRelation(
+  candidateTier: string,
+  currentTier: PersonalPlanTier,
+): 'lower' | 'current' | 'higher' | null {
+  const candidateIndex = PERSONAL_PLAN_ORDER.indexOf(
+    candidateTier as PersonalPlanTier,
+  );
+  if (candidateIndex < 0) return null;
+  const currentIndex = PERSONAL_PLAN_ORDER.indexOf(currentTier);
+  if (candidateIndex < currentIndex) return 'lower';
+  if (candidateIndex === currentIndex) return 'current';
+  return 'higher';
+}
+
 function personalPlanTier(value: unknown): PersonalPlanTier | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase().replace(/_(monthly|yearly)$/, '');

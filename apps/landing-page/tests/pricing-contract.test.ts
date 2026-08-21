@@ -21,11 +21,13 @@ import {
 import {
   PREMIUM_MODELS,
   getCurrentPlanLabel,
+  getPricingPlanActionLabels,
   getPricingContent,
 } from "../app/_lib/pricing-content.ts";
 import {
   isPersonalPlanAtOrBelow,
   loadCurrentPersonalPlanTier,
+  personalPlanRelation,
 } from "../app/_lib/pricing-current-plan.ts";
 import { LANDING_LOCALES } from "../app/i18n.ts";
 import { DEEPSEEK_V4_PRO_CAMPAIGN } from "../app/_lib/deepseek-v4-pro-campaign.ts";
@@ -207,6 +209,7 @@ describe("pricing contract", () => {
       individualPlans,
       /const compactSavings = \(amountUsd: number, interval: 'monthly' \| 'yearly'\)/,
     );
+    assert.match(individualPlans, /const amount = formatUsd\(amountUsd\);/);
     assert.match(
       individualPlans,
       /locale === 'en' && interval === 'monthly' \? `\$\{amount\}\/mo` : amount/,
@@ -215,6 +218,11 @@ describe("pricing contract", () => {
       individualPlans,
       /const compactBillingTotal = \(amountUsd: number\) =>\s*locale === 'en'/,
     );
+    const compactSavingsBlock = individualPlans.match(
+      /const compactSavings = \(amountUsd: number, interval: 'monthly' \| 'yearly'\) => \{([\s\S]*?)\n\};/,
+    )?.[1];
+    assert.ok(compactSavingsBlock);
+    assert.doesNotMatch(compactSavingsBlock, /replace\('\$', ''\)/);
   });
 
   it("keeps recommendation ribbons legible, animated, and motion-safe", async () => {
@@ -223,6 +231,10 @@ describe("pricing contract", () => {
     assert.match(
       individualPlans,
       /\.new-plan-ribbon\s*\{[^}]*font-size:\s*11px;/s,
+    );
+    assert.match(
+      individualPlans,
+      /\.new-plan-ribbon\s*\{[^}]*background:\s*#d8ffb5;/s,
     );
     assert.match(
       individualPlans,
@@ -307,7 +319,7 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /\{false && \(/);
     assert.doesNotMatch(page, /<section class="pr-grid"/);
     assert.match(individualPlans, /tier:\s*'go' as const/);
-    assert.match(individualPlans, /data-pricing-cta data-tier=\{tier\}/);
+    assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
     assert.deepEqual(GO_PLAN, {
       tier: "go",
       monthly: { priceUsd: 10, introPriceUsd: 5 },
@@ -407,28 +419,48 @@ describe("pricing contract", () => {
     assert.equal(proUnlimitedModels.includes("MiniMax M2.7"), false);
   });
 
-  it("groups the Pro unlimited models together and keeps ample access check-only", async () => {
+  it("uses the reviewed popular-model order and keeps ample access check-only", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
     const comparisonBlock = individualPlans.match(
       /const comparisonPopular = \[([\s\S]*?)\]\.map/,
     )?.[1];
 
     assert.ok(comparisonBlock);
+    const reviewedOrder = [
+      "DeepSeek V4 Flash",
+      "DeepSeek V4 Pro",
+      "GLM-5.2",
+      "Kimi K2.7 Code",
+      "MiniMax M2.7",
+      "Kimi K2.6",
+      "MiMo V2.5 Pro",
+      "GLM-5.1",
+    ];
     assert.deepEqual(
-      Array.from(comparisonBlock.matchAll(/'([^']+)'/g), (match) => match[1]).slice(0, 6),
-      [
-        "DeepSeek V4 Flash",
-        "DeepSeek V4 Pro",
-        "GLM-5.2",
-        "Kimi K2.7 Code",
-        "MiMo V2.5 Pro",
-        "MiniMax M2.7",
-      ],
+      Array.from(comparisonBlock.matchAll(/'([^']+)'/g), (match) => match[1]),
+      reviewedOrder,
     );
+    assert.match(individualPlans, /go:\s*\[[\s\S]*?'GLM-5\.1',\s*\],\s*plus:/);
+    assert.match(individualPlans, /plus:\s*\['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5\.2', 'Kimi K2\.7 Code'\]/);
+    assert.match(individualPlans, /pro:\s*\[[\s\S]*?'MiniMax M2\.7',\s*\],\s*max:/);
     assert.match(
       individualPlans,
       /status\.kind === 'more-ample'\s*\?\s*\(\s*<td><span class=\{`model-access-status \$\{status\.kind\}`\} aria-label=\{status\.text\}><i class="status-icon check"><\/i><\/span><\/td>/s,
     );
+    assert.match(
+      individualPlans,
+      /\.model-access-status\s*\{[^}]*grid-template-columns:\s*23px max-content;[^}]*width:\s*104px;[^}]*margin:\s*0 auto;/s,
+    );
+  });
+
+  it("matches the legal footnote size to the model allowance note", async () => {
+    const [page, individualPlans] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
+    ]);
+
+    assert.match(individualPlans, /\.individual-usage-note p\s*\{[^}]*font-size:\s*10\.5px;/s);
+    assert.match(page, /\.pr-foot\s*\{[^}]*font-size:\s*10\.5px;/s);
   });
 
   it("renders paid flagship headings as one localized phrase", async () => {
@@ -715,6 +747,11 @@ describe("pricing contract", () => {
     );
     assert.equal(getCurrentPlanLabel("en"), "Current plan");
     assert.equal(getCurrentPlanLabel("zh"), "当前套餐");
+    assert.deepEqual(getPricingPlanActionLabels("en"), {
+      current: "Current plan",
+      downgrade: "Downgrade to {plan}",
+      upgrade: "Upgrade to {plan}",
+    });
   });
 
   it("disables the current personal plan and every downgrade target", () => {
@@ -726,6 +763,10 @@ describe("pricing contract", () => {
     );
     assert.equal(isPersonalPlanAtOrBelow("team", "pro"), false);
     assert.equal(isPersonalPlanAtOrBelow("max", "pro"), false);
+    assert.equal(personalPlanRelation("go", "pro"), "lower");
+    assert.equal(personalPlanRelation("pro", "pro"), "current");
+    assert.equal(personalPlanRelation("max", "pro"), "higher");
+    assert.equal(personalPlanRelation("team", "pro"), null);
   });
 
   it("keeps CTA copy unchanged when subscription identity is unavailable or non-personal", async () => {
@@ -759,10 +800,14 @@ describe("pricing contract", () => {
     ]);
 
     assert.match(page, /data-billing-api-origin=\{apiOrigin\}/);
-    assert.match(page, /data-current-plan-label=\{currentPlanLabel\}/);
+    assert.match(page, /data-current-plan-label=\{planActionLabels\.current\}/);
+    assert.match(page, /data-downgrade-plan-label=\{planActionLabels\.downgrade\}/);
+    assert.match(page, /data-upgrade-plan-label=\{planActionLabels\.upgrade\}/);
     assert.match(page, /loadCurrentPersonalPlanTier\(apiOrigin\)/);
-    assert.match(page, /\[data-pricing-cta\]\[data-tier="\$\{currentTier\}"\] > span/);
-    assert.match(page, /isPersonalPlanAtOrBelow\(tier, currentTier\)/);
+    assert.match(page, /personalPlanRelation\(tier, currentTier\)/);
+    assert.match(page, /relation === 'current'/);
+    assert.match(page, /fillPlanLabel\(downgradePlanLabel, plan\)/);
+    assert.match(page, /fillPlanLabel\(upgradePlanLabel, plan\)/);
     assert.match(page, /cta\.setAttribute\('aria-disabled', 'true'\)/);
     assert.match(page, /cta\.setAttribute\('tabindex', '-1'\)/);
     assert.match(page, /cta\.removeAttribute\('href'\)/);
@@ -771,7 +816,8 @@ describe("pricing contract", () => {
       individualPlans,
       /\.pricing-card-cta\[aria-disabled='true'\][\s\S]*?cursor:\s*not-allowed;/,
     );
-    assert.match(individualPlans, /data-pricing-cta data-tier=\{tier\}/);
+    assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
+    assert.match(individualPlans, /\.pricing-card-cta\s*\{[^}]*border:\s*0;/s);
   });
 
   it("preserves only an explicit inbound workspace without inferring local state", async () => {
@@ -953,24 +999,22 @@ describe("pricing contract", () => {
     // generic global section padding must be cancelled on the component root.
     assert.match(individualPlans, /\.demo-individual-pricing\s*\{[^}]*padding:\s*0 !important;/s);
 
-    // Creator/Team and billing interval share one compact row above the
-    // Individual cards. The billing group is right-aligned and disappears
-    // entirely when the Team tab is active, matching the approved demo.
+    // Billing is the centered segmented control. Individual/Team stays as the
+    // plain right-aligned slash control and billing hides for Team.
     assert.match(page, /class="pr-audience-toggle"[^>]*role="tablist"/);
     assert.match(page, /\.pr-controls-row\s*\{[^}]*grid-template-columns:\s*1fr auto 1fr;/s);
-    assert.match(page, /\.pr-toggle\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;/s);
+    assert.match(page, /\.pr-toggle\s*\{[^}]*grid-column:\s*2;[^}]*justify-self:\s*center;[^}]*background:\s*#e8e9e3;[^}]*border-radius:\s*999px;/s);
     assert.match(
       page,
-      /\.pr-toggle-btn\s*\{[^}]*min-height:\s*36px;[^}]*font-size:\s*13px;[^}]*font-weight:\s*600;[^}]*line-height:\s*1;/s,
+      /\.pr-toggle-btn\s*\{[^}]*min-height:\s*40px;[^}]*border-radius:\s*999px;[^}]*font-size:\s*14px;[^}]*font-weight:\s*600;/s,
     );
     assert.match(
       page,
-      /\.pr-audience-btn\s*\{[^}]*border-radius:\s*9px;[^}]*font-size:\s*14px;[^}]*font-weight:\s*600;/s,
+      /\.pr-audience-toggle\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*margin-right:\s*24px;/s,
     );
-    assert.match(
-      page,
-      /\.pr-audience-btn\.is-active\s*\{[^}]*background:\s*#e8e9e3;/s,
-    );
+    assert.match(page, /<span class="pr-audience-separator" aria-hidden="true">\/<\/span>/);
+    assert.match(page, /<span class="pr-toggle-save">\{L\.yearlySave\}<\/span>/);
+    assert.doesNotMatch(page, /class="pr-toggle-separator"/);
     assert.match(
       page,
       /const billingToggle = root\.querySelector\('\.pr-toggle'\);[\s\S]*?billingToggle\.hidden = audience === 'team';/,
