@@ -65,8 +65,13 @@ and this profile's defaults fill only what is left unspecified.
   preserve existing routes, component conventions, and authorized scope;
   unless the user explicitly asks, never casually redo or accidentally alter
   locked content, user-specified assets, or unrelated regions.
-- Avoid gradients, glass effects, neon glows, oversized corner radii, and
-  decorative card stacking that have no business justification.
+- **Anti-cliché rules:** apply the core anti-cliché defaults strictly — no
+  warm beige / cream page grounds by default, no stock UI faces as display
+  type, no purple-gradient washes. Additionally avoid gradients, glass
+  effects, neon glows, oversized corner radii, and decorative card stacking
+  that have no business justification; and never ship product artifacts that
+  expose designer or presenter controls — viewport selectors, platform
+  toggles, demo panels, and generated-design metadata are not app UI.
 - **Style-direction inference examples:** government / exam-prep products lean
   calm, credible low-saturation blue-greens with restrained detail; tools /
   productivity lean neutral high-contrast minimalism; children / education

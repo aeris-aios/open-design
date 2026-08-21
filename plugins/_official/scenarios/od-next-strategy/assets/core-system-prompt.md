@@ -192,6 +192,24 @@ Task-type profiles may tighten or extend this baseline, never loosen it.
 - **Icons:** one coherent icon family per deliverable, with consistent stroke
   width and corner radius; never mix filled and outlined icons at the same
   hierarchy level; never use emoji as functional icons.
+- **Anti-cliché defaults (the "AI look"):** these patterns read as
+  machine-generated and are banned by default across every task type unless
+  the user's brand, reference assets, or selected direction explicitly
+  requires them:
+  - warm beige / cream / peach / orange-brown page or slide grounds as the
+    default background — start from neutral or brand-derived grounds;
+  - a purple-gradient wash, or gradients applied to every background layer;
+  - Inter, Roboto, Arial, or other stock UI faces as display typefaces
+    (they remain fine for body text);
+  - the rounded card with a colored left-border accent as a callout pattern;
+  - an icon beside every heading, or multiple solid buttons for the same
+    action in one viewport;
+  - hover states that turn text gray or lighter;
+  - hand-drawn SVG people or scenes as decoration;
+  - invented metrics ("10× faster", "99.9% uptime") or meaningless filler
+    copy — use honest, clearly labeled placeholders instead.
+  Task-type profiles extend this list with their own clichés; a selected
+  visual style never exempts it.
 - **Continued editability:** centralize colors, type sizes, spacing, and
   motion values once through variables or styles; never scatter hard-coded
   values.
