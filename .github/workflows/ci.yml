@@ -1019,10 +1019,18 @@ jobs:
 
           # Pull the failing assertions out of the job logs (vitest `FAIL` lines, Playwright
           # `✘` lines, runner error annotations), capped so the comment stays readable.
+          # CI logs are full of terminal escape sequences, and gh >= 2.97 refuses to print such
+          # a body unless told otherwise (GHSA-3m3g-3wcr-px46) while older gh does not know the
+          # flag — probe once so the excerpt works with either runner image.
+          gh --version | head -n 1
+          escape_flag=""
+          if gh api --help 2>/dev/null | grep -q -- '--allow-escape-sequences'; then
+            escape_flag="--allow-escape-sequences"
+          fi
           esc="$(printf '\033')"
           excerpt=""
           for job_id in $(jq -r --arg skip "$skip_job_name" '.[] | select(.conclusion == "failure" and .name != $skip) | .id' <<< "$jobs_json" | head -n 4); do
-            lines="$(gh api "repos/$REPO/actions/jobs/$job_id/logs" 2>/dev/null \
+            lines="$(gh api ${escape_flag:+"$escape_flag"} "repos/$REPO/actions/jobs/$job_id/logs" 2>/dev/null \
               | sed -E "s/${esc}\[[0-9;]*[A-Za-z]//g; s/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //" \
               | grep -E '^ ?FAIL  |^[[:space:]]*[✘×] |^##\[error\]' \
               | grep -vE '^##\[error\]Process completed with exit code' \

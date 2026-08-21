@@ -625,6 +625,9 @@ describe("packaged smoke workflow", () => {
       labelNoticeEmitted?: string;
       labels?: string[];
       mergePolicyConclusion?: string;
+      // gh >= 2.97 refuses to print a body with terminal escape sequences unless
+      // `--allow-escape-sequences` is passed; older gh rejects that flag as unknown.
+      ghSupportsEscapeFlag?: boolean;
     }): Promise<{
       stdout: string;
       output: Record<string, string>;
@@ -675,14 +678,25 @@ describe("packaged smoke workflow", () => {
         },
         logs: failedShardLog,
       };
+      const supportsEscapeFlag = args.ghSupportsEscapeFlag ?? true;
       await writeFile(
         ghPath,
         `#!/usr/bin/env node
 const fixtures = JSON.parse(process.env.FAKE_GH_FIXTURES);
-const args = process.argv.slice(2).join(" ");
-if (/\\/pulls\\/6214$/.test(args)) process.stdout.write(JSON.stringify(fixtures.pull));
+const supportsEscapeFlag = ${supportsEscapeFlag ? "true" : "false"};
+const argv = process.argv.slice(2);
+const args = argv.join(" ");
+const hasEscapeFlag = argv.includes("--allow-escape-sequences");
+if (args === "--version") process.stdout.write(supportsEscapeFlag ? "gh version 2.98.0 (fake)\\n" : "gh version 2.87.3 (fake)\\n");
+else if (args === "api --help") process.stdout.write(supportsEscapeFlag ? "      --allow-escape-sequences   Allow printing terminal escape sequences\\n" : "      --cache duration           Cache the response\\n");
+else if (hasEscapeFlag && !supportsEscapeFlag) { process.stderr.write("unknown flag: --allow-escape-sequences\\n"); process.exit(1); }
+else if (/\\/pulls\\/6214$/.test(args)) process.stdout.write(JSON.stringify(fixtures.pull));
 else if (/\\/actions\\/runs\\/${runId}\\/jobs/.test(args)) process.stdout.write(JSON.stringify(fixtures.jobs));
-else if (/\\/actions\\/jobs\\/\\d+\\/logs$/.test(args)) process.stdout.write(fixtures.logs);
+else if (/\\/actions\\/jobs\\/\\d+\\/logs$/.test(args)) {
+  // Real gh >= 2.97 behavior for a body full of ANSI codes: nothing on stdout, exit 1.
+  if (supportsEscapeFlag && !hasEscapeFlag) { process.stderr.write("the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway\\n"); process.exit(1); }
+  process.stdout.write(fixtures.logs);
+}
 else if (/\\/compare\\//.test(args)) process.stdout.write(JSON.stringify(fixtures.compare));
 else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit(1); }
 `,
@@ -805,6 +819,20 @@ else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit
     expect(labelPlusWorkload.output.comment_created).toBe("true");
     expect(labelPlusWorkload.body).toContain("**Daemon tests (1/4)**");
     expect(labelPlusWorkload.body).not.toContain("Merge policy");
+
+    // A runner whose gh predates the escape-sequence policy must still get the excerpt: the
+    // probe finds no flag and the plain fetch is used.
+    const olderGh = await runNotice({
+      needs: {
+        plan: { result: "success", outputs: { run: planRun } },
+        merge_policy: { result: "success", outputs: { ejection_notice: "" } },
+        daemon_unit_tests: { result: "failure" },
+      },
+      ghSupportsEscapeFlag: false,
+    });
+    expect(olderGh.output.comment_created).toBe("true");
+    expect(olderGh.body).toContain("FAIL  tests/project-archive.test.ts");
+    expect(olderGh.stdout).toContain("gh version 2.87.3 (fake)");
   });
 
   it("[P1] routes configured contributors into an independent maintainer merge block", async () => {
