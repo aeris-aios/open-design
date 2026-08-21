@@ -6,6 +6,7 @@ import type { Express, Request, Response } from 'express';
 import type { LintArtifactRequest, LintArtifactResponse } from '@open-design/contracts';
 import {
   PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
+  buildPreviewBaseHrefBridge,
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
@@ -5446,6 +5447,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     projectId: string,
     ownerFilePath: string,
     scope: string,
+    expiresAt: number,
   ): string {
     // Respect an artifact-authored base URL. Only generated documents without
     // one need the containment base that keeps runtime-created relative URLs
@@ -5456,10 +5458,13 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       ? ''
       : `${encodeProjectPathForUrl(ownerDir)}/`;
     const baseTag = `<base href="/api/projects/${encodeURIComponent(projectId)}`
-      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}">`;
+      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}" data-od-project-preview-base>`;
+    const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
+      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
+    const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
     const head = /<head\b[^>]*>/i;
-    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}`);
-    return `${baseTag}${html}`;
+    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}${bridge}`);
+    return `${baseTag}${bridge}${html}`;
   }
 
   function rewriteWorkspaceScopedHtmlAssetUrls(
@@ -5832,6 +5837,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
               workspaceMemberId: requestContext.workspaceMemberId,
             },
       );
+      const expiresAt = projectPreviewScopes.expiresAt(project.id, scope);
+      if (expiresAt === undefined) {
+        sendApiError(res, 503, 'PREVIEW_SCOPE_NOT_FOUND', 'preview scope not found');
+        return;
+      }
       /** @type {import('@open-design/contracts').ProjectPreviewUrlResponse} */
       const body = {
         url: `/api/projects/${encodeURIComponent(project.id)}/preview/${scope}/${encodeProjectPathForUrl(meta.name)}`,
@@ -5839,6 +5849,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         csp: projectPreviewCsp,
         iframeSandbox: projectPreviewIframeSandbox,
         opaqueOrigin: true,
+        expiresAt,
       };
       res.setHeader('Cache-Control', 'no-store');
       res.json(body);
@@ -5850,6 +5861,61 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST',
         String(err),
       );
+    }
+  });
+
+  app.post('/api/projects/:id/preview/:scope/renew', async (req, res) => {
+    try {
+      const projectId = String(req.params.id ?? '');
+      const scope = String(req.params.scope ?? '');
+      // The scope is embedded in untrusted preview HTML. Requiring a custom
+      // header makes renewal a host-only operation: an opaque-origin iframe
+      // cannot set it without a CORS preflight, and this route grants no CORS.
+      if (req.get('x-od-preview-scope-renewal') !== '1') {
+        sendApiError(res, 403, 'FORBIDDEN', 'preview scope renewal requires host authorization');
+        return;
+      }
+      if (!previewScopeRe.test(scope)) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'invalid preview scope');
+        return;
+      }
+      const project = getProject(db, projectId);
+      if (!project) {
+        sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+        return;
+      }
+      const previewWorkspace = projectPreviewScopes.resolve(project.id, scope);
+      if (previewWorkspace === undefined) {
+        sendApiError(res, 404, 'PREVIEW_SCOPE_NOT_FOUND', 'preview scope not found');
+        return;
+      }
+      const authorityRequest = previewWorkspace
+        ? {
+            query: {
+              ...req.query,
+              workspaceId: previewWorkspace.workspaceId,
+              workspaceMemberId: previewWorkspace.workspaceMemberId,
+            },
+            get: req.get.bind(req),
+          }
+        : req;
+      if (!await authorizeProjectRequest(
+        authorityRequest,
+        res,
+        project.id,
+        { mode: 'read', allowNavigationQuery: true },
+      )) return;
+      const expiresAt = projectPreviewScopes.renew(project.id, scope);
+      if (expiresAt === undefined) {
+        sendApiError(res, 404, 'PREVIEW_SCOPE_NOT_FOUND', 'preview scope not found');
+        return;
+      }
+      /** @type {import('@open-design/contracts').ProjectPreviewScopeRenewResponse} */
+      const body = { expiresAt };
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(body);
+    } catch (err: any) {
+      sendApiError(res, 400, 'BAD_REQUEST', String(err));
     }
   });
 
@@ -6082,11 +6148,14 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 }
               : null;
           const scope = projectPreviewScopes.mint(projectId, previewWorkspace);
+          const expiresAt = projectPreviewScopes.expiresAt(projectId, scope);
+          if (expiresAt === undefined) return html;
           return injectProjectPreviewBase(
             html,
             projectId,
             relPath,
             scope,
+            expiresAt,
           );
         },
         true, // revalidate: emit ETag/Last-Modified so covers/preview/export reuse cached assets

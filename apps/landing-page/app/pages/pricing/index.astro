@@ -24,7 +24,7 @@ import {
   type TeamPlanTierConfig,
 } from '../../_lib/pricing';
 import {
-  getCurrentPlanLabel,
+  getPricingPlanActionLabels,
   getPricingContent,
   fillTemplate,
 } from '../../_lib/pricing-content';
@@ -43,7 +43,7 @@ const locale = localeFromPath(Astro.url.pathname);
 const isZh = locale === 'zh' || locale === 'zh-tw';
 const href = (path: string) => localizedHref(path, locale);
 const content = getPricingContent(locale);
-const currentPlanLabel = getCurrentPlanLabel(locale);
+const planActionLabels = getPricingPlanActionLabels(locale);
 const teamContent = getTeamPricingContent(locale);
 const L = content.labels;
 const env = import.meta.env as Record<string, string | undefined>;
@@ -189,13 +189,24 @@ const jsonLd = [
     data-interval="yearly"
     data-cloud-console-environment="production"
     data-billing-api-origin={apiOrigin}
-    data-current-plan-label={currentPlanLabel}
+    data-current-plan-label={planActionLabels.current}
+    data-downgrade-plan-label={planActionLabels.downgrade}
+    data-upgrade-plan-label={planActionLabels.upgrade}
     data-campaign-start-at={DEEPSEEK_V4_PRO_CAMPAIGN.startAt}
     data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive}
   >
     <header class="pr-hero">
       <h1 class="pr-hero-heading">{isZh ? '零配置，只为结果付费' : locale === 'en' ? 'Zero setup. Pay only for results.' : L.heroTitle}</h1>
       <div class="pr-controls-row">
+        <div class="pr-toggle" role="tablist" aria-label={teamContent.billingIntervalLabel}>
+          <button type="button" class="pr-toggle-btn" role="tab" data-interval-btn="monthly" aria-selected="false">
+            {L.monthly}
+          </button>
+          <button type="button" class="pr-toggle-btn is-active" role="tab" data-interval-btn="yearly" aria-selected="true">
+            <span>{L.yearly}</span>
+            <span class="pr-toggle-save">{L.yearlySave}</span>
+          </button>
+        </div>
         <div class="pr-audience-toggle" role="tablist" aria-label={teamContent.audienceTabsLabel}>
           <button
             id="pr-audience-creator"
@@ -209,6 +220,7 @@ const jsonLd = [
           >
             {isZh ? '个人' : locale === 'en' ? 'Individual' : teamContent.creatorTab}
           </button>
+          <span class="pr-audience-separator" aria-hidden="true">/</span>
           <button
             id="pr-audience-team"
             type="button"
@@ -221,16 +233,6 @@ const jsonLd = [
           >
             {isZh ? '团队' : locale === 'en' ? 'Team' : teamContent.teamTab}
           </button>
-        </div>
-        <div class="pr-toggle" role="tablist" aria-label={teamContent.billingIntervalLabel}>
-          <button type="button" class="pr-toggle-btn" role="tab" data-interval-btn="monthly" aria-selected="false">
-            {L.monthly}
-          </button>
-          <span class="pr-toggle-separator" aria-hidden="true">/</span>
-          <button type="button" class="pr-toggle-btn is-active" role="tab" data-interval-btn="yearly" aria-selected="true">
-            {L.yearly}
-          </button>
-          <span class="pr-toggle-save">{L.yearlySave}</span>
         </div>
       </div>
     </header>
@@ -1087,28 +1089,40 @@ const jsonLd = [
   </script>
   <script>
     import {
-      isPersonalPlanAtOrBelow,
       loadCurrentPersonalPlanTier,
+      personalPlanRelation,
     } from '../../_lib/pricing-current-plan';
 
     const pricingRoot = document.querySelector('[data-pricing-root]');
     if (pricingRoot?.getAttribute('data-cloud-console-environment') === 'production') {
       const apiOrigin = pricingRoot.getAttribute('data-billing-api-origin') || '';
       const currentPlanLabel = pricingRoot.getAttribute('data-current-plan-label') || '';
+      const downgradePlanLabel = pricingRoot.getAttribute('data-downgrade-plan-label') || '';
+      const upgradePlanLabel = pricingRoot.getAttribute('data-upgrade-plan-label') || '';
+      const fillPlanLabel = (template: string, plan: string) =>
+        template.replace('{plan}', plan);
       void loadCurrentPersonalPlanTier(apiOrigin).then((currentTier) => {
-        if (!currentTier || !currentPlanLabel) return;
+        if (!currentTier || !currentPlanLabel || !downgradePlanLabel || !upgradePlanLabel) return;
         for (const cta of pricingRoot.querySelectorAll('[data-pricing-cta]')) {
           const tier = cta.getAttribute('data-tier') || '';
-          if (!isPersonalPlanAtOrBelow(tier, currentTier)) continue;
+          const relation = personalPlanRelation(tier, currentTier);
+          if (!relation) continue;
+          const label = cta.querySelector(':scope > span');
+          const plan = cta.getAttribute('data-plan-name') || tier;
+          if (relation === 'higher') {
+            if (label) label.textContent = fillPlanLabel(upgradePlanLabel, plan);
+            continue;
+          }
           cta.setAttribute('data-subscription-disabled', '');
           cta.setAttribute('aria-disabled', 'true');
           cta.setAttribute('tabindex', '-1');
           cta.removeAttribute('href');
+          if (label) {
+            label.textContent = relation === 'current'
+              ? currentPlanLabel
+              : fillPlanLabel(downgradePlanLabel, plan);
+          }
         }
-        const label = pricingRoot.querySelector(
-          `[data-pricing-cta][data-tier="${currentTier}"] > span`,
-        );
-        if (label) label.textContent = currentPlanLabel;
       });
     }
   </script>
@@ -1191,48 +1205,54 @@ const jsonLd = [
     margin-top: 65px;
   }
   .pr-toggle {
-    grid-column: 3;
-    justify-self: end;
+    grid-column: 2;
+    justify-self: center;
     display: inline-flex;
     align-items: center;
-    gap: 0;
-    min-height: 42px;
-    margin-right: 24px;
+    gap: 4px;
+    min-height: 48px;
+    padding: 4px;
+    background: #e8e9e3;
+    border-radius: 999px;
   }
   .pr-toggle[hidden] { display: none !important; }
   .pr-audience-toggle {
-    grid-column: 2;
+    grid-column: 3;
     position: relative;
     display: flex;
-    justify-content: center;
+    justify-self: end;
+    justify-content: flex-end;
     align-items: center;
-    gap: 10px;
-    width: 420px;
+    gap: 8px;
+    margin-right: 24px;
   }
   .pr-toggle-btn {
     display: inline-flex;
     align-items: center;
-    min-height: 36px;
+    gap: 10px;
+    min-height: 40px;
     border: 0;
     background: transparent;
+    border-radius: 999px;
     cursor: pointer;
     font-family: Albert Sans, Arial, sans-serif;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1;
     color: #858980;
-    padding: 0 2px;
-    transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+    padding: 0 18px;
+    transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1), background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1);
   }
-  .pr-toggle-btn.is-active { color: #151712; }
-  .pr-toggle-separator { margin: 0 9px; color: #c0c3bb; font-size: 14px; }
+  .pr-toggle-btn.is-active {
+    color: #151712;
+    background: #fff;
+    box-shadow: 0 1px 4px rgb(31 36 27 / 12%);
+  }
   .pr-audience-btn {
     position: relative;
-    min-width: 60px;
-    min-height: 38px;
-    padding: 0 16px;
+    min-height: 36px;
+    padding: 0 2px;
     border: 0;
-    border-radius: 9px;
     background: transparent;
     color: #74786f;
     font-family: Albert Sans, Arial, sans-serif;
@@ -1241,14 +1261,13 @@ const jsonLd = [
     line-height: 1;
     white-space: nowrap;
     cursor: pointer;
-    transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1), background-color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+    transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1);
   }
   .pr-audience-btn.is-active {
     color: #11120f;
-    background: #e8e9e3;
   }
+  .pr-audience-separator { color: #c0c3bb; font-size: 14px; }
   .pr-toggle-save {
-    margin-left: 7px;
     padding: 0;
     color: #2f8b25;
     background: transparent;
@@ -1261,8 +1280,7 @@ const jsonLd = [
     .pr-controls-row { grid-template-columns: 1fr; gap: 14px; }
     .pr-audience-toggle,
     .pr-toggle { grid-column: 1; justify-self: center; }
-    .pr-audience-toggle { width: 100%; }
-    .pr-toggle { margin-right: 0; }
+    .pr-audience-toggle { margin-right: 0; }
   }
 
   /* ---- Interval-conditional visibility ---- */
@@ -1403,7 +1421,7 @@ const jsonLd = [
     margin: 40px auto 0;
     max-width: 640px;
     text-align: center;
-    font-size: 0.82rem;
+    font-size: 10.5px;
     line-height: 1.6;
     color: var(--ink-soft, #666);
   }

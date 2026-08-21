@@ -2157,6 +2157,29 @@ function createProjectPreviewScopeRegistry() {
     revoke(scope) {
       scopes.delete(String(scope || ''));
     },
+    expiresAt(projectId, scope) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry) return undefined;
+      if (entry.expiresAt <= Date.now()) {
+        scopes.delete(key);
+        return undefined;
+      }
+      if (entry.projectId !== String(projectId)) return undefined;
+      return entry.expiresAt;
+    },
+    renew(projectId, scope, options = {}) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry) return undefined;
+      if (entry.expiresAt <= Date.now()) {
+        scopes.delete(key);
+        return undefined;
+      }
+      if (entry.projectId !== String(projectId)) return undefined;
+      entry.expiresAt = Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS);
+      return entry.expiresAt;
+    },
     validate(projectId, scope) {
       const key = String(scope || '');
       const entry = scopes.get(key);

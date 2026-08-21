@@ -24,6 +24,7 @@ import type {
   ReplaceProjectWorkingDirResponse,
   ProjectFileTextPreviewResponse,
   ProjectFileResponse,
+  ProjectPreviewScopeRenewResponse,
   ProjectPreviewUrlResponse,
   ProjectFileVersion,
   ProjectFileVersionSource,
@@ -2347,11 +2348,29 @@ export function projectFileUrl(
  * query parameters or headers. The opaque preview scope authorizes subsequent
  * asset navigation without exposing Workspace identifiers in iframe URLs.
  */
+export interface ProjectPreviewBaseScope {
+  href: string;
+  expiresAt: number;
+}
+
+// Newer daemons return the authoritative scope expiry. During a rolling
+// desktop/web update the web bundle can briefly run against an older daemon,
+// so retain a conservative refresh horizon instead of rejecting an otherwise
+// valid preview URL and dropping relative assets altogether.
+const LEGACY_PREVIEW_SCOPE_REFRESH_MS = 45 * 60 * 1000;
+
+function previewCapabilityHref(pathname: string): string {
+  const runtimeHref = typeof globalThis.location?.href === 'string'
+    ? globalThis.location.href
+    : 'http://open-design.local/';
+  return new URL(pathname, runtimeHref).href;
+}
+
 export async function fetchProjectPreviewBaseHref(
   projectId: string,
   name: string,
   _workspaceContext?: WorkspaceCollabContext | null,
-): Promise<string | null> {
+): Promise<ProjectPreviewBaseScope | null> {
   const params = new URLSearchParams({ file: name });
   const requestUrl =
     `/api/projects/${encodeURIComponent(projectId)}/preview-url?${params.toString()}`;
@@ -2367,7 +2386,47 @@ export async function fetchProjectPreviewBaseHref(
     if (!parsed.pathname.startsWith(expectedPrefix)) return null;
     const directoryEnd = parsed.pathname.lastIndexOf('/') + 1;
     if (directoryEnd <= expectedPrefix.length) return null;
-    return parsed.pathname.slice(0, directoryEnd);
+    const expiresAt = typeof body.expiresAt === 'number' && Number.isFinite(body.expiresAt)
+      ? body.expiresAt
+      : Date.now() + LEGACY_PREVIEW_SCOPE_REFRESH_MS;
+    return {
+      // Electron renders injected HTML from blob:od:// URLs. A root-relative
+      // <base> is ignored in a Blob document, leaving document.baseURI on the
+      // Blob and breaking lazy or script-created relative assets. Resolve the
+      // capability against the host document while it still has a real origin.
+      href: previewCapabilityHref(parsed.pathname.slice(0, directoryEnd)),
+      expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function renewProjectPreviewBaseScope(
+  projectId: string,
+  href: string,
+): Promise<number | null> {
+  try {
+    const parsed = new URL(href, 'http://open-design.local');
+    const expectedPrefix = `/api/projects/${encodeURIComponent(projectId)}/preview/`;
+    if (!parsed.pathname.startsWith(expectedPrefix)) return null;
+    const scopeEnd = parsed.pathname.indexOf('/', expectedPrefix.length);
+    if (scopeEnd <= expectedPrefix.length) return null;
+    const scope = parsed.pathname.slice(expectedPrefix.length, scopeEnd);
+    if (!/^[A-Za-z0-9_-]{8,128}$/u.test(scope)) return null;
+    const response = await fetch(
+      `${expectedPrefix}${encodeURIComponent(scope)}/renew`,
+      {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'x-od-preview-scope-renewal': '1' },
+      },
+    );
+    if (!response.ok) return null;
+    const body = (await response.json()) as ProjectPreviewScopeRenewResponse;
+    return typeof body.expiresAt === 'number' && Number.isFinite(body.expiresAt)
+      ? body.expiresAt
+      : null;
   } catch {
     return null;
   }

@@ -5,6 +5,7 @@
     "web_tests_required",
     "tools_dev_tests_required",
     "tools_pack_tests_required",
+    "windows_tools_pack_payload_tests_required",
     "ui_critical_validation_required",
     "ui_p0_validation_required",
     "visual_validation_required",
@@ -42,6 +43,29 @@
       "prefixes": [
         "apps/desktop/src/", "apps/desktop/tests/", "apps/packaged/src/", "apps/packaged/tests/",
         "tools/pack/src/", "tools/pack/tests/", "tools/pack/resources/"
+      ]
+    },
+    "windows-launcher-payload": {
+      "prefixes": [
+        "tools/pack/src/win/", "tools/pack/resources/win/",
+        "packages/launcher-proto/src/", "packages/sidecar-proto/src/"
+      ],
+      "exact": [
+        "tools/pack/src/cache.ts",
+        "tools/pack/src/config.ts",
+        "tools/pack/src/launcher-layout.ts",
+        "tools/pack/src/launcher-runtime-snapshot.ts",
+        "tools/pack/src/lock.ts",
+        "tools/pack/src/resources.ts",
+        "tools/pack/src/update-cache-lifecycle-snapshot.ts",
+        "tools/pack/src/versions.ts",
+        "tools/pack/src/win-prebundle.ts",
+        "tools/pack/tests/launcher-payload-windows.test.ts",
+        "packages/platform/src/command.ts",
+        "packages/platform/src/index.ts",
+        "packages/release/src/index.ts",
+        "packages/sidecar/src/index.ts",
+        "packages/sidecar/src/paths.ts"
       ]
     },
     "daemon-core": {
@@ -119,6 +143,12 @@
       "confidence": "certain"
     },
     {
+      "id": "certain-windows-launcher-payload",
+      "match": { "include": ["match://windows-launcher-payload"] },
+      "effects": ["windows_tools_pack_payload_tests_required"],
+      "confidence": "certain"
+    },
+    {
       "id": "tools-pack-sources",
       "match": {
         "prefixes": ["tools/pack/", "apps/packaged/", "apps/desktop/", "packages/release/", "packages/components/", "packages/host/", "packages/platform/", "packages/sidecar/", "packages/sidecar-proto/"],
@@ -132,7 +162,7 @@
         "exact": ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".github/workflows/ci.yml", "e2e/package.json"],
         "regexes": ["^apps/[^/]+/package\\.json$", "^packages/[^/]+/package\\.json$", "^tools/[^/]+/package\\.json$"]
       },
-      "effects": ["daemon_tests_required", "web_tests_required", "tools_dev_tests_required", "tools_pack_tests_required"],
+      "effects": ["daemon_tests_required", "web_tests_required", "tools_dev_tests_required", "tools_pack_tests_required", "windows_tools_pack_payload_tests_required"],
       "confidence": "medium"
     },
     {

@@ -194,7 +194,7 @@ function extractValidateGateJqPrograms(workflow: string): { failures: string; re
   const needsCheck = sectionBetween(
     validate,
     "      - name: Check workspace validation jobs",
-    "      - name: Block merge while a merge-blocking label is present",
+    "      - name: Download pending hash map",
   );
   const programs = [...needsCheck.matchAll(/jq -r '([\s\S]*?)'/g)].map((match) => match[1] ?? "");
   expect(programs).toHaveLength(2);
@@ -403,7 +403,7 @@ describe("packaged smoke workflow", () => {
     expect(workflow).not.toContain("OD_PACKAGED_E2E_");
   });
 
-  it("[P2] runs Windows launcher payload archive validation when tools-pack is touched", async () => {
+  it("[P2] runs the independent Windows launcher payload test set", async () => {
     const workflow = await readFile(ciWorkflowPath, "utf8");
     const job = sectionBetween(workflow, "  windows_tools_pack_payload_tests:", "  web_workspace_tests:");
     const validate = sectionBetween(workflow, "  validate:", "          if [ -n \"$failures\" ]; then");
@@ -411,7 +411,7 @@ describe("packaged smoke workflow", () => {
     expect(job).toContain("fromJSON(needs.runners.outputs.runs_on).windows_tools");
     expect(job).toContain("toJSON(fromJSON(needs.runners.outputs.runs_on).windows_tools)");
     expect(job).toContain("fromJSON(needs.plan.outputs.run).windows_tools_pack_payload_tests");
-    expect(job).toContain("pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload.test.ts");
+    expect(job).toContain("pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload-windows.test.ts");
     expect(validate).toContain("windows_tools_pack_payload_tests");
   });
 
@@ -533,13 +533,40 @@ describe("packaged smoke workflow", () => {
       readFile(commentWorkflowPath, "utf8"),
     ]);
 
-    // Producer: the merge_group gate emits a handoff/comment artifact for the labeled PR when
-    // it blocks, and uploads it on the failure path (the gate exits 1 exactly when it produces).
-    expect(ciWorkflow).toContain("<!-- merge-queue-needs-validation -->");
-    expect(ciWorkflow).toContain("emit_ejection_notice");
-    expect(ciWorkflow).toContain(
+    const mergePolicy = sectionBetween(ciWorkflow, "  merge_policy:", "  validate:");
+    const validate = sectionBetween(ciWorkflow, "  validate:", "  runtime_summary:");
+
+    // Producer: merge policy is a merge-group-only sibling of every workload. It emits a
+    // handoff/comment artifact for a labeled PR and uploads it on the failure path.
+    expect(mergePolicy).toContain("needs: [plan, runners]");
+    expect(mergePolicy).toContain("if: ${{ github.event_name == 'merge_group' }}");
+    expect(mergePolicy).toContain("fromJSON(needs.runners.outputs.runs_on).control");
+    expect(mergePolicy).toContain("<!-- merge-queue-needs-validation -->");
+    expect(mergePolicy).toContain("emit_ejection_notice");
+    expect(mergePolicy).toContain(
       "if: ${{ failure() && steps.merge_blocking_label_gate.outputs.comment_created == 'true' }}",
     );
+
+    // Policy converges only at the required workspace gate. It never becomes a prerequisite
+    // that could suppress workload coverage for a labeled merge group.
+    expect(validate).toContain("      - merge_policy");
+    expect(validate).toContain("if: ${{ always() }}");
+    expect(validate).not.toContain("Block merge while a merge-blocking label is present");
+    const workloadSections = [
+      ["  static_gate:", "  preflight:"],
+      ["  preflight:", "  workspace_unit_tests:"],
+      ["  workspace_unit_tests:", "  daemon_unit_tests:"],
+      ["  daemon_unit_tests:", "  windows_tools_pack_payload_tests:"],
+      ["  windows_tools_pack_payload_tests:", "  web_workspace_tests:"],
+      ["  web_workspace_tests:", "  e2e_vitest:"],
+      ["  e2e_vitest:", "  playwright_critical:"],
+      ["  playwright_critical:", "  ui_p0:"],
+      ["  ui_p0:", "  playwright_visual:"],
+      ["  playwright_visual:", "  merge_policy:"],
+    ] as const;
+    for (const [start, end] of workloadSections) {
+      expect(sectionBetween(ciWorkflow, start, end)).toContain("needs: [plan, runners]");
+    }
 
     // Consumer: a merge_group run's head_sha is the queue's synthetic merge commit, so the atom
     // binds merge_group artifacts to their producing run by run_id and skips the base-freshness
@@ -1175,10 +1202,28 @@ process.stdin.on("end", () => {
       run_playwright_visual: false,
       run_ui_p0: false,
       run_web_workspace_tests: false,
-      run_windows_tools_pack_payload_tests: true,
+      run_windows_tools_pack_payload_tests: false,
       tools_dev_tests_required: true,
       tools_pack_tests_required: true,
+      windows_tools_pack_payload_tests_required: false,
       workspace_validation_required: true,
+    });
+
+    await expect(runScopesPrint("merge_group", mergeGroup, ["tools/pack/src/mac/app.ts"])).resolves.toMatchObject({
+      run_windows_tools_pack_payload_tests: false,
+      tools_pack_tests_required: true,
+      windows_tools_pack_payload_tests_required: false,
+    });
+
+    await expect(runScopesPrint("merge_group", mergeGroup, ["tools/pack/src/win/custom-installer.ts"])).resolves.toMatchObject({
+      run_windows_tools_pack_payload_tests: true,
+      tools_pack_tests_required: true,
+      windows_tools_pack_payload_tests_required: true,
+    });
+
+    await expect(runScopesPrint("merge_group", mergeGroup, ["packages/launcher-proto/src/index.ts"])).resolves.toMatchObject({
+      run_windows_tools_pack_payload_tests: true,
+      windows_tools_pack_payload_tests_required: true,
     });
 
     await expect(runScopesPrint("merge_group", mergeGroup, ["apps/desktop/package.json"])).resolves.toMatchObject({
@@ -1270,8 +1315,23 @@ process.stdin.on("end", () => {
     await expect(
       validateGatePasses(workflow, {
         plan: { result: "success", outputs: { run: JSON.stringify(baseRun) } },
+        merge_policy: { result: "skipped" },
       }),
     ).resolves.toBe(true);
+
+    await expect(
+      validateGatePasses(workflow, {
+        plan: { result: "success", outputs: { run: JSON.stringify(baseRun) } },
+        merge_policy: { result: "success" },
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      validateGatePasses(workflow, {
+        plan: { result: "success", outputs: { run: JSON.stringify(baseRun) } },
+        merge_policy: { result: "failure" },
+      }),
+    ).resolves.toBe(false);
 
     const needsWithFailedWeb = {
       plan: { result: "success", outputs: { run: JSON.stringify({ ...baseRun, web_workspace_tests: true }) } },
@@ -1292,9 +1352,7 @@ process.stdin.on("end", () => {
     expect(validate.indexOf("Save successful hash map")).toBeGreaterThan(
       validate.indexOf("Check workspace validation jobs"),
     );
-    expect(validate.indexOf("Save successful hash map")).toBeGreaterThan(
-      validate.indexOf("Block merge while a merge-blocking label is present"),
-    );
+    expect(validate).not.toContain("Block merge while a merge-blocking label is present");
 
     const run = {
       static_gate: false,
@@ -1335,7 +1393,7 @@ process.stdin.on("end", () => {
     const e2eVitest = sectionBetween(workflow, "  e2e_vitest:", "  playwright_critical:");
     const preflight = sectionBetween(workflow, "  preflight:", "  workspace_unit_tests:");
     const uiP0 = sectionBetween(workflow, "  ui_p0:", "  playwright_visual:");
-    const visual = sectionBetween(workflow, "  playwright_visual:", "  validate:");
+    const visual = sectionBetween(workflow, "  playwright_visual:", "  merge_policy:");
 
     expect(runners).toContain("|| 'nexu-runners-small'");
     expect(runners).toContain("&& 'ubuntu-24.04'");

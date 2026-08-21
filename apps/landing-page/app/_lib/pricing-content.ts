@@ -16,21 +16,31 @@
  */
 import type { LandingLocaleCode } from '../i18n';
 
-const CURRENT_PLAN_LABELS: Partial<Record<LandingLocaleCode, string>> = {
-  en: 'Current plan',
-  zh: '当前套餐',
-  'zh-tw': '目前方案',
-  ja: '現在のプラン',
-  ko: '현재 요금제',
-  de: 'Aktueller Tarif',
-  fr: 'Offre actuelle',
-  ru: 'Текущий тариф',
-  es: 'Plan actual',
-  'pt-br': 'Plano atual',
+export interface PricingPlanActionLabels {
+  current: string;
+  downgrade: string;
+  upgrade: string;
+}
+
+const PLAN_ACTION_LABELS: Partial<Record<LandingLocaleCode, PricingPlanActionLabels>> = {
+  en: { current: 'Current plan', downgrade: 'Downgrade to {plan}', upgrade: 'Upgrade to {plan}' },
+  zh: { current: '当前套餐', downgrade: '降级至 {plan}', upgrade: '升级至 {plan}' },
+  'zh-tw': { current: '目前方案', downgrade: '降級至 {plan}', upgrade: '升級至 {plan}' },
+  ja: { current: '現在のプラン', downgrade: '{plan} にダウングレード', upgrade: '{plan} にアップグレード' },
+  ko: { current: '현재 요금제', downgrade: '{plan}(으)로 다운그레이드', upgrade: '{plan}(으)로 업그레이드' },
+  de: { current: 'Aktueller Tarif', downgrade: 'Auf {plan} downgraden', upgrade: 'Auf {plan} upgraden' },
+  fr: { current: 'Offre actuelle', downgrade: 'Rétrograder vers {plan}', upgrade: 'Passer à {plan}' },
+  ru: { current: 'Текущий тариф', downgrade: 'Понизить до {plan}', upgrade: 'Повысить до {plan}' },
+  es: { current: 'Plan actual', downgrade: 'Bajar a {plan}', upgrade: 'Subir a {plan}' },
+  'pt-br': { current: 'Plano atual', downgrade: 'Fazer downgrade para {plan}', upgrade: 'Fazer upgrade para {plan}' },
 };
 
 export function getCurrentPlanLabel(locale: LandingLocaleCode): string {
-  return CURRENT_PLAN_LABELS[locale] ?? CURRENT_PLAN_LABELS.en!;
+  return getPricingPlanActionLabels(locale).current;
+}
+
+export function getPricingPlanActionLabels(locale: LandingLocaleCode): PricingPlanActionLabels {
+  return PLAN_ACTION_LABELS[locale] ?? PLAN_ACTION_LABELS.en!;
 }
 
 export type PlanTierId = 'plus' | 'pro' | 'max';
