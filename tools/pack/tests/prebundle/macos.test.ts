@@ -20,7 +20,7 @@ import {
   renderMacPackagedMainEntry,
   shouldInstallInternalPackageForMacPrebundle,
   shouldUseMacStandalonePrebundle,
-} from "../src/mac-prebundle.js";
+} from "@/mac/prebundle.js";
 
 describe("mac standalone prebundle policy", () => {
   it("is enabled only for standalone web output", () => {
@@ -111,7 +111,7 @@ describe("mac standalone prebundle policy", () => {
   it.skipIf(process.platform !== "darwin")(
     "keeps chokidar's native fsevents binding outside daemon bundles",
     async () => {
-      const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+      const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
       const result = await build({
         banner: { js: MAC_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER },
         bundle: true,
@@ -138,7 +138,7 @@ describe("mac standalone prebundle policy", () => {
   it(
     "keeps node-pty's native runtime outside daemon bundles",
     async () => {
-      const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+      const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
       const result = await build({
         banner: { js: MAC_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER },
         bundle: true,

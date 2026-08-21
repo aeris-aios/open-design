@@ -15,7 +15,11 @@ type Plan = {
   scopes: Record<string, boolean | string>;
   enabled: Record<string, boolean>;
   matrices: { ui_p0: unknown[]; visual: unknown[] };
-  trace: { escalations: unknown[]; uiP0Shadow: { mode: string; matrix: Array<{ name: string }> } };
+  trace: {
+    escalations: unknown[];
+    ruleHits: Record<string, number>;
+    uiP0Shadow: { mode: string; matrix: Array<{ name: string }> };
+  };
 };
 
 function plan(context: "pr" | "merge-queue" | "full", files: string[] = []): Plan {
@@ -65,6 +69,19 @@ describe("workflow scope planner", () => {
     expect(plan("pr", ["tools/pack/src/win/payload.ts"])).toMatchObject({
       scopes: { tools_pack_tests_required: true, windows_tools_pack_payload_tests_required: true },
       enabled: { windows_tools_pack_payload_tests: true, ui_p0: false, playwright_critical: false },
+    });
+    expect(plan("pr", ["tools/pack/src/launcher/layout.ts"])).toMatchObject({
+      scopes: { tools_pack_tests_required: true, windows_tools_pack_payload_tests_required: true },
+      enabled: { windows_tools_pack_payload_tests: true },
+    });
+    expect(plan("pr", ["tools/pack/src/mac/payload.ts"])).toMatchObject({
+      scopes: { tools_pack_tests_required: true, windows_tools_pack_payload_tests_required: false },
+      enabled: { windows_tools_pack_payload_tests: false },
+    });
+    expect(plan("pr", ["tools/pack/src/future-root-helper.ts"])).toMatchObject({
+      scopes: { tools_pack_tests_required: true, windows_tools_pack_payload_tests_required: true },
+      enabled: { windows_tools_pack_payload_tests: true },
+      trace: { ruleHits: { "tools-pack-root-source-fallback": 1 } },
     });
     expect(plan("pr", ["packages/launcher-proto/src/index.ts"])).toMatchObject({
       scopes: { windows_tools_pack_payload_tests_required: true },

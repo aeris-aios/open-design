@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { electronBuilderVersionForAppVersion, versionCoreForAppVersion, versionFamilyForAppVersion } from "../src/versions.js";
+import { electronBuilderVersionForAppVersion, versionCoreForAppVersion, versionFamilyForAppVersion } from "@/versioning/index.js";
 
 describe("tools-pack version helpers", () => {
   it("keeps runtime app versions intact for electron-builder", () => {

@@ -9,8 +9,8 @@ import {
   type LauncherVersionPointer,
 } from "@open-design/launcher-proto";
 
-import type { ToolPackConfig } from "./config.js";
-import { resolveToolPackLauncherLayout } from "./launcher-layout.js";
+import type { ToolPackConfig } from "../config/index.js";
+import { resolveToolPackLauncherLayout } from "./layout.js";
 
 export type ToolPackLauncherRuntimeSnapshot = {
   attempt: LauncherAttemptDescriptor | null;

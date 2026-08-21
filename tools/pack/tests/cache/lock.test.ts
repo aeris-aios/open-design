@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { withDirectoryLock } from "../src/lock.js";
+import { withDirectoryLock } from "@/cache/lock.js";
 
 describe("withDirectoryLock", () => {
   it("reclaims a stale lock when the owner process is gone", async () => {

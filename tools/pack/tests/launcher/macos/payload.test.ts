@@ -7,13 +7,13 @@ import { promisify } from "node:util";
 import { LAUNCHER_SCHEMA_VERSION } from "@open-design/launcher-proto";
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
-import { resolveMacInstallIdentity } from "../src/mac/identity.js";
+import type { ToolPackConfig } from "@/config/index.js";
+import { resolveMacInstallIdentity } from "@/mac/identity.js";
 import {
   buildMacLauncherPayloadManifest,
   createMacLauncherPayloadArchive,
-} from "../src/mac/payload.js";
-import { resolveMacPaths } from "../src/mac/paths.js";
+} from "@/mac/payload.js";
+import { resolveMacPaths } from "@/mac/paths.js";
 
 const execFileAsync = promisify(execFile);
 
