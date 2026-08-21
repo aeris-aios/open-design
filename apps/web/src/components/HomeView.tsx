@@ -100,9 +100,9 @@ import { HomeHero, type ExamplePromptInfo, type HomeHeroHandle } from './HomeHer
 import { AppWashKineticGrid } from './AppWashKineticGrid';
 import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips';
 import {
-  prototypeSubChipForActionChipId,
+  legacyPrototypeSceneForChipId,
+  prototypeSceneProjectMetadata,
   prototypeSubChipForSlug,
-  taskTypeChipIdForChipId,
   type HomeHeroSubChip,
 } from './home-hero/sub-chips';
 import { homeHeroChipLabel } from './home-hero/chip-labels';
@@ -432,7 +432,11 @@ function readHomeComposerChipDraft(): HomeComposerChipDraft | null {
     const parsed = JSON.parse(raw) as Partial<HomeComposerChipDraft> | null;
     if (!parsed || typeof parsed.pluginId !== 'string' || !parsed.pluginId) return null;
     const parsedChipId = typeof parsed.chipId === 'string' ? parsed.chipId : null;
-    const legacyPrototypeSubtype = prototypeSubChipForActionChipId(parsedChipId);
+    // Drafts written before the creation hierarchy moved Mobile app and
+    // Wireframe under Prototype persist their retired top-level chip ids, and
+    // they outlive the release that removed those chips. Fold them onto the
+    // scene each became so a returning user's saved pick still restores.
+    const legacyPrototypeSubtype = legacyPrototypeSceneForChipId(parsedChipId);
     const parsedPrototypeSubtype =
       typeof parsed.prototypeSubtypeId === 'string'
         ? prototypeSubChipForSlug(parsed.prototypeSubtypeId)
@@ -1847,13 +1851,14 @@ export function HomeView({
       writeHomeComposerChipDraft(null);
       return;
     }
-    const restoredSubtype = prototypeSubChipForSlug(restore.prototypeSubtypeId ?? null);
-    const restoredActionChip = restoredSubtype?.actionChipId
-      ? findChip(restoredSubtype.actionChipId)
-      : restore.chipId
-        ? findChip(restore.chipId)
-        : null;
-    const restoredAction = restoredActionChip?.action;
+    // The draft reader already folded any retired top-level id onto its parent,
+    // so `restore.chipId` names a live task type and the scene is a refinement
+    // of it — never a chip of its own to look up instead.
+    const restoredChip = restore.chipId ? findChip(restore.chipId) : null;
+    const restoredSubtype = restoredChip?.id === 'prototype'
+      ? prototypeSubChipForSlug(restore.prototypeSubtypeId ?? null)
+      : null;
+    const restoredAction = restoredChip?.action;
     requestActivePlugin(record, undefined, {
       chipId: restore.chipId ?? undefined,
       prototypeSubtypeId: restoredSubtype?.slug ?? null,
@@ -1862,10 +1867,9 @@ export function HomeView({
         restoredAction?.kind === 'apply-scenario' || restoredAction?.kind === 'apply-figma-migration'
           ? restoredAction.inputs
           : undefined,
-      projectMetadata:
-        restoredAction?.kind === 'apply-scenario' || restoredAction?.kind === 'apply-figma-migration'
-          ? restoredAction.projectMetadata ?? null
-          : null,
+      projectMetadata: restoredChip
+        ? prototypeSceneProjectMetadata(restoredChip, restoredSubtype)
+        : null,
       replaceWithoutConfirmation: true,
       suppressPromptUpdate: true,
       deferApply: true,
@@ -2231,8 +2235,13 @@ export function HomeView({
 
   function clearActivePlugin() {
     if (active?.explicitPick && active.chipId) {
-      const prototypeSubtype = prototypeSubChipForSlug(active.prototypeSubtypeId);
-      const chip = findChip(prototypeSubtype?.actionChipId ?? active.chipId);
+      // Dropping the explicit pick falls back to the task type the user chose,
+      // with its scene still selected — the scene refines that chip's action,
+      // it never stands in for a different one.
+      const chip = findChip(active.chipId);
+      const prototypeSubtype = chip?.id === 'prototype'
+        ? prototypeSubChipForSlug(active.prototypeSubtypeId)
+        : null;
       const action = chip?.action;
       if (
         chip &&
@@ -2278,7 +2287,7 @@ export function HomeView({
             chipId: active.chipId,
             prototypeSubtypeId: active.prototypeSubtypeId,
             inputs: action.inputs,
-            projectMetadata: action.projectMetadata ?? null,
+            projectMetadata: prototypeSceneProjectMetadata(chip, prototypeSubtype),
             suppressPromptUpdate: true,
             deferApply: true,
           });
@@ -2425,20 +2434,17 @@ export function HomeView({
   // (`open-template-picker`) forward to callbacks threaded in from EntryShell.
   function pickChip(
     chip: HomeHeroChip,
-    selection?: { activeChipId?: string; prototypeSubtypeId?: string | null },
+    // A second-level scene under `chip`, when one is selected. The chip is
+    // always the task type the composer binds — a scene refines it and never
+    // substitutes another chip — so `activeChipId` is simply `chip.id`.
+    selection?: {
+      prototypeSubtypeId?: string | null;
+      projectMetadata?: ProjectMetadata | null;
+    },
   ) {
     setError(null);
-    // Mobile and Wireframe remain internal executable catalog actions, but
-    // their visible Home parent is Prototype. Normalize legacy/direct callers
-    // here so placeholder scenarios and persisted intents cannot resurrect a
-    // removed top-level chip.
-    const legacyPrototypeSubtype = prototypeSubChipForActionChipId(chip.id);
-    const activeChipId =
-      selection?.activeChipId ?? (legacyPrototypeSubtype ? 'prototype' : chip.id);
-    const prototypeSubtypeId =
-      selection?.prototypeSubtypeId !== undefined
-        ? selection.prototypeSubtypeId
-        : legacyPrototypeSubtype?.slug ?? null;
+    const activeChipId = chip.id;
+    const prototypeSubtypeId = selection?.prototypeSubtypeId ?? null;
     // P0 ui_click area=chat_composer element=plugin_chip|action_chip. The
     // chip's `action.kind` discriminates: plugin-bound chips
     // (apply-scenario / apply-figma-migration) route to a plugin; the rest
@@ -2505,7 +2511,10 @@ export function HomeView({
           chipId: activeChipId,
           prototypeSubtypeId,
           inputs: chip.action.inputs,
-          projectMetadata: chip.action.projectMetadata ?? null,
+          projectMetadata:
+            selection?.projectMetadata !== undefined
+              ? selection.projectMetadata
+              : chip.action.projectMetadata ?? null,
         };
         // Output-type tabs (create group) are mode-selection gestures:
         // switching between them should never prompt for confirmation,
@@ -2557,12 +2566,16 @@ export function HomeView({
     }
   }
 
+  // A second-level Prototype scene is the Prototype task type with the scene's
+  // metadata refinement merged in — never a chip of its own. Binding the parent
+  // chip here is what keeps the scene on 原型's plugin, project kind and OD Next
+  // route while still stamping the platform targets / lo-fi fidelity it adds.
   function pickPrototypeSubtype(sub: HomeHeroSubChip | null) {
-    const actionChip = findChip(sub?.actionChipId ?? 'prototype');
-    if (!actionChip) return;
-    pickChip(actionChip, {
-      activeChipId: 'prototype',
+    const prototypeChip = findChip('prototype');
+    if (!prototypeChip) return;
+    pickChip(prototypeChip, {
       prototypeSubtypeId: sub?.slug ?? null,
+      projectMetadata: prototypeSceneProjectMetadata(prototypeChip, sub),
     });
   }
 
@@ -2594,6 +2607,14 @@ export function HomeView({
     if (plugins.length === 0) return;
     const chipId = consumePendingHomeChip();
     if (!chipId) return;
+    // A queued intent is a bare string from another surface, so it can still
+    // name a retired top-level id; select the scene it became instead of
+    // failing the lookup and silently dropping the hand-off.
+    const legacyScene = legacyPrototypeSceneForChipId(chipId);
+    if (legacyScene) {
+      pickPrototypeSubtype(legacyScene);
+      return;
+    }
     const chip = findChip(chipId);
     if (chip) pickChip(chip);
     // pickChip / selectedDesignSystemTitle are recreated each render; this effect
@@ -2616,19 +2637,25 @@ export function HomeView({
       action?.kind === 'apply-scenario'
         ? plugins.find((plugin) => plugin.id === action.pluginId) ?? null
         : null;
-    const nestedPrototypeSubtype = prototypeSubChipForActionChipId(chip?.id ?? null);
-    const activeScenarioChipId = nestedPrototypeSubtype ? 'prototype' : chip?.id ?? null;
+    // A line curated for a second-level scene (Mobile app, Wireframe) binds its
+    // parent template with that scene selected — the scene refines the brief,
+    // it is not a template of its own.
+    const scenarioScene = chip?.id === 'prototype'
+      ? prototypeSubChipForSlug(scenario.prototypeSubtypeId ?? null)
+      : null;
+    const activeScenarioChipId = chip?.id ?? null;
     // When the user already picked this template (the carousel-over-a-selected-
     // template case), its binding is live -- reuse it instead of re-applying,
     // which would reset the resolved snapshot and re-fire chip analytics.
     const alreadyBound = Boolean(
       chip &&
       active?.chipId === activeScenarioChipId &&
-      active?.prototypeSubtypeId === (nestedPrototypeSubtype?.slug ?? null) &&
+      active?.prototypeSubtypeId === (scenarioScene?.slug ?? null) &&
       !active.explicitPick,
     );
     if (chip && record && !alreadyBound) {
-      pickChip(chip);
+      if (scenarioScene) pickPrototypeSubtype(scenarioScene);
+      else pickChip(chip);
     } else if (!chip || !record) {
       // Template unavailable (bundle missing / catalog still loading) -- fall
       // back to a free-form create from the line alone rather than dead-ending.
@@ -2672,13 +2699,12 @@ export function HomeView({
       element: 'send_button',
     });
     let submittedActive = active;
-    // The OD Next automatic route is owned by the first-level task type. A
-    // nested Prototype scene (Mobile / Wireframe) refines the brief it hands the
-    // agent — platform targets, lo-fi fidelity — and the Prototype task profile
-    // already branches on both, so the scene must not be able to swap the route
-    // its parent chose. Reading the task type rather than the bound chip's own
-    // catalog id makes that structural.
-    const submittedRouteChipId = taskTypeChipIdForChipId(submittedActive?.chipId ?? null);
+    // The OD Next automatic route is owned by the first-level task type, and
+    // `chipId` IS that task type: a second-level scene refines the brief it
+    // hands the agent — platform targets, lo-fi fidelity, both of which the
+    // Prototype task profile already branches on — and carries no chip id of
+    // its own, so it has nothing to swap the route its parent chose for.
+    const submittedRouteChipId = submittedActive?.chipId ?? null;
     const automaticStrategyTaskProfile = sessionMode === 'design'
       && !pinsPluginOverAutomaticRoute(submittedActive, submittedRouteChipId)
       ? automaticStrategyTaskProfileForRouteId(submittedRouteChipId)
@@ -3419,8 +3445,8 @@ function defaultPluginIdForChip(chipId: string | null): string | null {
  * hand the routing back to; and a record whose source we cannot name, which
  * would otherwise lose its material silently.
  *
- * `routeChipId` is the FIRST-LEVEL task type (see `taskTypeChipIdForChipId`),
- * so an example picked under a nested Prototype scene — 移动应用, 线框图 — is
+ * `routeChipId` is the FIRST-LEVEL task type — the only thing a chip id can be
+ * — so an example picked under a nested Prototype scene (移动应用, 线框图) is
  * judged by the route 原型 owns, exactly like one picked on 原型 itself.
  */
 function examplePickReference(

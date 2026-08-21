@@ -148,48 +148,11 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
       },
     },
   },
-  {
-    id: 'wireframe',
-    label: 'Wireframe',
-    icon: 'layout',
-    group: 'create',
-    description: 'Lo-fi screens & flows',
-    hint: 'Sketch lo-fi screens and flows to validate structure before visual design.',
-    // Wireframe reuses the battle-tested web-prototype seed but stamps a
-    // lo-fi fidelity so the agent stays in structural/greybox territory
-    // instead of jumping to high-fidelity styling.
-    action: {
-      kind: 'apply-scenario',
-      pluginId: 'example-web-prototype',
-      projectKind: 'prototype',
-      automaticDefault: true,
-      projectMetadata: {
-        kind: 'prototype',
-        fidelity: 'wireframe',
-      },
-    },
-  },
-  {
-    id: 'mobile',
-    label: 'Mobile app',
-    icon: 'smartphone',
-    group: 'create',
-    description: 'iOS & Android screens',
-    hint: 'Lay out mobile screens for iOS and Android.',
-    // Mobile reuses the web-prototype seed but records mobile platform
-    // targets so the agent frames screens for handheld viewports.
-    action: {
-      kind: 'apply-scenario',
-      pluginId: 'example-web-prototype',
-      projectKind: 'prototype',
-      automaticDefault: true,
-      projectMetadata: {
-        kind: 'prototype',
-        platform: 'auto',
-        platformTargets: ['mobile-ios', 'mobile-android'],
-      },
-    },
-  },
+  // Wireframe and Mobile app are NOT here: they are second-level scenes under
+  // Prototype, not task types. Each is the Prototype chip plus the metadata
+  // refinement it carries in `home-hero/sub-chips.ts` (a lo-fi fidelity, mobile
+  // platform targets), so they have no chip id, no action and no route of their
+  // own to diverge from their parent's.
   {
     id: 'deck',
     label: 'Slide deck',
@@ -397,9 +360,8 @@ export function chipsForGroup(group: ChipGroup): HomeHeroChip[] {
 }
 
 // Fixed Home information architecture. Only these ten output types are
-// top-level choices; Wireframe and Mobile remain executable catalog entries but
-// live under Prototype's second-level scene rail. Action-only create entries
-// (for example Create Design System) are intentionally excluded.
+// top-level choices. Action-only create entries (for example Create Design
+// System) are intentionally excluded.
 export const CREATE_RAIL_ORDER = [
   'prototype',
   'deck',
@@ -429,8 +391,8 @@ export const ONBOARDING_ARTIFACT_CHIP_IDS = CREATE_RAIL_ORDER.filter(
   (id) => !ONBOARDING_ARTIFACT_OMIT.has(id),
 );
 
-// The top-level Home chips in their exact product order. Internal/nested and
-// action-only catalog entries must not leak into the rail or template picker.
+// The top-level Home chips in their exact product order. Action-only catalog
+// entries must not leak into the rail or template picker.
 export function orderedCreateChips(): HomeHeroChip[] {
   const create = chipsForGroup('create');
   return CREATE_RAIL_ORDER

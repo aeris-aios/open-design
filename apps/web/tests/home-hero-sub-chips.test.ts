@@ -4,10 +4,12 @@ import { automaticStrategyTaskProfileForRouteId } from '@open-design/contracts';
 import {
   filterPluginsBySubChip,
   isSubChipParent,
+  legacyPrototypeSceneForChipId,
+  prototypeSceneProjectMetadata,
+  prototypeSubChipForSlug,
   subChipsForChip,
-  taskTypeChipIdForChipId,
 } from '../src/components/home-hero/sub-chips';
-import { HOME_HERO_CHIPS } from '../src/components/home-hero/chips';
+import { findChip, HOME_HERO_CHIPS } from '../src/components/home-hero/chips';
 
 // Minimal record whose facet derivation lands in a known prototype scene.
 // `byMode('prototype')` keys off manifest.od.mode; subcategory tests key off
@@ -51,8 +53,19 @@ describe('subChipsForChip', () => {
     ]);
     const dash = result.find((s) => s.slug === 'business-dashboards');
     expect(dash?.label).toBe('Dashboards');
-    expect(result.find((s) => s.slug === 'mobile')?.actionChipId).toBe('mobile');
-    expect(result.find((s) => s.slug === 'wireframe')?.actionChipId).toBe('wireframe');
+    // Mobile app and Wireframe carry a metadata refinement of their parent, not
+    // a pointer at a first-level chip: nothing here names a chip id.
+    expect(result.find((s) => s.slug === 'mobile')?.projectMetadata).toEqual({
+      platform: 'auto',
+      platformTargets: ['mobile-ios', 'mobile-android'],
+    });
+    expect(result.find((s) => s.slug === 'wireframe')?.projectMetadata).toEqual({
+      fidelity: 'wireframe',
+    });
+    // Every other scene narrows the example rail only and stamps nothing.
+    expect(
+      result.filter((s) => s.projectMetadata !== undefined).map((s) => s.slug),
+    ).toEqual(['mobile', 'wireframe']);
   });
 
   it('keeps the fixed prototype hierarchy visible without installed plugins', () => {
@@ -86,53 +99,86 @@ describe('isSubChipParent', () => {
   });
 });
 
-describe('taskTypeChipIdForChipId', () => {
-  it('folds the Mobile and Wireframe catalog actions back onto their Prototype parent', () => {
-    // A second-level scene refines WHAT to build; it never decides WHETHER the
-    // parent task type's product route applies.
-    expect(taskTypeChipIdForChipId('mobile')).toBe('prototype');
-    expect(taskTypeChipIdForChipId('wireframe')).toBe('prototype');
-    expect(taskTypeChipIdForChipId('prototype')).toBe('prototype');
+describe('prototypeSceneProjectMetadata', () => {
+  const prototypeChip = findChip('prototype')!;
+
+  it('stamps exactly the parent task type when no scene refines it', () => {
+    // 原型 itself stamps nothing beyond the kind the create flow derives, so a
+    // scene-less pick must not gain metadata just by going through the merge.
+    expect(prototypeSceneProjectMetadata(prototypeChip, null)).toBeNull();
+    expect(prototypeSceneProjectMetadata(prototypeChip, prototypeSubChipForSlug('app-prototypes')))
+      .toBeNull();
   });
 
-  it('leaves every other chip id — and no id at all — untouched', () => {
-    for (const chipId of [
-      'deck',
-      'hyperframes',
-      'web-clone',
-      'webgl',
-      'live-artifact',
-      'document',
-      'image',
-      'video',
-      'audio',
-      'figma',
-      'template',
-      'create-plugin',
-      'create-brand-kit',
-    ]) {
-      expect(taskTypeChipIdForChipId(chipId)).toBe(chipId);
+  it('stamps the parent kind plus the scene refinement, and nothing else', () => {
+    // The exact metadata these two scenes stamped as first-level chips. This is
+    // the whole contract of the second-level rail: same route, same plugin,
+    // same project kind, plus the one thing the scene refines. `toEqual` pins
+    // that no extra field is introduced, `JSON.stringify` that not even the key
+    // order moved (project metadata is persisted and compared as JSON).
+    const mobile = prototypeSceneProjectMetadata(
+      prototypeChip,
+      prototypeSubChipForSlug('mobile'),
+    );
+    expect(mobile).toEqual({
+      kind: 'prototype',
+      platform: 'auto',
+      platformTargets: ['mobile-ios', 'mobile-android'],
+    });
+    expect(JSON.stringify(mobile)).toBe(
+      '{"kind":"prototype","platform":"auto","platformTargets":["mobile-ios","mobile-android"]}',
+    );
+
+    const wireframe = prototypeSceneProjectMetadata(
+      prototypeChip,
+      prototypeSubChipForSlug('wireframe'),
+    );
+    expect(wireframe).toEqual({ kind: 'prototype', fidelity: 'wireframe' });
+    expect(JSON.stringify(wireframe)).toBe('{"kind":"prototype","fidelity":"wireframe"}');
+  });
+
+  it('lets the parent keep the fields the scene does not refine', () => {
+    // Witness for a parent that already stamps metadata of its own: a scene
+    // layers onto it rather than replacing it, and can never restate `kind`.
+    const webClone = findChip('web-clone')!;
+    expect(prototypeSceneProjectMetadata(webClone, prototypeSubChipForSlug('wireframe')))
+      .toEqual({ kind: 'prototype', intent: 'web-clone', fidelity: 'wireframe' });
+    expect(prototypeSceneProjectMetadata(webClone, null))
+      .toEqual({ kind: 'prototype', intent: 'web-clone' });
+  });
+});
+
+describe('legacyPrototypeSceneForChipId', () => {
+  it('folds the two retired top-level chip ids onto the scenes they became', () => {
+    // Persisted composer drafts and queued cross-surface intents still carry
+    // these ids; the scenes themselves are no longer chips.
+    expect(legacyPrototypeSceneForChipId('mobile')?.slug).toBe('mobile');
+    expect(legacyPrototypeSceneForChipId('wireframe')?.slug).toBe('wireframe');
+    expect(findChip('mobile')).toBeUndefined();
+    expect(findChip('wireframe')).toBeUndefined();
+  });
+
+  it('leaves every live chip id — and no id at all — alone', () => {
+    for (const chip of HOME_HERO_CHIPS) {
+      expect(legacyPrototypeSceneForChipId(chip.id), chip.id).toBeNull();
     }
-    expect(taskTypeChipIdForChipId(null)).toBeNull();
+    expect(legacyPrototypeSceneForChipId('landing-marketing')).toBeNull();
+    expect(legacyPrototypeSceneForChipId(null)).toBeNull();
   });
 
   it('routes exactly the product-owned OD Next task types and nothing else', () => {
-    // Full catalog sweep: the automatic route set must not silently grow when a
-    // chip is added or a nested scene is introduced.
+    // Full catalog sweep: a chip id IS a first-level task type now, so the
+    // automatic route set is read straight off the catalog. It must not
+    // silently grow when a chip is added.
     const routed = HOME_HERO_CHIPS
-      .filter((chip) => automaticStrategyTaskProfileForRouteId(
-        taskTypeChipIdForChipId(chip.id),
-      ) !== null)
+      .filter((chip) => automaticStrategyTaskProfileForRouteId(chip.id) !== null)
       .map((chip) => chip.id)
       .sort();
-    expect(routed).toEqual(['deck', 'hyperframes', 'mobile', 'prototype', 'wireframe']);
-    expect(
-      HOME_HERO_CHIPS
-        .filter((chip) => automaticStrategyTaskProfileForRouteId(
-          taskTypeChipIdForChipId(chip.id),
-        ) === 'prototype')
-        .map((chip) => chip.id)
-        .sort(),
-    ).toEqual(['mobile', 'prototype', 'wireframe']);
+    expect(routed).toEqual(['deck', 'hyperframes', 'prototype']);
+    // And a second-level scene has no id of its own to route by, so it can
+    // neither claim a route nor strand its parent's.
+    for (const scene of subChipsForChip('prototype', [])) {
+      expect(automaticStrategyTaskProfileForRouteId(scene.slug), scene.slug).toBeNull();
+    }
   });
 });

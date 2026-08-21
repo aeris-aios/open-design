@@ -1186,11 +1186,82 @@ describe('HomeView prompt handoff', () => {
       projectMetadata: expect.objectContaining(metadata),
     })));
     const [submittedNested] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    // Exactly the scene's refinement over 原型's kind — no extra field, and the
+    // scene may not restate `kind` as something else.
+    expect(submittedNested.projectMetadata).toEqual(metadata);
     expect(submittedNested).not.toHaveProperty('pluginInputs');
     expect(submittedNested).not.toHaveProperty('pluginSource');
     // Nothing is pinned, so there is no snapshot to resolve.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply-local'))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each([
+    {
+      legacyChipId: 'mobile',
+      metadata: {
+        kind: 'prototype',
+        platform: 'auto',
+        platformTargets: ['mobile-ios', 'mobile-android'],
+      },
+    },
+    { legacyChipId: 'wireframe', metadata: { kind: 'prototype', fidelity: 'wireframe' } },
+  ])('selects the nested scene when a queued intent still names the retired $legacyChipId chip id', async ({
+    legacyChipId,
+    metadata,
+  }) => {
+    // `requestHomeChip` takes a bare string from another surface, so a caller
+    // that predates the creation-hierarchy move can still ask for a chip id
+    // that no longer exists. The hand-off must land on the scene it became
+    // instead of failing the catalog lookup and silently dropping the intent.
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url.includes('/apply-local')) {
+        return new Response(JSON.stringify(WEB_PROTOTYPE_APPLY_RESULT), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    const onSubmit = vi.fn();
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={onSubmit}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    await screen.findByTestId('home-hero-input');
+    await clickHomeShortcut(legacyChipId);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
+      expect(screen.getByTestId(`home-hero-subtype-${legacyChipId}`).getAttribute('aria-selected'))
+        .toBe('true');
+    });
+
+    await setPromptAndSettle('Lay out the onboarding screens.');
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const [submittedLegacy] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submittedLegacy).toMatchObject({
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      projectKind: 'prototype',
+    });
+    expect(submittedLegacy.projectMetadata).toEqual(metadata);
   });
 
   it('keeps a Slide deck second-level scene on its own ppt route', async () => {
