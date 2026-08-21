@@ -7,7 +7,6 @@ import {
   clearAnonymousState,
   isAmrLoggedIn,
   markAccountMessageRead,
-  markAllAccountMessagesRead,
   pullMessageCenter,
   readAnonymousMessages,
   readAnonymousReadIds,
@@ -214,20 +213,6 @@ export function MessageCenter({
     commitState(nextMessages, nextIds, { persistAnonymous: !account });
   };
 
-  const markAllRead = async () => {
-    const account = await resolveLoggedInForWrite();
-    if (account) await markAllAccountMessagesRead();
-    const readAt = new Date().toISOString();
-    const nextIds = new Set(messagesRef.current.map((message) => message.id));
-    const nextMessages = messagesRef.current.map((message) => ({ ...message, readAt: message.readAt ?? readAt }));
-    if (account) {
-      pendingReadIdsRef.current = new Set(nextIds);
-      clearAnonymousState(window.localStorage);
-    }
-    invalidateSyncResponses();
-    commitState(nextMessages, nextIds, { persistAnonymous: !account });
-  };
-
   const openLabel = unreadCount > 0 ? `${t('messageCenter.openAria')} (${t('messageCenter.unreadCount', { count: unreadCount })})` : t('messageCenter.openAria');
 
   return <div className={styles.root}>
@@ -236,7 +221,6 @@ export function MessageCenter({
     </button>}
     {open ? createPortal(<div className={styles.backdrop} data-testid="message-center-backdrop"><aside ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid="message-center-dialog">
       <header className={styles.header}><div className={styles.headerCopy}><h2 id={titleId}>{t('messageCenter.title')}</h2><p>{t('messageCenter.subtitle')}</p></div><Button size="icon" className={styles.close} onClick={closePanel} aria-label={t('messageCenter.close')}><Icon name="close" size={18} strokeWidth={2}/></Button></header>
-      <div className={styles.controls}><button type="button" className={styles.markAll} onClick={() => void markAllRead().catch(() => setSyncState('error'))} disabled={unreadCount === 0}>{t('messageCenter.markAllRead')}</button></div>
       <div className={styles.list} aria-live="polite">
         {syncState === 'error' && messages.length > 0 ? (
           <div className={styles.syncStatus} role="status">

@@ -120,18 +120,14 @@ describe('MessageCenter', () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).includes('/release/read') && init?.method === 'POST')).toBe(true));
   });
 
-  it('shows read and unread messages in one flat list and marks all read', async () => {
+  it('shows read and unread messages in one flat list without filter or bulk actions', async () => {
     renderMessageCenter();
     const dialog = await openCenter();
 
     expect(within(dialog).queryByRole('button', { name: 'All' })).toBeNull();
     expect(within(dialog).queryByRole('button', { name: 'Unread' })).toBeNull();
     expect(within(dialog).queryByRole('button', { name: 'Read' })).toBeNull();
-    expect(within(dialog).getByText('OpenDesign 0.14 is available')).toBeTruthy();
-    expect(within(dialog).getByText('Credits added')).toBeTruthy();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Mark all read' }));
-    await waitFor(() => expect(screen.queryByLabelText(/unread/)).toBeNull());
+    expect(within(dialog).queryByRole('button', { name: 'Mark all read' })).toBeNull();
     expect(within(dialog).getByText('OpenDesign 0.14 is available')).toBeTruthy();
     expect(within(dialog).getByText('Credits added')).toBeTruthy();
   });
@@ -396,7 +392,7 @@ describe('MessageCenter', () => {
       expect(localStorage.getItem('open-design.message-center.anonymous-read-ids.v1')).toContain('release'),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
+    fireEvent.click(screen.getByRole('button', { name: /Security notice/ }));
     await waitFor(() =>
       expect(localStorage.getItem('open-design.message-center.anonymous-read-ids.v1')).toContain('security'),
     );
