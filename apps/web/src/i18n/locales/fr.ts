@@ -2082,6 +2082,7 @@ export const fr: Dict = {
   'inlineSwitcher.missingApiKey': 'Clé API manquante — ajoutez-la dans les Paramètres.',
   'inlineSwitcher.openFullSettings': 'Ouvrir les paramètres d\'exécution',
   'inlineSwitcher.customSuffix': '(personnalisé)',
+  'inlineSwitcher.unlimitedBadge': 'Illimité',
   'project.backToProjects': 'Retour aux projets',
   'project.brandReadyTitle': 'Le système de design {name} est prêt',
   'project.brandReadyTitleGeneric': 'Votre système de design est prêt',

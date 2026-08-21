@@ -2082,6 +2082,7 @@ export const id: Dict = {
   'inlineSwitcher.missingApiKey': 'Kunci API belum diatur — buka Pengaturan.',
   'inlineSwitcher.openFullSettings': 'Buka pengaturan eksekusi',
   'inlineSwitcher.customSuffix': '(kustom)',
+  'inlineSwitcher.unlimitedBadge': 'Tanpa batas',
   'project.backToProjects': 'Kembali ke proyek',
   'project.brandReadyTitle': 'Sistem desain {name} sudah siap',
   'project.brandReadyTitleGeneric': 'Sistem desain Anda sudah siap',
