@@ -233,6 +233,28 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
   });
 
+  it("lets a hosted shutdown callback close its own attachment without self-deadlocking", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    let hosted: Awaited<ReturnType<typeof controller.expose<DemoMethods>>> | null = null;
+    let shutdownFinished = false;
+    hosted = await controller.expose<DemoMethods>({
+      handlers: {
+        context(_input, context) { return context; },
+        echo(input) { return input; },
+      },
+      async onStopRequested() {
+        await hosted?.close();
+        shutdownFinished = true;
+      },
+      service: "shell",
+    });
+
+    await expect(controller.stop("shell")).resolves.toMatchObject({ state: "stopped" });
+    expect(shutdownFinished).toBe(true);
+    await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
+  });
+
   it("gives semantic calls a long default deadline while preserving caller overrides", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);

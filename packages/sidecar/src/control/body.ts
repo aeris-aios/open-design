@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { createJsonIpcServer } from "../json-ipc.js";
 import { SidecarControlError } from "./error.js";
 import { withLifecycleSession } from "./lifecycle-session.js";
@@ -81,7 +83,9 @@ export async function attachSidecarWithMetadata<TMethods>(
     projection: metadata.projection,
     roots: metadata.roots,
   });
+  const externalStopCallback = new AsyncLocalStorage<boolean>();
   let closing: Promise<void> | null = null;
+  let stopping: Promise<void> | null = null;
   let beginExternalStop: () => void = () => undefined;
   let stopRequested = false;
   let closeServerAndDescriptor: () => Promise<void> = async () => undefined;
@@ -178,23 +182,32 @@ export async function attachSidecarWithMetadata<TMethods>(
     await server.close();
     if (internal.releaseLeaseOnClose === true) await retireControlLeaseIfCurrent(metadata);
   };
-  const closeWithinSession = async () => {
+  const closeServerAndLeaseOnce = async () => {
     if (closing != null) return await closing;
     closing = closeServerAndLease();
     return await closing;
   };
   beginExternalStop = () => {
-    if (closing != null) return;
-    closing = Promise.resolve()
-      .then(() => onStopRequested?.())
-      .catch(() => undefined)
-      .then(closeServerAndLease);
+    if (stopping != null) return;
+    stopping = externalStopCallback.run(
+      true,
+      () => Promise.resolve()
+        .then(() => onStopRequested?.())
+        .catch(() => undefined)
+        .then(closeServerAndLeaseOnce),
+    );
   };
   closeServerAndDescriptor = async () => {
     if (closing != null) return await closing;
+    // The external controller already holds the namespace session while its
+    // shutdown callback runs. A callback such as desktop shutdown may close
+    // its own attachment; let that reentrant close own teardown directly
+    // instead of waiting on the stop promise that is waiting on this callback.
+    if (externalStopCallback.getStore() === true) return await closeServerAndLeaseOnce();
+    if (stopping != null) return await stopping;
     return await withLifecycleSession(
       privateLifecycleEndpointPath(metadata.identity, metadata.roots),
-      closeWithinSession,
+      closeServerAndLeaseOnce,
     );
   };
   try {
