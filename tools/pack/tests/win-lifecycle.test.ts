@@ -368,9 +368,9 @@ describe("stopPackedWinApp", () => {
         stoppedPids: [4242],
       });
       expect(stopControl.mock.calls).toEqual([
-        ["desktop", { graceMs: 15_000 }],
         ["web"],
         ["daemon"],
+        ["desktop", { graceMs: 15_000 }],
       ]);
     } finally {
       await rm(root, { force: true, recursive: true });

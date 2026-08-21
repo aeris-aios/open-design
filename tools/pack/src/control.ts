@@ -32,10 +32,13 @@ export type ToolPackStopResult = {
   stoppedPids: number[];
 };
 
+// Packaged desktop/headless owns the captured web and daemon launch handles.
+// Converge those children before the hosted owner so its lifecycle can drain
+// the handles without cross-process re-entry into our namespace session.
 const TOOL_PACK_SERVICE_STOPS = [
-  { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
   { service: APP_KEYS.WEB },
   { service: APP_KEYS.DAEMON },
+  { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
 ] as const;
 
 export function createToolPackControl(

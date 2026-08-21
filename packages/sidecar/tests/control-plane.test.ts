@@ -193,6 +193,10 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
           return { value: `hosted:${input.value}` };
         },
       },
+      lifecycle: {
+        initialize() {},
+        stop() {},
+      },
       service: "shell",
     });
     cleanups.push(() => hosted.close());
@@ -212,7 +216,7 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
   });
 
-  it("treats hosted shutdown, endpoint close and lease retirement as terminal stop", async () => {
+  it("treats hosted body stop, endpoint close and lease retirement as terminal stop", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
     let shutdownFinished = false;
@@ -221,9 +225,12 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
         context(_input, context) { return context; },
         echo(input) { return input; },
       },
-      async onStopRequested() {
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        shutdownFinished = true;
+      lifecycle: {
+        initialize() {},
+        async stop() {
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+          shutdownFinished = true;
+        },
       },
       service: "shell",
     });
@@ -233,38 +240,76 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
     await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
   });
 
-  it("lets a hosted shutdown callback close its own attachment without self-deadlocking", async () => {
+  it("coalesces local close with external stop and retains the hosted lease until body stop finishes", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
-    let hosted: Awaited<ReturnType<typeof controller.expose<DemoMethods>>> | null = null;
-    let releaseShutdown!: () => void;
-    const shutdownCanFinish = new Promise<void>((resolve) => { releaseShutdown = resolve; });
-    let attachmentClosed!: () => void;
-    const attachmentWasClosed = new Promise<void>((resolve) => { attachmentClosed = resolve; });
-    let shutdownFinished = false;
-    hosted = await controller.expose<DemoMethods>({
+    let releaseStop!: () => void;
+    const stopCanFinish = new Promise<void>((resolve) => { releaseStop = resolve; });
+    let stopStarted!: () => void;
+    const bodyStopStarted = new Promise<void>((resolve) => { stopStarted = resolve; });
+    let stopCalls = 0;
+    const hosted = await controller.expose<DemoMethods>({
       handlers: {
         context(_input, context) { return context; },
         echo(input) { return input; },
       },
-      async onStopRequested() {
-        await hosted?.close();
-        attachmentClosed();
-        await shutdownCanFinish;
-        shutdownFinished = true;
+      lifecycle: {
+        initialize() {},
+        async stop() {
+          stopCalls += 1;
+          stopStarted();
+          await stopCanFinish;
+        },
       },
       service: "shell",
     });
 
     let stopSettled = false;
     const stopped = controller.stop("shell").finally(() => { stopSettled = true; });
-    await attachmentWasClosed;
+    await bodyStopStarted;
+    const locallyClosed = hosted.close();
     expect(stopSettled).toBe(false);
-    await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
-    releaseShutdown();
+    await expect(privateLaunchStateForTest(createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "shell",
+    }))).resolves.toEqual({ descriptorExists: true, endpointExists: true });
+    releaseStop();
     await expect(stopped).resolves.toMatchObject({ state: "stopped" });
-    expect(shutdownFinished).toBe(true);
+    await expect(locallyClosed).resolves.toBeUndefined();
+    await expect(hosted.closed).resolves.toBeUndefined();
+    expect(stopCalls).toBe(1);
     await expect(controller.connect("shell")).rejects.toThrow(/unavailable/);
+  });
+
+  it("fails closed when body stop rejects", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const hosted = await controller.expose<DemoMethods>({
+      handlers: {
+        context(_input, context) { return context; },
+        echo(input) { return input; },
+      },
+      lifecycle: {
+        initialize() {},
+        stop() {
+          throw new Error("body stop failed");
+        },
+      },
+      service: "shell",
+    });
+
+    await expect(controller.stop("shell", { graceMs: 25 })).resolves.toMatchObject({
+      state: "alive",
+    });
+    await expect(hosted.closed).rejects.toThrow("body stop failed");
+    await expect(privateLaunchStateForTest(createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "shell",
+    }))).resolves.toEqual({ descriptorExists: true, endpointExists: true });
   });
 
   it("gives semantic calls a long default deadline while preserving caller overrides", async () => {
@@ -281,6 +326,10 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
         echo(input) {
           return input;
         },
+      },
+      lifecycle: {
+        initialize() {},
+        stop() {},
       },
       service: "shell",
     });
@@ -321,13 +370,16 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
           return { value: input.value };
         },
       },
-      initialize(context) {
-        expect(context).toEqual({
-          identity: { ...scope, service: "web" },
-          projection: createDemoController(scope, roots).projection,
-          roots,
-        });
-        initialized = true;
+      lifecycle: {
+        initialize(context) {
+          expect(context).toEqual({
+            identity: { ...scope, service: "web" },
+            projection: createDemoController(scope, roots).projection,
+            roots,
+          });
+          initialized = true;
+        },
+        stop() {},
       },
     });
     cleanups.push(() => body.close());
@@ -360,11 +412,13 @@ describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
           return { value: input.value };
         },
       },
-      initialize() {
-        throw new Error("body startup failed");
-      },
-      onStopRequested() {
-        stopped = true;
+      lifecycle: {
+        initialize() {
+          throw new Error("body startup failed");
+        },
+        stop() {
+          stopped = true;
+        },
       },
     })).rejects.toThrow("body startup failed");
 

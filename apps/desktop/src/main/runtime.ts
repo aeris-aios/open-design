@@ -2078,7 +2078,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     async (event, init?: OpenDesignHostProjectImportInit) => {
       // Defensive failsafe for non-production runtimes (test harnesses
       // that construct createDesktopRuntime without a secret). Round-5
-      // production wiring in runDesktopMain ALWAYS passes the per-process
+      // production wiring in startDesktopMain ALWAYS passes the per-process
       // secret regardless of whether the startup handshake succeeded —
       // the lazy retry inside pickAndImportFolder is the recovery
       // mechanism for the "startup registration missed its window"

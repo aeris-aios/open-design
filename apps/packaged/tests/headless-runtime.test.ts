@@ -59,18 +59,40 @@ describe("resolvePackagedMcpBootstrapLaunch", () => {
 });
 
 describe("acquirePackagedHeadlessStartup", () => {
-  function createDependencies(failAt: "mcp" | "web-identity") {
+  function createDependencies(failAt: "mcp" | "none" | "web-identity") {
     const closed: string[] = [];
     const exit = vi.fn();
+    let closeControl: (() => Promise<void>) | null = null;
     return {
       closed,
       dependencies: {
         confirmRuntime: vi.fn(async () => undefined),
-        createControlServer: vi.fn(async () => ({
-          close: async () => {
-            closed.push("ipc");
-          },
-        })),
+        createControlServer: vi.fn(async ({ lifecycle }) => {
+          let closing: Promise<void> | null = null;
+          let resolveClosed!: () => void;
+          let rejectClosed!: (error: unknown) => void;
+          const closedPromise = new Promise<void>((resolve, reject) => {
+            resolveClosed = resolve;
+            rejectClosed = reject;
+          });
+          const close = (): Promise<void> => {
+            if (closing != null) return closing;
+            const operation = lifecycle.stop().then(() => {
+              closed.push("ipc");
+              resolveClosed();
+            }, (error: unknown) => {
+              rejectClosed(error);
+              throw error;
+            });
+            closing = operation;
+            return operation;
+          };
+          closeControl = close;
+          return {
+            closed: closedPromise,
+            close,
+          };
+        }),
         exit,
         installMcp: vi.fn(async () => {
           if (failAt === "mcp") throw new Error("MCP install failed");
@@ -100,8 +122,21 @@ describe("acquirePackagedHeadlessStartup", () => {
         }),
       },
       exit,
+      stopControl: async () => await closeControl?.(),
     };
   }
+
+  it("does not exit an externally stopped headless host until body resources and control close", async () => {
+    const { closed, dependencies, exit, stopControl } = createDependencies("none");
+    await acquirePackagedHeadlessStartup(dependencies);
+
+    await stopControl();
+    await Promise.resolve();
+
+    expect(closed).toEqual(["sidecars", "identity", "ipc"]);
+    expect(exit).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
 
   it("closes identity and sidecars when MCP installation fails", async () => {
     const { closed, dependencies, exit } = createDependencies("mcp");
@@ -121,7 +156,7 @@ describe("acquirePackagedHeadlessStartup", () => {
       "web identity write failed",
     );
 
-    expect(closed).toEqual(["ipc", "sidecars", "identity"]);
+    expect(closed).toEqual(["sidecars", "identity", "ipc"]);
     expect(exit).not.toHaveBeenCalled();
   });
 });

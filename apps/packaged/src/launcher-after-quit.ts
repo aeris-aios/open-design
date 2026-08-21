@@ -94,12 +94,15 @@ async function restartExistingDesktop(input: {
   paths: PackagedNamespacePaths;
   reason: "headless-owner" | "stale-sidecar" | "superseded-version";
 }): Promise<boolean> {
+  // The packaged desktop owns the child launch handles. Stop the children
+  // before their hosted owner while this controller holds the namespace
+  // lifecycle session.
   const convergence = await stopSidecarServices(input.control, [
-    { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
     { service: APP_KEYS.WEB },
     { service: APP_KEYS.DAEMON },
+    { service: APP_KEYS.DESKTOP, options: { graceMs: 15_000 } },
   ]);
-  const desktop = convergence.attempts[0];
+  const desktop = convergence.attempts[2];
   const desktopResult = desktop?.status === "fulfilled" ? desktop.result : null;
   const failedServices = convergence.attempts
     .filter((attempt) => attempt.status === "rejected" || attempt.result.state === "alive")

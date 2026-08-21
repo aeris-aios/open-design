@@ -1,5 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-
 import { createJsonIpcServer } from "../json-ipc.js";
 import { SidecarControlError } from "./error.js";
 import { withLifecycleSession } from "./lifecycle-session.js";
@@ -71,8 +69,7 @@ export async function attachSidecarWithMetadata<TMethods>(
   metadata: PrivateLaunchMetadata,
   {
     handlers,
-    initialize,
-    onStopRequested,
+    lifecycle,
   }: AttachSidecarOptions<TMethods>,
   internal: Readonly<{
     releaseLeaseOnClose?: boolean;
@@ -83,13 +80,17 @@ export async function attachSidecarWithMetadata<TMethods>(
     projection: metadata.projection,
     roots: metadata.roots,
   });
-  const externalStopCallback = new AsyncLocalStorage<boolean>();
-  let closing: Promise<void> | null = null;
-  let serverClosing: Promise<void> | null = null;
   let stopping: Promise<void> | null = null;
   let beginExternalStop: () => void = () => undefined;
   let stopRequested = false;
-  let closeServerAndDescriptor: () => Promise<void> = async () => undefined;
+  let closeAttachment: () => Promise<void> = async () => undefined;
+  let resolveClosed!: () => void;
+  let rejectClosed!: (error: unknown) => void;
+  const closed = new Promise<void>((resolve, reject) => {
+    resolveClosed = resolve;
+    rejectClosed = reject;
+  });
+  void closed.catch(() => undefined);
 
   const claim = await readControlLease(metadata.identity, metadata.roots);
   if (
@@ -103,9 +104,9 @@ export async function attachSidecarWithMetadata<TMethods>(
   }
 
   try {
-    await initialize?.(context);
+    await lifecycle.initialize(context);
   } catch (error) {
-    await Promise.resolve().then(() => onStopRequested?.()).catch(() => undefined);
+    await Promise.resolve().then(() => lifecycle.stop()).catch(() => undefined);
     if (internal.releaseLeaseOnClose === true) {
       await retireControlLeaseIfCurrent(metadata).catch(() => undefined);
     }
@@ -175,45 +176,34 @@ export async function attachSidecarWithMetadata<TMethods>(
       }
     },
   }).catch(async (error: unknown) => {
-    await Promise.resolve().then(() => onStopRequested?.()).catch(() => undefined);
+    await Promise.resolve().then(() => lifecycle.stop()).catch(() => undefined);
     throw error;
   });
 
-  const closeServerOnce = async () => {
-    if (serverClosing != null) return await serverClosing;
-    serverClosing = server.close();
-    return await serverClosing;
-  };
-  const closeServerAndLease = async () => {
-    await closeServerOnce();
+  const stopBodyAndCloseAttachment = async () => {
+    await lifecycle.stop();
+    await server.close();
     if (internal.releaseLeaseOnClose === true) await retireControlLeaseIfCurrent(metadata);
   };
-  const closeServerAndLeaseOnce = async () => {
-    if (closing != null) return await closing;
-    closing = closeServerAndLease();
-    return await closing;
+  const stopOnce = (): Promise<void> => {
+    if (stopping != null) return stopping;
+    stopping = Promise.resolve()
+      .then(stopBodyAndCloseAttachment)
+      .then(resolveClosed, (error: unknown) => {
+        rejectClosed(error);
+        throw error;
+      });
+    void stopping.catch(() => undefined);
+    return stopping;
   };
   beginExternalStop = () => {
-    if (stopping != null) return;
-    stopping = externalStopCallback.run(
-      true,
-      () => Promise.resolve()
-        .then(() => onStopRequested?.())
-        .catch(() => undefined)
-        .then(closeServerAndLeaseOnce),
-    );
+    void stopOnce();
   };
-  closeServerAndDescriptor = async () => {
-    if (closing != null) return await closing;
-    // The external controller already holds the namespace session while its
-    // shutdown callback runs. A callback such as desktop shutdown may close
-    // its own attachment; close the endpoint so that callback can finish, but
-    // retain the lease until the complete callback reaches terminal teardown.
-    if (externalStopCallback.getStore() === true) return await closeServerOnce();
+  closeAttachment = async () => {
     if (stopping != null) return await stopping;
     return await withLifecycleSession(
       privateLifecycleEndpointPath(metadata.identity, metadata.roots),
-      closeServerAndLeaseOnce,
+      stopOnce,
     );
   };
   try {
@@ -223,13 +213,14 @@ export async function attachSidecarWithMetadata<TMethods>(
     if (internal.releaseLeaseOnClose === true) {
       await retireControlLeaseIfCurrent(metadata).catch(() => undefined);
     }
-    await Promise.resolve().then(() => onStopRequested?.()).catch(() => undefined);
+    await Promise.resolve().then(() => lifecycle.stop()).catch(() => undefined);
     throw error;
   }
 
   return Object.freeze({
+    closed,
     async close() {
-      await closeServerAndDescriptor();
+      await closeAttachment();
     },
     context,
   });

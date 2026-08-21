@@ -214,6 +214,10 @@ describe('Phase 2C CLI wrappers', () => {
           registerWebUrl: () => ({ accepted: true }),
           status: () => ({ desktopAuthGateActive: true, state: 'running', url: baseUrl }),
         },
+        lifecycle: {
+          initialize() {},
+          stop() {},
+        },
       });
       sidecarServers.push(sidecar);
       const daemonClient = await control.connect<DaemonSidecarMethods>('daemon');

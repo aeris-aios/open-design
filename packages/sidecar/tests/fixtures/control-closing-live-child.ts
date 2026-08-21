@@ -13,8 +13,11 @@ await attachSidecar<DemoMethods>({
       return { value: input.value };
     },
   },
-  async onStopRequested() {
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 100));
+  lifecycle: {
+    initialize() {},
+    async stop() {
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 100));
+    },
   },
 });
 

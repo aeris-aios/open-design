@@ -19,5 +19,9 @@ export async function attachDemoBody(
         return { value: input.value };
       },
     },
+    lifecycle: {
+      initialize() {},
+      stop() {},
+    },
   });
 }

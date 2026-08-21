@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   // Must run BEFORE `app.whenReady()` below, because Chromium consumes
   // `--lang` at session bootstrap. Doing it here lets the packaged
   // renderer's `navigator.language` follow the OS instead of Chromium's
-  // en-US default. runDesktopMain (called later) calls the same helper
+  // en-US default. startDesktopMain (called later) calls the same helper
   // again to recover the resolved locale string for the BrowserWindow.
   applyOsLocaleSwitch(app);
   // Must also land before whenReady — see the helper's docblock for the
@@ -278,8 +278,8 @@ async function main(): Promise<void> {
   // lack of a target should surface as the protocol layer's structured 503.
   registerOdProtocol(() => sidecars.currentWebUrl());
 
-  const { runDesktopMain } = await import("@open-design/desktop/main");
-  await runDesktopMain(runtime, {
+  const { startDesktopMain } = await import("@open-design/desktop/main");
+  await startDesktopMain(runtime, {
     splashWindow: splash.window,
     splashStartedAt: splash.startedAt,
     async beforeShutdown() {

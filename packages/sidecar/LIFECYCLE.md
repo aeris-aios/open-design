@@ -45,13 +45,31 @@ The public API exposes only `stop()`:
 
 - a spawned lease is terminal after the controller-captured child exits and the exact
   lease is retired;
-- a caller-hosted lease is terminal after its shutdown callback completes,
+- a caller-hosted lease is terminal after its explicit body lifecycle stops,
   its attached endpoint closes and the exact lease is retired.
 
-A hosted shutdown callback may close its own attachment. That re-entrant close
-closes the endpoint without waiting on the stop operation that is currently
-waiting for the callback; the lease is retired only after the callback finishes.
-Unrelated close callers still wait for the complete stop operation.
+Every body supplies `lifecycle.initialize(context)` and `lifecycle.stop()`.
+Initialization completes before readiness is published. Stop drains only
+body-owned resources: it never closes the attachment or exits the host. The
+package owns one idempotent terminal pipeline for both a private stop request
+and local `attached.close()`:
+
+1. await `lifecycle.stop()`;
+2. close the control endpoint;
+3. retire the exact lease for a caller-hosted body;
+4. resolve `attached.closed`.
+
+If body stop rejects, the endpoint and lease remain authoritative and
+`attached.closed` rejects. A controller therefore cannot report terminal while
+business resources may still be live. Spawned bodies close their endpoint at
+this boundary; their controller remains responsible for observing process exit
+before retiring the process-terminal lease.
+
+A hosted service that owns other identities in the same namespace is a graph
+node, not a recursive session owner. Ordered convergence stops those child
+identities before their hosted owner. The owner's `lifecycle.stop()` may then
+drain its captured handles without attempting a cross-process re-entry into the
+namespace session held by its controller.
 
 The private wire request is only a step in that operation. Acceptance is not a
 public lifecycle result, PID liveness is not a hosted terminal condition, and

@@ -11,4 +11,8 @@ await attachSidecar<DemoMethods>({
       return { value: input.value };
     },
   },
+  lifecycle: {
+    initialize() {},
+    stop() {},
+  },
 });

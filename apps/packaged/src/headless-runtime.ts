@@ -36,9 +36,11 @@ export interface RunPackagedHeadlessOptions {
 export interface PackagedHeadlessStartupDependencies {
   confirmRuntime(): Promise<void>;
   createControlServer(options: {
-    shutdown(): Promise<void>;
+    lifecycle: {
+      stop(): Promise<void>;
+    };
     webUrl: string;
-  }): Promise<{ close(): Promise<void> }>;
+  }): Promise<{ closed: Promise<void>; close(): Promise<void> }>;
   exit(code: number): void;
   installMcp(daemonUrl: string | null): Promise<void>;
   startSidecars(): Promise<PackagedSidecarHandle>;
@@ -56,19 +58,29 @@ export async function acquirePackagedHeadlessStartup(
 ): Promise<PackagedHeadlessStartupHandle> {
   let identity: PackagedDesktopIdentityHandle | null = null;
   let sidecars: PackagedSidecarHandle | null = null;
-  let controlServer: { close(): Promise<void> } | null = null;
-  let closed = false;
+  let controlServer: { closed: Promise<void>; close(): Promise<void> } | null = null;
+  let closingBody: Promise<void> | null = null;
+  let exited = false;
 
-  const close = async (): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    await controlServer?.close().catch(() => undefined);
-    await sidecars?.close().catch(() => undefined);
-    await identity?.close().catch(() => undefined);
+  const stopBody = (): Promise<void> => {
+    if (closingBody != null) return closingBody;
+    closingBody = (async () => {
+      const errors: unknown[] = [];
+      await sidecars?.close().catch((error: unknown) => errors.push(error));
+      await identity?.close().catch((error: unknown) => errors.push(error));
+      if (errors.length > 0) throw new AggregateError(errors, "packaged headless stop failed");
+    })();
+    return closingBody;
+  };
+  const exitOnce = (): void => {
+    if (exited) return;
+    exited = true;
+    dependencies.exit(0);
   };
   const shutdown = async (): Promise<void> => {
-    await close();
-    dependencies.exit(0);
+    if (controlServer == null) await stopBody();
+    else await controlServer.close();
+    exitOnce();
   };
 
   try {
@@ -81,12 +93,19 @@ export async function acquirePackagedHeadlessStartup(
       );
     }
     await dependencies.installMcp(sidecars.daemon.url);
-    controlServer = await dependencies.createControlServer({ shutdown, webUrl });
+    controlServer = await dependencies.createControlServer({
+      lifecycle: { stop: stopBody },
+      webUrl,
+    });
     await dependencies.writeWebIdentity(webUrl);
     await dependencies.confirmRuntime();
+    void controlServer.closed.then(exitOnce, (error: unknown) => {
+      console.error("packaged headless lifecycle stop failed", error);
+    });
     return { shutdown, webUrl };
   } catch (error) {
-    await close();
+    await controlServer?.close().catch(() => undefined);
+    await stopBody().catch(() => undefined);
     throw error;
   }
 }
@@ -171,7 +190,7 @@ export async function runPackagedHeadless(
 
   const { shutdown, webUrl } = await acquirePackagedHeadlessStartup({
     confirmRuntime: async () => await confirmPackagedLauncherRuntime(launcherRuntime),
-    createControlServer: async ({ shutdown: stop, webUrl: activeWebUrl }) =>
+    createControlServer: async ({ lifecycle, webUrl: activeWebUrl }) =>
       await control.expose<{ status: { input: Record<string, never>; output: DesktopStatusSnapshot } }>({
         service: OPEN_DESIGN_SERVICES.DESKTOP,
         handlers: {
@@ -183,7 +202,10 @@ export async function runPackagedHeadless(
             windowVisible: false,
           }),
         },
-        onStopRequested: async () => { setImmediate(() => { void stop(); }); },
+        lifecycle: {
+          initialize() {},
+          stop: lifecycle.stop,
+        },
       }),
     exit: (code) => process.exit(code),
     installMcp: async (daemonUrl) => {

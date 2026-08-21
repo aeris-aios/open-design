@@ -21,19 +21,6 @@ async function main(): Promise<void> {
   let control: SidecarControlPlane | null = null;
   let desktopHandoff: LegacyPayloadDesktopHandoffPreparation | null = null;
   const attached = await attachSidecar<DaemonSidecarMethods>({
-    async initialize(context) {
-      const runtime = createOpenDesignRuntimeContext(context);
-      desktopHandoff = await prepareLegacyPayloadDesktopHandoff({
-        namespace: runtime.namespace,
-        runtimeRoot: runtime.runtimeRoot,
-        source: runtime.source,
-      }).catch((error: unknown) => {
-        console.warn("[packaged desktop handoff] prepare failed", error);
-        return null;
-      });
-      control = resumeControlPlane(context);
-      server = await startDaemonSidecar(runtime, control);
-    },
     handlers: {
       mintImportToken(input) {
         return server!.mintImportToken(DAEMON_SIDECAR_INPUTS.mintImportToken.parse(input).baseDir);
@@ -49,9 +36,24 @@ async function main(): Promise<void> {
         return await server!.status();
       },
     },
-    async onStopRequested() {
-      await server?.stop();
-      await server?.waitUntilStopped();
+    lifecycle: {
+      async initialize(context) {
+        const runtime = createOpenDesignRuntimeContext(context);
+        desktopHandoff = await prepareLegacyPayloadDesktopHandoff({
+          namespace: runtime.namespace,
+          runtimeRoot: runtime.runtimeRoot,
+          source: runtime.source,
+        }).catch((error: unknown) => {
+          console.warn("[packaged desktop handoff] prepare failed", error);
+          return null;
+        });
+        control = resumeControlPlane(context);
+        server = await startDaemonSidecar(runtime, control);
+      },
+      async stop() {
+        await server?.stop();
+        await server?.waitUntilStopped();
+      },
     },
   });
 

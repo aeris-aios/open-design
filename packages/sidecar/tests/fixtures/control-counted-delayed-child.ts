@@ -17,7 +17,10 @@ await attachSidecar<DemoMethods>({
       return { value: input.value };
     },
   },
-  async initialize() {
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 100));
+  lifecycle: {
+    async initialize() {
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 100));
+    },
+    stop() {},
   },
 });

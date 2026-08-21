@@ -45,9 +45,9 @@ describe("tools-pack service convergence", () => {
 
       await expect(stopToolPackServices(control)).resolves.toMatchObject({ state: "incomplete" });
       expect(stop.mock.calls).toEqual([
-        ["desktop", { graceMs: 15_000 }],
         ["web"],
         ["daemon"],
+        ["desktop", { graceMs: 15_000 }],
       ]);
     },
   );
@@ -68,9 +68,9 @@ describe("tools-pack service convergence", () => {
         "failed to converge one or more packaged services",
       );
       expect(stop.mock.calls).toEqual([
-        ["desktop", { graceMs: 15_000 }],
         ["web"],
         ["daemon"],
+        ["desktop", { graceMs: 15_000 }],
       ]);
     },
   );

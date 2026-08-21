@@ -13,4 +13,8 @@ await attachSidecar<EnvironmentMethods>({
       return { value: process.env[input.key] ?? null };
     },
   },
+  lifecycle: {
+    initialize() {},
+    stop() {},
+  },
 });

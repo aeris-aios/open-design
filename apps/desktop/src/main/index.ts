@@ -130,7 +130,7 @@ export const OS_LOCALE_PRELOAD_ARG_PREFIX = "--od-os-locale=";
  *
  * Safe to call multiple times: `appendSwitch('lang', ...)` is a no-op
  * once `app.isReady()` is true. The packaged entry calls this once
- * before its own `whenReady` (so the switch lands) and `runDesktopMain`
+ * before its own `whenReady` (so the switch lands) and `startDesktopMain`
  * calls it again later to recover the same string for the BrowserWindow.
  */
 export function applyOsLocaleSwitch(electronApp: Electron.App): string {
@@ -705,7 +705,7 @@ async function registerDesktopAuthWithDaemon(
   return false;
 }
 
-export async function runDesktopMain(
+export async function startDesktopMain(
   runtime: OpenDesignRuntimeContext,
   options: DesktopMainOptions = {},
   sidecar: DesktopSidecarHost,
@@ -805,6 +805,7 @@ export async function runDesktopMain(
   let removeDiagnosticsIpc: () => void = () => undefined;
   let attachedSidecar: AttachedSidecar | null = null;
   let shuttingDown = false;
+  let stoppingDesktop: Promise<void> | null = null;
   let pendingUpdateDialogRequest = false;
 
   async function snapshotUpdateForStatus(): Promise<{
@@ -848,22 +849,25 @@ export async function runDesktopMain(
     return { ...activeDesktop.status(), ...update };
   }
 
-  async function shutdown(): Promise<void> {
-    if (shuttingDown) return;
+  function stopDesktopBody(): Promise<void> {
+    if (stoppingDesktop != null) return stoppingDesktop;
     shuttingDown = true;
-    await options.beforeShutdown?.().catch((error: unknown) => {
-      console.error("desktop beforeShutdown failed", error);
-    });
-    updateScheduler?.stop("shutdown");
-    disposeMenu();
-    removeDiagnosticsIpc();
-    await attachedSidecar?.close().catch(() => undefined);
-    await desktop?.close().catch(() => undefined);
-    // Mark the session clean only AFTER teardown actually completed, right
-    // before app.quit(). Doing it at the start of shutdown would flag a quit as
-    // clean even if a later await hangs and the process is then force-quit or
-    // OS-killed — which is itself an abnormal exit worth reporting.
-    endDesktopSessionCleanly({ stateFilePath: sessionStatePath });
+    stoppingDesktop = (async () => {
+      await options.beforeShutdown?.();
+      updateScheduler?.stop("shutdown");
+      disposeMenu();
+      removeDiagnosticsIpc();
+      await desktop?.close();
+      // Mark the session clean only AFTER teardown actually completed. Doing
+      // it at the start would hide a later teardown hang followed by a kill.
+      endDesktopSessionCleanly({ stateFilePath: sessionStatePath });
+    })();
+    return stoppingDesktop;
+  }
+
+  async function shutdown(): Promise<void> {
+    if (attachedSidecar == null) await stopDesktopBody();
+    else await attachedSidecar.close();
     app.quit();
   }
 
@@ -950,8 +954,15 @@ export async function runDesktopMain(
         return invokeDesktopMethod("update", parsed, () => updater.handle(parsed.action));
       },
     },
-    onStopRequested: shutdown,
+    lifecycle: {
+      initialize() {},
+      stop: stopDesktopBody,
+    },
   });
+  void attachedSidecar.closed.then(
+    () => app.quit(),
+    (error: unknown) => console.error("desktop lifecycle stop failed", error),
+  );
   console.info("[open-design desktop] desktop control ready", {
     channel: runtime.channel,
     generation: runtime.generation,
@@ -1067,12 +1078,6 @@ export async function runDesktopMain(
   app.on("before-quit", (event) => {
     if (shuttingDown) return;
     event.preventDefault();
-    void shutdown().finally(() => process.exit(0));
-  });
-
-  app.on("before-quit", (event) => {
-    if (shuttingDown) return;
-    event.preventDefault();
     shutdownAndExit();
   });
 
@@ -1094,7 +1099,7 @@ export async function runDesktopMain(
 if (isDirectEntry()) {
   const context = readSidecarContext();
   const control = resumeControlPlane(context);
-  void runDesktopMain(createOpenDesignRuntimeContext(context), {}, {
+  void startDesktopMain(createOpenDesignRuntimeContext(context), {}, {
     control,
     expose: (options) => attachSidecar(options),
   }).catch((error: unknown) => {

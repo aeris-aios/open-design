@@ -180,16 +180,17 @@ export type SidecarLaunch<TMethods> = Readonly<{
 
 export type AttachSidecarOptions<TMethods> = Readonly<{
   handlers: SidecarMethodHandlers<TMethods>;
-  /**
-   * Complete body-owned startup after the package has decoded and validated
-   * caller identity/roots, but before the ready descriptor becomes visible.
-   * This is the only bootstrap seam a real Web/daemon body needs.
-   */
-  initialize?: (context: SidecarControlContext) => void | Promise<void>;
-  onStopRequested?: () => void | Promise<void>;
+  lifecycle: Readonly<{
+    /** Complete body-owned startup before the ready descriptor becomes visible. */
+    initialize(context: SidecarControlContext): void | Promise<void>;
+    /** Stop and drain body-owned resources. Attachment teardown remains package-owned. */
+    stop(): void | Promise<void>;
+  }>;
 }>;
 
 export type AttachedSidecar = Readonly<{
+  /** Resolves after body stop and endpoint close; hosted attachments also retire their lease. */
+  closed: Promise<void>;
   context: SidecarControlContext;
   close(): Promise<void>;
 }>;

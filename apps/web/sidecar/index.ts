@@ -10,18 +10,20 @@ import { startWebSidecar, type WebSidecarHandle } from "./server.js";
 async function main(): Promise<void> {
   let server: WebSidecarHandle | null = null;
   const attached = await attachSidecar<WebSidecarMethods>({
-    async initialize(context) {
-      server = await startWebSidecar(createOpenDesignRuntimeContext(context));
-    },
     handlers: {
       async status(input) {
         WEB_SIDECAR_INPUTS.status.parse(input);
         return await server!.status();
       },
     },
-    async onStopRequested() {
-      await server?.stop();
-      await server?.waitUntilStopped();
+    lifecycle: {
+      async initialize(context) {
+        server = await startWebSidecar(createOpenDesignRuntimeContext(context));
+      },
+      async stop() {
+        await server?.stop();
+        await server?.waitUntilStopped();
+      },
     },
   });
 

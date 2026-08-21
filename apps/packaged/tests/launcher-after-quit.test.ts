@@ -139,9 +139,9 @@ describe("packaged launcher convergence", () => {
         paths: paths(root),
       })).resolves.toEqual({ action: "continue", reason: "stale-sidecar" });
       expect(fake.stop.mock.calls).toEqual([
-        ["desktop", { graceMs: 15_000 }],
         ["web"],
         ["daemon"],
+        ["desktop", { graceMs: 15_000 }],
       ]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -160,7 +160,7 @@ describe("packaged launcher convergence", () => {
         incomingVersion: "0.19.4-beta.9",
         paths: paths(root),
       })).resolves.toEqual({ action: "exit", reason: "existing-focus-failed" });
-      expect(fake.stop.mock.calls.map(([service]) => service)).toEqual(["desktop", "web", "daemon"]);
+      expect(fake.stop.mock.calls.map(([service]) => service)).toEqual(["web", "daemon", "desktop"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -175,7 +175,7 @@ describe("packaged launcher convergence", () => {
         incomingVersion: "0.19.4-beta.30",
         paths: paths(root),
       })).resolves.toEqual({ action: "continue", reason: "superseded-version" });
-      expect(fake.stop.mock.calls.map(([service]) => service)).toEqual(["desktop", "web", "daemon"]);
+      expect(fake.stop.mock.calls.map(([service]) => service)).toEqual(["web", "daemon", "desktop"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
