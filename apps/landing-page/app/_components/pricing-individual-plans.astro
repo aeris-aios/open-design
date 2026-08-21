@@ -534,7 +534,8 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   <td class="model-name-cell"><span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span><span>{model.name}</span></td>
                   {(['go', 'plus', 'pro', 'max'] as TierId[]).map((tier) => {
                     const status = accessStatus(category, model.name, tier);
-                    return status.kind === 'more-ample' ? (
+                    const checkOnly = status.kind === 'more-ample' || status.kind === 'ample' || status.kind === 'included';
+                    return checkOnly ? (
                       <td><span class={`model-access-status ${status.kind}`} aria-label={status.text}><i class="status-icon check"></i></span></td>
                     ) : (
                       <td><span class={`model-access-status ${status.kind}`}><i class:list={['status-icon', { infinity: status.kind === 'unlimited' }]}>{status.kind === 'unlimited' ? '∞' : ''}</i>{status.text}</span></td>
@@ -1566,7 +1567,9 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     white-space: nowrap;
   }
 
-  .model-access-status.more-ample {
+  .model-access-status.more-ample,
+  .model-access-status.ample,
+  .model-access-status.included {
     width: 104px;
     height: 23px;
   }
@@ -1592,26 +1595,6 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   }
 
   .status-icon.check::before {
-    width: 5px;
-    height: 9px;
-    content: '';
-    border: 2px solid;
-    border-width: 0 2px 2px 0;
-    transform: translateY(-1px) rotate(45deg);
-  }
-
-  .model-access-status.ample,
-  .model-access-status.included {
-    width: 104px;
-    height: 23px;
-    overflow: hidden;
-    font-size: 0;
-  }
-
-  .model-access-status.ample::after,
-  .model-access-status.included::after {
-    grid-column: 1;
-    justify-self: center;
     width: 5px;
     height: 9px;
     content: '';

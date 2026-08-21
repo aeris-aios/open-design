@@ -457,8 +457,9 @@ describe("pricing contract", () => {
     assert.match(individualPlans, /const popular = orderedPopularModels\(\);/);
     assert.match(
       individualPlans,
-      /status\.kind === 'more-ample'\s*\?\s*\(\s*<td><span class=\{`model-access-status \$\{status\.kind\}`\} aria-label=\{status\.text\}><i class="status-icon check"><\/i><\/span><\/td>/s,
+      /const checkOnly = status\.kind === 'more-ample' \|\| status\.kind === 'ample' \|\| status\.kind === 'included';\s*return checkOnly \? \(\s*<td><span class=\{`model-access-status \$\{status\.kind\}`\} aria-label=\{status\.text\}><i class="status-icon check"><\/i><\/span><\/td>/s,
     );
+    assert.doesNotMatch(individualPlans, /\.model-access-status\.(?:ample|included)::after/);
     assert.match(
       individualPlans,
       /\.model-access-status\s*\{[^}]*grid-template-columns:\s*23px max-content;[^}]*width:\s*104px;[^}]*margin:\s*0 auto;/s,
