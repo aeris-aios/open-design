@@ -2242,6 +2242,22 @@ function OnboardingView({
     (runtime === 'local' && visibleAgentTestState.status === 'running') ||
     (runtime === 'byok' && visibleProviderTestState.status === 'running');
   const connectStepBlocked = runtimeSetupStep && !connectStepRuntimeReady;
+  // What the user is looking at RIGHT NOW. `handlePrimaryAction` awaits a
+  // validation round trip before it persists anything, and its closure is
+  // frozen at click time — so the continuation cannot ask this question of its
+  // own variables. See `continueAttemptStillCurrent`.
+  const onboardingIntentRef = useRef({
+    step,
+    runtime,
+    agentTestInputKey,
+    providerTestInputKey,
+  });
+  onboardingIntentRef.current = {
+    step,
+    runtime,
+    agentTestInputKey,
+    providerTestInputKey,
+  };
   const connectGateReason: 'no_runtime' | 'local_agent_unavailable' | 'byok_unverified' | null =
     !runtimeSetupStep
       ? null
@@ -2708,14 +2724,42 @@ function OnboardingView({
     setRuntime('byok');
     setStep(2);
   }
+  /**
+   * Whether the Continue attempt that started against `startedInputKey` still
+   * describes what the user is looking at.
+   *
+   * A validation round trip can outlive the intent that started it: Back stays
+   * enabled while the test is in flight, and the inputs being validated stay
+   * editable. Persisting a late result regardless would write a configuration
+   * the user already walked away from and finish onboarding under them — so
+   * the attempt must still be on the runtime setup step, on the same runtime,
+   * and against the same inputs it validated.
+   *
+   * `inputKey` already guards what gets DISPLAYED (`visibleAgentTestState` /
+   * `visibleProviderTestState` fall back to idle once it drifts); this applies
+   * the same rule to what gets PERSISTED.
+   */
+  function continueAttemptStillCurrent(
+    startedRuntime: 'local' | 'byok',
+    startedInputKey: string,
+  ): boolean {
+    const now = onboardingIntentRef.current;
+    if (now.step !== 2 || now.runtime !== startedRuntime) return false;
+    return startedRuntime === 'local'
+      ? now.agentTestInputKey === startedInputKey
+      : now.providerTestInputKey === startedInputKey;
+  }
+
   async function handlePrimaryAction() {
     if (connectStepBlocked || connectStepTestRunning) return;
     if (runtime === 'local' && selectedAgent) {
+      const startedInputKey = agentTestInputKey;
       const testResult =
         visibleAgentTestState.status === 'done' && visibleAgentTestState.result.ok
           ? visibleAgentTestState.result
           : await testAgentInline();
       if (!testResult?.ok) return;
+      if (!continueAttemptStillCurrent('local', startedInputKey)) return;
       await onConfigPersist({
         ...config,
         mode: 'daemon',
@@ -2726,11 +2770,13 @@ function OnboardingView({
       return;
     }
     if (runtime === 'byok') {
+      const startedInputKey = providerTestInputKey;
       const testResult =
         visibleProviderTestState.status === 'done' && visibleProviderTestState.result.ok
           ? visibleProviderTestState.result
           : await testProviderInline();
       if (!testResult?.ok) return;
+      if (!continueAttemptStillCurrent('byok', startedInputKey)) return;
       await onConfigPersist({ ...config, mode: 'api' });
       emitOnboardingClick('continue', 'continue', { runtime_type: 'byok' });
       completeStreamlinedOnboarding('byok');
