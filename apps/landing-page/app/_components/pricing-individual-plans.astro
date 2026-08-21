@@ -228,11 +228,13 @@ const cardData = [
     tier: 'go' as const,
     logo: null,
     view: goView,
+    regularMonthlyPrice: GO_PLAN.monthly.priceUsd,
   },
   ...tiers.map((tier) => ({
     tier: tier.tier as PlanTierId,
     logo: `/pricing/plan-${tier.tier}.svg`,
     view: individualView(tier),
+    regularMonthlyPrice: tier.monthly.priceUsd,
   })),
 ];
 
@@ -321,7 +323,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 >
   <div class="benefits-summary-stage">
     <div class="four-tier-grid decision-grid">
-      {cardData.map(({ tier, logo, view }) => {
+      {cardData.map(({ tier, logo, view, regularMonthlyPrice }) => {
         const popular = orderedPopularModels();
         const flagship = tier === 'plus' ? plusFlagshipModels : flagshipModels;
         const imageResolution = tier === 'plus' ? '1K' : tier === 'pro' ? '2K' : '4K';
@@ -345,7 +347,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                   )}
                 </div>
                 <div class="plan-badges">
-                  <span class="discount-corner-badge" data-when="monthly">{fillTemplate(L.firstMonthTag, { pct: String(view.monthly.discount) })}</span>
+                  <span class="discount-corner-badge" data-when="monthly" data-intro-only>{fillTemplate(L.firstMonthTag, { pct: String(view.monthly.discount) })}</span>
                   <span class="discount-corner-badge" data-when="yearly">{fillTemplate(L.yearlyDiscountTag, { pct: String(view.yearly.discount) })}</span>
                 </div>
               </div>
@@ -353,9 +355,14 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
             </header>
 
             <div class="price" data-when="monthly">
-              <span>$</span><strong class="rolling-price-number">{view.monthly.amount}</strong><small>{L.perMonth}</small><del>{view.monthly.strike}</del>
+              <span>$</span><strong
+                class="rolling-price-number"
+                data-monthly-price
+                data-intro-price={view.monthly.amount}
+                data-regular-price={formatUsd(regularMonthlyPrice).replace('$', '')}
+              >{view.monthly.amount}</strong><small>{L.perMonth}</small><del data-intro-only>{view.monthly.strike}</del>
             </div>
-            <div class="compact-price-detail" data-when="monthly">
+            <div class="compact-price-detail" data-when="monthly" data-intro-only>
               <span class="price-savings-note">{fillTemplate(P.saveAmount, { amount: view.monthly.saving })}</span>
               <small>{view.monthly.billed}</small>
             </div>
@@ -372,6 +379,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
               data-pricing-cta
               data-tier={tier}
               data-plan-name={tier.charAt(0).toUpperCase() + tier.slice(1)}
+              data-default-label={tierCopy[tier].ctaLabel}
             >
               <span>{tierCopy[tier].ctaLabel}</span>
             </a>

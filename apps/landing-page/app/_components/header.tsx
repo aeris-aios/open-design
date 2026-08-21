@@ -27,6 +27,17 @@ const FEISHU_GROUP_QR = '/community/feishu-group-qr.png';
 const FEISHU_MARK = '/launch-week/feishu-mark.png';
 const X_PROFILE = 'https://x.com/OpenDesignHQ';
 
+// Pricing can opt into the existing Cloud account menu without restoring it
+// across the marketing site. The enhancer reads these values from data-*
+// because its inline script cannot access import.meta.env at runtime.
+const env = (import.meta.env ?? {}) as Record<string, string | undefined>;
+const CLOUD_API_BASE =
+  env.PUBLIC_CLOUD_API_BASE ?? env.PUBLIC_AMR_API_BASE ?? 'https://amr-api.open-design.ai';
+const CLOUD_CONSOLE_URL =
+  env.PUBLIC_CLOUD_CONSOLE_URL ??
+  env.PUBLIC_AMR_CONSOLE_URL ??
+  'https://open-design.ai/cloud/dashboard?source=open_design';
+
 // Solution → Use cases / Roles. Hrefs mirror upstream main's header 1:1 and
 // pair positionally with the localized `useCaseItems` / `roleItems` tuples.
 const USE_CASE_HREFS = [
@@ -155,6 +166,8 @@ export interface HeaderProps {
   copy?: HeaderCopy;
   /** Brand link target — `#top` on the homepage, `/` on sub-pages. */
   brandHref?: string;
+  /** Render the signed-in Cloud avatar/menu. Disabled on marketing pages by default. */
+  showAccount?: boolean;
 }
 
 export function Header({
@@ -164,6 +177,7 @@ export function Header({
   locale = DEFAULT_LOCALE,
   copy,
   brandHref = '#top',
+  showAccount = false,
 }: HeaderProps) {
   const headerCopy = copy ?? getCommonCopy(locale).header;
   const href = (path: string) => localizedHref(path, locale);
@@ -623,6 +637,53 @@ export function Header({
           >
             {headerCopy.download}
           </a>
+          {showAccount ? (
+            <div
+              className='nav-account'
+              data-amr-account
+              data-amr-api={CLOUD_API_BASE}
+              data-amr-console={CLOUD_CONSOLE_URL}
+            >
+              <details className='nav-account-menu' data-amr-menu hidden>
+                <summary
+                  className='nav-account-trigger'
+                  aria-label={headerCopy.accountAria}
+                  title={headerCopy.accountAria}
+                >
+                  <img className='nav-avatar' alt='' data-amr-avatar />
+                  <span
+                    className='nav-avatar-fallback'
+                    data-amr-avatar-fallback
+                    aria-hidden='true'
+                  />
+                </summary>
+                <div className='nav-account-dropdown' role='menu'>
+                  <div className='nav-account-id'>
+                    <span className='nav-account-name' data-amr-name />
+                    <span className='nav-account-email' data-amr-email />
+                  </div>
+                  <a
+                    className='nav-account-item'
+                    role='menuitem'
+                    href={CLOUD_CONSOLE_URL}
+                    target='_blank'
+                    rel='noreferrer noopener'
+                    data-amr-console-link
+                  >
+                    {headerCopy.menuConsole}
+                  </a>
+                  <button
+                    type='button'
+                    className='nav-account-item nav-account-signout'
+                    role='menuitem'
+                    data-amr-signout
+                  >
+                    {headerCopy.menuSignOut}
+                  </button>
+                </div>
+              </details>
+            </div>
+          ) : null}
         </div>
       </div>
       {/*

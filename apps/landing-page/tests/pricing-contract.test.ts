@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { glob, readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   CLOUD_CONSOLE_BASE_PARAM,
@@ -830,7 +831,12 @@ describe("pricing contract", () => {
       if (url.endsWith("/api/auth/get-session")) {
         return Response.json({ user: { id: "user-1" } });
       }
-      return Response.json({ membershipTier: "Pro" });
+      return Response.json({
+        membershipTier: "Pro",
+        billingInterval: "monthly",
+        subscriptionStatus: "active",
+        subscriptionEntitlementStatus: "active",
+      });
     };
 
     assert.equal(
@@ -847,11 +853,12 @@ describe("pricing contract", () => {
     );
     assert.equal(getCurrentPlanLabel("en"), "Current plan");
     assert.equal(getCurrentPlanLabel("zh"), "当前套餐");
-    assert.deepEqual(getPricingPlanActionLabels("en"), {
-      current: "Current plan",
-      downgrade: "Downgrade to {plan}",
-      upgrade: "Upgrade to {plan}",
-    });
+    assert.equal(getPricingPlanActionLabels("en").downgrade, "Downgrade to {plan}");
+    assert.equal(getPricingPlanActionLabels("en").upgrade, "Upgrade to {plan}");
+    assert.equal(
+      getPricingPlanActionLabels("en").switchBackToInterval,
+      "Switch back to {interval} before upgrading",
+    );
   });
 
   it("disables the current personal plan and every downgrade target", () => {
@@ -893,7 +900,7 @@ describe("pricing contract", () => {
     );
   });
 
-  it("labels the current CTA and disables current or lower personal tiers", async () => {
+  it("renders personal CTA state from the full billing context", async () => {
     const [page, individualPlans] = await Promise.all([
       readFile(PRICING_PAGE_PATH, "utf8"),
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
@@ -903,11 +910,13 @@ describe("pricing contract", () => {
     assert.match(page, /data-current-plan-label=\{planActionLabels\.current\}/);
     assert.match(page, /data-downgrade-plan-label=\{planActionLabels\.downgrade\}/);
     assert.match(page, /data-upgrade-plan-label=\{planActionLabels\.upgrade\}/);
-    assert.match(page, /loadCurrentPersonalPlanTier\(apiOrigin\)/);
-    assert.match(page, /personalPlanRelation\(tier, currentTier\)/);
-    assert.match(page, /relation === 'current'/);
-    assert.match(page, /fillPlanLabel\(downgradePlanLabel, plan\)/);
-    assert.match(page, /fillPlanLabel\(upgradePlanLabel, plan\)/);
+    assert.match(page, /loadPersonalPricingContext\(apiOrigin\)/);
+    assert.match(page, /resolvePersonalPlanAction\(pricingContext/);
+    assert.match(page, /action\.kind === 'dual_change'/);
+    assert.match(page, /action\.kind === 'manage_billing'/);
+    assert.match(page, /action\.kind === 'scheduled'/);
+    assert.match(page, /pricing:set-interval/);
+    assert.match(page, /data-first-month-intro-eligible/);
     assert.match(page, /cta\.setAttribute\('aria-disabled', 'true'\)/);
     assert.match(page, /cta\.setAttribute\('tabindex', '-1'\)/);
     assert.match(page, /cta\.removeAttribute\('href'\)/);
@@ -918,6 +927,28 @@ describe("pricing contract", () => {
     );
     assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
     assert.match(individualPlans, /\.pricing-card-cta\s*\{[^}]*border:\s*0;/s);
+  });
+
+  it("restores account actions only on Pricing", async () => {
+    const layout = await readFile(
+      new URL("../app/_components/sub-page-layout.astro", import.meta.url),
+      "utf8",
+    );
+    const pagesRoot = new URL("../app/pages/", import.meta.url);
+    const pricingPage = await readFile(new URL("pricing/index.astro", pagesRoot), "utf8");
+    const pageFiles = (
+      await Array.fromAsync(glob("**/*.astro", { cwd: fileURLToPath(pagesRoot) }))
+    ).sort();
+    const accountOptIns = [];
+    for (const pageFile of pageFiles) {
+      const source = await readFile(new URL(pageFile, pagesRoot), "utf8");
+      if (/showHeaderAccount/u.test(source)) accountOptIns.push(pageFile);
+    }
+
+    assert.match(layout, /showHeaderAccount = false/u);
+    assert.match(layout, /showAccount: showHeaderAccount/u);
+    assert.match(pricingPage, /<Layout[^>]*showHeaderAccount/u);
+    assert.deepEqual(accountOptIns, ["pricing/index.astro"]);
   });
 
   it("preserves only an explicit inbound workspace without inferring local state", async () => {
@@ -1047,13 +1078,14 @@ describe("pricing contract", () => {
     );
   });
 
-  it("renders the Team monthly total, first-year total, and priced checkout from the annual offer", async () => {
+  it("renders interval-specific Team totals and checkout labels", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
     const english = TEAM_PRICING_CONTENT_BY_LOCALE.en;
 
     for (const tier of PRICING_SNAPSHOT.teamTiers) {
       for (const seats of [3, 4] as const) {
         const annualTotal = teamIntroTotalUsd(tier, "yearly", seats);
+        const firstMonthTotal = teamIntroTotalUsd(tier, "monthly", seats);
         const monthlyTotal = annualTotal / 12;
         const amount = (value: number) => formatUsd(value).replace(/^\$/, "");
 
@@ -1066,7 +1098,11 @@ describe("pricing contract", () => {
           `${amount(annualTotal)} billed for the first year`,
         );
         assert.equal(
-          english.checkout.replace("{amount}", amount(annualTotal)),
+          english.monthlyCheckout.replace("{amount}", amount(firstMonthTotal)),
+          `Upgrade team · ${amount(firstMonthTotal)}/month`,
+        );
+        assert.equal(
+          english.yearlyCheckout.replace("{amount}", amount(annualTotal)),
           `Upgrade team · ${amount(annualTotal)}/year`,
         );
       }
@@ -1075,7 +1111,10 @@ describe("pricing contract", () => {
     assert.match(page, /data-team-monthly-summary/);
     assert.match(page, /data-team-yearly-summary/);
     assert.match(page, /data-team-checkout-total/);
-    assert.match(page, /const interval = 'yearly';/);
+    assert.match(
+      page,
+      /const interval = root\.getAttribute\('data-interval'\) === 'monthly' \? 'monthly' : 'yearly';/,
+    );
   });
 
   it("removes the obsolete Team-coming-soon banner", async () => {
@@ -1099,8 +1138,8 @@ describe("pricing contract", () => {
     // generic global section padding must be cancelled on the component root.
     assert.match(individualPlans, /\.demo-individual-pricing\s*\{[^}]*padding:\s*0 !important;/s);
 
-    // Billing is the centered segmented control. Individual/Team stays as the
-    // plain right-aligned slash control and billing hides for Team.
+    // Billing is the centered segmented control shared by Individual and Team.
+    // The audience switch stays as the plain right-aligned slash control.
     assert.match(page, /class="pr-audience-toggle"[^>]*role="tablist"/);
     assert.match(page, /\.pr-controls-row\s*\{[^}]*grid-template-columns:\s*1fr auto 1fr;/s);
     assert.match(page, /\.pr-toggle\s*\{[^}]*grid-column:\s*2;[^}]*justify-self:\s*center;[^}]*background:\s*#e8e9e3;[^}]*border-radius:\s*999px;/s);
@@ -1115,14 +1154,7 @@ describe("pricing contract", () => {
     assert.match(page, /<span class="pr-audience-separator" aria-hidden="true">\/<\/span>/);
     assert.match(page, /<span class="pr-toggle-save">\{L\.yearlySave\}<\/span>/);
     assert.doesNotMatch(page, /class="pr-toggle-separator"/);
-    assert.match(
-      page,
-      /const billingToggle = root\.querySelector\('\.pr-toggle'\);[\s\S]*?billingToggle\.hidden = audience === 'team';/,
-    );
-    assert.match(
-      page,
-      /\.pr-toggle\[hidden\]\s*\{\s*display:\s*none !important;\s*\}/,
-    );
+    assert.doesNotMatch(page, /billingToggle\.hidden = audience === 'team'/);
 
     // The visible Team tier control must never open the OS-native select popup.
     assert.doesNotMatch(page, /<select[^>]*data-team-tier/);
@@ -1208,7 +1240,8 @@ describe("pricing contract", () => {
       );
       assert.match(copy.monthlyTotal, /\{amount\}/);
       assert.match(copy.yearlyTotal, /\{amount\}/);
-      assert.match(copy.checkout, /\{amount\}/);
+      assert.match(copy.monthlyCheckout, /\{amount\}/);
+      assert.match(copy.yearlyCheckout, /\{amount\}/);
       assert.doesNotMatch(copy.monthlyTotal, /\{count\}|\{savings\}/);
       assert.doesNotMatch(copy.yearlyTotal, /\{count\}|\{savings\}/);
       assert.equal("yearlySummary" in copy, false);
@@ -1230,9 +1263,13 @@ describe("pricing contract", () => {
       TEAM_PRICING_CONTENT_BY_LOCALE.en.yearlyTotal,
       "{amount} billed for the first year",
     );
+    assert.equal(
+      TEAM_PRICING_CONTENT_BY_LOCALE.en.monthlyCheckout,
+      "Upgrade team · {amount}/month",
+    );
   });
 
-  it("updates the annual Team quote for tier and seat controls", async () => {
+  it("updates the Team quote for the selected billing interval, tier, and seats", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
     const updateStart = page.indexOf("const updateTeamPlan = () =>");
     const updateEnd = page.indexOf(
@@ -1249,7 +1286,7 @@ describe("pricing contract", () => {
     );
     assert.match(
       updateTeamPlan,
-      /const interval = 'yearly';/,
+      /const interval = root\.getAttribute\('data-interval'\) === 'monthly' \? 'monthly' : 'yearly';/,
     );
     assert.match(
       updateTeamPlan,
@@ -1257,7 +1294,11 @@ describe("pricing contract", () => {
     );
     assert.match(updateTeamPlan, /fillTeam\(teamCopy\.monthlyTotal, \{ amount: monthlyTotal \}\)/);
     assert.match(updateTeamPlan, /fillTeam\(teamCopy\.yearlyTotal, \{ amount: total \}\)/);
-    assert.match(updateTeamPlan, /fillTeam\(teamCopy\.checkout, \{ amount: total \}\)/);
+    assert.match(
+      updateTeamPlan,
+      /interval === 'yearly' \? teamCopy\.yearlyCheckout : teamCopy\.monthlyCheckout/,
+    );
+    assert.match(page, /data-team-yearly-summary data-when="yearly"/);
     assert.match(page, /const selectTeamTier = \(option\) => \{[\s\S]*?updateTeamPlan\(\)/);
     assert.match(
       page,
@@ -1282,7 +1323,8 @@ describe("pricing contract", () => {
     const syncCtas = page.slice(syncStart, syncEnd);
 
     assert.match(syncCtas, /target\.searchParams\.set\('plan', selectedTier\.tier\)/);
-    assert.match(syncCtas, /target\.searchParams\.set\('interval', 'yearly'\)/);
+    assert.match(syncCtas, /target\.searchParams\.set\('interval', interval\)/);
+    assert.doesNotMatch(syncCtas, /target\.searchParams\.set\('interval', 'yearly'\)/);
     assert.match(syncCtas, /'seats',[\s\S]*String\(Math\.max\(selectedTier\.minSeats, selectedSeats\)\)/);
     assert.match(syncCtas, /target\.searchParams\.set\('checkout', 'auto'\)/);
   });
