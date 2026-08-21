@@ -409,11 +409,6 @@
   left: auto;
 }
 
-[dir='rtl'] .entry-top-right-cluster > .entry-nav-rail__account-updater .entry-updater-menu .updater-popup {
-  right: auto;
-  left: 0;
-}
-
 .updater-popup__body {
   min-width: 0;
 }
