@@ -21,7 +21,17 @@
 // 404s while inline `data:` images still render.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildWorkspacePermissions,
+  buildWorkspaceSeatSummary,
+  type WorkspaceCollabContext,
+} from '@open-design/contracts';
+import {
+  CollabProvider,
+  type CollabContextValue,
+} from '../../src/collab/collab-context';
 import { FileViewer } from '../../src/components/FileViewer';
 import type { ProjectFile } from '../../src/types';
 
@@ -29,6 +39,49 @@ const START_TIME = new Date('2026-08-20T10:00:00Z').getTime();
 // Daemon-side PROJECT_PREVIEW_SCOPE_TTL_MS (apps/daemon/src/server.ts).
 const PREVIEW_SCOPE_TTL_MS = 60 * 60 * 1000;
 const PREVIEW_SCOPE_RENEW_MARGIN_MS = 5 * 60 * 1000;
+
+function teamWorkspaceContext(): WorkspaceCollabContext {
+  return {
+    workspaceId: 'ws-1',
+    workspaceType: 'team',
+    teamId: 'team-1',
+    workspaceMemberId: 'wm-1',
+    role: 'member',
+    memberStatus: 'active',
+    lifecycleState: 'active',
+    billingState: 'active',
+    planId: null,
+    providerMode: 'platform_credits',
+    seatSummary: buildWorkspaceSeatSummary({ seatLimit: 5, usedSeats: 1 }),
+    permissions: buildWorkspacePermissions({ role: 'member', lifecycleState: 'active' }),
+  };
+}
+
+function renderTeamViewer(ui: ReactElement) {
+  const workspaceContext = teamWorkspaceContext();
+  const value: CollabContextValue = {
+    workspaceContext,
+    workspaceContextLoading: false,
+    enabled: false,
+    member: null,
+    present: [],
+    publishedVersion: null,
+    syncState: null,
+    viewerOnly: false,
+    writerAuthority: 'allowed',
+    isOwner: false,
+    isEffectiveOwner: false,
+    isSharedNonOwner: false,
+    ownerDisplayName: null,
+    ownerRole: null,
+    downloadPending: false,
+    reportChange: () => {},
+    requestPublish: () => {},
+    refreshPresence: () => {},
+    checkStatusNow: () => {},
+  };
+  return render(<CollabProvider value={value}>{ui}</CollabProvider>);
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -169,7 +222,7 @@ describe('FileViewer srcDoc preview base expiry', () => {
     let body = deckHtml('version-one');
     const fetchState = stubFetch(() => body);
 
-    render(
+    renderTeamViewer(
       <FileViewer projectId="project-1" projectKind="prototype" file={deckFile()} isDeck />,
     );
 
@@ -199,7 +252,7 @@ describe('FileViewer srcDoc preview base expiry', () => {
   it('renews the daemon-injected URL-load scope without navigating the iframe', async () => {
     const fetchState = stubFetch(() => '<html><body><main>URL loaded</main></body></html>');
 
-    render(
+    renderTeamViewer(
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
@@ -241,7 +294,7 @@ describe('FileViewer srcDoc preview base expiry', () => {
   it('replaces a lost URL-load scope by messaging the live document', async () => {
     const fetchState = stubFetch(() => '<html><body><main>URL loaded</main></body></html>');
 
-    render(
+    renderTeamViewer(
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
@@ -291,7 +344,7 @@ describe('FileViewer srcDoc preview base expiry', () => {
     let body = deckHtml('version-one');
     const fetchState = stubFetch(() => body);
 
-    render(
+    renderTeamViewer(
       <FileViewer projectId="project-1" projectKind="prototype" file={deckFile()} isDeck />,
     );
 
