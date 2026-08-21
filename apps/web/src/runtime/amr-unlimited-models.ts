@@ -9,8 +9,8 @@
  *    inherit the personal answer (#7187);
  *  • the model switcher's badge asks what to mark on screen, via
  *    {@link isUnlimitedModelForPlanTier}, which reads the tier out of a
- *    team-namespaced id too, because a Team Pro subscriber's Kimi K2.7 Code is
- *    just as unlimited as a personal Pro's.
+ *    personal ladder only — see {@link planUnlimitedTier} for why a Team plan
+ *    is not the same question.
  *
  * Keeping both on one table is the point: the sets are a product promise, and
  * a second copy would drift. The Pricing page's own `unlimitedByTier`
@@ -75,14 +75,22 @@ const TIER_ORDER: readonly PlanUnlimitedTier[] = ['max', 'pro', 'plus', 'go'];
 
 /**
  * The unlimited-models tier a raw vela plan id belongs to, or null when the id
- * names no tier that carries an unlimited set (`free`, `team_basic`, or the
- * empty string billing reports before it has answered).
+ * names no tier that carries an unlimited set — `free`, the empty string
+ * billing reports before it has answered, and every TEAM plan.
  *
- * Team plans are namespaced ids on their own ladder (`team_plus`,
- * `team_max_yearly`), so the tier is read off the id's SEGMENTS rather than by
- * comparing the whole string. Substring matching is deliberately not used: it
- * is what made an earlier plan-badge rule answer `plus` for "Team Plus" before
- * the team branch could run.
+ * Team is excluded on evidence, not on tidiness. "Team plans are paid too" is
+ * the wrong test; the question is whether the plan funds usage without
+ * touching the wallet, and vela's schema answers no: in-plan usage is recorded
+ * through the `coding_plan` billing mode, constrained to
+ * `membership_tier_snapshot = ANY (ARRAY['go','plus','pro','max'])`, so a Team
+ * workspace never produces a zero-charge call. `team_basic` is seats-only on
+ * top of that (`monthly_credits_per_seat = 0` in the seeded catalog). The
+ * balance preflight above already refuses to stand down for Team, and a badge
+ * promising what the preflight then blocks is worse than no badge.
+ *
+ * The tier is read off the id's SEGMENTS rather than by substring: substring
+ * matching is what made an earlier plan-badge rule answer `plus` for
+ * "Team Plus", which is exactly the confusion this function must not repeat.
  */
 export function planUnlimitedTier(
   rawTier: string | null | undefined,
@@ -90,6 +98,7 @@ export function planUnlimitedTier(
   const normalized = normalize(rawTier);
   if (!normalized) return null;
   const segments = new Set(normalized.split(/[_\-\s]+/).filter(Boolean));
+  if (segments.has('team')) return null;
   return TIER_ORDER.find((tier) => segments.has(tier)) ?? null;
 }
 

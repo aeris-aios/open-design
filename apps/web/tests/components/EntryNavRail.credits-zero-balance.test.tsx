@@ -83,8 +83,8 @@ function creditsPill(): HTMLElement | null {
 }
 
 describe('top-right credits pill', () => {
-  it.each(['go', 'plus', 'pro', 'max', 'team_plus', 'team_max_yearly'])(
-    'hides the zero balance on the subscribed plan %s',
+  it.each(['go', 'plus', 'pro', 'max'])(
+    'hides the zero balance on the subscribed personal plan %s',
     (tier) => {
       renderRail({
         context: context({ planId: tier } as Partial<WorkspaceCollabContext>),
@@ -109,6 +109,22 @@ describe('top-right credits pill', () => {
     renderRail({ balanceUsd: '-1.25' });
     expect(creditsPill()?.textContent).toContain('-$1.25');
   });
+
+  it.each(['team_basic', 'team_plus', 'team_max_yearly'])(
+    'keeps the zero balance on the team plan %s, which really is out of credits',
+    (tier) => {
+      // A Team workspace has no unlimited set to fall back on: vela records
+      // in-plan usage through the `coding_plan` billing mode, which its schema
+      // constrains to personal tiers, so a Team zero is an empty wallet and
+      // hiding it would hide the reason members get blocked.
+      renderRail({
+        context: context({ planId: tier } as Partial<WorkspaceCollabContext>),
+        billing: billing({ membershipTier: tier }),
+        balanceUsd: '0',
+      });
+      expect(creditsPill()?.textContent).toContain('$0.00');
+    },
+  );
 
   it('keeps the zero balance for a free plan, where it explains the gate', () => {
     renderRail({

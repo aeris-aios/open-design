@@ -189,7 +189,7 @@ def enabled_workloads(outputs, ci_mode, full_lanes):
         "preflight": True,
         "workspace_unit_tests": broad,
         "daemon_unit_tests": outputs["daemon_tests_required"],
-        "windows_tools_pack_payload_tests": full_lanes or outputs["tools_pack_tests_required"],
+        "windows_tools_pack_payload_tests": full_lanes or outputs["windows_tools_pack_payload_tests_required"],
         "web_workspace_tests": full_lanes or outputs["web_tests_required"],
         "e2e_vitest": full_lanes or outputs["web_tests_required"] or outputs["ui_p0_validation_required"],
         "playwright_critical": outputs["ui_critical_validation_required"] and not ui_p0,

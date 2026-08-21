@@ -26,15 +26,23 @@ describe('planUnlimitedTier', () => {
     expect(planUnlimitedTier(raw)).toBe(expected);
   });
 
-  it.each([
-    ['team_plus', 'plus'],
-    ['team-pro', 'pro'],
-    ['team_max_yearly', 'max'],
-  ] as const)('reads the tier segment out of the team id %s', (raw, expected) => {
-    expect(planUnlimitedTier(raw)).toBe(expected);
-  });
+  it.each(['team_plus', 'team-pro', 'team_max_yearly', 'team_basic', 'team'])(
+    'refuses to read a personal tier out of the team id %s',
+    (raw) => {
+      // Being paid is not the question — whether the plan funds usage without
+      // touching the wallet is, and for Team it does not. vela records in-plan
+      // usage through the `coding_plan` billing mode, which its schema
+      // constrains to personal tiers
+      // (`membership_tier_snapshot = ANY (ARRAY['go','plus','pro','max'])`),
+      // so no Team workspace ever gets a zero-charge call. #7187's balance
+      // preflight already refuses to stand down for them; the badge must not
+      // promise what the preflight then blocks.
+      expect(planUnlimitedTier(raw)).toBeNull();
+      expect(isUnlimitedModelForPlanTier('deepseek-v4-flash', raw)).toBe(false);
+    },
+  );
 
-  it.each([null, undefined, '', '   ', 'free', 'team_basic'])(
+  it.each([null, undefined, '', '   ', 'free'])(
     'answers null for %s, which carries no unlimited set',
     (raw) => {
       expect(planUnlimitedTier(raw)).toBeNull();
@@ -82,9 +90,9 @@ describe('per-tier unlimited sets, as the badge sees them', () => {
     }
   });
 
-  it('gives a team-namespaced id the same set as its personal tier', () => {
-    expect(unlimitedOn('team_pro')).toEqual(unlimitedOn('pro'));
-    expect(unlimitedOn('team_max_yearly')).toEqual(unlimitedOn('max'));
+  it('marks nothing on a team-namespaced id', () => {
+    expect(unlimitedOn('team_pro')).toEqual([]);
+    expect(unlimitedOn('team_max_yearly')).toEqual([]);
   });
 });
 
@@ -104,7 +112,7 @@ describe('isUnlimitedModelForPlanTier', () => {
   it('badges Kimi K2.7 Code on Plus and above but not on Go', () => {
     expect(isUnlimitedModelForPlanTier('kimi-k2.7-code', 'go')).toBe(false);
     expect(isUnlimitedModelForPlanTier('kimi-k2.7-code', 'plus')).toBe(true);
-    expect(isUnlimitedModelForPlanTier('kimi-k2.7-code', 'team_pro')).toBe(true);
+    expect(isUnlimitedModelForPlanTier('kimi-k2.7-code', 'team_pro')).toBe(false);
   });
 
   it('fails closed while the plan is unknown or free', () => {

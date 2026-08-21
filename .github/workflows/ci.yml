@@ -384,7 +384,7 @@ jobs:
           runner-labels: ${{ toJSON(fromJSON(needs.runners.outputs.runs_on).windows_tools) }}
 
       - name: Windows launcher payload archive tests
-        run: pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload.test.ts
+        run: pnpm --filter @open-design/tools-pack exec vitest run tests/launcher-payload-windows.test.ts
 
   web_workspace_tests:
     name: Web workspace tests (${{ matrix.shard }}/2)
@@ -661,68 +661,25 @@ jobs:
         if: ${{ steps.visual.outcome != 'success' }}
         run: exit 1
 
-  validate:
-    name: Validate workspace
-    needs:
-      - plan
-      - runners
-      - static_gate
-      - preflight
-      - workspace_unit_tests
-      - daemon_unit_tests
-      - windows_tools_pack_payload_tests
-      - web_workspace_tests
-      - e2e_vitest
-      - playwright_critical
-      - ui_p0
-      - playwright_visual
-    if: ${{ always() }}
+  # This policy is a sibling of the validation workloads, not their prerequisite.
+  # Labeled merge groups still receive the same workload coverage before the
+  # required Validate workspace check rejects the converged result.
+  merge_policy:
+    name: Merge policy
+    needs: [plan, runners]
+    if: ${{ github.event_name == 'merge_group' }}
     runs-on: ${{ fromJSON(needs.runners.outputs.runs_on).control }}
     timeout-minutes: 5
 
     steps:
-      # The merge-blocking label gate below produces a `handoff/comment` artifact when it ejects a
+      # The merge-blocking label gate produces a `handoff/comment` artifact when it ejects a
       # queued PR, and that production goes through `.github/scripts/handoff.py` (the only
-      # sanctioned source of handoff names and layout). Only the merge_group context can eject,
-      # so pull_request runs skip the checkout entirely.
+      # sanctioned source of handoff names and layout).
       - name: Checkout handoff helper
-        if: ${{ github.event_name == 'merge_group' }}
         uses: actions/checkout@v6.0.2
         with:
           sparse-checkout: .github
           sparse-checkout-cone-mode: true
-
-      - name: Check workspace validation jobs
-        env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          set -euo pipefail
-          echo "$NEEDS_JSON" | jq .
-          failures="$(echo "$NEEDS_JSON" | jq -r '
-            to_entries[]
-            | select(.value.result != "success" and .value.result != "skipped")
-            | "\(.key)=\(.value.result)"')"
-          if [ -n "$failures" ]; then
-            echo "Workspace validation failed:"
-            echo "$failures"
-            exit 1
-          fi
-
-          required_misses="$(echo "$NEEDS_JSON" | jq -r '
-            . as $needs |
-            (($needs.plan.outputs.run // "{}") | fromjson) as $run |
-            (
-              ["plan"]
-              + [$run | to_entries[] | select(.value) | .key]
-            )[]
-            | select(($needs[.].result // "missing") != "success")
-            | "\(.)=\($needs[.].result // "missing")"
-          ')"
-          if [ -n "$required_misses" ]; then
-            echo "Required validation jobs did not succeed:"
-            echo "$required_misses"
-            exit 1
-          fi
 
       - name: Block merge while a merge-blocking label is present
         id: merge_blocking_label_gate
@@ -894,6 +851,59 @@ jobs:
         with:
           name: ${{ steps.merge_blocking_label_gate.outputs.comment_name }}
           path: ${{ steps.merge_blocking_label_gate.outputs.comment_path }}
+
+  validate:
+    name: Validate workspace
+    needs:
+      - plan
+      - runners
+      - merge_policy
+      - static_gate
+      - preflight
+      - workspace_unit_tests
+      - daemon_unit_tests
+      - windows_tools_pack_payload_tests
+      - web_workspace_tests
+      - e2e_vitest
+      - playwright_critical
+      - ui_p0
+      - playwright_visual
+    if: ${{ always() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.runs_on).control }}
+    timeout-minutes: 5
+
+    steps:
+      - name: Check workspace validation jobs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS_JSON" | jq .
+          failures="$(echo "$NEEDS_JSON" | jq -r '
+            to_entries[]
+            | select(.value.result != "success" and .value.result != "skipped")
+            | "\(.key)=\(.value.result)"')"
+          if [ -n "$failures" ]; then
+            echo "Workspace validation failed:"
+            echo "$failures"
+            exit 1
+          fi
+
+          required_misses="$(echo "$NEEDS_JSON" | jq -r '
+            . as $needs |
+            (($needs.plan.outputs.run // "{}") | fromjson) as $run |
+            (
+              ["plan"]
+              + [$run | to_entries[] | select(.value) | .key]
+            )[]
+            | select(($needs[.].result // "missing") != "success")
+            | "\(.)=\($needs[.].result // "missing")"
+          ')"
+          if [ -n "$required_misses" ]; then
+            echo "Required validation jobs did not succeed:"
+            echo "$required_misses"
+            exit 1
+          fi
 
       - name: Download pending hash map
         uses: actions/download-artifact@v8
