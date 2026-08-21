@@ -1,4 +1,5 @@
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import { isWindowsNamedPipePath } from "../ipc-path.js";
 import { writeJsonFile } from "../json-file.js";
@@ -39,7 +40,16 @@ export async function writePrivateReadyDescriptorForTest(
   pid: number,
 ): Promise<void> {
   const { descriptorPath } = privateControlPaths(metadata.identity, metadata.roots);
-  await writeJsonFile(descriptorPath, { ...metadata, pid } satisfies PrivateReadyDescriptor);
+  await writeJsonFile(descriptorPath, { ...metadata, pid, state: "ready" } satisfies PrivateReadyDescriptor);
+}
+
+export async function writePrivateDescriptorTextForTest(
+  metadata: PrivateLaunchMetadata,
+  text: string,
+): Promise<void> {
+  const { descriptorPath } = privateControlPaths(metadata.identity, metadata.roots);
+  await mkdir(dirname(descriptorPath), { recursive: true });
+  await writeFile(descriptorPath, text, "utf8");
 }
 
 export async function sendPrivateRequestForTest(

@@ -12,8 +12,9 @@ import {
   accessControlPlane,
   stopSidecarServices,
   type SidecarControlAccess,
-  type SidecarConvergeResult,
+  type SidecarConvergenceProof,
   type SidecarControlScope,
+  type SidecarServicesConvergence,
 } from "@open-design/sidecar/control";
 
 import type { ToolPackConfig } from "./config.js";
@@ -73,57 +74,50 @@ export function createToolPackControl(
 
 export async function stopToolPackServices(
   control: SidecarControlAccess,
-): Promise<SidecarConvergeResult[]> {
-  const attempts = await stopSidecarServices(control, TOOL_PACK_SERVICE_STOPS);
-  const failures = attempts.flatMap((attempt) =>
-    attempt.status === "rejected"
-      ? [new Error(`failed to stop ${attempt.service}`, { cause: attempt.error })]
-      : []
-  );
-  if (failures.length > 0) {
-    throw new AggregateError(failures, "failed to converge one or more packaged services");
-  }
-  return attempts.map((attempt) => {
-    if (attempt.status !== "fulfilled") throw new Error("unreachable rejected stop attempt");
-    return attempt.result;
-  });
+): Promise<SidecarServicesConvergence> {
+  return await stopSidecarServices(control, TOOL_PACK_SERVICE_STOPS);
 }
 
 export async function convergeToolPackServices(
   control: SidecarControlAccess,
-): Promise<SidecarConvergeResult[]> {
-  const results = await stopToolPackServices(control);
-  const failures = results.flatMap((result, index) =>
-    result.stopped
-      ? []
-      : [new Error(
-          `could not prove ${TOOL_PACK_SERVICE_STOPS[index]!.service} stopped`
-          + (result.pid == null ? "" : ` (pid ${result.pid})`),
-        )],
-  );
-  if (failures.length > 0) {
-    throw new AggregateError(failures, "failed to converge one or more packaged services");
-  }
-  return results;
+): Promise<SidecarConvergenceProof> {
+  const convergence = await stopToolPackServices(control);
+  if (convergence.state === "complete") return convergence.proof;
+  const failures = convergence.attempts.flatMap((attempt) => {
+    if (attempt.status === "rejected") {
+      return [new Error(`failed to stop ${attempt.service}`, { cause: attempt.error })];
+    }
+    return attempt.result.state === "alive"
+      ? [new Error(
+          `could not prove ${attempt.service} stopped`
+          + (attempt.result.pid == null ? "" : ` (pid ${attempt.result.pid})`),
+        )]
+      : [];
+  });
+  throw new AggregateError(failures, "failed to converge one or more packaged services");
 }
 
 export function summarizeToolPackStopResults(
   namespace: string,
-  results: readonly SidecarConvergeResult[],
+  convergence: SidecarServicesConvergence,
 ): ToolPackStopResult {
+  const results = convergence.attempts.flatMap((attempt) =>
+    attempt.status === "fulfilled" ? [attempt.result] : []
+  );
   const pids = [...new Set(results.flatMap((result) => result.pid == null ? [] : [result.pid]))];
   const remainingPids = [...new Set(
-    results.flatMap((result) => !result.stopped && result.pid != null ? [result.pid] : []),
+    results.flatMap((result) => result.state === "alive" && result.pid != null ? [result.pid] : []),
   )];
   const stoppedPids = [...new Set(
-    results.flatMap((result) => result.stopped && result.pid != null ? [result.pid] : []),
+    results.flatMap((result) => result.state === "stopped" ? [result.pid] : []),
   )];
-  const allStopped = results.every((result) => result.stopped);
   return {
     gracefulRequested: pids.length > 0,
     namespace,
     remainingPids,
-    status: allStopped ? (pids.length === 0 ? "not-running" : "stopped") : "partial",
+    status: convergence.state === "complete"
+      ? (pids.length === 0 ? "not-running" : "stopped")
+      : "partial",
     stoppedPids,
   };
 }

@@ -47,7 +47,11 @@ function control(input: {
   const stop = vi.fn(async (service: string) => {
     const error = input.stopErrors?.[service];
     if (error != null) throw error;
-    return { forced: false, pid: 1234, stopped: input.stopped ?? true };
+    return {
+      forced: false,
+      pid: 1234,
+      state: input.stopped === false ? "alive" as const : "stopped" as const,
+    };
   });
   const connect = vi.fn(async (service: string) => ({
     call: async (method: string) => {

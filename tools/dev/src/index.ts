@@ -792,13 +792,13 @@ async function stopApp(config: ToolDevConfig, appName: ToolDevAppName) {
   const matchedPids = converged.pid == null ? [] : [converged.pid];
   return {
     app: appName,
-    status: converged.pid == null ? "not-running" : converged.stopped ? "stopped" : "partial",
+    status: converged.state === "absent" ? "not-running" : converged.state === "stopped" ? "stopped" : "partial",
     stop: {
-      alreadyStopped: converged.pid == null,
+      alreadyStopped: converged.state === "absent",
       forcedPids: converged.forced && converged.pid != null ? [converged.pid] : [],
       matchedPids,
-      remainingPids: converged.stopped ? [] : matchedPids,
-      stoppedPids: converged.stopped ? matchedPids : [],
+      remainingPids: converged.state === "alive" ? matchedPids : [],
+      stoppedPids: converged.state === "stopped" ? matchedPids : [],
     },
     via: converged.forced ? "control+force" : "control",
   };

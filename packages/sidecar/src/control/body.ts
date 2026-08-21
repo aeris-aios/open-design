@@ -1,15 +1,17 @@
-import { readJsonFile, removeFile, writeJsonFile } from "../json-file.js";
 import { createJsonIpcServer } from "../json-ipc.js";
 import { SidecarControlError } from "./error.js";
 import {
-  privateControlPaths,
+  publishReadyLease,
+  removeControlLeaseIfCurrent,
+} from "./lease-store.js";
+import {
+  PRIVATE_CONTROL_SCHEMA_VERSION,
   privateResponse,
   readPrivateLaunchMetadata,
   sameControlIdentity,
   type PrivateControlRequest,
   type PrivateControlResponse,
   type PrivateLaunchMetadata,
-  type PrivateReadyDescriptor,
 } from "./private-protocol.js";
 import type {
   AttachedSidecar,
@@ -33,7 +35,7 @@ function normalizeIncomingRequest(value: unknown): PrivateControlRequest | null 
   if (typeof value !== "object" || value == null) return null;
   const request = value as Partial<PrivateControlRequest>;
   if (
-    request.schemaVersion !== 1 ||
+    request.schemaVersion !== PRIVATE_CONTROL_SCHEMA_VERSION ||
     typeof request.requestId !== "string" ||
     typeof request.incarnation !== "string" ||
     typeof request.operation !== "object" ||
@@ -68,6 +70,10 @@ export async function attachSidecarWithMetadata<TMethods>(
     initialize,
     onStopRequested,
   }: AttachSidecarOptions<TMethods>,
+  internal: Readonly<{
+    claimOwnedByBody?: boolean;
+    releaseLeaseOnClose?: boolean;
+  }> = {},
 ): Promise<AttachedSidecar> {
   const context: SidecarControlContext = Object.freeze({
     identity: metadata.identity,
@@ -157,20 +163,26 @@ export async function attachSidecarWithMetadata<TMethods>(
     throw error;
   });
 
-  const { descriptorPath } = privateControlPaths(metadata.identity, metadata.roots);
   closeServerAndDescriptor = async () => {
     if (closing != null) return await closing;
     closing = (async () => {
       await server.close();
-      const current = await readJsonFile<Partial<PrivateReadyDescriptor>>(descriptorPath);
-      if (current?.incarnation === metadata.incarnation) await removeFile(descriptorPath);
+      if (internal.releaseLeaseOnClose === true) await removeControlLeaseIfCurrent(metadata);
     })();
     return await closing;
   };
   try {
-    await writeJsonFile(descriptorPath, { ...metadata, pid: process.pid } satisfies PrivateReadyDescriptor);
+    const externallyLaunched = await publishReadyLease(
+      metadata,
+      process.pid,
+      internal.claimOwnedByBody,
+    );
+    if (internal.releaseLeaseOnClose == null) {
+      internal = { releaseLeaseOnClose: !externallyLaunched };
+    }
   } catch (error) {
     await server.close();
+    await removeControlLeaseIfCurrent(metadata).catch(() => undefined);
     await Promise.resolve().then(() => onStopRequested?.()).catch(() => undefined);
     throw error;
   }

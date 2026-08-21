@@ -10,9 +10,14 @@ import {
 
 describe("tools-pack service convergence", () => {
   it("keeps every unproven stop unsafe even when no PID was reported", () => {
-    const stop = summarizeToolPackStopResults("release-beta", [
-      { forced: false, pid: null, stopped: false },
-    ]);
+    const stop = summarizeToolPackStopResults("release-beta", {
+      attempts: [{
+        result: { forced: false, pid: null, state: "alive" },
+        service: "daemon",
+        status: "fulfilled",
+      }],
+      state: "incomplete",
+    });
 
     expect(stop).toEqual({
       gracefulRequested: false,
@@ -31,13 +36,11 @@ describe("tools-pack service convergence", () => {
     async (failedService) => {
       const stop = vi.fn(async (service: string) => {
         if (service === failedService) throw new Error(`${service} failed`);
-        return { forced: false, pid: null, stopped: true };
+        return { forced: false, pid: null, state: "absent" as const };
       });
       const control = { stop } as unknown as SidecarControlAccess;
 
-      await expect(stopToolPackServices(control)).rejects.toThrow(
-        "failed to converge one or more packaged services",
-      );
+      await expect(stopToolPackServices(control)).resolves.toMatchObject({ state: "incomplete" });
       expect(stop.mock.calls).toEqual([
         ["desktop", { graceMs: 15_000 }],
         ["web"],
@@ -52,7 +55,7 @@ describe("tools-pack service convergence", () => {
       const stop = vi.fn(async (service: string) => ({
         forced: false,
         pid: service === unstoppedService ? 42 : null,
-        stopped: service !== unstoppedService,
+        state: service === unstoppedService ? "alive" as const : "absent" as const,
       }));
       const control = { stop } as unknown as SidecarControlAccess;
 

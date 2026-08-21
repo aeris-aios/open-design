@@ -72,11 +72,10 @@ export type SidecarStopResult = Readonly<{
   accepted: true;
 }>;
 
-export type SidecarConvergeResult = Readonly<{
-  forced: boolean;
-  pid: number | null;
-  stopped: boolean;
-}>;
+export type SidecarConvergeResult =
+  | Readonly<{ forced: false; pid: null; state: "absent" }>
+  | Readonly<{ forced: boolean; pid: number; state: "stopped" }>
+  | Readonly<{ forced: false; pid: number | null; state: "alive" }>;
 
 export type SidecarStopOptions = Readonly<{ graceMs?: number }>;
 
@@ -95,6 +94,25 @@ export type SidecarServiceStopAttempt =
       error: unknown;
       service: string;
       status: "rejected";
+    }>;
+
+declare const convergenceProof: unique symbol;
+
+/** Opaque evidence that every requested identity is absent or stopped. */
+export type SidecarConvergenceProof = Readonly<{
+  attempts: readonly SidecarServiceStopAttempt[];
+  [convergenceProof]: true;
+}>;
+
+export type SidecarServicesConvergence =
+  | Readonly<{
+      attempts: readonly SidecarServiceStopAttempt[];
+      proof: SidecarConvergenceProof;
+      state: "complete";
+    }>
+  | Readonly<{
+      attempts: readonly SidecarServiceStopAttempt[];
+      state: "incomplete";
     }>;
 
 export type SidecarCallOptions = Readonly<{

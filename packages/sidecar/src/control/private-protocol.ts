@@ -10,8 +10,9 @@ import type {
   SidecarControlScope,
 } from "./public-types.js";
 
-const CONTROL_SCHEMA_VERSION = 1 as const;
-const CONTROL_BOOTSTRAP_ENV = "OD_SIDECAR_CONTROL_BOOTSTRAP_V1";
+export const PRIVATE_CONTROL_SCHEMA_VERSION = 2 as const;
+const CONTROL_SCHEMA_VERSION = PRIVATE_CONTROL_SCHEMA_VERSION;
+const CONTROL_BOOTSTRAP_ENV = "OD_SIDECAR_CONTROL_BOOTSTRAP_V2";
 // Launch environments may be exact allowlists, so endpoint identity cannot depend on TMPDIR.
 const POSIX_CONTROL_ROOT = "/tmp";
 const CONTROL_TOKEN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
@@ -49,7 +50,23 @@ export type PrivateControlResponse = Readonly<{
   status: "error" | "ok";
 }>;
 
-export type PrivateReadyDescriptor = PrivateLaunchMetadata & Readonly<{ pid: number }>;
+export type PrivateClaimingLease = PrivateLaunchMetadata & Readonly<{
+  ownerPid: number;
+  state: "claiming";
+}>;
+
+type PrivateProcessLeaseFor<TState extends "ready" | "starting" | "stopping"> =
+  PrivateLaunchMetadata & Readonly<{
+  pid: number;
+  state: TState;
+}>;
+
+export type PrivateReadyDescriptor = PrivateProcessLeaseFor<"ready">;
+export type PrivateProcessLease =
+  | PrivateReadyDescriptor
+  | PrivateProcessLeaseFor<"starting">
+  | PrivateProcessLeaseFor<"stopping">;
+export type PrivateControlLease = PrivateClaimingLease | PrivateProcessLease;
 
 function invalid(label: string, detail: string): never {
   throw new SidecarControlError("invalid-input", `${label} ${detail}`);
@@ -207,7 +224,7 @@ function controlKey(
 export function privateControlPaths(
   identity: SidecarControlIdentity,
   roots: Pick<SidecarControlRoots, "runtimeRoot">,
-): Readonly<{ descriptorPath: string; endpointPath: string }> {
+): Readonly<{ descriptorPath: string; endpointPath: string; operationLockPath: string }> {
   const key = controlKey(identity, roots);
   const controlRoot = join(roots.runtimeRoot, ".sidecar-control");
   return {
@@ -216,6 +233,7 @@ export function privateControlPaths(
       process.platform === "win32"
         ? `\\\\.\\pipe\\open-design-sidecar-${key}`
         : join(POSIX_CONTROL_ROOT, `od-sidecar-${key}.sock`),
+    operationLockPath: join(controlRoot, `${key}.lock`),
   };
 }
 
@@ -354,7 +372,7 @@ export function privateResponse(
   };
 }
 
-export function normalizePrivateReadyDescriptor(value: unknown): PrivateReadyDescriptor {
+export function normalizePrivateControlLease(value: unknown): PrivateControlLease {
   const record = typeof value === "object" && value != null
     ? value as Record<string, unknown>
     : null;
@@ -363,10 +381,25 @@ export function normalizePrivateReadyDescriptor(value: unknown): PrivateReadyDes
       ? Buffer.from(JSON.stringify(value), "utf8").toString("base64url")
       : value,
   );
-  if (!Number.isSafeInteger(record?.pid) || (record?.pid as number) <= 0) {
-    invalid("sidecar ready pid", "must be a positive safe integer");
+  if (record?.state === "claiming") {
+    if (!Number.isSafeInteger(record.ownerPid) || (record.ownerPid as number) <= 0) {
+      invalid("sidecar claim ownerPid", "must be a positive safe integer");
+    }
+    return Object.freeze({ ...descriptor, ownerPid: record.ownerPid as number, state: "claiming" });
   }
-  return Object.freeze({ ...descriptor, pid: record!.pid as number });
+  if (record?.state !== "starting" && record?.state !== "ready" && record?.state !== "stopping") {
+    invalid("sidecar lease state", "is unsupported");
+  }
+  if (!Number.isSafeInteger(record.pid) || (record.pid as number) <= 0) {
+    invalid("sidecar lease pid", "must be a positive safe integer");
+  }
+  return Object.freeze({ ...descriptor, pid: record.pid as number, state: record.state });
+}
+
+export function normalizePrivateReadyDescriptor(value: unknown): PrivateReadyDescriptor {
+  const lease = normalizePrivateControlLease(value);
+  if (lease.state !== "ready") invalid("sidecar ready lease", "must be ready");
+  return lease as PrivateReadyDescriptor;
 }
 
 export function assertPrivateResponse(

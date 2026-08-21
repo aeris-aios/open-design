@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import {
   installPrivateLaunchForTest,
   privateLaunchStateForTest,
   sendPrivateRequestForTest,
+  writePrivateDescriptorTextForTest,
   writePrivateReadyDescriptorForTest,
 } from "../src/control/private-testing.js";
 import { attachDemoBody } from "./fixtures/control-body.js";
@@ -70,7 +71,7 @@ describe("sidecar ordered convergence", () => {
       async stop(service: string) {
         calls.push(service);
         if (service !== "daemon") throw new Error(`${service} failed`);
-        return { forced: false, pid: 42, stopped: true };
+        return { forced: false, pid: 42, state: "stopped" as const };
       },
     };
 
@@ -78,12 +79,32 @@ describe("sidecar ordered convergence", () => {
       { service: "desktop" },
       { service: "web" },
       { service: "daemon" },
-    ])).resolves.toMatchObject([
-      { service: "desktop", status: "rejected" },
-      { service: "web", status: "rejected" },
-      { result: { stopped: true }, service: "daemon", status: "fulfilled" },
-    ]);
+    ])).resolves.toMatchObject({
+      attempts: [
+        { service: "desktop", status: "rejected" },
+        { service: "web", status: "rejected" },
+        { result: { state: "stopped" }, service: "daemon", status: "fulfilled" },
+      ],
+      state: "incomplete",
+    });
     expect(calls).toEqual(["desktop", "web", "daemon"]);
+  });
+
+  it("issues proof only when every requested service is absent or stopped", async () => {
+    const convergence = await publicControl.stopSidecarServices({
+      async stop(service: string) {
+        return service === "desktop"
+          ? { forced: false, pid: 42, state: "stopped" as const }
+          : { forced: false, pid: null, state: "absent" as const };
+      },
+    }, [
+      { service: "desktop" },
+      { service: "daemon" },
+    ]);
+
+    expect(convergence).toMatchObject({ state: "complete" });
+    if (convergence.state !== "complete") throw new Error("expected convergence proof");
+    expect(convergence.proof.attempts).toBe(convergence.attempts);
   });
 });
 
@@ -106,7 +127,7 @@ describe("sidecar control identity", () => {
   });
 });
 
-describe("independent sidecar controller and body", () => {
+describe("independent sidecar controller and body", { timeout: 10_000 }, () => {
   it("exposes a caller-hosted semantic service through the same fenced control plane", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
@@ -396,6 +417,32 @@ describe("independent sidecar controller and body", () => {
     await expect(right.client.call("echo", { value: "right" })).resolves.toEqual({ value: "right" });
   });
 
+  it("executes cold-start initialization once when two launchers race", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const markerPath = join(roots.runtimeRoot, "initialization-pids.txt");
+    const childEntry = join(import.meta.dirname, "fixtures", "control-counted-delayed-child.ts");
+    const launchOptions = {
+      args: ["--import", "tsx", childEntry, markerPath],
+      executable: process.execPath,
+      existing: "adopt",
+      readyTimeoutMs: 5_000,
+      service: "daemon",
+    } as const;
+
+    const [left, right] = await Promise.all([
+      controller.launch<DemoMethods>(launchOptions),
+      controller.launch<DemoMethods>(launchOptions),
+    ]);
+    cleanups.push(async () => {
+      await Promise.allSettled([left.stop(), right.stop()]);
+    });
+
+    expect(left.pid).toBe(right.pid);
+    const initializedPids = (await readFile(markerPath, "utf8")).trim().split("\n");
+    expect(initializedPids).toEqual([String(left.pid)]);
+  });
+
   it("does not spawn when an adopted identity exists but its peer is unprobeable", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
@@ -481,7 +528,7 @@ describe("independent sidecar controller and body", () => {
     await expect(createDemoController(scope, roots).stop("daemon")).resolves.toEqual({
       forced: false,
       pid: deadPid,
-      stopped: true,
+      state: "stopped",
     });
     await expect(privateLaunchStateForTest(metadata)).resolves.toEqual({
       descriptorExists: false,
@@ -630,6 +677,50 @@ describe("independent sidecar controller and body", () => {
     await expect(createDemoController(scope, roots).connect("daemon")).resolves.toBeDefined();
   });
 
+  it("does not report malformed authority as an empty control slot", async () => {
+    const { roots, scope } = await createFixture();
+    const metadata = createPrivateLaunchForTest({
+      projection: demoProjection,
+      roots,
+      scope,
+      service: "daemon",
+    });
+    await writePrivateDescriptorTextForTest(metadata, "{ malformed");
+
+    const access = publicControl.accessControlPlane({ runtimeRoot: roots.runtimeRoot, scope });
+    await expect(access.stop("daemon")).rejects.toMatchObject({ code: "peer-mismatch" });
+    await expect(createDemoController(scope, roots).stop("daemon")).rejects.toMatchObject({
+      code: "peer-mismatch",
+    });
+  });
+
+  it("does not launch a replacement while a captured peer is still stopping", async () => {
+    const { roots, scope } = await createFixture();
+    const controller = createDemoController(scope, roots);
+    const first = await controller.launch<DemoMethods>({
+      args: ["--import", "tsx", join(import.meta.dirname, "fixtures", "control-closing-live-child.ts")],
+      executable: process.execPath,
+      service: "daemon",
+      stopTimeoutMs: 50,
+    });
+    cleanups.push(async () => {
+      await first.stop();
+    });
+
+    const stopping = publicControl.accessControlPlane({ runtimeRoot: roots.runtimeRoot, scope })
+      .stop("daemon", { graceMs: 300 });
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 175));
+
+    await expect(controller.launch<DemoMethods>({
+      args: ["--import", "tsx", join(import.meta.dirname, "fixtures", "control-child.ts")],
+      executable: process.execPath,
+      existing: "adopt",
+      readyTimeoutMs: 500,
+      service: "daemon",
+    })).rejects.toMatchObject({ code: "peer-unavailable" });
+    await expect(stopping).resolves.toMatchObject({ pid: first.pid, state: "alive" });
+  });
+
   it("does not force an acknowledged peer that remains alive past the grace period", async () => {
     const { roots, scope } = await createFixture();
     const controller = createDemoController(scope, roots);
@@ -647,7 +738,7 @@ describe("independent sidecar controller and body", () => {
     await expect(access.stop("daemon", { graceMs: 10 })).resolves.toEqual({
       forced: false,
       pid: launch.pid,
-      stopped: false,
+      state: "alive",
     });
     expect(() => process.kill(launch.pid, 0)).not.toThrow();
   });
@@ -683,7 +774,7 @@ describe("independent sidecar controller and body", () => {
     await expect(createDemoController(scope, roots).stop("daemon", { graceMs: 2_000 })).resolves.toEqual({
       forced: false,
       pid,
-      stopped: true,
+      state: "stopped",
     });
   });
 
@@ -719,7 +810,7 @@ describe("independent sidecar controller and body", () => {
     await expect(access.stop("daemon", { graceMs: 10 })).resolves.toEqual({
       forced: false,
       pid,
-      stopped: false,
+      state: "alive",
     });
     expect(() => process.kill(pid, 0)).not.toThrow();
 
@@ -727,7 +818,7 @@ describe("independent sidecar controller and body", () => {
     await expect(bootstrap.stop("daemon", { graceMs: 10 })).resolves.toEqual({
       forced: false,
       pid,
-      stopped: false,
+      state: "alive",
     });
     expect(() => process.kill(pid, 0)).not.toThrow();
   });

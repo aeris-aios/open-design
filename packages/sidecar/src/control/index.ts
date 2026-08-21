@@ -1,12 +1,12 @@
 export { SidecarControlError } from "./error.js";
 export { attachSidecar, readSidecarContext } from "./body.js";
+export { stopSidecarServices } from "./convergence.js";
 export {
   accessControlPlane,
   bootstrapControlPlane,
   connectSidecar,
   forwardSidecarEnvironment,
   resumeControlPlane,
-  stopSidecarServices,
   stripSidecarEnvironment,
 } from "./controller.js";
 export type {
@@ -24,6 +24,7 @@ export type {
   SidecarControlRoots,
   SidecarControlScope,
   SidecarConvergeResult,
+  SidecarConvergenceProof,
   SidecarExit,
   SidecarExposeOptions,
   SidecarLaunch,
@@ -34,5 +35,6 @@ export type {
   SidecarStopResult,
   SidecarServiceStopAttempt,
   SidecarServiceStopRequest,
+  SidecarServicesConvergence,
   SidecarStopOptions,
 } from "./public-types.js";
