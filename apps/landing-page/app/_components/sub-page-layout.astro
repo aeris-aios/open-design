@@ -173,7 +173,7 @@ const ldArray = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
     <div class="shell">
       <div class="site-chrome" data-chrome-headroom>
         {/* Same React-rendered Header used by the homepage (language switcher
-         * lives in the nav, no separate topbar) so the chrome matches `/`. */}
+         * lives in the footer, no separate topbar) so the chrome matches `/`. */}
         <Fragment set:html={headerHtml} />
       </div>
 
@@ -181,7 +181,7 @@ const ldArray = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
         <slot />
       </main>
 
-      <SiteFooter counts={counts} locale={locale} />
+      <SiteFooter counts={counts} locale={locale} localeCanonicalOnly={localeCanonicalOnly} />
     </div>
 
     <HeaderEnhancer />

@@ -39,12 +39,9 @@ import {
   trackOnboardingCompleteResult,
   trackOnboardingRuntimeScanResult,
   trackPageView,
-  trackDeepSeekCampaignBadgeClick,
-  trackDeepSeekCampaignBadgeSurfaceView,
 } from '../analytics/events';
 import {
   amrHandoffDeviceId,
-  attributedAmrUrl,
   recordAmrEntry,
   type AmrEntryAttribution,
 } from '../analytics/amr-attribution';
@@ -72,7 +69,7 @@ import type {
   TrackingCliProviderId,
 } from '@open-design/contracts/analytics';
 import { agentIdToTracking } from '@open-design/contracts/analytics';
-import { useT } from '../i18n';
+import { useI18n, useT } from '../i18n';
 import { navigate, useRoute } from '../router';
 import type {
   AgentInfo,
@@ -123,10 +120,6 @@ import {
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
-import {
-  amrPlansUrlForProfile,
-  amrPlansUrlForWorkspace,
-} from '../runtime/amr-guidance';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { EntryBlankState } from './EntryBlankState';
 import { RecentProjectsStrip } from './RecentProjectsStrip';
@@ -141,7 +134,11 @@ import type { OnboardingEntry } from '../onboarding/onboarding-entry';
 import type { PluginUseAction } from './plugins-home/useActions';
 import { Icon } from './Icon';
 import { Button } from '@open-design/components';
-import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
+import {
+  defaultAgentModelId,
+  effectiveAgentModelChoice,
+  effectiveAgentModelId,
+} from './agentModelSelection';
 import { AgentIcon } from './AgentIcon';
 import { CommunityView } from './CommunityView';
 import { TeamSlotPlaceholder } from './TeamSlotPlaceholder';
@@ -161,6 +158,11 @@ import { useWorkspaceInvalidation } from '../collab/workspace-events';
 import { resolvePlanLabelTier } from '../collab/team-plan';
 import { resolveDeepSeekV4FlashCampaignAudience } from '../campaigns/deepseek-v4-flash';
 import { useDeepSeekV4FlashCampaignVisibility } from '../campaigns/use-deepseek-v4-flash-campaign';
+import {
+  resolveSubscriptionAudience,
+} from '../campaigns/go-plan';
+import { useGoPlanCampaignVisibility } from '../campaigns/use-go-plan-campaign';
+import { WorkbenchCampaignBadge } from './WorkbenchCampaignBadge';
 import {
   beginWorkspaceScopedRead,
   workspaceIdentityCacheKey,
@@ -609,7 +611,7 @@ export function EntryShell({
   onAmrLoginStatusChange,
   artifactUpgradeSlot,
 }: Props) {
-  const t = useT();
+  const { t } = useI18n();
   // Each entry sub-view (home / projects / design-systems) is its own
   // URL now, so the browser back/forward buttons work and a deep link
   // to /design-systems lands on that section. We derive the active
@@ -671,6 +673,7 @@ export function EntryShell({
     workspaceContext,
   );
   const deepSeekCampaignVisibility = useDeepSeekV4FlashCampaignVisibility();
+  const goPlanCampaignVisibility = useGoPlanCampaignVisibility();
   // Same personal-vs-team accountPlan rule as App's `resolvedAmrPlan`.
   const deepSeekCampaignPlan = resolvePlanLabelTier({
     billing: workspaceBilling,
@@ -688,6 +691,24 @@ export function EntryShell({
     loggedIn: amrLoggedIn,
     now: deepSeekCampaignVisibility.now,
   });
+  const subscriptionAudience = resolveSubscriptionAudience({
+    plan: deepSeekCampaignPlan,
+    loggedIn: amrLoggedIn,
+  });
+  const homeCampaignModalAudience =
+    subscriptionAudience === 'unpaid' && goPlanCampaignVisibility.visible
+      ? 'unpaid'
+      : deepSeekV4FlashCampaignAudience === 'paid'
+        ? 'paid'
+        : 'unknown';
+  const topRightCampaignKind =
+    subscriptionAudience === 'unpaid'
+      ? goPlanCampaignVisibility.visible
+        ? 'go'
+        : null
+      : deepSeekV4FlashCampaignAudience === 'paid'
+        ? 'deepseek'
+        : null;
   const workspaceBalanceUsd = workspaceBillingBalanceUsd(
     workspaceBillingResponse,
     workspaceContext,
@@ -1169,61 +1190,6 @@ export function EntryShell({
     scrollContainer.scrollTop = 0;
   }, [view]);
   const analytics = useAnalytics();
-  useEffect(() => {
-    if (view !== 'home' || deepSeekV4FlashCampaignAudience === 'unknown') return;
-    trackDeepSeekCampaignBadgeSurfaceView(analytics.track, {
-      page_name: 'home',
-      area: 'campaign_badge',
-      element: 'deepseek_v4_pro',
-      campaign_id: 'deepseek_v4_pro',
-      user_state: deepSeekV4FlashCampaignAudience,
-    });
-  }, [analytics.track, deepSeekV4FlashCampaignAudience, view]);
-  const openDeepSeekCampaignPricing = useCallback(() => {
-    if (deepSeekV4FlashCampaignAudience === 'unknown') return;
-    trackDeepSeekCampaignBadgeClick(analytics.track, {
-      page_name: 'home',
-      area: 'campaign_badge',
-      element: 'open_pricing',
-      campaign_id: 'deepseek_v4_pro',
-      user_state: deepSeekV4FlashCampaignAudience,
-    });
-    const attribution = recordAmrEntry(
-      analytics.track,
-      'deepseek_workbench_badge',
-      new Date(),
-      {
-        metricsConsent: config.telemetry?.metrics === true,
-        campaignId: 'deepseek_v4_pro',
-        conversionSource: 'deepseek_workbench_badge',
-      },
-    );
-    const deviceId = amrHandoffDeviceId({
-      metricsConsent: config.telemetry?.metrics === true,
-      resolvedDeviceId: getResolvedDeviceId(),
-      installationId: config.installationId,
-    });
-    // The same destination the modal's CTA opens: the console's plan surface,
-    // scoped to this workspace. Both are in-product entries for a signed-in
-    // user, so pointing one at the console (where a subscription can actually
-    // be started) and the other at the marketing site would split one funnel
-    // across two destinations — and the marketing link was pinned to `/zh/`,
-    // landing every non-Chinese user on a Chinese page.
-    const plansUrl =
-      amrPlansUrlForWorkspace(undefined, workspaceContext?.workspaceId)
-      ?? amrPlansUrlForProfile(undefined);
-    window.open(
-      attributedAmrUrl(plansUrl, attribution, deviceId),
-      '_blank',
-      'noopener,noreferrer',
-    );
-  }, [
-    analytics.track,
-    config.installationId,
-    config.telemetry?.metrics,
-    deepSeekV4FlashCampaignAudience,
-    workspaceContext?.workspaceId,
-  ]);
   // 产品拍板 D5: the campaign modal's paid 立即使用 performs the REAL switch —
   // daemon execution mode + Cloud agent (amr) + DeepSeek V4 Flash — through
   // the same persistence callbacks the InlineModelSwitcher writes through.
@@ -1386,6 +1352,10 @@ export function EntryShell({
     let amrGatePrecheckWitness: AmrBalanceGateScope | undefined;
     let amrGatePrecheckPassed = false;
     if (config.mode === 'daemon' && config.agentId === 'amr') {
+      const amrModelId = effectiveAgentModelId(
+        agents.find((agent) => agent.id === 'amr'),
+        config.agentModels?.amr,
+      );
       // PRODUCT INVARIANT: Send never starts Workspace identity discovery.
       // Billing consumes the shell's current in-memory snapshot; if it has not
       // arrived yet, the existing account-scoped gate is used. The daemon's
@@ -1402,7 +1372,7 @@ export function EntryShell({
         const gateWorkspaceIdentity = workspaceIdentityCacheKey(gateWorkspaceContext);
         const gateScope = amrBalanceGateScopeForWorkspaceContext(gateWorkspaceContext);
         let gate = await retryUnavailableAmrBalanceGate(
-          () => checkAmrBalanceGate(gateScope),
+          () => checkAmrBalanceGate(gateScope, amrModelId),
         );
         // Hard blocks hold THIS submit open: the dialog resolves 'retry' when
         // its blocking condition clears (sign-in completed, recharge landed)
@@ -1421,7 +1391,7 @@ export function EntryShell({
           setAmrBalanceGateBlock(null);
           if (decision === 'dismiss') return 'blocked' as const;
           gate = await retryUnavailableAmrBalanceGate(
-            () => checkAmrBalanceGate(gateScope),
+            () => checkAmrBalanceGate(gateScope, amrModelId),
           );
         }
         if (gate.kind === 'unavailable') return false;
@@ -1660,17 +1630,13 @@ export function EntryShell({
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
           topRightSlot={
-            view === 'home' && deepSeekV4FlashCampaignAudience !== 'unknown' ? (
-              <button
-                type="button"
-                className="entry-deepseek-campaign-badge"
-                onClick={openDeepSeekCampaignPricing}
-                aria-label={t('campaign.deepseekV4Flash.workbenchBadgeAria')}
-                data-testid="deepseek-campaign-pricing-badge"
-              >
-                <span>{t('campaign.deepseekV4Flash.workbenchBadge')}</span>
-                <Icon name="arrow-right" size={13} />
-              </button>
+            topRightCampaignKind ? (
+              <WorkbenchCampaignBadge
+                kind={topRightCampaignKind}
+                page="home"
+                metricsConsent={config.telemetry?.metrics === true}
+                installationId={config.installationId}
+              />
             ) : null
           }
           context={railWorkspaceContext}
@@ -1703,9 +1669,8 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
-          {/* DeepSeek campaign badge moved into EntryNavRail's top-right
-              cluster (topRightSlot above) so it sits beside the account
-              module in one flex row. */}
+          {/* The campaign badge lives in EntryNavRail's top-right cluster so it
+              stays beside the account module across every entry tab. */}
           {amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}
@@ -1767,7 +1732,7 @@ export function EntryShell({
                 promptTemplates={promptTemplates}
                 executionSwitcher={view === 'home' ? homeExecutionSwitcher : undefined}
                 artifactUpgradeSlot={artifactUpgradeSlot}
-                deepSeekV4FlashCampaignAudience={deepSeekV4FlashCampaignAudience}
+                deepSeekV4FlashCampaignAudience={homeCampaignModalAudience}
                 onDeepSeekV4FlashCampaignUseNow={applyDeepSeekCampaignModel}
                 deepSeekV4FlashCampaignMetricsConsent={config.telemetry?.metrics === true}
                 deepSeekV4FlashCampaignInstallationId={config.installationId ?? null}

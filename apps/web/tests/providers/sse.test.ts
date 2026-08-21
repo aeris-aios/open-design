@@ -142,6 +142,7 @@ describe('streamViaDaemon', () => {
       onArtifactPaths: (paths) => artifactPaths.push(paths),
     });
 
+    expect(handlers.onArtifactCount).toHaveBeenCalledWith(2);
     expect(published).toEqual([{
       agentId: 'amr',
       runId: 'run-artifact-success',
@@ -2391,6 +2392,7 @@ function createDaemonHandlers() {
   return {
     ...createStreamHandlers(),
     onAgentEvent: vi.fn(),
+    onArtifactCount: vi.fn(),
   };
 }
 
