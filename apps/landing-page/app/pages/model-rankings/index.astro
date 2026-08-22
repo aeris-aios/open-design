@@ -1,5 +1,6 @@
 ---
 import Layout from '../../_components/sub-page-layout.astro';
+import ModelRankingPair from '../../_components/model-ranking-pair.astro';
 import { localeFromPath } from '../../i18n';
 import './model-rankings.css';
 
@@ -73,8 +74,6 @@ const models: Model[] = [
   { name: 'DeepSeek V4', maker: 'DeepSeek', icon: '/agents/deepseek.svg', color: '#5277f6', pdr: 68.6, d0: 94.4, d1: 51.8, d2: 26.6, time: 83, cost: 0.48, calls: 10.1 },
 ];
 
-const defaultLeaderboard = [...models].sort((a, b) => (b.d1 + b.d2) - (a.d1 + a.d2));
-
 const scenarios = [
   { id: 'landing', label: isZh ? '落地页' : 'Landing page', detail: isZh ? '品牌表达与转化路径' : 'Brand expression and conversion', color: '#ef7442', area: '1 / 1 / 3 / 4' },
   { id: 'dashboard', label: isZh ? '数据看板' : 'Dashboard', detail: isZh ? '信息密度与数据层级' : 'Information density and hierarchy', color: '#6756d8', area: '1 / 4 / 2 / 7' },
@@ -105,10 +104,38 @@ const scenarioResults = models.map((model, modelIndex) => ({
   }),
 }));
 
-const scenarioWinners = scenarios.map((scenario, scenarioIndex) => {
-  const winner = [...scenarioResults].sort((a, b) => b.scenarios[scenarioIndex]!.score - a.scenarios[scenarioIndex]!.score)[0]!;
-  return { ...scenario, winner, result: winner.scenarios[scenarioIndex]! };
-});
+const costPlotX = (cost: number) => {
+  const minimum = Math.log(.35);
+  const maximum = Math.log(3);
+  return Number(clamp(8 + ((Math.log(cost) - minimum) / (maximum - minimum)) * 84, 8, 92).toFixed(2));
+};
+const costPlotY = (pdr: number) => Number(clamp(8 + ((pdr - 60) / 36) * 84, 8, 92).toFixed(2));
+
+const leaderboardGroups = [
+  {
+    id: 'overall',
+    label: isZh ? '综合总榜' : 'Overall',
+    detail: isZh ? '所有五个设计场景的综合表现' : 'Combined performance across all five design scenarios',
+    rows: scenarioResults.map((model) => ({
+      name: model.name, maker: model.maker, icon: model.icon, color: model.color,
+      score: Number((model.d1 + model.d2).toFixed(1)), pdr: model.pdr, cost: model.cost,
+      x: costPlotX(model.cost), y: costPlotY(model.pdr),
+    })).sort((a, b) => b.score - a.score),
+  },
+  ...scenarios.map((scenario, scenarioIndex) => ({
+    id: scenario.id,
+    label: scenario.label,
+    detail: scenario.detail,
+    rows: scenarioResults.map((model) => {
+      const result = model.scenarios[scenarioIndex]!;
+      return {
+        name: model.name, maker: model.maker, icon: model.icon, color: model.color,
+        score: result.score, pdr: result.pdr, cost: result.cost,
+        x: costPlotX(result.cost), y: costPlotY(result.pdr),
+      };
+    }).sort((a, b) => b.score - a.score),
+  })),
+];
 
 const efficiencyX = (model: Model) => Math.max(5, Math.min(95, 5 + (model.time / 340) * 90));
 const efficiencyY = (model: Model) => Math.max(6, Math.min(94, 6 + ((model.pdr - 65) / 25) * 88));
@@ -157,92 +184,34 @@ const clientCopyJson = JSON.stringify({
       </div>
 
       <div class="score-primer" aria-label={copy.scoreAria}>
-        {copy.primer.map(([code, label], index) => index < copy.metrics.length ? (
-          <button
-            type="button"
-            class:list={{ active: index === 0 }}
-            aria-pressed={index === 0 ? 'true' : 'false'}
-            data-primer-metric={copy.metrics[index]![0]}
-          >
-            <strong>{code}</strong><small>{label}</small>
-          </button>
-        ) : (
+        {copy.primer.map(([code, label], index) => index === copy.primer.length - 1 ? (
           <a href="#analysis-title"><strong>{code}</strong><small>{label}</small></a>
+        ) : (
+          <span><strong>{code}</strong><small>{label}</small></span>
         ))}
       </div>
 
-      <div class="leaderboard-bars">
-        <div class="bar-view-toolbar">
-          <div class="bar-display-tabs" role="tablist" aria-label={copy.valueFormatAria}>
-            <button type="button" role="tab" aria-selected="true" class="active" data-view="score">{copy.score}</button>
-            <button type="button" role="tab" aria-selected="false" data-view="percentage">{copy.percentage}</button>
-          </div>
-        </div>
-        <div class="bar-head">
-          <span>{copy.model}</span>
-          <div class="bar-scale" aria-label={`${copy.score} ${isZh ? '刻度' : 'scale'}`}>
-            <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
-          </div>
-          <span class="bar-head-value">{copy.score}</span>
-        </div>
-        <div class="bar-list">
-          {defaultLeaderboard.map((model, index) => (
-            <div class="leaderboard-bar-row" data-model={model.name}>
-              <span class="bar-model">
-                <i data-rank>{index + 1}</i>
-                <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
-                <span><strong>{model.name}</strong><small>{model.maker}</small></span>
-              </span>
-              <span class="bar-track"><span class="bar-fill" style={`width:${model.d1 + model.d2}%;background:${model.color}`}></span></span>
-              <span class="bar-value"><strong>{(model.d1 + model.d2).toFixed(1)}</strong><small>/ 100</small></span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <ModelRankingPair group={leaderboardGroups[0]!} isZh={isZh} prominent />
     </section>
 
-    <section class="model-section task-section" aria-labelledby="task-title">
+    <section class="model-section scenario-rankings-section" aria-labelledby="task-title">
       <div class="section-heading">
-        <div><h2 id="task-title">{isZh ? '五个场景，各自谁最强' : 'The strongest model in each scene'}</h2><p>{isZh ? '先用 Treemap 看每个场景的领先者，再用热力矩阵展开所有模型的场景表现。' : 'Start with the scene leaders, then expand every model across all five scenes in the heatmap.'}</p></div>
+        <div><h2 id="task-title">{isZh ? '五个场景，逐一展开' : 'Five scenarios, viewed one by one'}</h2><p>{isZh ? '每个场景都使用同一套视图：左侧比较原始分与 PDR 通过率，右侧观察表现与单次成本的关系。' : 'Each scenario uses the same pair of views: score and PDR ranking on the left, performance against session cost on the right.'}</p></div>
       </div>
-      <div class="task-map">
-        {scenarioWinners.map((task) => (
-          <div class="task-tile" style={`background:${task.color};grid-area:${task.area}`}>
-            <span>{task.label}</span><small>{task.detail}</small>
-            <div class="task-winner">
-              <span class="model-icon"><img src={task.winner.icon} alt="" width="24" height="24" /></span>
-              <strong>{task.winner.name}</strong><b>{task.result.score}<small>/100</small></b>
-            </div>
-          </div>
+      <nav class="scenario-index" aria-label={isZh ? '五个设计场景' : 'Five design scenarios'}>
+        {leaderboardGroups.slice(1).map((group, index) => <a href={`#scenario-${group.id}`}><i>{String(index + 1).padStart(2, '0')}</i><span><strong>{group.label}</strong><small>{group.detail}</small></span></a>)}
+      </nav>
+      <div class="scenario-ranking-stack">
+        {leaderboardGroups.slice(1).map((group, index) => (
+          <article class="scenario-benchmark" id={`scenario-${group.id}`}>
+            <header class="scenario-benchmark-head">
+              <span>{String(index + 1).padStart(2, '0')}</span>
+              <div><h3>{group.label}</h3><p>{group.detail}</p></div>
+              <strong>{isZh ? '当前第一' : 'Current leader'}<b>{group.rows[0]!.name}</b></strong>
+            </header>
+            <ModelRankingPair group={group} isZh={isZh} />
+          </article>
         ))}
-      </div>
-
-      <div class="scene-matrix" data-scene-matrix>
-        <div class="scene-matrix-heading">
-          <div><span>{isZh ? '场景热力矩阵' : 'Scene heatmap'}</span><h3>{isZh ? '展开每个模型的五场景表现' : 'Every model across five scenes'}</h3><p>{isZh ? '默认显示 D1 与 D2 合计的原始分，也可以切换查看 PDR、需求完成度和设计质量。' : 'Raw D1 plus D2 score is the default. Switch to PDR, requirement fulfillment, or design quality.'}</p></div>
-          <div class="matrix-tabs" role="tablist" aria-label={isZh ? '热力矩阵指标' : 'Heatmap metric'}>
-            <button type="button" class="active" role="tab" aria-selected="true" data-matrix-metric="score">{isZh ? '原始分' : 'Score'}</button>
-            <button type="button" role="tab" aria-selected="false" data-matrix-metric="pdr">PDR</button>
-            <button type="button" role="tab" aria-selected="false" data-matrix-metric="d1">D1</button>
-            <button type="button" role="tab" aria-selected="false" data-matrix-metric="d2">D2</button>
-          </div>
-        </div>
-        <div class="scene-matrix-scroll">
-          <div class="scene-matrix-table" role="table" aria-label={isZh ? '五场景模型表现' : 'Model performance across five scenes'}>
-            <div class="scene-matrix-row scene-matrix-head" role="row">
-              <span role="columnheader">{copy.model}</span>
-              {scenarios.map((scenario) => <span role="columnheader"><i style={`background:${scenario.color}`}></i>{scenario.label}</span>)}
-              <span role="columnheader">{isZh ? '平均' : 'Average'}</span>
-            </div>
-            {scenarioResults.map((model) => (
-              <div class="scene-matrix-row" role="row" data-matrix-row={model.name}>
-                <span class="scene-model" role="rowheader"><span class="model-icon"><img src={model.icon} alt="" width="24" height="24" /></span><span><strong>{model.name}</strong><small>{model.maker}</small></span></span>
-                {model.scenarios.map((result) => <b role="cell" data-scene={result.id} data-score={result.score} data-pdr={result.pdr} data-d1={result.d1} data-d2={result.d2}>{result.score.toFixed(1)}</b>)}
-                <strong class="scene-average" role="cell" data-matrix-average>{(model.scenarios.reduce((sum, result) => sum + result.score, 0) / model.scenarios.length).toFixed(1)}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </section>
 
@@ -333,10 +302,7 @@ const clientCopyJson = JSON.stringify({
   <script is:inline type="application/json" id="model-rankings-scenarios" set:html={scenariosJson}></script>
   <script is:inline type="application/json" id="model-rankings-copy" set:html={clientCopyJson}></script>
   <script>
-    type Metric = 'pdr' | 'd0' | 'd1' | 'd2';
-    type ViewMode = 'percentage' | 'score';
     type EfficiencyModule = 'speed' | 'cost' | 'calls';
-    type MatrixMetric = 'score' | 'pdr' | 'd1' | 'd2';
     type QualityMetric = 'score' | 'pdr';
     type ScenarioId = 'overall' | string;
     type ScenarioResult = { id: string; d1: number; d2: number; score: number; pdr: number; time: number; cost: number; calls: number };
@@ -375,99 +341,33 @@ const clientCopyJson = JSON.stringify({
       const modelData = JSON.parse(dataElement.textContent || '[]') as ClientModel[];
       const scenarioData = JSON.parse(scenariosElement.textContent || '[]') as ClientScenario[];
       const clientCopy = JSON.parse(copyElement.textContent || '{}') as ClientCopy;
-      let activeMetric: Metric = 'pdr';
-      let activeView: ViewMode = 'score';
-
-      const maximumFor = (metric: Metric) => metric === 'd1' ? 65 : metric === 'd2' ? 35 : 100;
-      const scoreFor = (model: ClientModel, metric: Metric) => metric === 'pdr' ? model.d1 + model.d2 : model[metric];
-      const formatTick = (value: number) => Number.isInteger(value) ? String(value) : value.toFixed(1);
-
-      const renderLeaderboard = () => {
-        const maximum = maximumFor(activeMetric);
-        const scoreMaximum = activeMetric === 'pdr' ? 100 : maximum;
-        const sorted = [...modelData].sort((a, b) => {
-          if (activeView === 'score' && activeMetric === 'pdr') return scoreFor(b, activeMetric) - scoreFor(a, activeMetric);
-          return b[activeMetric] - a[activeMetric];
-        });
-        const list = root.querySelector<HTMLElement>('.bar-list');
-        const scale = root.querySelector<HTMLElement>('.bar-scale');
-        const valueHead = root.querySelector<HTMLElement>('.bar-head-value');
-        if (!list || !scale || !valueHead) return;
-        const scaleMaximum = activeView === 'percentage' ? 100 : scoreMaximum;
-        scale.innerHTML = [0, .25, .5, .75, 1].map((step, index) => `<span>${formatTick(scaleMaximum * step)}${activeView === 'percentage' && index === 4 ? '%' : ''}</span>`).join('');
-        scale.setAttribute('aria-label', `${activeView === 'percentage' ? clientCopy.percentage : clientCopy.score} ${clientCopy.scale}`);
-        valueHead.textContent = activeView === 'percentage' ? clientCopy.percentage : clientCopy.score;
-
-        sorted.forEach((model, index) => {
-          const row = list.querySelector<HTMLElement>(`[data-model="${CSS.escape(model.name)}"]`);
-          if (!row) return;
-          const percentage = model[activeMetric] / maximum * 100;
-          const score = scoreFor(model, activeMetric);
-          const ratio = activeView === 'percentage' ? percentage : score / scoreMaximum * 100;
-          const rank = row.querySelector<HTMLElement>('[data-rank]');
-          const fill = row.querySelector<HTMLElement>('.bar-fill');
-          const value = row.querySelector<HTMLElement>('.bar-value');
-          if (rank) rank.textContent = String(index + 1);
-          if (fill) fill.style.width = `${ratio}%`;
-          if (value) value.innerHTML = activeView === 'percentage' ? `<strong>${percentage.toFixed(1)}%</strong><small></small>` : `<strong>${score.toFixed(1)}</strong><small>/ ${scoreMaximum}</small>`;
-          list.append(row);
-        });
-      };
-
-      const setLeaderboardMetric = (metric: Metric) => {
-        activeMetric = metric;
-        root.querySelectorAll<HTMLButtonElement>('[data-primer-metric]').forEach((item) => {
-          const selected = item.dataset.primerMetric === metric;
-          item.classList.toggle('active', selected);
-          item.setAttribute('aria-pressed', String(selected));
-        });
-        renderLeaderboard();
-      };
-
-      root.querySelectorAll<HTMLButtonElement>('[data-primer-metric]').forEach((button) => button.addEventListener('click', () => {
-        setLeaderboardMetric(button.dataset.primerMetric as Metric);
-      }));
-      root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => button.addEventListener('click', () => {
-        activeView = button.dataset.view as ViewMode;
-        root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((item) => {
-          const selected = item === button;
-          item.classList.toggle('active', selected);
-          item.setAttribute('aria-selected', String(selected));
-        });
-        renderLeaderboard();
-      }));
-
-      let activeMatrixMetric: MatrixMetric = 'score';
-      const matrixMaximum = (metric: MatrixMetric) => metric === 'd1' ? 65 : metric === 'd2' ? 35 : 100;
-      const renderMatrix = () => {
-        const maximum = matrixMaximum(activeMatrixMetric);
-        const columns = scenarioData.map((scenario) => {
-          const values = modelData.map((model) => model.scenarios.find((item) => item.id === scenario.id)?.[activeMatrixMetric] || 0);
-          return Math.max(...values);
-        });
-        root.querySelectorAll<HTMLElement>('[data-matrix-row]').forEach((row) => {
-          const values: number[] = [];
-          row.querySelectorAll<HTMLElement>('[data-scene]').forEach((cell, index) => {
-            const value = Number(cell.dataset[activeMatrixMetric] || 0);
-            values.push(value);
-            const ratio = value / maximum;
-            cell.textContent = `${value.toFixed(1)}${activeMatrixMetric === 'pdr' ? '%' : ''}`;
-            cell.style.setProperty('--matrix-alpha', String(.07 + ratio * .76));
-            cell.classList.toggle('is-column-leader', Math.abs(value - columns[index]!) < .01);
+      root.querySelectorAll<HTMLElement>('[data-ranking-card]').forEach((card) => {
+        const list = card.querySelector<HTMLElement>('.ranking-list');
+        const label = card.querySelector<HTMLElement>('[data-ranking-value-label]');
+        const buttons = [...card.querySelectorAll<HTMLButtonElement>('[data-ranking-view]')];
+        const render = (view: 'score' | 'percentage') => {
+          const rows = [...card.querySelectorAll<HTMLElement>('[data-ranking-row]')].sort((a, b) => Number(b.dataset[view] || 0) - Number(a.dataset[view] || 0));
+          rows.forEach((row, index) => {
+            const value = Number(row.dataset[view] || 0);
+            const height = Math.max(12, Math.min(92, (value - 50) * 2));
+            const position = row.querySelector<HTMLElement>('[data-ranking-position]');
+            const valueNode = row.querySelector<HTMLElement>('.ranking-value');
+            if (position) position.textContent = String(index + 1);
+            row.style.setProperty('--model-value', String(value));
+            row.style.setProperty('--model-height', `${height}%`);
+            if (valueNode) valueNode.innerHTML = view === 'percentage' ? `<strong>${value.toFixed(1)}%</strong><small></small>` : `<strong>${value.toFixed(1)}</strong><small>/100</small>`;
+            list?.append(row);
           });
-          const average = row.querySelector<HTMLElement>('[data-matrix-average]');
-          if (average) average.textContent = `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}${activeMatrixMetric === 'pdr' ? '%' : ''}`;
-        });
-      };
-      root.querySelectorAll<HTMLButtonElement>('[data-matrix-metric]').forEach((button) => button.addEventListener('click', () => {
-        activeMatrixMetric = button.dataset.matrixMetric as MatrixMetric;
-        root.querySelectorAll<HTMLButtonElement>('[data-matrix-metric]').forEach((item) => {
-          const selected = item === button;
-          item.classList.toggle('active', selected);
-          item.setAttribute('aria-selected', String(selected));
-        });
-        renderMatrix();
-      }));
+          if (label) label.textContent = view === 'percentage' ? clientCopy.percentage : clientCopy.score;
+          buttons.forEach((button) => {
+            const selected = button.dataset.rankingView === view;
+            button.classList.toggle('active', selected);
+            button.setAttribute('aria-selected', String(selected));
+          });
+        };
+        buttons.forEach((button) => button.addEventListener('click', () => render(button.dataset.rankingView as 'score' | 'percentage')));
+        render('score');
+      });
 
       const moduleConfig = {
         speed: { label: clientCopy.module.speed.title.replace('PDR', ''), xLabel: clientCopy.module.speed.xLabel, maximum: 340, ticks: [0, 85, 170, 255, 340], format: (value: number) => `${Math.round(value)}${clientCopy.module.speed.suffix}` },
@@ -595,8 +495,6 @@ const clientCopyJson = JSON.stringify({
         renderCompare();
       }));
 
-      renderLeaderboard();
-      renderMatrix();
       renderEfficiency();
       renderCompare();
     }
