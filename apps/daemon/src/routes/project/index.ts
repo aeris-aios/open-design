@@ -1,10 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
+import { load } from 'cheerio';
 import type { Express, Request, Response } from 'express';
 import type { LintArtifactRequest, LintArtifactResponse } from '@open-design/contracts';
 import {
   PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
+  buildPreviewBaseHrefBridge,
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
@@ -120,6 +122,95 @@ import {
 import { localPluginRegistryScope } from '../../plugins/local-source.js';
 import type { WorkspaceDirectoryFetchResult } from '../../collab/vela-workspace-context.js';
 import { cancelRunsOwnedBy } from './cancel-owned-runs.js';
+
+export function rewriteOutsideExecutableHtmlRanges(
+  html: string,
+  rewriteChunk: (chunk: string) => string,
+): string {
+  const $ = load(html, { sourceCodeLocationInfo: true }, false);
+  const scriptRanges = $('script')
+    .toArray()
+    .flatMap((node) => {
+      const location = node.sourceCodeLocation;
+      if (!location?.startTag) return [];
+      const startTag = html.slice(location.startTag.startOffset, location.startTag.endOffset);
+      const isSelfClosingForeignScript = node.namespace !== 'http://www.w3.org/1999/xhtml'
+        && startTag.endsWith('/>');
+      return [{
+        start: location.startTag.endOffset,
+        end: location.endTag?.startOffset
+          ?? (isSelfClosingForeignScript ? location.startTag.endOffset : html.length),
+      }];
+    });
+  const executableAttributeRanges = $('*')
+    .toArray()
+    .flatMap((node) => {
+      const sourceLocation = node.sourceCodeLocation;
+      if (!sourceLocation || !('attrs' in sourceLocation)) return [];
+      const attributes = sourceLocation.attrs as Record<string, {
+        startOffset: number;
+        endOffset: number;
+      }> | undefined;
+      const element = node as Extract<typeof node, { attribs: Record<string, string> }>;
+      // parse5 stores namespaced values by local name and keeps their source prefix separately.
+      const valuesBySourceName = new Map(Object.entries(element.attribs).map(([localName, value]) => {
+        const prefix = element['x-attribsPrefix']?.[localName];
+        return [(prefix ? `${prefix}:${localName}` : localName).toLowerCase(), value] as const;
+      }));
+      return Object.entries(attributes ?? {}).flatMap(([name, location]) => {
+        const normalizedName = name.toLowerCase();
+        const value = valuesBySourceName.get(normalizedName) ?? '';
+        const normalizedSchemeValue = value.replace(/[\t\n\r]/g, '');
+        if (
+          normalizedName.startsWith('on')
+          || normalizedName === 'srcdoc'
+          || /^\s*(?:javascript|vbscript|data):/i.test(normalizedSchemeValue)
+        ) {
+          return [{ start: location.startOffset, end: location.endOffset }];
+        }
+        return [];
+      });
+    });
+  const protectedRanges = [...scriptRanges, ...executableAttributeRanges]
+    .sort((left, right) => left.start - right.start)
+    .reduce<Array<{ start: number; end: number }>>((ranges, range) => {
+      const previous = ranges.at(-1);
+      if (!previous || range.start > previous.end) {
+        ranges.push({ ...range });
+      } else {
+        previous.end = Math.max(previous.end, range.end);
+      }
+      return ranges;
+    }, []);
+
+  let markerPrefix: string | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const candidate = `__OD_PROTECTED_HTML_RANGE_${randomUUID()}_`;
+    if (!html.includes(candidate)) {
+      markerPrefix = candidate;
+      break;
+    }
+  }
+  if (!markerPrefix) throw new Error('Unable to allocate protected HTML marker');
+
+  const protectedValues: Array<{ marker: string; value: string }> = [];
+  let maskedHtml = '';
+  let cursor = 0;
+  for (const [index, range] of protectedRanges.entries()) {
+    const marker = `${markerPrefix}${index}__`;
+    maskedHtml += html.slice(cursor, range.start);
+    maskedHtml += marker;
+    protectedValues.push({ marker, value: html.slice(range.start, range.end) });
+    cursor = range.end;
+  }
+  maskedHtml += html.slice(cursor);
+
+  let rewrittenHtml = rewriteChunk(maskedHtml);
+  for (const { marker, value } of protectedValues) {
+    rewrittenHtml = rewrittenHtml.split(marker).join(value);
+  }
+  return rewrittenHtml;
+}
 
 function parseLocalCatalogScope(value: unknown, field: string): LocalCatalogScope | null {
   if (value === undefined || value === null) return null;
@@ -5356,6 +5447,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     projectId: string,
     ownerFilePath: string,
     scope: string,
+    expiresAt: number,
   ): string {
     // Respect an artifact-authored base URL. Only generated documents without
     // one need the containment base that keeps runtime-created relative URLs
@@ -5366,10 +5458,13 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       ? ''
       : `${encodeProjectPathForUrl(ownerDir)}/`;
     const baseTag = `<base href="/api/projects/${encodeURIComponent(projectId)}`
-      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}">`;
+      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}" data-od-project-preview-base>`;
+    const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
+      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
+    const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
     const head = /<head\b[^>]*>/i;
-    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}`);
-    return `${baseTag}${html}`;
+    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}${bridge}`);
+    return `${baseTag}${bridge}${html}`;
   }
 
   function rewriteWorkspaceScopedHtmlAssetUrls(
@@ -5411,42 +5506,46 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       return `${scoped}&${suffix.slice(1)}`;
     };
 
-    let next = html.replace(
-      assetAttr,
-      (match, space: string, name: string, eq: string, quote: string, value: string) => {
-        const rewritten = rewrite(value);
-        return rewritten === value ? match : `${space}${name}${eq}${quote}${rewritten}${quote}`;
-      },
-    );
-    next = next.replace(linkTag, (tag) =>
-      tag.replace(linkHref, (match, prefix: string, quote: string, value: string) => {
-        const rewritten = rewrite(value);
+    const rewriteChunk = (chunk: string): string => {
+      let next = chunk.replace(
+        assetAttr,
+        (match, space: string, name: string, eq: string, quote: string, value: string) => {
+          const rewritten = rewrite(value);
+          return rewritten === value ? match : `${space}${name}${eq}${quote}${rewritten}${quote}`;
+        },
+      );
+      next = next.replace(linkTag, (tag) =>
+        tag.replace(linkHref, (match, prefix: string, quote: string, value: string) => {
+          const rewritten = rewrite(value);
+          return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
+        }),
+      );
+      next = next.replace(srcsetAttr, (match, prefix: string, quote: string, value: string) => {
+        // A data URL contains an unescaped comma, so the lightweight candidate
+        // splitter below cannot safely rewrite a mixed data-URL srcset. Leave the
+        // whole attribute untouched rather than corrupting embedded bytes.
+        if (/(?:^|,\s*)data:/i.test(value)) return match;
+        const rewritten = value
+          .split(',')
+          .map((candidate) => {
+            const body = candidate.trim();
+            if (!body) return candidate;
+            const [url = '', ...descriptors] = body.split(/\s+/);
+            const rewrittenUrl = rewrite(url);
+            if (rewrittenUrl === url) return candidate;
+            const leading = candidate.match(/^\s*/)?.[0] ?? '';
+            return `${leading}${[rewrittenUrl, ...descriptors].join(' ')}`;
+          })
+          .join(',');
         return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
-      }),
-    );
-    next = next.replace(srcsetAttr, (match, prefix: string, quote: string, value: string) => {
-      // A data URL contains an unescaped comma, so the lightweight candidate
-      // splitter below cannot safely rewrite a mixed data-URL srcset. Leave the
-      // whole attribute untouched rather than corrupting embedded bytes.
-      if (/(?:^|,\s*)data:/i.test(value)) return match;
-      const rewritten = value
-        .split(',')
-        .map((candidate) => {
-          const body = candidate.trim();
-          if (!body) return candidate;
-          const [url = '', ...descriptors] = body.split(/\s+/);
-          const rewrittenUrl = rewrite(url);
-          if (rewrittenUrl === url) return candidate;
-          const leading = candidate.match(/^\s*/)?.[0] ?? '';
-          return `${leading}${[rewrittenUrl, ...descriptors].join(' ')}`;
-        })
-        .join(',');
-      return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
-    });
-    return next.replace(cssUrl, (match, quote: string, value: string) => {
-      const rewritten = rewrite(value);
-      return rewritten === value ? match : `url(${quote}${rewritten}${quote})`;
-    });
+      });
+      return next.replace(cssUrl, (match, quote: string, value: string) => {
+        const rewritten = rewrite(value);
+        return rewritten === value ? match : `url(${quote}${rewritten}${quote})`;
+      });
+    };
+
+    return rewriteOutsideExecutableHtmlRanges(html, rewriteChunk);
   }
 
   async function maybeResolveVitePreviewHtml({
@@ -5738,6 +5837,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
               workspaceMemberId: requestContext.workspaceMemberId,
             },
       );
+      const expiresAt = projectPreviewScopes.expiresAt(project.id, scope);
+      if (expiresAt === undefined) {
+        sendApiError(res, 503, 'PREVIEW_SCOPE_NOT_FOUND', 'preview scope not found');
+        return;
+      }
       /** @type {import('@open-design/contracts').ProjectPreviewUrlResponse} */
       const body = {
         url: `/api/projects/${encodeURIComponent(project.id)}/preview/${scope}/${encodeProjectPathForUrl(meta.name)}`,
@@ -5745,6 +5849,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         csp: projectPreviewCsp,
         iframeSandbox: projectPreviewIframeSandbox,
         opaqueOrigin: true,
+        expiresAt,
       };
       res.setHeader('Cache-Control', 'no-store');
       res.json(body);
@@ -5756,6 +5861,61 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST',
         String(err),
       );
+    }
+  });
+
+  app.post('/api/projects/:id/preview/:scope/renew', async (req, res) => {
+    try {
+      const projectId = String(req.params.id ?? '');
+      const scope = String(req.params.scope ?? '');
+      // The scope is embedded in untrusted preview HTML. Requiring a custom
+      // header makes renewal a host-only operation: an opaque-origin iframe
+      // cannot set it without a CORS preflight, and this route grants no CORS.
+      if (req.get('x-od-preview-scope-renewal') !== '1') {
+        sendApiError(res, 403, 'FORBIDDEN', 'preview scope renewal requires host authorization');
+        return;
+      }
+      if (!previewScopeRe.test(scope)) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'invalid preview scope');
+        return;
+      }
+      const project = getProject(db, projectId);
+      if (!project) {
+        sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+        return;
+      }
+      const previewWorkspace = projectPreviewScopes.resolve(project.id, scope);
+      if (previewWorkspace === undefined) {
+        sendApiError(res, 404, 'PREVIEW_SCOPE_NOT_FOUND', 'preview scope not found');
+        return;
+      }
+      const authorityRequest = previewWorkspace
+        ? {
+            query: {
+              ...req.query,
+              workspaceId: previewWorkspace.workspaceId,
+              workspaceMemberId: previewWorkspace.workspaceMemberId,
+            },
+            get: req.get.bind(req),
+          }
+        : req;
+      if (!await authorizeProjectRequest(
+        authorityRequest,
+        res,
+        project.id,
+        { mode: 'read', allowNavigationQuery: true },
+      )) return;
+      const expiresAt = projectPreviewScopes.renew(project.id, scope);
+      if (expiresAt === undefined) {
+        sendApiError(res, 404, 'PREVIEW_SCOPE_NOT_FOUND', 'preview scope not found');
+        return;
+      }
+      /** @type {import('@open-design/contracts').ProjectPreviewScopeRenewResponse} */
+      const body = { expiresAt };
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(body);
+    } catch (err: any) {
+      sendApiError(res, 400, 'BAD_REQUEST', String(err));
     }
   });
 
@@ -5988,11 +6148,14 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 }
               : null;
           const scope = projectPreviewScopes.mint(projectId, previewWorkspace);
+          const expiresAt = projectPreviewScopes.expiresAt(projectId, scope);
+          if (expiresAt === undefined) return html;
           return injectProjectPreviewBase(
             html,
             projectId,
             relPath,
             scope,
+            expiresAt,
           );
         },
         true, // revalidate: emit ETag/Last-Modified so covers/preview/export reuse cached assets

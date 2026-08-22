@@ -1127,6 +1127,7 @@ export interface Dict {
   'entry.discordAria': string;
   'entry.discordAriaWithOnline': string;
   'entry.discordOnlineLabel': string;
+  'entry.feishuAria': string;
   'entry.mailAria': string;
   'entry.accountSettings': string;
   'chat.collapsePane': string;
@@ -2816,6 +2817,7 @@ export interface Dict {
   'inlineSwitcher.missingApiKey': string;
   'inlineSwitcher.openFullSettings': string;
   'inlineSwitcher.customSuffix': string;
+  'inlineSwitcher.unlimitedBadge': string;
 
   // Project view / chat pane / composer
   'project.backToProjects': string;
