@@ -151,6 +151,13 @@ const WINDOWS_COMMAND_NOT_FOUND_EXIT = 9009;
 // missing-path reports. A non-zero exit on its own stays a real answer from
 // the right binary — otherwise a CLI that merely rejects its arguments would
 // be abandoned in favour of some other install of itself.
+//
+// `isCliNotInstalledText` in run-failure-classification.ts reads similar
+// output, and the overlap is deliberate rather than shared: it buckets a
+// finished run for telemetry, where over-matching costs a mislabelled event,
+// while this decides whether to abandon a binary mid-resolution, where
+// over-matching sends a working CLI's user to a different install. It carries
+// broader phrases ("not installed", "not on PATH") that must not leak in here.
 const LAUNCHER_TARGET_MISSING_PATTERNS = [
   /\bMODULE_NOT_FOUND\b/,
   /\bCannot find module\b/i,
@@ -397,8 +404,6 @@ async function probe(
   }
   if (outcome.kind === 'not-invocable') {
     rememberUnusableExecutable(def.id, launch.selectedPath);
-  }
-  if (outcome.kind === 'not-invocable') {
     // Report the path that was actually tried. The agent picker only renders
     // an unavailable agent when it carries a path (that is what makes the
     // row actionable), so dropping it here erases the agent from the UI and
