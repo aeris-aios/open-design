@@ -386,6 +386,44 @@ interface RunCreateMeta extends JsonRecord {
   workspaceScope?: RunWorkspaceScope | null;
 }
 
+/**
+ * Invariant: a conversation runs at most one design-system enrichment
+ * ("AI Optimize") pass at a time.
+ *
+ * The enrichment turn is a hidden, seeded prompt that refines the SAME
+ * registered design system in place, so two concurrent passes bill twice and
+ * race on identical files. Incident 2026-07-28: one double-triggered UI
+ * affordance created two enrichment runs 383 ms apart in one conversation and
+ * both were billed. Ordinary chat turns are deliberately NOT gated here — the
+ * web composer already queues them while the conversation is busy, and a
+ * "send now" interrupt may legitimately overlap the run it is cancelling.
+ *
+ * Returns the non-terminal run that already owns the conversation's
+ * enrichment pass, or null when the request may proceed.
+ */
+function activeRunBlockingDesignSystemEnrichment(
+  runs: Pick<ChatRunService, 'list'>,
+  input: {
+    conversationId: unknown;
+    analyticsHints: unknown;
+    /** The optimistically created run for this request; it never blocks itself. */
+    excludeRunId?: string | null;
+  },
+): ChatRun | null {
+  const hints = input.analyticsHints;
+  const isEnrichment =
+    hints !== null
+    && typeof hints === 'object'
+    && !Array.isArray(hints)
+    && (hints as Record<string, unknown>).dsEnrichment === true;
+  if (!isEnrichment) return null;
+  if (typeof input.conversationId !== 'string' || !input.conversationId) return null;
+  const active = runs
+    .list({ conversationId: input.conversationId, status: 'active' })
+    .filter((run) => run.id !== input.excludeRunId);
+  return active[0] ?? null;
+}
+
 interface RunListFilters {
   projectId?: unknown;
   conversationId?: unknown;
@@ -1757,6 +1795,29 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'IDEMPOTENCY_CONFLICT',
         'clientRequestId is already associated with a different logical run request',
       );
+    }
+    if (creation.kind === 'created') {
+      const blockingRun = activeRunBlockingDesignSystemEnrichment(design.runs, {
+        conversationId: meta.conversationId,
+        analyticsHints: meta.analyticsHints,
+        excludeRunId: creation.run.id,
+      });
+      if (blockingRun) {
+        design.runs.drop(creation.run);
+        return sendApiError(
+          res,
+          409,
+          'DESIGN_SYSTEM_ENRICHMENT_IN_PROGRESS',
+          'a design-system enrichment run is already active for this conversation',
+          {
+            details: {
+              kind: 'design_system_enrichment_in_progress',
+              runId: blockingRun.id,
+              conversationId: blockingRun.conversationId ?? '',
+            },
+          },
+        );
+      }
     }
     const run = creation.run;
     const analyticsAttributionMismatch =
@@ -3232,6 +3293,29 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'IDEMPOTENCY_CONFLICT',
         'clientRequestId is already associated with a different logical run request',
       );
+    }
+    if (creation.kind === 'created') {
+      const blockingRun = activeRunBlockingDesignSystemEnrichment(design.runs, {
+        conversationId: meta.conversationId,
+        analyticsHints: meta.analyticsHints,
+        excludeRunId: creation.run.id,
+      });
+      if (blockingRun) {
+        design.runs.drop(creation.run);
+        return sendApiError(
+          res,
+          409,
+          'DESIGN_SYSTEM_ENRICHMENT_IN_PROGRESS',
+          'a design-system enrichment run is already active for this conversation',
+          {
+            details: {
+              kind: 'design_system_enrichment_in_progress',
+              runId: blockingRun.id,
+              conversationId: blockingRun.conversationId ?? '',
+            },
+          },
+        );
+      }
     }
     const run = creation.run;
     if (creation.kind === 'reused') {
