@@ -39,10 +39,6 @@ import { localeFromPath, localizedHref } from '../../i18n';
 import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 import { getPricingCampaignContent } from '../../_lib/pricing-campaign-content';
 
-if (Astro.url.pathname === '/pricing' || Astro.url.pathname === '/pricing/') {
-  return Astro.redirect('/pricing-e-final/?review=pricing', 302);
-}
-
 const locale = localeFromPath(Astro.url.pathname);
 const isZh = locale === 'zh' || locale === 'zh-tw';
 const href = (path: string) => localizedHref(path, locale);
