@@ -132,6 +132,39 @@ type VersionProbeOutcome =
   | { kind: 'not-invocable'; cause: NotInvocableCause }
   | { kind: 'spawned'; version: string | null };
 
+// cmd.exe's equivalent of POSIX 127 ("command not found").
+const WINDOWS_COMMAND_NOT_FOUND_EXIT = 9009;
+
+// Evidence that the *launcher* never reached the program it stands for, as
+// opposed to the program running and reporting its own failure.
+//
+// Exit status alone cannot make this call on Windows. A global npm wrapper is
+// a `.CMD`, which OpenDesign runs through `cmd.exe /d /s /c`; when the package
+// behind it has been uninstalled, cmd.exe starts, node starts, and only then
+// does node fail to load the script the wrapper names — a plain exit 1 with
+// MODULE_NOT_FOUND on stderr. Nothing along that chain failed to *start*, so
+// none of the POSIX signals (ENOENT, 126, 127) ever appear, and the wrapper
+// looks indistinguishable from a healthy CLI that dislikes `--version`.
+//
+// So match the launcher's own vocabulary instead, and only that: node's
+// missing-module report, and cmd.exe / PowerShell's missing-command and
+// missing-path reports. A non-zero exit on its own stays a real answer from
+// the right binary — otherwise a CLI that merely rejects its arguments would
+// be abandoned in favour of some other install of itself.
+const LAUNCHER_TARGET_MISSING_PATTERNS = [
+  /\bMODULE_NOT_FOUND\b/,
+  /\bCannot find module\b/i,
+  /is not recognized as (?:an internal or external command|the name of a cmdlet)/i,
+  /\bCommandNotFoundException\b/,
+  /The system cannot find the (?:path|file) specified/i,
+];
+
+function launcherTargetMissing(err: unknown): boolean {
+  const stderr = (err as { stderr?: unknown })?.stderr;
+  if (typeof stderr !== 'string' || stderr.length === 0) return false;
+  return LAUNCHER_TARGET_MISSING_PATTERNS.some((pattern) => pattern.test(stderr));
+}
+
 /**
  * Run the agent's `--version` probe and classify the result. The probe
  * has two distinct failure modes the catch arm has to discriminate:
@@ -139,9 +172,10 @@ type VersionProbeOutcome =
  *   - **Not invocable.** The OS rejected the spawn outright, OR the
  *     wrapper script spawned but its underlying interpreter / target
  *     failed. We split permission failures (EACCES / exit 126) from
- *     missing-target failures (ENOENT / ENOTDIR / exit 127) so Settings can
- *     offer permission-specific copy instead of treating every failure as a
- *     broken shim. We still mark the agent unavailable so Settings does not
+ *     missing-target failures (ENOENT / ENOTDIR / exit 127 / cmd.exe's 9009,
+ *     plus the launcher stderr Windows wrappers report instead) so Settings
+ *     can offer permission-specific copy instead of treating every failure as
+ *     a broken shim. We still mark the agent unavailable so Settings does not
  *     advertise a ghost entry (issue #658, lefarcen review P2 on PR #1301).
  *
  *   - **Spawned but `--version` was unhappy.** The binary itself ran
@@ -152,8 +186,9 @@ type VersionProbeOutcome =
  *
  * `child_process.execFile` reports OS-level rejections with a string
  * `err.code` (`'ENOENT'`, `'EACCES'`, `'ENOTDIR'`) and non-zero exit
- * codes with a *numeric* `err.code` equal to the exit status, so the
- * two arms below are unambiguous.
+ * codes with a *numeric* `err.code` equal to the exit status, so those
+ * two arms are unambiguous. Windows wrappers are the case they cannot
+ * decide on their own — see `launcherTargetMissing` above.
  */
 async function probeVersionAtPath(
   def: RuntimeAgentDef,
@@ -179,11 +214,17 @@ async function probeVersionAtPath(
       if (code === 'ENOENT' || code === 'ENOTDIR') {
         return { kind: 'not-invocable', cause: 'missing-target' };
       }
-    } else if (typeof code === 'number' && (code === 126 || code === 127)) {
-      return {
-        kind: 'not-invocable',
-        cause: code === 126 ? 'not-executable' : 'missing-target',
-      };
+    } else if (typeof code === 'number') {
+      if (code === 126) {
+        return { kind: 'not-invocable', cause: 'not-executable' };
+      }
+      // 127 is the POSIX shell's "command not found"; 9009 is cmd.exe's.
+      if (code === 127 || code === WINDOWS_COMMAND_NOT_FOUND_EXIT) {
+        return { kind: 'not-invocable', cause: 'missing-target' };
+      }
+      if (launcherTargetMissing(err)) {
+        return { kind: 'not-invocable', cause: 'missing-target' };
+      }
     }
     return { kind: 'spawned', version: null };
   }
