@@ -238,13 +238,38 @@ describe('agent executable resolution falls back past unusable candidates', () =
     expect(samePath(launch.launchPath, goodBin)).toBe(true);
   });
 
-  // Remembering detection's winner must reorder candidates, never introduce
-  // one. Resolution stays a pure function of the current environment: an
-  // emptied PATH, a sandboxed OD_AGENT_HOME, or an uninstalled CLI all still
-  // mean "not found". Without this, a winner learned in a richer environment
-  // resurrects a binary the caller can no longer see — which is how a route
-  // that must report the runtime as unavailable starts reporting it as ready.
-  it('does not resurrect a remembered binary once the environment stops offering it', async () => {
+  // What detection carries forward is the set of paths it proved dead, not the
+  // candidate that won. Recording the winner instead pinned the daemon to one
+  // binary for its whole lifetime and silently outranked the caller's own PATH:
+  // a CLI that became visible earlier afterwards — a fresh install, a version
+  // manager swapping shims, a caller resolving under its own environment —
+  // could no longer be reached. Everything still standing stays in PATH order.
+  it('lets a CLI that appears earlier on PATH after detection win', async () => {
+    const settledDir = tempDir('settled');
+    const laterDir = tempDir('newly-installed');
+    const settledBin = writeWorkingShim(settledDir);
+
+    process.env.OD_AGENT_HOME = settledDir;
+    process.env.PATH = settledDir;
+
+    const detected = await detectAgent(def);
+    expect(detected.available).toBe(true);
+    expect(samePath(detected.path, settledBin)).toBe(true);
+
+    // A second healthy install shows up ahead of the one detection settled on.
+    const newBin = writeWorkingShim(laterDir, '0.1.0-rc.8');
+    process.env.PATH = [laterDir, settledDir].join(path.delimiter);
+
+    expect(samePath(resolveAgentLaunch(def).selectedPath, newBin)).toBe(true);
+    expect(samePath(resolveAgentLaunch(def).selectedPath, settledBin)).toBe(false);
+  });
+
+  // Resolution stays a pure function of the current environment: an emptied
+  // PATH, a sandboxed OD_AGENT_HOME, or an uninstalled CLI all still mean "not
+  // found". Nothing detection learned may resurrect a binary the caller can no
+  // longer see — that is how a route which must report the runtime as
+  // unavailable starts reporting it as ready.
+  it('does not resurrect a binary once the environment stops offering it', async () => {
     const goodDir = tempDir('remembered');
     const goodBin = writeWorkingShim(goodDir);
 

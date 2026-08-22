@@ -353,44 +353,37 @@ export function resolveAgentExecutable(
   return inspectAgentExecutableResolution(def, configuredEnv).selectedPath;
 }
 
-// The executable a completed detection pass settled on, per agent id.
+// The executables a completed detection pass proved cannot be launched, per
+// agent id.
 //
-// Detection is the only stage that learns which candidate can actually be
-// executed — it is the only one that spawns anything. Without recording that
-// answer, every later resolution (chat, connection test, memory summariser,
-// companion install) would redo the naive "first hit on PATH" walk and land
-// back on the very shim detection just rejected: Settings would advertise the
-// agent as installed while each turn exec'd a broken wrapper. Publishing the
-// winner here keeps detection and launch pointed at the same binary.
-const detectedExecutables = new Map<string, string>();
+// Detection is the only stage that learns this — it is the only one that spawns
+// anything. Without recording the answer, every later resolution (chat,
+// connection test, memory summariser, companion install) would redo the naive
+// "first hit on PATH" walk and land back on the very shim detection just
+// rejected: Settings would advertise the agent as installed while each turn
+// exec'd a broken wrapper.
+//
+// This deliberately records what is *broken* rather than which candidate won.
+// Skipping proven-dead paths leaves PATH order in charge of everything still
+// standing, so a CLI that becomes visible earlier after detection ran — a fresh
+// install, a version manager swapping shims, a caller resolving under its own
+// environment — still wins. Remembering the winner instead pins the daemon to
+// one binary for its whole lifetime and silently outranks the caller's PATH.
+const unusableExecutables = new Map<string, Set<string>>();
 
-/** Record the executable a detection pass proved invocable. */
-export function rememberDetectedExecutable(agentId: string, resolvedPath: string): void {
-  detectedExecutables.set(agentId, resolvedPath);
+/** Record an executable a detection pass proved could not be launched. */
+export function rememberUnusableExecutable(agentId: string, resolvedPath: string): void {
+  const known = unusableExecutables.get(agentId);
+  if (known) known.add(resolvedPath);
+  else unusableExecutables.set(agentId, new Set([resolvedPath]));
 }
 
 /**
- * Drop an agent's remembered executable. Detection clears it before each pass
- * so a re-scan after the user repairs or removes a CLI never resolves against
- * a stale winner.
+ * Drop what an agent proved unusable. Detection clears it before each pass, so
+ * a rescan after the user repairs or reinstalls a CLI never keeps skipping it.
  */
-export function forgetDetectedExecutable(agentId: string): void {
-  detectedExecutables.delete(agentId);
-}
-
-/**
- * Pick the remembered winner, but only when the live search already offers it.
- *
- * The memory reorders candidates; it must never introduce one. Resolution has
- * to stay a pure function of the current environment — an emptied PATH, a
- * sandboxed `OD_AGENT_HOME`, or an uninstalled CLI all have to keep meaning
- * "not found", and a winner remembered from a richer environment must not
- * resurrect a binary the caller can no longer see.
- */
-function preferRememberedExecutable(agentId: string, candidates: string[]): string | null {
-  const remembered = detectedExecutables.get(agentId);
-  if (!remembered) return null;
-  return candidates.includes(remembered) ? remembered : null;
+export function forgetUnusableExecutables(agentId: string): void {
+  unusableExecutables.delete(agentId);
 }
 
 export function inspectAgentExecutableResolution(
@@ -420,6 +413,7 @@ export function inspectAgentExecutableResolution(
     ...(Array.isArray(def.fallbackBins) ? def.fallbackBins : []),
   ];
   const skip = new Set(options.skipPathCandidates ?? []);
+  for (const proven of unusableExecutables.get(def.id) ?? []) skip.add(proven);
   const pathCandidates: string[] = [];
   for (const bin of candidates) {
     for (const resolved of resolveAllOnPath(bin)) {
@@ -427,14 +421,10 @@ export function inspectAgentExecutableResolution(
       pathCandidates.push(resolved);
     }
   }
-  // Among what the current environment offers, prefer the candidate detection
-  // proved invocable; otherwise take the first hit as before. Plain order is
-  // not enough on its own — the first file that merely *exists* is exactly the
-  // broken shim detection walked past. An explicit `*_BIN` override and a
-  // packaged built-in still outrank both (see the selectedPath order below),
-  // so this only settles guesswork, never a deliberate choice.
-  const pathResolvedPath: string | null =
-    preferRememberedExecutable(def.id, pathCandidates) ?? pathCandidates[0] ?? null;
+  // First hit among what is left. Plain order is not enough on its own — the
+  // first file that merely *exists* can be a shim detection already proved
+  // dead, which is why those are filtered out above rather than ranked below.
+  const pathResolvedPath: string | null = pathCandidates[0] ?? null;
   const builtInPath = packagedBuiltInExecutable(def, configuredEnv);
   const appBundlePath = codexAppBundleExecutable(def);
   return {

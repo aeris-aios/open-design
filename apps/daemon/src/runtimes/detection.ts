@@ -12,8 +12,8 @@ import { probeAgentAuthStatus } from './auth.js';
 import { agentCapabilities } from './capabilities.js';
 import { installMetaForAgent } from './metadata.js';
 import {
-  forgetDetectedExecutable,
-  rememberDetectedExecutable,
+  forgetUnusableExecutables,
+  rememberUnusableExecutable,
   resolveAmrOpenCodeExecutable,
 } from './executables.js';
 import { resolveAmrProfile } from '../integrations/vela.js';
@@ -299,9 +299,9 @@ async function probe(
   configuredEnv: Record<string, string> = {},
 ): Promise<DetectedAgent> {
   detectedRuntimeVersions.delete(def.id);
-  // Drop the previous winner before re-probing: a rescan after the user fixes
-  // or removes a CLI must not resolve against a stale one.
-  forgetDetectedExecutable(def.id);
+  // Forget what a previous pass proved unusable before re-probing: a rescan
+  // after the user repairs or reinstalls a CLI must not keep skipping it.
+  forgetUnusableExecutables(def.id);
   // Detection must probe the exact path the runtime will spawn, not just the
   // PATH-visible shim. This is load-bearing for Codex under nvm/fnm/mise:
   // the discovered `codex` entry is often a `#!/usr/bin/env node` wrapper
@@ -385,13 +385,18 @@ async function probe(
     );
     outcome = await probeVersionAtPath(def, next.launchPath, probeEnv);
   }
-  // Publish the executable this pass proved invocable, so chat, the connection
-  // test, and every other spawn site resolve to the same binary instead of
-  // redoing the naive first-hit-on-PATH walk. This restores the invariant
-  // stated above — detection probes the exact path the runtime will spawn —
-  // which the candidate walk would otherwise have broken.
-  if (outcome.kind !== 'not-invocable') {
-    rememberDetectedExecutable(def.id, launch.selectedPath);
+  // Publish every candidate this pass proved cannot be launched, so chat, the
+  // connection test, and every other spawn site skip them instead of redoing
+  // the naive first-hit-on-PATH walk and landing back on the shim detection
+  // rejected. This restores the invariant stated above — detection probes the
+  // exact path the runtime will spawn — which the candidate walk would
+  // otherwise have broken. Recording the dead paths rather than the winner
+  // leaves PATH order in charge of every candidate still standing.
+  for (const attempted of attemptedPaths) {
+    rememberUnusableExecutable(def.id, attempted);
+  }
+  if (outcome.kind === 'not-invocable') {
+    rememberUnusableExecutable(def.id, launch.selectedPath);
   }
   if (outcome.kind === 'not-invocable') {
     // Report the path that was actually tried. The agent picker only renders
