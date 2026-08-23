@@ -29,6 +29,7 @@ import type {
   AgentDiagnostic,
   DetectedAgent,
   RuntimeAgentDef,
+  RuntimeVersionPolicy,
   RuntimeCapabilityMap,
   RuntimeModelSource,
   RuntimeModelOption,
@@ -235,6 +236,17 @@ async function probeVersionAtPath(
     }
     return { kind: 'spawned', version: null };
   }
+}
+
+/**
+ * Whether a probed version is one this build stands behind: an exact match on
+ * what we exercised, or a match on the release line the agent declares. The
+ * line exists so an agent that ships release candidates faster than we ship
+ * does not warn every user who followed our own install instructions.
+ */
+function versionIsSupported(policy: RuntimeVersionPolicy, version: string): boolean {
+  if (policy.supportedVersions.includes(version)) return true;
+  return policy.supportedVersionPattern?.test(version) ?? false;
 }
 
 async function probeAmrOpenCodeVersion(
@@ -449,7 +461,7 @@ async function probe(
   const versionDiagnostic =
     def.versionPolicy &&
     outcome.version &&
-    !def.versionPolicy.supportedVersions.includes(outcome.version)
+    !versionIsSupported(def.versionPolicy, outcome.version)
       ? buildVersionDiagnostic(def, outcome.version)
       : null;
   // The version probe must finish first (it gates availability), but the
