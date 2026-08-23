@@ -198,8 +198,20 @@ const clientCopyJson = JSON.stringify({
       <div class="section-heading">
         <div><h2 id="task-title">{isZh ? '五个场景，逐一展开' : 'Five scenarios, viewed one by one'}</h2><p>{isZh ? '每个场景都使用同一套视图：左侧比较原始分与 PDR 通过率，右侧观察表现与单次成本的关系。' : 'Each scenario uses the same pair of views: score and PDR ranking on the left, performance against session cost on the right.'}</p></div>
       </div>
-      <nav class="scenario-index" aria-label={isZh ? '五个设计场景' : 'Five design scenarios'}>
-        {leaderboardGroups.slice(1).map((group, index) => <a href={`#scenario-${group.id}`}><i>{String(index + 1).padStart(2, '0')}</i><span><strong>{group.label}</strong><small>{group.detail}</small></span></a>)}
+      <nav class="task-map" aria-label={isZh ? '五个设计场景' : 'Five design scenarios'}>
+        {leaderboardGroups.slice(1).map((group, index) => {
+          const scene = scenarios[index]!;
+          const winner = group.rows[0]!;
+          return (
+            <a class="task-tile" href={`#scenario-${group.id}`} style={`background:${scene.color};grid-area:${scene.area}`}>
+              <span>{group.label}</span><small>{group.detail}</small>
+              <div class="task-winner">
+                <span class="model-icon"><img src={winner.icon} alt="" width="24" height="24" /></span>
+                <strong>{winner.name}</strong><b>{winner.score.toFixed(1)}<small>/100</small></b>
+              </div>
+            </a>
+          );
+        })}
       </nav>
       <div class="scenario-ranking-stack">
         {leaderboardGroups.slice(1).map((group, index) => (
