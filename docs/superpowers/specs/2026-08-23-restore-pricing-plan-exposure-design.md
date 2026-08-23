@@ -1,118 +1,209 @@
-# Restore Migrated Pricing Analytics Design
+# Restore Authenticated Pricing Funnel Analytics Design
 
 ## Goal
 
-Restore the retired Vela Pricing modal's compatible analytics events on the
-migrated OpenDesign `/pricing/` page without restoring the modal or changing
-checkout behavior.
+Restore the Vela subscription funnel that was lost when the authenticated
+plan-selection modal was replaced by the shared OpenDesign `/pricing/` page.
+The restored events must continue into the existing AMR PostHog project and
+preserve the current dashboard and alert contract. The migrated Pricing UI,
+checkout handoff, prices, and entitlements remain unchanged.
+
+## Confirmed Legacy Semantics
+
+The retired surface lived behind Vela authentication on `/wallet` and
+`/dashboard`. It emitted `subscription_plan_exposure` for Go, Plus, Pro, and
+Max, and emitted the registry-backed `subscription_pricing_click` event for
+plan CTAs, interval changes, and the Enterprise lead interactions that existed
+on the modal. Both registry entries have `anonymousAllowed: false` and
+`publicPageAllowed: false`.
+
+The Vela API stored the events in AMR PostHog as:
+
+| Registry key | AMR PostHog event | Existing breakdown key |
+| --- | --- | --- |
+| `subscription_plan_exposure` | `subscription_plan_exposure` | `registry_key=subscription_plan_exposure` |
+| `subscription_pricing_click` | `ui_click` | `registry_key=subscription_pricing_click` |
+
+The public Pricing page's direct OpenDesign PostHog capture is a different
+pipeline. Reusing the same JavaScript event name there does not restore the AMR
+funnel. The new bridge therefore terminates at Vela's authenticated analytics
+pipeline rather than OpenDesign PostHog.
 
 ## Scope
 
-- Start from the latest `nexu-io/open-design` `main` branch.
-- Change only the landing Pricing analytics and its regression coverage.
-- Emit one exposure for each visible paid Personal plan: Plus, Pro, and Max.
-- Do not include Go or Team plans because the retired event covered the
-  Personal Plus/Pro/Max catalog.
-- Emit again when the visitor changes the billing interval because the visible
-  price and grant context changes, matching the retired catalog behavior.
-- Do not emit when the Team audience is active because the Personal cards are
-  hidden.
-- Do not restore any modal, route, or purchase-flow code.
-- Restore `subscription_pricing_click` for equivalent controls that still
-  exist on the migrated page: Personal plan CTA, billing-interval change,
-  Enterprise lead open, and Enterprise lead submit.
-- Do not recreate analytics for removed UI such as proof samples or customer
-  stories.
-- Keep checkout creation, return, lifecycle, and payment-result events in Vela;
-  the landing page must not duplicate those downstream facts.
+- Two repositories and two PRs: Vela provides the authenticated ingestion
+  boundary; OpenDesign emits from the migrated Pricing interactions.
+- Only visitors with a valid Vela session and a trusted `/wallet` or
+  `/dashboard` Pricing entry are included in the restored AMR funnel.
+- Anonymous or direct public Pricing visitors continue to use the existing
+  OpenDesign Pricing analytics only.
+- Restore equivalent interactions that still exist: Go/Plus/Pro/Max exposure,
+  enabled Personal subscribe/upgrade CTA, interval change, Enterprise lead
+  open, and Enterprise lead submit intent.
+- Do not recreate the retired modal, removed controls, checkout-result events,
+  or PII-bearing legacy lead payloads.
+- Do not change Pricing rendering, plan selection, checkout URLs, payment
+  behavior, entitlement behavior, or existing OpenDesign analytics.
 
-## Event Contract
+## Architecture
 
-Use the existing event names `subscription_plan_exposure` and
-`subscription_pricing_click`. Preserve the old Personal plan fields and Vela's
-camelCase PostHog representation while adapting the page context to the
-migrated surface:
+### Vela: authenticated Pricing analytics endpoint
 
-- `pageName=pricing`
+Add a purpose-built authenticated endpoint at
+`POST /api/v1/analytics/pricing-events`. The endpoint accepts only a small,
+discriminated Pricing request contract; it does not accept arbitrary registry
+keys, event names, common metadata, or free-form properties.
+
+The endpoint:
+
+1. requires the same valid Vela user session used by the public Pricing page's
+   existing subscription-context request;
+2. validates the request origin against the existing OpenDesign hosted-origin
+   policy and rejects anonymous calls with `401`;
+3. accepts only `plan_exposure` and `pricing_click` records, with a bounded
+   batch size and bounded string fields;
+4. accepts only `sourceSurface=wallet|dashboard`, Personal plan IDs
+   `go|plus|pro|max`, billing intervals `monthly|yearly`, and the legacy click
+   elements that the new page actually emits;
+5. maps the reduced request into the existing analytics registry contract,
+   stamping `pageName=workspace`, `workspaceTab=sourceSurface`, the authenticated
+   user profile, server receive time, registry key, event name, event type, and
+   normal common metadata;
+6. sends the mapped records through the existing `AnalyticsService`, so the
+   primary AMR destination receives the same event names and
+   `registry_key` properties as before;
+7. never accepts or forwards email, name, company, free-form lead text, URL,
+   referrer text, or other PII.
+
+The client supplies a bounded event ID and occurrence time so navigation-safe
+`keepalive` delivery remains idempotent. The server rejects stale, future, or
+malformed timestamps and validates every plan/click payload against the
+existing registry schema before storage.
+
+### OpenDesign: Pricing compatibility emitter
+
+The Pricing page gains a small client that posts reduced events to the Vela
+endpoint with credentials and `keepalive: true`. It does not synthesize Vela's
+internal analytics envelope and does not send these compatibility records to
+`window.__odTrack`.
+
+The emitter activates only after all of the following are true:
+
+- the Cloud Console destination is an allowlisted production Vela origin;
+- the subscription-context request confirms a valid authenticated session;
+- the inbound entry resolves to a trusted Vela `/wallet` or `/dashboard`
+  surface;
+- the Personal pricing context has finished resolving, including current plan,
+  current interval, and first-month eligibility.
+
+The trusted surface is derived from an explicit allowlisted handoff value when
+present, otherwise from an allowlisted OpenDesign/Vela referrer host with an
+exact route segment. Arbitrary query strings and external referrers cannot
+create new analytics dimensions.
+
+## Event Mapping
+
+### Plan exposure
+
+When the Personal audience is visible, emit one `plan_exposure` input for each
+visible Personal plan: Go, Plus, Pro, and Max. Vela maps each record to
+`subscription_plan_exposure` with the legacy properties:
+
+- `pageName=workspace`
+- `workspaceTab=wallet|dashboard`
 - `area=subscription_pricing`
-- `entryPoint=open_design_entry`, preserving the old registry enum for the new
-  OpenDesign-owned surface
-- `sourceDetail`: derive from `od_entry_source`, then `source`, then the
-  previous page's `/wallet` or `/dashboard` referrer, then `direct`
-- `conversionSource`: derive from `od_conversion_source`, then
-  `sourceDetail`
-- `planId` and `planName`: `plus | pro | max`
-- `billingInterval`: the visible `monthly | yearly` selection
-- `priceUsd`: introductory monthly price or full yearly price, formatted with
-  two decimals
-- `creditsGrantedUsd`: monthly grant; yearly grants normalized to one month,
-  formatted with two decimals
-- `deployLimit`: the plan contract value, including zero if introduced later
-- `introOfferApplied`: true only for the monthly introductory price
-- `isRecommended`: the plan contract recommendation flag
+- `entryPoint=open_design_entry`
+- `planId`, `planName`, `billingInterval`, `priceUsd`
+- `creditsGrantedUsd`, `deployLimit`, `introOfferApplied`
+- `firstMonthEligible`, `isCurrentPlan`, `isRecommended`
 - `autoRechargeSupported=true`
+- validated optional OpenDesign campaign attribution already allowed by the
+  Vela registry
 
-The landing page already supplies `locale` and routes the event through its
-existing `window.__odTrack` PostHog helper. PostHog also attaches
-`$current_url`; preserve inbound `od_*` attribution fields in the compatible
-event payload. `entryPoint` remains the valid `open_design_entry` enum while
-`sourceDetail` and `conversionSource` distinguish the explicit URL source and
-fall back to the same-origin referrer when the redirect omitted query
-parameters. No
-new event name, analytics sink, dependency, or Feishu taxonomy row is
-introduced.
+Go uses the legacy catalog values: zero credits, zero deploy limit, and not
+recommended. Yearly credits are normalized to one month, matching the retired
+modal.
 
-For `subscription_pricing_click`:
+Exposure is deferred until authenticated pricing context resolves. Deduplication
+includes audience, interval, eligibility, current plan, and current interval,
+so a state correction cannot be swallowed. Switching to Team clears the active
+Personal exposure signature; returning to Personal creates a genuine
+re-exposure. Repeating the same resolved state does not.
 
-- a Personal paid-plan CTA emits `subscribe_now` when there is no current
-  Personal subscription and `upgrade_now` when the loaded pricing context has
-  a current Personal plan;
-- interval controls emit `change_interval` with current and target intervals;
-- Enterprise lead opening emits `request_team_access` with
-  `area=enterprise_contact` and `targetDestination=lead_form`;
-- Enterprise lead submission emits `team_lead_submit` with the same area and
-  destination;
-- plan CTA payloads include target plan, target interval, plan price/grant
-  fields, recommendation, and intro-offer state.
+### Pricing click
 
-## Data Flow
+Vela maps `pricing_click` inputs to the existing registry key
+`subscription_pricing_click`, whose AMR PostHog event remains `ui_click`.
 
-1. Astro passes the existing `PRICING_SNAPSHOT.tiers` contract into the Pricing
-   page's inline enhancement script.
-2. After the analytics helper is available, the script reads the active
-   audience and interval.
-3. If the Personal audience is visible, it emits one
-   `subscription_plan_exposure` per paid Personal tier.
-4. The existing interval activation path emits the new interval's three plan
-   exposures after updating the visible state and emits one
-   `subscription_pricing_click` for the interval control.
-5. Audience switching into Personal emits the current interval's three plan
-   exposures; switching to Team emits none.
-6. Existing CTA and Enterprise handlers dual-report their current `ui_click` /
-   lead event and the old compatible `subscription_pricing_click` event.
+- Enabled Go/Plus/Pro/Max CTA: `subscribe_now` when no current Personal plan,
+  otherwise `upgrade_now`, with current and target plan/interval fields.
+- User-initiated monthly/yearly change: `change_interval`, emitted before the
+  new interval's exposures.
+- Enterprise lead open: `request_team_access`,
+  `area=enterprise_contact`, `targetDestination=lead_form`.
+- Enterprise form submit intent: `team_lead_submit` before client validation or
+  network submission, preserving the legacy click meaning. Existing
+  `lead_submit_invalid`, `lead_submit_attempt`, `lead_submit_success`, and
+  `lead_submit_failed` events continue independently in OpenDesign PostHog.
 
-## Duplicate Control
+Disabled/current/downgrade-unavailable Personal CTAs, Team checkout CTAs,
+removed email/story/proof controls, and programmatic interval synchronization
+do not emit compatibility clicks.
 
-Deduplicate by `audience + billingInterval` during a page session. Initial
-state synchronization and repeated activation of the same state must not emit
-duplicates. A genuine interval change or returning from Team to Personal may
-emit again because a newly visible plan surface is being exposed.
+## Failure and Privacy Behavior
 
-## Testing
+Compatibility analytics are best effort. A timeout, `401`, validation failure,
+network error, or unavailable Vela endpoint must not block rendering, form
+validation, checkout navigation, or lead submission. Failures may be logged in
+development but must not expose request bodies or user data.
 
-Add a Pricing contract regression test before production code. It must fail on
-the current `main` branch and prove that:
+The endpoint is authenticated, origin-restricted, schema-restricted, and
+rate-limited. It stores no additional cookies and accepts no PII. Direct public
+traffic cannot write to the AMR funnel, preserving the original population.
 
-- both compatible event names are present;
-- only Plus, Pro, and Max are traversed;
-- payloads retain the old plan, interval, price, grant, deploy-limit, intro,
-  recommendation, and auto-recharge fields;
-- Personal initial load and interval changes trigger exposure tracking;
-- Team activation does not report Personal plan exposures;
-- the equivalent plan, interval, and Enterprise controls emit the old click
-  event with URL-derived attribution;
-- checkout/result events are not added to the landing page;
-- the old Vela modal is not reintroduced.
+## Rollout
 
-Run the focused Pricing contract suite, the full landing-page test suite,
-landing-page typecheck, and landing-page static build before creating the PR.
+Deploy the Vela endpoint first. The OpenDesign emitter may then be deployed
+without a compatibility window or feature migration. Until Vela is available,
+OpenDesign continues its existing local Pricing analytics and checkout behavior;
+the compatibility post simply fails open.
+
+The two PRs cross-link each other and state the deployment order. The existing
+AMR dashboard and alert continue querying
+`subscription_plan_exposure` and `ui_click` with
+`registry_key=subscription_pricing_click`; no data-source migration is required.
+
+## Testing and Acceptance
+
+### Vela
+
+- Route tests prove anonymous and untrusted-origin requests are rejected.
+- Contract tests prove arbitrary registry keys, unknown plans/elements,
+  malformed/stale times, oversized batches, and free-form fields are rejected.
+- Mapping tests prove both registry entries receive exact legacy event names,
+  types, common metadata, `pageName=workspace`, and the correct
+  `workspaceTab`.
+- Repository tests prove the resulting PostHog payloads remain
+  `subscription_plan_exposure` and `ui_click` with the legacy `registry_key`.
+
+### OpenDesign
+
+- Pure contract tests cover Go/Plus/Pro/Max price and grant payloads, strict
+  source resolution, context-aware deduplication, click classification, and
+  excluded interactions.
+- DOM/browser integration tests cover authenticated context resolution before
+  first exposure, same-interval state correction, audience leave/return,
+  interval control ordering, enabled/disabled CTAs, Enterprise submit intent,
+  and navigation-safe endpoint delivery.
+- Existing `page_view`, `ui_click`, lead-form analytics, pricing UI, and checkout
+  destinations remain unchanged.
+- Full repository gates, typechecks, unit suites, and relevant browser tests
+  pass in both repositories.
+
+## Documentation
+
+Update the current Feishu tracking rows for `subscription_plan_exposure` and
+`subscription_pricing_click` to state that the migrated public Pricing page
+emits them only through the authenticated Vela bridge and preserves
+`pageName=workspace` plus `workspaceTab`. No new event name or dashboard source
+is introduced.
