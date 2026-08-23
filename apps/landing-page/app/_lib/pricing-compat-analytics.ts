@@ -12,19 +12,6 @@ import type {
   PlanTierConfig,
 } from './pricing';
 
-/** Temporary compile seam for the page wiring replaced in Task 3. */
-export type PricingCompatibilityEvent =
-  | 'subscription_plan_exposure'
-  | 'subscription_pricing_click';
-
-/** Temporary compile seam; compatibility attribution now comes from Vela. */
-export function pricingCompatibilityAttribution(
-  _search: URLSearchParams,
-  _referrer = '',
-): Record<string, never> {
-  return {};
-}
-
 export type ResolvedPricingContext = {
   authenticated: true;
   sourceSurface: PricingBridgeSource;
@@ -36,10 +23,6 @@ export type ResolvedPricingContext = {
 type PersonalExposureInput = {
   audience: 'creator' | 'team';
   interval: BillingInterval;
-  /** Legacy page arguments are ignored; resolved context is authoritative. */
-  introEligible?: boolean;
-  currentPlanId?: PlanTier | null;
-  currentBillingInterval?: BillingInterval | null;
 };
 
 type IntervalChangeInput = Omit<PersonalExposureInput, 'interval'> & {
@@ -49,14 +32,10 @@ type IntervalChangeInput = Omit<PersonalExposureInput, 'interval'> & {
 };
 
 type PlanClickInput = {
-  /** Optional only until Task 3 replaces the existing page call site. */
-  audience?: 'creator' | 'team';
+  audience: 'creator' | 'team';
   planId: string;
   interval: BillingInterval;
   enabled: boolean;
-  introEligible?: boolean;
-  currentPlanId?: PlanTier | null;
-  currentBillingInterval?: BillingInterval | null;
 };
 
 type CompatibilityTransport = typeof postPricingBridgeEvents;
@@ -68,12 +47,6 @@ type PricingCompatibilityOptions = {
   postEvents?: CompatibilityTransport;
   now?: () => Date;
   createEventId?: () => string;
-  /** Legacy page arguments are intentionally unused until Task 3 removes them. */
-  attribution?: unknown;
-  track?: (
-    event: PricingCompatibilityEvent,
-    props: Record<string, unknown>,
-  ) => void;
 };
 
 let fallbackEventSequence = 0;
@@ -105,8 +78,12 @@ function personalPlanFacts(
     priceUsd: priceUsd.toFixed(2),
     creditsGrantedUsd: creditsGrantedUsd.toFixed(2),
     introOfferApplied,
-    isRecommended: tier.recommended,
   } as const;
+}
+
+function recommendedPlan(currentPlanId: PlanTier | null): PlanTier | null {
+  if (currentPlanId === 'max') return null;
+  return currentPlanId === 'pro' ? 'max' : 'pro';
 }
 
 export function createPricingCompatibilityAnalytics({
@@ -181,7 +158,7 @@ export function createPricingCompatibilityAnalytics({
         isCurrentPlan:
           resolved.currentPlanId === tier.tier &&
           resolved.currentBillingInterval === input.interval,
-        isRecommended: facts.isRecommended,
+        isRecommended: tier.tier === recommendedPlan(resolved.currentPlanId),
       });
     });
   };
@@ -232,7 +209,7 @@ export function createPricingCompatibilityAnalytics({
       isCurrentPlan:
         context.currentPlanId === tier.tier &&
         context.currentBillingInterval === input.interval,
-      isRecommended: facts.isRecommended,
+      isRecommended: tier.tier === recommendedPlan(context.currentPlanId),
     } as const;
     const payload: PricingClickInput = context.currentPlanId === null
       ? {
@@ -252,7 +229,14 @@ export function createPricingCompatibilityAnalytics({
     element: 'request_team_access' | 'team_lead_submit',
   ) => {
     if (!context) return;
-    emit([createEvent('pricing_click', { element })]);
+    const enterpriseContext = {
+      currentPlanId: context.currentPlanId,
+      currentBillingInterval: context.currentBillingInterval,
+    } as const;
+    const payload: PricingClickInput = element === 'request_team_access'
+      ? { element: 'request_team_access', ...enterpriseContext }
+      : { element: 'team_lead_submit', ...enterpriseContext };
+    emit([createEvent('pricing_click', payload)]);
   };
 
   return {

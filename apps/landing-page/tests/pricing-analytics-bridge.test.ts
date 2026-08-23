@@ -156,12 +156,34 @@ test('transport posts only the reduced authenticated bridge body', async () => {
       isRecommended: false,
     },
   };
+  const enterpriseClickEvents: PricingBridgeEvent[] = [
+    {
+      kind: 'pricing_click',
+      eventId: 'enterprise-open-1',
+      eventTime,
+      payload: {
+        element: 'request_team_access',
+        currentPlanId: null,
+        currentBillingInterval: null,
+      },
+    },
+    {
+      kind: 'pricing_click',
+      eventId: 'enterprise-submit-1',
+      eventTime,
+      payload: {
+        element: 'team_lead_submit',
+        currentPlanId: 'pro',
+        currentBillingInterval: 'yearly',
+      },
+    },
+  ];
 
   const result = await postPricingBridgeEvents({
     apiOrigin: 'https://amr-api.open-design.ai/',
     sourceSurface: 'dashboard',
     sessionId: 'pricing-session-1',
-    events: [eventWithForbiddenFields, clickEvent],
+    events: [eventWithForbiddenFields, clickEvent, ...enterpriseClickEvents],
     fetcher: async (input, init) => {
       capturedUrl = String(input);
       capturedInit = init;
@@ -185,7 +207,7 @@ test('transport posts only the reduced authenticated bridge body', async () => {
   assert.deepEqual(JSON.parse(String(capturedInit?.body)), {
     sourceSurface: 'dashboard',
     sessionId: 'pricing-session-1',
-    events: [exposureEvent, clickEvent],
+    events: [exposureEvent, clickEvent, ...enterpriseClickEvents],
   });
 });
 

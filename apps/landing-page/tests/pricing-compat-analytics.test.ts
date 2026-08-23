@@ -136,6 +136,31 @@ describe('migrated Pricing compatibility analytics', () => {
     assert.equal(testHarness.requests[0]?.sessionId, 'pricing-session-1');
   });
 
+  it('preserves the legacy recommendation progression for every current plan exposure', () => {
+    const fixtures = [
+      { currentPlanId: null, expected: [false, false, true, false] },
+      { currentPlanId: 'go', expected: [false, false, true, false] },
+      { currentPlanId: 'plus', expected: [false, false, true, false] },
+      { currentPlanId: 'pro', expected: [false, false, false, true] },
+      { currentPlanId: 'max', expected: [false, false, false, false] },
+    ] as const;
+
+    for (const fixture of fixtures) {
+      const testHarness = harness();
+      resolve(testHarness, {
+        currentPlanId: fixture.currentPlanId,
+        currentBillingInterval: fixture.currentPlanId ? 'monthly' : null,
+      });
+      testHarness.analytics.exposePlans({ audience: 'creator', interval: 'yearly' });
+
+      assert.deepEqual(
+        exposures(testHarness).map((event) => event.payload.isRecommended),
+        fixture.expected,
+        `current plan ${fixture.currentPlanId ?? 'none'}`,
+      );
+    }
+  });
+
   it('does not let a pre-resolution render swallow the corrected first exposure', () => {
     const testHarness = harness();
 
@@ -279,6 +304,39 @@ describe('migrated Pricing compatibility analytics', () => {
     ]);
   });
 
+  it('preserves the legacy recommendation progression for every current plan CTA', () => {
+    const fixtures = [
+      { currentPlanId: null, expected: [false, false, true, false] },
+      { currentPlanId: 'go', expected: [false, false, true, false] },
+      { currentPlanId: 'plus', expected: [false, false, true, false] },
+      { currentPlanId: 'pro', expected: [false, false, false, true] },
+      { currentPlanId: 'max', expected: [false, false, false, false] },
+    ] as const;
+    const planIds = ['go', 'plus', 'pro', 'max'] as const;
+
+    for (const fixture of fixtures) {
+      const testHarness = harness();
+      resolve(testHarness, {
+        currentPlanId: fixture.currentPlanId,
+        currentBillingInterval: fixture.currentPlanId ? 'monthly' : null,
+      });
+      for (const planId of planIds) {
+        testHarness.analytics.clickPlan({
+          audience: 'creator',
+          planId,
+          interval: 'yearly',
+          enabled: true,
+        });
+      }
+
+      assert.deepEqual(
+        clicks(testHarness).map((event) => event.payload.isRecommended),
+        fixture.expected,
+        `current plan ${fixture.currentPlanId ?? 'none'}`,
+      );
+    }
+  });
+
   it('excludes disabled, Team, and unknown plan CTAs', () => {
     const testHarness = harness();
     resolve(testHarness);
@@ -310,14 +368,46 @@ describe('migrated Pricing compatibility analytics', () => {
 
   it('records Enterprise submit as an immediate intent event', () => {
     const testHarness = harness();
+    resolve(testHarness, {
+      currentPlanId: 'pro',
+      currentBillingInterval: 'yearly',
+    });
+
+    testHarness.analytics.openEnterpriseLead();
+    testHarness.analytics.submitEnterpriseLead();
+
+    assert.deepEqual(clicks(testHarness).map((event) => event.payload), [
+      {
+        element: 'request_team_access',
+        currentPlanId: 'pro',
+        currentBillingInterval: 'yearly',
+      },
+      {
+        element: 'team_lead_submit',
+        currentPlanId: 'pro',
+        currentBillingInterval: 'yearly',
+      },
+    ]);
+  });
+
+  it('records nullable Enterprise context for users without a current plan', () => {
+    const testHarness = harness();
     resolve(testHarness);
 
     testHarness.analytics.openEnterpriseLead();
     testHarness.analytics.submitEnterpriseLead();
 
     assert.deepEqual(clicks(testHarness).map((event) => event.payload), [
-      { element: 'request_team_access' },
-      { element: 'team_lead_submit' },
+      {
+        element: 'request_team_access',
+        currentPlanId: null,
+        currentBillingInterval: null,
+      },
+      {
+        element: 'team_lead_submit',
+        currentPlanId: null,
+        currentBillingInterval: null,
+      },
     ]);
   });
 

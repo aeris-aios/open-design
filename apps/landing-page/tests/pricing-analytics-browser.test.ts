@@ -337,8 +337,19 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     assert.deepEqual(
       flattened(requests)
         .filter((event) => event.kind === 'pricing_click')
-        .map((event) => event.payload.element),
-      ['request_team_access', 'team_lead_submit'],
+        .map((event) => event.payload),
+      [
+        {
+          element: 'request_team_access',
+          currentPlanId: 'pro',
+          currentBillingInterval: 'yearly',
+        },
+        {
+          element: 'team_lead_submit',
+          currentPlanId: 'pro',
+          currentBillingInterval: 'yearly',
+        },
+      ],
     );
   });
 });

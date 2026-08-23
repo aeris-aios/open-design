@@ -39,6 +39,15 @@ type PlanCtaClickFields = {
   isRecommended: boolean;
 };
 
+type EnterpriseClickContext = {
+  currentPlanId: PlanTier | null;
+  currentBillingInterval: BillingInterval | null;
+};
+
+type EnterpriseClickInput =
+  | (EnterpriseClickContext & { element: 'request_team_access' })
+  | (EnterpriseClickContext & { element: 'team_lead_submit' });
+
 export type PricingClickInput =
   | (PlanCtaClickFields & {
       element: 'subscribe_now';
@@ -49,8 +58,7 @@ export type PricingClickInput =
       currentPlanId: PlanTier;
     })
   | ChangeIntervalClickInput
-  | { element: 'request_team_access' }
-  | { element: 'team_lead_submit' };
+  | EnterpriseClickInput;
 
 export type PricingBridgeEvent =
   | {
@@ -286,9 +294,31 @@ function sanitizedClickPayload(value: unknown): PricingClickInput | null {
       };
     }
     case 'request_team_access':
-      return { element: 'request_team_access' };
+      if (
+        (payload.currentPlanId !== null && !isPlanTier(payload.currentPlanId)) ||
+        (payload.currentBillingInterval !== null &&
+          !isBillingInterval(payload.currentBillingInterval))
+      ) {
+        return null;
+      }
+      return {
+        element: 'request_team_access',
+        currentPlanId: payload.currentPlanId,
+        currentBillingInterval: payload.currentBillingInterval,
+      };
     case 'team_lead_submit':
-      return { element: 'team_lead_submit' };
+      if (
+        (payload.currentPlanId !== null && !isPlanTier(payload.currentPlanId)) ||
+        (payload.currentBillingInterval !== null &&
+          !isBillingInterval(payload.currentBillingInterval))
+      ) {
+        return null;
+      }
+      return {
+        element: 'team_lead_submit',
+        currentPlanId: payload.currentPlanId,
+        currentBillingInterval: payload.currentBillingInterval,
+      };
     default:
       return null;
   }
