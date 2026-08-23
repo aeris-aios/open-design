@@ -295,6 +295,19 @@ describe('migrated Pricing compatibility analytics', () => {
     assert.deepEqual(testHarness.requests, []);
   });
 
+  it('fails closed when a Personal CTA omits its audience', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+
+    testHarness.analytics.clickPlan({
+      planId: 'go',
+      interval: 'monthly',
+      enabled: true,
+    });
+
+    assert.deepEqual(testHarness.requests, []);
+  });
+
   it('records Enterprise submit as an immediate intent event', () => {
     const testHarness = harness();
     resolve(testHarness);

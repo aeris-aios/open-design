@@ -213,7 +213,7 @@ export function createPricingCompatibilityAnalytics({
   };
 
   const clickPlan = (input: PlanClickInput) => {
-    if (!context || input.audience === 'team' || !input.enabled) return;
+    if (!context || input.audience !== 'creator' || !input.enabled) return;
     const tier = tiers.find((candidate) => candidate.tier === input.planId);
     if (!tier) return;
 
