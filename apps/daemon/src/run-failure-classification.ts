@@ -10,6 +10,7 @@ import { isModelWindowLimitFailure } from '@open-design/contracts';
 
 import { classifyAmrAccountFailure } from './integrations/vela-errors.js';
 import { summarizeRunToolProgress } from './run-diagnostics.js';
+import { isAcpHandshakeRpcErrorText } from './runtimes/acp-handshake-failure.js';
 import { classifyAgentServiceFailure } from './runtimes/auth.js';
 import type { RunResult, RunStatusForAnalytics } from './run-result.js';
 
@@ -825,9 +826,27 @@ function classifyRunFailureBase(
   }
 
   if (isAgentProtocolErrorText(text)) {
+    const protocolDetail = processExitDetail(errorCode, text);
+    // A JSON-RPC error numbered inside the ACP handshake (`initialize`,
+    // `session/new` / `session/load`) means the CLI never opened a session, so
+    // the run produced nothing and the same CLI build will refuse again.
+    // Attribute it to `session_init` — that stage is what stops the retry
+    // policy from re-running a deterministic failure, and it points triage at
+    // the CLI rather than at the model or the stream.
+    const handshakeRejected =
+      protocolDetail === 'agent_protocol_error' && isAcpHandshakeRpcErrorText(text);
+    if (handshakeRejected) {
+      return classification(
+        'process_exit',
+        protocolDetail,
+        'session_init',
+        false,
+        'install_cli',
+      );
+    }
     return classification(
       'process_exit',
-      processExitDetail(errorCode, text),
+      protocolDetail,
       'child_close',
       retryableHint ?? true,
       retryableHint === false ? 'none' : 'retry',
