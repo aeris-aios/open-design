@@ -3,333 +3,332 @@ import { describe, it } from 'node:test';
 
 import {
   createPricingCompatibilityAnalytics,
-  pricingCompatibilityAttribution,
-  type PricingCompatibilityEvent,
+  type ResolvedPricingContext,
 } from '../app/_lib/pricing-compat-analytics.ts';
-import type { PlanTierConfig } from '../app/_lib/pricing.ts';
+import {
+  PERSONAL_PRICING_TIERS,
+  type PricingBridgeEvent,
+  type postPricingBridgeEvents,
+} from '../app/_lib/pricing-analytics-bridge.ts';
 
-const tiers = [
-  {
-    tier: 'plus',
-    rank: 1,
-    recommended: false,
-    monthly: { priceUsd: 20, introPriceUsd: 16, grantUsd: 20 },
-    yearly: { priceUsd: 168, discountPct: 30, grantUsd: 240 },
-    deployLimit: 3,
-  },
-  {
-    tier: 'pro',
-    rank: 2,
-    recommended: true,
-    monthly: { priceUsd: 100, introPriceUsd: 70, grantUsd: 120 },
-    yearly: { priceUsd: 720, discountPct: 40, grantUsd: 1440 },
-    deployLimit: 20,
-  },
-  {
-    tier: 'max',
-    rank: 3,
-    recommended: false,
-    monthly: { priceUsd: 200, introPriceUsd: 120, grantUsd: 300 },
-    yearly: { priceUsd: 1176, discountPct: 51, grantUsd: 3600 },
-    deployLimit: 50,
-  },
-] satisfies PlanTierConfig[];
+type BridgeRequest = Parameters<typeof postPricingBridgeEvents>[0];
+type Harness = ReturnType<typeof harness>;
 
-type CapturedEvent = {
-  event: PricingCompatibilityEvent;
-  props: Record<string, unknown>;
+const dashboardContext: ResolvedPricingContext = {
+  authenticated: true,
+  sourceSurface: 'dashboard',
+  currentPlanId: null,
+  currentBillingInterval: null,
+  firstMonthEligible: true,
 };
 
-function harness(search = '') {
-  const events: CapturedEvent[] = [];
-  const attribution = pricingCompatibilityAttribution(
-    new URLSearchParams(search),
-  );
+function harness() {
+  const requests: BridgeRequest[] = [];
+  let eventSequence = 0;
   const analytics = createPricingCompatibilityAnalytics({
-    tiers,
-    attribution,
-    track: (event, props) => events.push({ event, props }),
+    apiOrigin: 'https://amr-api.open-design.ai',
+    sessionId: 'pricing-session-1',
+    tiers: PERSONAL_PRICING_TIERS,
+    now: () => new Date('2026-08-23T12:00:00.000Z'),
+    createEventId: () => `event-${++eventSequence}`,
+    postEvents: async (request) => {
+      requests.push(request);
+      return true;
+    },
   });
-  return { analytics, attribution, events };
+  return { analytics, requests };
+}
+
+function resolve(
+  testHarness: Harness,
+  overrides: Partial<Omit<ResolvedPricingContext, 'authenticated'>> = {},
+) {
+  testHarness.analytics.resolveContext({
+    ...dashboardContext,
+    ...overrides,
+  });
+}
+
+function events(testHarness: Harness): PricingBridgeEvent[] {
+  return testHarness.requests.flatMap((request) => [...request.events]);
+}
+
+function exposures(testHarness: Harness) {
+  return events(testHarness).filter(
+    (event): event is Extract<PricingBridgeEvent, { kind: 'plan_exposure' }> =>
+      event.kind === 'plan_exposure',
+  );
+}
+
+function clicks(testHarness: Harness) {
+  return events(testHarness).filter(
+    (event): event is Extract<PricingBridgeEvent, { kind: 'pricing_click' }> =>
+      event.kind === 'pricing_click',
+  );
 }
 
 describe('migrated Pricing compatibility analytics', () => {
-  it('preserves URL attribution while keeping the old entry-point enum', () => {
-    assert.deepEqual(
-      pricingCompatibilityAttribution(
-        new URLSearchParams({
-          od_origin: 'open_design',
-          od_entry_id: 'entry-21',
-          od_entry_source: 'workspace_usage_card',
-          od_entry_at: '2026-08-23T12:00:00.000Z',
-          od_conversion_source: 'workspace_upgrade_button',
-          od_campaign_id: 'deepseek_v4_pro',
-        }),
-      ),
-      {
-        entryPoint: 'open_design_entry',
-        sourceProduct: 'open_design',
-        sourceDetail: 'workspace_usage_card',
-        conversionSource: 'workspace_upgrade_button',
-        entryId: 'entry-21',
-        entryOccurredAt: '2026-08-23T12:00:00.000Z',
-        campaignId: 'deepseek_v4_pro',
-      },
-    );
+  it('no-ops every interaction until authenticated Vela context resolves', () => {
+    const testHarness = harness();
 
-    assert.deepEqual(
-      pricingCompatibilityAttribution(new URLSearchParams('source=workbench')),
-      {
-        entryPoint: 'open_design_entry',
-        sourceProduct: 'open_design',
-        sourceDetail: 'workbench',
-        conversionSource: 'workbench',
-        entryId: undefined,
-        entryOccurredAt: undefined,
-        campaignId: undefined,
-      },
-    );
+    testHarness.analytics.exposePlans({ audience: 'creator', interval: 'yearly' });
+    testHarness.analytics.changeInterval({
+      audience: 'creator',
+      currentInterval: 'yearly',
+      targetInterval: 'monthly',
+      userInitiated: true,
+    });
+    testHarness.analytics.clickPlan({
+      audience: 'creator',
+      planId: 'go',
+      interval: 'monthly',
+      enabled: true,
+    });
+    testHarness.analytics.openEnterpriseLead();
+    testHarness.analytics.submitEnterpriseLead();
 
-    assert.deepEqual(
-      pricingCompatibilityAttribution(
-        new URLSearchParams(),
-        'https://open-design.ai/cloud/dashboard?billing=plan',
-      ),
-      {
-        entryPoint: 'open_design_entry',
-        sourceProduct: 'open_design',
-        sourceDetail: 'workspace_dashboard',
-        conversionSource: 'workspace_dashboard',
-        entryId: undefined,
-        entryOccurredAt: undefined,
-        campaignId: undefined,
-      },
-    );
-
-    assert.equal(
-      pricingCompatibilityAttribution(
-        new URLSearchParams(),
-        'https://example.com/dashboard',
-      ).sourceDetail,
-      'direct',
-    );
+    assert.deepEqual(testHarness.requests, []);
   });
 
-  it('emits the three retired yearly plan exposures with literal plan facts', () => {
-    const { analytics, events } = harness(
-      'od_entry_source=workspace&od_conversion_source=pricing_redirect',
+  it('emits resolved Go Plus Pro Max yearly exposures with literal legacy facts', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+
+    testHarness.analytics.exposePlans({ audience: 'creator', interval: 'yearly' });
+
+    const captured = exposures(testHarness);
+    assert.deepEqual(
+      captured.map((event) => event.payload.planId),
+      ['go', 'plus', 'pro', 'max'],
     );
-
-    analytics.exposePlans({
-      audience: 'creator',
-      interval: 'yearly',
-      introEligible: true,
-      currentPlanId: null,
-      currentBillingInterval: null,
-    });
-
-    assert.equal(events.length, 3);
-    assert.deepEqual(events[0], {
-      event: 'subscription_plan_exposure',
-      props: {
-        pageName: 'pricing',
-        area: 'subscription_pricing',
-        entryPoint: 'open_design_entry',
-        sourceProduct: 'open_design',
-        sourceDetail: 'workspace',
-        conversionSource: 'pricing_redirect',
-        entryId: undefined,
-        entryOccurredAt: undefined,
-        campaignId: undefined,
-        planId: 'plus',
-        planName: 'plus',
+    assert.deepEqual(captured[0], {
+      kind: 'plan_exposure',
+      eventId: 'event-1',
+      eventTime: '2026-08-23T12:00:00.000Z',
+      payload: {
+        planId: 'go',
         billingInterval: 'yearly',
-        priceUsd: '168.00',
-        creditsGrantedUsd: '20.00',
-        deployLimit: 3,
+        priceUsd: '60.00',
+        creditsGrantedUsd: '0.00',
+        deployLimit: 0,
         introOfferApplied: false,
         firstMonthEligible: true,
         isCurrentPlan: false,
         isRecommended: false,
-        autoRechargeSupported: true,
       },
     });
     assert.deepEqual(
-      events.map(({ props }) => [
-        props.planId,
-        props.priceUsd,
-        props.creditsGrantedUsd,
-        props.deployLimit,
-        props.isRecommended,
+      captured.map((event) => [
+        event.payload.planId,
+        event.payload.priceUsd,
+        event.payload.creditsGrantedUsd,
+        event.payload.deployLimit,
+        event.payload.isRecommended,
       ]),
       [
+        ['go', '60.00', '0.00', 0, false],
         ['plus', '168.00', '20.00', 3, false],
         ['pro', '720.00', '120.00', 20, true],
         ['max', '1176.00', '300.00', 50, false],
       ],
     );
+    assert.equal(testHarness.requests[0]?.sourceSurface, 'dashboard');
+    assert.equal(testHarness.requests[0]?.sessionId, 'pricing-session-1');
   });
 
-  it('deduplicates only the same visible state and reports a returning surface', () => {
-    const { analytics, events } = harness();
-    const creator = {
-      audience: 'creator' as const,
-      interval: 'yearly' as const,
-      introEligible: true,
-      currentPlanId: null,
-      currentBillingInterval: null,
-    };
+  it('does not let a pre-resolution render swallow the corrected first exposure', () => {
+    const testHarness = harness();
 
-    analytics.exposePlans(creator);
-    analytics.exposePlans(creator);
-    assert.equal(events.length, 3);
+    testHarness.analytics.exposePlans({ audience: 'creator', interval: 'monthly' });
+    resolve(testHarness, {
+      sourceSurface: 'wallet',
+      currentPlanId: 'pro',
+      currentBillingInterval: 'monthly',
+      firstMonthEligible: false,
+    });
+    testHarness.analytics.exposePlans({ audience: 'creator', interval: 'monthly' });
 
-    analytics.exposePlans({ ...creator, audience: 'team' });
-    assert.equal(events.length, 3);
-
-    analytics.exposePlans(creator);
-    assert.equal(events.length, 6);
+    const captured = exposures(testHarness);
+    assert.equal(captured.length, 4);
+    assert.equal(captured[0]?.payload.introOfferApplied, false);
+    assert.equal(captured[0]?.payload.firstMonthEligible, false);
+    assert.equal(captured[2]?.payload.planId, 'pro');
+    assert.equal(captured[2]?.payload.isCurrentPlan, true);
+    assert.equal(testHarness.requests[0]?.sourceSurface, 'wallet');
   });
 
-  it('reports a real interval click before the newly visible monthly plans', () => {
-    const { analytics, events } = harness('source=workspace_wallet');
-    analytics.exposePlans({
-      audience: 'creator',
-      interval: 'yearly',
-      introEligible: true,
-      currentPlanId: null,
-      currentBillingInterval: null,
-    });
-    events.length = 0;
+  it('deduplicates the full resolved state and re-exposes after Team', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+    const visible = { audience: 'creator' as const, interval: 'yearly' as const };
 
-    analytics.changeInterval({
-      audience: 'creator',
-      currentInterval: 'yearly',
-      targetInterval: 'monthly',
-      introEligible: true,
-      currentPlanId: null,
-      currentBillingInterval: null,
-      userInitiated: true,
-    });
+    testHarness.analytics.exposePlans(visible);
+    testHarness.analytics.exposePlans(visible);
+    assert.equal(exposures(testHarness).length, 4);
 
-    assert.deepEqual(events[0], {
-      event: 'subscription_pricing_click',
-      props: {
-        pageName: 'pricing',
-        area: 'subscription_pricing',
-        element: 'change_interval',
-        entryPoint: 'open_design_entry',
-        sourceProduct: 'open_design',
-        sourceDetail: 'workspace_wallet',
-        conversionSource: 'workspace_wallet',
-        entryId: undefined,
-        entryOccurredAt: undefined,
-        campaignId: undefined,
-        currentPlanId: null,
-        currentBillingInterval: 'yearly',
-        targetBillingInterval: 'monthly',
-      },
-    });
-    assert.equal(events.length, 4);
-    assert.deepEqual(
-      events.slice(1).map(({ props }) => [
-        props.planId,
-        props.priceUsd,
-        props.introOfferApplied,
-      ]),
-      [
-        ['plus', '16.00', true],
-        ['pro', '70.00', true],
-        ['max', '120.00', true],
-      ],
-    );
-  });
-
-  it('restores subscribe and upgrade clicks only for enabled paid Personal plans', () => {
-    const { analytics, events } = harness();
-
-    analytics.clickPlan({
-      planId: 'plus',
-      interval: 'monthly',
-      introEligible: true,
-      enabled: true,
-      currentPlanId: null,
-      currentBillingInterval: null,
-    });
-    analytics.clickPlan({
-      planId: 'pro',
-      interval: 'yearly',
-      introEligible: false,
-      enabled: true,
+    resolve(testHarness, { firstMonthEligible: false });
+    testHarness.analytics.exposePlans(visible);
+    resolve(testHarness, { firstMonthEligible: false, currentPlanId: 'plus' });
+    testHarness.analytics.exposePlans(visible);
+    resolve(testHarness, {
+      firstMonthEligible: false,
       currentPlanId: 'plus',
       currentBillingInterval: 'monthly',
     });
-    for (const planId of ['go', 'team', 'unknown']) {
-      analytics.clickPlan({
-        planId,
-        interval: 'yearly',
-        introEligible: true,
-        enabled: true,
-        currentPlanId: null,
-        currentBillingInterval: null,
-      });
-    }
-    analytics.clickPlan({
-      planId: 'max',
-      interval: 'yearly',
-      introEligible: true,
-      enabled: false,
-      currentPlanId: null,
-      currentBillingInterval: null,
+    testHarness.analytics.exposePlans(visible);
+    assert.equal(exposures(testHarness).length, 16);
+
+    testHarness.analytics.exposePlans({ audience: 'team', interval: 'yearly' });
+    testHarness.analytics.exposePlans(visible);
+    assert.equal(exposures(testHarness).length, 20);
+  });
+
+  it('sends a real interval click before the new interval exposure batch', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+    testHarness.analytics.exposePlans({ audience: 'creator', interval: 'yearly' });
+    testHarness.requests.length = 0;
+
+    testHarness.analytics.changeInterval({
+      audience: 'creator',
+      currentInterval: 'yearly',
+      targetInterval: 'monthly',
+      userInitiated: true,
     });
 
-    assert.equal(events.length, 2);
+    assert.equal(testHarness.requests.length, 1);
     assert.deepEqual(
-      events.map(({ props }) => [
-        props.element,
-        props.currentPlanId,
-        props.currentBillingInterval,
-        props.targetPlanId,
-        props.targetBillingInterval,
-        props.priceUsd,
-      ]),
-      [
-        ['subscribe_now', null, null, 'plus', 'monthly', '16.00'],
-        ['upgrade_now', 'plus', 'monthly', 'pro', 'yearly', '720.00'],
-      ],
+      testHarness.requests[0]?.events.map((event) =>
+        event.kind === 'pricing_click' ? event.payload.element : event.payload.planId,
+      ),
+      ['change_interval', 'go', 'plus', 'pro', 'max'],
+    );
+    assert.deepEqual(clicks(testHarness)[0]?.payload, {
+      element: 'change_interval',
+      currentPlanId: null,
+      currentBillingInterval: 'yearly',
+      targetBillingInterval: 'monthly',
+    });
+  });
+
+  it('excludes programmatic interval changes from click events', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+
+    testHarness.analytics.changeInterval({
+      audience: 'creator',
+      currentInterval: 'yearly',
+      targetInterval: 'monthly',
+      userInitiated: false,
+    });
+
+    assert.equal(clicks(testHarness).length, 0);
+    assert.deepEqual(
+      exposures(testHarness).map((event) => event.payload.planId),
+      ['go', 'plus', 'pro', 'max'],
     );
   });
 
-  it('restores the equivalent Enterprise lead clicks', () => {
-    const { analytics, events } = harness('source=pricing_nav');
+  it('emits exact subscribe and upgrade payloads for enabled Personal CTAs', () => {
+    const testHarness = harness();
+    resolve(testHarness, { firstMonthEligible: true });
 
-    analytics.openEnterpriseLead();
-    analytics.submitEnterpriseLead();
+    testHarness.analytics.clickPlan({
+      audience: 'creator',
+      planId: 'go',
+      interval: 'monthly',
+      enabled: true,
+    });
+    resolve(testHarness, {
+      currentPlanId: 'plus',
+      currentBillingInterval: 'monthly',
+      firstMonthEligible: false,
+    });
+    testHarness.analytics.clickPlan({
+      audience: 'creator',
+      planId: 'pro',
+      interval: 'yearly',
+      enabled: true,
+    });
 
-    assert.deepEqual(
-      events.map(({ event, props }) => ({
-        event,
-        area: props.area,
-        element: props.element,
-        target: props.targetDestination,
-        source: props.sourceDetail,
-      })),
-      [
-        {
-          event: 'subscription_pricing_click',
-          area: 'enterprise_contact',
-          element: 'request_team_access',
-          target: 'lead_form',
-          source: 'pricing_nav',
-        },
-        {
-          event: 'subscription_pricing_click',
-          area: 'enterprise_contact',
-          element: 'team_lead_submit',
-          target: 'lead_form',
-          source: 'pricing_nav',
-        },
-      ],
-    );
+    assert.deepEqual(clicks(testHarness).map((event) => event.payload), [
+      {
+        element: 'subscribe_now',
+        currentPlanId: null,
+        currentBillingInterval: null,
+        targetPlanId: 'go',
+        targetBillingInterval: 'monthly',
+        priceUsd: '5.00',
+        creditsGrantedUsd: '0.00',
+        introOfferApplied: true,
+        isCurrentPlan: false,
+        isRecommended: false,
+      },
+      {
+        element: 'upgrade_now',
+        currentPlanId: 'plus',
+        currentBillingInterval: 'monthly',
+        targetPlanId: 'pro',
+        targetBillingInterval: 'yearly',
+        priceUsd: '720.00',
+        creditsGrantedUsd: '120.00',
+        introOfferApplied: false,
+        isCurrentPlan: false,
+        isRecommended: true,
+      },
+    ]);
+  });
+
+  it('excludes disabled, Team, and unknown plan CTAs', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+
+    for (const input of [
+      { audience: 'creator' as const, planId: 'go', enabled: false },
+      { audience: 'team' as const, planId: 'go', enabled: true },
+      { audience: 'creator' as const, planId: 'team', enabled: true },
+      { audience: 'creator' as const, planId: 'unknown', enabled: true },
+    ]) {
+      testHarness.analytics.clickPlan({ ...input, interval: 'yearly' });
+    }
+
+    assert.deepEqual(testHarness.requests, []);
+  });
+
+  it('records Enterprise submit as an immediate intent event', () => {
+    const testHarness = harness();
+    resolve(testHarness);
+
+    testHarness.analytics.openEnterpriseLead();
+    testHarness.analytics.submitEnterpriseLead();
+
+    assert.deepEqual(clicks(testHarness).map((event) => event.payload), [
+      { element: 'request_team_access' },
+      { element: 'team_lead_submit' },
+    ]);
+  });
+
+  it('keeps transport failures best effort', async () => {
+    const rejected = createPricingCompatibilityAnalytics({
+      apiOrigin: 'https://amr-api.open-design.ai',
+      sessionId: 'pricing-session-1',
+      tiers: PERSONAL_PRICING_TIERS,
+      postEvents: async () => {
+        throw new Error('offline');
+      },
+    });
+    const synchronous = createPricingCompatibilityAnalytics({
+      apiOrigin: 'https://amr-api.open-design.ai',
+      sessionId: 'pricing-session-2',
+      tiers: PERSONAL_PRICING_TIERS,
+      postEvents: (() => {
+        throw new Error('offline');
+      }) as typeof postPricingBridgeEvents,
+    });
+    for (const analytics of [rejected, synchronous]) {
+      analytics.resolveContext(dashboardContext);
+      assert.doesNotThrow(() => analytics.openEnterpriseLead());
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
   });
 });
