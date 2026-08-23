@@ -18,8 +18,9 @@
   .od-tile { display: grid; grid-template-rows: auto 1fr; }
   :where(.od-tile) > :where(*) { display: block; }
 
-  /* media keeps its ratio; never a distorted or cropped cover by accident */
-  .od-media { display: block; width: 100%; aspect-ratio: var(--od-ratio, 1); object-fit: cover; }
+  /* media keeps its ratio; never a distorted or cropped cover by accident.
+     height:auto is what lets aspect-ratio win over an <img height="…"> attribute. */
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, 1); object-fit: cover; }
 
   /* data text only — authored copy is rewritten to its budget instead */
   .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

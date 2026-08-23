@@ -162,6 +162,9 @@ fact and quotes its source in `device-frame-shell`.
 - The shell is presentation, not a design system: it sets no typography,
   palette, spacing, components, or navigation for the app. Never put an
   Android app in the iPhone shell or the reverse.
+- Sheets, dialogs, toasts, and scrims mount inside the shell's screen, often
+  outside the app's own wrapper, so the product's design tokens live on
+  `:root` — never on an inner wrapper where an overlay cannot inherit them.
 - Keep the shell's narrow-viewport fallback (below 480px the handset chrome
   collapses and the screen fills the viewport) so the artifact still meets
   the 375px rule above.
@@ -209,7 +212,11 @@ Everywhere: one piece of information is one block-level line — sibling
 number and its unit, a price and 起, a date and its weekday sit in
 `.od-nowrap`; short CJK labels use `.od-keep` with `<wbr>` at the phrase
 boundary (精油洗护`<wbr>`SPA) so a break never lands inside a word;
-pointer-only styles live under `@media (hover: hover)`.
+pointer-only styles live under `@media (hover: hover)`. An `<img>` keeps its
+`width`/`height` attributes for layout stability and `.od-media` sizes it —
+never a CSS height on the image. A card, tile, or row built on `<a>` sets its
+own `color` and `text-decoration: none`; browser-default link styling never
+reaches product UI.
 
 ### Design usable forms and feedback
 
