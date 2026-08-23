@@ -9,6 +9,7 @@ import { resolvePluginFolder } from '../src/plugins/registry.js';
 import {
   StrategyPackageAssetPathError,
   createBundledStrategyBindingV2,
+  loadBundledStrategyPromptAssetsV2,
 } from '../src/plugins/strategy-package.js';
 import { resolvePluginSnapshot } from '../src/plugins/resolve-snapshot.js';
 
@@ -56,7 +57,7 @@ async function resolveStrategyRecord(folder = SOURCE): Promise<InstalledPluginRe
 }
 
 describe('bundled OD Next strategy package identity', () => {
-  it('reads only the explicit manifest, skill, core, orchestration, selected profile, and reference', async () => {
+  it('reads only the explicit manifest, skill, core, orchestration, selected profile, its resources, and reference', async () => {
     const plugin = await resolveStrategyRecord();
     const prototype = createBundledStrategyBindingV2({ plugin, taskType: 'prototype' });
     const repeated = createBundledStrategyBindingV2({ plugin, taskType: 'prototype' });
@@ -68,18 +69,66 @@ describe('bundled OD Next strategy package identity', () => {
       './assets/core-system-prompt.md',
       './assets/general-orchestration.md',
       './assets/task-profiles/prototype.md',
+      './assets/task-profiles/prototype/device-frames/android.html',
+      './assets/task-profiles/prototype/device-frames/iphone.html',
+      './assets/task-profiles/prototype/device-frames/neutral.html',
+      './open-design.json',
+      './references/task-profile-mapping.md',
+    ]);
+    // Resources travel with the profile that declares them only.
+    expect(hyperframes.assetDigests.map((asset) => asset.path)).toEqual([
+      './SKILL.md',
+      './assets/core-system-prompt.md',
+      './assets/general-orchestration.md',
+      './assets/task-profiles/hyperframes.md',
       './open-design.json',
       './references/task-profile-mapping.md',
     ]);
     expect(prototype.selectedTaskProfile).toEqual(expect.objectContaining({
       taskType: 'prototype',
-      version: '2.0.0',
+      version: '2.1.0',
       path: './assets/task-profiles/prototype.md',
     }));
     expect(hyperframes.packageHash).not.toBe(prototype.packageHash);
     expect(hyperframes.selectedTaskProfile.sha256).not.toBe(
       prototype.selectedTaskProfile.sha256,
     );
+  });
+
+  it('decodes the prototype device shells as task resources and locks them into the package identity', async () => {
+    const plugin = await resolveStrategyRecord();
+    const binding = createBundledStrategyBindingV2({ plugin, taskType: 'prototype' });
+    const assets = loadBundledStrategyPromptAssetsV2({ plugin, binding });
+    expect(assets.taskResources.map((resource) => resource.path)).toEqual([
+      './assets/task-profiles/prototype/device-frames/iphone.html',
+      './assets/task-profiles/prototype/device-frames/android.html',
+      './assets/task-profiles/prototype/device-frames/neutral.html',
+    ]);
+    for (const resource of assets.taskResources) {
+      expect(resource.text).toContain('data-phone-shell');
+      expect(resource.text).toContain('APP CONTENT START');
+      expect(resource.text).toContain('class="phone-content"');
+    }
+    expect(loadBundledStrategyPromptAssetsV2({
+      plugin,
+      binding: createBundledStrategyBindingV2({ plugin, taskType: 'hyperframes' }),
+    }).taskResources).toEqual([]);
+
+    // A shell edit moves the prototype package hash exactly like a rule-card
+    // edit, and leaves a profile that does not declare the shell untouched.
+    const folder = path.join(tmpDir, 'strategy');
+    await cp(SOURCE, folder, { recursive: true });
+    const copied = await resolveStrategyRecord(folder);
+    const prototypeBaseline = createBundledStrategyBindingV2({ plugin: copied, taskType: 'prototype' });
+    const hyperframesBaseline = createBundledStrategyBindingV2({ plugin: copied, taskType: 'hyperframes' });
+    const shellPath = path.join(folder, 'assets/task-profiles/prototype/device-frames/neutral.html');
+    await writeFile(shellPath, `${await readFile(shellPath, 'utf8')}\n<!-- edited -->\n`);
+    expect(createBundledStrategyBindingV2({ plugin: copied, taskType: 'prototype' }).packageHash)
+      .not.toBe(prototypeBaseline.packageHash);
+    expect(createBundledStrategyBindingV2({ plugin: copied, taskType: 'hyperframes' }).packageHash)
+      .toBe(hyperframesBaseline.packageHash);
+    expect(() => loadBundledStrategyPromptAssetsV2({ plugin: copied, binding: prototypeBaseline }))
+      .toThrow(/no longer matches/i);
   });
 
   it('changes for a declared byte but ignores an undeclared file', async () => {

@@ -1,4 +1,4 @@
-# OD Next Prototype Task Profile v2.0.0
+# OD Next Prototype Task Profile v2.1.0
 
 > Rollout: active
 
@@ -128,6 +128,43 @@ record them in the Design Spec:
   mobile never scrolls horizontally and never disables zoom.
 - Fixed headers, bottom bars, and floating controls reserve matching padding
   for the content they cover.
+
+### Handheld device shell
+
+When the target device is a phone — the brief names iPhone / iOS, Android, or
+a mobile / 手机 app without naming a platform — the prototype ships inside the
+bundled handset shell, never a hand-drawn approximation of one. Open Design
+stages the shells at `.od-frames/` in the project directory and, when it
+resolved the platform, names the selected shell in the `device-frame` context
+fact and quotes its source in `device-frame-shell`.
+
+| Brief names | Shell |
+|---|---|
+| iPhone, iOS, SwiftUI, UIKit, App Store | `.od-frames/iphone.html` |
+| Android, Material, Pixel, Galaxy, HarmonyOS, APK | `.od-frames/android.html` |
+| A phone / mobile app with no platform named | `.od-frames/neutral.html` |
+| Web app, landing page, responsive site, desktop app, tablet | no shell — the page is the product |
+
+- Use the selected shell's markup and CSS as the document skeleton and put
+  the product inside the `APP CONTENT START` / `APP CONTENT END` slot; the
+  app mounts in `.phone-content` and nowhere else.
+- One handset persists across the whole prototype. Screen navigation and hash
+  routes swap the content inside the screen; a new handset per route appears
+  only when the user asks for a side-by-side board.
+- Keep the shell's hardware and system chrome intact: metallic bezel, outer
+  radius deeper than the screen radius, side keys, the platform's camera
+  treatment, SVG status glyphs with a clock, and the home indicator as the
+  last visible system element. A `border: 1px solid` + `border-radius: 24px`
+  card is not a phone.
+- The app scrolls inside `.phone-content` while the handset stays fixed, and
+  content honors `--phone-safe-top` / `--phone-safe-bottom` so nothing sits
+  under the status bar or the home indicator.
+- The shell is presentation, not a design system: it sets no typography,
+  palette, spacing, components, or navigation for the app. Never put an
+  Android app in the iPhone shell or the reverse.
+- Keep the shell's narrow-viewport fallback (below 480px the handset chrome
+  collapses and the screen fills the viewport) so the artifact still meets
+  the 375px rule above.
 
 ### Design usable forms and feedback
 

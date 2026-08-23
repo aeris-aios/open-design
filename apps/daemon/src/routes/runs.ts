@@ -394,6 +394,15 @@ interface ChatRun {
   deliverableValidation?: ChatRunStatusResponse['deliverableValidation'];
   deliverableEntryFile?: string;
   deliverableArtifactKind?: ChatRunStatusResponse['deliverableArtifactKind'];
+  /** Shells staged for an OD Next prototype run, project-relative. */
+  odNextStagedDeviceFrames?: string[];
+  /** Run-finish observation: did the delivered entry carry the staged handset shell? */
+  odNextDeviceShell?: {
+    platform: 'ios' | 'android' | 'mobile-neutral';
+    resolvedFrom: 'request-text' | 'project-metadata';
+    entryFile: string;
+    shellPresent: boolean;
+  };
   analyticsTelemetry?: RunTelemetryTimestamps;
   resolvedModelId?: string | null;
   preflightAgentCliVersion?: string | null;
@@ -3319,6 +3328,13 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         area: isDesignSystemRun ? 'design_system_generation' : 'chat_composer',
         ...configureGlobals,
         ...odNextRolloutAnalyticsProperties(strategyRolloutDecision),
+        ...(run.odNextDeviceShell
+          ? {
+              od_next_device_platform: run.odNextDeviceShell.platform,
+              od_next_device_platform_source: run.odNextDeviceShell.resolvedFrom,
+              od_next_device_shell_present: run.odNextDeviceShell.shellPresent,
+            }
+          : {}),
         runtime_type: runtimeTypeForRunAnalytics({
           derived: configureGlobals.runtime_type,
           hint: analyticsHints.runtimeType,

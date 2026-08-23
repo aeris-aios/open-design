@@ -112,7 +112,24 @@ const StrategyTaskProfileAssetDeclarationV2Schema = StrategyAssetDeclarationV2Sc
   taskType: StrategyTaskTypeV2Schema.exclude(['generic']),
   rollout: z.enum(['active', 'reserved']),
   projectKinds: z.array(z.string().min(1)).min(1),
-}).strict();
+  /**
+   * Non-prompt files the task profile ships alongside its rule card — for
+   * example the handheld device shells the prototype profile stages into the
+   * project directory. They enter the package identity with the profile that
+   * declares them, so a shell edit changes the package hash exactly like a
+   * rule-card edit does, and they are never concatenated into the prompt head.
+   */
+  resources: z.array(StrategyAssetDeclarationV2Schema).optional(),
+}).strict().superRefine((value, context) => {
+  const paths = (value.resources ?? []).map((resource) => resource.path);
+  if (new Set(paths).size !== paths.length || paths.includes(value.path)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['resources'],
+      message: 'Task profile resources must have unique paths distinct from the profile itself.',
+    });
+  }
+});
 
 export const BundledStrategyDeclarationV2Schema = z.object({
   schema: z.literal(OD_NEXT_BUNDLED_STRATEGY_SCHEMA),
