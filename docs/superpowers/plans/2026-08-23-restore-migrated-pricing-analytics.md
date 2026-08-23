@@ -1,245 +1,250 @@
-# Restore Migrated Pricing Analytics Implementation Plan
+# OpenDesign Authenticated Pricing Analytics Emitter Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the retired Vela Pricing modal's compatible plan-exposure and pricing-click events on OpenDesign's migrated public Pricing page.
+**Goal:** Send migrated Pricing interactions to Vela's authenticated compatibility endpoint so the existing AMR subscription funnel resumes without changing the Pricing or checkout flow.
 
-**Architecture:** Add a pure TypeScript compatibility controller inside the landing app. It builds and emits the old event contracts from the existing Pricing plan contract, while the Astro page connects its current audience, interval, CTA, and Enterprise interactions to that controller. Existing landing events stay in place and checkout/result facts remain owned by Vela.
+**Architecture:** A pure controller builds reduced, strictly bounded bridge records and a transport posts them to Vela with credentials and keepalive. The page activates the controller only after authenticated pricing context and a trusted wallet/dashboard source resolve; existing OpenDesign PostHog events remain independent.
 
-**Tech Stack:** Astro 6, TypeScript, PostHog, Node test runner.
+**Tech Stack:** Astro 6, TypeScript, Node test runner, Playwright, PostHog wrapper (unchanged)
 
 ## Global Constraints
 
-- Start from `nexu-io/open-design` latest `main`.
-- Modify only landing Pricing analytics and tests plus internal design/plan documents.
-- Do not restore the Vela Pricing modal or change checkout navigation.
-- Do not add dependencies or a second analytics sink.
-- Preserve existing landing `page_view`, `ui_click`, and lead events.
-- Restore only equivalent old interactions that still exist: Plus/Pro/Max exposure, Personal paid-plan CTA, interval change, Enterprise lead open, and Enterprise lead submit.
-- Keep checkout creation, return, lifecycle, and payment facts in Vela.
-- Use TDD and observe the focused test failing before adding production code.
+- Base the work on the latest `nexu-io/open-design/main`.
+- Do not change Pricing UI, prices, entitlements, CTA destinations, checkout behavior, or existing OpenDesign analytics.
+- Only authenticated Vela sessions arriving from trusted wallet/dashboard surfaces enter the compatibility funnel.
+- Compatibility delivery is best effort and must never block navigation or form submission.
+- Never include email, company, lead free text, raw URL, or raw referrer in the bridge request.
+- Vela endpoint must deploy before this emitter.
 
 ---
 
-### Task 1: Define the compatibility controller through failing tests
+### Task 1: Define the reduced bridge contract and strict source resolver
 
 **Files:**
-- Create: `apps/landing-page/tests/pricing-compat-analytics.test.ts`
-- Create later: `apps/landing-page/app/_lib/pricing-compat-analytics.ts`
+- Modify: `apps/landing-page/app/_lib/pricing.ts`
+- Create: `apps/landing-page/app/_lib/pricing-analytics-bridge.ts`
+- Create: `apps/landing-page/tests/pricing-analytics-bridge.test.ts`
 
 **Interfaces:**
-- Consumes: `PlanTierConfig[]`, URL search parameters, current audience/interval/eligibility/current-plan state, and a `(event, props) => void` tracker.
-- Produces: `createPricingCompatibilityAnalytics(options)` with `exposePlans`, `changeInterval`, `clickPlan`, `openEnterpriseLead`, and `submitEnterpriseLead` methods.
+- Consumes: `GO_PLAN`, `PRICING_SNAPSHOT.tiers`, `HOSTED_CLOUD_CONSOLE_DOMAINS`
+- Produces: `PERSONAL_PRICING_TIERS`, `resolvePricingBridgeSource()`, `postPricingBridgeEvents()`, and the reduced `PricingBridgeEvent` union
 
-- [ ] **Step 1: Write failing behavior tests**
-
-Import the not-yet-created module and add literal assertions for these behaviors:
-
-1. `pricingCompatibilityAttribution()` maps `od_origin`, `od_entry_id`, `od_entry_source`, `od_entry_at`, `od_conversion_source`, and `od_campaign_id`; it keeps `entryPoint='open_design_entry'` and falls back to `source`, the `/wallet` or `/dashboard` referrer, then `direct` for source detail.
-2. Initial Personal yearly exposure emits exactly three `subscription_plan_exposure` events for Plus, Pro, and Max with literal price, monthly-normalized credit, deploy limit, intro, recommendation, and attribution fields.
-3. Repeating the same visible state emits nothing; Team emits nothing; returning to Personal emits three new exposures.
-4. A real yearly-to-monthly change emits one `subscription_pricing_click` with `element='change_interval'`, then three monthly exposures using introductory prices.
-5. A Plus CTA emits one compatible plan click with `subscribe_now` for no current plan and `upgrade_now` with current-plan fields when a current plan exists.
-6. Go, Team, disabled, and unknown CTA inputs emit no compatible plan click.
-7. Enterprise open and submit emit `request_team_access` and `team_lead_submit` with `area='enterprise_contact'` and `targetDestination='lead_form'`.
-
-Use the literal 2026-08-23 plan fixture:
+- [ ] **Step 1: Write failing contract tests**
 
 ```ts
-const tiers = [
-  {
-    tier: 'plus', rank: 1, recommended: false,
-    monthly: { priceUsd: 20, introPriceUsd: 16, grantUsd: 20 },
-    yearly: { priceUsd: 168, discountPct: 30, grantUsd: 240 },
-    deployLimit: 3,
-  },
-  {
-    tier: 'pro', rank: 2, recommended: true,
-    monthly: { priceUsd: 100, introPriceUsd: 70, grantUsd: 120 },
-    yearly: { priceUsd: 720, discountPct: 40, grantUsd: 1440 },
-    deployLimit: 20,
-  },
-  {
-    tier: 'max', rank: 3, recommended: false,
-    monthly: { priceUsd: 200, introPriceUsd: 120, grantUsd: 300 },
-    yearly: { priceUsd: 1176, discountPct: 51, grantUsd: 3600 },
-    deployLimit: 50,
-  },
-] satisfies PlanTierConfig[];
+test('personal compatibility catalog contains go plus pro max', () => {
+  assert.deepEqual(PERSONAL_PRICING_TIERS.map((tier) => tier.tier), [
+    'go', 'plus', 'pro', 'max',
+  ]);
+});
+
+test('source resolver accepts only exact trusted wallet/dashboard routes', () => {
+  assert.equal(resolvePricingBridgeSource({
+    search: new URLSearchParams(),
+    referrer: 'https://open-design.ai/cloud/dashboard?billing=plan',
+  }), 'dashboard');
+  assert.equal(resolvePricingBridgeSource({
+    search: new URLSearchParams(),
+    referrer: 'https://example.com/dashboard',
+  }), null);
+});
 ```
 
-- [ ] **Step 2: Run the focused test to verify RED**
+Also assert that unknown query values, substring routes, oversized IDs, and untrusted hosts return `null`, and that the Go adapter yields price 10/60, credits 0, deploy limit 0, and `recommended=false`.
 
-```bash
-corepack pnpm --filter @open-design/landing-page test -- pricing-compat-analytics.test.ts
-```
+- [ ] **Step 2: Run the focused tests and verify RED**
 
-Expected: FAIL because `app/_lib/pricing-compat-analytics.ts` does not exist.
+Run: `pnpm --filter @open-design/landing-page exec node --import tsx --test tests/pricing-analytics-bridge.test.ts`
+Expected: FAIL because the catalog, resolver, and transport do not exist.
 
-- [ ] **Step 3: Confirm the failure is valid**
-
-The failure must be a missing-module failure for the intended production boundary, not a typo in the test filename or fixture.
-
-### Task 2: Implement the pure compatibility controller
-
-**Files:**
-- Create: `apps/landing-page/app/_lib/pricing-compat-analytics.ts`
-- Test: `apps/landing-page/tests/pricing-compat-analytics.test.ts`
-
-**Interfaces:**
-- Produces: `pricingCompatibilityAttribution(search, referrer)`, `personalPlanCompatibilityPayload(tier, interval, introEligible)`, and `createPricingCompatibilityAnalytics(options)`.
-- Compatibility event properties use the original Vela camelCase field names.
-
-- [ ] **Step 1: Define types and attribution mapping**
-
-Implement:
+- [ ] **Step 3: Implement the minimal bridge module**
 
 ```ts
-export type CompatibilityTrack = (
-  event: 'subscription_plan_exposure' | 'subscription_pricing_click',
-  props: Record<string, unknown>,
-) => void;
+export type PricingBridgeSource = 'wallet' | 'dashboard';
 
-export function pricingCompatibilityAttribution(search: URLSearchParams, referrer = '') {
-  const sourceDetail =
-    search.get('od_entry_source') ?? search.get('source') ?? sourceFromReferrer(referrer);
-  return {
-    entryPoint: 'open_design_entry',
-    sourceProduct: search.get('od_origin') ?? 'open_design',
-    sourceDetail,
-    conversionSource: search.get('od_conversion_source') ?? sourceDetail,
-    entryId: search.get('od_entry_id') ?? undefined,
-    entryOccurredAt: search.get('od_entry_at') ?? undefined,
-    campaignId: search.get('od_campaign_id') ?? undefined,
-  } as const;
-}
+export type PricingBridgeEvent =
+  | { kind: 'plan_exposure'; eventId: string; eventTime: string; payload: PlanExposureInput }
+  | { kind: 'pricing_click'; eventId: string; eventTime: string; payload: PricingClickInput };
+
+export async function postPricingBridgeEvents(input: {
+  apiOrigin: string;
+  sourceSurface: PricingBridgeSource;
+  sessionId: string;
+  events: readonly PricingBridgeEvent[];
+  fetcher?: typeof fetch;
+}): Promise<boolean>;
 ```
 
-- [ ] **Step 2: Implement plan payload parity**
+Build `PERSONAL_PRICING_TIERS` by adapting `GO_PLAN` and appending the existing snapshot tiers. Validate the API origin with the same hosted/loopback policy used by the checkout handoff. POST only the reduced body to `/api/v1/analytics/pricing-events` with `credentials: 'include'`, `keepalive: true`, JSON headers, and a short abort timeout. Return `false` on every failure without throwing.
 
-For monthly, use the intro price only when `introEligible` is true. For yearly, use the full annual price and divide the annual grant by 12. Format price and credit strings with `toFixed(2)`. Preserve `planId`, `planName`, `billingInterval`, `deployLimit`, `introOfferApplied`, `firstMonthEligible`, `isRecommended`, and `autoRechargeSupported=true`.
+- [ ] **Step 4: Run the focused tests and verify GREEN**
 
-- [ ] **Step 3: Implement controller methods**
+Run: `pnpm --filter @open-design/landing-page exec node --import tsx --test tests/pricing-analytics-bridge.test.ts`
+Expected: PASS.
 
-`createPricingCompatibilityAnalytics({ tiers, attribution, track })` maintains only the last exposure signature. `exposePlans` skips Team and immediate duplicate state, resetting the signature on Team. `changeInterval` emits the old click only for an actual user change and then calls `exposePlans`. `clickPlan` accepts only enabled Plus/Pro/Max inputs and chooses `subscribe_now` versus `upgrade_now` from `currentPlanId`. Enterprise methods emit their corresponding old click payloads.
-
-- [ ] **Step 4: Run focused tests to verify GREEN**
+- [ ] **Step 5: Commit**
 
 ```bash
-corepack pnpm --filter @open-design/landing-page test -- pricing-compat-analytics.test.ts
+git add apps/landing-page/app/_lib/pricing.ts \
+  apps/landing-page/app/_lib/pricing-analytics-bridge.ts \
+  apps/landing-page/tests/pricing-analytics-bridge.test.ts
+git commit -m "feat(analytics): add authenticated pricing bridge contract"
 ```
 
-Expected: all compatibility-controller tests pass.
-
-### Task 3: Wire the existing Pricing page to the controller
+### Task 2: Rebuild compatibility semantics around resolved authentication context
 
 **Files:**
-- Modify: `apps/landing-page/app/pages/pricing/index.astro`
-- Test: `apps/landing-page/tests/pricing-compat-analytics.test.ts`
+- Modify: `apps/landing-page/app/_lib/pricing-compat-analytics.ts`
+- Modify: `apps/landing-page/tests/pricing-compat-analytics.test.ts`
 
 **Interfaces:**
-- Consumes: `createPricingCompatibilityAnalytics`, `pricingCompatibilityAttribution`, `PRICING_SNAPSHOT.tiers`, existing Pricing DOM state, and `window.__odTrack`.
-- Produces: compatible events through the same PostHog sink as existing landing events.
+- Consumes: `PricingBridgeEvent`, `PERSONAL_PRICING_TIERS`
+- Produces: `createPricingCompatibilityAnalytics()` that emits reduced records only after `resolveContext()`
 
-- [ ] **Step 1: Expose analytics-only state transitions**
+- [ ] **Step 1: Replace the controller assertions with failing legacy-semantics tests**
 
-Extend existing custom events without altering rendering:
+Add literal expectations proving:
 
-- `pricing:audience-changed` carries `{ audience }` after audience activation.
-- `pricing:interval-changed` additionally carries `{ previousInterval, shouldTrack }`.
-- `pricing:enterprise-open` fires alongside `team_lead_open`.
-- `pricing:enterprise-submit` fires alongside `team_lead_submit`.
-
-- [ ] **Step 2: Expose current Personal context**
-
-Inside `applyPersonalActions`, write `data-current-personal-plan-id` and `data-current-personal-billing-interval` on the Pricing root from `pricingContext.current`. Do not change CTA enablement, copy, or URLs.
-
-- [ ] **Step 3: Install the compatibility bridge**
-
-Add a bundled module script after the existing Pricing scripts. It imports the controller and `PRICING_SNAPSHOT`, creates a tracker that delegates to `window.__odTrack`, derives attribution from `window.location.search`, and immediately calls `exposePlans` with the current DOM state.
-
-- [ ] **Step 4: Connect state and interaction events**
-
-The module script must:
-
-- call `exposePlans` on `pricing:audience-changed`;
-- call `changeInterval` on `pricing:interval-changed` using `shouldTrack` and current intro eligibility;
-- listen to delegated Pricing CTA clicks, skip disabled and non-Plus/Pro/Max CTAs, and call `clickPlan` with root current-plan attributes;
-- call the Enterprise controller methods on `pricing:enterprise-open` and `pricing:enterprise-submit`.
-
-Do not remove or rename existing landing analytics calls.
-
-- [ ] **Step 5: Re-run focused tests**
-
-```bash
-corepack pnpm --filter @open-design/landing-page test -- pricing-compat-analytics.test.ts
+```ts
+assert.deepEqual(exposures.map((event) => event.payload.planId), [
+  'go', 'plus', 'pro', 'max',
+]);
+assert.equal(exposures[0].payload.creditsGrantedUsd, '0.00');
+assert.equal(exposures[0].payload.deployLimit, 0);
 ```
 
-Expected: all focused tests still pass after wiring.
+Add independent tests that no exposure occurs before context resolution, a same-interval context correction emits the correct first exposure, dedupe includes eligibility/current-plan state, interval click precedes new exposures, disabled/Team CTAs are excluded, and Enterprise submit is an intent event.
 
-- [ ] **Step 6: Run diff checks**
+- [ ] **Step 2: Run the controller test and verify RED**
 
-```bash
-git diff --check
-git diff -- apps/landing-page/app/_lib/pricing-compat-analytics.ts \
-  apps/landing-page/app/pages/pricing/index.astro \
-  apps/landing-page/tests/pricing-compat-analytics.test.ts
+Run: `pnpm --filter @open-design/landing-page exec node --import tsx --test tests/pricing-compat-analytics.test.ts`
+Expected: FAIL for missing Go, eager exposure, incomplete signature, and old transport event names.
+
+- [ ] **Step 3: Implement the minimal state machine**
+
+The controller owns:
+
+```ts
+type ResolvedPricingContext = {
+  authenticated: true;
+  sourceSurface: 'wallet' | 'dashboard';
+  currentPlanId: 'go' | 'plus' | 'pro' | 'max' | null;
+  currentBillingInterval: 'monthly' | 'yearly' | null;
+  firstMonthEligible: boolean;
+};
 ```
 
-Confirm the diff contains analytics hooks only and no checkout or visible UI behavior changes.
+Before `resolveContext()`, all methods no-op. After resolution, exposure signatures include audience, interval, eligibility, current plan, and current interval. Emit arrays through the bridge transport rather than `window.__odTrack`. Preserve exact old click intent and ordering.
 
-### Task 4: Verify, commit, and create the PR
+- [ ] **Step 4: Run the focused controller and bridge suites**
 
-**Files:**
-- Verify all files changed by Tasks 1–3 and the design/plan documents.
+Run: `pnpm --filter @open-design/landing-page exec node --import tsx --test tests/pricing-compat-analytics.test.ts tests/pricing-analytics-bridge.test.ts`
+Expected: PASS.
 
-**Interfaces:**
-- Produces: a pushed `codex/restore-pricing-plan-exposure` branch and an OpenDesign PR against `main`.
-
-- [ ] **Step 1: Run landing-page tests**
-
-```bash
-corepack pnpm --filter @open-design/landing-page test
-```
-
-Expected: zero failures.
-
-- [ ] **Step 2: Run typecheck**
-
-```bash
-corepack pnpm --filter @open-design/landing-page typecheck
-```
-
-Expected: Astro check exits zero.
-
-- [ ] **Step 3: Run the static build**
-
-```bash
-corepack pnpm --filter @open-design/landing-page build:static
-```
-
-Expected: static output and localized route verification complete successfully.
-
-- [ ] **Step 4: Review the final diff**
-
-```bash
-git diff --check
-git diff origin/main...HEAD
-git status --short
-```
-
-Confirm no dependency, generated output, purchase-flow behavior, or unrelated file changed.
-
-- [ ] **Step 5: Commit implementation**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add apps/landing-page/app/_lib/pricing-compat-analytics.ts \
-  apps/landing-page/app/pages/pricing/index.astro \
-  apps/landing-page/tests/pricing-compat-analytics.test.ts \
-  docs/superpowers/specs/2026-08-23-restore-pricing-plan-exposure-design.md
-git commit -m "fix(analytics): restore migrated pricing funnel events"
+  apps/landing-page/tests/pricing-compat-analytics.test.ts
+git commit -m "fix(analytics): restore complete personal pricing semantics"
 ```
 
-- [ ] **Step 6: Push and create the PR**
+### Task 3: Wire Pricing context, DOM interactions, and navigation-safe delivery
 
-Push `codex/restore-pricing-plan-exposure`, fill every section of `.github/pull_request_template.md`, and create a PR against `main`. State that checkout/result ownership is unchanged and URL attribution distinguishes migrated Pricing sources.
+**Files:**
+- Modify: `apps/landing-page/app/pages/pricing/index.astro`
+- Modify: `apps/landing-page/app/_components/enterprise-lead-form.astro`
+- Modify: `apps/landing-page/tests/pricing-contract.test.ts`
+- Create: `apps/landing-page/tests/pricing-analytics-browser.test.ts`
+
+**Interfaces:**
+- Consumes: Vela `POST /api/v1/analytics/pricing-events`
+- Produces: real Pricing-page bridge requests after authenticated context resolution
+
+- [ ] **Step 1: Write failing DOM/browser tests**
+
+Use a real browser page with intercepted session, billing-summary, and pricing-events requests. Assert:
+
+```ts
+assert.deepEqual(
+  captured.events.filter((event) => event.kind === 'plan_exposure')
+    .map((event) => event.payload.planId),
+  ['go', 'plus', 'pro', 'max'],
+);
+assert.equal(captured.sourceSurface, 'dashboard');
+```
+
+Also assert no request for signed-out/direct/untrusted traffic; resolved current-plan fields on first exposure; interval click before exposure batch; Team-to-Personal re-exposure; disabled CTA exclusion; and `team_lead_submit` on submit intent even when validation fails.
+
+- [ ] **Step 2: Run the browser test and verify RED**
+
+Run: `pnpm --filter @open-design/landing-page exec node --import tsx --test tests/pricing-analytics-browser.test.ts`
+Expected: FAIL because the page still captures compatibility events locally and emits before context resolution.
+
+- [ ] **Step 3: Wire the context-resolved event**
+
+After `loadPersonalPricingContext(apiOrigin)` resolves, set a resolved marker and dispatch:
+
+```ts
+pricingRoot.dispatchEvent(new CustomEvent('pricing:personal-context-resolved', {
+  detail: { authenticated: context !== null, context },
+}));
+```
+
+The compatibility script waits for this event, resolves the trusted source, creates one session ID, and sends bridge batches. Do not initialize for null context or null source.
+
+- [ ] **Step 4: Restore Enterprise submit intent timing**
+
+Dispatch `pricing:enterprise-submit` from the form's synchronous `submit` event before validation. Remove the compatibility dispatch from `od:lead-success`; retain the existing OpenDesign success bridge and non-PII lead analytics unchanged.
+
+- [ ] **Step 5: Run browser, contract, and full landing tests**
+
+Run:
+
+```bash
+pnpm --filter @open-design/landing-page exec node --import tsx --test \
+  tests/pricing-analytics-browser.test.ts tests/pricing-contract.test.ts
+pnpm --filter @open-design/landing-page test
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/landing-page/app/pages/pricing/index.astro \
+  apps/landing-page/app/_components/enterprise-lead-form.astro \
+  apps/landing-page/tests/pricing-contract.test.ts \
+  apps/landing-page/tests/pricing-analytics-browser.test.ts
+git commit -m "fix(analytics): relay authenticated pricing funnel events"
+```
+
+### Task 4: Validate, document dependency, and update the OpenDesign PR
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-08-23-restore-pricing-plan-exposure-design.md` only if implementation reveals a factual mismatch
+- Modify: PR #7299 body through `odc`
+
+- [ ] **Step 1: Run all static and build gates**
+
+```bash
+pnpm --filter @open-design/landing-page typecheck
+pnpm --filter @open-design/landing-page build
+pnpm guard
+git diff --check
+```
+
+Expected: zero errors and a clean worktree after committed changes.
+
+- [ ] **Step 2: Verify against a locally running Vela endpoint**
+
+With an authenticated fixture, trigger initial Personal exposure, interval change, Personal/Team return, plan CTA, Enterprise open, and invalid Enterprise submit. Confirm requests reach Vela and no compatibility events hit `window.__odTrack`.
+
+- [ ] **Step 3: Update PR #7299 through `odc`**
+
+Cross-link the Vela PR, state that Vela must deploy first, list exact restored interactions, and remove the obsolete claim that direct OpenDesign PostHog capture restores AMR.
+
+- [ ] **Step 4: Request independent review**
+
+Review the final `origin/main..HEAD` diff using the requesting-code-review skill. Resolve every Critical and Important issue before considering the PR ready.
