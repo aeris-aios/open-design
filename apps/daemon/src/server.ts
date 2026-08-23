@@ -10223,7 +10223,10 @@ export async function startServer({
       'currentPrompt',
     );
     const strategyProtocol = strategyTaskAtStart
-      ? new OdNextMachineProtocolStream()
+      ? new OdNextMachineProtocolStream({
+          expectedTaskProfileVersion: getSnapshot(db, strategyTaskAtStart.snapshotId)
+            ?.strategy?.selectedTaskProfile.version,
+        })
       : null;
     let strategyVisibleEmitted = '';
     let strategyProtocolResult = null;
