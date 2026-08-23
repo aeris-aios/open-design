@@ -62,16 +62,16 @@ type Model = {
 };
 
 const models: Model[] = [
-  { name: 'Gemini 3.1 Pro', maker: 'Google', icon: '/agents/gemini.svg', color: '#168cf3', pdr: 88.4, d0: 98.7, d1: 59.8, d2: 31.7, time: 164, cost: 1.92, calls: 16.4 },
-  { name: 'GPT-5.6', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#151714', pdr: 86.9, d0: 99.2, d1: 60.7, d2: 30.4, time: 138, cost: 1.78, calls: 14.8 },
-  { name: 'Claude Opus 5.0', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#ff7c3f', pdr: 84.7, d0: 97.4, d1: 58.6, d2: 32.1, time: 181, cost: 2.26, calls: 18.2 },
-  { name: 'Grok 4.6', maker: 'xAI', icon: '/agents/xai.svg', color: '#7a63e8', pdr: 80.2, d0: 96.1, d1: 56.9, d2: 29.8, time: 126, cost: 1.44, calls: 13.1 },
-  { name: 'Claude Sonnet 5.0', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#df9b70', pdr: 78.8, d0: 98.1, d1: 56.1, d2: 29.6, time: 112, cost: 1.08, calls: 12.5 },
-  { name: 'Kimi K3', maker: 'Moonshot AI', icon: '/agents/moonshot.svg', color: '#6350cf', pdr: 76.6, d0: 96.8, d1: 55.7, d2: 28.9, time: 118, cost: 0.94, calls: 12.9 },
-  { name: 'Gemini 3.1 Flash', maker: 'Google', icon: '/agents/gemini.svg', color: '#54bff2', pdr: 74.5, d0: 98, d1: 54.2, d2: 27.9, time: 74, cost: 0.62, calls: 9.8 },
-  { name: 'GPT-5.5', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#66706a', pdr: 72.1, d0: 97.2, d1: 53.6, d2: 27.4, time: 96, cost: 0.86, calls: 11.2 },
-  { name: 'Qwen 3.8 Max', maker: 'Alibaba', icon: '/agents/qwen.svg', color: '#564bd0', pdr: 70.8, d0: 95.9, d1: 52.9, d2: 27.1, time: 89, cost: 0.58, calls: 10.6 },
-  { name: 'DeepSeek V4', maker: 'DeepSeek', icon: '/agents/deepseek.svg', color: '#5277f6', pdr: 68.6, d0: 94.4, d1: 51.8, d2: 26.6, time: 83, cost: 0.48, calls: 10.1 },
+  { name: 'Claude Opus 5', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#ff7c3f', pdr: 89.8, d0: 98.9, d1: 61.2, d2: 32.9, time: 178, cost: 2.31, calls: 17.8 },
+  { name: 'GPT-5.6 Sol', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#151714', pdr: 88.3, d0: 99.3, d1: 60.6, d2: 31.8, time: 142, cost: 1.84, calls: 15.1 },
+  { name: 'Claude Sonnet 5', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#df9b70', pdr: 86.5, d0: 98.4, d1: 59.1, d2: 31.4, time: 108, cost: 1.12, calls: 12.8 },
+  { name: 'GPT-5.6 Luna', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#66706a', pdr: 84.2, d0: 98.6, d1: 57.9, d2: 30.7, time: 94, cost: .88, calls: 11.4 },
+  { name: 'Gemini 3.1 Pro', maker: 'Google', icon: '/agents/gemini.svg', color: '#168cf3', pdr: 81.9, d0: 98.7, d1: 56.2, d2: 29.2, time: 164, cost: 1.92, calls: 16.4 },
+  { name: 'Grok 4.6', maker: 'xAI', icon: '/agents/xai.svg', color: '#7a63e8', pdr: 79.8, d0: 96.4, d1: 55.1, d2: 28.7, time: 126, cost: 1.44, calls: 13.1 },
+  { name: 'Kimi K3', maker: 'Moonshot AI', icon: '/agents/moonshot.svg', color: '#6350cf', pdr: 78.1, d0: 96.8, d1: 54.3, d2: 28.1, time: 118, cost: .94, calls: 12.9 },
+  { name: 'Gemini 3.7 Flash', maker: 'Google', icon: '/agents/gemini.svg', color: '#54bff2', pdr: 76.2, d0: 98.1, d1: 53.4, d2: 27.5, time: 68, cost: .58, calls: 9.4 },
+  { name: 'Qwen 3.8-Max', maker: 'Alibaba', icon: '/agents/qwen.svg', color: '#564bd0', pdr: 74.3, d0: 95.9, d1: 52.6, d2: 26.9, time: 89, cost: .62, calls: 10.6 },
+  { name: 'DeepSeek-V4-Pro', maker: 'DeepSeek', icon: '/agents/deepseek.svg', color: '#5277f6', pdr: 72.4, d0: 94.8, d1: 51.6, d2: 26.4, time: 83, cost: .52, calls: 10.1 },
 ];
 
 const scenarios = [
@@ -367,6 +367,38 @@ const clientCopyJson = JSON.stringify({
         };
         buttons.forEach((button) => button.addEventListener('click', () => render(button.dataset.rankingView as 'score' | 'percentage')));
         render('score');
+      });
+
+      // 常驻标签的方向：构建期只能按百分比估算，误差够大到会撞。
+      // 这里用真实几何重算一次，按名次依次放，每个都避开其它模型的点和已放好的标签。
+      const overlap = (a: DOMRect, b: DOMRect) => a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+      root.querySelectorAll<HTMLElement>('.cost-plot').forEach((plot) => {
+        const points = [...plot.querySelectorAll<HTMLElement>('.cost-point')];
+        const placed: DOMRect[] = [];
+        points.filter((point) => point.classList.contains('is-labeled')).forEach((point) => {
+          const label = point.querySelector<HTMLElement>('.cost-point-label');
+          if (!label) return;
+          const bounds = plot.getBoundingClientRect();
+          let best: { dir: string; cost: number } | null = null;
+          for (const dir of ['up', 'down', 'up-right', 'up-left', 'down-right', 'down-left', 'right', 'left']) {
+            point.dataset.labelDir = dir;
+            const rect = label.getBoundingClientRect();
+            let cost = rect.left < bounds.left - 62 || rect.right > bounds.right + 62 || rect.top < bounds.top - 32 || rect.bottom > bounds.bottom + 32 ? 3 : 0;
+            points.forEach((other) => { if (other !== point && overlap(rect, other.getBoundingClientRect())) cost += 1; });
+            placed.forEach((rows) => { if (overlap(rect, rows)) cost += 2; });
+            if (!best || cost < best.cost) best = { dir, cost };
+            if (cost === 0) break;
+          }
+          // 放不下就不放：第 1 名保底常驻，2、3 名只在能干净落位时才常驻，
+          // 否则退回 hover 显示 —— 密集的图里宁可少两个标签，也不要压字。
+          if (best!.cost > 0 && placed.length > 0) {
+            point.classList.remove('is-labeled');
+            delete point.dataset.labelDir;
+            return;
+          }
+          point.dataset.labelDir = best!.dir;
+          placed.push(label.getBoundingClientRect());
+        });
       });
 
       const moduleConfig = {

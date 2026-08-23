@@ -39,11 +39,47 @@ const chartHeight = (value: number) => Math.max(12, Math.min(92, (value - 50) * 
 const byPdr = [...group.rows].sort((a, b) => b.pdr - a.pdr);
 const topTier = byPdr.slice(0, Math.ceil(byPdr.length / 2));
 const zoneAnchor = topTier.reduce((best, row) => (row.cost < best.cost ? row : best), topTier[0]!);
-// 边界取锚点与相邻模型的中点，避免某个点正好压在虚线上
-const nextBelow = Math.max(...group.rows.filter((row) => row.y < zoneAnchor.y).map((row) => row.y), 0);
-const nextRight = Math.min(...group.rows.filter((row) => row.x > zoneAnchor.x).map((row) => row.x), 100);
-const zoneWidth = Math.min(96, (zoneAnchor.x + nextRight) / 2);
-const zoneHeight = Math.min(96, 100 - (zoneAnchor.y + nextBelow) / 2);
+// 边界给锚点留固定余量，让它确实落在区域内部而不是压在拐角上。
+// 中点规则会被"成本只高一点点"的模型挤到紧贴锚点；跟着一起进区的模型
+// 本来也是高性价比的那几个，读法不受影响。
+const zoneWidth = Math.min(96, zoneAnchor.x + 8);
+const zoneHeight = Math.min(96, 100 - (zoneAnchor.y - 8));
+
+// 常驻标签的方向在构建期算：重点模型沿成本-PDR 对角链排布，写死方向必然撞上相邻图标。
+// 用绘图区百分比估算标签占位，四个方向里挑与其它点重叠最少的那个。
+const LABEL_W = 34;   // 标签宽约占绘图区宽的 34%
+const LABEL_H = 11;   // 标签高约占绘图区高的 11%
+const GAP_X = 7;      // 图标半径 + 间距，换算成 x 百分比
+const GAP_Y = 6;      // 同上，y 百分比
+const DOT_X = 5;      // 重点图标半宽
+const DOT_Y = 4;      // 重点图标半高
+const labelRect = (row: RankingRow, dir: string) => {
+  if (dir === 'up') return { x0: row.x - LABEL_W / 2, x1: row.x + LABEL_W / 2, y0: row.y + GAP_Y, y1: row.y + GAP_Y + LABEL_H };
+  if (dir === 'down') return { x0: row.x - LABEL_W / 2, x1: row.x + LABEL_W / 2, y0: row.y - GAP_Y - LABEL_H, y1: row.y - GAP_Y };
+  if (dir === 'left') return { x0: row.x - GAP_X - LABEL_W, x1: row.x - GAP_X, y0: row.y - LABEL_H / 2, y1: row.y + LABEL_H / 2 };
+  return { x0: row.x + GAP_X, x1: row.x + GAP_X + LABEL_W, y0: row.y - LABEL_H / 2, y1: row.y + LABEL_H / 2 };
+};
+// 依次放置：后放的标签要同时避开其它模型的图标和已放好的标签，
+// 否则三个标签会各自独立地都选「上」然后互相压住。
+const overlaps = (a: { x0: number; x1: number; y0: number; y1: number }, b: { x0: number; x1: number; y0: number; y1: number }) =>
+  a.x1 > b.x0 && a.x0 < b.x1 && a.y1 > b.y0 && a.y0 < b.y1;
+const placedLabels: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
+const labelDirs = new Map<string, string>();
+group.rows.slice(0, 3).forEach((row) => {
+  const others = group.rows.filter((other) => other !== row);
+  const scored = ['up', 'down', 'right', 'left'].map((dir) => {
+    const box = labelRect(row, dir);
+    const outside = box.x0 < -6 || box.x1 > 106 || box.y0 < -4 || box.y1 > 104 ? 1 : 0;
+    const hits = others.filter((other) =>
+      other.x + DOT_X > box.x0 && other.x - DOT_X < box.x1 && other.y + DOT_Y > box.y0 && other.y - DOT_Y < box.y1).length;
+    const clashes = placedLabels.filter((placed) => overlaps(box, placed)).length;
+    return { dir, box, cost: hits + clashes * 2 + outside * 3 };
+  });
+  const best = scored.reduce((winner, item) => (item.cost < winner.cost ? item : winner), scored[0]!);
+  placedLabels.push(best.box);
+  labelDirs.set(row.name, best.dir);
+});
+
 ---
 
 <div class:list={['ranking-pair', { 'ranking-pair-prominent': prominent }]}>
@@ -102,6 +138,7 @@ const zoneHeight = Math.min(96, 100 - (zoneAnchor.y + nextBelow) / 2);
         {group.rows.map((model, index) => (
           <span
             class:list={['cost-point', { 'is-leading': index < 4, 'is-labeled': index < 3, 'is-winner': index === 0 }]}
+            data-label-dir={labelDirs.get(model.name)}
             style={`--x:${model.x}%;--y:${model.y}%;--point-color:${model.color}`}
             aria-label={`${model.name}: ${model.pdr.toFixed(1)}%, $${model.cost.toFixed(2)}`}
             tabindex="0"
