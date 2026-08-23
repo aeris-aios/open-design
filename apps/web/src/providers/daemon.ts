@@ -341,6 +341,13 @@ export interface DaemonStreamOptions {
   initialLastEventId?: string | null;
   onRunCreated?: (runId: string) => void;
   onRunStatus?: (status: ChatRunStatus) => void;
+  /**
+   * Fired once per attempt when the daemon reports a run started. A same-run
+   * automatic retry re-sends `start` with a later anchor, which is how the live
+   * clock re-anchors to the attempt actually running instead of counting from
+   * the first one.
+   */
+  onAttemptStarted?: (attempt: { startedAt: number; index: number }) => void;
   /** Authoritative project-relative artifacts created or modified by the run. */
   onArtifactPaths?: (paths: string[]) => void;
   onRunEventId?: (eventId: string) => void;
@@ -363,6 +370,13 @@ export interface DaemonReattachOptions {
   handlers: DaemonStreamHandlers;
   initialLastEventId?: string | null;
   onRunStatus?: (status: ChatRunStatus) => void;
+  /**
+   * Fired once per attempt when the daemon reports a run started. A same-run
+   * automatic retry re-sends `start` with a later anchor, which is how the live
+   * clock re-anchors to the attempt actually running instead of counting from
+   * the first one.
+   */
+  onAttemptStarted?: (attempt: { startedAt: number; index: number }) => void;
   onArtifactPaths?: (paths: string[]) => void;
   onRunEventId?: (eventId: string) => void;
   /** Publish a current-run success outcome to the app-level upgrade gate. */
@@ -715,6 +729,7 @@ export async function streamViaDaemon({
   initialLastEventId,
   onRunCreated,
   onRunStatus,
+  onAttemptStarted,
   onArtifactPaths,
   onRunEventId,
   analyticsHints,
@@ -822,6 +837,7 @@ export async function streamViaDaemon({
       handlers,
       initialLastEventId,
       onRunStatus: emitRunStatus,
+      onAttemptStarted,
       onArtifactPaths,
       onRunEventId,
       projectId,
@@ -1214,6 +1230,7 @@ async function consumeDaemonRun({
   handlers,
   initialLastEventId,
   onRunStatus,
+  onAttemptStarted,
   onArtifactPaths,
   onRunEventId,
   projectId,
@@ -1382,6 +1399,14 @@ async function consumeDaemonRun({
           if (event.event === 'start') {
             const data = event.data as ChatSseStartPayload;
             onRunStatus?.('running');
+            // Re-anchor the elapsed clock. `start` is emitted once per attempt,
+            // so on an automatic retry this carries the new attempt's boundary.
+            if (typeof data.attemptStartedAt === 'number') {
+              onAttemptStarted?.({
+                startedAt: data.attemptStartedAt,
+                index: typeof data.attemptIndex === 'number' ? data.attemptIndex : 0,
+              });
+            }
             handlers.onAgentEvent({
               kind: 'status',
               label: 'starting',

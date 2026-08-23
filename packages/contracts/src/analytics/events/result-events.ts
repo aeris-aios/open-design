@@ -212,7 +212,20 @@ export interface RunDesignSystemProps {
 
 export interface RunTimingProps {
   total_duration_ms: number;
+  /**
+   * Wait endured by the CURRENT attempt before it began executing. Attempt-
+   * scoped since the per-attempt clock fix; rows emitted before that measured
+   * from run creation and so charged a retried run for every earlier attempt.
+   * Filter on `phase_schema_version`, do not average across the boundary.
+   */
   queue_duration_ms?: number;
+  /**
+   * Time consumed by earlier attempts (their execution plus retry backoff)
+   * before the current attempt was scheduled. Present only on retried runs.
+   * `queue_duration_ms + retry_wait_duration_ms` reconstructs the pre-fix
+   * `queue_duration_ms`.
+   */
+  retry_wait_duration_ms?: number;
   process_spawn_duration_ms?: number;
   time_to_first_model_event_ms?: number;
   first_model_event_type?: TrackingFirstModelEventType;
@@ -504,6 +517,7 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   is_followup_turn?: boolean;
   cache_token_source?: 'anthropic' | 'openai' | 'unavailable';
   queue_duration_ms?: number;
+  retry_wait_duration_ms?: number;
   pre_spawn_duration_ms?: number;
   prompt_build_duration_ms?: number;
   launch_preflight_duration_ms?: number;

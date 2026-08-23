@@ -18,6 +18,11 @@ type ChatRunMessageState = {
   agentId?: string | null;
   status?: string;
   createdAt?: number;
+  // Per-attempt clock anchor. `createdAt` is the logical run start and never
+  // moves, so on a same-run retry (which reuses the run object) only these two
+  // say when the attempt actually running began (#7300).
+  analyticsTelemetry?: { attemptStartedAt?: number; attemptIndex?: number } | null;
+  retryAttemptCount?: number | null;
   sessionMode?: string | null;
   context?: Record<string, unknown> | null;
   error?: string | null;
@@ -149,6 +154,18 @@ export function persistRunEventToAssistantMessage(
   data: unknown,
 ): void {
   if (!run.assistantMessageId) return;
+  // `start` is the only frame emitted once per ATTEMPT, so it is the boundary
+  // at which the persisted attempt anchor has to move. The claim in
+  // pinAssistantMessageOnRunCreate runs once per run (create/resume), not per
+  // attempt, and an automatic same-run retry re-enters startChatRun without
+  // re-claiming — so without this the row would keep attempt 0's anchor and a
+  // reloaded client would fall back to the cumulative run clock (#7300).
+  // Reading the anchor off the frame itself is deliberate: the SSE payload and
+  // the persisted row are then the same number by construction, so a refresh
+  // cannot make the clock jump.
+  if (event === 'start') {
+    stampAssistantMessageAttemptStart(db, run.assistantMessageId, data);
+  }
   const persisted = runSseEventToPersistedAgentEvent(event, data);
   if (!persisted) {
     if (event === 'end' || event === 'close') flushRunMessageEvents(run);
@@ -188,6 +205,43 @@ export function persistRunEventToAssistantMessage(
       flushRunMessageEvents(run);
     }, RUN_MESSAGE_EVENT_FLUSH_INTERVAL_MS);
     pending.timer.unref?.();
+  }
+}
+
+/**
+ * Advance the assistant row's per-attempt clock anchor.
+ *
+ * Invariant: `attempt_started_at` only ever moves FORWARD. `started_at` stays
+ * pinned to the run's first attempt (the claim's `CASE WHEN` guarantees that),
+ * so these two columns together let a client answer both "when did the user
+ * ask for this?" and "how long has the attempt on screen been running?".
+ *
+ * The monotonic guard is on the timestamp rather than the index because a
+ * manual resume resets the attempt index back to 0 while still starting a
+ * genuinely later attempt.
+ */
+function stampAssistantMessageAttemptStart(
+  db: SqliteDb,
+  messageId: string,
+  data: unknown,
+): void {
+  if (!isRecord(data)) return;
+  const attemptStartedAt = data.attemptStartedAt;
+  if (typeof attemptStartedAt !== 'number' || !Number.isFinite(attemptStartedAt)) return;
+  const attemptIndex =
+    typeof data.attemptIndex === 'number' && Number.isFinite(data.attemptIndex)
+      ? data.attemptIndex
+      : 0;
+  try {
+    db.prepare(
+      `UPDATE messages
+          SET attempt_started_at = ?, attempt_index = ?
+        WHERE id = ?
+          AND (attempt_started_at IS NULL OR attempt_started_at <= ?)`,
+    ).run(attemptStartedAt, attemptIndex, messageId, attemptStartedAt);
+  } catch (err) {
+    // The clock is a display affordance; never let it break the run.
+    console.warn('[runs] attempt clock persistence failed', err);
   }
 }
 
@@ -525,6 +579,20 @@ function liveArtifactRefreshPhase(value: unknown): 'started' | 'succeeded' | 'fa
   return 'started';
 }
 
+/**
+ * The attempt anchor a claim can vouch for, or nothing.
+ *
+ * Kept as a pair: an index without a timestamp would describe an attempt the
+ * row has no start time for, which is worse than saying nothing at all.
+ */
+function claimAttemptAnchor(
+  run: ChatRunMessageState,
+): { attemptStartedAt: number; attemptIndex: number } | Record<string, never> {
+  const attemptStartedAt = run.analyticsTelemetry?.attemptStartedAt;
+  if (typeof attemptStartedAt !== 'number' || !Number.isFinite(attemptStartedAt)) return {};
+  return { attemptStartedAt, attemptIndex: run.retryAttemptCount ?? 0 };
+}
+
 export function pinAssistantMessageOnRunCreate(
   db: SqliteDb,
   run: ChatRunMessageState,
@@ -574,6 +642,10 @@ export function pinAssistantMessageOnRunCreate(
         sessionMode: run.sessionMode ?? undefined,
         runContext: run.context ?? undefined,
         startedAt: run.createdAt,
+        // Seed the attempt anchor when the run already has one (a resume claim
+        // does). A fresh run has not stamped its attempt boundary yet at claim
+        // time — the `start` frame does that a moment later.
+        ...claimAttemptAnchor(run),
       });
       return { ok: true };
     }
@@ -610,7 +682,13 @@ export function pinAssistantMessageOnRunCreate(
                 WHEN run_id = ? THEN started_at
                 WHEN ? THEN COALESCE(started_at, ?)
                 ELSE ?
-              END
+              END,
+              -- Unlike started_at (deliberately pinned to the first attempt),
+              -- the attempt anchor must ADVANCE: COALESCE keeps the stored
+              -- value when this claim has nothing newer to say, and overwrites
+              -- it when it does (#7300).
+              attempt_started_at = COALESCE(?, attempt_started_at),
+              attempt_index = COALESCE(?, attempt_index)
         WHERE id = ?
           AND conversation_id = ?
           AND role = 'assistant'
@@ -632,6 +710,10 @@ export function pinAssistantMessageOnRunCreate(
       existing.runId ? 0 : 1, // placeholder -> keep web-persisted startedAt
       run.createdAt,
       run.createdAt, // terminal rebind -> reset to this run's start
+      run.analyticsTelemetry?.attemptStartedAt ?? null,
+      run.analyticsTelemetry?.attemptStartedAt === undefined
+        ? null // no anchor yet -> leave the pair alone rather than half-write it
+        : run.retryAttemptCount ?? 0,
       run.assistantMessageId,
       run.conversationId,
       run.id, // same-run gate in WHERE

@@ -108,6 +108,7 @@ export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
     producerStartedAt?: number,
   ): void;
   resetForAttempt(attemptIndex: number, timestamp?: number): void;
+  markAttemptStart(attemptIndex: number, timestamp?: number): void;
 } {
   const mark = (lifecycleMark: RunLifecycleMark, timestamp = Date.now()) => {
     const field = MARK_TO_FIELD[lifecycleMark];
@@ -168,6 +169,31 @@ export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
         ...(run.analyticsTelemetry?.startRequestedAt !== undefined
           ? { startRequestedAt: run.analyticsTelemetry.startRequestedAt }
           : {}),
+      };
+    },
+    // Invariant: every attempt -- including the first -- carries an
+    // `attemptStartedAt`, so "when did the work currently running begin" is
+    // always answerable without inferring it from `run.createdAt`.
+    //
+    // `resetForAttempt` already stamps this for retries and manual resumes, at
+    // the moment the failed attempt is torn down. Attempt 0 had no such
+    // boundary and was left unstamped, which is why the only start time a
+    // client could read was the logical run start -- the value that keeps
+    // growing across retries and reads as a wedged task.
+    //
+    // First-write-wins within an attempt: `resetForAttempt` has just replaced
+    // the telemetry bag, so the retry's teardown timestamp is the one that
+    // survives. Anchoring the retry at teardown rather than at respawn keeps
+    // the clock continuous across the policy backoff (no visible gap while the
+    // run sits in `queued`) and keeps the backoff attributable as this
+    // attempt's queue wait.
+    markAttemptStart(attemptIndex: number, timestamp = Date.now()) {
+      const current = run.analyticsTelemetry ?? {};
+      if (current.attemptStartedAt !== undefined) return;
+      run.analyticsTelemetry = {
+        ...current,
+        attemptIndex,
+        attemptStartedAt: timestamp,
       };
     },
   };

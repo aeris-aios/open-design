@@ -3546,6 +3546,7 @@ export const pl: Dict = {
   'assistant.thinking': 'Myślę',
   'assistant.thought': 'Pomyślał',
   'assistant.thoughtFor': 'Myślał {s}s',
+  'assistant.retryAttemptSummary': 'Próba {n} · łącznie {total}',
   'assistant.systemReminder': 'Przypomnienie systemowe',
   'assistant.possiblePromptInjection': 'Możliwa iniekcja promptu',
   'assistant.waitingFirstOutput': 'Oczekiwanie na pierwszą odpowiedź',

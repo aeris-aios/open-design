@@ -483,6 +483,15 @@ function mergeServerMessageWithLocal(server: ChatMessage, local?: ChatMessage): 
   if (!server.startedAt && local.startedAt) {
     merged.startedAt = local.startedAt;
   }
+  // Same rule as startedAt: a server row that predates the per-attempt clock
+  // (or whose run state has been pruned) must not wipe an anchor the live
+  // stream already established, or the clock silently reverts to cumulative.
+  if (server.attemptStartedAt === undefined && local.attemptStartedAt !== undefined) {
+    merged.attemptStartedAt = local.attemptStartedAt;
+  }
+  if (server.attemptIndex === undefined && local.attemptIndex !== undefined) {
+    merged.attemptIndex = local.attemptIndex;
+  }
   if (!server.endedAt && local.endedAt) {
     merged.endedAt = local.endedAt;
   }
@@ -5637,6 +5646,17 @@ export function ProjectView({
           cancelSignal: cancelController.signal,
           initialLastEventId: needsFullReplay ? null : message.lastRunEventId ?? null,
           publishRunFinishedEvent: shouldPublishRunFinishedEvent,
+          // Re-anchors the clock when a retry fires during this reattach, and
+          // on a full replay where the `start` frame is redelivered. A reload
+          // that resumes mid-stream gets the anchor from the persisted message
+          // row instead, so no extra run-status probe is needed on this path.
+          onAttemptStarted: ({ startedAt, index }) => {
+            updateMessageById(message.id, (prev) => ({
+              ...prev,
+              attemptStartedAt: startedAt,
+              attemptIndex: index,
+            }));
+          },
           onArtifactPaths: (paths) => {
             authoritativeReattachArtifactPaths = paths;
           },
@@ -8034,6 +8054,17 @@ export function ProjectView({
           onArtifactPaths: (paths) => {
             authoritativeArtifactPaths = paths;
           },
+          // Re-anchor the elapsed clock on every attempt. A daemon-side
+          // automatic retry reuses this run and this message, so without this
+          // the clock keeps counting from the first attempt and a healthy retry
+          // reads as a task stuck for hours.
+          onAttemptStarted: ({ startedAt, index }) => {
+            updateMessageById(
+              assistantId,
+              (prev) => ({ ...prev, attemptStartedAt: startedAt, attemptIndex: index }),
+              true,
+            );
+          },
           onRunStatus: (runStatus) => {
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;
             const runMayFinalize =
@@ -8210,6 +8241,17 @@ export function ProjectView({
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,
             }));
+          },
+          // Re-anchor the elapsed clock on every attempt. A daemon-side
+          // automatic retry reuses this run and this message, so without this
+          // the clock keeps counting from the first attempt and a healthy retry
+          // reads as a task stuck for hours.
+          onAttemptStarted: ({ startedAt, index }) => {
+            updateMessageById(
+              assistantId,
+              (prev) => ({ ...prev, attemptStartedAt: startedAt, attemptIndex: index }),
+              true,
+            );
           },
           onRunStatus: (runStatus) => {
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;

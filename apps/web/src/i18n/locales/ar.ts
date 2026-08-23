@@ -3546,6 +3546,7 @@ export const ar: Dict = {
   'assistant.thinking': 'تفكير',
   'assistant.thought': 'فكّر',
   'assistant.thoughtFor': 'فكّر لمدة {s} ث',
+  'assistant.retryAttemptSummary': 'المحاولة {n} · {total} إجمالاً',
   'assistant.systemReminder': 'تذكير النظام',
   'assistant.possiblePromptInjection': 'احتمال حقن التوجيه',
   'assistant.waitingFirstOutput': 'في انتظار أول مخرج',

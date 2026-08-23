@@ -9658,6 +9658,11 @@ export async function startServer({
   const startChatRun = async (chatBody, run) => {
     const lifecycle = createRunLifecycleTracer(run);
     lifecycle.mark('chat_run_started');
+    // Stamp the attempt boundary for attempt 0 too. Retries/resumes get theirs
+    // from resetForAttempt at teardown; without this the first attempt has no
+    // attempt anchor and clients fall back to run.createdAt, which is exactly
+    // the cumulative clock this fix removes.
+    lifecycle.markAttemptStart(run.retryAttemptCount ?? 0);
     const pendingNativeSessionContinue =
       run.nativeSessionContinuePending &&
       typeof run.nativeSessionContinuePending.sessionId === 'string'
@@ -12180,6 +12185,11 @@ export async function startServer({
       reasoning: safeReasoning,
       serviceTier: safeServiceTier,
       toolTokenExpiresAt: toolTokenGrant?.expiresAt ?? null,
+      // Emitted once per attempt, so a same-run retry re-sends `start` with a
+      // later timestamp. That is the signal a live client uses to re-anchor its
+      // elapsed clock to the attempt actually running.
+      attemptStartedAt: run.analyticsTelemetry?.attemptStartedAt ?? run.createdAt,
+      attemptIndex: run.retryAttemptCount ?? 0,
     });
     noteAgentActivity();
 
