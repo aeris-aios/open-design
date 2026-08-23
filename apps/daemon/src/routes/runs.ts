@@ -403,6 +403,8 @@ interface ChatRun {
     entryFile: string;
     shellPresent: boolean;
   };
+  /** Run-finish observation: how the delivered entry carries the staged layout primitives. */
+  odNextLayoutPrimitives?: 'verbatim' | 'modified' | 'linked' | 'absent';
   analyticsTelemetry?: RunTelemetryTimestamps;
   resolvedModelId?: string | null;
   preflightAgentCliVersion?: string | null;
@@ -3334,6 +3336,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
               od_next_device_platform_source: run.odNextDeviceShell.resolvedFrom,
               od_next_device_shell_present: run.odNextDeviceShell.shellPresent,
             }
+          : {}),
+        ...(run.odNextLayoutPrimitives
+          ? { od_next_layout_primitives: run.odNextLayoutPrimitives }
           : {}),
         runtime_type: runtimeTypeForRunAnalytics({
           derived: configureGlobals.runtime_type,
