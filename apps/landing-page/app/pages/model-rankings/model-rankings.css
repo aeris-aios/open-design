@@ -260,8 +260,8 @@ body:has(.model-index-page) .site-chrome.is-condensed .nav {
   white-space: nowrap;
 }
 .ranking-chart {
-  height: 548px;
-  padding: 26px 18px 12px;
+  height: 452px;
+  padding: 22px 18px 12px;
   display: block;
 }
 .ranking-chart-scroll { min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
@@ -371,7 +371,7 @@ body:has(.model-index-page) .site-chrome.is-condensed .nav {
 
 .cost-card { display: flex; flex-direction: column; }
 .cost-card-head { align-items: flex-start; }
-.cost-stage { min-height: 554px; position: relative; flex: 1; }
+.cost-stage { min-height: 458px; position: relative; flex: 1; }
 .cost-plot {
   position: absolute;
   inset: 30px 22px 56px 54px;
@@ -611,7 +611,7 @@ body:has(.model-index-page) .site-chrome.is-condensed .nav {
 @media (max-width: 1000px) {
   .section-heading { align-items: flex-start; flex-direction: column; }
   .ranking-pair { grid-template-columns: 1fr; }
-  .cost-stage { min-height: 460px; }
+  .cost-stage { min-height: 404px; }
   .scenario-index { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .analysis-toolbar { align-items: stretch; flex-direction: column; gap: 12px; }
   .analysis-tabs { width: 100%; }
@@ -641,14 +641,14 @@ body:has(.model-index-page) .site-chrome.is-condensed .nav {
   .benchmark-card-head { min-height: 0; padding: 16px 14px; align-items: flex-start; flex-direction: column; gap: 13px; }
   .benchmark-card-head h3 { font-size: 18px; }
   .ranking-view-tabs { width: 100%; grid-template-columns: repeat(2,1fr); }
-  .ranking-chart { height: 470px; padding: 20px 10px 10px; display: block; }
+  .ranking-chart { height: 408px; padding: 18px 10px 10px; display: block; }
   .ranking-list { min-width: 700px; gap: 6px; }
   .ranking-row { grid-template-rows: minmax(0,1fr) 74px; }
   .ranking-fill { width: min(100%,46px); }
   .ranking-fill .model-icon { width: 24px; height: 24px; padding: 4px; bottom: 6px; }
   .ranking-model strong { font-size: 9px; }
   .ranking-model small { display: none; }
-  .cost-stage { min-height: 390px; }
+  .cost-stage { min-height: 348px; }
   .cost-plot { inset: 30px 18px 56px 50px; }
   .cost-y-ticks { left: 27px; }
   .cost-x-ticks { right: 13px; left: 47px; }
