@@ -113,10 +113,14 @@ after(async () => {
 
 async function openPricing(input: {
   billing?: BillingFixture;
+  browserLocale?: string;
   sourcePath?: '/dashboard' | '/wallet' | '/not-a-pricing-source' | null;
   signedIn?: boolean;
+  targetHref?: string;
 } = {}): Promise<{ page: Page; requests: BridgeRequest[]; navigations: string[] }> {
-  const context = await browser.newContext({ locale: 'en-US' });
+  const context = await browser.newContext({
+    locale: input.browserLocale ?? 'en-US',
+  });
   const page = await context.newPage();
   const requests: BridgeRequest[] = [];
   const navigations: string[] = [];
@@ -126,6 +130,7 @@ async function openPricing(input: {
     }
   });
   const sourcePath = input.sourcePath === undefined ? '/dashboard' : input.sourcePath;
+  const targetHref = input.targetHref ?? '/pricing/';
   const signedIn = input.signedIn ?? true;
   const billing: BillingFixture = {
     personalSubscriptionCheckoutAllowed: true,
@@ -165,15 +170,18 @@ async function openPricing(input: {
 
   if (sourcePath) {
     await page.route(`${baseUrl}${sourcePath}`, async (route) => {
+      const escapedTargetHref = targetHref
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;');
       await route.fulfill({
         status: 200,
         contentType: 'text/html',
-        body: '<!doctype html><a id="pricing-link" href="/pricing/">Pricing</a>',
+        body: `<!doctype html><a id="pricing-link" href="${escapedTargetHref}">Pricing</a>`,
       });
     });
     await page.goto(`${baseUrl}${sourcePath}`);
     await page.locator('#pricing-link').click();
-    await page.waitForURL('**/pricing/');
+    await page.waitForURL((url) => url.pathname.endsWith('/pricing/'));
   } else {
     await page.goto(`${baseUrl}/pricing/`);
   }
@@ -238,6 +246,35 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
         ['pro', 'monthly', false, true],
         ['max', 'monthly', false, false],
       ],
+    );
+  });
+
+  it('preserves wallet attribution for a direct Chinese Vela locale handoff', async (t) => {
+    const targetHref =
+      '/zh/pricing/?od_locale=zh&cloud_console_base=' +
+      encodeURIComponent('https://open-design.ai/cloud/');
+    const { page, requests, navigations } = await openPricing({
+      browserLocale: 'zh-CN',
+      sourcePath: '/wallet',
+      targetHref,
+    });
+    t.after(() => page.context().close());
+    await waitForRequests(requests, 1);
+
+    assert.deepEqual(navigations, [
+      `${baseUrl}/wallet`,
+      `${baseUrl}${targetHref}`,
+    ]);
+    assert.equal(
+      page.url(),
+      `${baseUrl}/zh/pricing/?cloud_console_base=${encodeURIComponent('https://open-design.ai/cloud/')}`,
+    );
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-CN');
+    assert.equal(await page.evaluate(() => document.referrer), `${baseUrl}/wallet`);
+    assert.equal(requests[0]?.sourceSurface, 'wallet');
+    assert.deepEqual(
+      requests[0]?.events.map((event) => event.payload.planId),
+      ['go', 'plus', 'pro', 'max'],
     );
   });
 
