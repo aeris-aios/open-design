@@ -10766,14 +10766,19 @@ export async function startServer({
     // the run.
     if (cwd && strategyTaskAtStart && typeof run.appliedPluginSnapshotId === 'string') {
       try {
-        const staged = await materializeOdNextDeviceFrames({
+        const staging = await materializeOdNextDeviceFrames({
           cwd,
           resources: await loadOdNextTaskResourcesForSnapshot({
             bundledPluginsDir: BUNDLED_PLUGINS_DIR,
             snapshot: getSnapshot(db, run.appliedPluginSnapshotId),
           }),
         });
-        if (staged.length > 0) run.odNextStagedDeviceFrames = staged;
+        if (staging.staged.length > 0) run.odNextStagedDeviceFrames = staging.staged;
+        if (staging.skipped.length > 0) {
+          console.warn(
+            `[od-next-device-frames] left pre-existing project files in place: ${staging.skipped.join(', ')}`,
+          );
+        }
       } catch (err) {
         console.warn(
           `[od-next-device-frames] staging skipped: ${err instanceof Error ? err.message : String(err)}`,

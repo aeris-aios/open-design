@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -23,6 +24,31 @@ export class InvalidOdNextDeviceFrameRootError extends Error {
     super(message);
     this.name = 'InvalidOdNextDeviceFrameRootError';
   }
+}
+
+/**
+ * Ownership record the materializer keeps beside the shells it wrote.
+ *
+ * `.od-frames/` is a name this feature introduces inside a directory the user
+ * owns, so an imported or older project can already hold a folder of that name
+ * with arbitrary files in it. The manifest is the only thing that makes a file
+ * ours: staging replaces or removes exactly the files it previously recorded
+ * and never touches anything else — including a user's own `iphone.html` that
+ * happens to share a managed name.
+ */
+export const OD_NEXT_DEVICE_FRAME_MANIFEST = '.od-next-device-frames.json' as const;
+const OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA = 'open-design.od-next-device-frames/v1' as const;
+
+interface OdNextDeviceFrameManifestV1 {
+  schema: typeof OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA;
+  files: Record<string, string>;
+}
+
+export interface OdNextDeviceFrameStagingResult {
+  /** Project-relative paths of the shells now staged and daemon-owned. */
+  staged: string[];
+  /** Managed names left alone because an unmanaged file already holds them. */
+  skipped: string[];
 }
 
 /**
@@ -52,36 +78,108 @@ export async function loadOdNextTaskResourcesForSnapshot(input: {
     .map((resource) => ({ path: resource.path, text: resource.text }));
 }
 
+function digest(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+async function readManifest(root: string): Promise<OdNextDeviceFrameManifestV1> {
+  const empty: OdNextDeviceFrameManifestV1 = { schema: OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA, files: {} };
+  let raw: string;
+  try {
+    raw = await readFile(path.join(root, OD_NEXT_DEVICE_FRAME_MANIFEST), 'utf8');
+  } catch {
+    return empty;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<OdNextDeviceFrameManifestV1> | null;
+    if (parsed?.schema !== OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA || typeof parsed.files !== 'object' || !parsed.files) {
+      return empty;
+    }
+    const files: Record<string, string> = {};
+    for (const [name, sha] of Object.entries(parsed.files)) {
+      if (typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha) && !name.includes('/') && !name.includes('\\')) {
+        files[name] = sha;
+      }
+    }
+    return { schema: OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA, files };
+  } catch {
+    return empty;
+  }
+}
+
 /**
  * Stage the device shells into `<cwd>/.od-frames/` so the rule card's
  * `.od-frames/<shell>.html` paths resolve for every prototype run, whether or
  * not a platform was resolved up front.
  *
- * First-party content, so the directory is replaced wholesale on every run —
- * a shell edit in a newer package must win over whatever an earlier run left
- * behind. The root itself is refused when it is a symlink or a non-directory,
- * mirroring the frozen Skill materialization guard.
+ * Non-destructive by construction: only files recorded in the manifest from a
+ * previous staging are replaced or (when the package no longer ships them)
+ * removed. A pre-existing file under a managed name that the manifest does not
+ * claim is left untouched and that shell is reported as skipped — the quoted
+ * `device-frame-shell` fact still carries the source. Unrelated files in the
+ * directory are never read, written, or deleted. The root itself is refused
+ * when it is a symlink or a non-directory, mirroring the frozen Skill guard.
  */
 export async function materializeOdNextDeviceFrames(input: {
   cwd: string;
   resources: ReadonlyArray<OdNextTaskResource>;
-}): Promise<string[]> {
+}): Promise<OdNextDeviceFrameStagingResult> {
   const shells = input.resources.filter((resource) => odNextDevicePlatformForResource(resource.path));
-  if (shells.length === 0) return [];
+  if (shells.length === 0) return { staged: [], skipped: [] };
   const root = path.join(input.cwd, OD_NEXT_DEVICE_FRAME_ROOT);
-  const stat = await lstat(root).catch(() => null);
-  if (stat && (stat.isSymbolicLink() || !stat.isDirectory())) {
+  const rootStat = await lstat(root).catch(() => null);
+  if (rootStat && (rootStat.isSymbolicLink() || !rootStat.isDirectory())) {
     throw new InvalidOdNextDeviceFrameRootError('Device shell staging root is unsafe.');
   }
-  await rm(root, { recursive: true, force: true });
   await mkdir(root, { recursive: true });
+  const previous = await readManifest(root);
+  const next: Record<string, string> = {};
   const staged: string[] = [];
+  const skipped: string[] = [];
+
   for (const shell of shells) {
-    const basename = path.posix.basename(shell.path);
-    await writeFile(path.join(root, basename), shell.text, { encoding: 'utf8', flag: 'wx' });
-    staged.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${basename}`);
+    const name = path.posix.basename(shell.path);
+    const target = path.join(root, name);
+    const owned = Object.prototype.hasOwnProperty.call(previous.files, name);
+    const existing = await lstat(target).catch(() => null);
+    if (existing && !owned) {
+      // Someone else's file. Leave it exactly as it is.
+      skipped.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`);
+      continue;
+    }
+    if (existing && (existing.isSymbolicLink() || !existing.isFile())) {
+      // Our manifest claims it, but it is no longer a plain file we wrote.
+      skipped.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`);
+      continue;
+    }
+    await writeFile(target, shell.text, { encoding: 'utf8' });
+    next[name] = digest(shell.text);
+    staged.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`);
   }
-  return staged.sort();
+
+  // Retire shells we staged earlier that the current package no longer ships,
+  // and only when the bytes are still ours.
+  for (const [name, sha] of Object.entries(previous.files)) {
+    if (name in next || skipped.includes(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`)) continue;
+    const target = path.join(root, name);
+    const existing = await lstat(target).catch(() => null);
+    if (!existing || existing.isSymbolicLink() || !existing.isFile()) continue;
+    const current = await readFile(target, 'utf8').catch(() => null);
+    if (current !== null && digest(current) === sha) {
+      await rm(target, { force: true });
+    }
+  }
+
+  const manifest: OdNextDeviceFrameManifestV1 = {
+    schema: OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA,
+    files: Object.fromEntries(Object.entries(next).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+  };
+  await writeFile(
+    path.join(root, OD_NEXT_DEVICE_FRAME_MANIFEST),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    { encoding: 'utf8' },
+  );
+  return { staged: staged.sort(), skipped: skipped.sort() };
 }
 
 export interface OdNextDeviceShellObservation {
