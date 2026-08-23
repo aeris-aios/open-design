@@ -966,6 +966,11 @@ describe("pricing contract", () => {
     assert.match(page, /data-downgrade-plan-label=\{planActionLabels\.downgrade\}/);
     assert.match(page, /data-upgrade-plan-label=\{planActionLabels\.upgrade\}/);
     assert.match(page, /loadPersonalPricingContext\(apiOrigin\)/);
+    assert.match(page, /pricing:personal-context-resolved/);
+    assert.match(page, /resolvePricingBridgeSource/);
+    assert.match(page, /authenticated:\s*true/);
+    assert.doesNotMatch(page, /pricingCompatibilityAttribution/);
+    assert.doesNotMatch(page, /tiers:\s*PRICING_SNAPSHOT\.tiers/);
     assert.match(page, /resolvePersonalPlanAction\(pricingContext/);
     assert.match(page, /action\.kind === 'dual_change'/);
     assert.doesNotMatch(page, /action\.kind === 'manage_billing'/);
@@ -986,6 +991,31 @@ describe("pricing contract", () => {
     );
     assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
     assert.match(individualPlans, /\.pricing-card-cta\s*\{[^}]*border:\s*0;/s);
+  });
+
+  it("records Pricing Enterprise submit intent before shared-form validation", async () => {
+    const [page, form] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      readFile(
+        new URL("../app/_components/enterprise-lead-form.astro", import.meta.url),
+        "utf8",
+      ),
+    ]);
+    const submitHandler = form.slice(
+      form.indexOf("form.addEventListener('submit'"),
+      form.indexOf("const data = new FormData(form)"),
+    );
+    assert.match(
+      submitHandler,
+      /pricing:enterprise-submit[\s\S]*?\['email', 'team-size'/,
+    );
+    assert.doesNotMatch(
+      page.slice(
+        page.indexOf("modal.addEventListener('od:lead-success'"),
+        page.indexOf("});", page.indexOf("modal.addEventListener('od:lead-success'")) + 3,
+      ),
+      /pricing:enterprise-submit/,
+    );
   });
 
   it("restores account actions only on Pricing", async () => {

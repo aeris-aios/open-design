@@ -1120,7 +1120,6 @@ const jsonLd = [
             use_case: d.use_case || '',
             use_case_count: d.use_case_count || 0,
           });
-          root.dispatchEvent(new CustomEvent('pricing:enterprise-submit'));
         });
       }
     })();
@@ -1261,40 +1260,42 @@ const jsonLd = [
         } else {
           applyPersonalActions();
         }
+        (pricingRoot as HTMLElement & {
+          __personalPricingContext?: PersonalPricingContext;
+        }).__personalPricingContext = context;
+        pricingRoot.setAttribute('data-personal-pricing-context-resolved', 'true');
+        pricingRoot.dispatchEvent(new CustomEvent('pricing:personal-context-resolved', {
+          detail: { authenticated: true, context },
+        }));
       });
     }
   </script>
   <script>
     import {
       createPricingCompatibilityAnalytics,
-      pricingCompatibilityAttribution,
-      type PricingCompatibilityEvent,
     } from '../../_lib/pricing-compat-analytics';
     import {
-      PRICING_SNAPSHOT,
-      type BillingInterval,
-      type PlanTier,
-    } from '../../_lib/pricing';
-
-    type PricingAnalyticsWindow = Window & {
-      __odTrack?: (
-        event: PricingCompatibilityEvent,
-        props: Record<string, unknown>,
-      ) => void;
-    };
+      resolvePricingBridgeSource,
+    } from '../../_lib/pricing-analytics-bridge';
+    import type {
+      PersonalPricingContext,
+    } from '../../_lib/pricing-current-plan';
+    import type { BillingInterval } from '../../_lib/pricing';
 
     const compatibilityRoot = document.querySelector<HTMLElement>('[data-pricing-root]');
-    if (compatibilityRoot) {
-      const analyticsWindow = window as PricingAnalyticsWindow;
+    const sourceSurface = resolvePricingBridgeSource({
+      search: new URLSearchParams(window.location.search),
+      referrer: document.referrer,
+    });
+    if (compatibilityRoot && sourceSurface) {
+      const apiOrigin = compatibilityRoot.getAttribute('data-billing-api-origin') || '';
+      const sessionId = typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `pricing-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const compatibility = createPricingCompatibilityAnalytics({
-        tiers: PRICING_SNAPSHOT.tiers,
-        attribution: pricingCompatibilityAttribution(
-          new URLSearchParams(window.location.search),
-          document.referrer,
-        ),
-        track: (event, props) => analyticsWindow.__odTrack?.(event, props),
+        apiOrigin,
+        sessionId,
       });
-      const personalPlanIds = new Set<string>(['go', 'plus', 'pro', 'max']);
       const readAudience = () =>
         compatibilityRoot.getAttribute('data-audience') === 'team'
           ? 'team' as const
@@ -1303,31 +1304,35 @@ const jsonLd = [
         compatibilityRoot.getAttribute('data-interval') === 'monthly'
           ? 'monthly'
           : 'yearly';
-      const readIntroEligibility = () =>
-        compatibilityRoot.getAttribute('data-first-month-intro-eligible') !== 'false';
-      const readCurrentPlan = () => {
-        const planId = compatibilityRoot.getAttribute('data-current-personal-plan-id');
-        return planId && personalPlanIds.has(planId)
-          ? planId as PlanTier | 'go'
-          : null;
-      };
-      const readCurrentInterval = (): BillingInterval | null => {
-        const interval = compatibilityRoot.getAttribute(
-          'data-current-personal-billing-interval',
-        );
-        return interval === 'monthly' || interval === 'yearly' ? interval : null;
-      };
       const exposeVisiblePlans = () => {
         compatibility.exposePlans({
           audience: readAudience(),
           interval: readInterval(),
-          introEligible: readIntroEligibility(),
-          currentPlanId: readCurrentPlan(),
-          currentBillingInterval: readCurrentInterval(),
         });
       };
 
-      exposeVisiblePlans();
+      const resolveCompatibilityContext = (context: PersonalPricingContext | null) => {
+        if (!context) return;
+        compatibility.resolveContext({
+          authenticated: true,
+          sourceSurface,
+          currentPlanId: context.current?.tier ?? null,
+          currentBillingInterval: context.current?.interval ?? null,
+          firstMonthEligible: context.firstMonthIntroEligible,
+        });
+        exposeVisiblePlans();
+      };
+      compatibilityRoot.addEventListener('pricing:personal-context-resolved', (event) => {
+        const detail = (event as CustomEvent<{
+          authenticated?: boolean;
+          context?: PersonalPricingContext | null;
+        }>).detail;
+        if (detail?.authenticated !== true) return;
+        resolveCompatibilityContext(detail.context ?? null);
+      });
+      resolveCompatibilityContext((compatibilityRoot as HTMLElement & {
+        __personalPricingContext?: PersonalPricingContext;
+      }).__personalPricingContext ?? null);
       compatibilityRoot.addEventListener('pricing:audience-changed', exposeVisiblePlans);
       compatibilityRoot.addEventListener('pricing:interval-changed', (event) => {
         const detail = (
@@ -1345,9 +1350,6 @@ const jsonLd = [
           audience: readAudience(),
           currentInterval,
           targetInterval,
-          introEligible: readIntroEligibility(),
-          currentPlanId: readCurrentPlan(),
-          currentBillingInterval: readCurrentInterval(),
           userInitiated: detail?.shouldTrack === true,
         });
       });
@@ -1357,19 +1359,17 @@ const jsonLd = [
         const cta = target.closest<HTMLElement>('[data-pricing-cta]');
         if (!cta) return;
         compatibility.clickPlan({
+          audience: readAudience(),
           planId: cta.getAttribute('data-tier') || '',
           interval: readInterval(),
-          introEligible: readIntroEligibility(),
           enabled: !cta.hasAttribute('data-subscription-disabled'),
-          currentPlanId: readCurrentPlan(),
-          currentBillingInterval: readCurrentInterval(),
         });
       });
       compatibilityRoot.addEventListener(
         'pricing:enterprise-open',
         compatibility.openEnterpriseLead,
       );
-      compatibilityRoot.addEventListener(
+      document.addEventListener(
         'pricing:enterprise-submit',
         compatibility.submitEnterpriseLead,
       );
