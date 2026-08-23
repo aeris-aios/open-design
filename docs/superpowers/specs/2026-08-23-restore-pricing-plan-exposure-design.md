@@ -96,10 +96,16 @@ The emitter activates only after all of the following are true:
 - the Personal pricing context has finished resolving, including current plan,
   current interval, and first-month eligibility.
 
-The trusted surface is derived from an explicit allowlisted handoff value when
-present, otherwise from an allowlisted OpenDesign/Vela referrer host with an
-exact route segment. Arbitrary query strings and external referrers cannot
-create new analytics dimensions.
+The trusted surface is derived only from the browser referrer when it has an
+allowlisted OpenDesign/Vela origin and an exact `/wallet`, `/dashboard`,
+`/cloud/wallet`, or `/cloud/dashboard` path. Query parameters never select the
+source surface, and arbitrary query strings or external referrers cannot create
+new analytics dimensions.
+
+Vela links directly to the matching localized Pricing route and carries
+`od_locale` alongside `cloud_console_base`. Avoiding an intermediate locale
+redirect preserves the trusted Vela referrer needed by this source check; the
+locale parameter itself is not used as analytics attribution.
 
 ## Event Mapping
 
