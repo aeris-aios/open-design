@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -149,6 +150,37 @@ describe('materializeOdNextDeviceFrames', () => {
     expect(await readFile(path.join(cwd, '.od-frames', 'iphone.html'), 'utf8')).toBe('the user\'s own iphone frame');
     expect((await readdir(path.join(cwd, '.od-frames'))).sort())
       .toEqual([OD_NEXT_DEVICE_FRAME_MANIFEST, 'iphone.html']);
+  });
+
+  it('refuses a same-schema manifest that claims a file it would never stage', async () => {
+    const cwd = await projectDir();
+    await mkdir(path.join(cwd, '.od-frames'), { recursive: true });
+    const unrelated = 'a project file that has nothing to do with device shells';
+    await writeFile(path.join(cwd, '.od-frames', 'leftover.html'), unrelated);
+    // Well-formed on our own schema, and the digest really is this file's — the
+    // only thing wrong with it is that `leftover.html` is not a name this
+    // materializer can ever stage, so it must not become a deletion target.
+    const forged = `${JSON.stringify({
+      schema: 'open-design.od-next-device-frames/v1',
+      files: { 'leftover.html': createHash('sha256').update(unrelated, 'utf8').digest('hex') },
+    }, null, 2)}\n`;
+    await writeFile(path.join(cwd, '.od-frames', OD_NEXT_DEVICE_FRAME_MANIFEST), forged);
+
+    const result = await materializeOdNextDeviceFrames({ cwd, resources: SHELLS });
+
+    expect(result).toEqual({
+      staged: [],
+      skipped: [
+        `.od-frames/${OD_NEXT_DEVICE_FRAME_MANIFEST}`,
+        '.od-frames/android.html',
+        '.od-frames/iphone.html',
+        '.od-frames/neutral.html',
+      ].sort(),
+    });
+    expect(await readFile(path.join(cwd, '.od-frames', 'leftover.html'), 'utf8')).toBe(unrelated);
+    expect(await readFile(path.join(cwd, '.od-frames', OD_NEXT_DEVICE_FRAME_MANIFEST), 'utf8')).toBe(forged);
+    expect((await readdir(path.join(cwd, '.od-frames'))).sort())
+      .toEqual([OD_NEXT_DEVICE_FRAME_MANIFEST, 'leftover.html']);
   });
 
   it('is a no-op without shells and refuses a symlinked staging root', async () => {

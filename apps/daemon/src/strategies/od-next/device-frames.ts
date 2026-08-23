@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  OD_NEXT_DEVICE_FRAME_FILES,
   OD_NEXT_DEVICE_FRAME_ROOT,
   OD_NEXT_STRATEGY_ID,
   hasOdNextDeviceShell,
@@ -41,10 +42,20 @@ export class InvalidOdNextDeviceFrameRootError extends Error {
  * The control file is itself a name inside the user's directory, so it is
  * subject to the same rule: when it is occupied by something we did not write,
  * there is no trustworthy ownership record and the directory is left alone
- * entirely.
+ * entirely. "Something we did not write" is decided against what this
+ * materializer can ever produce — a key set inside {@link MANAGED_SHELL_FILES}
+ * and 64-hex digests. A manifest naming anything else is not a manifest of
+ * ours, and must not be allowed to nominate that name for deletion.
  */
 export const OD_NEXT_DEVICE_FRAME_MANIFEST = '.od-next-device-frames.json' as const;
 const OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA = 'open-design.od-next-device-frames/v1' as const;
+
+/**
+ * Every filename this materializer can ever stage, retire, or record. The
+ * manifest lives in a directory the project controls, so this set — not the
+ * manifest's own key list — is what bounds the files it may touch.
+ */
+const MANAGED_SHELL_FILES: ReadonlySet<string> = new Set(Object.values(OD_NEXT_DEVICE_FRAME_FILES));
 
 interface OdNextDeviceFrameManifestV1 {
   schema: typeof OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA;
@@ -105,9 +116,12 @@ function digest(text: string): string {
 }
 
 /**
- * Classify the control file. Anything that is not a plain file holding our own
- * schema is `foreign` — deliberately including unreadable files and malformed
- * JSON, because "we could not understand it" is not evidence that we wrote it.
+ * Classify the control file. Only a plain file holding exactly what this
+ * materializer writes — our schema, keys drawn from {@link MANAGED_SHELL_FILES},
+ * 64-hex digests — counts as `ours`. Everything else is `foreign`: unreadable
+ * files, malformed JSON, a foreign schema, and same-schema content naming a
+ * file we would never stage. "We could not understand it" is not evidence that
+ * we wrote it, and neither is "it looks close enough".
  */
 async function readOwnership(root: string): Promise<OdNextDeviceFrameOwnership> {
   const target = path.join(root, OD_NEXT_DEVICE_FRAME_MANIFEST);
@@ -136,9 +150,15 @@ async function readOwnership(root: string): Promise<OdNextDeviceFrameOwnership> 
   }
   const files: Record<string, string> = {};
   for (const [name, sha] of Object.entries(parsed.files)) {
-    if (typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha) && !name.includes('/') && !name.includes('\\')) {
-      files[name] = sha;
+    // A key we would never have written, or a digest we would never have
+    // produced, means this file came from somewhere else. Refuse the whole
+    // record rather than salvaging the entries that happen to look right:
+    // salvaging is what would let a crafted entry nominate an unrelated
+    // project file for retirement.
+    if (!MANAGED_SHELL_FILES.has(name) || typeof sha !== 'string' || !/^[a-f0-9]{64}$/.test(sha)) {
+      return { kind: 'foreign' };
     }
+    files[name] = sha;
   }
   return { kind: 'ours', files };
 }
@@ -213,8 +233,11 @@ export async function materializeOdNextDeviceFrames(input: {
   }
 
   // Retire shells we staged earlier that the current package no longer ships,
-  // and only when the bytes are still ours.
+  // and only when the bytes are still ours. The allowlist is re-checked here so
+  // the deletion set stays bounded by this feature's own filenames even if the
+  // parser above is ever loosened.
   for (const [name, sha] of Object.entries(previous)) {
+    if (!MANAGED_SHELL_FILES.has(name)) continue;
     if (name in next || skipped.includes(managedName(name))) continue;
     const target = path.join(root, name);
     const existing = await lstat(target).catch(() => null);
