@@ -12,6 +12,7 @@ import type {
 } from '../public-params.js';
 import type { ReleaseChannel } from '@open-design/release';
 import type { ArtifactOriginEntrySurface, ArtifactOriginStatus } from '../../api/files.js';
+import type { AgentDiagnosticReason, AgentDiagnosticSeverity } from '../../api/registry.js';
 import type { TrackingDesignSystemEditSurface, TrackingDesignSystemKind, TrackingDesignSystemLengthBucket, TrackingDesignSystemOrigin, TrackingDesignSystemRunEntryFrom } from './design-systems.js';
 import type { TrackingSettingsPage } from './event-names.js';
 import type { TrackingAmrOpenCodeErrorPhase, TrackingAmrOpenCodeLastEventType, TrackingAmrOpenCodeLastToolKind, TrackingAmrOpenCodeLastToolStatus, TrackingArtifactKind, TrackingArtifactWriteSource, TrackingArtifactWriteStatus, TrackingByokPreflightBlockReason, TrackingByokProviderId, TrackingCliProviderId, TrackingDesignSystemSource, TrackingExecutionMode, TrackingExportFormat, TrackingExportResult, TrackingFeedbackAction, TrackingFeedbackProviderId, TrackingFeedbackRating, TrackingFeedbackRatingWithNone, TrackingFeedbackReasonCode, TrackingFidelity, TrackingFileSizeBucket, TrackingFileType, TrackingFirstModelEventType, TrackingLangfuseDeliveryStatus, TrackingLangfuseDropReason, TrackingLangfuseReportResult, TrackingLangfuseReportSkipReason, TrackingProjectKind, TrackingProjectSource, TrackingPublishErrorCode, TrackingResult, TrackingRunCancelOrigin, TrackingRunCloseReason, TrackingRunDiagnosticSource, TrackingRunFailureCategory, TrackingRunFailureDetail, TrackingRunFailureStage, TrackingRunFailureUserAction, TrackingRunLifecyclePhase, TrackingRunPhaseTimingStatus, TrackingRunResult, TrackingRunRetryFinalResult, TrackingRunRetryStrategy, TrackingRunRetrySuppressedReason, TrackingRunTerminalTrigger, TrackingStderrLineCountBucket, TrackingTestResult, TrackingTokenCountSource } from './shared-enums.js';
@@ -999,6 +1000,31 @@ export interface AssistantFeedbackReasonSubmitProps
 export interface SettingsViewProps {
   page_name: TrackingSettingsPage;
   area: TrackingSettingsArea;
+}
+
+/**
+ * One diagnostic detection produced for one agent CLI. Answers, fleet-wide, the
+ * question a single bug report can only answer for one machine: how many
+ * installs of an agent someone installed cannot actually be used, and why.
+ *
+ * Carries no `page_name` on purpose. Detection is a daemon fact reported to
+ * whichever surface asked for the agent list; the surface is incidental to the
+ * failure and splitting by it would fragment the only number that matters.
+ *
+ * Carries no resolved path on purpose either — an agent binary path contains
+ * the OS username.
+ */
+export interface AgentDetectDiagnosticProps {
+  area: 'runtime_detection';
+  cli_provider_id: TrackingCliProviderId;
+  reason: AgentDiagnosticReason;
+  severity: AgentDiagnosticSeverity;
+  /** Warnings are not blocking, so availability is what separates them. */
+  agent_available: boolean;
+  /** The version detection read, when it read one. */
+  agent_version?: string;
+  /** A row with no path is hidden entirely — the user sees nothing to fix. */
+  has_path: boolean;
 }
 
 export interface SettingsCliTestResultProps {
