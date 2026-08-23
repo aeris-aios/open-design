@@ -37,11 +37,13 @@ import {
   detectOdNextDevicePlatformFromText,
   resolveOdNextDevicePlatform,
   selectOdNextDeviceFrameContextV2,
+  selectOdNextLayoutPrimitivesCss,
 } from '@open-design/contracts';
 import {
   loadOdNextTaskResourcesForSnapshot,
   materializeOdNextDeviceFrames,
   observeOdNextDeviceShell,
+  observeOdNextLayoutPrimitives,
 } from './strategies/od-next/device-frames.js';
 import {
   composeSystemPrompt,
@@ -9928,6 +9930,12 @@ export async function startServer({
           taskResources: odNextStrategyRecipe.taskResources,
         })
       : null;
+    // Structure-only layout primitives travel with every prototype run as a
+    // fact, so stacked text, truncation, rails, and screen chrome are composed
+    // from classes that already behave instead of re-derived per component.
+    const odNextLayoutPrimitivesCss = odNextStrategyRecipe?.taskType === 'prototype'
+      ? selectOdNextLayoutPrimitivesCss(odNextStrategyRecipe.taskResources)
+      : null;
     const odNextStableRequestContext = odNextStrategyRecipe
       ? {
           agentId,
@@ -9937,6 +9945,7 @@ export async function startServer({
           template,
           exampleReference: odNextExampleReference,
           ...(odNextDeviceFrame ? { deviceFrame: odNextDeviceFrame } : {}),
+          ...(odNextLayoutPrimitivesCss ? { layoutPrimitivesCss: odNextLayoutPrimitivesCss } : {}),
           designSystemBody,
           designSystemTitle,
           designSystemUsageMd,
@@ -9970,6 +9979,7 @@ export async function startServer({
           template,
           exampleReference: odNextExampleReference,
           deviceFrame: odNextDeviceFrame,
+          layoutPrimitivesCss: odNextLayoutPrimitivesCss,
           designSystemBody,
           designSystemTitle,
           craftBody,
@@ -15215,6 +15225,24 @@ export async function startServer({
                   resolvedFrom: observation.resolvedFrom,
                   entryFile: observation.entryFile,
                   shellPresent: observation.shellPresent,
+                });
+              }
+              const primitives = await observeOdNextLayoutPrimitives({
+                projectRoot: resolveProjectDir(PROJECTS_DIR, run.projectId, projectRecord.metadata),
+                entryFile: deliverable.entryFile,
+                primitivesCss: typeof run.appliedPluginSnapshotId === 'string'
+                  ? selectOdNextLayoutPrimitivesCss(await loadOdNextTaskResourcesForSnapshot({
+                      bundledPluginsDir: BUNDLED_PLUGINS_DIR,
+                      snapshot: getSnapshot(db, run.appliedPluginSnapshotId),
+                    }))
+                  : null,
+              });
+              if (primitives) {
+                run.odNextLayoutPrimitives = primitives.presence;
+                console.info('[od-next-layout-primitives]', {
+                  runId: run.id,
+                  entryFile: primitives.entryFile,
+                  presence: primitives.presence,
                 });
               }
             } catch (err) {
