@@ -117,6 +117,11 @@ const residualAllowedExactPaths = new Set([
   // integration tests. The Vitest test spawns it via `child_process.spawn`,
   // which needs a directly-executable file (shebang + .mjs).
   "apps/daemon/tests/fixtures/fake-vela.mjs",
+  // Fake ACP agent CLI that answers `initialize` and then rejects
+  // `session/new`, used by the ACP handshake-rejection wiring tests. Same
+  // precedent as `fake-vela.mjs`: Vitest puts it on PATH and the daemon
+  // spawns it, so it must be directly executable (shebang + .mjs).
+  "apps/daemon/tests/fixtures/fake-acp-handshake-cli.mjs",
   "tools/dev/bin/tools-dev.mjs",
   "tools/dev/esbuild.config.mjs",
   "tools/pack/bin/tools-pack.mjs",

@@ -51,13 +51,17 @@ export function isAcpHandshakeRpcErrorText(text: string | null | undefined): boo
   return id !== null && id >= 1 && id <= ACP_HANDSHAKE_MAX_RPC_ID;
 }
 
-export interface AcpHandshakeFailureMessageInput {
-  /** The raw agent line (`json-rpc id 2: Internal error`), kept verbatim in the result. */
-  rawMessage: string;
+/** Runtime identity the failure copy leads with. */
+export interface AcpAgentIdentity {
   /** Display name of the runtime (`RuntimeAgentDef.name`), when known. */
   agentName?: string | null;
   /** CLI version the daemon detected for this run, when known. */
   agentCliVersion?: string | null;
+}
+
+export interface AcpHandshakeFailureMessageInput extends AcpAgentIdentity {
+  /** The raw agent line (`json-rpc id 2: Internal error`), kept verbatim in the result. */
+  rawMessage: string;
 }
 
 function readable(value: string | null | undefined): string | null {
@@ -86,4 +90,58 @@ export function buildAcpHandshakeFailureMessage(
     'session request it received. Update the CLI, or reinstall a version that ' +
     `worked before, then retry.${details}`
   );
+}
+
+/** The failure frame `agent-protocol/acp/session.ts` puts on `send('error', …)`. */
+interface AcpErrorFrame {
+  message?: unknown;
+  error?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * Invariant: no ACP handshake rejection leaves the daemon still reading as a
+ * bare JSON-RPC frame.
+ *
+ * `attachAcpSession` hands its failure payload to the caller's
+ * `send('error', payload)`, and in server.ts that one payload feeds BOTH
+ * user-facing surfaces at once: it is streamed to SSE clients verbatim, and
+ * `design.runs.emit` reads `error.message ?? message` out of it to populate
+ * `run.error`. The close handler that runs afterwards short-circuits on
+ * `hasFatalError()`, so nothing downstream gets a second chance to explain the
+ * failure — the payload is the last point where both surfaces can be corrected
+ * together.
+ *
+ * Rewrites only the message fields, and only for a handshake-numbered JSON-RPC
+ * error. Every other payload is returned by identity, so structured failures
+ * (`AMR_MODEL_UNAVAILABLE`, promoted opencode errors) and post-session protocol
+ * errors keep the exact shape their own handling depends on.
+ *
+ * @param payload - The raw ACP error payload, forwarded unchanged when it is not a handshake rejection.
+ * @param identity - Runtime name and detected CLI version to lead the copy with.
+ * @returns The payload to send, with `message` / `error.message` explained when applicable.
+ */
+export function withAcpHandshakeFailureGuidance(
+  payload: unknown,
+  identity: AcpAgentIdentity = {},
+): unknown {
+  if (!payload || typeof payload !== 'object') return payload;
+  const frame = payload as AcpErrorFrame;
+  const nested =
+    frame.error && typeof frame.error === 'object'
+      ? (frame.error as Record<string, unknown>)
+      : null;
+  // Same precedence `extractErrorDetails` uses to fill `run.error`, so the text
+  // matched here is the text the user would otherwise have been shown.
+  const rawMessage =
+    readable(typeof nested?.message === 'string' ? nested.message : null) ??
+    readable(typeof frame.message === 'string' ? frame.message : null);
+  if (!rawMessage || !isAcpHandshakeRpcErrorText(rawMessage)) return payload;
+
+  const explained = buildAcpHandshakeFailureMessage({ rawMessage, ...identity });
+  return {
+    ...frame,
+    ...(typeof frame.message === 'string' ? { message: explained } : {}),
+    ...(nested ? { error: { ...nested, message: explained } } : {}),
+  };
 }

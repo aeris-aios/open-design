@@ -218,6 +218,7 @@ import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
 import {
   buildAcpHandshakeFailureMessage,
   isAcpHandshakeRpcErrorText,
+  withAcpHandshakeFailureGuidance,
 } from './runtimes/acp-handshake-failure.js';
 import { getDetectedRuntimeVersions } from './runtimes/detection.js';
 import { preflightCodexDefaultModel } from './runtimes/codex-model-preflight.js';
@@ -2304,6 +2305,27 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '', option
     });
   }
   return rawMessage;
+}
+
+/**
+ * The runtime identity failure copy leads with: display name plus whichever CLI
+ * version this run actually observed. Codex's model preflight is the only
+ * producer of `preflightAgentCliVersion`; every other agent falls back to the
+ * daemon-lifetime detection probe, and an undetected version degrades the copy
+ * rather than blocking it.
+ *
+ * @param def - The resolved `RuntimeAgentDef` for this run.
+ * @param run - The run record, read for a preflight-detected CLI version.
+ * @returns An `AcpAgentIdentity`, with `null` for anything not detected.
+ */
+function agentFailureIdentity(def, run) {
+  return {
+    agentName: def?.name ?? null,
+    agentCliVersion:
+      run?.preflightAgentCliVersion
+      ?? getDetectedRuntimeVersions(def?.id)?.agentCliVersion
+      ?? null,
+  };
 }
 
 function createAmrModelUnavailablePayload(model, init = {}) {
@@ -12962,10 +12984,7 @@ export async function startServer({
           agentId,
           String(ev.message || 'Agent stream error'),
           failureText,
-          {
-            agentName: def?.name ?? null,
-            agentCliVersion: run.preflightAgentCliVersion ?? null,
-          },
+          agentFailureIdentity(def, run),
         );
         agentStreamErrorObservedBeforeCancellation = true;
         run.runtimeFailureObservedBeforeCancellation = true;
@@ -13136,10 +13155,12 @@ export async function startServer({
           agentStreamError = structuredCode
             ? message
             : diagnostic?.message
-              ?? rewriteKnownAgentStreamError(agentId, message, failureText, {
-                agentName: def?.name ?? null,
-                agentCliVersion: run.preflightAgentCliVersion ?? null,
-              });
+              ?? rewriteKnownAgentStreamError(
+                agentId,
+                message,
+                failureText,
+                agentFailureIdentity(def, run),
+              );
           agentStreamErrorObservedBeforeCancellation = true;
           run.runtimeFailureObservedBeforeCancellation = true;
           send('error', createSseErrorPayload(
@@ -13367,9 +13388,21 @@ export async function startServer({
           if (event === 'agent') {
             noteFirstTokenFromAgentEvent(data);
             emitAgentEvent(data);
-          } else {
-            send(event, data);
+            return;
           }
+          if (event === 'error') {
+            // This payload is the whole user-visible surface of an ACP failure:
+            // `send` streams it to SSE clients and `design.runs.emit` reads
+            // `run.error` out of it, and the close handler below returns on
+            // `hasFatalError()` before any later rewrite can run. Explain a
+            // handshake rejection here or nowhere.
+            send(event, withAcpHandshakeFailureGuidance(
+              data,
+              agentFailureIdentity(def, run),
+            ));
+            return;
+          }
+          send(event, data);
         },
         ...(acpStageTimeoutMs !== undefined ? { stageTimeoutMs: acpStageTimeoutMs } : {}),
       });
@@ -13859,10 +13892,7 @@ export async function startServer({
               def.id,
               (agentStderrTail || agentStdoutTail || '').trim(),
               `${agentStderrTail}\n${agentStdoutTail}`,
-              {
-                agentName: def?.name ?? null,
-                agentCliVersion: run.preflightAgentCliVersion ?? null,
-              },
+              agentFailureIdentity(def, run),
             );
             if (rewritten !== 'Agent stream error') {
               send('error', createSseErrorPayload(
