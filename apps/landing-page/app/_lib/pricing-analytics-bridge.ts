@@ -154,6 +154,12 @@ const idMaxLength = 128;
 const maxEventsPerRequest = 8;
 const transportTimeoutMs = 3_000;
 const usdAmountPattern = /^(?:0|[1-9][0-9]{0,8})\.[0-9]{2}$/u;
+// Mirrors Zod 3.25 `z.string().datetime()` used by Vela: real calendar date,
+// UTC Z suffix, optional seconds, and arbitrary fractional-second precision.
+const velaDateTimePattern = new RegExp(
+  '^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$',
+  'u',
+);
 
 function isBoundedId(value: unknown): value is string {
   return (
@@ -183,6 +189,10 @@ function isUsdAmount(value: unknown): value is string {
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
+}
+
+function isVelaDateTime(value: unknown): value is string {
+  return typeof value === 'string' && velaDateTimePattern.test(value);
 }
 
 function sanitizedPlanPayload(value: unknown): PlanExposureInput | null {
@@ -287,8 +297,7 @@ function sanitizedClickPayload(value: unknown): PricingClickInput | null {
 function sanitizedEvent(event: PricingBridgeEvent): PricingBridgeEvent | null {
   if (
     !isBoundedId(event.eventId) ||
-    typeof event.eventTime !== 'string' ||
-    !Number.isFinite(Date.parse(event.eventTime))
+    !isVelaDateTime(event.eventTime)
   ) {
     return null;
   }
@@ -339,29 +348,35 @@ export async function postPricingBridgeEvents(input: {
   events: readonly PricingBridgeEvent[];
   fetcher?: typeof fetch;
 }): Promise<boolean> {
-  const apiBase = resolveApiBase(input.apiOrigin);
-  if (
-    !apiBase ||
-    (input.sourceSurface !== 'wallet' && input.sourceSurface !== 'dashboard') ||
-    !isBoundedId(input.sessionId) ||
-    input.events.length < 1 ||
-    input.events.length > maxEventsPerRequest
-  ) {
-    return false;
-  }
-
-  const events: PricingBridgeEvent[] = [];
-  const eventIds = new Set<string>();
-  for (const event of input.events) {
-    const sanitized = sanitizedEvent(event);
-    if (!sanitized || eventIds.has(sanitized.eventId)) return false;
-    eventIds.add(sanitized.eventId);
-    events.push(sanitized);
-  }
-
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), transportTimeoutMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
+    const apiBase = resolveApiBase(input.apiOrigin);
+    if (
+      !apiBase ||
+      (input.sourceSurface !== 'wallet' &&
+        input.sourceSurface !== 'dashboard') ||
+      !isBoundedId(input.sessionId) ||
+      !Array.isArray(input.events) ||
+      input.events.length < 1 ||
+      input.events.length > maxEventsPerRequest
+    ) {
+      return false;
+    }
+
+    const events: PricingBridgeEvent[] = [];
+    const eventIds = new Set<string>();
+    for (const event of input.events) {
+      const sanitized = sanitizedEvent(event);
+      if (!sanitized || eventIds.has(sanitized.eventId)) return false;
+      eventIds.add(sanitized.eventId);
+      events.push(sanitized);
+    }
+
+    const abortController = new AbortController();
+    timeout = setTimeout(
+      () => abortController.abort(),
+      transportTimeoutMs,
+    );
     const response = await (input.fetcher ?? fetch)(
       new URL('api/v1/analytics/pricing-events', apiBase),
       {
@@ -384,6 +399,6 @@ export async function postPricingBridgeEvents(input: {
   } catch {
     return false;
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }

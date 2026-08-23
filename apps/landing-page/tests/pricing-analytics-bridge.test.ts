@@ -189,6 +189,56 @@ test('transport posts only the reduced authenticated bridge body', async () => {
   });
 });
 
+test('transport mirrors Vela UTC datetime syntax for event times', async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls += 1;
+    return new Response(null, { status: 204 });
+  };
+
+  for (const accepted of [
+    '2026-08-23T12:00Z',
+    '2026-08-23T12:00:00Z',
+    '2026-08-23T12:00:00.123456Z',
+    '2028-02-29T23:59:59.9Z',
+  ]) {
+    assert.equal(
+      await postPricingBridgeEvents({
+        apiOrigin: 'https://amr-api.open-design.ai',
+        sourceSurface: 'dashboard',
+        sessionId: 'session',
+        events: [{ ...exposureEvent, eventTime: accepted }],
+        fetcher,
+      }),
+      true,
+      accepted,
+    );
+  }
+
+  for (const rejected of [
+    '2026-08-23',
+    '2026-08-23T12:00:00+08:00',
+    '2026-08-23T12:00:00.000+0800',
+    '2026-08-23T12:00:00z',
+    '2026-02-30T12:00:00Z',
+    '2026-08-23T24:00:00Z',
+    'not-a-time',
+  ]) {
+    assert.equal(
+      await postPricingBridgeEvents({
+        apiOrigin: 'https://amr-api.open-design.ai',
+        sourceSurface: 'dashboard',
+        sessionId: 'session',
+        events: [{ ...exposureEvent, eventTime: rejected }],
+        fetcher,
+      }),
+      false,
+      rejected,
+    );
+  }
+  assert.equal(calls, 4);
+});
+
 test('transport rejects invalid origins and bounded request IDs before fetch', async () => {
   let calls = 0;
   const fetcher: typeof fetch = async () => {
@@ -252,6 +302,39 @@ test('transport rejects invalid origins and bounded request IDs before fetch', a
       }),
       false,
     );
+  }
+  assert.equal(calls, 0);
+});
+
+test('transport returns false for malformed runtime shapes without fetching', async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls += 1;
+    return new Response(null, { status: 204 });
+  };
+  const postUnchecked = postPricingBridgeEvents as unknown as (
+    input: unknown,
+  ) => Promise<boolean>;
+  const validBase = {
+    apiOrigin: 'https://amr-api.open-design.ai',
+    sourceSurface: 'dashboard',
+    sessionId: 'session',
+    events: [exposureEvent],
+    fetcher,
+  };
+
+  for (const malformed of [
+    null,
+    undefined,
+    {},
+    { ...validBase, apiOrigin: 42 },
+    { ...validBase, events: null },
+    { ...validBase, events: { length: 1 } },
+    { ...validBase, events: [null] },
+    { ...validBase, events: [{ ...exposureEvent, payload: null }] },
+    { ...validBase, events: [{ kind: 'plan_exposure' }] },
+  ]) {
+    assert.equal(await postUnchecked(malformed), false);
   }
   assert.equal(calls, 0);
 });
