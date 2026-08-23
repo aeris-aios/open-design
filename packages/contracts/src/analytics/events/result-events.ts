@@ -1100,6 +1100,16 @@ export interface PackagedRuntimeFailedProps {
   // though the reason was sitting in a log we had already read. Scrubbed and
   // truncated like the other free-form fields.
   daemon_error?: string | null;
+  // The scrubbed, bounded tail of that same log, sent ONLY when the parse above
+  // produced nothing (no error_code, no missing_module, no daemon_error). That
+  // all-null combination is the largest startup-failure bucket in production
+  // (macOS daemon-start, 968 events / 293 people over the 14 days to
+  // 2026-08-22) and was previously undiagnosable: the reason was printed in a
+  // log we had already read and discarded because it matched no known pattern.
+  // Narrow by design — when the cause is already named, the raw tail is bytes
+  // and privacy surface for nothing, so a present value also *means* "this log
+  // defeated the parser".
+  daemon_log_tail?: string | null;
   // Node's system-error triplet read off the THROWN error object, as opposed to
   // `error_code`, which is parsed out of the sidecar log. A failed spawn or
   // socket op carries its real cause here (`UNKNOWN`/-4094/`spawn`,
