@@ -44,6 +44,11 @@ export interface BundledStrategyPromptAssetsV2 {
   coreStrategy: string;
   generalOrchestration: string;
   taskSkill: string;
+  /**
+   * The selected profile's declared non-prompt resources (device shells and
+   * the like), decoded from the same verified roster as the prompt text.
+   */
+  taskResources: ReadonlyArray<{ path: string; text: string }>;
 }
 
 /**
@@ -97,6 +102,10 @@ export function loadBundledStrategyPromptAssetsV2(input: {
     coreStrategy: decode(loaded.corePath),
     generalOrchestration: decode(loaded.orchestrationPath),
     taskSkill: decode(loaded.selectedProfilePath),
+    taskResources: loaded.selectedResourcePaths.map((resourcePath) => ({
+      path: resourcePath,
+      text: decode(resourcePath),
+    })),
   };
 }
 
@@ -109,6 +118,7 @@ function readBundledStrategyPackageV2(input: {
   corePath: string;
   orchestrationPath: string;
   selectedProfilePath: string;
+  selectedResourcePaths: string[];
 } {
   const provenance = inspectBundledStrategyProvenanceV2(input.plugin);
   if (provenance.kind === 'none') {
@@ -141,6 +151,10 @@ function readBundledStrategyPackageV2(input: {
   } catch {
     throw new StrategyPackageIdentityError('Bundled strategy root is unavailable.');
   }
+  // The selected profile's resources join the roster with the profile that
+  // declares them; other profiles' resources stay out so the package hash for
+  // one task type does not move when another task type's shell changes.
+  const selectedResources = selectedProfile.resources ?? [];
   const declaredPaths = [
     './open-design.json',
     './SKILL.md',
@@ -148,6 +162,7 @@ function readBundledStrategyPackageV2(input: {
     declaration.assets.orchestration.path,
     selectedProfile.path,
     declaration.assets.taskProfileMapping.path,
+    ...selectedResources.map((resource) => resource.path),
   ];
   const assets = new Map<string, Uint8Array>();
   let identity;
@@ -203,6 +218,7 @@ function readBundledStrategyPackageV2(input: {
     corePath: normalizeStrategyAssetPath(declaration.assets.core.path),
     orchestrationPath: normalizeStrategyAssetPath(declaration.assets.orchestration.path),
     selectedProfilePath: selectedPath,
+    selectedResourcePaths: selectedResources.map((resource) => normalizeStrategyAssetPath(resource.path)),
   };
 }
 

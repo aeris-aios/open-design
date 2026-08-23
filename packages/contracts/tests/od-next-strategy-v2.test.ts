@@ -467,3 +467,44 @@ describe('OD Next V2 capability, Child, and task projection contracts', () => {
     })).toThrow(/locked execution mode/);
   });
 });
+
+describe('task profile resources', () => {
+  const profile = (resources: unknown) => ({
+    schema: 'open-design.bundled-strategy/v2',
+    id: 'od-next-strategy',
+    promptRecipe: 'od-next-plan-build-v2',
+    assets: {
+      core: { path: './assets/core.md', version: '2.0.0' },
+      orchestration: { path: './assets/orchestration.md', version: '2.0.0' },
+      taskProfiles: [
+        { taskType: 'prototype', path: './profiles/prototype.md', version: '2.1.0', rollout: 'active', projectKinds: ['prototype'], resources },
+        { taskType: 'ppt', path: './profiles/ppt.md', version: '2', rollout: 'reserved', projectKinds: ['deck'] },
+        { taskType: 'marketing', path: './profiles/marketing.md', version: '2', rollout: 'reserved', projectKinds: ['image'] },
+        { taskType: 'hyperframes', path: './profiles/hyperframes.md', version: '2', rollout: 'active', projectKinds: ['video'] },
+      ],
+      taskProfileMapping: { path: './references/mapping.md', version: '2' },
+    },
+  });
+
+  it('accepts declared shell resources on one profile and leaves the others bare', () => {
+    const declaration = BundledStrategyDeclarationV2Schema.parse(profile([
+      { path: './profiles/prototype/device-frames/iphone.html', version: '1.0.0' },
+      { path: './profiles/prototype/device-frames/android.html', version: '1.0.0' },
+    ]));
+    expect(declaration.assets.taskProfiles[0]?.resources).toHaveLength(2);
+    expect(declaration.assets.taskProfiles[1]?.resources).toBeUndefined();
+  });
+
+  it('rejects duplicate resource paths and a resource that re-declares the profile itself', () => {
+    expect(() => BundledStrategyDeclarationV2Schema.parse(profile([
+      { path: './profiles/prototype/device-frames/iphone.html', version: '1.0.0' },
+      { path: './profiles/prototype/device-frames/iphone.html', version: '1.0.1' },
+    ]))).toThrow(/unique/i);
+    expect(() => BundledStrategyDeclarationV2Schema.parse(profile([
+      { path: './profiles/prototype.md', version: '1.0.0' },
+    ]))).toThrow(/unique/i);
+    expect(() => BundledStrategyDeclarationV2Schema.parse(profile([
+      { path: '../escape.html', version: '1.0.0' },
+    ]))).toThrow();
+  });
+});

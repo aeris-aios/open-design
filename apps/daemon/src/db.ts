@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type {
   CollabCloudComment,
+  OdNextDevicePlatformV1,
   ProjectBrowserWorkspaceTab,
   ProjectTabsState,
 } from '@open-design/contracts';
@@ -2384,13 +2385,25 @@ export interface ConversationIntentSignals {
   deck: boolean;
   media: boolean;
   platform: boolean;
+  /**
+   * Which handheld shell the user's own words asked for (OD Next prototype
+   * tasks). Latches like the booleans: the first resolved platform holds for
+   * the conversation so a later "make the button blue" turn keeps quoting the
+   * same shell and the stable context does not flip.
+   */
+  devicePlatform: OdNextDevicePlatformV1 | null;
 }
 
 const NO_INTENT_SIGNALS: ConversationIntentSignals = {
   deck: false,
   media: false,
   platform: false,
+  devicePlatform: null,
 };
+
+function normalizeDevicePlatform(value: unknown): OdNextDevicePlatformV1 | null {
+  return value === 'ios' || value === 'android' || value === 'mobile-neutral' ? value : null;
+}
 
 /**
  * Read the conversation's latched intent signals. A missing row, NULL
@@ -2415,6 +2428,7 @@ function normalizeIntentSignals(value: unknown): ConversationIntentSignals {
       deck: parsed?.deck === true,
       media: parsed?.media === true,
       platform: parsed?.platform === true,
+      devicePlatform: normalizeDevicePlatform(parsed?.devicePlatform),
     };
   } catch {
     return { ...NO_INTENT_SIGNALS };
@@ -2447,11 +2461,13 @@ export function latchConversationIntentSignals(
       deck: stored.deck || fresh.deck,
       media: stored.media || fresh.media,
       platform: stored.platform || fresh.platform,
+      devicePlatform: stored.devicePlatform ?? fresh.devicePlatform ?? null,
     };
     if (
       effective.deck !== stored.deck ||
       effective.media !== stored.media ||
-      effective.platform !== stored.platform
+      effective.platform !== stored.platform ||
+      effective.devicePlatform !== stored.devicePlatform
     ) {
       db.prepare(`UPDATE conversations SET intent_signals_json = ? WHERE id = ?`).run(
         JSON.stringify(effective),

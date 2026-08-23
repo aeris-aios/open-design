@@ -11,6 +11,7 @@ import {
   type StrategyTaskTypeV2,
 } from '../plugins/strategy-v2.js';
 import type { ChatSessionMode } from '../api/chat.js';
+import type { OdNextDeviceFrameContextV2 } from './od-next-device-frame.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
 import type {
   OdNextPromptBundleHeadV2,
@@ -48,6 +49,14 @@ export interface OdNextStrategyRequestRecipeV2 {
   generalOrchestration: string;
   taskSkill: string;
   activeStages: ReadonlyArray<OdNextPromptBundleStageV2>;
+  /**
+   * Non-prompt files declared by the selected task profile (see
+   * `StrategyTaskProfileAssetDeclarationV2.resources`), already verified
+   * against the applied package identity. Never part of the Bundle head; the
+   * daemon stages them on disk and may quote one into the stable request
+   * context as a fact.
+   */
+  taskResources?: ReadonlyArray<{ path: string; text: string }> | undefined;
 }
 
 /**
@@ -94,6 +103,14 @@ export interface OdNextStrategyStableRequestContextV2 {
     title?: string | undefined;
     brief?: string | undefined;
   } | undefined;
+  /**
+   * The handheld shell Open Design resolved for a phone-app prototype. A fact
+   * in two parts — which shell and why, then the shell source itself — so the
+   * Build holds the real handset markup instead of re-drawing one from memory.
+   * Omitted when no phone platform was resolved; the rule card then points at
+   * the staged shells on disk.
+   */
+  deviceFrame?: OdNextDeviceFrameContextV2 | undefined;
   craftBody?: string | undefined;
   craftSections?: string[] | undefined;
   memoryBody?: string | undefined;
@@ -481,6 +498,15 @@ export function composeOdNextStrategyStableRequestContextV2(
         ? { brief: context.exampleReference.brief.trim() }
         : {}),
     });
+  }
+  if (context.deviceFrame) {
+    factualStructured('device-frame', {
+      platform: context.deviceFrame.platform,
+      resolvedFrom: context.deviceFrame.resolvedFrom,
+      shell: context.deviceFrame.shell,
+      availableShells: context.deviceFrame.availableShells,
+    });
+    factualText('device-frame-shell', context.deviceFrame.shellHtml);
   }
   instructionText('personal-memory', context.memoryBody);
   instructionText('user-custom-instructions', context.userInstructions);

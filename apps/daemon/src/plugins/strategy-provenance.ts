@@ -112,6 +112,7 @@ export function validateBundledStrategyActivationV2(
     declaration.assets.orchestration.path,
     selected.path,
     declaration.assets.taskProfileMapping.path,
+    ...(selected.resources ?? []).map((resource) => resource.path),
   ].map(normalizeStrategyAssetPath).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   const actualPaths = binding.assetDigests.map((asset) => asset.path);
   if (

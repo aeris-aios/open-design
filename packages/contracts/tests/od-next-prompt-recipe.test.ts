@@ -576,3 +576,43 @@ describe('OD Next V2 prompt recipe', () => {
     } as never)).toThrow(/native session resume/i);
   });
 });
+
+describe('handheld device shell in the stable request context', () => {
+  const deviceFrame = {
+    platform: 'ios' as const,
+    resolvedFrom: 'request-text' as const,
+    shell: '.od-frames/iphone.html',
+    availableShells: ['.od-frames/android.html', '.od-frames/iphone.html', '.od-frames/neutral.html'],
+    shellHtml: '<div class="phone-frame" data-phone-shell data-platform="iphone"><main class="phone-content"></main></div>',
+  };
+
+  it('emits the selection and the shell source as two facts, never as instructions', () => {
+    const prompt = composeOdNextStrategyStableRequestContextV2({ deviceFrame });
+    expect(prompt).toContain('<od-next-context kind="fact" name="device-frame">');
+    expect(prompt).toContain('"platform": "ios"');
+    expect(prompt).toContain('"resolvedFrom": "request-text"');
+    expect(prompt).toContain('"shell": ".od-frames/iphone.html"');
+    expect(prompt).toContain('.od-frames/neutral.html');
+    expect(prompt).toContain('<od-next-context kind="fact" name="device-frame-shell">');
+    expect(prompt).toContain(deviceFrame.shellHtml);
+    expect(prompt).not.toContain('kind="instruction" name="device-frame');
+  });
+
+  it('keeps the shell source out of the planning/Build-only guard', () => {
+    // Shell markup is quoted reference data: words that would be refused in
+    // an instruction block must not refuse the handset source.
+    const prompt = composeOdNextStrategyStableRequestContextV2({
+      deviceFrame: {
+        ...deviceFrame,
+        shellHtml: '<!-- verification checklist: inspect after render --><div data-phone-shell><main class="phone-content"></main></div>',
+      },
+    });
+    expect(prompt).toContain('verification checklist');
+  });
+
+  it('omits both facts when no shell was resolved', () => {
+    expect(composeOdNextStrategyStableRequestContextV2({ memoryBody: 'Remember the operator audience.' }))
+      .not.toContain('device-frame');
+    expect(composeOdNextStrategyStableRequestContextV2({})).toBe('');
+  });
+});

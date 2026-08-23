@@ -75,6 +75,7 @@ describe('bundled OD Next Strategy V2 package', () => {
       declaration.assets.core.path,
       declaration.assets.orchestration.path,
       ...declaration.assets.taskProfiles.map((profile) => profile.path),
+      ...declaration.assets.taskProfiles.flatMap((profile) => (profile.resources ?? []).map((resource) => resource.path)),
       declaration.assets.taskProfileMapping.path,
     ];
     expect(new Set(assetPaths).size).toBe(assetPaths.length);
@@ -85,6 +86,29 @@ describe('bundled OD Next Strategy V2 package', () => {
       for (const forbidden of forbiddenContent) {
         expect(content, `${assetPath} must not match ${forbidden}`).not.toMatch(forbidden);
       }
+    }
+  });
+
+  it('ships the three handheld shells as prototype resources with the shell contract intact', () => {
+    const prototype = declaration.assets.taskProfiles.find((profile) => profile.taskType === 'prototype');
+    expect(prototype?.resources?.map((resource) => resource.path)).toEqual([
+      './assets/task-profiles/prototype/device-frames/iphone.html',
+      './assets/task-profiles/prototype/device-frames/android.html',
+      './assets/task-profiles/prototype/device-frames/neutral.html',
+    ]);
+    for (const resource of prototype?.resources ?? []) {
+      const shell = readFileSync(`${pluginRoot}/${resource.path.slice(2)}`, 'utf8');
+      expect(shell).toContain('data-phone-shell');
+      expect(shell).toContain('class="phone-content"');
+      expect(shell).toContain('APP CONTENT START');
+      expect(shell).toContain('APP CONTENT END');
+      expect(shell).toContain('--phone-safe-top');
+      expect(shell).toContain('@media (max-width: 480px)');
+    }
+    const ruleCard = readFileSync(`${pluginRoot}/${prototype!.path.slice(2)}`, 'utf8');
+    expect(ruleCard).toContain('### Handheld device shell');
+    for (const shell of ['.od-frames/iphone.html', '.od-frames/android.html', '.od-frames/neutral.html']) {
+      expect(ruleCard).toContain(shell);
     }
   });
 

@@ -182,6 +182,7 @@ export async function resolveOdNextStrategyRequestRecipeV2(input: {
       generalOrchestration: assets.generalOrchestration,
       taskSkill: assets.taskSkill,
       activeStages,
+      taskResources: assets.taskResources,
     };
   } catch (error) {
     if (error instanceof InvalidOdNextStrategyPromptRecipeV2Error) throw error;
