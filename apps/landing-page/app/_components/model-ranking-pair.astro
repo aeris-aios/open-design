@@ -28,7 +28,9 @@ const { group, isZh, prominent = false } = Astro.props;
 const scoreLabel = isZh ? '原始分' : 'Score';
 const percentageLabel = isZh ? 'PDR 通过率' : 'PDR rate';
 const modelLabel = isZh ? '模型' : 'Model';
-const rankingTitle = isZh ? `${group.label}排名` : `${group.label} ranking`;
+// 场景名可能以拉丁字母结尾（Dashboard、Web 端 App），中西文之间要留空格
+const zhGap = /[A-Za-z0-9)\]]$/.test(group.label) ? ' ' : '';
+const rankingTitle = isZh ? `${group.label}${zhGap}排名` : `${group.label} ranking`;
 const costTitle = isZh ? `${group.label} PDR × 成本` : `${group.label} PDR vs cost`;
 const costDescription = isZh ? '左上象限代表用更低成本获得更高的通过率。' : 'The upper-left quadrant combines a higher PDR rate with a lower session cost.';
 const chartHeight = (value: number) => Math.max(12, Math.min(92, (value - 50) * 2));

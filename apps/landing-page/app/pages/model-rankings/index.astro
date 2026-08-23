@@ -76,10 +76,10 @@ const models: Model[] = [
 
 const scenarios = [
   { id: 'landing', label: isZh ? '落地页' : 'Landing page', detail: isZh ? '品牌表达与转化路径' : 'Brand expression and conversion', color: '#ef7442', area: '1 / 1 / 3 / 4' },
-  { id: 'dashboard', label: isZh ? '数据看板' : 'Dashboard', detail: isZh ? '信息密度与数据层级' : 'Information density and hierarchy', color: '#6756d8', area: '1 / 4 / 2 / 7' },
-  { id: 'prototype', label: isZh ? '产品原型' : 'Product prototype', detail: isZh ? '流程、状态与交互闭环' : 'Flows, states and interactions', color: '#4f43bb', area: '2 / 4 / 3 / 7' },
+  { id: 'dashboard', label: 'Dashboard', detail: isZh ? '信息密度与数据层级' : 'Information density and hierarchy', color: '#6756d8', area: '1 / 4 / 2 / 7' },
+  { id: 'wireframe', label: isZh ? '线框图' : 'Wireframe', detail: isZh ? '结构、层级与信息骨架' : 'Structure, hierarchy and layout', color: '#4f43bb', area: '2 / 4 / 3 / 7' },
   { id: 'mobile', label: isZh ? '移动端界面' : 'Mobile UI', detail: isZh ? '触控体验与响应式布局' : 'Touch and responsive layout', color: '#319d6a', area: '1 / 7 / 3 / 9' },
-  { id: 'data', label: isZh ? '数据可视化' : 'Data visualization', detail: isZh ? '图表编码与可读性' : 'Chart encoding and readability', color: '#1589e8', area: '1 / 9 / 3 / 11' },
+  { id: 'webapp', label: isZh ? 'Web 端 App' : 'Web app', detail: isZh ? '多页面结构与操作流' : 'Multi-page structure and flows', color: '#1589e8', area: '1 / 9 / 3 / 11' },
 ];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
