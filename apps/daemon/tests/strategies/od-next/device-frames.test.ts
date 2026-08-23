@@ -101,6 +101,56 @@ describe('materializeOdNextDeviceFrames', () => {
     expect(await readFile(path.join(cwd, '.od-frames', 'neutral.html'), 'utf8')).toBe('edited by the user after staging');
   });
 
+  it('hands a staged shell back to the user once they edit it', async () => {
+    const cwd = await projectDir();
+    await materializeOdNextDeviceFrames({ cwd, resources: SHELLS });
+
+    const edited = '<div data-phone-shell data-platform="iphone"><main class="phone-content">my own bezel</main></div>';
+    await writeFile(path.join(cwd, '.od-frames', 'iphone.html'), edited);
+
+    // The package still ships iphone.html, so this is the replacement path —
+    // not the retirement path the previous test covers.
+    const second = await materializeOdNextDeviceFrames({ cwd, resources: SHELLS });
+    expect(second).toEqual({
+      staged: ['.od-frames/android.html', '.od-frames/neutral.html'],
+      skipped: ['.od-frames/iphone.html'],
+    });
+    expect(await readFile(path.join(cwd, '.od-frames', 'iphone.html'), 'utf8')).toBe(edited);
+
+    // The edit drops the name out of the manifest, so it stays the user's on
+    // every later staging too.
+    const manifest = JSON.parse(await readFile(path.join(cwd, '.od-frames', OD_NEXT_DEVICE_FRAME_MANIFEST), 'utf8'));
+    expect(Object.keys(manifest.files).sort()).toEqual(['android.html', 'neutral.html']);
+    const third = await materializeOdNextDeviceFrames({ cwd, resources: SHELLS });
+    expect(third.skipped).toEqual(['.od-frames/iphone.html']);
+    expect(await readFile(path.join(cwd, '.od-frames', 'iphone.html'), 'utf8')).toBe(edited);
+  });
+
+  it('leaves the whole directory alone when the control file name is already taken', async () => {
+    const cwd = await projectDir();
+    await mkdir(path.join(cwd, '.od-frames'), { recursive: true });
+    const foreignManifest = '{"note":"an unrelated file that happens to share the name"}\n';
+    await writeFile(path.join(cwd, '.od-frames', OD_NEXT_DEVICE_FRAME_MANIFEST), foreignManifest);
+    await writeFile(path.join(cwd, '.od-frames', 'iphone.html'), 'the user\'s own iphone frame');
+
+    const result = await materializeOdNextDeviceFrames({ cwd, resources: SHELLS });
+
+    expect(result).toEqual({
+      staged: [],
+      skipped: [
+        `.od-frames/${OD_NEXT_DEVICE_FRAME_MANIFEST}`,
+        '.od-frames/android.html',
+        '.od-frames/iphone.html',
+        '.od-frames/neutral.html',
+      ].sort(),
+    });
+    expect(await readFile(path.join(cwd, '.od-frames', OD_NEXT_DEVICE_FRAME_MANIFEST), 'utf8'))
+      .toBe(foreignManifest);
+    expect(await readFile(path.join(cwd, '.od-frames', 'iphone.html'), 'utf8')).toBe('the user\'s own iphone frame');
+    expect((await readdir(path.join(cwd, '.od-frames'))).sort())
+      .toEqual([OD_NEXT_DEVICE_FRAME_MANIFEST, 'iphone.html']);
+  });
+
   it('is a no-op without shells and refuses a symlinked staging root', async () => {
     const cwd = await projectDir();
     expect(await materializeOdNextDeviceFrames({ cwd, resources: [SHELLS[3]!] })).toEqual({ staged: [], skipped: [] });

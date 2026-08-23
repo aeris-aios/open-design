@@ -32,9 +32,16 @@ export class InvalidOdNextDeviceFrameRootError extends Error {
  * `.od-frames/` is a name this feature introduces inside a directory the user
  * owns, so an imported or older project can already hold a folder of that name
  * with arbitrary files in it. The manifest is the only thing that makes a file
- * ours: staging replaces or removes exactly the files it previously recorded
- * and never touches anything else — including a user's own `iphone.html` that
- * happens to share a managed name.
+ * ours, and it only ever makes it *provisionally* ours: a name has to be listed
+ * here AND the bytes on disk have to still match the digest we recorded, or the
+ * file is treated as the user's. That covers both a user's own `iphone.html`
+ * that happens to share a managed name and a shell we staged that the user has
+ * since edited.
+ *
+ * The control file is itself a name inside the user's directory, so it is
+ * subject to the same rule: when it is occupied by something we did not write,
+ * there is no trustworthy ownership record and the directory is left alone
+ * entirely.
  */
 export const OD_NEXT_DEVICE_FRAME_MANIFEST = '.od-next-device-frames.json' as const;
 const OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA = 'open-design.od-next-device-frames/v1' as const;
@@ -44,10 +51,25 @@ interface OdNextDeviceFrameManifestV1 {
   files: Record<string, string>;
 }
 
+/**
+ * What the control file name currently holds. `absent` and `ours` are the two
+ * states in which this materializer may write; `foreign` means the name is
+ * taken by something we cannot prove we wrote, which makes every byte under the
+ * root unaccounted for.
+ */
+type OdNextDeviceFrameOwnership =
+  | { kind: 'absent' }
+  | { kind: 'ours'; files: Record<string, string> }
+  | { kind: 'foreign' };
+
 export interface OdNextDeviceFrameStagingResult {
   /** Project-relative paths of the shells now staged and daemon-owned. */
   staged: string[];
-  /** Managed names left alone because an unmanaged file already holds them. */
+  /**
+   * Managed names left alone because the bytes on disk are not provably ours:
+   * a file we never wrote, a shell edited since we staged it, or — when the
+   * control file itself is occupied — every managed name under the root.
+   */
   skipped: string[];
 }
 
@@ -82,29 +104,43 @@ function digest(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
-async function readManifest(root: string): Promise<OdNextDeviceFrameManifestV1> {
-  const empty: OdNextDeviceFrameManifestV1 = { schema: OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA, files: {} };
+/**
+ * Classify the control file. Anything that is not a plain file holding our own
+ * schema is `foreign` — deliberately including unreadable files and malformed
+ * JSON, because "we could not understand it" is not evidence that we wrote it.
+ */
+async function readOwnership(root: string): Promise<OdNextDeviceFrameOwnership> {
+  const target = path.join(root, OD_NEXT_DEVICE_FRAME_MANIFEST);
+  const stat = await lstat(target).catch(() => null);
+  if (!stat) return { kind: 'absent' };
+  if (stat.isSymbolicLink() || !stat.isFile()) return { kind: 'foreign' };
   let raw: string;
   try {
-    raw = await readFile(path.join(root, OD_NEXT_DEVICE_FRAME_MANIFEST), 'utf8');
+    raw = await readFile(target, 'utf8');
   } catch {
-    return empty;
+    return { kind: 'foreign' };
   }
+  let parsed: Partial<OdNextDeviceFrameManifestV1> | null;
   try {
-    const parsed = JSON.parse(raw) as Partial<OdNextDeviceFrameManifestV1> | null;
-    if (parsed?.schema !== OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA || typeof parsed.files !== 'object' || !parsed.files) {
-      return empty;
-    }
-    const files: Record<string, string> = {};
-    for (const [name, sha] of Object.entries(parsed.files)) {
-      if (typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha) && !name.includes('/') && !name.includes('\\')) {
-        files[name] = sha;
-      }
-    }
-    return { schema: OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA, files };
+    parsed = JSON.parse(raw) as Partial<OdNextDeviceFrameManifestV1> | null;
   } catch {
-    return empty;
+    return { kind: 'foreign' };
   }
+  if (
+    parsed?.schema !== OD_NEXT_DEVICE_FRAME_MANIFEST_SCHEMA ||
+    typeof parsed.files !== 'object' ||
+    !parsed.files ||
+    Array.isArray(parsed.files)
+  ) {
+    return { kind: 'foreign' };
+  }
+  const files: Record<string, string> = {};
+  for (const [name, sha] of Object.entries(parsed.files)) {
+    if (typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha) && !name.includes('/') && !name.includes('\\')) {
+      files[name] = sha;
+    }
+  }
+  return { kind: 'ours', files };
 }
 
 /**
@@ -112,13 +148,16 @@ async function readManifest(root: string): Promise<OdNextDeviceFrameManifestV1> 
  * `.od-frames/<shell>.html` paths resolve for every prototype run, whether or
  * not a platform was resolved up front.
  *
- * Non-destructive by construction: only files recorded in the manifest from a
- * previous staging are replaced or (when the package no longer ships them)
- * removed. A pre-existing file under a managed name that the manifest does not
- * claim is left untouched and that shell is reported as skipped — the quoted
- * `device-frame-shell` fact still carries the source. Unrelated files in the
- * directory are never read, written, or deleted. The root itself is refused
- * when it is a symlink or a non-directory, mirroring the frozen Skill guard.
+ * Non-destructive by construction. A managed name is written or removed only
+ * when the manifest claims it *and* the bytes on disk still hash to what we
+ * recorded there, so neither a pre-existing `iphone.html` nor a shell the user
+ * edited after we staged it is ever overwritten; both are reported as skipped
+ * and drop out of the manifest, which hands the name back to the user for good.
+ * If the manifest name is itself occupied by something we did not write, the
+ * whole directory is left alone. Unrelated files are never written or deleted.
+ * The root is refused when it is a symlink or a non-directory, mirroring the
+ * frozen Skill guard. In every skipped case the quoted `device-frame-shell`
+ * fact still carries the shell source, so the run keeps working.
  */
 export async function materializeOdNextDeviceFrames(input: {
   cwd: string;
@@ -132,7 +171,21 @@ export async function materializeOdNextDeviceFrames(input: {
     throw new InvalidOdNextDeviceFrameRootError('Device shell staging root is unsafe.');
   }
   await mkdir(root, { recursive: true });
-  const previous = await readManifest(root);
+  const ownership = await readOwnership(root);
+  const managedName = (name: string) => `${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`;
+  if (ownership.kind === 'foreign') {
+    // The control file name is taken by something this materializer did not
+    // write, so nothing under the root can be proven to be ours. Write nothing,
+    // delete nothing, and do not replace the file holding the name.
+    return {
+      staged: [],
+      skipped: [
+        managedName(OD_NEXT_DEVICE_FRAME_MANIFEST),
+        ...shells.map((shell) => managedName(path.posix.basename(shell.path))),
+      ].sort(),
+    };
+  }
+  const previous = ownership.kind === 'ours' ? ownership.files : {};
   const next: Record<string, string> = {};
   const staged: string[] = [];
   const skipped: string[] = [];
@@ -140,27 +193,29 @@ export async function materializeOdNextDeviceFrames(input: {
   for (const shell of shells) {
     const name = path.posix.basename(shell.path);
     const target = path.join(root, name);
-    const owned = Object.prototype.hasOwnProperty.call(previous.files, name);
+    const recorded = Object.prototype.hasOwnProperty.call(previous, name) ? previous[name] : undefined;
     const existing = await lstat(target).catch(() => null);
-    if (existing && !owned) {
-      // Someone else's file. Leave it exactly as it is.
-      skipped.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`);
-      continue;
-    }
-    if (existing && (existing.isSymbolicLink() || !existing.isFile())) {
-      // Our manifest claims it, but it is no longer a plain file we wrote.
-      skipped.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`);
-      continue;
+    if (existing) {
+      // A file already holds the name. Replace it only after proving the bytes
+      // are the ones we last wrote: an unclaimed name, a name that is no longer
+      // a plain file, or a digest that moved all mean the user owns it now.
+      const current = recorded === undefined || existing.isSymbolicLink() || !existing.isFile()
+        ? null
+        : await readFile(target, 'utf8').catch(() => null);
+      if (current === null || digest(current) !== recorded) {
+        skipped.push(managedName(name));
+        continue;
+      }
     }
     await writeFile(target, shell.text, { encoding: 'utf8' });
     next[name] = digest(shell.text);
-    staged.push(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`);
+    staged.push(managedName(name));
   }
 
   // Retire shells we staged earlier that the current package no longer ships,
   // and only when the bytes are still ours.
-  for (const [name, sha] of Object.entries(previous.files)) {
-    if (name in next || skipped.includes(`${OD_NEXT_DEVICE_FRAME_ROOT}/${name}`)) continue;
+  for (const [name, sha] of Object.entries(previous)) {
+    if (name in next || skipped.includes(managedName(name))) continue;
     const target = path.join(root, name);
     const existing = await lstat(target).catch(() => null);
     if (!existing || existing.isSymbolicLink() || !existing.isFile()) continue;
