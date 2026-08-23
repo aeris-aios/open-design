@@ -33,6 +33,15 @@ interface Props {
 }
 
 type SourceFilter = 'all' | 'user' | 'built-in';
+type SkillSource = Exclude<SourceFilter, 'all'>;
+
+const SOURCE_FILTERS = ['user', 'built-in'] as const satisfies readonly SkillSource[];
+
+function getSkillSource(skill: Pick<SkillSummary, 'source'>): SkillSource {
+  // Older or alternate registry responses may omit source. Skills without
+  // explicit user ownership are built-in and should stay in that bucket.
+  return skill.source ?? 'built-in';
+}
 
 interface DraftState {
   name: string;
@@ -126,6 +135,25 @@ export function SkillsSection({ cfg, setCfg }: Props) {
     [cfg.disabledSkills],
   );
 
+  const sourceCounts = useMemo(() => {
+    const counts: Record<SkillSource, number> = {
+      user: 0,
+      'built-in': 0,
+    };
+    for (const skill of skills) {
+      counts[getSkillSource(skill)] += 1;
+    }
+    return counts;
+  }, [skills]);
+
+  // Do not leave the select pointing at a source that disappeared after a
+  // refresh (for example, when the last user skill is deleted).
+  useEffect(() => {
+    if (sourceFilter !== 'all' && sourceCounts[sourceFilter] === 0) {
+      setSourceFilter('all');
+    }
+  }, [sourceCounts, sourceFilter]);
+
   const modeOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const s of skills) {
@@ -152,7 +180,7 @@ export function SkillsSection({ cfg, setCfg }: Props) {
     const q = search.toLowerCase().trim();
     return skills.filter((s) => {
       if (modeFilter !== 'all' && s.mode !== modeFilter) return false;
-      if (sourceFilter !== 'all' && s.source !== sourceFilter) return false;
+      if (sourceFilter !== 'all' && getSkillSource(s) !== sourceFilter) return false;
       if (categoryFilter !== 'all' && s.category !== categoryFilter)
         return false;
       if (!q) return true;
@@ -235,7 +263,7 @@ export function SkillsSection({ cfg, setCfg }: Props) {
 
   const requestEdit = useCallback(
     (skill: SkillSummary) => {
-      if (skill.source === 'built-in') {
+      if (getSkillSource(skill) === 'built-in') {
         setConfirmBuiltInEditId(skill.id);
         setConfirmDeleteId(null);
         return;
@@ -392,8 +420,9 @@ export function SkillsSection({ cfg, setCfg }: Props) {
               <option value="all">
                 {t('settings.libraryAll')} ({skills.length})
               </option>
-              {(['user', 'built-in'] as const).map((s) => {
-                const count = skills.filter((sk) => sk.source === s).length;
+              {SOURCE_FILTERS.map((s) => {
+                const count = sourceCounts[s];
+                if (count === 0) return null;
                 return (
                   <option key={s} value={s}>
                     {s} ({count})
@@ -559,7 +588,7 @@ function SkillRow({
 }: SkillRowProps) {
   const t = useT();
   const summaryName = skill.name || skill.id;
-  const canDelete = skill.source === 'user';
+  const canDelete = getSkillSource(skill) === 'user';
   return (
     <div
       className={`skills-row${enabled ? '' : ' skills-row-disabled'}${

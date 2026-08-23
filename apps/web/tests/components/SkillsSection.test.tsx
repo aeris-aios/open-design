@@ -89,6 +89,74 @@ describe('SkillsSection', () => {
     expect(within(row).queryByTestId('skills-delete-confirm')).toBeNull();
   });
 
+  it('hides a source filter when no skills belong to that source', async () => {
+    renderSkillsSection([
+      makeSkill({
+        id: 'builtin-skill',
+        name: 'Built-in skill',
+        source: 'built-in',
+      }),
+    ]);
+
+    const sourceSelect = await screen.findByLabelText('Source');
+
+    expect(sourceSelect.querySelector('option[value="user"]')).toBeNull();
+    expect(sourceSelect.querySelector('option[value="built-in"]')?.textContent).toContain(
+      '(1)',
+    );
+  });
+
+  it('shows and applies the user source filter when user skills exist', async () => {
+    renderSkillsSection([
+      makeSkill({
+        id: 'builtin-skill',
+        name: 'Built-in skill',
+        source: 'built-in',
+      }),
+      makeSkill({
+        id: 'user-skill',
+        name: 'User skill',
+        source: 'user',
+      }),
+    ]);
+
+    const sourceSelect = await screen.findByLabelText('Source');
+    const userOption = sourceSelect.querySelector('option[value="user"]');
+
+    expect(userOption?.textContent).toContain('(1)');
+
+    fireEvent.change(sourceSelect, { target: { value: 'user' } });
+
+    expect(await screen.findByTestId('skill-row-user-skill')).toBeTruthy();
+    expect(screen.queryByTestId('skill-row-builtin-skill')).toBeNull();
+  });
+
+  it('treats an omitted source as built-in for counts and filtering', async () => {
+    renderSkillsSection([
+      makeSkill({
+        id: 'legacy-skill',
+        name: 'Legacy skill',
+        source: undefined,
+      }),
+      makeSkill({
+        id: 'builtin-skill',
+        name: 'Built-in skill',
+        source: 'built-in',
+      }),
+    ]);
+
+    const sourceSelect = await screen.findByLabelText('Source');
+
+    expect(sourceSelect.querySelector('option[value="built-in"]')?.textContent).toContain(
+      '(2)',
+    );
+
+    fireEvent.change(sourceSelect, { target: { value: 'built-in' } });
+
+    expect(await screen.findByTestId('skill-row-legacy-skill')).toBeTruthy();
+    expect(screen.getByTestId('skill-row-builtin-skill')).toBeTruthy();
+  });
+
   it('keeps delete confirmation and commit available for user skills', async () => {
     const { fetchMock } = renderSkillsSection([
       makeSkill({
