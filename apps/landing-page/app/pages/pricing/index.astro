@@ -747,6 +747,9 @@ const jsonLd = [
           });
         }
         trackCampaignBenefit(audience);
+        root.dispatchEvent(new CustomEvent('pricing:audience-changed', {
+          detail: { audience },
+        }));
       };
       for (const button of root.querySelectorAll('[data-audience-btn]')) {
         button.addEventListener('click', () => {
@@ -789,6 +792,9 @@ const jsonLd = [
       // One entry point so user clicks and subscription-state initialization
       // share the same rendering path without misreporting initialization as a click.
       const activateInterval = (interval, via, shouldTrack = true) => {
+        const previousInterval = root.getAttribute('data-interval') === 'monthly'
+          ? 'monthly'
+          : 'yearly';
         root.setAttribute('data-interval', interval);
         for (const b of root.querySelectorAll('[data-interval-btn]')) {
           const on = b.getAttribute('data-interval-btn') === interval;
@@ -797,7 +803,9 @@ const jsonLd = [
         }
         updateTeamPlan();
         syncCtas();
-        root.dispatchEvent(new CustomEvent('pricing:interval-changed', { detail: { interval } }));
+        root.dispatchEvent(new CustomEvent('pricing:interval-changed', {
+          detail: { interval, previousInterval, shouldTrack },
+        }));
         if (shouldTrack) {
           track('ui_click', {
             area: 'pricing_controls',
@@ -1079,6 +1087,7 @@ const jsonLd = [
         for (const btn of document.querySelectorAll('[data-open-lead-modal]')) {
           btn.addEventListener('click', () => {
             track('team_lead_open', { area: 'enterprise_card' });
+            root.dispatchEvent(new CustomEvent('pricing:enterprise-open'));
             openModal();
           });
         }
@@ -1111,6 +1120,7 @@ const jsonLd = [
             use_case: d.use_case || '',
             use_case_count: d.use_case_count || 0,
           });
+          root.dispatchEvent(new CustomEvent('pricing:enterprise-submit'));
         });
       }
     })();
@@ -1167,6 +1177,14 @@ const jsonLd = [
         const interval: PersonalBillingInterval = pricingRoot.getAttribute('data-interval') === 'monthly'
           ? 'monthly'
           : 'yearly';
+        pricingRoot.setAttribute(
+          'data-current-personal-plan-id',
+          pricingContext.current?.tier ?? '',
+        );
+        pricingRoot.setAttribute(
+          'data-current-personal-billing-interval',
+          pricingContext.current?.interval ?? '',
+        );
         for (const cta of pricingRoot.querySelectorAll('[data-pricing-cta]')) {
           const tier = cta.getAttribute('data-tier') || '';
           if (!personalTiers.has(tier)) continue;
@@ -1244,6 +1262,117 @@ const jsonLd = [
           applyPersonalActions();
         }
       });
+    }
+  </script>
+  <script>
+    import {
+      createPricingCompatibilityAnalytics,
+      pricingCompatibilityAttribution,
+      type PricingCompatibilityEvent,
+    } from '../../_lib/pricing-compat-analytics';
+    import {
+      PRICING_SNAPSHOT,
+      type BillingInterval,
+      type PlanTier,
+    } from '../../_lib/pricing';
+
+    type PricingAnalyticsWindow = Window & {
+      __odTrack?: (
+        event: PricingCompatibilityEvent,
+        props: Record<string, unknown>,
+      ) => void;
+    };
+
+    const compatibilityRoot = document.querySelector<HTMLElement>('[data-pricing-root]');
+    if (compatibilityRoot) {
+      const analyticsWindow = window as PricingAnalyticsWindow;
+      const compatibility = createPricingCompatibilityAnalytics({
+        tiers: PRICING_SNAPSHOT.tiers,
+        attribution: pricingCompatibilityAttribution(
+          new URLSearchParams(window.location.search),
+          document.referrer,
+        ),
+        track: (event, props) => analyticsWindow.__odTrack?.(event, props),
+      });
+      const personalPlanIds = new Set<string>(['go', 'plus', 'pro', 'max']);
+      const readAudience = () =>
+        compatibilityRoot.getAttribute('data-audience') === 'team'
+          ? 'team' as const
+          : 'creator' as const;
+      const readInterval = (): BillingInterval =>
+        compatibilityRoot.getAttribute('data-interval') === 'monthly'
+          ? 'monthly'
+          : 'yearly';
+      const readIntroEligibility = () =>
+        compatibilityRoot.getAttribute('data-first-month-intro-eligible') !== 'false';
+      const readCurrentPlan = () => {
+        const planId = compatibilityRoot.getAttribute('data-current-personal-plan-id');
+        return planId && personalPlanIds.has(planId)
+          ? planId as PlanTier | 'go'
+          : null;
+      };
+      const readCurrentInterval = (): BillingInterval | null => {
+        const interval = compatibilityRoot.getAttribute(
+          'data-current-personal-billing-interval',
+        );
+        return interval === 'monthly' || interval === 'yearly' ? interval : null;
+      };
+      const exposeVisiblePlans = () => {
+        compatibility.exposePlans({
+          audience: readAudience(),
+          interval: readInterval(),
+          introEligible: readIntroEligibility(),
+          currentPlanId: readCurrentPlan(),
+          currentBillingInterval: readCurrentInterval(),
+        });
+      };
+
+      exposeVisiblePlans();
+      compatibilityRoot.addEventListener('pricing:audience-changed', exposeVisiblePlans);
+      compatibilityRoot.addEventListener('pricing:interval-changed', (event) => {
+        const detail = (
+          event as CustomEvent<{
+            interval?: string;
+            previousInterval?: string;
+            shouldTrack?: boolean;
+          }>
+        ).detail;
+        const targetInterval = detail?.interval === 'monthly' ? 'monthly' : 'yearly';
+        const currentInterval = detail?.previousInterval === 'monthly'
+          ? 'monthly'
+          : 'yearly';
+        compatibility.changeInterval({
+          audience: readAudience(),
+          currentInterval,
+          targetInterval,
+          introEligible: readIntroEligibility(),
+          currentPlanId: readCurrentPlan(),
+          currentBillingInterval: readCurrentInterval(),
+          userInitiated: detail?.shouldTrack === true,
+        });
+      });
+      compatibilityRoot.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const cta = target.closest<HTMLElement>('[data-pricing-cta]');
+        if (!cta) return;
+        compatibility.clickPlan({
+          planId: cta.getAttribute('data-tier') || '',
+          interval: readInterval(),
+          introEligible: readIntroEligibility(),
+          enabled: !cta.hasAttribute('data-subscription-disabled'),
+          currentPlanId: readCurrentPlan(),
+          currentBillingInterval: readCurrentInterval(),
+        });
+      });
+      compatibilityRoot.addEventListener(
+        'pricing:enterprise-open',
+        compatibility.openEnterpriseLead,
+      );
+      compatibilityRoot.addEventListener(
+        'pricing:enterprise-submit',
+        compatibility.submitEnterpriseLead,
+      );
     }
   </script>
 </Layout>

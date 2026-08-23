@@ -29,33 +29,36 @@ checkout behavior.
 ## Event Contract
 
 Use the existing event names `subscription_plan_exposure` and
-`subscription_pricing_click`. Preserve the old Personal plan fields and
-snake_case PostHog representation while adapting the page context to the
+`subscription_pricing_click`. Preserve the old Personal plan fields and Vela's
+camelCase PostHog representation while adapting the page context to the
 migrated surface:
 
-- `page_name=pricing`
+- `pageName=pricing`
 - `area=subscription_pricing`
-- `entry_point=open_design_entry`, preserving the old registry enum for the new
+- `entryPoint=open_design_entry`, preserving the old registry enum for the new
   OpenDesign-owned surface
-- `source_detail`: derive from `od_entry_source`, then `source`, then `direct`
-- `conversion_source`: derive from `od_conversion_source`, then
-  `source_detail`
-- `plan_id` and `plan_name`: `plus | pro | max`
-- `billing_interval`: the visible `monthly | yearly` selection
-- `price_usd`: introductory monthly price or full yearly price, formatted with
+- `sourceDetail`: derive from `od_entry_source`, then `source`, then the
+  previous page's `/wallet` or `/dashboard` referrer, then `direct`
+- `conversionSource`: derive from `od_conversion_source`, then
+  `sourceDetail`
+- `planId` and `planName`: `plus | pro | max`
+- `billingInterval`: the visible `monthly | yearly` selection
+- `priceUsd`: introductory monthly price or full yearly price, formatted with
   two decimals
-- `credits_granted_usd`: monthly grant; yearly grants normalized to one month,
+- `creditsGrantedUsd`: monthly grant; yearly grants normalized to one month,
   formatted with two decimals
-- `deploy_limit`: the plan contract value, including zero if introduced later
-- `intro_offer_applied`: true only for the monthly introductory price
-- `is_recommended`: the plan contract recommendation flag
-- `auto_recharge_supported=true`
+- `deployLimit`: the plan contract value, including zero if introduced later
+- `introOfferApplied`: true only for the monthly introductory price
+- `isRecommended`: the plan contract recommendation flag
+- `autoRechargeSupported=true`
 
 The landing page already supplies `locale` and routes the event through its
 existing `window.__odTrack` PostHog helper. PostHog also attaches
 `$current_url`; preserve inbound `od_*` attribution fields in the compatible
-event payload. `entry_point` remains the valid `open_design_entry` enum while
-`source_detail` and `conversion_source` distinguish the actual URL source. No
+event payload. `entryPoint` remains the valid `open_design_entry` enum while
+`sourceDetail` and `conversionSource` distinguish the explicit URL source and
+fall back to the same-origin referrer when the redirect omitted query
+parameters. No
 new event name, analytics sink, dependency, or Feishu taxonomy row is
 introduced.
 
@@ -66,7 +69,7 @@ For `subscription_pricing_click`:
   a current Personal plan;
 - interval controls emit `change_interval` with current and target intervals;
 - Enterprise lead opening emits `request_team_access` with
-  `area=enterprise_contact` and `target_destination=lead_form`;
+  `area=enterprise_contact` and `targetDestination=lead_form`;
 - Enterprise lead submission emits `team_lead_submit` with the same area and
   destination;
 - plan CTA payloads include target plan, target interval, plan price/grant
@@ -90,7 +93,7 @@ For `subscription_pricing_click`:
 
 ## Duplicate Control
 
-Deduplicate by `audience + billing_interval` during a page session. Initial
+Deduplicate by `audience + billingInterval` during a page session. Initial
 state synchronization and repeated activation of the same state must not emit
 duplicates. A genuine interval change or returning from Team to Personal may
 emit again because a newly visible plan surface is being exposed.

@@ -35,13 +35,13 @@
 
 Import the not-yet-created module and add literal assertions for these behaviors:
 
-1. `pricingCompatibilityAttribution()` maps `od_origin`, `od_entry_id`, `od_entry_source`, `od_entry_at`, `od_conversion_source`, and `od_campaign_id`; it keeps `entry_point='open_design_entry'` and falls back to `source`/`direct` for source detail.
+1. `pricingCompatibilityAttribution()` maps `od_origin`, `od_entry_id`, `od_entry_source`, `od_entry_at`, `od_conversion_source`, and `od_campaign_id`; it keeps `entryPoint='open_design_entry'` and falls back to `source`, the `/wallet` or `/dashboard` referrer, then `direct` for source detail.
 2. Initial Personal yearly exposure emits exactly three `subscription_plan_exposure` events for Plus, Pro, and Max with literal price, monthly-normalized credit, deploy limit, intro, recommendation, and attribution fields.
 3. Repeating the same visible state emits nothing; Team emits nothing; returning to Personal emits three new exposures.
 4. A real yearly-to-monthly change emits one `subscription_pricing_click` with `element='change_interval'`, then three monthly exposures using introductory prices.
 5. A Plus CTA emits one compatible plan click with `subscribe_now` for no current plan and `upgrade_now` with current-plan fields when a current plan exists.
 6. Go, Team, disabled, and unknown CTA inputs emit no compatible plan click.
-7. Enterprise open and submit emit `request_team_access` and `team_lead_submit` with `area='enterprise_contact'` and `target_destination='lead_form'`.
+7. Enterprise open and submit emit `request_team_access` and `team_lead_submit` with `area='enterprise_contact'` and `targetDestination='lead_form'`.
 
 Use the literal 2026-08-23 plan fixture:
 
@@ -87,8 +87,8 @@ The failure must be a missing-module failure for the intended production boundar
 - Test: `apps/landing-page/tests/pricing-compat-analytics.test.ts`
 
 **Interfaces:**
-- Produces: `pricingCompatibilityAttribution(search)`, `personalPlanCompatibilityPayload(tier, interval, introEligible)`, and `createPricingCompatibilityAnalytics(options)`.
-- Event properties use the snake_case form stored by the retired Vela analytics mirror.
+- Produces: `pricingCompatibilityAttribution(search, referrer)`, `personalPlanCompatibilityPayload(tier, interval, introEligible)`, and `createPricingCompatibilityAnalytics(options)`.
+- Compatibility event properties use the original Vela camelCase field names.
 
 - [ ] **Step 1: Define types and attribution mapping**
 
@@ -100,24 +100,24 @@ export type CompatibilityTrack = (
   props: Record<string, unknown>,
 ) => void;
 
-export function pricingCompatibilityAttribution(search: URLSearchParams) {
+export function pricingCompatibilityAttribution(search: URLSearchParams, referrer = '') {
   const sourceDetail =
-    search.get('od_entry_source') ?? search.get('source') ?? 'direct';
+    search.get('od_entry_source') ?? search.get('source') ?? sourceFromReferrer(referrer);
   return {
-    entry_point: 'open_design_entry',
-    source_product: search.get('od_origin') ?? 'open_design',
-    source_detail: sourceDetail,
-    conversion_source: search.get('od_conversion_source') ?? sourceDetail,
-    entry_id: search.get('od_entry_id') ?? undefined,
-    entry_occurred_at: search.get('od_entry_at') ?? undefined,
-    campaign_id: search.get('od_campaign_id') ?? undefined,
+    entryPoint: 'open_design_entry',
+    sourceProduct: search.get('od_origin') ?? 'open_design',
+    sourceDetail,
+    conversionSource: search.get('od_conversion_source') ?? sourceDetail,
+    entryId: search.get('od_entry_id') ?? undefined,
+    entryOccurredAt: search.get('od_entry_at') ?? undefined,
+    campaignId: search.get('od_campaign_id') ?? undefined,
   } as const;
 }
 ```
 
 - [ ] **Step 2: Implement plan payload parity**
 
-For monthly, use the intro price only when `introEligible` is true. For yearly, use the full annual price and divide the annual grant by 12. Format price and credit strings with `toFixed(2)`. Preserve `plan_id`, `plan_name`, `billing_interval`, `deploy_limit`, `intro_offer_applied`, `first_month_eligible`, `is_recommended`, and `auto_recharge_supported=true`.
+For monthly, use the intro price only when `introEligible` is true. For yearly, use the full annual price and divide the annual grant by 12. Format price and credit strings with `toFixed(2)`. Preserve `planId`, `planName`, `billingInterval`, `deployLimit`, `introOfferApplied`, `firstMonthEligible`, `isRecommended`, and `autoRechargeSupported=true`.
 
 - [ ] **Step 3: Implement controller methods**
 
