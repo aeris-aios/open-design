@@ -735,7 +735,6 @@ export const uk: Dict = {
   'entry.discordAria': 'Приєднатися до Discord OpenDesign',
   'entry.discordAriaWithOnline': 'Приєднатися до Discord OpenDesign - {online}',
   'entry.discordOnlineLabel': '{count} онлайн',
-  'entry.feishuAria': 'Приєднуйтесь до групи OpenDesign у Feishu',
   'entry.mailAria': 'Написати OpenDesign електронною поштою',
   'entry.accountSettings': 'Налаштування',
   'chat.collapsePane': 'Згорнути панель розмови',
