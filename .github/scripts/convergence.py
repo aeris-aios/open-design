@@ -29,6 +29,7 @@ CONTROL_SUITE = "convergence-control"
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 IDENTITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 PRODUCT_TYPES = {"job", "url"}
+PUBLIC_READ_USER_AGENT = "open-design-workload-convergence/1"
 
 
 def canonical_json(value: Any) -> str:
@@ -382,8 +383,19 @@ def validate_result(
     return {**result, "products": products}
 
 
+def public_read_request(url: str, *, accept: str, byte_range: str | None = None) -> urllib.request.Request:
+    headers = {
+        "Accept": accept,
+        "Cache-Control": "no-cache",
+        "User-Agent": PUBLIC_READ_USER_AGENT,
+    }
+    if byte_range is not None:
+        headers["Range"] = byte_range
+    return urllib.request.Request(url, headers=headers)
+
+
 def fetch_result(url: str, timeout: float) -> Any:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "Cache-Control": "no-cache"})
+    request = public_read_request(url, accept="application/json")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         if response.status != 200:
             raise OSError(f"unexpected HTTP status {response.status}")
@@ -396,10 +408,7 @@ def fetch_result(url: str, timeout: float) -> Any:
 
 
 def probe_product(url: str, timeout: float) -> None:
-    request = urllib.request.Request(
-        url,
-        headers={"Accept": "*/*", "Cache-Control": "no-cache", "Range": "bytes=0-0"},
-    )
+    request = public_read_request(url, accept="*/*", byte_range="bytes=0-0")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         if response.status not in {200, 206}:
             raise OSError(f"unexpected product HTTP status {response.status}")
@@ -416,7 +425,7 @@ def sha256_file(path: Path) -> str:
 
 def sha256_url(url: str, timeout: float) -> str:
     digest = hashlib.sha256()
-    request = urllib.request.Request(url, headers={"Accept": "*/*", "Cache-Control": "no-cache"})
+    request = public_read_request(url, accept="*/*")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         if response.status != 200:
             raise OSError(f"unexpected product HTTP status {response.status}")
@@ -800,6 +809,9 @@ def same_reusable_result(existing: Any, expected: Any) -> bool:
 
 
 def self_check() -> None:
+    public_request = public_read_request("https://results.example/result.json", accept="application/json")
+    if public_request.get_header("User-agent") != PUBLIC_READ_USER_AGENT:
+        raise ConfigError("convergence public reads omitted the stable client identity")
     workflow = WorkflowContract.__new__(WorkflowContract)
     workflow.name = "ci"
     workflow.policy = "self-check-v1"
