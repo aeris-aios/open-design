@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -393,9 +394,7 @@ def validate_result(
         raise ConfigError("products:none workload result must not contain products")
     if expected["products"] == "manifest" and not products:
         raise ConfigError("products:manifest workload result must contain products")
-    validated = object_value(result["validated"], "workload result.validated")
-    if not isinstance(validated.get("runId"), int) or validated["runId"] <= 0:
-        raise ConfigError("workload result.validated.runId must be positive")
+    validated_provenance(result["validated"])
     return {**result, "products": products}
 
 
@@ -531,7 +530,15 @@ def resolve_results(
         except urllib.error.HTTPError as error:
             hits[identity] = False
             reasons[identity] = "result-missing" if error.code == 404 else f"read-http-{error.code}"
-        except (ConfigError, json.JSONDecodeError, OSError, urllib.error.URLError, TimeoutError) as error:
+        except (
+            ConfigError,
+            json.JSONDecodeError,
+            UnicodeError,
+            http.client.HTTPException,
+            OSError,
+            urllib.error.URLError,
+            TimeoutError,
+        ) as error:
             hits[identity] = False
             reasons[identity] = f"read-unavailable:{type(error).__name__}"
     return hits, reasons, results
@@ -551,6 +558,14 @@ def write_json_atomic(path: Path, value: Any) -> None:
         except OSError:
             pass
         raise
+
+
+def execution_decisions(
+    enabled: dict[str, Any], hits: dict[str, bool], mode: str
+) -> tuple[dict[str, bool], dict[str, bool]]:
+    would_run = {identity: bool(enabled[identity]) and not hit for identity, hit in hits.items()}
+    run = dict(would_run) if mode == "enforce" else {identity: bool(enabled[identity]) for identity in hits}
+    return run, would_run
 
 
 def plan_command(args: argparse.Namespace, contract: ConvergenceContract, root: Path) -> int:
@@ -577,8 +592,7 @@ def plan_command(args: argparse.Namespace, contract: ConvergenceContract, root: 
         calculated,
         args.timeout,
     )
-    would_run = {identity: bool(enabled[identity]) and not hits[identity] for identity in calculated}
-    run = dict(would_run) if args.mode == "enforce" else {identity: bool(enabled[identity]) for identity in calculated}
+    run, would_run = execution_decisions(enabled, hits, args.mode)
     reasons = {
         identity: "scope-disabled"
         if not enabled[identity]
@@ -1043,6 +1057,9 @@ def self_check() -> None:
         hits, _, _ = resolve_results("https://results.example", 42, workflow, {"unit": expected}, 0.1)
         if hits != {"unit": True}:
             raise ConfigError("convergence self-check did not accept a valid result")
+        shadow_run, _ = execution_decisions({"unit": True}, hits, "shadow")
+        if shadow_run != {"unit": True}:
+            raise ConfigError("convergence self-check omitted a shadow-mode result hit")
     with patch.object(module, "fetch_result", return_value={}):
         hits, _, _ = resolve_results("https://results.example", 42, workflow, {"unit": expected}, 0.1)
         if hits != {"unit": False}:
@@ -1051,6 +1068,23 @@ def self_check() -> None:
         hits, _, _ = resolve_results("https://results.example", 42, workflow, {"unit": expected}, 0.1)
         if hits != {"unit": False}:
             raise ConfigError("convergence self-check did not fail open on timeout")
+    for unavailable in (
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        http.client.IncompleteRead(b"{", 2),
+    ):
+        with patch.object(module, "fetch_result", side_effect=unavailable):
+            hits, _, _ = resolve_results("https://results.example", 42, workflow, {"unit": expected}, 0.1)
+            if hits != {"unit": False}:
+                raise ConfigError(
+                    f"convergence self-check did not fail open on {type(unavailable).__name__}"
+                )
+    for malformed_provenance in ({"runId": 1}, {**provenance, "unexpected": True}):
+        malformed_receipt = json.loads(canonical_json(receipt))
+        malformed_receipt["validated"] = malformed_provenance
+        with patch.object(module, "fetch_result", return_value=malformed_receipt):
+            hits, _, _ = resolve_results("https://results.example", 42, workflow, {"unit": expected}, 0.1)
+            if hits != {"unit": False}:
+                raise ConfigError("convergence self-check accepted malformed provenance")
     product_expected = {**expected, "products": "manifest"}
     product_receipt = json.loads(canonical_json(receipt))
     product_receipt["products"] = {
