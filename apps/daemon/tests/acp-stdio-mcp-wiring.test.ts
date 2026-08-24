@@ -109,12 +109,18 @@ describe('ACP stdio MCP servers are withheld from runtimes that reject them', ()
     await fetch(`${baseUrl}/api/agents`).catch(() => {});
   });
 
+  // Best-effort cleanup against a throwaway data dir. Deleting serially inside
+  // the default 10s hook budget times out once this file shares a worker with
+  // other server-level suites, so fan the deletes out and give the hook room —
+  // a slow teardown must not report as a test failure when every case passed.
   afterAll(async () => {
-    for (const id of projectsToClean.splice(0)) {
-      await fetch(`${baseUrl}/api/projects/${id}`, { method: 'DELETE' }).catch(() => {});
-    }
+    await Promise.all(
+      projectsToClean.splice(0).map((id) =>
+        fetch(`${baseUrl}/api/projects/${id}`, { method: 'DELETE' }).catch(() => {}),
+      ),
+    );
     await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await fetch(`${baseUrl}/api/mcp/servers`, {
