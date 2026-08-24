@@ -59,6 +59,7 @@ import {
   modelSelectionErrorIsRecoverable,
 } from './models.js';
 import { buildAcpSessionNewParams, buildPromptBlocks, type AcpMcpServerInput } from './session-params.js';
+import { withholdStdioMcpServersForBuild } from './stdio-mcp.js';
 
 /**
  * Options for `attachAcpSession`. All fields except `child`, `prompt`, and
@@ -73,6 +74,12 @@ export interface AttachAcpSessionOptions {
   mcpServers?: AcpMcpServerInput[];
   // Passed through to buildAcpSessionNewParams — see AcpSessionOptions.
   envFormat?: 'array' | 'map';
+  // First version of this agent that rejects stdio MCP servers on `session/new`
+  // (`RuntimeAgentDef.acpStdioMcpRemovedInVersion`). When set, stdio entries are
+  // withheld from any build at or above it, judged against the version the agent
+  // reports in its own `initialize` result. Leave unset for agents that accept
+  // stdio MCP servers at every version.
+  stdioMcpRemovedInVersion?: string | null;
   send: (event: string, payload: unknown) => void;
   clientName?: string;
   clientVersion?: string;
@@ -132,6 +139,7 @@ export function attachAcpSession({
   imagePaths = [],
   mcpServers,
   envFormat = 'array',
+  stdioMcpRemovedInVersion,
   send,
   clientName = 'open-design',
   clientVersion = 'runtime-adapter',
@@ -922,12 +930,34 @@ export function attachAcpSession({
           'session/load',
         );
       } else {
+        // The build that just answered `initialize` is the one about to parse
+        // `session/new`, so the version it reports for itself is the authority
+        // on which MCP transports this payload may carry. Preferred over any
+        // earlier `--version` probe, which can be stale by the time a run
+        // starts (upgrade between probe and run, PATH shim, detection refresh).
+        const agentInfo = (result as { agentInfo?: { version?: unknown } }).agentInfo;
+        const reportedVersion =
+          typeof agentInfo?.version === 'string' ? agentInfo.version : null;
+        const sessionMcp = mcpServers
+          ? withholdStdioMcpServersForBuild(mcpServers, {
+              reportedVersion,
+              removedInVersion: stdioMcpRemovedInVersion,
+            })
+          : null;
+        if (sessionMcp && sessionMcp.withheldNames.length > 0) {
+          // Daemon-log only: the transcript is user-facing and localized, and a
+          // withheld MCP server is an operator-diagnostic detail, not something
+          // the user can act on mid-turn.
+          console.warn(
+            `[acp] agent build ${reportedVersion ?? 'unknown'} does not accept stdio MCP servers; withheld ${sessionMcp.withheldNames.join(', ')}`,
+          );
+        }
         writeRpc(
           nextId,
           'session/new',
           buildAcpSessionNewParams(
             effectiveCwd,
-            mcpServers ? { mcpServers, envFormat } : { envFormat },
+            sessionMcp ? { mcpServers: sessionMcp.servers, envFormat } : { envFormat },
           ),
           'session/new',
         );

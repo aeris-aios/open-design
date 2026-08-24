@@ -13251,6 +13251,10 @@ export async function startServer({
         imagePaths: def.supportsImagePaths ? amrStagedImages : [],
         mcpServers,
         envFormat: def.acpMcpEnvFormat ?? 'array',
+        // Lets the session withhold stdio MCP servers from agent builds that
+        // reject them (Kimi 0.37.0+). Unset for every other runtime, which
+        // leaves their `session/new` payload exactly as it is today.
+        stdioMcpRemovedInVersion: def.acpStdioMcpRemovedInVersion ?? null,
         executionProfile,
         completePromptOnTurnEnd: def.acpTurnEndCompletesPrompt === true,
         ...(def.id === 'amr' ? { modelUnavailableErrorCode: 'AMR_MODEL_UNAVAILABLE' } : {}),
