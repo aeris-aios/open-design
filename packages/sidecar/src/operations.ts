@@ -119,12 +119,17 @@ export async function invokeSidecar<TResult = unknown>(
 
 export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
   const exact = normalizeSidecarStamp(stamp);
-  const initial = await findSidecarProcesses(exact);
+  const initialSnapshots = await listProcessSnapshots();
+  const initialRoots = initialSnapshots.filter((processInfo) =>
+    matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
+  );
+  const initialPids = collectProcessTreePids(initialSnapshots, initialRoots.map(({ pid }) => pid));
+  const initialPidSet = new Set(initialPids);
   let gracefulAccepted = false;
   try {
     const response = await requestJsonIpc<{ accepted?: unknown }>(
       resolvePrivateIpcPath(exact),
-      { type: sidecarProtocol.stop },
+      { targetPids: initialRoots.map(({ pid }) => pid), type: sidecarProtocol.stop },
       { timeoutMs: 2_000 },
     );
     gracefulAccepted = response.accepted === true;
@@ -132,7 +137,7 @@ export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOpt
     // An absent or stale endpoint is resolved by the exact argv scan below.
   }
 
-  if (initial.length === 0) {
+  if (initialRoots.length === 0) {
     return {
       alreadyStopped: true,
       forcedPids: [],
@@ -145,27 +150,36 @@ export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOpt
 
   const graceMs = options.termGraceMs ?? 5_000;
   const deadline = Date.now() + graceMs;
-  let remaining = await findSidecarProcesses(exact);
+  const remainingInitialPids = async () => (await listProcessSnapshots())
+    .map(({ pid }) => pid)
+    .filter((pid) => initialPidSet.has(pid));
+  let remaining = await remainingInitialPids();
   while (remaining.length > 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
-    remaining = await findSidecarProcesses(exact);
+    remaining = await remainingInitialPids();
   }
   if (remaining.length === 0) {
     return {
       alreadyStopped: false,
       forcedPids: [],
       gracefulAccepted,
-      matchedPids: initial.map(({ pid }) => pid),
+      matchedPids: initialPids,
       remainingPids: [],
-      stoppedPids: initial.map(({ pid }) => pid),
+      stoppedPids: initialPids,
     };
   }
 
-  const snapshots = await listProcessSnapshots();
-  const exactRoots = snapshots.filter((processInfo) =>
-    matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
-  );
-  const pids = collectProcessTreePids(snapshots, exactRoots.map(({ pid }) => pid));
-  const forced = await stopProcesses(pids, { termGraceMs: 0, killGraceMs: options.killGraceMs });
-  return { ...forced, alreadyStopped: false, gracefulAccepted };
+  // The five-field stamp names a resource set, not a process generation. Keep
+  // this stop invocation scoped to the process tree observed at call entry so
+  // a replacement that acquires the same stamp during the grace window cannot
+  // be swept into the old instance's fallback termination.
+  const forced = await stopProcesses(remaining, { termGraceMs: 0, killGraceMs: options.killGraceMs });
+  return {
+    alreadyStopped: false,
+    forcedPids: forced.forcedPids,
+    gracefulAccepted,
+    matchedPids: initialPids,
+    remainingPids: forced.remainingPids,
+    stoppedPids: initialPids.filter((pid) => !forced.remainingPids.includes(pid)),
+  };
 }

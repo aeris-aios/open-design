@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { waitForProcessExit } from "@open-design/platform";
 import {
   normalizeSidecarStamp,
   bootstrapSidecarProcess,
@@ -106,6 +107,7 @@ describe("normalized sidecar client", () => {
       runtimeRoot: "/tmp/open-design-runtime",
     });
     const events: string[] = [];
+    let inheritedDuringStart: Record<string, string> | null = null;
     let receivedResources: SidecarResources | null = null;
     const client = SidecarFactory.create({
       handlers: {
@@ -117,6 +119,7 @@ describe("normalized sidecar client", () => {
       lifecycle: {
         async start(resources) {
           events.push("start");
+          inheritedDuringStart = SidecarFactory.inheritedEnvironment();
           receivedResources = resources;
           return { ready: true };
         },
@@ -129,8 +132,7 @@ describe("normalized sidecar client", () => {
       },
     });
 
-    const inheritedEnv = SidecarFactory.inheritedEnvironment();
-    expect(Object.keys(inheritedEnv)).toHaveLength(1);
+    expect(SidecarFactory.inheritedEnvironment()).toEqual({});
     expect(client.resources).toEqual({
       dataRoot: "/tmp/open-design-data",
       ownerPid: null,
@@ -139,6 +141,8 @@ describe("normalized sidecar client", () => {
       runtimeRoot: "/tmp/open-design-runtime",
     });
     await client.start();
+    const inheritedEnv = SidecarFactory.inheritedEnvironment();
+    expect(Object.keys(inheritedEnv)).toHaveLength(1);
     const inherited = SidecarFactory.connectInherited(inheritedEnv);
     expect(inherited).not.toBeNull();
     await expect(inherited?.status("daemon")).resolves.toEqual({ ready: true });
@@ -149,6 +153,7 @@ describe("normalized sidecar client", () => {
     expect(SidecarFactory.inheritedEnvironment()).toEqual({});
 
     expect(receivedResources).toEqual(client.resources);
+    expect(inheritedDuringStart).toEqual({});
     expect(events).toEqual(["start", "handler", "handler", "stop"]);
   });
 
@@ -267,4 +272,45 @@ describe("server-side atomic operations", () => {
       await stopSidecar(beta, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
   });
+
+  it("does not let an earlier stop terminate a replacement with the same stamp", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const replacementStamp = { ...stamp, namespace: `replacement-${process.pid}` };
+    const resources = {
+      dataRoot: "/tmp/open-design-replacement",
+      ownerPid: null,
+      port: 0,
+      runtimeRoot: "/tmp/open-design-replacement-runtime",
+    };
+    const old = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
+    let replacement: { pid: number } | null = null;
+    try {
+      await vi.waitFor(async () => {
+        expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(old.pid);
+      });
+      const stopping = stopSidecar(replacementStamp, { killGraceMs: 2_000, termGraceMs: 300 });
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      replacement = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
+      await vi.waitFor(async () => {
+        expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
+      });
+      process.kill(old.pid, "SIGKILL");
+      await waitForProcessExit(old.pid, 2_000);
+
+      const result = await stopping;
+      expect(result.matchedPids).toContain(old.pid);
+      expect(result.matchedPids).not.toContain(replacement.pid);
+      expect(result.forcedPids).not.toContain(replacement.pid);
+      expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement.pid);
+    } finally {
+      try { process.kill(old.pid, "SIGKILL"); } catch {}
+      if (replacement != null) {
+        try { process.kill(replacement.pid, "SIGKILL"); } catch {}
+      }
+      await Promise.all([
+        waitForProcessExit(old.pid, 2_000),
+        replacement == null ? Promise.resolve(true) : waitForProcessExit(replacement.pid, 2_000),
+      ]);
+    }
+  }, 10_000);
 });

@@ -53,7 +53,9 @@ export type SidecarConnection = {
 };
 
 type InvokeEnvelope = { action: string; app: string; input: unknown; type: typeof BUSINESS_INVOKE };
-type ControlEnvelope = { type: typeof CONTROL_STATUS | typeof CONTROL_STOP };
+type ControlEnvelope =
+  | { type: typeof CONTROL_STATUS }
+  | { targetPids: readonly number[] | null; type: typeof CONTROL_STOP };
 
 function normalizeResources(input: unknown): SidecarResources {
   if (typeof input !== "object" || input == null || Array.isArray(input)) {
@@ -93,7 +95,15 @@ function assertEnvelope(message: unknown): InvokeEnvelope | ControlEnvelope {
     throw new Error("invalid sidecar request");
   }
   const request = message as Record<string, unknown>;
-  if (request.type === CONTROL_STATUS || request.type === CONTROL_STOP) return { type: request.type };
+  if (request.type === CONTROL_STATUS) return { type: CONTROL_STATUS };
+  if (request.type === CONTROL_STOP) {
+    if (request.targetPids != null && (
+      !Array.isArray(request.targetPids) ||
+      !request.targetPids.every((pid) => Number.isSafeInteger(pid) && Number(pid) > 0)
+    )) throw new Error("invalid sidecar stop targets");
+    const targetPids = request.targetPids == null ? null : request.targetPids.map(Number);
+    return { targetPids, type: CONTROL_STOP };
+  }
   if (request.type !== BUSINESS_INVOKE || typeof request.app !== "string" || typeof request.action !== "string") {
     throw new Error("invalid sidecar request");
   }
@@ -118,7 +128,6 @@ export class SidecarClient<TRuntime> {
   constructor(options: SidecarClientOptions<TRuntime>) {
     this.stamp = readCurrentSidecarStamp();
     this.resources = readCurrentResources();
-    this.#publishEndpoint();
     this.#handlers = options.handlers ?? {};
     this.#lifecycle = options.lifecycle;
   }
@@ -126,7 +135,6 @@ export class SidecarClient<TRuntime> {
   start(): Promise<void> {
     if (this.#stopPromise != null) return Promise.reject(new Error("sidecar client is stopping"));
     if (this.#startPromise != null) return this.#startPromise;
-    this.#publishEndpoint();
     const attempt = this.#start();
     this.#startPromise = attempt;
     void attempt.catch(() => {
@@ -148,6 +156,9 @@ export class SidecarClient<TRuntime> {
           const request = assertEnvelope(message);
           if (request.type === CONTROL_STATUS) return await this.#lifecycle.status(runtime);
           if (request.type === CONTROL_STOP) {
+            if (request.targetPids != null && !request.targetPids.includes(process.pid)) {
+              return { accepted: false };
+            }
             setImmediate(() => { this.#stopAndExit(); });
             return { accepted: true };
           }
@@ -171,6 +182,7 @@ export class SidecarClient<TRuntime> {
         }, 1_000);
         this.#ownerTimer.unref();
       }
+      this.#publishEndpoint();
     } catch (error) {
       this.#runtime = null;
       if (runtimeStarted) await this.#lifecycle.stop(runtime).catch(() => undefined);

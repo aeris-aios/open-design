@@ -10,6 +10,7 @@ import { findSidecarProcesses, getSidecarStatus, invokeSidecar, stopSidecar } fr
 import {
   APP_KEYS,
   OPEN_DESIGN_SIDECAR_CONTRACT,
+  SIDECAR_MESSAGES,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
 } from "@open-design/sidecar-proto";
@@ -782,8 +783,10 @@ describe("inspectPackedLinuxApp", () => {
   });
 
   it("allows desktop inspect eval and screenshot options when headless is omitted", async () => {
-    vi.mocked(findSidecarProcesses).mockResolvedValueOnce([{ command: "desktop", pid: 42, ppid: 1 }]);
-    vi.mocked(getSidecarStatus).mockResolvedValueOnce({ state: "running", url: "od://app/" });
+    vi.mocked(getSidecarStatus).mockImplementation(async (stamp) => {
+      if (stamp.source === SIDECAR_SOURCES.TOOLS_PACK) return { state: "running", url: "od://app/" };
+      throw new Error("packaged status unavailable");
+    });
     vi.mocked(invokeSidecar)
       .mockResolvedValueOnce({ ok: true, value: "Open Design" })
       .mockResolvedValueOnce({ path: "/tmp/open-design-linux.png" });
@@ -798,8 +801,29 @@ describe("inspectPackedLinuxApp", () => {
       screenshot: { path: "/tmp/open-design-linux.png" },
       status: { state: "running", url: "od://app/" },
     });
-    expect(getSidecarStatus).toHaveBeenCalledOnce();
+    expect(getSidecarStatus).toHaveBeenCalledTimes(2);
     expect(invokeSidecar).toHaveBeenCalledTimes(2);
+  });
+
+  it("targets packaged IPC when a tools-pack process marker is stale", async () => {
+    vi.mocked(findSidecarProcesses).mockImplementation(async (stamp) =>
+      stamp.source === SIDECAR_SOURCES.TOOLS_PACK ? [{ command: "desktop", pid: 42, ppid: 1 }] : [],
+    );
+    vi.mocked(getSidecarStatus).mockImplementation(async (stamp) => {
+      if (stamp.source === SIDECAR_SOURCES.PACKAGED) return { state: "running", url: "od://app/" };
+      throw new Error("stale tools-pack endpoint");
+    });
+    vi.mocked(invokeSidecar).mockResolvedValueOnce({ ok: true, value: "Open Design" });
+
+    const result = await inspectPackedLinuxApp(makeConfig(), { expr: "document.title" });
+
+    expect(result.status).toEqual({ state: "running", url: "od://app/" });
+    expect(invokeSidecar).toHaveBeenCalledWith(
+      expect.objectContaining({ source: SIDECAR_SOURCES.PACKAGED }),
+      SIDECAR_MESSAGES.EVAL,
+      { expression: "document.title" },
+      { timeoutMs: 5000 },
+    );
   });
 });
 

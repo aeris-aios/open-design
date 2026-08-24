@@ -942,11 +942,27 @@ export function createLinuxDesktopLaunchEnv(
   return env;
 }
 
-async function waitForLinuxStatus<T>(stamp: SidecarStamp, timeoutMs: number): Promise<T | null> {
+type ReachableLinuxSidecar<T> = {
+  stamp: SidecarStamp;
+  status: T;
+};
+
+async function resolveReachableLinuxSidecar<T>(
+  stamps: readonly SidecarStamp[],
+  timeoutMs: number,
+): Promise<ReachableLinuxSidecar<T> | null> {
+  const probes = await Promise.all(stamps.map(async (stamp): Promise<ReachableLinuxSidecar<T> | null> => {
+    const status = await getSidecarStatus<T>(stamp, { timeoutMs }).catch(() => null);
+    return status == null ? null : { stamp, status };
+  }));
+  return probes.find((probe): probe is ReachableLinuxSidecar<T> => probe != null) ?? null;
+}
+
+async function waitForLinuxStatus<T>(stamps: readonly SidecarStamp[], timeoutMs: number): Promise<ReachableLinuxSidecar<T> | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const status = await getSidecarStatus<T>(stamp, { timeoutMs: 1_000 }).catch(() => null);
-    if (status != null) return status;
+    const active = await resolveReachableLinuxSidecar<T>(stamps, 1_000);
+    if (active != null) return active;
     await new Promise((r) => setTimeout(r, 200));
   }
   return null;
@@ -968,6 +984,10 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   await writeFile(logPath, "", "utf8");
 
   const stamp = linuxStamp(config);
+  const launchStamps = [
+    stamp,
+    linuxStamp(config, { source: SIDECAR_SOURCES.PACKAGED }),
+  ];
 
   // --appimage-extract-and-run bypasses FUSE-mounted SquashFS, which is too slow
   // for daemon startup on first launch (smoke testing showed startup exceeded the
@@ -991,9 +1011,9 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   // first launch before exec'ing the inner electron, which adds substantial
   // overhead vs mac's direct .app launch.
   //
-  const status = await waitForLinuxStatus<DesktopStatusSnapshot>(stamp, 60_000);
-  if (status == null) {
-    await stopSidecar(stamp).catch(() => undefined);
+  const active = await waitForLinuxStatus<DesktopStatusSnapshot>(launchStamps, 60_000);
+  if (active == null) {
+    await Promise.all(launchStamps.map(async (candidate) => await stopSidecar(candidate).catch(() => undefined)));
     throw new Error(`desktop sidecar did not become ready within 60s for ${config.namespace}`);
   }
 
@@ -1004,7 +1024,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
     namespace: config.namespace,
     pid: child.pid,
     source,
-    status,
+    status: active.status,
   };
 }
 
@@ -1056,8 +1076,9 @@ export async function inspectPackedLinuxApp(
       source: SIDECAR_SOURCES.PACKAGED,
     }),
   ];
-  const stamp = (await findSidecarProcesses(stamps[0])).length > 0 ? stamps[0] : stamps[1];
-  const status = await getSidecarStatus<DesktopStatusSnapshot>(stamp, { timeoutMs: 2000 }).catch(() => null);
+  const active = await resolveReachableLinuxSidecar<DesktopStatusSnapshot>(stamps, 2000);
+  const stamp = active?.stamp ?? stamps[0];
+  const status = active?.status ?? null;
 
   if (options.headless === true) {
     return { status };
@@ -1281,6 +1302,10 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   await writeFile(logPath, "", "utf8");
 
   const stamp = linuxStamp(config, { mode: "headless" });
+  const launchStamps = [
+    stamp,
+    linuxStamp(config, { mode: "headless", source: SIDECAR_SOURCES.PACKAGED }),
+  ];
   const logHandle = await open(logPath, "a");
   let child: { pid: number };
   try {
@@ -1307,9 +1332,9 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
     await logHandle.close().catch(() => undefined);
   }
 
-  const status = await waitForLinuxStatus<DesktopStatusSnapshot>(stamp, 95_000);
-  if (status == null) {
-    await stopSidecar(stamp).catch(() => undefined);
+  const active = await waitForLinuxStatus<DesktopStatusSnapshot>(launchStamps, 95_000);
+  if (active == null) {
+    await Promise.all(launchStamps.map(async (candidate) => await stopSidecar(candidate).catch(() => undefined)));
     throw new Error(`headless sidecar did not become ready within 95s for ${config.namespace}`);
   }
 
@@ -1318,7 +1343,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
     logPath,
     namespace: config.namespace,
     pid: child.pid,
-    status,
+    status: active.status,
   };
 }
 
