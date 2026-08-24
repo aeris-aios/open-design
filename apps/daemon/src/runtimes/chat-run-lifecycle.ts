@@ -171,6 +171,13 @@ export function applyClaudeStreamJsonRunBookkeeping(
  *
  * Agent-originated errors are not lost by this: they arrive on the child's
  * stdout/stderr, and those raw-chunk handlers stamp the clock already.
+ *
+ * This predicate only covers emissions that reach the daemon BEFORE the verdict
+ * — `fail()` flushes open tools and only then sends the error. Everything that
+ * arrives after it (the child's shutdown line on stderr, diagnostics promoted
+ * from it) is handled by the attempt-scoped freeze in `startChatRun`; see
+ * `freezeProgressClock`. The two together are one rule: the progress clock runs
+ * from the agent's bytes and stops when the daemon gives up.
  */
 export function runtimeEmissionCountsAsAgentProgress(
   channel: string,
