@@ -311,8 +311,10 @@ describe('ACP handshake rejection — server wiring', () => {
   //
   // Deterministic, not timed: the fake CLI parks at a named gate and announces
   // it, so the run's handshake and a concurrent `/api/agents` refresh are held
-  // open TOGETHER, and the failure is built at the precise moment the cache is
-  // blank.
+  // open TOGETHER, and the failure is built at the precise moment a probe is in
+  // flight — the window that used to leave the cache blank. Both halves of the
+  // fix are exercised at once: the run reports the version it froze at spawn,
+  // and the in-flight probe no longer retracts the cached reading behind it.
   it('names the version this run spawned with, even mid-refresh', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-race-bin-'));
     const logPath = path.join(binDir, 'invocations.jsonl');
@@ -343,8 +345,8 @@ describe('ACP handshake rejection — server wiring', () => {
     // The run's child has answered `initialize` and is holding `session/new`.
     await waitForGate(sessionGate);
 
-    // Now open the window: a refresh that has cleared the cache and not yet
-    // refilled it. Nothing here sleeps — the gate reports arrival.
+    // Now open the window: a refresh that has started re-probing and not yet
+    // published. Nothing here sleeps — the gate reports arrival.
     const refresh = fetch(`${started.url}/api/agents`);
     await waitForGate(versionGate);
 
