@@ -2495,8 +2495,10 @@ a.avatar-item:visited {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -10px;
-  right: -10px;
+  /* Keep the chat-side scroll edge entirely outside the resize hitbox in
+     both directions; extra grab room belongs on the workspace side only. */
+  inset-inline-start: 0;
+  inset-inline-end: -8px;
   cursor: col-resize;
 }
 .split-resize-handle::after {
