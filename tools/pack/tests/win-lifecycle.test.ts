@@ -187,13 +187,20 @@ describe("installPackedWinApp", () => {
 });
 
 describe("inspectPackedWinApp", () => {
-  it("targets packaged desktop and peer sidecars when no tools-pack desktop is running", async () => {
+  it("targets reachable packaged peers when a tools-pack process marker is stale", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
 
     try {
-      findSidecarProcesses.mockResolvedValue([]);
+      findSidecarProcesses.mockImplementation(async (stamp: { source: string }) =>
+        stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
+      );
       requestSidecar.mockReset();
-      requestSidecar.mockResolvedValue({ state: "running" });
+      requestSidecar.mockImplementation(async (_app: string, payload: { type?: string }, source: string) => {
+        if (payload.type === SIDECAR_MESSAGES.STATUS && source === "tools-pack") {
+          throw new Error("stale tools-pack endpoint");
+        }
+        return { state: "running" };
+      });
 
       await inspectPackedWinApp(createConfig(root), {});
 
@@ -203,7 +210,7 @@ describe("inspectPackedWinApp", () => {
         "packaged",
       );
       expect(requestSidecar.mock.calls.filter((call) => call[1]?.type === SIDECAR_MESSAGES.STATUS))
-        .toHaveLength(3);
+        .toHaveLength(4);
     } finally {
       await rm(root, { force: true, recursive: true });
       findSidecarProcesses.mockImplementation(async (stamp: { source: string }) =>

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -18,6 +21,7 @@ import {
 
 const originalArgv = [...process.argv];
 const originalResources = process.env.OD_SIDECAR_RESOURCES;
+const originalEndpoint = process.env.OD_SIDECAR_CLIENT_ENDPOINT;
 
 const stamp: SidecarStamp = {
   channel: "local",
@@ -45,6 +49,8 @@ afterEach(() => {
   process.argv = [...originalArgv];
   if (originalResources == null) delete process.env.OD_SIDECAR_RESOURCES;
   else process.env.OD_SIDECAR_RESOURCES = originalResources;
+  if (originalEndpoint == null) delete process.env.OD_SIDECAR_CLIENT_ENDPOINT;
+  else process.env.OD_SIDECAR_CLIENT_ENDPOINT = originalEndpoint;
 });
 
 describe("five-field argv identity", () => {
@@ -184,15 +190,53 @@ describe("normalized sidecar client", () => {
     });
     await expect(client.start()).rejects.toThrow();
     expect(events).toEqual(["start", "stop"]);
+    expect(SidecarFactory.inheritedEnvironment()).toEqual({});
 
     await blocker.stop();
     await expect(client.start()).resolves.toBeUndefined();
     expect(events).toEqual(["start", "stop", "start"]);
+    expect(Object.keys(SidecarFactory.inheritedEnvironment())).toEqual(["OD_SIDECAR_CLIENT_ENDPOINT"]);
     await client.stop();
   });
 });
 
 describe("server-side atomic operations", () => {
+  it("does not leak a parent client capability into an independently stamped sidecar", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-env-"));
+    const capturePath = join(root, "env.json");
+    const childStamp = { ...stamp, namespace: `env-${process.pid}` };
+    try {
+      await launchSidecar({
+        args: [fixture],
+        command: process.execPath,
+        env: {
+          ...process.env,
+          OD_SIDECAR_CLIENT_ENDPOINT: "/tmp/open-design/ipc/parent.sock",
+          OD_SIDECAR_RESOURCES: JSON.stringify({ dataRoot: "/wrong" }),
+          OD_TEST_SIDECAR_ENV_CAPTURE: capturePath,
+        },
+        resources: { dataRoot: "/tmp/open-design-child", ownerPid: null, port: 0, runtimeRoot: "/tmp/open-design-child-runtime" },
+        stamp: childStamp,
+      });
+      let captured: { endpoint: string | null; resources: string | null } | null = null;
+      for (let attempt = 0; attempt < 50 && captured == null; attempt += 1) {
+        captured = await readFile(capturePath, "utf8").then((value) => JSON.parse(value)).catch(() => null);
+        if (captured == null) await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+      }
+      expect(captured?.endpoint).toBeNull();
+      expect(JSON.parse(captured?.resources ?? "null")).toEqual({
+        dataRoot: "/tmp/open-design-child",
+        ownerPid: null,
+        port: 0,
+        runtimeRoot: "/tmp/open-design-child-runtime",
+      });
+    } finally {
+      await stopSidecar(childStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("keeps distribution channels isolated and force-stops only an exact argv stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
     const stable = { ...stamp, channel: "stable", namespace: `isolation-${process.pid}` };

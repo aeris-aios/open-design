@@ -15,6 +15,23 @@ export type SidecarResources = Readonly<{
   runtimeRoot: string;
 }>;
 
+export function prepareSidecarLaunchEnvironment(
+  env: NodeJS.ProcessEnv,
+  resources: Omit<SidecarResources, "pid">,
+): NodeJS.ProcessEnv {
+  const launchEnv: NodeJS.ProcessEnv = {
+    ...env,
+    [RESOURCES_ENV]: JSON.stringify({
+      dataRoot: resources.dataRoot,
+      ownerPid: resources.ownerPid,
+      port: resources.port,
+      runtimeRoot: resources.runtimeRoot,
+    }),
+  };
+  delete launchEnv[INHERITED_ENDPOINT_ENV];
+  return launchEnv;
+}
+
 export type SidecarHandler = (input: unknown) => unknown | Promise<unknown>;
 export type SidecarHandlers = Readonly<Record<string, SidecarHandler>>;
 
@@ -101,7 +118,7 @@ export class SidecarClient<TRuntime> {
   constructor(options: SidecarClientOptions<TRuntime>) {
     this.stamp = readCurrentSidecarStamp();
     this.resources = readCurrentResources();
-    process.env[INHERITED_ENDPOINT_ENV] = resolvePrivateIpcPath(this.stamp);
+    this.#publishEndpoint();
     this.#handlers = options.handlers ?? {};
     this.#lifecycle = options.lifecycle;
   }
@@ -109,6 +126,7 @@ export class SidecarClient<TRuntime> {
   start(): Promise<void> {
     if (this.#stopPromise != null) return Promise.reject(new Error("sidecar client is stopping"));
     if (this.#startPromise != null) return this.#startPromise;
+    this.#publishEndpoint();
     const attempt = this.#start();
     this.#startPromise = attempt;
     void attempt.catch(() => {
@@ -118,9 +136,12 @@ export class SidecarClient<TRuntime> {
   }
 
   async #start(): Promise<void> {
-    const runtime = await this.#lifecycle.start(this.resources);
-    this.#runtime = runtime;
+    let runtime!: TRuntime;
+    let runtimeStarted = false;
     try {
+      runtime = await this.#lifecycle.start(this.resources);
+      runtimeStarted = true;
+      this.#runtime = runtime;
       this.#ipcServer = await createJsonIpcServer({
         socketPath: resolvePrivateIpcPath(this.stamp),
         handler: async (message) => {
@@ -152,8 +173,19 @@ export class SidecarClient<TRuntime> {
       }
     } catch (error) {
       this.#runtime = null;
-      await this.#lifecycle.stop(runtime).catch(() => undefined);
+      if (runtimeStarted) await this.#lifecycle.stop(runtime).catch(() => undefined);
+      this.#clearEndpoint();
       throw error;
+    }
+  }
+
+  #publishEndpoint(): void {
+    process.env[INHERITED_ENDPOINT_ENV] = resolvePrivateIpcPath(this.stamp);
+  }
+
+  #clearEndpoint(): void {
+    if (process.env[INHERITED_ENDPOINT_ENV] === resolvePrivateIpcPath(this.stamp)) {
+      delete process.env[INHERITED_ENDPOINT_ENV];
     }
   }
 
@@ -177,9 +209,7 @@ export class SidecarClient<TRuntime> {
       if (this.#runtime != null) await this.#lifecycle.stop(this.#runtime);
       this.#runtime = null;
     } finally {
-      if (process.env[INHERITED_ENDPOINT_ENV] === resolvePrivateIpcPath(this.stamp)) {
-        delete process.env[INHERITED_ENDPOINT_ENV];
-      }
+      this.#clearEndpoint();
       this.#resolveStopped();
     }
   }

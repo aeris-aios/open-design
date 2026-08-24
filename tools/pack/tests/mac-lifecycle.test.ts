@@ -10,7 +10,10 @@ import type { DesktopStatusSnapshot } from "@open-design/sidecar-proto";
 import type { ToolPackConfig } from "@/config/index.js";
 import { resolveMacPaths } from "@/mac/paths.js";
 
-const getSidecarStatus = vi.fn(async (): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
+const getSidecarStatus = vi.fn(async (
+  _stamp: { source: string },
+  _options?: { timeoutMs?: number },
+): Promise<DesktopStatusSnapshot> => ({ state: "running" }));
 const findSidecarProcesses = vi.fn(async (stamp: { source: string }) =>
   stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
 );
@@ -123,7 +126,10 @@ describe("startPackedMacApp", () => {
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");
       await chmod(executablePath, 0o755);
-      getSidecarStatus.mockResolvedValue({ pid: delegatedPid, state: "running" });
+      getSidecarStatus.mockImplementation(async (stamp: { source: string }) => {
+        if (stamp.source === "packaged") return { pid: delegatedPid, state: "running" };
+        throw new Error("tools-pack desktop endpoint is gone after delegation");
+      });
       findSidecarProcesses.mockResolvedValue([]);
       spawnLoggedProcess.mockImplementationOnce(async ({ env }: { env: NodeJS.ProcessEnv }) => {
         const child = Object.assign(new EventEmitter(), {
@@ -286,13 +292,20 @@ describe("stopPackedMacApp", () => {
 });
 
 describe("inspectPackedMacApp", () => {
-  it("targets the packaged sidecar when no tools-pack desktop is running", async () => {
+  it("targets the reachable packaged sidecar when a tools-pack process marker is stale", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
     try {
-      findSidecarProcesses.mockResolvedValue([]);
+      findSidecarProcesses.mockImplementation(async (stamp: { source: string }) =>
+        stamp.source === "tools-pack" ? [{ pid: 1234 }] : [],
+      );
+      getSidecarStatus.mockImplementation(async (stamp: { source: string }) => {
+        if (stamp.source === "packaged") return { pid: 5678, state: "running" };
+        throw new Error("stale tools-pack endpoint");
+      });
 
-      await inspectPackedMacApp(makeConfig(root), {});
+      const result = await inspectPackedMacApp(makeConfig(root), {});
 
+      expect(result.status).toEqual({ pid: 5678, state: "running" });
       expect(getSidecarStatus).toHaveBeenCalledWith(
         expect.objectContaining({ source: "packaged" }),
         { timeoutMs: 2000 },

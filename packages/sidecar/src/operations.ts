@@ -10,7 +10,7 @@ import {
 } from "@open-design/platform";
 
 import { requestJsonIpc } from "./json-ipc.js";
-import { sidecarProtocol, type SidecarResources } from "./client.js";
+import { prepareSidecarLaunchEnvironment, sidecarProtocol, type SidecarResources } from "./client.js";
 import { normalizeSidecarStamp, readCurrentSidecarStamp, resolvePrivateIpcPath, SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
 
 export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
@@ -84,15 +84,7 @@ function sidecarSpawnRequest(request: SidecarLaunchRequest): SpawnProcessRequest
   return {
     ...spawnRequest,
     args: [...args, ...createProcessStampArgs(stamp, SIDECAR_STAMP_CONTRACT)],
-    env: {
-      ...(env ?? process.env),
-      [sidecarProtocol.resourcesEnv]: JSON.stringify({
-        dataRoot: resources.dataRoot,
-        ownerPid: resources.ownerPid,
-        port: resources.port,
-        runtimeRoot: resources.runtimeRoot,
-      }),
-    },
+    env: prepareSidecarLaunchEnvironment(env ?? process.env, resources),
   };
 }
 

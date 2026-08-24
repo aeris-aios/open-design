@@ -16,7 +16,6 @@ import {
   type DesktopUpdateResult,
 } from "@open-design/sidecar-proto";
 import {
-  findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
   spawnSidecar,
@@ -58,21 +57,32 @@ function convergedDesktopStamp(
   };
 }
 
-async function activeDesktopStamp(config: ToolPackConfig): Promise<ConvergedSidecarStamp> {
-  const toolsPackStamp = convergedDesktopStamp(config, SIDECAR_SOURCES.TOOLS_PACK);
-  return (await findSidecarProcesses(toolsPackStamp)).length > 0
-    ? toolsPackStamp
-    : convergedDesktopStamp(config, SIDECAR_SOURCES.PACKAGED);
+type ReachableDesktop = {
+  stamp: ConvergedSidecarStamp;
+  status: DesktopStatusSnapshot;
+};
+
+async function resolveReachableDesktop(config: ToolPackConfig, timeoutMs: number): Promise<ReachableDesktop | null> {
+  const probes = await Promise.all([
+    SIDECAR_SOURCES.TOOLS_PACK,
+    SIDECAR_SOURCES.PACKAGED,
+  ].map(async (source) => {
+    const stamp = convergedDesktopStamp(config, source);
+    try {
+      return { stamp, status: await getSidecarStatus<DesktopStatusSnapshot>(stamp, { timeoutMs }) };
+    } catch {
+      return null;
+    }
+  }));
+  return probes.find((probe): probe is ReachableDesktop => probe != null) ?? null;
 }
 
 async function waitForDesktopStatus(config: ToolPackConfig, timeoutMs = 45_000): Promise<DesktopStatusSnapshot | null> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    try {
-      return await getSidecarStatus<DesktopStatusSnapshot>(await activeDesktopStamp(config), { timeoutMs: 1000 });
-    } catch {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 200));
-    }
+    const active = await resolveReachableDesktop(config, 1000);
+    if (active != null) return active.status;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }
   return null;
 }
@@ -483,8 +493,9 @@ function resolveUpdateAction(value: string | undefined): DesktopUpdateAction | n
 }
 
 export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string; updateAction?: string }): Promise<MacInspectResult> {
-  const stamp = await activeDesktopStamp(config);
-  const status = await getSidecarStatus<DesktopStatusSnapshot>(stamp, { timeoutMs: 2000 }).catch(() => null);
+  const active = await resolveReachableDesktop(config, 2000);
+  const stamp = active?.stamp ?? convergedDesktopStamp(config);
+  const status = active?.status ?? null;
   const updateAction = resolveUpdateAction(options.updateAction);
 
   return {

@@ -84,23 +84,28 @@ function desktopLogPath(config: ToolPackConfig): string {
   return join(config.roots.runtime.namespaceRoot, "logs", APP_KEYS.DESKTOP, "latest.log");
 }
 
-async function activeDesktopStamp(config: ToolPackConfig): Promise<SidecarStamp & {
-  source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED;
-}> {
-  const toolsPackStamp = appStamp(config, APP_KEYS.DESKTOP, SIDECAR_SOURCES.TOOLS_PACK);
-  return (await findSidecarProcesses(toolsPackStamp)).length > 0
-    ? toolsPackStamp
-    : appStamp(config, APP_KEYS.DESKTOP, SIDECAR_SOURCES.PACKAGED);
+type DesktopEndpoint = {
+  snapshot: { error?: string; status: DesktopStatusSnapshot | null };
+  stamp: SidecarStamp & { source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED };
+};
+
+async function resolveDesktopEndpoint(config: ToolPackConfig, timeoutMs: number): Promise<DesktopEndpoint> {
+  const probes = await Promise.all([
+    SIDECAR_SOURCES.TOOLS_PACK,
+    SIDECAR_SOURCES.PACKAGED,
+  ].map(async (source): Promise<DesktopEndpoint> => {
+    const stamp = appStamp(config, APP_KEYS.DESKTOP, source);
+    return { snapshot: await requestStatusSnapshot<DesktopStatusSnapshot>(stamp, timeoutMs), stamp };
+  }));
+  return probes.find(({ snapshot }) => snapshot.status != null) ?? probes[0]!;
 }
 
 async function waitForDesktopStatus(config: ToolPackConfig, timeoutMs = 45_000): Promise<DesktopStatusSnapshot | null> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    try {
-      return await getSidecarStatus<DesktopStatusSnapshot>(await activeDesktopStamp(config), { timeoutMs: 1000 });
-    } catch {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 200));
-    }
+    const active = await resolveDesktopEndpoint(config, 1000);
+    if (active.snapshot.status != null) return active.snapshot.status;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }
   return null;
 }
@@ -525,9 +530,9 @@ async function requestDesktopEval(
   }
 }
 
-async function requestStatusSnapshot<T>(stamp: SidecarStamp): Promise<{ error?: string; status: T | null }> {
+async function requestStatusSnapshot<T>(stamp: SidecarStamp, timeoutMs = 2000): Promise<{ error?: string; status: T | null }> {
   try {
-    return { status: await getSidecarStatus<T>(stamp, { timeoutMs: 2000 }) };
+    return { status: await getSidecarStatus<T>(stamp, { timeoutMs }) };
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : String(error),
@@ -549,7 +554,7 @@ async function delay(ms: number): Promise<void> {
 
 async function pollWinInspectStatus(config: ToolPackConfig, count: number, intervalMs: number): Promise<WinInspectStatusPollResult> {
   const samples: WinInspectStatusPollSample[] = [];
-  const desktop = await activeDesktopStamp(config);
+  const desktop = (await resolveDesktopEndpoint(config, 2000)).stamp;
   const daemon = appStamp(config, APP_KEYS.DAEMON, desktop.source);
   const web = appStamp(config, APP_KEYS.WEB, desktop.source);
   for (let attempt = 1; attempt <= count; attempt += 1) {
@@ -580,12 +585,13 @@ export async function inspectPackedWinApp(
   config: ToolPackConfig,
   options: { expr?: string; path?: string; statusPollCount?: string | number; statusPollIntervalMs?: string | number; updateAction?: string },
 ): Promise<WinInspectResult> {
-  const stamp = await activeDesktopStamp(config);
-  const [desktopSnapshot, daemonSnapshot, webSnapshot] = await Promise.all([
-    requestStatusSnapshot<DesktopStatusSnapshot>(stamp),
+  const desktop = await resolveDesktopEndpoint(config, 2000);
+  const stamp = desktop.stamp;
+  const [daemonSnapshot, webSnapshot] = await Promise.all([
     requestStatusSnapshot<DaemonStatusSnapshot>(appStamp(config, APP_KEYS.DAEMON, stamp.source)),
     requestStatusSnapshot<WebStatusSnapshot>(appStamp(config, APP_KEYS.WEB, stamp.source)),
   ]);
+  const desktopSnapshot = desktop.snapshot;
   const updateAction = resolveUpdateAction(options.updateAction);
   const statusPollCount = resolveOptionalPositiveInteger(options.statusPollCount, "--status-poll-count");
   const statusPollIntervalMs = resolveOptionalPositiveInteger(options.statusPollIntervalMs, "--status-poll-interval-ms") ?? 500;

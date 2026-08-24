@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -151,6 +151,37 @@ describe("legacy payload desktop handoff", () => {
         runtimeRoot: value.runtimeRoot,
         source: SIDECAR_SOURCES.PACKAGED,
       })).resolves.toEqual({ kind: "none", reason: "payload-desktop-active" });
+    } finally {
+      await rm(value.root, { force: true, recursive: true });
+    }
+  });
+
+  it("recognizes the installed outer through a symlinked launcher root", async () => {
+    const value = await fixture();
+    try {
+      const aliasRoot = join(value.root, "launcher-root-alias");
+      await symlink(value.root, aliasRoot, "dir");
+      await writeFile(value.launcherPaths.installPath, JSON.stringify({
+        channel: "beta",
+        launchPath: join(aliasRoot, "installed", "Open Design Beta.app"),
+        namespace: value.namespace,
+        schemaVersion: LAUNCHER_SCHEMA_VERSION,
+      }));
+
+      await expect(prepareLegacyPayloadDesktopHandoff({
+        dataRoot: join(value.root, "data"),
+        env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: aliasRoot },
+        namespace: value.namespace,
+        parentPid: 4321,
+        platform: "darwin",
+        requestDesktopStatus: async () => ({
+          executablePath: value.outerExecutablePath,
+          pid: 4321,
+          state: "running",
+        }),
+        runtimeRoot: value.runtimeRoot,
+        source: SIDECAR_SOURCES.PACKAGED,
+      })).resolves.toMatchObject({ kind: "prepared", descriptor: { state: "prepared" } });
     } finally {
       await rm(value.root, { force: true, recursive: true });
     }

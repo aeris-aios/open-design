@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -117,9 +117,15 @@ function samePointer(
     left.version === right.version;
 }
 
-function samePath(left: string, right: string, platform: NodeJS.Platform): boolean {
-  const normalizedLeft = resolve(left);
-  const normalizedRight = resolve(right);
+async function canonicalPath(value: string): Promise<string> {
+  return await realpath(value).catch(() => resolve(value));
+}
+
+async function samePath(left: string, right: string, platform: NodeJS.Platform): Promise<boolean> {
+  const [normalizedLeft, normalizedRight] = await Promise.all([
+    canonicalPath(left),
+    canonicalPath(right),
+  ]);
   return platform === "win32"
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
@@ -288,13 +294,13 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
   if (payloadExecutablePath == null) return { kind: "none", reason: "invalid-payload" };
   if (desktopStatus != null && desktopStatus.pid === outer.pid &&
       typeof desktopStatus.executablePath === "string" &&
-      samePath(desktopStatus.executablePath, payloadExecutablePath, platform)) {
+      await samePath(desktopStatus.executablePath, payloadExecutablePath, platform)) {
     return { kind: "none", reason: "payload-desktop-active" };
   }
   if (desktopStatus != null && (
     desktopStatus.pid !== outer.pid ||
     typeof desktopStatus.executablePath !== "string" ||
-    !samePath(desktopStatus.executablePath, outer.executablePath, platform)
+    !(await samePath(desktopStatus.executablePath, outer.executablePath, platform))
   )) return { kind: "none", reason: "desktop-identity-mismatch" };
 
   const existingRaw = await readJsonFile<LauncherDesktopHandoffDescriptor>(launcherPaths.handoffPath);
@@ -387,7 +393,7 @@ async function waitForOuterConfirm(
     if (
       status?.pid === prepared.descriptor.outer.pid &&
       typeof status.executablePath === "string" &&
-      samePath(status.executablePath, prepared.descriptor.payloadExecutablePath, process.platform)
+      await samePath(status.executablePath, prepared.descriptor.payloadExecutablePath, process.platform)
     ) return "payload-desktop-active";
     if (
       runtime != null &&
@@ -397,7 +403,7 @@ async function waitForOuterConfirm(
       status?.state === "running" &&
       status.pid === prepared.descriptor.outer.pid &&
       typeof status.executablePath === "string" &&
-      samePath(status.executablePath, prepared.descriptor.outer.executablePath, process.platform)
+      await samePath(status.executablePath, prepared.descriptor.outer.executablePath, process.platform)
     ) return "confirmed";
     await options.sleep(HANDOFF_POLL_INTERVAL_MS);
   }
