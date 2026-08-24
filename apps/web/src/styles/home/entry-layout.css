@@ -3526,6 +3526,10 @@
 .onboarding-view__agent-chip {
   display: flex;
   align-items: center;
+  /* The global `button` primitive centers its flex line. These chips are
+     fixed-width grid cells, so a centered line offsets each icon+name group
+     by a different amount and the two columns read ragged. */
+  justify-content: flex-start;
   gap: 9px;
   min-width: 0;
   min-height: 48px;

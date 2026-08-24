@@ -25,14 +25,14 @@ test('publishes pinned cross-platform DeepSeek Harness installers', () => {
 
   assert.match(shell, /^#!\/usr\/bin\/env sh\n/);
   assert.match(shell, /NODE_VERSION=['"]?24\.19\.0/);
-  assert.match(shell, /DSH_VERSION=['"]?0\.1\.0-rc\.8/);
+  assert.match(shell, /DSH_VERSION=['"]?0\.1\.1-rc\.2/);
   assert.match(shell, /PNPM_VERSION=['"]?11\.7\.0/);
   assert.match(shell, /SHASUMS256\.txt/);
   assert.match(shell, /--no-launch/);
   assert.doesNotMatch(shell, /npm\s+(?:install|i)\s+-g/);
 
   assert.match(powershell, /NodeVersion\s*=\s*'24\.19\.0'/);
-  assert.match(powershell, /DshVersion\s*=\s*'0\.1\.0-rc\.8'/);
+  assert.match(powershell, /DshVersion\s*=\s*'0\.1\.1-rc\.2'/);
   assert.match(powershell, /PnpmVersion\s*=\s*'11\.7\.0'/);
   assert.match(powershell, /Get-FileHash/);
   assert.match(powershell, /NoLaunch/);
@@ -110,7 +110,7 @@ mkdir -p "$prefix/node_modules/@deepseek-ai/dsh/lib" "$prefix/node_modules/.bin"
 : > "$prefix/node_modules/@deepseek-ai/dsh/lib/bin.js"
 cat > "$prefix/node_modules/.bin/dsh" <<'EOF'
 #!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\\n' '0.1.0-rc.8'; exit 0; fi
+if [ "$1" = "--version" ]; then printf '%s\\n' '0.1.1-rc.2'; exit 0; fi
 if [ "$1" = "plugin" ]; then pnpm --version; exit $?; fi
 printf '%s\\n' "dsh:$*"
 EOF
@@ -151,11 +151,11 @@ printf '%s\\n' '10.33.2'
   try {
     const first = spawnSync('sh', [posixInstaller, '--no-launch'], { encoding: 'utf8', env });
     assert.equal(first.status, 0, first.stderr);
-    assert.match(first.stdout, /DeepSeek Harness 0\.1\.0-rc\.8 is ready/);
+    assert.match(first.stdout, /DeepSeek Harness 0\.1\.1-rc\.2 is ready/);
 
     const version = spawnSync(join(binDir, 'dsh'), ['--version'], { encoding: 'utf8', env });
     assert.equal(version.status, 0, version.stderr);
-    assert.equal(version.stdout.trim(), '0.1.0-rc.8');
+    assert.equal(version.stdout.trim(), '0.1.1-rc.2');
 
     const pluginPnpm = spawnSync(join(binDir, 'dsh'), ['plugin'], { encoding: 'utf8', env });
     assert.equal(pluginPnpm.status, 0, pluginPnpm.stderr);
@@ -178,7 +178,7 @@ test('POSIX installer reuses a complete compatible toolchain without downloading
   mkdirSync(pathDir, { recursive: true });
   for (const [name, version] of [
     ['node', 'v24.19.0'],
-    ['dsh', '0.1.0-rc.8'],
+    ['dsh', '0.1.1-rc.2'],
     ['pnpm', '11.7.0'],
   ] as const) {
     const executable = join(pathDir, name);
@@ -201,7 +201,7 @@ test('POSIX installer reuses a complete compatible toolchain without downloading
     assert.doesNotMatch(result.stdout + result.stderr, /Downloading/);
     const version = spawnSync(join(binDir, 'dsh'), ['--version'], { encoding: 'utf8', env });
     assert.equal(version.status, 0, version.stderr);
-    assert.equal(version.stdout.trim(), '0.1.0-rc.8');
+    assert.equal(version.stdout.trim(), '0.1.1-rc.2');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
