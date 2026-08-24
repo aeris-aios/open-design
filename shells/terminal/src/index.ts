@@ -10,8 +10,9 @@ export const TERMINAL_SHELL_IDENTITY = Object.freeze({
   capabilities: ["exact-install", "lifecycle"] as const,
 });
 
-export function assertOfficialNodeVersion(version = process.versions.node): void {
+export function assertOfficialNodeVersion(version = process.versions.node): typeof OFFICIAL_NODE_VERSION {
   if (version !== OFFICIAL_NODE_VERSION) throw new Error(`Terminal carrier requires official Node ${OFFICIAL_NODE_VERSION}; got ${version}`);
+  return OFFICIAL_NODE_VERSION;
 }
 
 export class FileFixtureLifecyclePort implements LifecyclePort {
@@ -55,5 +56,6 @@ export class FileFixtureLifecyclePort implements LifecyclePort {
 
 export async function applyTerminalUpdate(updater: StandaloneUpdater, launcher: VersionedLauncher, preparation: UpdatePreparation): Promise<{ preparation: UpdatePreparation; lifecycle?: LifecycleStatus }> {
   if (preparation.status === "shell-reinstall-required") return { preparation };
+  if (preparation.status === "current" && !preparation.applyRequired) return { preparation, lifecycle: await launcher.status() };
   return { preparation, lifecycle: await updater.applyNow(launcher) };
 }

@@ -24,7 +24,7 @@ export type InstalledShellIdentity = {
 
 export type UpdatePreparation =
   | { status: "prepared"; generation: GenerationRecord }
-  | { status: "current"; generationId: string }
+  | { status: "current"; generationId: string; applyRequired: boolean }
   | { status: "shell-reinstall-required"; releaseVersion: string };
 
 function parseEnvelope(bytes: Uint8Array): SignedStandaloneMetadata {
@@ -81,12 +81,13 @@ export class StandaloneUpdater {
     if (!compatible) return { status: "shell-reinstall-required", releaseVersion: lane.releaseVersion };
     const id = sha256Hex(canonicalJson(envelope.metadata));
     const state = await this.store.readState();
-    if (state.active === id || state.attempt === id) return { status: "current", generationId: id };
+    if (state.attempt === id) return { status: "current", generationId: id, applyRequired: true };
+    if (state.active === id) return { status: "current", generationId: id, applyRequired: false };
     if (state.active !== null) {
       const active = await this.store.activeGeneration();
       const order = compareVersions(active.releaseVersion, lane.releaseVersion, this.channel);
       if (order > 0) throw new Error(`channel head would downgrade ${active.releaseVersion} to ${lane.releaseVersion}`);
-      if (order === 0) return { status: "current", generationId: active.id };
+      if (order === 0) return { status: "current", generationId: active.id, applyRequired: false };
     }
     const generation = await this.store.prepare(envelope, this.trustedKeys, (url) => this.source.readArtifact(url));
     return { status: "prepared", generation };

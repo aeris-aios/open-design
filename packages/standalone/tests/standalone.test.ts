@@ -93,13 +93,13 @@ describe("standalone exact skeleton", () => {
     );
     await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "prepared" });
     expect(await store.readState()).toMatchObject({ active: null, attempt: expect.any(String) });
-    await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "current" });
+    await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "current", applyRequired: true });
     const launcher = new VersionedLauncher(store, new FixturePort());
     await expect(updater.applyNow(launcher)).resolves.toMatchObject({ state: "running" });
     expect(await store.readState()).toMatchObject({ active: expect.any(String), attempt: null });
     await expect(updater.applyNow(launcher)).rejects.toThrow("no prepared generation to apply");
 
-    await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "current" });
+    await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "current", applyRequired: false });
     const active = await store.activeGeneration();
     const activated = await updater.activateOnColdStart();
     expect(activated).toBeNull();

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { FossilBootloader, StandaloneStore, StandaloneUpdater, VersionedLauncher, type SignedStandaloneChannelHead, type SignedStandaloneMetadata } from "@open-design/standalone";
-import { FileFixtureLifecyclePort, OFFICIAL_NODE_VERSION, TERMINAL_SHELL_IDENTITY, TERMINAL_SHELL_VERSION, applyTerminalUpdate } from "./index.js";
+import { FileFixtureLifecyclePort, TERMINAL_SHELL_IDENTITY, TERMINAL_SHELL_VERSION, applyTerminalUpdate, assertOfficialNodeVersion } from "./index.js";
 
 function option(name: string, fallback?: string): string {
   const index = process.argv.indexOf(name);
@@ -30,6 +30,7 @@ function hostTarget(): "darwin-arm64" | "win32-x64" {
 }
 
 async function main(): Promise<void> {
+  const runtimeVersion = assertOfficialNodeVersion();
   const command = process.argv[2];
   const root = resolve(option("--root"));
   const channelIndex = process.argv.indexOf("--channel");
@@ -57,7 +58,7 @@ async function main(): Promise<void> {
     const updater = new StandaloneUpdater(
       channel,
       "closure",
-      { shell: "terminal", target: hostTarget(), shellVersion: TERMINAL_SHELL_VERSION, runtime: { name: "node", version: OFFICIAL_NODE_VERSION } },
+      { shell: "terminal", target: hostTarget(), shellVersion: TERMINAL_SHELL_VERSION, runtime: { name: "node", version: runtimeVersion } },
       trusted,
       store,
       { readChannelHead: async () => JSON.parse(Buffer.from(await readArtifact(headUrl)).toString("utf8")) as SignedStandaloneChannelHead, readArtifact },
