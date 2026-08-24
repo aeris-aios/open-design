@@ -54,6 +54,9 @@ Decks that need restrained, corporate, or quiet typography — the bold condense
    to a different template.
 6. **Keep the navigation runtime as shipped.** If the deck ships an
    `assets/deck-stage.js` or inline keyboard handler, leave it intact.
+7. **Protect headline air.** Condensed statements should stay below seven lines,
+   use at least `0.96` line-height, and keep decorative circles outside the main
+   reading column.
 
 ## Output contract
 

@@ -25,6 +25,7 @@ Target balance: **68% washi / 16% vermilion / 12% indigo / 4% sumi**. Treat the 
 - Pair one horizontal title with one vertical text rail.
 - Keep a generous paper margin and an asymmetrical quiet center.
 - Use vermilion as a decisive field, not a scattered accent.
+- Keep horizontal headlines fully inside the paper field; the color seam may frame type but must not cut through a word.
 - Keep paper texture subtle and below 20% opacity.
 
 The supplied template includes six layout families: cover, problem split, manifesto, three-part system, programme, and closing statement. Duplicate the closest family for additional pages. Create new layouts only by recombining the same grid, type roles, palette, and signature geometry.

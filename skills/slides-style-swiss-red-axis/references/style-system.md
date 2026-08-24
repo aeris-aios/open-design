@@ -23,6 +23,7 @@ Target balance: **80% warm white / 14% red / 6% black**. Treat the ratio as a co
 ## Composition grammar
 
 - Anchor every slide to one visible horizontal or vertical red axis.
+- Route the axis through negative space; it may align with type but must never strike through a headline or body line.
 - Let one typographic claim dominate the composition.
 - Align supporting copy to the axis and keep it short.
 - Avoid cards, pills, gradients, decorative shadows, and ornamental color.

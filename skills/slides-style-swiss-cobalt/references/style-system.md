@@ -25,6 +25,7 @@ Target balance: **72% warm white / 20% cobalt / 8% signal red**. Treat the ratio
 - Compose on an explicit twelve-column grid.
 - Use red for information, never ambient decoration.
 - Place one large cobalt field on each key spread.
+- Keep at least one grid module between headline type and the cobalt or signal-red boundary.
 - Avoid centered composition, cards, gradients, pills, and shadows.
 
 The supplied template includes six layout families: cover, problem split, manifesto, three-part system, programme, and closing statement. Duplicate the closest family for additional pages. Create new layouts only by recombining the same grid, type roles, palette, and signature geometry.

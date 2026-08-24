@@ -55,6 +55,8 @@ Decks that need to read as soft or comforting — the burgundy/pink/cream tri-to
    decorative vocabulary, spacing rhythm, and component grammar — never bail
    to a different template.
 6. **Keep the inlined navigation runtime as shipped.**
+7. **Control display overlaps.** Serif and grotesk wordmarks may interlock, but
+   letterforms must remain individually readable at a 50% thumbnail scale.
 
 ## Output contract
 

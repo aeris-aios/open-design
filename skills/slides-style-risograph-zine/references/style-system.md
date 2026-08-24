@@ -24,6 +24,7 @@ Target balance: **55% stock / 24% yellow / 13% coral / 8% ultramarine**. Treat t
 
 - Use exactly two simulated ink colors per slide, in addition to stock.
 - Let misregistration touch but never obscure key text.
+- Keep Fraunces display tracking at `-0.02em` or looser; the print character comes from color and texture, not fused letterforms.
 - Include halftone or grain at low opacity.
 - Crop one word or shape intentionally; never crop body copy.
 
