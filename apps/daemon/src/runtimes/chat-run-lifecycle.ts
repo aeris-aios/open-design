@@ -146,22 +146,39 @@ export function applyClaudeStreamJsonRunBookkeeping(
  * inactivity clock (`run.lastAgentActivityAt`, exported to analytics as
  * `last_progress_age_ms`).
  *
- * Only bytes the agent produced count. A terminal `error` emitted by an adapter
- * is the daemon reporting its own verdict — an ACP stage-watchdog timeout, a
- * protocol failure we detected, a close with no result — not the agent making
- * progress. Stamping the clock from it means the daemon's own timeout event is
- * the last recorded "progress", so `last_progress_age_ms` reads near zero on
- * exactly the stalled runs whose contract says it must read "near the
- * inactivity ceiling" (see TrackingRunFinished in packages/contracts). That is
- * what made the 2026-07-28 AMR design-system stall (run 14b04dd3, ~30 minutes
- * of silence, reported age 664ms) look like a run that was still working when
- * it was killed.
+ * Only bytes the agent produced count. Everything the daemon manufactures while
+ * closing out a turn is excluded, because stamping the progress clock from our
+ * own bookkeeping means the last recorded "progress" is the very act of giving
+ * up — so `last_progress_age_ms` reads near zero on exactly the stalled runs
+ * whose contract says it must read "near the inactivity ceiling" (see
+ * TrackingRunFinished in packages/contracts). That is what made the 2026-07-28
+ * AMR design-system stall (run 14b04dd3, ~30 minutes of silence, reported age
+ * 664ms) look like a run that was still working when it was killed.
+ *
+ * Two kinds of emission are ours, not the agent's:
+ *
+ * 1. A terminal `error` — the daemon reporting its own verdict (an ACP
+ *    stage-watchdog timeout, a protocol failure we detected, a close with no
+ *    result).
+ * 2. Any emission flagged `hostSynthesized` — currently the terminal
+ *    `tool_use`/`tool_result` pair the ACP bridge writes for a tool the agent
+ *    left open (`flushOpenAcpTools`). These ride the normal `agent` channel and
+ *    are otherwise indistinguishable from real tool traffic, and they are
+ *    emitted on every ACP failure path immediately BEFORE the terminal error —
+ *    so excluding only case 1 still lets a stall that died with a tool in
+ *    flight report a near-zero age. That is the common stall shape, not an
+ *    edge case.
  *
  * Agent-originated errors are not lost by this: they arrive on the child's
  * stdout/stderr, and those raw-chunk handlers stamp the clock already.
  */
-export function runtimeEmissionCountsAsAgentProgress(channel: string): boolean {
-  return channel !== 'error';
+export function runtimeEmissionCountsAsAgentProgress(
+  channel: string,
+  meta?: { hostSynthesized?: boolean },
+): boolean {
+  if (channel === 'error') return false;
+  if (meta?.hostSynthesized === true) return false;
+  return true;
 }
 
 export function resolveChatRunShutdownGraceMs() {

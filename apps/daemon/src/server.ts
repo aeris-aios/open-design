@@ -13264,7 +13264,7 @@ export async function startServer({
         onCliReady: () => noteCliReadyAt(),
         onSessionInit: () => noteSessionInitDoneAt(),
         onPromptComplete: () => clearFirstOutputWatchdog(),
-        send: (event, data) => {
+        send: (event, data, meta) => {
           if (event === 'error') {
             clearFirstOutputWatchdog();
             if (run.cancelRequested) return;
@@ -13285,11 +13285,13 @@ export async function startServer({
               noteFirstOutputEvent(data);
             }
           }
-          // A terminal `error` from the ACP bridge is the daemon's own verdict
-          // (stage-watchdog timeout, protocol failure), not agent progress —
-          // stamping the progress clock from it is what made a 30-minute stall
-          // report `last_progress_age_ms = 664`.
-          if (runtimeEmissionCountsAsAgentProgress(event)) {
+          // Only bytes the agent produced advance the progress clock. The ACP
+          // bridge's terminal `error` is the daemon's own verdict, and its
+          // `hostSynthesized` tool pairs are the daemon closing tools the agent
+          // left open — both are emitted at the moment we give up. Stamping the
+          // clock from either is what made a 30-minute stall report
+          // `last_progress_age_ms = 664`.
+          if (runtimeEmissionCountsAsAgentProgress(event, meta)) {
             noteAgentActivity();
           }
           if (event === 'error') flushVisibleAgentStderr();

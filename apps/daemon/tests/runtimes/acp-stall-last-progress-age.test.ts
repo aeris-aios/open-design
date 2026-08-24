@@ -135,6 +135,68 @@ describe('ACP stall progress age', () => {
       ACP_STAGE_TIMEOUT_MS * 0.8,
     );
   }, 60_000);
+
+  // The stall that matters most is the one WITH a tool in flight — that is the
+  // shape of the field incident, and it is the shape that arms the daemon's own
+  // synthetic-event path. `attachAcpSession`'s `fail()` calls
+  // `flushOpenAcpTools(true)` before `send('error')`, and that helper emits a
+  // synthetic `tool_use` + errored `tool_result` pair for every still-open tool
+  // through the SAME `send` callback. Those land on the daemon's ACP wrapper as
+  // `event === 'agent'`, so suppressing only the terminal `error` still leaves
+  // the progress clock stamped microseconds before the run finalizes.
+  //
+  // Synthetic terminal events are the daemon closing its own books, not the
+  // agent producing bytes, so they must not count as progress either.
+  it('reports the real silence when the stalled turn had an open tool the failure path flushes', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-stall-tool-bin-'));
+    const fakeVela = await writeSilentlyStallingVela(binDir, 'vela-silent-stall-open-tool', {
+      openToolBeforeStall: true,
+    });
+
+    process.env.POSTHOG_KEY = 'phc_test_acp_stall_tool';
+    delete process.env.POSTHOG_HOST;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
+    process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
+    process.env.OD_ACP_STAGE_TIMEOUT_MS = String(ACP_STAGE_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = String(OUTER_INACTIVITY_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '0';
+
+    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    await putConfig(started.url, {
+      agentId: 'amr',
+      agentCliEnv: { amr: { VELA_BIN: fakeVela } },
+      telemetry: { metrics: true, content: false, artifactManifest: false },
+      privacyDecisionAt: Date.now(),
+    });
+
+    const run = await createAndWaitForAmrRun(started.url);
+    expect(run.status).toBe('failed');
+
+    const finished = await waitForRunFinished(run.id);
+
+    // Non-vacuity guard: the fixture really did leave a concrete tool open, and
+    // the failure path really did synthesize its terminal pair. Without this the
+    // progress-age assertion below could pass simply because no tool existed.
+    expect(finished.tool_call_count).toBeGreaterThanOrEqual(1);
+
+    // Same terminal fingerprint as the tool-free stall: an ACP stage timeout,
+    // named as such. Flushing an open tool must not reclassify the failure.
+    expect(finished.failure_category).toBe('timeout');
+    expect(finished.failure_detail).toBe('timeout');
+    expect(finished.terminal_trigger).toBe('acp_stage_timeout');
+
+    // The agent produced its last real byte at the start of the stall window.
+    // The synthetic flush pair that the daemon emitted on the way out is not
+    // agent progress, so the reported age must still cover the whole silence.
+    expect(typeof finished.last_progress_age_ms).toBe('number');
+    expect(finished.last_progress_age_ms).toBeGreaterThanOrEqual(
+      ACP_STAGE_TIMEOUT_MS * 0.8,
+    );
+  }, 60_000);
 });
 
 async function waitForRunFinished(runId: string): Promise<Record<string, any>> {
@@ -151,7 +213,11 @@ async function waitForRunFinished(runId: string): Promise<Record<string, any>> {
   throw new Error(`no run_finished analytics event for run ${runId}`);
 }
 
-async function writeSilentlyStallingVela(dir: string, name: string): Promise<string> {
+async function writeSilentlyStallingVela(
+  dir: string,
+  name: string,
+  options: { openToolBeforeStall?: boolean } = {},
+): Promise<string> {
   const bin = path.join(dir, name);
   await writeFile(bin, `#!/bin/sh
 if [ "$1" = "agent" ] && [ "$2" = "run" ]; then
@@ -159,7 +225,7 @@ if [ "$1" = "agent" ] && [ "$2" = "run" ]; then
   export FAKE_VELA_TEXT_BEFORE_STALL=1
   export FAKE_VELA_STALL_HEARTBEAT_MS=0
   export FAKE_VELA_REQUIRE_SET_MODEL=0
-fi
+${options.openToolBeforeStall ? '  export FAKE_VELA_OPEN_TOOL_BEFORE_STALL=1\n' : ''}fi
 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_VELA)} "$@"
 `, 'utf8');
   await chmod(bin, 0o755);

@@ -51,6 +51,13 @@
  *                                   while the process stays alive
  *   FAKE_VELA_TEXT_BEFORE_STALL  – when set to '1', stream the assistant text
  *                                   once before stalling
+ *   FAKE_VELA_OPEN_TOOL_BEFORE_STALL – when set to '1', open a concrete
+ *                                   (non-think) tool call that never reaches a
+ *                                   terminal status before stalling. Models an
+ *                                   agent that goes silent WITH a tool in
+ *                                   flight, which is the shape that makes the
+ *                                   host synthesize terminal tool events on the
+ *                                   failure path
  *   FAKE_VELA_PROMPT_RESULT_DELAY_MS – delay the terminal session/prompt result
  *                                      after streaming substantive output
  *   FAKE_VELA_MODELS             – newline-separated `vela models` stdout
@@ -89,6 +96,7 @@ const STALL_HEARTBEAT_MS = env.FAKE_VELA_STALL_HEARTBEAT_MS === undefined
   ? 20
   : Number(env.FAKE_VELA_STALL_HEARTBEAT_MS) || 0;
 const TEXT_BEFORE_STALL = env.FAKE_VELA_TEXT_BEFORE_STALL === '1';
+const OPEN_TOOL_BEFORE_STALL = env.FAKE_VELA_OPEN_TOOL_BEFORE_STALL === '1';
 const PROMPT_RESULT_DELAY_MS = Number(env.FAKE_VELA_PROMPT_RESULT_DELAY_MS) || 0;
 const OMIT_PROMPT_USAGE = env.FAKE_VELA_OMIT_PROMPT_USAGE === '1';
 const STAY_ALIVE_AFTER_PROMPT_MS = Number(env.FAKE_VELA_STAY_ALIVE_AFTER_PROMPT_MS) || 0;
@@ -314,6 +322,23 @@ function handleMessage(msg) {
       }
       if (STALL_AFTER_PROMPT) {
         if (TEXT_BEFORE_STALL) emitSessionUpdates(sessionId);
+        // A concrete tool the agent never closes. `kind: 'read'` is a
+        // recognized non-think, non-write family, and `in_progress` is not a
+        // terminal status, so the host keeps this call open in
+        // `acpToolRunEventState` for the whole stall.
+        if (OPEN_TOOL_BEFORE_STALL) {
+          writeNotification('session/update', {
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'fake-vela-open-tool-1',
+              kind: 'read',
+              title: 'Read design tokens',
+              status: 'in_progress',
+              rawInput: { path: 'tokens.json' },
+            },
+          });
+        }
         // Keep both the ACP stage watchdog and the outer chat inactivity
         // watchdog fed without producing text, thinking, tools, artifacts, or
         // a terminal prompt result. This models a provider bridge that stays
