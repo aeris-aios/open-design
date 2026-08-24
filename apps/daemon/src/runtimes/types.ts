@@ -111,6 +111,18 @@ export type RuntimeListModels = {
 export type RuntimeVersionPolicy = {
   /** Exact version strings exercised by this OpenDesign build. */
   supportedVersions: string[];
+  /**
+   * Optional shape of versions this build accepts without having exercised
+   * each one. Some agent CLIs ship as a stream of release candidates that
+   * moves faster than our releases do, so naming individual ones warns every
+   * user who followed our own install instructions the week after we bump
+   * them. Matching the line keeps the check meaningful instead of removing
+   * it — a version off that line still warns.
+   *
+   * Must not carry the `g` flag: `RegExp.test` is stateful with it, so the
+   * same version would alternate between supported and untested.
+   */
+  supportedVersionPattern?: RegExp;
   /** Fail closed when the version probe fails or returns no usable version. */
   requireVersion: true;
   /** Normalize and validate the first output line; null means unusable. */
