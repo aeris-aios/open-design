@@ -61,6 +61,12 @@ import {
 import { buildAcpSessionNewParams, buildPromptBlocks, type AcpMcpServerInput } from './session-params.js';
 import { createVelaChildEvidenceConsumer } from '../../runtimes/vela-child-evidence.js';
 
+const NON_DISPLAYABLE_ACP_SESSION_UPDATES = new Set([
+  'usage_update',
+  'session_info_update',
+  'available_commands_update',
+]);
+
 /**
  * Options for `attachAcpSession`. All fields except `child`, `prompt`, and
  * `send` are optional and carry sensible defaults.
@@ -758,6 +764,12 @@ export function attachAcpSession({
         return;
       }
       if (emitAcpExecutionObservability(update)) {
+        return;
+      }
+      if (
+        typeof update.sessionUpdate === 'string' &&
+        NON_DISPLAYABLE_ACP_SESSION_UPDATES.has(update.sessionUpdate)
+      ) {
         return;
       }
       if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') {

@@ -2084,6 +2084,7 @@ export const ja: Dict = {
   'inlineSwitcher.missingApiKey': 'API キー未設定 — 設定から追加してください。',
   'inlineSwitcher.openFullSettings': '実行設定を開く',
   'inlineSwitcher.customSuffix': '（カスタム）',
+  'inlineSwitcher.unlimitedBadge': '無制限',
   'project.backToProjects': 'プロジェクトに戻る',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

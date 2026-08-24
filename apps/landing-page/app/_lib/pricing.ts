@@ -79,8 +79,70 @@ export interface PricingContract {
   teamTiers: TeamPlanTierConfig[];
 }
 
+/** Query parameter carrying the Cloud Console deployment that opened Pricing. */
+export const CLOUD_CONSOLE_BASE_PARAM = 'cloud_console_base';
+
+/** Production Cloud Console used for direct public Pricing visits. */
+export const DEFAULT_CLOUD_CONSOLE_BASE_URL = 'https://open-design.ai/cloud/';
+
+/** Hosted domains (including their subdomains) allowed to receive a Pricing handoff. */
+export const HOSTED_CLOUD_CONSOLE_DOMAINS = [
+  'open-design.ai',
+  'powerformer.net',
+] as const;
+
+function isHostedCloudConsole(url: URL): boolean {
+  return (
+    url.protocol === 'https:' &&
+    url.port.length === 0 &&
+    url.pathname.endsWith('/') &&
+    HOSTED_CLOUD_CONSOLE_DOMAINS.some(
+      (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+    )
+  );
+}
+
+function isLoopbackCloudConsole(url: URL): boolean {
+  return (
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+    url.port.length > 0 &&
+    url.pathname === '/'
+  );
+}
+
+/**
+ * Resolve an explicit environment handoff without exposing an open redirect.
+ * A missing value is a normal direct public visit and uses production; a
+ * present but invalid value fails visibly at the Pricing CTA seam.
+ */
+export function resolveCloudConsoleBase(rawValue: string | null): string {
+  if (rawValue === null) return DEFAULT_CLOUD_CONSOLE_BASE_URL;
+  const value = rawValue.trim();
+  if (!value) throw new RangeError('Invalid Cloud Console base: value is empty');
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new RangeError('Invalid Cloud Console base: expected an absolute URL');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new RangeError('Invalid Cloud Console base: credentials and URL state are not allowed');
+  }
+
+  const normalized = url.toString();
+  if (!isHostedCloudConsole(url) && !isLoopbackCloudConsole(url)) {
+    throw new RangeError('Invalid Cloud Console base: destination is not allowlisted');
+  }
+  return normalized;
+}
+
 /** Production dashboard that owns authenticated checkout. */
-export const CLOUD_BASE_URL = 'https://open-design.ai/cloud/dashboard';
+export const CLOUD_BASE_URL = new URL(
+  'dashboard',
+  DEFAULT_CLOUD_CONSOLE_BASE_URL,
+).toString();
 
 /** Public pricing contract served by the landing page. */
 export const PLANS_JSON_URL = '/pricing/plans.json';

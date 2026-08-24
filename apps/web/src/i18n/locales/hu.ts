@@ -2084,6 +2084,7 @@ export const hu: Dict = {
   'inlineSwitcher.missingApiKey': 'Hiányzó API-kulcs — add hozzá a Beállításokban.',
   'inlineSwitcher.openFullSettings': 'Végrehajtási beállítások megnyitása',
   'inlineSwitcher.customSuffix': '(egyedi)',
+  'inlineSwitcher.unlimitedBadge': 'Korlátlan',
   'project.backToProjects': 'Vissza a projektekhez',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

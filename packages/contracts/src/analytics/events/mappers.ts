@@ -194,6 +194,34 @@ export function agentIdToTracking(agentId: string | null | undefined): TrackingC
       return 'pi';
     case 'kilo':
       return 'kilo';
+    case 'kiro':
+      return 'kiro';
+    case 'vibe':
+      return 'vibe';
+    case 'amp':
+      return 'amp';
+    case 'aider':
+      return 'aider';
+    case 'trae-cli':
+      return 'trae_cli';
+    case 'grok-build':
+      return 'grok_build';
+    case 'antigravity':
+      return 'antigravity';
+    case 'codebuddy':
+      return 'codebuddy';
+    case 'reasonix':
+      return 'reasonix';
+    case 'mimo':
+      return 'mimo';
+    case 'atomcode':
+      return 'atomcode';
+    case 'byok-opencode':
+      return 'byok_opencode';
+    case 'deepseek':
+      return 'deepseek';
+    case 'deepseek-harness':
+      return 'deepseek_harness';
     case 'amr':
       return 'amr';
     default:

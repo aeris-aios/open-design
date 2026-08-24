@@ -2084,6 +2084,7 @@ export const id: Dict = {
   'inlineSwitcher.missingApiKey': 'Kunci API belum diatur — buka Pengaturan.',
   'inlineSwitcher.openFullSettings': 'Buka pengaturan eksekusi',
   'inlineSwitcher.customSuffix': '(kustom)',
+  'inlineSwitcher.unlimitedBadge': 'Tanpa batas',
   'project.backToProjects': 'Kembali ke proyek',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

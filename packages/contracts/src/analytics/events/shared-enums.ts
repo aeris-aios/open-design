@@ -170,12 +170,17 @@ export type TrackingByokProviderId =
 // v2 CLI provider catalogue (CSV row 63 + image 59). Adds `qoder_cli` and
 // `kilo` over v1, plus `amr` (the vela CLI runtime) so AMR runs no longer
 // fold into the `other` catch-all bucket.
+// Every agent the daemon can detect needs its own id here. An agent that falls
+// through to `other` is invisible to any breakdown or alert that asks *which*
+// CLI failed — which is the only question worth asking when an install someone
+// followed our own instructions for cannot be used.
 export type TrackingCliProviderId =
   | 'claude_code'
   | 'codex_cli'
   | 'devin_for_terminal'
   | 'gemini_cli'
   | 'opencode'
+  | 'byok_opencode'
   | 'hermes'
   | 'kimi_cli'
   | 'cursor_agent'
@@ -184,6 +189,19 @@ export type TrackingCliProviderId =
   | 'github_copilot_cli'
   | 'pi'
   | 'kilo'
+  | 'kiro'
+  | 'vibe'
+  | 'amp'
+  | 'aider'
+  | 'trae_cli'
+  | 'grok_build'
+  | 'antigravity'
+  | 'codebuddy'
+  | 'reasonix'
+  | 'mimo'
+  | 'atomcode'
+  | 'deepseek'
+  | 'deepseek_harness'
   | 'amr'
   | 'other';
 

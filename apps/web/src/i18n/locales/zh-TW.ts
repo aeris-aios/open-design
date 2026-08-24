@@ -2188,6 +2188,7 @@ export const zhTW: Dict = {
   "inlineSwitcher.missingApiKey": "尚未填寫 API Key — 在「設定」中新增。",
   "inlineSwitcher.openFullSettings": "開啟執行設定",
   "inlineSwitcher.customSuffix": "（自訂）",
+  "inlineSwitcher.unlimitedBadge": "無限使用",
   "project.backToProjects": "返回專案列表",
   "project.restoreAutomaticScenario": "使用系統自動場景",
   "project.restoreAutomaticScenarioConfirm": "確認恢復自動場景",

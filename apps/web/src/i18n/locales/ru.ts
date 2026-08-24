@@ -2084,6 +2084,7 @@ export const ru: Dict = {
   'inlineSwitcher.missingApiKey': 'API-ключ не задан — откройте Настройки.',
   'inlineSwitcher.openFullSettings': 'Открыть настройки выполнения',
   'inlineSwitcher.customSuffix': '(пользовательская)',
+  'inlineSwitcher.unlimitedBadge': 'Безлимит',
   'project.backToProjects': 'Назад к проектам',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

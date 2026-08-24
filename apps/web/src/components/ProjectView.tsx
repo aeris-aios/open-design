@@ -179,6 +179,7 @@ import {
   installedBrandEnrichmentSkillIds,
   isProgrammaticBrandExtractionProject,
 } from '../runtime/brand-enrichment';
+import { useSingleFlightCallback } from '../runtime/useSingleFlightCallback';
 import { useBrandReadyPrompt } from '../runtime/useBrandReadyPrompt';
 import {
   buildDesignSystemPackageAuditRepairPrompt,
@@ -341,7 +342,7 @@ import { buildContinueInCliToast } from '../lib/build-continue-in-cli-toast';
 import { buildClipboardPrompt } from '../lib/build-clipboard-prompt';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { effectiveMaxTokens } from '../state/maxTokens';
-import { effectiveAgentModelChoice } from './agentModelSelection';
+import { effectiveAgentModelChoice, effectiveAgentModelId } from './agentModelSelection';
 import { mediaExecutionPolicyForProjectMetadata } from '../media/execution-policy';
 import { mediaModelProviderId } from '../media/models';
 import { byokProviderRequiresApiKey } from '../utils/byokProvider';
@@ -6933,6 +6934,10 @@ export function ProjectView({
               persistedWorkspaceId.length > 0
               || projectWorkspaceScopeState.scope?.kind === 'unbound'
             );
+          const amrModelId = effectiveAgentModelId(
+            agentsById.get('amr'),
+            config.agentModels?.amr,
+          );
           const gate =
             deferAmrPreflightToDaemon
               ? { kind: 'allow' as const }
@@ -6945,6 +6950,7 @@ export function ProjectView({
                           projectRunPreflightContext.workspaceMemberId,
                       }
                     : undefined,
+                  amrModelId,
                 );
           // A blocked send parks in the conversation queue with its FULL
           // payload (prompt, attachments, comment context) — the composer
@@ -7900,8 +7906,15 @@ export function ProjectView({
           textBuffer.flush();
           textBuffer.cancel();
           cancelSendTextBuffer();
+          // The daemon refused a duplicate design-system enrichment because the
+          // conversation already runs one (HTTP 409
+          // DESIGN_SYSTEM_ENRICHMENT_IN_PROGRESS). The surviving run is the one
+          // the user asked for, so this is not a failure worth a global banner;
+          // only the duplicate turn itself records why it went nowhere.
+          const duplicateEnrichmentRejected =
+            errorCode === 'DESIGN_SYSTEM_ENRICHMENT_IN_PROGRESS';
           if (runMayFinalize) {
-            setRunError(err.message, assistantId);
+            if (!duplicateEnrichmentRejected) setRunError(err.message, assistantId);
             appendAssistantErrorEvent(assistantId, err.message, errorCode, failure);
             updateAssistant((prev) => ({
               ...prev,
@@ -10855,8 +10868,11 @@ export function ProjectView({
   // brand: send the hidden seeded enrichment prompt + the default design-system
   // skill bundle, refining the SAME registered design system in place. Shared by
   // the chat "Continue" affordance and the ready-toast "AI Optimize" nudge.
-  const handleBrandEnrichment = useCallback(() => {
-    if (brandEnrichmentStarting || config.mode !== 'daemon') return;
+  // The synchronous single-flight wrapper below (not this state flag) is what
+  // stops a double trigger: `brandEnrichmentStarting` only updates after a
+  // re-render, so it cannot reject a second call inside the same tick.
+  const startBrandEnrichment = useCallback(() => {
+    if (config.mode !== 'daemon') return;
     const system = designSystemProject ?? activeDesignSystemSummary;
     const skillIds = installedBrandEnrichmentSkillIds(skills);
     trackDesignSystemEnrichClick(analytics.track, {
@@ -10867,7 +10883,7 @@ export function ProjectView({
       project_kind: 'design_system',
     });
     setBrandEnrichmentStarting(true);
-    void handleSend(
+    return handleSend(
       buildBrandEnrichmentPrompt(brandEnrichmentPromptSeed || brandEnrichmentPromptSeedCache, {
         metadata: currentProject.metadata,
         designSystemId: system?.id,
@@ -10883,7 +10899,6 @@ export function ProjectView({
     analytics,
     brandEnrichmentPromptSeed,
     brandEnrichmentPromptSeedCache,
-    brandEnrichmentStarting,
     config.mode,
     designSystemProject,
     handleSend,
@@ -10892,6 +10907,7 @@ export function ProjectView({
     projectFiles,
     skills,
   ]);
+  const handleBrandEnrichment = useSingleFlightCallback(startBrandEnrichment);
 
   const handleCreateDesignFromActiveDesignSystem = useCallback(() => {
     if (brandCreateDesignStarting) return;

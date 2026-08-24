@@ -2084,6 +2084,7 @@ export const esES: Dict = {
   'inlineSwitcher.missingApiKey': 'Falta la clave API — abre Ajustes para añadirla.',
   'inlineSwitcher.openFullSettings': 'Abrir ajustes de ejecución',
   'inlineSwitcher.customSuffix': '(personalizado)',
+  'inlineSwitcher.unlimitedBadge': 'Ilimitado',
   'project.backToProjects': 'Volver a los proyectos',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

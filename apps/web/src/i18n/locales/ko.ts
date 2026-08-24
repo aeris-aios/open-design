@@ -2084,6 +2084,7 @@ export const ko: Dict = {
   'inlineSwitcher.missingApiKey': 'API 키 미설정 — 설정에서 추가하세요.',
   'inlineSwitcher.openFullSettings': '실행 설정 열기',
   'inlineSwitcher.customSuffix': '(직접 입력)',
+  'inlineSwitcher.unlimitedBadge': '무제한',
   'project.backToProjects': '프로젝트 목록으로 돌아가기',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

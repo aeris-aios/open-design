@@ -37,7 +37,8 @@ export interface TeamPricingContent {
   perSeatMonth: string;
   monthlyTotal: string;
   yearlyTotal: string;
-  checkout: string;
+  monthlyCheckout: string;
+  yearlyCheckout: string;
   teamFeatures: string[];
   enterpriseTitle: string;
   enterpriseTagline: string;
@@ -67,7 +68,8 @@ const EN: TeamPricingContent = {
   perSeatMonth: '/ seat / month',
   monthlyTotal: '{amount} / month for your team',
   yearlyTotal: '{amount} billed for the first year',
-  checkout: 'Upgrade team · {amount}/year',
+  monthlyCheckout: 'Upgrade team · {amount}/month',
+  yearlyCheckout: 'Upgrade team · {amount}/year',
   teamFeatures: [
     'Share and manage projects, design systems, and plugins as a team',
     'Everyone can view and comment; only the project creator can edit',
@@ -111,7 +113,8 @@ const ZH: TeamPricingContent = {
   perSeatMonth: '/ 席 / 月',
   monthlyTotal: '团队合计 {amount} / 月',
   yearlyTotal: '首年应付 {amount}',
-  checkout: '升级团队版 · {amount}/年',
+  monthlyCheckout: '升级团队版 · {amount}/月',
+  yearlyCheckout: '升级团队版 · {amount}/年',
   teamFeatures: [
     '项目、设计系统与插件，团队统一共享与管理',
     '成员均可查看和评论项目，仅项目创建者可以编辑',
@@ -155,7 +158,8 @@ const JA: TeamPricingContent = {
   perSeatMonth: '/ 席 / 月',
   monthlyTotal: 'チーム合計 月額 {amount}',
   yearlyTotal: '初年度の請求額 {amount}',
-  checkout: 'Team にアップグレード · 年額 {amount}',
+  monthlyCheckout: 'Team にアップグレード · 月額 {amount}',
+  yearlyCheckout: 'Team にアップグレード · 年額 {amount}',
   teamFeatures: [
     'プロジェクト、Design Systems、プラグインをチームで共有・管理',
     '全員が閲覧とコメント可能。編集はプロジェクト作成者のみ',
@@ -199,7 +203,8 @@ const KO: TeamPricingContent = {
   perSeatMonth: '/ 좌석 / 월',
   monthlyTotal: '팀 합계 월 {amount}',
   yearlyTotal: '첫해 청구 금액 {amount}',
-  checkout: 'Team으로 업그레이드 · 연 {amount}',
+  monthlyCheckout: 'Team으로 업그레이드 · 월 {amount}',
+  yearlyCheckout: 'Team으로 업그레이드 · 연 {amount}',
   teamFeatures: [
     '프로젝트, Design Systems, 플러그인을 팀에서 공유하고 관리',
     '모든 구성원이 보고 댓글을 달 수 있으며 편집은 프로젝트 생성자만 가능',
@@ -243,7 +248,8 @@ const DE: TeamPricingContent = {
   perSeatMonth: '/ Sitz / Monat',
   monthlyTotal: 'Teamgesamtpreis {amount} / Monat',
   yearlyTotal: 'Im ersten Jahr werden {amount} berechnet',
-  checkout: 'Auf Team upgraden · {amount}/Jahr',
+  monthlyCheckout: 'Auf Team upgraden · {amount}/Monat',
+  yearlyCheckout: 'Auf Team upgraden · {amount}/Jahr',
   teamFeatures: [
     'Projekte, Design Systems und Plugins gemeinsam teilen und verwalten',
     'Alle können ansehen und kommentieren; nur Ersteller bearbeiten ihr Projekt',
@@ -287,7 +293,8 @@ const FR: TeamPricingContent = {
   perSeatMonth: '/ siège / mois',
   monthlyTotal: 'Total équipe : {amount} / mois',
   yearlyTotal: '{amount} facturés la première année',
-  checkout: 'Passer à Team · {amount}/an',
+  monthlyCheckout: 'Passer à Team · {amount}/mois',
+  yearlyCheckout: 'Passer à Team · {amount}/an',
   teamFeatures: [
     'Partager et gérer en équipe projets, Design Systems et plugins',
     'Tous peuvent consulter et commenter ; seul le créateur du projet le modifie',
@@ -331,7 +338,8 @@ const RU: TeamPricingContent = {
   perSeatMonth: '/ место / месяц',
   monthlyTotal: '{amount} / месяц для команды',
   yearlyTotal: '{amount} за первый год',
-  checkout: 'Перейти на Team · {amount}/год',
+  monthlyCheckout: 'Перейти на Team · {amount}/месяц',
+  yearlyCheckout: 'Перейти на Team · {amount}/год',
   teamFeatures: [
     'Общие проекты, Design Systems и плагины с управлением для команды',
     'Все могут смотреть и комментировать; редактирует только создатель проекта',
@@ -375,7 +383,8 @@ const ES: TeamPricingContent = {
   perSeatMonth: '/ asiento / mes',
   monthlyTotal: '{amount} / mes para tu equipo',
   yearlyTotal: '{amount} facturados el primer año',
-  checkout: 'Mejorar a Team · {amount}/año',
+  monthlyCheckout: 'Mejorar a Team · {amount}/mes',
+  yearlyCheckout: 'Mejorar a Team · {amount}/año',
   teamFeatures: [
     'Compartir y gestionar proyectos, Design Systems y plugins en equipo',
     'Todos pueden ver y comentar; solo el creador del proyecto puede editarlo',
@@ -419,7 +428,8 @@ const PT_BR: TeamPricingContent = {
   perSeatMonth: '/ assento / mês',
   monthlyTotal: '{amount} / mês para sua equipe',
   yearlyTotal: '{amount} cobrados no primeiro ano',
-  checkout: 'Fazer upgrade para Team · {amount}/ano',
+  monthlyCheckout: 'Fazer upgrade para Team · {amount}/mês',
+  yearlyCheckout: 'Fazer upgrade para Team · {amount}/ano',
   teamFeatures: [
     'Compartilhe e gerencie projetos, Design Systems e plugins em equipe',
     'Todos podem ver e comentar; apenas o criador do projeto pode editar',
@@ -463,7 +473,8 @@ const IT: TeamPricingContent = {
   perSeatMonth: '/ postazione / mese',
   monthlyTotal: '{amount} / mese per il tuo team',
   yearlyTotal: '{amount} fatturati il primo anno',
-  checkout: 'Passa a Team · {amount}/anno',
+  monthlyCheckout: 'Passa a Team · {amount}/mese',
+  yearlyCheckout: 'Passa a Team · {amount}/anno',
   teamFeatures: [
     'Condividi e gestisci progetti, Design Systems e plugin come team',
     'Tutti possono vedere e commentare; modifica solo chi crea il progetto',
@@ -507,7 +518,8 @@ const TR: TeamPricingContent = {
   perSeatMonth: '/ koltuk / ay',
   monthlyTotal: 'Ekibiniz için aylık {amount}',
   yearlyTotal: 'İlk yıl için {amount} faturalandırılır',
-  checkout: 'Team’e yükselt · {amount}/yıl',
+  monthlyCheckout: 'Team’e yükselt · {amount}/ay',
+  yearlyCheckout: 'Team’e yükselt · {amount}/yıl',
   teamFeatures: [
     'Projeleri, Design Systems öğelerini ve eklentileri ekipçe paylaşın ve yönetin',
     'Herkes görüntüleyip yorum yapabilir; yalnızca proje sahibi düzenleyebilir',

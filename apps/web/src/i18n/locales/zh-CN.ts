@@ -2180,6 +2180,7 @@ export const zhCN: Dict = {
   "inlineSwitcher.missingApiKey": "尚未填写 API Key — 在“设置”中添加。",
   "inlineSwitcher.openFullSettings": "打开执行设置",
   "inlineSwitcher.customSuffix": "（自定义）",
+  "inlineSwitcher.unlimitedBadge": "无限使用",
   "project.backToProjects": "返回项目列表",
   "project.restoreAutomaticScenario": "使用系统自动场景",
   "project.restoreAutomaticScenarioConfirm": "确认恢复自动场景",

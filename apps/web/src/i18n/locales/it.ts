@@ -2084,6 +2084,7 @@ export const it: Dict = {
   'inlineSwitcher.missingApiKey': 'API key non impostata — apri le Impostazioni per aggiungerla.',
   'inlineSwitcher.openFullSettings': 'Apri impostazioni di esecuzione',
   'inlineSwitcher.customSuffix': '(personalizzato)',
+  'inlineSwitcher.unlimitedBadge': 'Illimitato',
   'project.backToProjects': 'Torna ai progetti',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',

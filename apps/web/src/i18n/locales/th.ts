@@ -2084,6 +2084,7 @@ export const th: Dict = {
   'inlineSwitcher.missingApiKey': 'ยังไม่ได้ตั้งค่า API key — เปิดการตั้งค่าเพื่อเพิ่ม',
   'inlineSwitcher.openFullSettings': 'เปิดการตั้งค่าการดำเนินการ',
   'inlineSwitcher.customSuffix': '(กำหนดเอง)',
+  'inlineSwitcher.unlimitedBadge': 'ไม่จำกัด',
   'project.backToProjects': 'กลับไปยังโปรเจกต์',
   'project.restoreAutomaticScenario': 'Use automatic scenario',
   'project.restoreAutomaticScenarioConfirm': 'Confirm automatic scenario',
