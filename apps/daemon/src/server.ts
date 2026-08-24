@@ -136,6 +136,7 @@ import {
   resolveChatRunArtifactQuietPeriodMs,
   resolveChatRunFirstOutputTimeoutMs,
   resolveChatRunInactivityTimeoutMs,
+  runtimeEmissionCountsAsAgentProgress,
   resolveChatRunShutdownGraceMs,
 } from './runtimes/chat-run-lifecycle.js';
 import { assertOdNextSemanticRequestFactProducerCoverage } from './runtimes/od-next-exact-input.js';
@@ -194,6 +195,7 @@ export {
   resolveChatRunArtifactQuietPeriodMs,
   resolveChatRunFirstOutputTimeoutMs,
   resolveChatRunInactivityTimeoutMs,
+  runtimeEmissionCountsAsAgentProgress,
 } from './runtimes/chat-run-lifecycle.js';
 export {
   renderRunContextPrompt,
@@ -12956,7 +12958,61 @@ export async function startServer({
         artifactQuietPeriodMs,
         artifactRegistered,
       });
+    /**
+     * The progress clock (`run.lastAgentActivityAt` → `last_progress_age_ms`)
+     * stops at the moment the daemon gives up on this attempt.
+     *
+     * After a terminal verdict the agent is no longer making progress toward
+     * the user's task; whatever it emits next is a reaction to our teardown —
+     * a shutdown line on stderr, a late diagnostic promoted from that stderr,
+     * the bridge's own flushed bookkeeping. Letting any of it re-stamp the
+     * clock is what makes a run that sat silent for the whole timeout window
+     * report an age of a few hundred milliseconds, which is exactly the reading
+     * that sent the 2026-07-28 AMR incident's triage after the wrong window.
+     *
+     * Scoped to the attempt, not the run: a retry (or the resume-failed reseed)
+     * builds a fresh `startChatRun` closure, so the next attempt starts with an
+     * unfrozen clock and measures its own silence.
+     */
+    let progressClockFrozen = false;
+    const freezeProgressClock = () => {
+      progressClockFrozen = true;
+    };
+    /**
+     * The ACP bridge has reached a terminal verdict for this attempt: it has
+     * already emitted the error and SIGTERMed the child. Hand the attempt over
+     * to the close handler under THAT verdict.
+     *
+     * Retiring the outer chat inactivity watchdog is the point. `fail()` issues
+     * one direct SIGTERM and nothing escalates it, while the outer watchdog is
+     * still armed from the agent's last real output — so a child that lingers
+     * past that ceiling lets `failForInactivity` fire on a run it does not yet
+     * consider terminal, overwrite `terminal_trigger` with `inactivity_watchdog`,
+     * and emit a second failure. The stall then reads as the wrong clock, which
+     * is the confusion `acp_stage_timeout` exists to remove.
+     *
+     * Escalating the teardown is the other half: without it, retiring the
+     * watchdog would leave a SIGTERM-ignoring child with nothing to reap it.
+     * `scheduleForcedChildShutdown` captures this attempt's child, so a retry
+     * that swaps `run.child` inside the grace window is not affected.
+     */
+    const retireAttemptOnAcpVerdict = () => {
+      freezeProgressClock();
+      clearInactivityWatchdog();
+      scheduleForcedChildShutdown();
+    };
     const noteAgentActivity = () => {
+      // Once this attempt has a terminal verdict, nothing the child says may
+      // restart any of its clocks — not the progress timestamp, and not the
+      // inactivity watchdog. Bailing here rather than only skipping the
+      // timestamp is load-bearing: the raw `child.stderr` handler routes every
+      // late byte through this helper, so a child that logs while ignoring
+      // SIGTERM would otherwise re-arm the very watchdog
+      // `retireAttemptOnAcpVerdict` just cleared, and that timer firing before
+      // forced shutdown reaps the child terminalizes the run a second time
+      // under `inactivity_watchdog`. The token TTL is moot for the same reason:
+      // this attempt is over, and a retry builds a fresh closure.
+      if (progressClockFrozen) return;
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
       run.lastAgentActivityAt = Date.now();
@@ -14262,7 +14318,7 @@ export async function startServer({
         onCliReady: () => noteCliReadyAt(),
         onSessionInit: () => noteSessionInitDoneAt(),
         onPromptComplete: () => clearFirstOutputWatchdog(),
-        send: (event, data) => {
+        send: (event, data, meta) => {
           if (event === 'error') {
             clearFirstOutputWatchdog();
             if (run.cancelRequested) return;
@@ -14283,7 +14339,21 @@ export async function startServer({
               noteFirstOutputEvent(data);
             }
           }
-          noteAgentActivity();
+          // Only bytes the agent produced advance the progress clock. The ACP
+          // bridge's `hostSynthesized` pairs are the daemon closing tools the
+          // agent left open, emitted from `fail()` just BEFORE the verdict;
+          // the terminal `error` is the verdict itself. Stamping the clock
+          // from either is what made a 30-minute stall report
+          // `last_progress_age_ms = 664`.
+          if (runtimeEmissionCountsAsAgentProgress(event, meta)) {
+            noteAgentActivity();
+          }
+          // ...and everything the child emits AFTER the verdict — its shutdown
+          // line on stderr, the diagnostic promoted from that line — is a
+          // reaction to the SIGTERM this error is about to trigger, not
+          // progress. Freeze here so the recorded age keeps describing the
+          // silence rather than our own teardown.
+          if (event === 'error') retireAttemptOnAcpVerdict();
           if (event === 'error') flushVisibleAgentStderr();
           if (def.id === 'amr' && event === 'error') {
             const failure = classifyAmrAccountFailureSignal({
