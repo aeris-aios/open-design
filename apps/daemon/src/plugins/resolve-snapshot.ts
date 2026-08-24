@@ -23,12 +23,16 @@
 import type Database from 'better-sqlite3';
 import type {
   AppliedPluginSnapshot,
+  AppliedStrategyBindingV2,
   ApplyResult,
   InstalledPluginRecord,
   PluginConnectorBinding,
+  ProjectScenarioBindingProvenance,
+  ProjectScenarioTaskProfile,
 } from '@open-design/contracts';
 import {
   applyPlugin,
+  InternalBundledStrategyApplyError,
   MissingInputError,
   type ApplyTrust,
 } from './apply.js';
@@ -47,6 +51,13 @@ import {
   type ConnectorProbe,
 } from './connector-gate.js';
 import type { RegistryView } from '@open-design/plugin-runtime';
+import {
+  createBundledStrategyBindingV2,
+  StrategyPackageIdentityError,
+  type SelectableStrategyTaskTypeV2,
+} from './strategy-package.js';
+import { InvalidBundledStrategyActivationV2Error } from './strategy-provenance.js';
+import { writeProjectScenarioBinding } from './scenario-binding.js';
 
 type SqliteDb = Database.Database;
 
@@ -62,11 +73,38 @@ export interface ResolveSnapshotInput {
   // Pluggable for tests; in production these are the daemon's live
   // skill / design-system catalogs (server.ts wires them).
   registry: RegistryView;
+  /** Exact already-local record selected by a record-aware caller. */
+  plugin?: InstalledPluginRecord | undefined;
   connectorProbe?: ConnectorProbe | undefined;
   // Optional active-project DS binding. Forwarded to `applyPlugin` so
   // plugins that declared `od.context.designSystem.primary: true` get
   // bound to the project's DS at apply time.
   activeProjectDesignSystem?: { id: string; title?: string } | undefined;
+  /**
+   * Run creation may only reuse a snapshot already pinned to the same
+   * project. Project creation deliberately leaves this false because it can
+   * create a fresh snapshot, while run routes set it after project authority
+   * has been established.
+   */
+  requireSnapshotProjectMatch?: boolean | undefined;
+  /**
+   * Internal Coordinator-only activation. This is not parsed from an HTTP or
+   * CLI request body, so ordinary catalog/apply paths stay fail closed.
+   */
+  internalStrategyActivation?: {
+    taskType: SelectableStrategyTaskTypeV2;
+    /** Trusted record resolved directly from the hidden bundled resource. */
+    plugin: InstalledPluginRecord;
+  } | undefined;
+  /**
+   * Daemon-owned provenance to stamp when this call changes the durable
+   * project pin. Omit for fallback reuse; explicit request fields default to
+   * `explicit_user`.
+   */
+  projectBinding?: {
+    provenance: ProjectScenarioBindingProvenance;
+    taskProfile?: ProjectScenarioTaskProfile | null;
+  } | undefined;
 }
 
 export interface ResolveSnapshotOk {
@@ -138,6 +176,11 @@ function pickPluginFields(body: Record<string, unknown> | null | undefined) {
 
 export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnapshotResult {
   const fields = pickPluginFields(input.body);
+  const requestNamedBinding = Boolean(fields.pluginId || fields.snapshotId);
+  const projectBinding = input.internalStrategyActivation
+    ? null
+    : input.projectBinding
+      ?? (requestNamedBinding ? { provenance: 'explicit_user' as const } : null);
   // If the caller didn't name a plugin / snapshot in the body but a
   // snapshot is already pinned to the project (set by a prior project /
   // conversation create that ran the plugin), reuse it. This is what
@@ -168,6 +211,25 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
         },
       };
     }
+    if (input.requireSnapshotProjectMatch) {
+      const row = input.db
+        .prepare('SELECT project_id AS projectId FROM applied_plugin_snapshots WHERE id = ?')
+        .get(fields.snapshotId) as { projectId?: unknown } | undefined;
+      if (row?.projectId !== input.projectId) {
+        return {
+          ok: false,
+          status: 404,
+          exitCode: 65,
+          body: {
+            error: {
+              code: 'snapshot-not-found',
+              message: `Applied plugin snapshot ${fields.snapshotId} not found`,
+              data: { snapshotId: fields.snapshotId },
+            },
+          },
+        };
+      }
+    }
     if (snapshot.status === 'stale') {
       return {
         ok: false,
@@ -190,11 +252,17 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
       input,
       snapshot,
       created: false,
+      projectBinding,
     });
   }
 
   // Path 2: pluginId — run apply, persist a new snapshot.
-  const plugin = getInstalledPlugin(input.db, fields.pluginId!);
+  const internalPlugin = input.internalStrategyActivation?.plugin;
+  const plugin = internalPlugin?.id === fields.pluginId
+    ? internalPlugin
+    : input.plugin?.id === fields.pluginId
+      ? input.plugin
+      : getInstalledPlugin(input.db, fields.pluginId!);
   if (!plugin) {
     return {
       ok: false,
@@ -212,6 +280,13 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
 
   let applyComputed;
   try {
+    const internalStrategyBinding: AppliedStrategyBindingV2 | undefined =
+      input.internalStrategyActivation
+        ? createBundledStrategyBindingV2({
+            plugin,
+            taskType: input.internalStrategyActivation.taskType,
+          })
+        : undefined;
     applyComputed = applyPlugin({
       plugin,
       inputs: fields.pluginInputs ?? {},
@@ -219,8 +294,40 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
       activeProjectDesignSystem: input.activeProjectDesignSystem,
       connectorProbe: input.connectorProbe,
       locale: fields.locale,
+      internalStrategyBinding,
     });
   } catch (err) {
+    if (err instanceof InternalBundledStrategyApplyError) {
+      return {
+        ok: false,
+        status: 409,
+        exitCode: 72,
+        body: {
+          error: {
+            code: 'strategy-inactive',
+            message: `Bundled strategy "${fields.pluginId}" is not active.`,
+            data: { pluginId: fields.pluginId },
+          },
+        },
+      };
+    }
+    if (
+      err instanceof StrategyPackageIdentityError
+      || err instanceof InvalidBundledStrategyActivationV2Error
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        exitCode: 72,
+        body: {
+          error: {
+            code: 'strategy-content-invalid',
+            message: `Bundled strategy "${fields.pluginId}" failed content identity validation.`,
+            data: { pluginId: fields.pluginId },
+          },
+        },
+      };
+    }
     if (err instanceof MissingInputError) {
       return {
         ok: false,
@@ -285,6 +392,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     connectorsResolved: result.appliedPlugin.connectorsResolved,
     mcpServers: result.appliedPlugin.mcpServers,
     query: result.query,
+    strategy: result.appliedPlugin.strategy,
   });
 
   return finalizeOk({
@@ -292,6 +400,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     snapshot: persisted,
     applyResult: { ...result, appliedPlugin: persisted },
     created: true,
+    projectBinding,
   });
 }
 
@@ -300,16 +409,32 @@ function finalizeOk(args: {
   snapshot: AppliedPluginSnapshot;
   applyResult?: ApplyResult;
   created: boolean;
+  projectBinding: ResolveSnapshotInput['projectBinding'] | null;
 }): ResolveSnapshotOk {
   // Pin the snapshot to whichever surfaces the caller already knows.
   // Order matters: link to project (always) before conversation/run so
   // the foreign key is satisfied and `expires_at` clears in one statement.
   const { db } = args.input;
   const snap = args.snapshot;
-  if (args.input.projectId) {
+  // Rollout activation is run-scoped authority. It must not replace the
+  // user's durable project/conversation plugin pin; rollback then affects new
+  // tasks while this run remains linked to its immutable strategy snapshot.
+  const runScopedStrategy = Boolean(args.input.internalStrategyActivation);
+  if (args.input.projectId && !runScopedStrategy) {
     linkSnapshotToProject(db, snap.snapshotId, args.input.projectId);
+    if (args.projectBinding) {
+      writeProjectScenarioBinding(db, {
+        projectId: args.input.projectId,
+        snapshotId: snap.snapshotId,
+        pluginId: snap.pluginId,
+        provenance: args.projectBinding.provenance,
+        ...(args.projectBinding.taskProfile
+          ? { taskProfile: args.projectBinding.taskProfile }
+          : {}),
+      });
+    }
   }
-  if (args.input.conversationId) {
+  if (args.input.conversationId && !runScopedStrategy) {
     linkSnapshotToConversation(db, snap.snapshotId, args.input.conversationId);
   }
   if (args.input.runId) {

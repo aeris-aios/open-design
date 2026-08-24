@@ -24,7 +24,7 @@ import {
   AMR_STDERR_RETRY_TAIL_LIMIT,
   ACP_STDERR_DIAGNOSTIC_TAIL_LIMIT,
 } from './constants.js';
-import { errorMessage, asObject, extractAcpUpdateText } from './json.js';
+import { errorMessage, asObject, extractAcpUpdateText, extractAcpStatusDetail } from './json.js';
 import {
   sendRpc,
   sendRpcResult,
@@ -32,6 +32,7 @@ import {
   rpcErrorMessage,
   rpcErrorData,
   rpcErrorRetryable,
+  inferRpcErrorRetryable,
   promotedOpenCodeSessionErrorPayload,
   formatUsage,
   choosePermissionOutcome,
@@ -60,6 +61,13 @@ import {
   modelSelectionErrorIsRecoverable,
 } from './models.js';
 import { buildAcpSessionNewParams, buildPromptBlocks, type AcpMcpServerInput } from './session-params.js';
+import { createVelaChildEvidenceConsumer } from '../../runtimes/vela-child-evidence.js';
+
+const NON_DISPLAYABLE_ACP_SESSION_UPDATES = new Set([
+  'usage_update',
+  'session_info_update',
+  'available_commands_update',
+]);
 
 /**
  * Options for `attachAcpSession`. All fields except `child`, `prompt`, and
@@ -71,6 +79,8 @@ export interface AttachAcpSessionOptions {
   cwd?: string;
   model?: string | null;
   imagePaths?: string[];
+  /** Frozen non-image/image resources delivered as ACP resource_link blocks. */
+  resourcePaths?: string[];
   mcpServers?: AcpMcpServerInput[];
   // Passed through to buildAcpSessionNewParams — see AcpSessionOptions.
   envFormat?: 'array' | 'map';
@@ -94,9 +104,11 @@ export interface AttachAcpSessionOptions {
   // `onCliReady` fires once on the first well-formed ACP JSON-RPC message
   // (the CLI is up and speaking the protocol); `onSessionInit` fires once when
   // the `session/new` handshake is acknowledged (a session id is established).
-  // Both are best-effort and the caller dedupes, so extra calls are harmless.
+  // `onPromptComplete` fires once when a clean `session/prompt` result is
+  // accepted. Error paths never invoke it.
   onCliReady?: () => void;
   onSessionInit?: () => void;
+  onPromptComplete?: () => void;
 }
 /**
  * Attaches an ACP protocol session to an already-spawned child process and
@@ -129,6 +141,7 @@ export function attachAcpSession({
   cwd,
   model,
   imagePaths = [],
+  resourcePaths = [],
   mcpServers,
   envFormat = 'array',
   send,
@@ -141,6 +154,7 @@ export function attachAcpSession({
   resumeSessionId,
   onCliReady,
   onSessionInit,
+  onPromptComplete,
 }: AttachAcpSessionOptions) {
   const runStartedAt = Date.now();
   const effectiveCwd = path.resolve(cwd || process.cwd());
@@ -170,6 +184,7 @@ export function attachAcpSession({
   let emittedTextBuffer = '';
   let rawAcpShapeDiagnosticCount = 0;
   let artifactSuppressionDiagnosticCount = 0;
+  let velaChildRejectionDiagnosticCount = 0;
   let acpStderrTail = '';
   let currentStage = 'initialize';
   let finished = false;
@@ -195,6 +210,22 @@ export function attachAcpSession({
     openedBlocks: 0,
     closedBlocks: 0,
   };
+  // The AMR discriminator is deliberately required here. A generic ACP agent
+  // advertising a same-named extension must not silently expand the daemon's
+  // accepted protocol surface.
+  const velaChildEvidenceConsumer = modelUnavailableErrorCode
+    ? createVelaChildEvidenceConsumer({
+        onFact: (fact) => {
+          send('agent', {
+            type: 'diagnostic',
+            name: 'vela_opencode_child_agent_lifecycle',
+            source: 'amr-opencode',
+            elapsedMs: Date.now() - runStartedAt,
+            ...fact,
+          });
+        },
+      })
+    : null;
   const acpArtifactWriteToolCallIds = new Set<string>();
   // Per toolCallId: accumulate name/input/path/result across partial ACP frames
   // and emit exactly one tool_use + one tool_result at terminal status (or on
@@ -379,6 +410,84 @@ export function attachAcpSession({
     });
   };
 
+  const emitAcpExecutionObservability = (update: JsonObject): boolean => {
+    const name = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
+    if (
+      name !== 'assistant_message_lifecycle' &&
+      name !== 'model_step_lifecycle' &&
+      name !== 'model_retry'
+    ) {
+      return false;
+    }
+    const numberField = (key: string) => {
+      const value = update[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    };
+    const stringField = (key: string) => {
+      const value = update[key];
+      return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    };
+    const usage = asObject(update.usage);
+    send('agent', {
+      type: 'diagnostic',
+      name,
+      source: 'amr-opencode',
+      elapsedMs: Date.now() - runStartedAt,
+      ...(stringField('phase') ? { phase: stringField('phase') } : {}),
+      ...(stringField('status') ? { status: stringField('status') } : {}),
+      ...(stringField('reason') ? { reason: stringField('reason') } : {}),
+      ...(stringField('provider') ? { provider: stringField('provider') } : {}),
+      ...(stringField('model') ? { model: stringField('model') } : {}),
+      ...(stringField('errorClass') ? { errorClass: stringField('errorClass') } : {}),
+      ...(stringField('timingEvidence')
+        ? { timingEvidence: stringField('timingEvidence') }
+        : {}),
+      ...(numberField('assistantMessageIndex') !== undefined
+        ? { assistantMessageIndex: numberField('assistantMessageIndex') }
+        : {}),
+      ...(numberField('stepIndex') !== undefined
+        ? { stepIndex: numberField('stepIndex') }
+        : {}),
+      ...(numberField('startedAtMs') !== undefined
+        ? { startedAtMs: numberField('startedAtMs') }
+        : {}),
+      ...(numberField('endedAtMs') !== undefined
+        ? { endedAtMs: numberField('endedAtMs') }
+        : {}),
+      ...(numberField('durationMs') !== undefined
+        ? { durationMs: numberField('durationMs') }
+        : {}),
+      ...(numberField('attempt') !== undefined
+        ? { attempt: numberField('attempt') }
+        : {}),
+      ...(usage
+        ? {
+            usage: {
+              ...(typeof usage.inputTokens === 'number'
+                ? { inputTokens: usage.inputTokens }
+                : {}),
+              ...(typeof usage.outputTokens === 'number'
+                ? { outputTokens: usage.outputTokens }
+                : {}),
+              ...(typeof usage.totalTokens === 'number'
+                ? { totalTokens: usage.totalTokens }
+                : {}),
+              ...(typeof usage.reasoningTokens === 'number'
+                ? { reasoningTokens: usage.reasoningTokens }
+                : {}),
+              ...(typeof usage.cacheReadTokens === 'number'
+                ? { cacheReadTokens: usage.cacheReadTokens }
+                : {}),
+              ...(typeof usage.cacheWriteTokens === 'number'
+                ? { cacheWriteTokens: usage.cacheWriteTokens }
+                : {}),
+            },
+          }
+        : {}),
+    });
+    return true;
+  };
+
   const emitVisibleTextDelta = (delta: string) => {
     if (!delta) return;
     emittedVisibleTextChunk = true;
@@ -488,7 +597,7 @@ export function attachAcpSession({
       'session/prompt',
       {
         sessionId,
-        prompt: buildPromptBlocks(prompt, imagePaths),
+        prompt: buildPromptBlocks(prompt, [...resourcePaths, ...imagePaths]),
       },
       'session/prompt',
     );
@@ -515,6 +624,10 @@ export function attachAcpSession({
 
   const finishCleanPrompt = (usageSource?: unknown) => {
     if (finished) return;
+    // Mark the prompt finished before notifying observers so duplicate results
+    // and callback re-entry cannot report clean completion more than once.
+    finished = true;
+    onPromptComplete?.();
     // Flush any tools still open when the prompt completes so traces stay
     // complete (one tool_use + tool_result per id).
     flushOpenAcpTools();
@@ -528,11 +641,10 @@ export function attachAcpSession({
     emitToolCallTextSuppressionSummary();
     emitArtifactTextSuppressionSummary();
     emitUsageIfPresent(usageSource);
-    finished = true;
     clearStageTimer();
     stdin.end();
     // Some ACP agents keep the child process alive after stdin closes,
-    // waiting for another prompt. Each Open Design run owns one process per
+    // waiting for another prompt. Each OpenDesign run owns one process per
     // turn, so close it once this prompt is cleanly complete.
     const cleanExitTimer = setTimeout(() => {
       if (!child.killed) child.kill('SIGTERM');
@@ -611,7 +723,7 @@ export function attachAcpSession({
         failWithPayload(promotedPayload);
         return;
       }
-      const retryable = rpcErrorRetryable(details);
+      const retryable = rpcErrorRetryable(details) ?? inferRpcErrorRetryable(rpcErr, details);
       fail(rpcErr, {
         details,
         ...(retryable === undefined ? {} : { retryable }),
@@ -631,10 +743,45 @@ export function attachAcpSession({
           return;
         }
       }
+      const velaChildResult = velaChildEvidenceConsumer?.observe({
+        expectedAcpSessionId: sessionId,
+        envelopeAcpSessionId: params?.sessionId,
+        update,
+      });
+      if (velaChildResult?.handled) {
+        if (
+          velaChildResult.reason &&
+          velaChildRejectionDiagnosticCount < ACP_RAW_EVENT_SHAPE_DIAGNOSTIC_LIMIT
+        ) {
+          velaChildRejectionDiagnosticCount += 1;
+          send('agent', {
+            type: 'diagnostic',
+            name: 'vela_opencode_child_evidence_rejected',
+            source: 'amr-opencode',
+            elapsedMs: Date.now() - runStartedAt,
+            reason: velaChildResult.reason,
+          });
+        }
+        // Accepted facts are emitted by onFact. Rejected child frames must not
+        // fall through to generic status/raw diagnostics, which could copy
+        // unallowlisted producer fields.
+        return;
+      }
+      if (emitAcpExecutionObservability(update)) {
+        return;
+      }
+      if (
+        typeof update.sessionUpdate === 'string' &&
+        NON_DISPLAYABLE_ACP_SESSION_UPDATES.has(update.sessionUpdate)
+      ) {
+        return;
+      }
       if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') {
+        const detail = extractAcpStatusDetail(update);
         send('agent', {
           type: 'status',
           label: String(update.sessionUpdate || 'session_update'),
+          ...(detail ? { detail } : {}),
           elapsedMs: Date.now() - runStartedAt,
         });
         emitAcpRawShapeDiagnostic(update);
@@ -826,6 +973,16 @@ export function attachAcpSession({
       return;
     }
     if (expectedId === 1) {
+      const negotiation = velaChildEvidenceConsumer?.negotiate(result);
+      if (negotiation?.advertised) {
+        send('agent', {
+          type: 'diagnostic',
+          name: 'vela_opencode_child_evidence_capability',
+          source: 'amr-opencode',
+          elapsedMs: Date.now() - runStartedAt,
+          ...negotiation,
+        });
+      }
       expectedId = nextId;
       if (resumeSessionId) {
         // Resume the prior upstream session instead of creating a fresh one.
@@ -975,10 +1132,31 @@ export function attachAcpSession({
     clientInfo: { name: clientName, version: clientVersion },
   }, 'initialize');
 
+  /**
+   * The prompt request resolved without a fatal protocol/transport error and
+   * without an abort. Any other ending may have dropped ACP updates that were
+   * still in flight, so evidence collected in this run cannot claim to be
+   * complete.
+   */
+  const promptCompletedCleanly = () => finished && !fatal && !aborted;
+
   return {
     /** Returns `true` when the session ended with a fatal protocol or transport error, allowing the caller to surface the failure. */
     hasFatalError() {
       return fatal;
+    },
+    /**
+     * Child-evidence coverage for this ACP run, or `undefined` when the agent
+     * is not the AMR-discriminated runtime and therefore has no child-evidence
+     * consumer. The daemon publishes this as the `child_evidence_coverage_v1`
+     * diagnostic at child close; without it every AMR task aggregates as
+     * `child_lifecycle_unavailable_not_zero`, which cannot distinguish a run
+     * that had no Child agents from a run nobody was observing.
+     */
+    childEvidenceCoverage() {
+      return velaChildEvidenceConsumer?.childEvidenceCoverage({
+        sessionComplete: promptCompletedCleanly(),
+      });
     },
     // The durable upstream session handle to persist for resume, or null when
     // none was reported (older agents, or a handshake that never established a
@@ -993,7 +1171,7 @@ export function attachAcpSession({
       // and was not aborted. The chat consumer treats this as a successful
       // run even if the child process subsequently exited via SIGTERM
       // (which is expected for agents that don't shut down on stdin.end()).
-      return finished && !fatal && !aborted;
+      return promptCompletedCleanly();
     },
     /**
      * Aborts an in-progress ACP session. Sends `session/cancel` when a session
