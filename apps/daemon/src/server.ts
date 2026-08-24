@@ -12920,10 +12920,33 @@ export async function startServer({
         artifactQuietPeriodMs,
         artifactRegistered,
       });
+    /**
+     * The progress clock (`run.lastAgentActivityAt` → `last_progress_age_ms`)
+     * stops at the moment the daemon gives up on this attempt.
+     *
+     * After a terminal verdict the agent is no longer making progress toward
+     * the user's task; whatever it emits next is a reaction to our teardown —
+     * a shutdown line on stderr, a late diagnostic promoted from that stderr,
+     * the bridge's own flushed bookkeeping. Letting any of it re-stamp the
+     * clock is what makes a run that sat silent for the whole timeout window
+     * report an age of a few hundred milliseconds, which is exactly the reading
+     * that sent the 2026-07-28 AMR incident's triage after the wrong window.
+     *
+     * Scoped to the attempt, not the run: a retry (or the resume-failed reseed)
+     * builds a fresh `startChatRun` closure, so the next attempt starts with an
+     * unfrozen clock and measures its own silence.
+     */
+    let progressClockFrozen = false;
+    const freezeProgressClock = () => {
+      progressClockFrozen = true;
+    };
     const noteAgentActivity = () => {
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
-      run.lastAgentActivityAt = Date.now();
+      // Frozen once this attempt has a terminal verdict — see
+      // `freezeProgressClock`. Everything else here still runs: the token TTL
+      // and watchdog re-arm are unrelated to what the field measures.
+      if (!progressClockFrozen) run.lastAgentActivityAt = Date.now();
       if (toolTokenGrant) {
         toolTokenRegistry.refreshToken(toolTokenGrant.token, { ttlMs: toolTokenTtlMs });
       }
@@ -14219,14 +14242,20 @@ export async function startServer({
             }
           }
           // Only bytes the agent produced advance the progress clock. The ACP
-          // bridge's terminal `error` is the daemon's own verdict, and its
-          // `hostSynthesized` tool pairs are the daemon closing tools the agent
-          // left open — both are emitted at the moment we give up. Stamping the
-          // clock from either is what made a 30-minute stall report
+          // bridge's `hostSynthesized` pairs are the daemon closing tools the
+          // agent left open, emitted from `fail()` just BEFORE the verdict;
+          // the terminal `error` is the verdict itself. Stamping the clock
+          // from either is what made a 30-minute stall report
           // `last_progress_age_ms = 664`.
           if (runtimeEmissionCountsAsAgentProgress(event, meta)) {
             noteAgentActivity();
           }
+          // ...and everything the child emits AFTER the verdict — its shutdown
+          // line on stderr, the diagnostic promoted from that line — is a
+          // reaction to the SIGTERM this error is about to trigger, not
+          // progress. Freeze here so the recorded age keeps describing the
+          // silence rather than our own teardown.
+          if (event === 'error') freezeProgressClock();
           if (event === 'error') flushVisibleAgentStderr();
           if (def.id === 'amr' && event === 'error') {
             const failure = classifyAmrAccountFailureSignal({

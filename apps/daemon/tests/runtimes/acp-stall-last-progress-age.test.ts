@@ -200,6 +200,62 @@ describe('ACP stall progress age', () => {
       progressAgeFailureContext(finished, run),
     ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
   }, 60_000);
+
+  // Real CLIs log while they die. The daemon ends an ACP stage timeout by
+  // SIGTERMing the child, and the child's shutdown line arrives on stderr a few
+  // milliseconds later — where the raw stderr handler stamps the progress clock
+  // just like any other agent byte. The run then reports an age measured from
+  // OUR teardown instead of from the agent's last real output.
+  //
+  // This is the same failure as the two above seen from the far side of the
+  // verdict, and it is what made these specs pass locally but report ages of 8
+  // and 16 milliseconds on CI, where the teardown ordering differs. Once the
+  // daemon has given up, nothing the child says counts as progress.
+  it('reports the real silence when the agent logs to stderr while shutting down', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-stall-teardown-bin-'));
+    const fakeVela = await writeSilentlyStallingVela(binDir, 'vela-silent-stall-teardown-log', {
+      stderrOnSigterm: true,
+    });
+
+    process.env.POSTHOG_KEY = 'phc_test_acp_stall_teardown';
+    delete process.env.POSTHOG_HOST;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
+    process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
+    process.env.OD_ACP_STAGE_TIMEOUT_MS = String(ACP_STAGE_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = String(OUTER_INACTIVITY_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '0';
+
+    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    await putConfig(started.url, {
+      agentId: 'amr',
+      agentCliEnv: { amr: { VELA_BIN: fakeVela } },
+      telemetry: { metrics: true, content: false, artifactManifest: false },
+      privacyDecisionAt: Date.now(),
+    });
+
+    const run = await createAndWaitForAmrRun(started.url);
+    expect(run.status).toBe('failed');
+
+    const finished = await waitForRunFinished(run.id);
+
+    // Non-vacuity guard: the child really did exit through its SIGTERM handler,
+    // so its shutdown line really was written after the daemon's verdict.
+    expect(finished.error_code).toBe('AGENT_EXIT_143');
+
+    expect(finished.failure_category).toBe('timeout');
+    expect(finished.failure_detail).toBe('timeout');
+    expect(finished.terminal_trigger).toBe('acp_stage_timeout');
+
+    expect(typeof finished.last_progress_age_ms).toBe('number');
+    expect(
+      finished.last_progress_age_ms,
+      progressAgeFailureContext(finished, run),
+    ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
+  }, 60_000);
 });
 
 /**
@@ -266,7 +322,7 @@ async function waitForRunFinished(runId: string): Promise<Record<string, any>> {
 async function writeSilentlyStallingVela(
   dir: string,
   name: string,
-  options: { openToolBeforeStall?: boolean } = {},
+  options: { openToolBeforeStall?: boolean; stderrOnSigterm?: boolean } = {},
 ): Promise<string> {
   const bin = path.join(dir, name);
   await writeFile(bin, `#!/bin/sh
@@ -275,7 +331,7 @@ if [ "$1" = "agent" ] && [ "$2" = "run" ]; then
   export FAKE_VELA_TEXT_BEFORE_STALL=1
   export FAKE_VELA_STALL_HEARTBEAT_MS=0
   export FAKE_VELA_REQUIRE_SET_MODEL=0
-${options.openToolBeforeStall ? '  export FAKE_VELA_OPEN_TOOL_BEFORE_STALL=1\n' : ''}fi
+${options.openToolBeforeStall ? '  export FAKE_VELA_OPEN_TOOL_BEFORE_STALL=1\n' : ''}${options.stderrOnSigterm ? '  export FAKE_VELA_STDERR_ON_SIGTERM=1\n' : ''}fi
 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_VELA)} "$@"
 `, 'utf8');
   await chmod(bin, 0o755);

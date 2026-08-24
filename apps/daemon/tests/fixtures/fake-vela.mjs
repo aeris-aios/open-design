@@ -58,6 +58,9 @@
  *                                   flight, which is the shape that makes the
  *                                   host synthesize terminal tool events on the
  *                                   failure path
+ *   FAKE_VELA_STDERR_ON_SIGTERM  – when set to '1', log a shutdown line to
+ *                                   stderr on SIGTERM and exit 143, the way a
+ *                                   real CLI does when the host kills it
  *   FAKE_VELA_PROMPT_RESULT_DELAY_MS – delay the terminal session/prompt result
  *                                      after streaming substantive output
  *   FAKE_VELA_MODELS             – newline-separated `vela models` stdout
@@ -97,6 +100,7 @@ const STALL_HEARTBEAT_MS = env.FAKE_VELA_STALL_HEARTBEAT_MS === undefined
   : Number(env.FAKE_VELA_STALL_HEARTBEAT_MS) || 0;
 const TEXT_BEFORE_STALL = env.FAKE_VELA_TEXT_BEFORE_STALL === '1';
 const OPEN_TOOL_BEFORE_STALL = env.FAKE_VELA_OPEN_TOOL_BEFORE_STALL === '1';
+const STDERR_ON_SIGTERM = env.FAKE_VELA_STDERR_ON_SIGTERM === '1';
 const PROMPT_RESULT_DELAY_MS = Number(env.FAKE_VELA_PROMPT_RESULT_DELAY_MS) || 0;
 const OMIT_PROMPT_USAGE = env.FAKE_VELA_OMIT_PROMPT_USAGE === '1';
 const STAY_ALIVE_AFTER_PROMPT_MS = Number(env.FAKE_VELA_STAY_ALIVE_AFTER_PROMPT_MS) || 0;
@@ -189,6 +193,16 @@ function writeError(id, message, code = -32603) {
 
 function logDiag(line) {
   stderr.write(`[fake-vela] ${line}\n`);
+}
+
+// Real agent CLIs log a line or two while shutting down after the host kills
+// them. Modelling that is the only way a spec can cover what the daemon does
+// with agent bytes that arrive AFTER it has already given up on the turn.
+if (STDERR_ON_SIGTERM) {
+  process.on('SIGTERM', () => {
+    logDiag('shutting down after SIGTERM');
+    exit(143);
+  });
 }
 
 // Append one line per session-bind method (`new` / `load`) to the file named by
