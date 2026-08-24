@@ -12,12 +12,15 @@ import {
   type PlanTierId,
 } from '../_lib/pricing-content';
 import { getCatalogCounts } from '../_lib/catalog';
+import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../_lib/deepseek-v4-pro-campaign';
+import { getPricingCampaignContent } from '../_lib/pricing-campaign-content';
 import { localeFromPath } from '../i18n';
 
 const locale = localeFromPath(Astro.url.pathname);
 const content = getPricingContent(locale);
 const L = content.labels;
 const P = content.personal;
+const campaign = getPricingCampaignContent(locale);
 const tiers = PRICING_SNAPSHOT.tiers;
 const catalogCounts = await getCatalogCounts(locale);
 const skillsCount = catalogCounts.skills.toLocaleString('en-US');
@@ -71,21 +74,14 @@ const imageModels: ModelItem[] = [
   { name: 'GPT Image 2', icon: '/agents/openai.svg' },
 ];
 
-const unlimitedByTier: Record<TierId, Set<string>> = {
-  go: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2']),
-  plus: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code']),
-  // Pro includes GLM-5.2, not MiniMax M2.7: every tier from Go up carries
-  // GLM-5.2, while MiniMax M2.7 stays metered until Max.
-  pro: new Set([
-    'DeepSeek V4 Flash Vision Exp',
-    'DeepSeek V4 Flash',
-    'DeepSeek V4 Pro',
-    'GLM-5.2',
-    'Kimi K2.7 Code',
-    'MiMo V2.5 Pro',
-  ]),
-  max: new Set(popularModels.map((model) => model.name)),
-};
+const campaignUnlimitedModelNames = [
+  'DeepSeek V4 Pro',
+  'DeepSeek V4 Flash',
+] as const;
+const campaignUnlimitedModelSet = new Set<string>(campaignUnlimitedModelNames);
+const campaignUnlimitedModels = campaignUnlimitedModelNames.map(
+  (name) => popularModels.find((model) => model.name === name)!,
+);
 
 const popularModelDisplayOrder = [
   'DeepSeek V4 Flash Vision Exp',
@@ -101,6 +97,9 @@ const popularModelDisplayOrder = [
 
 const orderedPopularModels = () =>
   popularModelDisplayOrder.map((name) => popularModels.find((model) => model.name === name)!);
+
+const popularAllowanceLabel = (tier: TierId) =>
+  `${P.popularModels} · ${tier === 'go' ? P.ample : P.moreAmple}`;
 
 const renderCatalogLabel = (label: string) => fillTemplate(label, {
   skillsCount,
@@ -136,7 +135,7 @@ const paidTierBenefits = (tier: PlanTierId) => {
   const customDomains = customDomainsByTier[tier];
   return [
     fillTemplate(L.creditBenefit, { amount: formatUsd(config.monthly.grantUsd) }),
-    fillTemplate(P.unlimitedPopularModels, { count: String(unlimitedByTier[tier].size) }),
+    popularAllowanceLabel(tier),
     customDomains == null
       ? P.unlimitedCustomDomains
       : fillTemplate(P.customDomains, { count: String(customDomains) }),
@@ -259,7 +258,10 @@ const usageRows = [
   { ...popularModel('GLM-5.1'), value: 670 },
 ];
 
-const comparisonPopular = orderedPopularModels();
+const comparisonPopular = [
+  ...campaignUnlimitedModelNames.slice().reverse().map((name) => popularModels.find((model) => model.name === name)!),
+  ...orderedPopularModels().filter((model) => !campaignUnlimitedModelSet.has(model.name)),
+];
 
 const comparisonFlagship = [
   'Kimi-K3',
@@ -292,11 +294,17 @@ const categoryCopy: Record<ModelCategory, { title: string; count: string }> = {
 };
 
 function popularAccessStatus(modelName: string, tier: TierId) {
-  if (unlimitedByTier[tier].has(modelName)) {
+  if (campaignUnlimitedModelSet.has(modelName)) {
     return { kind: 'unlimited', text: P.unlimited };
   }
   if (tier === 'go') return { kind: 'ample', text: P.ample };
   return { kind: 'more-ample', text: P.moreAmple };
+}
+
+function popularAllowanceStatus(tier: TierId) {
+  return tier === 'go'
+    ? { kind: 'ample', text: P.ample }
+    : { kind: 'more-ample', text: P.moreAmple };
 }
 
 function accessStatus(category: ModelCategory, modelName: string, tier: TierId) {
@@ -395,10 +403,39 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
             <div class="plan-feature-details">
               <div class="plan-model-modules">
-                <section class="plan-model-module unlimited-module" data-model-module>
+                <section
+                  class="plan-model-module limited-time-unlimited-module"
+                  data-pricing-campaign-surface
+                  hidden
+                >
+                  <header>
+                    <h4>{campaign.individualOfferTitle}</h4>
+                    <time
+                      class="limited-time-countdown"
+                      datetime={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive}
+                      title={campaign.individualEndNote}
+                      data-personal-campaign-countdown
+                      data-day-unit={campaign.dayUnit}
+                      aria-label={campaign.windowLabel}
+                    >0{campaign.dayUnit} 00:00:00</time>
+                  </header>
+                  <ul>
+                    {campaignUnlimitedModels.map((model) => (
+                      <li>
+                        <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
+                        <span title={model.name}>{model.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                <section
+                  class:list={['plan-model-module', 'popular-model-module', { 'recommended-model-module': tier === 'pro' || tier === 'max' }]}
+                  data-model-module
+                >
                   <header>
                     <div class="plan-model-title-with-help">
-                      <h4>{fillTemplate(P.unlimitedPopularModels, { count: String(unlimitedByTier[tier].size) })}</h4>
+                      <h4>{popularAllowanceLabel(tier)}</h4>
                       <details class="plan-model-help">
                         <summary aria-label={P.aboutModelEntitlements}>?</summary>
                         <span class="plan-model-help-copy">{P.modelEntitlementActivationNote}</span>
@@ -406,19 +443,15 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                     </div>
                   </header>
                   <ul>
-                    {popular.map((model) => {
-                      const popularStatus = popularAccessStatus(model.name, tier);
-                      return (
-                        <li class="model-with-status">
-                          <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
-                          <span
-                            class:list={{ 'long-model-name': model.name.length > 24 }}
-                            title={model.name}
-                          >{model.name}</span>
-                          {popularStatus.kind === 'unlimited' && <em class={popularStatus.kind}>{popularStatus.text}</em>}
-                        </li>
-                      );
-                    })}
+                    {popular.map((model) => (
+                      <li>
+                        <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
+                        <span
+                          class:list={{ 'long-model-name': model.name.length > 24 }}
+                          title={model.name}
+                        >{model.name}</span>
+                      </li>
+                    ))}
                   </ul>
                   <button type="button" class="model-module-toggle" aria-expanded="false" data-module-toggle data-total={popular.length}>
                     <span>{fillTemplate(P.viewAll, { count: String(popular.length) })}</span><span class="toggle-symbol">+</span>
@@ -554,8 +587,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
               ['flagship', comparisonFlagship],
               ['image', imageModels],
             ] as [ModelCategory, ModelItem[]][]).flatMap(([category, models]) =>
-              models.map((model, index) => (
-                <tr>
+              models.map((model, index) => {
+                const isCampaignUnlimited = category === 'popular'
+                  && campaignUnlimitedModelSet.has(model.name);
+                return (
+                  <tr>
                   {index === 0 && (
                     <th class="model-group-cell" rowspan={models.length} scope="rowgroup">
                       <span class="model-group-title">
@@ -570,9 +606,37 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       <small>{categoryCopy[category].count}</small>
                     </th>
                   )}
-                  <td class="model-name-cell"><span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span><span>{model.name}</span></td>
+                  <td class:list={['model-name-cell', { 'limited-time-model-name-cell': isCampaignUnlimited }]}>
+                    <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
+                    {isCampaignUnlimited ? (
+                      <span class="limited-time-model-copy">
+                        <span>{model.name}</span>
+                        <small class="limited-time-model-note" data-pricing-campaign-surface hidden>
+                          {campaign.individualEndNote}
+                        </small>
+                      </span>
+                    ) : <span>{model.name}</span>}
+                  </td>
                   {(['go', 'plus', 'pro', 'max'] as TierId[]).map((tier) => {
                     const status = accessStatus(category, model.name, tier);
+                    if (status.kind === 'unlimited') {
+                      const fallback = popularAllowanceStatus(tier);
+                      return (
+                        <td>
+                          <span
+                            class="model-access-status unlimited limited-time-access"
+                            data-pricing-campaign-surface
+                            aria-label={status.text}
+                            hidden
+                          ><i class="status-icon infinity" aria-hidden="true">∞</i><span>{status.text}</span></span>
+                          <span
+                            class={`model-access-status ${fallback.kind}`}
+                            data-pricing-campaign-fallback
+                            aria-label={fallback.text}
+                          ><i class="status-icon check"></i></span>
+                        </td>
+                      );
+                    }
                     const checkOnly = status.kind === 'more-ample' || status.kind === 'ample' || status.kind === 'included';
                     return checkOnly ? (
                       <td><span class={`model-access-status ${status.kind}`} aria-label={status.text}><i class="status-icon check"></i></span></td>
@@ -580,8 +644,9 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       <td><span class={`model-access-status ${status.kind}`}><i class:list={['status-icon', { infinity: status.kind === 'unlimited' }]}>{status.kind === 'unlimited' ? '∞' : ''}</i>{status.text}</span></td>
                     );
                   })}
-                </tr>
-              )),
+                  </tr>
+                );
+              }),
             )}
           </tbody>
         </table>
@@ -615,6 +680,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .demo-individual-pricing p {
     max-width: none;
+  }
+
+  .demo-individual-pricing [data-pricing-campaign-surface][hidden],
+  .demo-individual-pricing [data-pricing-campaign-fallback][hidden] {
+    display: none !important;
   }
 
   :global([data-interval='yearly']) .demo-individual-pricing [data-when='monthly'],
@@ -931,20 +1001,31 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     transition: background-color 0.2s;
   }
 
-  .plan-model-module.unlimited-module {
+  .plan-model-module.limited-time-unlimited-module {
+    min-height: 0;
     background:
-      radial-gradient(circle at 92% 4%, rgba(120, 234, 87, 0.26), transparent 42%),
-      linear-gradient(135deg, rgba(120, 234, 87, 0.2), rgba(120, 234, 87, 0.07));
+      radial-gradient(circle at 92% 4%, rgba(120, 234, 87, 0.16), transparent 50%),
+      linear-gradient(135deg, #effbea 0%, #f7fcf5 52%, #e6f6e1 100%);
   }
 
-  .plan-go .plan-model-module.unlimited-module,
-  .plan-plus .plan-model-module.unlimited-module {
-    background: #f7f8f3;
+  .limited-time-unlimited-module > header {
+    align-items: flex-start;
+    flex-wrap: nowrap;
   }
 
-  .plan-go .plan-model-module.unlimited-module h4,
-  .plan-plus .plan-model-module.unlimited-module h4 {
-    color: #30332d;
+  .limited-time-countdown {
+    flex: none;
+    margin-left: auto;
+    padding: 3px 7px;
+    color: #1f7e16;
+    font-size: 9.5px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.62);
+    border: 1px solid rgba(120, 234, 87, 0.24);
+    border-radius: 999px;
   }
 
   .plan-model-module.recommended-model-module {
@@ -1043,7 +1124,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     display: none;
   }
 
-  .plan-model-module.unlimited-module h4,
+  .plan-model-module.limited-time-unlimited-module h4,
   .plan-model-module.recommended-model-module h4 { color: #1f7e16; }
 
   .plan-model-module header > span {
@@ -1318,8 +1399,14 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .plan-max .plan-model-module,
   .plan-max .plan-model-module.recommended-model-module,
-  .plan-max .plan-model-module.unlimited-module {
+  .plan-max .plan-model-module.limited-time-unlimited-module {
     background: #192318;
+  }
+
+  .plan-max .limited-time-countdown {
+    color: #91dc7b;
+    background: rgba(120, 234, 87, 0.1);
+    border-color: rgba(120, 234, 87, 0.2);
   }
 
   .plan-max .plan-model-module h4 { color: var(--pricing-accent); }
@@ -1347,7 +1434,6 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   .plan-max .model-logo { background: #f3f5f0; }
   .plan-max .model-logo img,
   .plan-max .model-logo-mimo img { filter: none; }
-  .plan-max .plan-model-module li.model-with-status em.unlimited,
   .plan-max .plan-model-module li.model-with-status em.multimodal-status,
   .plan-max .plan-benefit-list .bonus-benefit > span {
     color: #91dc7b;
@@ -1751,6 +1837,27 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   }
   .model-name-cell > .model-logo { margin-right: 9px; }
 
+  .limited-time-model-name-cell > .model-logo {
+    margin-top: 2px;
+    vertical-align: top;
+  }
+
+  .limited-time-model-copy {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    vertical-align: middle;
+  }
+
+  .limited-time-model-note {
+    color: #849080;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
   .model-access-status {
     display: inline-grid;
     grid-template-columns: 23px max-content;
@@ -1775,6 +1882,13 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     height: 23px;
   }
   .model-access-status.resolution { font-weight: 500; }
+
+  .model-access-status.limited-time-access {
+    grid-template-columns: 23px max-content;
+    gap: 6px;
+    width: max-content;
+    justify-content: center;
+  }
 
   .status-icon {
     display: inline-grid;
