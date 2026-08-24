@@ -15,7 +15,7 @@ Registered layout IDs: `cover`, `foreword`, `diagnosis`, `options`, `recommendat
 | ID | Role | Use when | Guardrail |
 |---|---|---|---|
 | `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Keep the title dominant; no agenda, dashboard, or multi-card payload. |
-| `foreword` | Foreword | Use this layout only for content that matches its demonstrated information shape. | Preserve its hierarchy, alignment, and signature spacing before adding variants. |
+| `foreword` | Foreword | Use this layout only for content that matches its demonstrated information shape. | Vertically center the left opener in its column; keep the right reader column top-aligned. |
 | `diagnosis` | Diagnosis | Use this layout only for content that matches its demonstrated information shape. | Preserve its hierarchy, alignment, and signature spacing before adding variants. |
 | `options` | Options | Contrast two choices, states, or approaches. | Use matched criteria and comparable evidence. |
 | `recommendation` | Recommendation | End with the decision, takeaway, or next action. | Do not introduce new evidence or a second competing message. |
