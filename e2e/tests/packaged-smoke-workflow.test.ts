@@ -576,6 +576,269 @@ describe("packaged smoke workflow", () => {
     expect(commentWorkflow).toContain('[ "$RUN_EVENT" != "merge_group" ] && [ "$current_base" != "$base_sha" ]');
   });
 
+  it("[P2] surfaces a merge-queue CI failure ejection as a PR comment handoff", async () => {
+    const ciWorkflow = await readFile(ciWorkflowPath, "utf8");
+    const mergePolicy = sectionBetween(ciWorkflow, "  merge_policy:", "  validate:");
+    const validate = sectionBetween(ciWorkflow, "  validate:", "  runtime_summary:");
+
+    // The label gate tells the generic notice whether it already announced this ejection, so a
+    // label-only ejection gets exactly one comment.
+    expect(mergePolicy).toContain(
+      "ejection_notice: ${{ steps.merge_blocking_label_gate.outputs.comment_created }}",
+    );
+    expect(validate).toContain("LABEL_NOTICE_EMITTED: ${{ needs.merge_policy.outputs.ejection_notice }}");
+
+    // Producer: merge-group only, only after the gate has already failed, unable to change the
+    // gate result, and uploaded on the failure path exactly like the label notice.
+    expect(validate).toContain("<!-- merge-queue-ci-failure -->");
+    expect(validate).toContain("if: ${{ failure() && github.event_name == 'merge_group' }}");
+    expect(validate).toContain("continue-on-error: true");
+    expect(validate).toContain(
+      "if: ${{ failure() && steps.merge_queue_failure_notice.outputs.comment_created == 'true' }}",
+    );
+    // It sits after hash publication so the success path is untouched and the gate's own jq
+    // programs stay isolated (see extractValidateGateJqPrograms).
+    expect(validate.indexOf("Save successful hash map")).toBeLessThan(
+      validate.indexOf("Produce merge-queue failure notice handoff"),
+    );
+
+    // Behavior: run the real step script against a stubbed `gh`, then read the handoff it
+    // produced through the same helper comment.atom.yml uses to consume it.
+    const script = extractWorkflowRunScript(ciWorkflow, "Produce merge-queue failure notice handoff");
+    const prHead = "4821c4ee".padEnd(40, "0");
+    const prBase = "1a7a23d4".padEnd(40, "0");
+    const groupHead = "e3051e63".padEnd(40, "0");
+    const runId = "32105196624";
+    const planRun = JSON.stringify({ static_gate: true, daemon_unit_tests: true, e2e_vitest: false });
+    const esc = String.fromCharCode(27);
+    const failedShardLog = [
+      `2026-08-18T06:05:15.3329113Z ${esc}[31m⎯⎯⎯ Failed Tests 1 ⎯⎯⎯${esc}[39m`,
+      `2026-08-18T06:05:15.3330283Z ${esc}[41m${esc}[1m FAIL ${esc}[22m${esc}[49m tests/project-archive.test.ts > buildProjectArchive > exposes a consumable stream with the same archive contents`,
+      `2026-08-18T06:05:15.3333182Z ${esc}[31mAssertionError: expected [ Array(6) ] to deeply equal [ 'DESIGN-HANDOFF.md', …(4) ]${esc}[39m`,
+      "2026-08-18T06:05:15.3398469Z ##[error]AssertionError: expected [ Array(6) ] to deeply equal [ 'DESIGN-HANDOFF.md', …(4) ]",
+      "2026-08-18T06:05:15.4000000Z ##[error]Process completed with exit code 1.",
+      "",
+    ].join("\n");
+
+    async function runNotice(args: {
+      needs: Record<string, unknown>;
+      labelNoticeEmitted?: string;
+      labels?: string[];
+      mergePolicyConclusion?: string;
+      // gh >= 2.97 refuses to print a body with terminal escape sequences unless
+      // `--allow-escape-sequences` is passed; older gh rejects that flag as unknown.
+      ghSupportsEscapeFlag?: boolean;
+    }): Promise<{
+      stdout: string;
+      output: Record<string, string>;
+      listed: Array<Record<string, unknown>>;
+      body: string;
+    }> {
+      const dir = await mkdtemp(join(tmpdir(), "od-merge-queue-notice-"));
+      const ghPath = join(dir, "gh");
+      const outputPath = join(dir, "github-output");
+      const runnerTemp = join(dir, "runner-temp");
+      await mkdir(runnerTemp);
+      await writeFile(outputPath, "");
+      const mergePolicyConclusion = args.mergePolicyConclusion ?? "success";
+      const fixtures = {
+        pull: {
+          head: { sha: prHead },
+          base: { sha: prBase },
+          labels: (args.labels ?? []).map((name) => ({ name })),
+        },
+        jobs: {
+          jobs: [
+            {
+              id: 101,
+              name: "Daemon tests (1/4)",
+              conclusion: "failure",
+              html_url: `https://github.com/nexu-io/open-design/actions/runs/${runId}/job/101`,
+              steps: [
+                { name: "Checkout", conclusion: "success" },
+                { name: "Run daemon test shard", conclusion: "failure" },
+              ],
+            },
+            { id: 102, name: "Daemon tests (2/4)", conclusion: "success", html_url: "", steps: [] },
+            {
+              id: 103,
+              name: "Merge policy",
+              conclusion: mergePolicyConclusion,
+              html_url: `https://github.com/nexu-io/open-design/actions/runs/${runId}/job/103`,
+              steps: [{ name: "Block merge while a merge-blocking label is present", conclusion: mergePolicyConclusion }],
+            },
+            // Replaying a completed run reports the gate itself as failed; it must never be listed.
+            { id: 104, name: "Validate workspace", conclusion: "failure", html_url: "", steps: [] },
+          ],
+        },
+        compare: {
+          commits: [
+            { commit: { message: "fix(daemon): keep daemon as sole writer of run events (#6559)\n\nbody" } },
+            { commit: { message: "fix(daemon): list dot-prefixed user content in managed projects (#6214)" } },
+          ],
+        },
+        logs: failedShardLog,
+      };
+      const supportsEscapeFlag = args.ghSupportsEscapeFlag ?? true;
+      await writeFile(
+        ghPath,
+        `#!/usr/bin/env node
+const fixtures = JSON.parse(process.env.FAKE_GH_FIXTURES);
+const supportsEscapeFlag = ${supportsEscapeFlag ? "true" : "false"};
+const argv = process.argv.slice(2);
+const args = argv.join(" ");
+const hasEscapeFlag = argv.includes("--allow-escape-sequences");
+if (args === "--version") process.stdout.write(supportsEscapeFlag ? "gh version 2.98.0 (fake)\\n" : "gh version 2.87.3 (fake)\\n");
+// Real help text is long: a probe that lets grep exit early would SIGPIPE gh and, under
+// pipefail, read as "flag unsupported". Pad well past the pipe buffer so that stays red.
+else if (args === "api --help") process.stdout.write((supportsEscapeFlag ? "      --allow-escape-sequences   Allow printing terminal escape sequences\\n" : "      --cache duration           Cache the response\\n") + "      --padding\\n".repeat(8192));
+else if (hasEscapeFlag && !supportsEscapeFlag) { process.stderr.write("unknown flag: --allow-escape-sequences\\n"); process.exit(1); }
+else if (/\\/pulls\\/6214$/.test(args)) process.stdout.write(JSON.stringify(fixtures.pull));
+else if (/\\/actions\\/runs\\/${runId}\\/jobs/.test(args)) process.stdout.write(JSON.stringify(fixtures.jobs));
+else if (/\\/actions\\/jobs\\/\\d+\\/logs$/.test(args)) {
+  // Real gh >= 2.97 behavior for a body full of ANSI codes: nothing on stdout, exit 1.
+  if (supportsEscapeFlag && !hasEscapeFlag) { process.stderr.write("the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway\\n"); process.exit(1); }
+  process.stdout.write(fixtures.logs);
+}
+else if (/\\/compare\\//.test(args)) process.stdout.write(JSON.stringify(fixtures.compare));
+else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit(1); }
+`,
+      );
+      await chmod(ghPath, 0o755);
+      try {
+        const { stdout } = await execFileAsync("bash", ["-c", script], {
+          cwd: workspaceRoot,
+          env: workflowFixtureEnv(
+            {
+              GH_TOKEN: "fake",
+              REPO: "nexu-io/open-design",
+              RUN_ID: runId,
+              NEEDS_JSON: JSON.stringify(args.needs),
+              MERGE_GROUP_REF: `gh-readonly-queue/main/pr-6214-${prBase}`,
+              BASE_SHA: prBase,
+              HEAD_SHA: groupHead,
+              LABEL_NOTICE_EMITTED: args.labelNoticeEmitted ?? "",
+              SELF_JOB_NAME: "Validate workspace",
+              GITHUB_OUTPUT: outputPath,
+              GITHUB_SERVER_URL: "https://github.com",
+              RUNNER_TEMP: runnerTemp,
+              FAKE_GH_FIXTURES: JSON.stringify(fixtures),
+            },
+            dir,
+          ),
+        });
+        const output = parseGithubOutput(await readFile(outputPath, "utf8"));
+        let listed: Array<Record<string, unknown>> = [];
+        let body = "";
+        if (output.comment_path) {
+          const { stdout: listStdout } = await execFileAsync(
+            "python3",
+            [handoffScriptPath, "list", "comment", output.comment_path],
+            { cwd: workspaceRoot },
+          );
+          listed = listStdout
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+          body = await readFile(
+            join(output.comment_path, "handoff", "comment", "merge-queue-ci-failure-pr-6214", "body.md"),
+            "utf8",
+          );
+        }
+        return { stdout, output, listed, body };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+
+    // A failed workload: one notice for the PR heading the group, naming the job, the step,
+    // the failing assertion, the run, and the PR batched ahead of it.
+    const workloadFailure = await runNotice({
+      needs: {
+        plan: { result: "success", outputs: { run: planRun } },
+        merge_policy: { result: "success", outputs: { ejection_notice: "" } },
+        static_gate: { result: "success" },
+        daemon_unit_tests: { result: "failure" },
+        e2e_vitest: { result: "skipped" },
+      },
+    });
+    expect(workloadFailure.output.comment_created).toBe("true");
+    expect(workloadFailure.output.comment_name).toBe("handoff-comment-merge-queue-ci-failure-pr-6214");
+    expect(workloadFailure.listed).toHaveLength(1);
+    expect(workloadFailure.listed[0]).toMatchObject({
+      kind: "comment",
+      id: "merge-queue-ci-failure-pr-6214",
+      pr_number: 6214,
+      head_sha: prHead,
+      base_sha: prBase,
+      run_id: 32105196624,
+      marker: "<!-- merge-queue-ci-failure -->",
+    });
+    expect(workloadFailure.body).toContain("<!-- merge-queue-ci-failure -->");
+    expect(workloadFailure.body).toContain(
+      `[run ${runId}](https://github.com/nexu-io/open-design/actions/runs/${runId})`,
+    );
+    expect(workloadFailure.body).toContain(
+      `- **Daemon tests (1/4)** — failure at \`Run daemon test shard\` ([job log](https://github.com/nexu-io/open-design/actions/runs/${runId}/job/101))`,
+    );
+    expect(workloadFailure.body).not.toContain("Daemon tests (2/4)");
+    expect(workloadFailure.body).not.toContain("Validate workspace");
+    expect(workloadFailure.body).toContain(
+      "FAIL  tests/project-archive.test.ts > buildProjectArchive > exposes a consumable stream with the same archive contents",
+    );
+    expect(workloadFailure.body).toContain("AssertionError: expected [ Array(6) ]");
+    expect(workloadFailure.body).not.toContain("Process completed with exit code");
+    expect(workloadFailure.body).not.toContain(esc);
+    expect(workloadFailure.body).toContain("queued ahead of it (#6559)");
+    expect(workloadFailure.body).toContain("add the PR back to the merge queue");
+
+    // A label-only ejection is already announced by the gate's notice: no second comment.
+    const labelOnly = await runNotice({
+      needs: {
+        plan: { result: "success", outputs: { run: planRun } },
+        merge_policy: { result: "failure", outputs: { ejection_notice: "true" } },
+        static_gate: { result: "success" },
+        daemon_unit_tests: { result: "success" },
+      },
+      labelNoticeEmitted: "true",
+      labels: ["needs-validation"],
+      mergePolicyConclusion: "failure",
+    });
+    expect(labelOnly.output.comment_created).toBeUndefined();
+    expect(labelOnly.stdout).toContain("its own notice covers this ejection");
+
+    // A workload that failed alongside a blocking label is still reported, without repeating
+    // the policy job — and the live label alone is enough to recognize the label ejection.
+    const labelPlusWorkload = await runNotice({
+      needs: {
+        plan: { result: "success", outputs: { run: planRun } },
+        merge_policy: { result: "failure", outputs: { ejection_notice: "" } },
+        static_gate: { result: "success" },
+        daemon_unit_tests: { result: "failure" },
+      },
+      labels: ["needs-maintainer-check"],
+      mergePolicyConclusion: "failure",
+    });
+    expect(labelPlusWorkload.output.comment_created).toBe("true");
+    expect(labelPlusWorkload.body).toContain("**Daemon tests (1/4)**");
+    expect(labelPlusWorkload.body).not.toContain("Merge policy");
+
+    // A runner whose gh predates the escape-sequence policy must still get the excerpt: the
+    // probe finds no flag and the plain fetch is used.
+    const olderGh = await runNotice({
+      needs: {
+        plan: { result: "success", outputs: { run: planRun } },
+        merge_policy: { result: "success", outputs: { ejection_notice: "" } },
+        daemon_unit_tests: { result: "failure" },
+      },
+      ghSupportsEscapeFlag: false,
+    });
+    expect(olderGh.output.comment_created).toBe("true");
+    expect(olderGh.body).toContain("FAIL  tests/project-archive.test.ts");
+    expect(olderGh.stdout).toContain("gh version 2.87.3 (fake)");
+  });
+
   it("[P1] routes configured contributors into an independent maintainer merge block", async () => {
     const [routingWorkflow, ciWorkflow, inactivityWorkflow] = await Promise.all([
       readFile(contributorMaintainerCheckWorkflowPath, "utf8"),

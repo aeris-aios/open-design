@@ -442,6 +442,18 @@ export interface ChatRunCreateResponse {
   analyticsAttributionMismatch?: boolean;
 }
 
+/**
+ * `ApiError.details` for `DESIGN_SYSTEM_ENRICHMENT_IN_PROGRESS` (HTTP 409 from
+ * `POST /api/runs` and `POST /api/chat`): the run that already owns the
+ * conversation's enrichment pass. Clients should treat the rejected request
+ * as a no-op and keep following `runId` rather than surfacing a failure.
+ */
+export interface DesignSystemEnrichmentInProgressDetails {
+  kind: 'design_system_enrichment_in_progress';
+  runId: string;
+  conversationId: string;
+}
+
 export type NativeSessionRecoveryState =
   | 'not_applicable'
   | 'no_recoverable_session'

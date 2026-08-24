@@ -154,6 +154,11 @@ describe("pricing contract", () => {
       plans,
       /\.plan-max \.plan-model-module li\.model-with-status em\.unlimited,[\s\S]*?background:\s*rgba\(120, 234, 87, 0\.14\);/,
     );
+    assert.match(plans, /'long-model-name': model\.name\.length > 24/);
+    assert.match(
+      plans,
+      /\.plan-model-module li > span\.long-model-name\s*\{[^}]*font-size:\s*10\.5px;/s,
+    );
     assert.match(plans, /data-usage-module/);
     assert.match(plans, /new IntersectionObserver/);
     assert.match(plans, /threshold:\s*0\.22/);
@@ -171,6 +176,14 @@ describe("pricing contract", () => {
     assert.match(
       plans,
       /\.individual-usage-meter b\s*\{[^}]*left:\s*clamp\(4px, calc\(2\.5769% - 10px\), 16px\);/s,
+    );
+    assert.match(
+      plans,
+      /\.individual-usage-row\s*\{[^}]*grid-template-columns:\s*220px minmax\(0, 1fr\);/s,
+    );
+    assert.match(
+      plans,
+      /\.individual-usage-axis\s*\{[^}]*grid-template-columns:\s*220px minmax\(0, 1fr\);/s,
     );
     assert.doesNotMatch(plans, /--usage-label/);
   });
@@ -378,6 +391,37 @@ describe("pricing contract", () => {
     );
   });
 
+  it("explains delayed client entitlement display on every localized plan card", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+    const expectedNotes = {
+      en: "Model entitlements take effect after subscribing. They may appear with a delay in the client and will display normally after updating to the latest version.",
+      zh: "模型权益订阅后均已生效，客户端可能延迟展示，版本升级后会正常展示。",
+      "zh-tw": "模型權益訂閱後均已生效，客戶端可能延遲顯示，版本升級後會正常顯示。",
+      es: "Los beneficios de los modelos se activan al suscribirte. Es posible que tarden en aparecer en el cliente; se mostrarán correctamente después de actualizar a la última versión.",
+      "pt-br": "Os benefícios dos modelos entram em vigor após a assinatura. Pode haver atraso na exibição no cliente; eles aparecerão normalmente após a atualização para a versão mais recente.",
+      ru: "Права на модели активируются после подписки. В клиенте они могут появиться с задержкой и будут отображаться корректно после обновления до последней версии.",
+      fr: "Les droits d’accès aux modèles prennent effet après l’abonnement. Leur affichage peut être retardé dans le client et redeviendra normal après la mise à jour vers la dernière version.",
+      ko: "모델 이용 권한은 구독 후 적용됩니다. 클라이언트에는 늦게 표시될 수 있으며 최신 버전으로 업데이트하면 정상적으로 표시됩니다.",
+      de: "Die Modellberechtigungen werden nach dem Abonnement aktiviert. Im Client können sie verzögert erscheinen und werden nach dem Update auf die neueste Version korrekt angezeigt.",
+      ja: "モデルの利用権はサブスクリプション登録後に有効になります。クライアントへの表示が遅れる場合がありますが、最新版へアップデートすると正常に表示されます。",
+    } as const;
+
+    for (const [locale, expected] of Object.entries(expectedNotes)) {
+      assert.equal(
+        getPricingContent(locale as keyof typeof expectedNotes).personal.modelEntitlementActivationNote,
+        expected,
+      );
+    }
+    assert.match(
+      individualPlans,
+      /<details class="plan-model-help">\s*<summary aria-label=\{P\.aboutModelEntitlements\}>\?<\/summary>\s*<span class="plan-model-help-copy">\{P\.modelEntitlementActivationNote\}<\/span>\s*<\/details>/s,
+    );
+    assert.match(
+      individualPlans,
+      /\.pricing-card:has\(\.plan-model-help\[open\]\),\s*\.pricing-card:has\(\.plan-model-help:hover\),\s*\.pricing-card:has\(\.plan-model-help:focus-within\)\s*\{\s*z-index:\s*20;/s,
+    );
+  });
+
   it("keeps the Max wordmark readable on its dark card", async () => {
     const [individualPlans, logo] = await Promise.all([
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
@@ -431,7 +475,8 @@ describe("pricing contract", () => {
       proUnlimitedBlock.matchAll(/'([^']+)'/g),
       (match) => match[1],
     );
-    assert.equal(proUnlimitedModels.length, 5);
+    assert.equal(proUnlimitedModels.length, 6);
+    assert.ok(proUnlimitedModels.includes("DeepSeek V4 Flash Vision Exp"));
     assert.ok(proUnlimitedModels.includes("GLM-5.2"));
     assert.equal(proUnlimitedModels.includes("MiniMax M2.7"), false);
   });
@@ -444,6 +489,7 @@ describe("pricing contract", () => {
 
     assert.ok(displayOrderBlock);
     const reviewedOrder = [
+      "DeepSeek V4 Flash Vision Exp",
       "DeepSeek V4 Flash",
       "DeepSeek V4 Pro",
       "GLM-5.2",
@@ -475,6 +521,15 @@ describe("pricing contract", () => {
     assert.match(
       individualPlans,
       /\.model-access-status\s*\{[^}]*grid-template-columns:\s*23px max-content;[^}]*width:\s*104px;[^}]*margin:\s*0 auto;/s,
+    );
+  });
+
+  it("keeps the confirmed vision-model usage estimate in descending order", async () => {
+    const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
+
+    assert.match(
+      individualPlans,
+      /popularModel\('MiMo V2\.5 Pro'\), value: 11000[\s\S]*popularModel\('DeepSeek V4 Flash Vision Exp'\), value: 8000[\s\S]*popularModel\('DeepSeek V4 Pro'\), value: 4300/,
     );
   });
 

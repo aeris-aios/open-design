@@ -21,6 +21,7 @@ const RUNTIME_TABLE = `${repoRoot}apps/web/src/runtime/amr-unlimited-models.ts`;
 
 /** Pricing display name → the AMR model id the workbench receives. */
 const MODEL_ID_BY_DISPLAY_NAME: Record<string, string> = {
+  'DeepSeek V4 Flash Vision Exp': 'deepseek-v4-flash-vision-exp',
   'DeepSeek V4 Flash': 'deepseek-v4-flash',
   'DeepSeek V4 Pro': 'deepseek-v4-pro',
   'GLM-5.2': 'glm-5.2',
@@ -154,12 +155,16 @@ describe('unlimited-model sets stay identical across Pricing and the workbench',
     expect([...runtime[tier]].sort()).toEqual([...pricing[tier]].sort());
   });
 
-  it('keeps the advertised model counts (3 / 4 / 5 / 8)', async () => {
+  it('keeps the advertised model counts (4 / 5 / 6 / 9)', async () => {
     const pricing = await pricingUnlimitedIdsByTier();
-    expect(pricing.go).toHaveLength(3);
-    expect(pricing.plus).toHaveLength(4);
-    expect(pricing.pro).toHaveLength(5);
-    expect(pricing.max).toHaveLength(8);
+    expect(pricing.go).toHaveLength(4);
+    expect(pricing.plus).toHaveLength(5);
+    expect(pricing.pro).toHaveLength(6);
+    expect(pricing.max).toHaveLength(9);
+  });
+
+  it('puts DeepSeek V4 Flash Vision Exp first in the popular-model list', async () => {
+    expect((await pricingPopularModelNames())[0]).toBe('DeepSeek V4 Flash Vision Exp');
   });
 
   it('maps every popular model the Pricing page lists to an AMR model id', async () => {

@@ -35,6 +35,7 @@ interface ModelItem {
 const DEMO_ASSET_BASE = '/pricing-e-final/assets';
 
 const popularModels: ModelItem[] = [
+  { name: 'DeepSeek V4 Flash Vision Exp', icon: '/agents/deepseek.svg' },
   { name: 'DeepSeek V4 Flash', icon: '/agents/deepseek.svg' },
   { name: 'GLM-5.2', icon: `${DEMO_ASSET_BASE}/zai-logo-official-Byn-xbrp.png`, iconClass: 'model-logo-zhipu' },
   { name: 'Kimi K2.7 Code', icon: '/model-icons/kimi.svg', iconClass: 'model-logo-kimi' },
@@ -71,13 +72,12 @@ const imageModels: ModelItem[] = [
 ];
 
 const unlimitedByTier: Record<TierId, Set<string>> = {
-  go: new Set(['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2']),
-  plus: new Set(['DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code']),
-  // Pro's fifth slot is GLM-5.2, not MiniMax M2.7: every tier from Go up
-  // carries GLM-5.2, and MiniMax M2.7 stays metered until Max. The two were
-  // swapped here, so the page promised Pro subscribers unlimited MiniMax while
-  // marking the GLM-5.2 they do get as metered.
+  go: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2']),
+  plus: new Set(['DeepSeek V4 Flash Vision Exp', 'DeepSeek V4 Flash', 'DeepSeek V4 Pro', 'GLM-5.2', 'Kimi K2.7 Code']),
+  // Pro includes GLM-5.2, not MiniMax M2.7: every tier from Go up carries
+  // GLM-5.2, while MiniMax M2.7 stays metered until Max.
   pro: new Set([
+    'DeepSeek V4 Flash Vision Exp',
     'DeepSeek V4 Flash',
     'DeepSeek V4 Pro',
     'GLM-5.2',
@@ -88,6 +88,7 @@ const unlimitedByTier: Record<TierId, Set<string>> = {
 };
 
 const popularModelDisplayOrder = [
+  'DeepSeek V4 Flash Vision Exp',
   'DeepSeek V4 Flash',
   'DeepSeek V4 Pro',
   'GLM-5.2',
@@ -242,6 +243,7 @@ const popularModel = (name: string) => popularModels.find((model) => model.name 
 const usageRows = [
   { ...popularModel('DeepSeek V4 Flash'), value: 13000 },
   { ...popularModel('MiMo V2.5 Pro'), value: 11000 },
+  { ...popularModel('DeepSeek V4 Flash Vision Exp'), value: 8000 },
   { ...popularModel('DeepSeek V4 Pro'), value: 4300 },
   { ...popularModel('MiniMax M2.7'), value: 2800 },
   { ...popularModel('Kimi K2.6'), value: 1000 },
@@ -270,7 +272,7 @@ const comparisonFlagship = [
 const categoryCopy: Record<ModelCategory, { title: string; count: string }> = {
   popular: {
     title: P.popularModels,
-    count: fillTemplate(P.modelCount, { count: '8' }),
+    count: fillTemplate(P.modelCount, { count: String(comparisonPopular.length) }),
   },
   flagship: {
     title: P.flagshipModels,
@@ -388,7 +390,13 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
               <div class="plan-model-modules">
                 <section class="plan-model-module unlimited-module" data-model-module>
                   <header>
-                    <h4>{fillTemplate(P.unlimitedPopularModels, { count: String(unlimitedByTier[tier].size) })}</h4>
+                    <div class="plan-model-title-with-help">
+                      <h4>{fillTemplate(P.unlimitedPopularModels, { count: String(unlimitedByTier[tier].size) })}</h4>
+                      <details class="plan-model-help">
+                        <summary aria-label={P.aboutModelEntitlements}>?</summary>
+                        <span class="plan-model-help-copy">{P.modelEntitlementActivationNote}</span>
+                      </details>
+                    </div>
                   </header>
                   <ul>
                     {popular.map((model) => {
@@ -396,7 +404,10 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
                       return (
                         <li class="model-with-status">
                           <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
-                          <span>{model.name}</span>
+                          <span
+                            class:list={{ 'long-model-name': model.name.length > 24 }}
+                            title={model.name}
+                          >{model.name}</span>
                           {popularStatus.kind === 'unlimited' && <em class={popularStatus.kind}>{popularStatus.text}</em>}
                         </li>
                       );
@@ -622,6 +633,12 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   .pricing-card:nth-child(2) { animation-delay: 0.1s; }
   .pricing-card:nth-child(3) { animation-delay: 0.2s; }
   .pricing-card:nth-child(4) { animation-delay: 0.3s; }
+
+  .pricing-card:has(.plan-model-help[open]),
+  .pricing-card:has(.plan-model-help:hover),
+  .pricing-card:has(.plan-model-help:focus-within) {
+    z-index: 20;
+  }
 
   .pricing-card.plan-max {
     color: #f7f8f4;
@@ -934,6 +951,70 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     white-space: nowrap;
   }
 
+  .plan-model-title-with-help {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .plan-model-help {
+    position: relative;
+    z-index: 3;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+  }
+
+  .plan-model-help summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    color: #5f645c;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    list-style: none;
+    cursor: help;
+    background: rgba(255, 255, 255, 0.52);
+    border: 1px solid #8a8f86;
+    border-radius: 50%;
+  }
+
+  .plan-model-help summary::-webkit-details-marker { display: none; }
+  .plan-model-help summary::marker { content: ''; }
+  .plan-model-help summary:focus-visible {
+    outline: 2px solid #1f7e16;
+    outline-offset: 2px;
+  }
+
+  .plan-model-help-copy {
+    position: absolute;
+    z-index: 5;
+    top: 23px;
+    left: -8px;
+    display: block;
+    width: min(250px, calc(100vw - 32px));
+    padding: 10px 12px;
+    color: #30342e;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    background: #fff;
+    border: 1px solid rgba(65, 72, 61, 0.16);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(28, 35, 24, 0.12);
+  }
+
+  .plan-model-help:not([open]):not(:hover):not(:focus-within) > .plan-model-help-copy {
+    display: none;
+  }
+
   .plan-model-module.unlimited-module h4,
   .plan-model-module.recommended-model-module h4 { color: #1f7e16; }
 
@@ -978,6 +1059,11 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .plan-model-module li > span.long-model-name {
+    font-size: 10.5px;
+    letter-spacing: -0.015em;
   }
 
   .plan-model-module li:nth-child(n + 4) { display: none; }
@@ -1144,6 +1230,19 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
   }
 
   .plan-max .plan-model-module h4 { color: var(--pricing-accent); }
+  .plan-max .plan-model-help summary {
+    color: #a8e697;
+    background: rgba(120, 234, 87, 0.08);
+    border-color: rgba(168, 230, 151, 0.62);
+  }
+  .plan-max .plan-model-help-copy {
+    right: -8px;
+    left: auto;
+    color: #eef2eb;
+    background: #253024;
+    border-color: rgba(223, 239, 218, 0.16);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  }
   .plan-max .plan-model-module header > span { color: #9caa97; }
   .plan-max .plan-model-module li,
   .plan-max .plan-benefit-list li { color: #eef2eb; }
@@ -1260,7 +1359,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .individual-usage-row {
     display: grid;
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
     align-items: center;
     min-height: 48px;
     padding: 0 16px;
@@ -1339,7 +1438,7 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
 
   .individual-usage-axis {
     display: grid;
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
     align-items: start;
     min-height: 38px;
     padding: 0 16px;
