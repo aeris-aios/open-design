@@ -13,10 +13,20 @@ export class VersionedLauncher {
 
   async start(): Promise<LifecycleStatus> {
     const generation = await this.store.activeGeneration();
-    const status = await this.lifecycle.start(generation);
-    if (status.state !== "running" || status.generationId !== generation.id) throw new Error("lifecycle did not acknowledge the active generation");
-    await this.store.markSuccessful(generation.id);
-    return status;
+    try {
+      const status = await this.lifecycle.start(generation);
+      if (status.state !== "running" || status.generationId !== generation.id) throw new Error("lifecycle did not acknowledge the active generation");
+      await this.store.markSuccessful(generation.id);
+      return status;
+    } catch (error) {
+      const fallback = await this.store.rollbackFailedActivation();
+      if (fallback === null || fallback.id === generation.id) throw error;
+      await this.lifecycle.stop();
+      const recovered = await this.lifecycle.start(fallback);
+      if (recovered.state !== "running" || recovered.generationId !== fallback.id) throw error;
+      await this.store.markSuccessful(fallback.id);
+      return recovered;
+    }
   }
 
   status(): Promise<LifecycleStatus> { return this.lifecycle.status(); }

@@ -7,7 +7,6 @@
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "files": ["dist"],
-  "bin": {"open-design-standalone-compose": "./dist/exact-compose.mjs"},
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -16,7 +15,6 @@
   },
   "scripts": {
     "build": "tsx ./esbuild.config.ts && tsc -p tsconfig.json --emitDeclarationOnly",
-    "exact:compose": "pnpm run build && node ./dist/exact-compose.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit"
   },

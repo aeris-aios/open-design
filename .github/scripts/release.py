@@ -81,37 +81,51 @@ def main() -> None:
         etag = put_immutable(url, body, "application/octet-stream")
         uploaded.append({"url": url, "etag": etag, "sha256": artifact["sha256"]})
 
-    metadata_path = Path(pack["metadataFile"]).resolve()
-    metadata_body = metadata_path.read_bytes()
-    if hashlib.sha256(metadata_body).hexdigest() != pack["metadataSha256"]:
-        raise SystemExit("metadata digest does not match pack receipt")
-    exact_url = f"{prefix}/{version}/metadata.json"
-    exact_etag = put_immutable(exact_url, metadata_body, "application/json; charset=utf-8")
-    readback = request(exact_url)
-    if readback.status != 200 or readback.read() != metadata_body:
-        raise SystemExit("exact metadata readback failed")
+    documents = []
+    for document in pack["documents"]:
+        path = Path(document["file"]).resolve()
+        body = path.read_bytes()
+        if hashlib.sha256(body).hexdigest() != document["sha256"] or len(body) != document["size"]:
+            raise SystemExit(f"document receipt verification failed: {path}")
+        url = f"{prefix}/{version}/{path.name}"
+        etag = put_immutable(url, body, "application/json; charset=utf-8")
+        readback = request(url)
+        if readback.status != 200 or readback.read() != body:
+            raise SystemExit(f"exact document readback failed: {url}")
+        documents.append({"url": url, "etag": etag, "sha256": document["sha256"]})
 
-    latest_url = f"{prefix}/latest/metadata.json"
+    head_path = Path(pack["channelHeadFile"]).resolve()
+    head_body = head_path.read_bytes()
+    latest_url = f"{prefix}/latest/channel-head.json"
     current = request(latest_url)
     headers = {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=60"}
     if current.status == 404:
         headers["If-None-Match"] = "*"
     elif current.status == 200:
         current_body = current.read()
-        if current_body == metadata_body:
+        if current_body == head_body:
             latest_etag = current.headers.get("ETag", "")
-            write_json(args.receipt.resolve(), {"schemaVersion": 1, "operation": "exact.release", "channel": channel, "releaseVersion": version, "exactMetadataUrl": exact_url, "exactMetadataEtag": exact_etag, "latestMetadataUrl": latest_url, "latestMetadataEtag": latest_etag, "artifacts": uploaded, "replayed": True})
+            write_json(args.receipt.resolve(), {"schemaVersion": 1, "operation": "exact.release", "channel": channel, "releaseVersion": version, "latestChannelHeadUrl": latest_url, "latestChannelHeadEtag": latest_etag, "documents": documents, "artifacts": uploaded, "replayed": True})
             return
-        current_version = json.loads(current_body)["metadata"]["releaseVersion"]
-        if release_number(version, channel) <= release_number(current_version, channel):
-            raise SystemExit(f"latest would not advance monotonically: {current_version} -> {version}")
+        current_head = json.loads(current_body)["head"]
+        incoming_head = json.loads(head_body)["head"]
+        advanced = False
+        for lane in ("closure", "terminal"):
+            current_version = current_head["lanes"][lane]["releaseVersion"]
+            incoming_version = incoming_head["lanes"][lane]["releaseVersion"]
+            order = release_number(incoming_version, channel) > release_number(current_version, channel)
+            if release_number(incoming_version, channel) < release_number(current_version, channel):
+                raise SystemExit(f"{lane} lane would move backward: {current_version} -> {incoming_version}")
+            advanced = advanced or order
+        if not advanced:
+            raise SystemExit("channel head CAS would not advance either lane")
         headers["If-Match"] = current.headers.get("ETag", "")
     else:
         raise SystemExit(f"latest inspection failed ({current.status})")
-    promoted = request(latest_url, "PUT", metadata_body, headers)
+    promoted = request(latest_url, "PUT", head_body, headers)
     if promoted.status != 200:
         raise SystemExit(f"latest CAS failed ({promoted.status})")
-    write_json(args.receipt.resolve(), {"schemaVersion": 1, "operation": "exact.release", "channel": channel, "releaseVersion": version, "exactMetadataUrl": exact_url, "exactMetadataEtag": exact_etag, "latestMetadataUrl": latest_url, "latestMetadataEtag": promoted.headers.get("ETag", ""), "artifacts": uploaded, "replayed": False})
+    write_json(args.receipt.resolve(), {"schemaVersion": 1, "operation": "exact.release", "channel": channel, "releaseVersion": version, "latestChannelHeadUrl": latest_url, "latestChannelHeadEtag": promoted.headers.get("ETag", ""), "documents": documents, "artifacts": uploaded, "replayed": False})
 
 
 if __name__ == "__main__":
