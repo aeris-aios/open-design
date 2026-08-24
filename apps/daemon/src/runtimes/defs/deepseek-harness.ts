@@ -59,8 +59,13 @@ export const deepseekHarnessAgentDef = {
     // who followed our instructions land on an "untested version" warning the
     // week after we bumped the installer. Accept the release line; a version
     // off it still warns.
-    supportedVersions: ['0.1.0-rc.6', '0.1.0-rc.8'],
-    supportedVersionPattern: /^0\.1\.0-rc\.\d+$/u,
+    supportedVersions: ['0.1.0-rc.8', '0.1.1-rc.2'],
+    // The line, not one point on it. Scoping this to `0.1.0-rc.N` was still a
+    // pin: upstream shipped `0.1.1-rc.1` two days later and every user on it
+    // was told their CLI was untested. Patch lines within 0.1.x carry the same
+    // profile protocol, and a stable release on the line is not "untested"
+    // either — a genuinely new minor still is.
+    supportedVersionPattern: /^0\.1\.\d+(?:-rc\.\d+)?$/u,
     requireVersion: true,
     parse: parseDeepSeekHarnessVersion,
   },

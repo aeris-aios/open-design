@@ -2,7 +2,7 @@
 set -eu
 
 NODE_VERSION='24.19.0'
-DSH_VERSION='0.1.0-rc.8'
+DSH_VERSION='0.1.1-rc.2'
 PNPM_VERSION='11.7.0'
 # Freeze npm's view of the registry to just after DSH_VERSION was published.
 #
@@ -17,7 +17,7 @@ PNPM_VERSION='11.7.0'
 #
 # The cutoff must stay LATER than DSH_VERSION's publish time and EARLIER than
 # the next release candidate's. Update both values together.
-DSH_RESOLUTION_CUTOFF='2026-08-19T16:00:00Z'
+DSH_RESOLUTION_CUTOFF='2026-08-21T13:00:00Z'
 
 NO_LAUNCH=0
 
