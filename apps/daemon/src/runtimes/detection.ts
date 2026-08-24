@@ -53,6 +53,50 @@ const detectedRuntimeVersionProbes = new Map<
   string,
   Promise<DetectedRuntimeVersions | null>
 >();
+// Detection's answer for one agent is only ever replaced by a COMPLETED probe.
+//
+// `probe()` used to clear the entry before re-reading it, so for the whole
+// duration of every `/api/agents` refresh the daemon could not say which CLI
+// version it had detected. Anything that asked inside that window — a run
+// failing right then, wanting to name the build that refused it — got nothing,
+// or, with two probes overlapping, the loser's answer. A probe now publishes
+// once, at the end, and only when no probe that started later has already
+// published, so the cache always holds the newest COMPLETED reading rather than
+// the state of one in flight.
+let runtimeVersionProbeSequence = 0;
+const detectedRuntimeVersionPublished = new Map<string, number>();
+
+/** Claims a monotonic slot for a probe that is about to start. */
+function beginRuntimeVersionProbe(): number {
+  runtimeVersionProbeSequence += 1;
+  return runtimeVersionProbeSequence;
+}
+
+/**
+ * Publishes a finished probe's reading, unless a later probe already answered.
+ *
+ * @param agentId - Runtime whose detected identity this is.
+ * @param sequence - The slot claimed by `beginRuntimeVersionProbe`.
+ * @param versions - What the probe found, or `null` when the runtime turned out not to be invocable.
+ * @param scope - Launch-identity scope the reading is valid for.
+ */
+function commitDetectedRuntimeVersions(
+  agentId: string,
+  sequence: number,
+  versions: DetectedRuntimeVersions | null,
+  scope: string,
+): void {
+  if (sequence < (detectedRuntimeVersionPublished.get(agentId) ?? 0)) return;
+  detectedRuntimeVersionPublished.set(agentId, sequence);
+  if (versions) {
+    detectedRuntimeVersions.set(agentId, versions);
+    detectedRuntimeVersionScopes.set(agentId, scope);
+    return;
+  }
+  detectedRuntimeVersions.delete(agentId);
+  detectedRuntimeVersionScopes.delete(agentId);
+}
+
 const detectedRuntimeCapabilityScopes = new Map<string, string>();
 const detectedRuntimeCapabilityProbes = new Map<
   string,
@@ -347,11 +391,15 @@ async function probeRuntimeVersionsOnly(
   def: RuntimeAgentDef,
   context: RuntimeVersionProbeContext,
 ): Promise<DetectedRuntimeVersions | null> {
+  const sequence = beginRuntimeVersionProbe();
   const [outcome, amrOpenCodeVersion] = await Promise.all([
     probeVersionAtPath(def, context.launchPath, context.probeEnv),
     probeAmrOpenCodeVersion(def, context.probeEnv),
   ]);
-  if (outcome.kind !== 'spawned') return null;
+  if (outcome.kind !== 'spawned') {
+    commitDetectedRuntimeVersions(def.id, sequence, null, context.scope);
+    return null;
+  }
   const versions: DetectedRuntimeVersions = {
     invocable: true,
     ...(outcome.version ? { agentCliVersion: outcome.version } : {}),
@@ -362,8 +410,7 @@ async function probeRuntimeVersionsOnly(
         }
       : {}),
   };
-  detectedRuntimeVersions.set(def.id, versions);
-  detectedRuntimeVersionScopes.set(def.id, context.scope);
+  commitDetectedRuntimeVersions(def.id, sequence, versions, context.scope);
   return { ...versions };
 }
 
@@ -425,7 +472,16 @@ async function probe(
   def: RuntimeAgentDef,
   configuredEnv: Record<string, string> = {},
 ): Promise<DetectedAgent> {
-  detectedRuntimeVersions.delete(def.id);
+  const sequence = beginRuntimeVersionProbe();
+  // Every giving-up exit below retracts the previous reading — but only now
+  // that this probe has finished, never speculatively on the way in.
+  const giveUp = (
+    diagnostics: AgentDiagnostic[] = [],
+    detected?: { path?: string; version?: string | null },
+  ): DetectedAgent => {
+    commitDetectedRuntimeVersions(def.id, sequence, null, '');
+    return unavailableAgent(def, diagnostics, detected);
+  };
   // Detection must probe the exact path the runtime will spawn, not just the
   // PATH-visible shim. This is load-bearing for Codex under nvm/fnm/mise:
   // the discovered `codex` entry is often a `#!/usr/bin/env node` wrapper
@@ -436,7 +492,7 @@ async function probe(
   // hand even though the real launch path is healthy.
   const launch = resolveAgentLaunch(def, configuredEnv);
   if (!launch.selectedPath || !launch.launchPath) {
-    return unavailableAgent(def, [buildExecutableDiagnostic(def, configuredEnv)]);
+    return giveUp([buildExecutableDiagnostic(def, configuredEnv)]);
   }
   const probeEnv = applyAgentLaunchEnv(
     spawnEnvForAgent(
@@ -453,18 +509,16 @@ async function probe(
   );
   const outcome = await probeVersionAtPath(def, launch.launchPath, probeEnv);
   if (outcome.kind === 'not-invocable') {
-    return unavailableAgent(def, [
-      buildNotInvocableDiagnostic(def, launch, outcome.cause),
-    ]);
+    return giveUp([buildNotInvocableDiagnostic(def, launch, outcome.cause)]);
   }
   if (def.versionPolicy?.requireVersion && !outcome.version) {
-    return unavailableAgent(def, [buildVersionDiagnostic(def, outcome.version)]);
+    return giveUp([buildVersionDiagnostic(def, outcome.version)]);
   }
   let runtimeCompanionVersion: string | undefined;
   if (def.compatibilityProbe) {
     try {
       if (def.compatibilityProbe.preflight && !def.compatibilityProbe.preflight(probeEnv)) {
-        return unavailableAgent(def, [buildCompatibilityDiagnostic(def)], {
+        return giveUp([buildCompatibilityDiagnostic(def)], {
           path: launch.selectedPath,
           version: outcome.version,
         });
@@ -480,7 +534,7 @@ async function probe(
       );
       runtimeCompanionVersion = def.compatibilityProbe.parse(String(stdout));
     } catch {
-      return unavailableAgent(def, [buildCompatibilityDiagnostic(def)], {
+      return giveUp([buildCompatibilityDiagnostic(def)], {
         path: launch.selectedPath,
         version: outcome.version,
       });
@@ -527,9 +581,10 @@ async function probe(
       : {}),
   };
   if (Object.keys(runtimeVersions).length > 0) {
-    detectedRuntimeVersions.set(def.id, runtimeVersions);
-    detectedRuntimeVersionScopes.set(
+    commitDetectedRuntimeVersions(
       def.id,
+      sequence,
+      runtimeVersions,
       runtimeVersionProbeContext(def, configuredEnv)?.scope ?? '',
     );
   }

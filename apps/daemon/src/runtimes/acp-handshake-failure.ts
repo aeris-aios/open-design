@@ -3,19 +3,19 @@
  * `initialize` and then refused to open a session — and NAMES it, so the
  * client can say what to do about it in the reader's own language.
  *
- * `agent-protocol/acp/session.ts` numbers the handshake deterministically:
- * request id 1 is `initialize`, id 2 is `session/new` (or `session/load` when
- * resuming), and ids from 3 up belong to model selection and `session/prompt`.
- * So a JSON-RPC error carrying id 1 or 2 is, by construction, a handshake
- * failure: nothing has streamed yet. Anything numbered 3 or higher happened
- * after a session existed and keeps the old transient treatment.
+ * `acp-handshake-id.ts` answers *when* the failure happened: ids 1 and 2 are
+ * the handshake, ids 3 and up happened after a session existed and keep the old
+ * transient treatment.
  *
- * The id answers *when* the failure happened, never *why* — so it alone can
- * never justify the verdict. A CLI that is signed out, throttled, or talking to
- * a dead upstream also fails inside the handshake, and telling that user to
- * change a perfectly good CLI sends them after the wrong fix.
- * `isAcpCliSessionRefusalText` is the predicate the verdict hangs off:
- * handshake numbering AND no cause with a remedy of its own.
+ * The id alone can never justify the verdict. A CLI that is signed out,
+ * throttled, out of balance, talking to a dead upstream, or handed more content
+ * than it accepts also fails inside the handshake, and telling any of those
+ * users to change a perfectly good CLI sends them after the wrong fix. So the
+ * *why* is not decided here at all: `isAcpCliSessionRefusalText` is
+ * re-exported from `run-failure-classification.ts`, which owns every cause
+ * signature the daemon knows and is the same function that files the run for
+ * telemetry. One decision, so the card the user reads and the bucket the run
+ * lands in can never prescribe two different fixes.
  *
  * What this module does NOT do is write the sentence. The daemon has no locale
  * — a paragraph composed here lands verbatim in `run.error` and is rendered
@@ -37,68 +37,19 @@
  * daemon actually detected and leaves the wording to the client.
  */
 
-import { classifyAgentServiceFailure } from './auth.js';
+import { isAcpCliSessionRefusalText } from '../run-failure-classification.js';
 
-/** Highest JSON-RPC request id the ACP handshake can use (`initialize`, then `session/new` / `session/load`). */
-export const ACP_HANDSHAKE_MAX_RPC_ID = 2;
+export {
+  ACP_HANDSHAKE_MAX_RPC_ID,
+  acpRpcErrorId,
+  isAcpHandshakeRpcErrorText,
+} from './acp-handshake-id.js';
 
-/**
- * Reads the JSON-RPC request id out of an ACP failure line.
- *
- * @param text - Failure text as surfaced by the ACP session (`rpcErrorMessage`).
- * @returns The request id, or `null` when the text carries no `json-rpc id N:` prefix.
- */
-export function acpRpcErrorId(text: string | null | undefined): number | null {
-  if (typeof text !== 'string' || !text) return null;
-  const match = /\bjson-rpc id (\d+):/i.exec(text);
-  if (!match?.[1]) return null;
-  const id = Number.parseInt(match[1], 10);
-  return Number.isSafeInteger(id) ? id : null;
-}
-
-/**
- * True when a failure text is a JSON-RPC error raised during the ACP
- * handshake, i.e. before any session existed. Structural only: it reports
- * *when* the failure happened and says nothing about its cause.
- *
- * @param text - Failure text as surfaced by the ACP session.
- */
-export function isAcpHandshakeRpcErrorText(text: string | null | undefined): boolean {
-  const id = acpRpcErrorId(text);
-  return id !== null && id >= 1 && id <= ACP_HANDSHAKE_MAX_RPC_ID;
-}
-
-/**
- * True when the handshake failure names a cause the user fixes some other way
- * — an expired credential, an exhausted quota, an upstream outage.
- *
- * Reuses `classifyAgentServiceFailure` instead of growing a second signature
- * list: it is agent-agnostic, covers exactly these three classes, and carries
- * its own suite. It is unrelated to `isCliNotInstalledText` in
- * `run-failure-classification.ts` and must stay narrower than it — that
- * predicate answers "was the binary even there", which a CLI that already
- * answered `initialize` has plainly settled.
- *
- * @param text - Failure text as surfaced by the ACP session.
- */
-function handshakeFailureNamesItsOwnRemedy(text: string | null | undefined): boolean {
-  return classifyAgentServiceFailure(typeof text === 'string' ? text : '') !== null;
-}
-
-/**
- * True when a handshake failure reads as the agent CLI itself refusing to open
- * a session: it answered `initialize`, rejected `session/new` / `session/load`,
- * and offered no cause of its own. That is the one shape "this CLI build cannot
- * start a session — change it, then retry" actually answers, because the build
- * is the only variable left. A handshake error that does name its cause keeps
- * that cause's own code, so the user reads the card that points at their real
- * fix.
- *
- * @param text - Failure text as surfaced by the ACP session.
- */
-export function isAcpCliSessionRefusalText(text: string | null | undefined): boolean {
-  return isAcpHandshakeRpcErrorText(text) && !handshakeFailureNamesItsOwnRemedy(text);
-}
+// The verdict — handshake numbering AND no cause the run classifier already
+// has a remedy for — is `classifyRunFailure`'s, not this module's. Re-exported
+// so the ACP surface still reads as one place, while there is exactly one
+// implementation to keep honest.
+export { isAcpCliSessionRefusalText } from '../run-failure-classification.js';
 
 /**
  * Structured API error code for an ACP CLI that answered `initialize` and then

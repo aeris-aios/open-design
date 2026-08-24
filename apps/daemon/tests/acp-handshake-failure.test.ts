@@ -349,3 +349,196 @@ describe('handshake failures that name their own remedy', () => {
     });
   });
 });
+
+// The wording of a JSON-RPC rejection is the agent's choice, not a signal. A
+// CLI build that cannot open a session says so as `Internal error`, as `Method
+// not found`, or as `Invalid params` depending on which layer refused — and
+// every one of them means the same thing: this build answered `initialize` and
+// then would not start a session.
+//
+// These run through the event shape a real ACP failure produces, because that
+// is where the wording used to decide the outcome: `server.ts` emits a
+// `runtime_close` diagnostic carrying `rpc_close_reason: 'fatal_rpc_error'`
+// before classifying, and that close reason is enough to promote an unclaimed
+// failure to a retryable `fatal_rpc_error` on `child_close`.
+describe('handshake rejections the agent did not word as "Internal error"', () => {
+  const REFUSALS = [
+    'json-rpc id 1: Internal error',
+    'json-rpc id 2: Internal error',
+    'json-rpc id 1: Method not found',
+    'json-rpc id 2: Method not found',
+    'json-rpc id 2: Invalid params',
+    'json-rpc id 2: Server error',
+  ];
+
+  /** The events a real ACP handshake failure leaves behind before classification. */
+  function acpCloseEvents(error: string, retryable?: boolean) {
+    return [
+      {
+        event: 'error',
+        data: {
+          error: {
+            code: 'AGENT_EXECUTION_FAILED',
+            message: error,
+            ...(retryable === undefined ? {} : { retryable }),
+          },
+        },
+      },
+      {
+        event: 'diagnostic',
+        data: {
+          type: 'runtime_close',
+          rpc_close_reason: 'fatal_rpc_error',
+          status: 'failed',
+        },
+      },
+    ];
+  }
+
+  function classifyAcpClose(errorCode: string, error: string, retryable?: boolean) {
+    return classifyRunFailure({
+      result: 'failed',
+      status: { status: 'failed', error, errorCode },
+      errorCode,
+      agentId: 'kimi',
+      events: acpCloseEvents(error, retryable),
+    });
+  }
+
+  function retryFor(errorCode: string, error: string, retryable?: boolean) {
+    const failure = classifyAcpClose(errorCode, error, retryable);
+    return decideSafeRunRetry({
+      result: 'failed',
+      attemptCount: 0,
+      failure: failure
+        ? {
+            failure_category: failure.failure_category,
+            failure_detail: failure.failure_detail,
+            failure_stage: failure.failure_stage,
+            retryable: failure.retryable,
+          }
+        : {},
+      sideEffects: {},
+      random: () => 0,
+    });
+  }
+
+  it.each(REFUSALS)('files it as a handshake-stage CLI refusal: %s', (raw) => {
+    expect(classifyAcpClose('AGENT_EXECUTION_FAILED', raw)).toMatchObject({
+      failure_category: 'process_exit',
+      failure_detail: 'agent_protocol_error',
+      failure_stage: 'session_init',
+      retryable: false,
+      user_action: 'install_cli',
+    });
+  });
+
+  it.each(REFUSALS)('reaches the same verdict once the code is stamped: %s', (raw) => {
+    // By the time the run is classified, the ACP payload rewrite has already
+    // replaced the error code with `AGENT_CLI_SESSION_REFUSED`. The verdict
+    // must not depend on which of the two codes classification happens to see,
+    // or the run lands in the `unknown` bucket and stops being triageable.
+    expect(classifyAcpClose(ACP_CLI_SESSION_REFUSED_CODE, raw)).toMatchObject({
+      failure_category: 'process_exit',
+      failure_detail: 'agent_protocol_error',
+      failure_stage: 'session_init',
+      retryable: false,
+      user_action: 'install_cli',
+    });
+  });
+
+  it.each(REFUSALS)('refuses to re-run it, even when the CLI calls it transient: %s', (raw) => {
+    expect(retryFor('AGENT_EXECUTION_FAILED', raw).shouldRetry).toBe(false);
+    expect(retryFor('AGENT_EXECUTION_FAILED', raw, true).shouldRetry).toBe(false);
+    expect(retryFor(ACP_CLI_SESSION_REFUSED_CODE, raw, true).shouldRetry).toBe(false);
+  });
+
+  // The guard the fix must not trade away: ids 3 and up belong to model
+  // selection and `session/prompt`, so a session already existed and the
+  // failure stays the transient, retryable protocol error it has always been.
+  it.each([
+    'json-rpc id 3: Internal error',
+    'json-rpc id 3: Method not found',
+    'json-rpc id 4: Invalid params',
+    'json-rpc id 12: Internal error',
+  ])('leaves a post-session protocol error transient: %s', (raw) => {
+    const failure = classifyAcpClose('AGENT_EXECUTION_FAILED', raw);
+    expect(failure?.failure_stage).not.toBe('session_init');
+    expect(failure?.user_action).not.toBe('install_cli');
+    expect(failure?.retryable).toBe(true);
+    expect(retryFor('AGENT_EXECUTION_FAILED', raw).shouldRetry).toBe(true);
+  });
+});
+
+// A handshake failure that the run classifier already recognises has a remedy
+// of its own, and that remedy is the one the user must follow. Reading only the
+// three `classifyAgentServiceFailure` classes left every other recognised cause
+// — prompt size above all — looking like an unexplained CLI refusal, so a user
+// whose content was too long was told their CLI version was incompatible.
+describe('handshake failures the run classifier already has a remedy for', () => {
+  const ALREADY_REMEDIED: ReadonlyArray<readonly [string, string, string]> = [
+    [
+      'json-rpc id 2: [code=request_too_large] request body exceeds configured limit',
+      'prompt_too_large',
+      'reduce_context',
+    ],
+    [
+      'json-rpc id 2: prompt is too long: 210000 tokens > 200000 maximum',
+      'prompt_too_large',
+      'reduce_context',
+    ],
+    ['json-rpc id 2: Authentication required', 'auth', 'login'],
+    ['json-rpc id 2: rate limit exceeded', 'rate_limit', 'retry'],
+  ];
+
+  it.each(ALREADY_REMEDIED)(
+    'does not read %s as an unexplained CLI refusal',
+    (raw, category) => {
+      // Precedence, not a second signature list: whatever `classifyRunFailure`
+      // can already name, the ACP rewrite must leave alone.
+      expect(classify('AGENT_EXECUTION_FAILED', raw)).toMatchObject({
+        failure_category: category,
+      });
+      expect(isAcpCliSessionRefusalText(raw)).toBe(false);
+    },
+  );
+
+  it.each(ALREADY_REMEDIED)(
+    'ships %s to the client under its own remedy, not the CLI upgrade copy',
+    (raw) => {
+      // The predicate and the classifier must not prescribe two different
+      // fixes for one failure: the card would say "update your CLI" while the
+      // telemetry says "shorten the prompt".
+      expect(withAcpHandshakeFailureGuidance({ message: raw })).toEqual({ message: raw });
+      const payload = withAcpHandshakeFailureGuidance(
+        { message: raw, error: { code: 'AGENT_EXECUTION_FAILED', message: raw } },
+        { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+      ) as { error: { code: string; details?: Record<string, unknown> } };
+      expect(payload.error.code).not.toBe(ACP_CLI_SESSION_REFUSED_CODE);
+      expect(payload.error.details?.action).not.toBe('update_cli');
+    },
+  );
+
+  it('keeps the user action the classifier assigns', () => {
+    for (const [raw, , action] of ALREADY_REMEDIED) {
+      expect(classify('AGENT_EXECUTION_FAILED', raw)?.user_action).toBe(action);
+    }
+  });
+
+  // A handshake-numbered frame carrying an OS-level crash banner reports a
+  // child that DIED; the JSON-RPC envelope is only how the corpse arrived. The
+  // remedy is the crash's (ship a compatible runtime), never "change your CLI
+  // version". Sampled from a real AMR failure on Windows.
+  it('leaves a crashed child to the crash reading, not the refusal reading', () => {
+    const CRASHED =
+      'json-rpc id 2: start opencode server: opencode exited before readiness: exit status 0xc0000409';
+    expect(isAcpHandshakeRpcErrorText(CRASHED)).toBe(true);
+    expect(isAcpCliSessionRefusalText(CRASHED)).toBe(false);
+    expect(classify('AGENT_SIGNAL_SIGTERM', CRASHED)).toMatchObject({
+      failure_category: 'process_exit',
+      failure_detail: 'process_crashed',
+      user_action: 'none',
+    });
+    expect(withAcpHandshakeFailureGuidance({ message: CRASHED })).toEqual({ message: CRASHED });
+  });
+});

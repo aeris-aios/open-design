@@ -10,10 +10,7 @@ import { isModelWindowLimitFailure } from '@open-design/contracts';
 
 import { classifyAmrAccountFailure } from './integrations/vela-errors.js';
 import { summarizeRunToolProgress } from './run-diagnostics.js';
-import {
-  isAcpCliSessionRefusalText,
-  isAcpHandshakeRpcErrorText,
-} from './runtimes/acp-handshake-failure.js';
+import { isAcpHandshakeRpcErrorText } from './runtimes/acp-handshake-id.js';
 import { classifyAgentServiceFailure } from './runtimes/auth.js';
 import type { RunResult, RunStatusForAnalytics } from './run-result.js';
 
@@ -828,40 +825,22 @@ function classifyRunFailureBase(
     );
   }
 
-  if (isAgentProtocolErrorText(text)) {
-    const protocolDetail = processExitDetail(errorCode, text);
-    const handshakeStage =
-      protocolDetail === 'agent_protocol_error' && isAcpHandshakeRpcErrorText(text);
-    // A JSON-RPC error numbered inside the ACP handshake (`initialize`,
-    // `session/new` / `session/load`) means the CLI never opened a session, so
-    // the run produced nothing. When the CLI also gave no reason for refusing,
-    // its build is the only variable left: attribute it to `session_init` —
-    // that stage is what stops the retry policy from re-running a
-    // deterministic failure, and it points triage at the CLI rather than at
-    // the model or the stream.
-    if (handshakeStage && isAcpCliSessionRefusalText(text)) {
-      return classification(
-        'process_exit',
-        protocolDetail,
-        'session_init',
-        false,
-        'install_cli',
-      );
-    }
-    if (!handshakeStage) {
-      return classification(
-        'process_exit',
-        protocolDetail,
-        'child_close',
-        retryableHint ?? true,
-        retryableHint === false ? 'none' : 'retry',
-      );
-    }
-    // A handshake failure that named its own cause — an expired credential, an
-    // exhausted quota, an upstream outage. The JSON-RPC frame is only the
-    // envelope it arrived in, so fall through to the branches that own those
-    // causes and let the run be filed, and the user advised, under the fix
-    // that actually applies.
+  // A protocol failure from AFTER the handshake: a session existed, so the run
+  // may simply have hit a bad moment and the old transient treatment stands.
+  // Handshake-numbered frames (ids 1 and 2) are deliberately NOT claimed here
+  // — the wording an agent chooses for its rejection (`Internal error`,
+  // `Method not found`, `Invalid params`) is not a signal, and matching on it
+  // made the verdict depend on which layer of the CLI happened to refuse.
+  // Those fall through every cause branch below and are answered once, at
+  // `isAcpHandshakeRpcErrorText` further down.
+  if (isAgentProtocolErrorText(text) && !isAcpHandshakeRpcErrorText(text)) {
+    return classification(
+      'process_exit',
+      processExitDetail(errorCode, text),
+      'child_close',
+      retryableHint ?? true,
+      retryableHint === false ? 'none' : 'retry',
+    );
   }
 
   const serviceFailure = classifyAgentServiceFailure(text);
@@ -1006,6 +985,36 @@ function classifyRunFailureBase(
     );
   }
 
+  // Last word on an ACP handshake rejection, and deliberately the last: every
+  // branch above has already had its chance to name a cause, so reaching here
+  // means the agent CLI answered `initialize`, refused `session/new` /
+  // `session/load`, and gave no reason the daemon recognises. Its build is then
+  // the only variable left — file it at `session_init`, which is the stage the
+  // retry policy refuses to re-run, and point the user at the CLI rather than
+  // at the model or the stream.
+  //
+  // Placing this AFTER the cause branches is what makes the precedence a fact
+  // rather than a promise: a signed-out CLI is filed under auth, a throttled
+  // one under rate_limit, an over-long prompt under prompt_too_large, and only
+  // an unexplained refusal reaches this line. `isAcpCliSessionRefusalText` is
+  // this same reading, exposed so the ACP payload rewrite prescribes exactly
+  // what the telemetry records.
+  //
+  // The one deferral is not about wording: a text carrying an OS-level crash
+  // banner (a Bun panic, a Windows STATUS_ILLEGAL_INSTRUCTION from the bundled
+  // opencode) describes a child that DIED, and the JSON-RPC frame is only how
+  // the corpse was reported. `signalInterruptClassification` below owns that
+  // reading — the same reason `isCpuUnsupportedCrashText` is checked above.
+  if (isAcpHandshakeRpcErrorText(text) && !isProcessCrashText(text)) {
+    return classification(
+      'process_exit',
+      'agent_protocol_error',
+      'session_init',
+      false,
+      'install_cli',
+    );
+  }
+
   // ACP fatal paths ask the host to terminate the child after the protocol
   // failure. The resulting exit/signal is therefore cleanup, not the cause.
   // Prefer the runtime_close reason once specific text classifiers above have
@@ -1063,6 +1072,39 @@ function classifyRunFailureBase(
     retryableHint ?? false,
     retryableHint ? 'retry' : 'none',
   );
+}
+
+/**
+ * The error code the text-only probe below classifies under: the generic
+ * "the agent failed and said this" code, so the verdict is decided by the text
+ * and nothing else.
+ */
+const TEXT_ONLY_PROBE_ERROR_CODE = 'AGENT_EXECUTION_FAILED';
+
+/**
+ * True when this failure text reads as an ACP handshake rejection the agent CLI
+ * gave no reason for — the one shape "this CLI build cannot start a session;
+ * change it, then retry" actually answers, because the build is the only
+ * variable left.
+ *
+ * Answered by running the classifier itself rather than by a second signature
+ * list, so the prescription the user reads and the bucket the run is filed
+ * under are the same decision. A handshake failure that names a cause the
+ * classifier recognises — signed out, throttled, out of balance, upstream down,
+ * prompt too long — is claimed by that cause's branch and reported false here,
+ * so the user is sent after the fix that actually applies.
+ *
+ * @param text - Failure text as surfaced by the ACP session (`rpcErrorMessage`).
+ */
+export function isAcpCliSessionRefusalText(text: string | null | undefined): boolean {
+  if (typeof text !== 'string' || !isAcpHandshakeRpcErrorText(text)) return false;
+  const failure = classifyRunFailureBase({
+    result: 'failed',
+    status: { status: 'failed', error: text },
+    errorCode: TEXT_ONLY_PROBE_ERROR_CODE,
+  });
+  return failure?.failure_detail === 'agent_protocol_error'
+    && failure.failure_stage === 'session_init';
 }
 
 export function classifyRunFailure(

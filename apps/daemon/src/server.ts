@@ -2510,13 +2510,19 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '') {
 
 /**
  * The runtime identity a failure ships as structured data: display name plus
- * whichever CLI version this run actually observed. Codex's model preflight is
- * the only producer of `preflightAgentCliVersion`; every other agent falls back
- * to the daemon-lifetime detection probe, and an undetected version degrades
- * the client's copy rather than blocking it.
+ * the CLI version THIS RUN was started with.
+ *
+ * Both version sources are frozen on the run before its child is spawned —
+ * Codex's model preflight writes `preflightAgentCliVersion`, and every other
+ * agent gets `spawnedAgentCliVersion` from the detection cache at spawn time.
+ * Nothing is read from the process-wide cache here on purpose: detection probes
+ * are asynchronous, so a `/api/agents` refresh that happens to be running while
+ * this run fails would otherwise decide whether the user is told which build
+ * refused them. An undetected version degrades the client's copy to its
+ * version-less sentence rather than blocking it.
  *
  * @param def - The resolved `RuntimeAgentDef` for this run.
- * @param run - The run record, read for a preflight-detected CLI version.
+ * @param run - The run record, read for the CLI version captured before spawn.
  * @returns An `AcpAgentIdentity`, with `null` for anything not detected.
  */
 function agentFailureIdentity(def, run) {
@@ -2524,7 +2530,7 @@ function agentFailureIdentity(def, run) {
     agentName: def?.name ?? null,
     agentCliVersion:
       run?.preflightAgentCliVersion
-      ?? getDetectedRuntimeVersions(def?.id)?.agentCliVersion
+      ?? run?.spawnedAgentCliVersion
       ?? null,
   };
 }
@@ -13193,6 +13199,12 @@ export async function startServer({
       });
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
+      // Freeze the runtime identity this child is being started with. Read once,
+      // here, so a failure later in the run names the build it actually spawned
+      // instead of whatever a concurrent detection probe left in the
+      // process-wide cache at the moment it failed.
+      run.spawnedAgentCliVersion =
+        getDetectedRuntimeVersions(def?.id)?.agentCliVersion ?? null;
       child = spawn(invocation.command, invocation.args, {
         env,
         stdio: [stdinMode, 'pipe', 'pipe'],
