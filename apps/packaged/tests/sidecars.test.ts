@@ -31,6 +31,7 @@ import {
   createWebSidecarSupervisor,
   openLog,
   registerPackagedWebUrl,
+  retireExistingSidecar,
   resolveDaemonStatusTimeoutMs,
   resolvePackagedChildBaseEnv,
   resolvePackagedElectronNodeCommand,
@@ -127,6 +128,96 @@ describe('packaged web URL registration', () => {
       [daemonStamp, 'register-web-url', { url: 'http://127.0.0.1:64248' }, { timeoutMs: 1200 }],
       [daemonStamp, 'register-web-url', { url: 'http://127.0.0.1:53421' }, { timeoutMs: 1200 }],
     ]);
+  });
+});
+
+describe('packaged stale sidecar retirement', () => {
+  const stopped = (overrides: Partial<{
+    matchedPids: number[];
+    remainingPids: number[];
+    staleEndpointRemoved: boolean;
+  }> = {}) => ({
+    alreadyStopped: false,
+    forcedPids: [],
+    gracefulAccepted: false,
+    matchedPids: overrides.matchedPids ?? [4321],
+    remainingPids: overrides.remainingPids ?? [],
+    staleEndpointRemoved: overrides.staleEndpointRemoved ?? false,
+    stoppedPids: overrides.matchedPids ?? [4321],
+  });
+
+  async function withLog(run: (logPath: string) => Promise<void>): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), 'od-packaged-retire-'));
+    try {
+      await run(join(root, 'latest.log'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it('treats an absent endpoint with no stamped root as a clean first boot', async () => {
+    await withLog(async (logPath) => {
+      const stop = vi.fn(async () => stopped());
+      await expect(retireExistingSidecar(testStamp(), logPath, {
+        find: async () => [],
+        status: (async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }) as never,
+        stop,
+      })).resolves.toBeUndefined();
+      expect(stop).not.toHaveBeenCalled();
+    });
+  });
+
+  it('quick-fails an unresponsive daemon instead of risking a second writer', async () => {
+    await withLog(async (logPath) => {
+      const stop = vi.fn(async () => stopped());
+      await expect(retireExistingSidecar(testStamp(), logPath, {
+        find: async () => [{ command: 'daemon', pid: 4321, ppid: 1 }],
+        status: (async () => { throw new Error('timed out'); }) as never,
+        stop,
+      })).rejects.toThrow('cannot safely relaunch unresponsive daemon sidecar');
+      expect(stop).not.toHaveBeenCalled();
+    });
+  });
+
+  it('retires an unresponsive web generation through its durable stamped root', async () => {
+    await withLog(async (logPath) => {
+      const stop = vi.fn(async () => stopped());
+      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
+        find: async () => [{ command: 'sidecar-supervisor', pid: 4321, ppid: 1 }],
+        status: (async () => { throw new Error('timed out'); }) as never,
+        stop,
+      })).resolves.toBeUndefined();
+      expect(stop).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('quick-fails web recovery when neither a generation root nor a stale endpoint was retired', async () => {
+    await withLog(async (logPath) => {
+      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
+        find: async () => [],
+        status: (async () => { throw new Error('timed out'); }) as never,
+        stop: async () => stopped({ matchedPids: [] }),
+      })).rejects.toThrow('no durable generation root was found');
+    });
+  });
+
+  it('allows web recovery when the only remaining artifact was a stale endpoint', async () => {
+    await withLog(async (logPath) => {
+      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
+        find: async () => [],
+        status: (async () => { throw new Error('timed out'); }) as never,
+        stop: async () => stopped({ matchedPids: [], staleEndpointRemoved: true }),
+      })).resolves.toBeUndefined();
+    });
+  });
+
+  it('does not relaunch after a healthy generation fails to stop', async () => {
+    await withLog(async (logPath) => {
+      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
+        status: (async () => ({ pid: 1234 })) as never,
+        stop: async () => stopped({ remainingPids: [4321] }),
+      })).rejects.toThrow('generation remains: 4321');
+    });
   });
 });
 
@@ -818,32 +909,18 @@ describe('waitForStatus child-exit fast-fail', () => {
     expect(elapsed).toBeLessThan(2_000);
   });
 
-  it('does not accept ready status from a stale IPC endpoint owned by a different pid', async () => {
+  it('does not interpret a business status pid as the generation root pid', async () => {
     const child = fakeChild();
     child.pid = 5678;
-    const probe = {
-      label: 'web',
-      read: async () => ({
-        pid: 1234,
-        state: 'running',
-        updatedAt: new Date().toISOString(),
-        url: 'http://127.0.0.1:1234',
-      }),
-    };
-      let captured: unknown;
-      try {
-        await waitForStatus<{ pid?: number | null; url: string | null }>(
-          probe,
-          (status) => status.url != null,
-          250,
-          { child, logPath: join(tmpdir(), 'od-test-web.log') },
-        );
-      } catch (err) {
-        captured = err;
-      }
-
-      expect(captured).toBeInstanceOf(Error);
-      expect((captured as Error).message).toContain('sidecar status pid 1234 did not match spawned pid 5678');
+    await expect(waitForStatus<{ pid: number; url: string | null }>(
+      {
+        label: 'web',
+        read: async () => ({ pid: 1234, url: 'http://127.0.0.1:1234' }),
+      },
+      (status) => status.url != null,
+      250,
+      { child, logPath: join(tmpdir(), 'od-test-web.log') },
+    )).resolves.toEqual({ pid: 1234, url: 'http://127.0.0.1:1234' });
   });
 });
 

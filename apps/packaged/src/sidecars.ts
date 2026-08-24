@@ -17,6 +17,7 @@ import {
   type WebStatusSnapshot,
 } from "@open-design/sidecar-proto";
 import {
+  findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
   spawnSidecar,
@@ -519,21 +520,6 @@ export async function waitForStatus<T>(
       }
       try {
         const status = await probe.read(800);
-        const statusPid = typeof (status as { pid?: unknown }).pid === "number"
-          ? (status as { pid: number }).pid
-          : null;
-        if (watch?.child.pid != null) {
-          if (statusPid == null) {
-            lastError = new Error(`sidecar status did not include pid for spawned pid ${watch.child.pid}`);
-            await sleep(STATUS_POLL_INITIAL_MS);
-            continue;
-          }
-          if (statusPid !== watch.child.pid) {
-            lastError = new Error(`sidecar status pid ${statusPid} did not match spawned pid ${watch.child.pid}`);
-            await sleep(STATUS_POLL_INITIAL_MS);
-            continue;
-          }
-        }
         if (isReady(status)) return status;
       } catch (error) {
         lastError = error;
@@ -558,18 +544,35 @@ export async function waitForStatus<T>(
   }
 }
 
-async function retireExistingSidecar(stamp: SidecarStamp, logPath: string): Promise<void> {
+export async function retireExistingSidecar(
+  stamp: SidecarStamp,
+  logPath: string,
+  deps: {
+    find?: typeof findSidecarProcesses;
+    status?: typeof getSidecarStatus;
+    stop?: typeof stopSidecar;
+  } = {},
+): Promise<void> {
   let status: { pid?: number | null } | null = null;
   try {
-    status = await getSidecarStatus<{ pid?: number | null }>(stamp, { timeoutMs: 350 });
-  } catch {
+    status = await (deps.status ?? getSidecarStatus)<{ pid?: number | null }>(stamp, { timeoutMs: 350 });
+  } catch (error) {
+    const roots = await (deps.find ?? findSidecarProcesses)(stamp);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" && roots.length === 0) return;
+    if (stamp.app !== APP_KEYS.WEB) {
+      throw new Error(`cannot safely relaunch unresponsive ${stamp.app} sidecar`);
+    }
     await appendSidecarLifecycleLog(
       logPath,
       `[open-design packaged] ${stamp.app} endpoint is unavailable; retiring any stale stamped generation before relaunch`,
     );
-    const stopped = await stopSidecar(stamp, { termGraceMs: 2_500 });
-    if (stopped.remainingPids.length > 0) {
-      throw new Error(`cannot relaunch ${stamp.app}; stale generation remains: ${stopped.remainingPids.join(", ")}`);
+    const stopped = await (deps.stop ?? stopSidecar)(stamp, { termGraceMs: 2_500 });
+    if ((stopped.matchedPids.length === 0 && stopped.staleEndpointRemoved !== true) || stopped.remainingPids.length > 0) {
+      throw new Error(
+        stopped.matchedPids.length === 0
+          ? `cannot relaunch ${stamp.app}; no durable generation root was found`
+          : `cannot relaunch ${stamp.app}; stale generation remains: ${stopped.remainingPids.join(", ")}`,
+      );
     }
     return;
   }
@@ -580,12 +583,16 @@ async function retireExistingSidecar(stamp: SidecarStamp, logPath: string): Prom
     `[open-design packaged] existing ${stamp.app} sidecar detected pid=${pid ?? "unknown"}; requesting shutdown before relaunch`,
   );
   try {
-    await stopSidecar(stamp, { termGraceMs: 2_500 });
+    const stopped = await (deps.stop ?? stopSidecar)(stamp, { termGraceMs: 2_500 });
+    if (stopped.remainingPids.length > 0) {
+      throw new Error(`generation remains: ${stopped.remainingPids.join(", ")}`);
+    }
   } catch (error) {
     await appendSidecarLifecycleLog(
       logPath,
       `[open-design packaged] existing sidecar shutdown failed app=${stamp.app} error=${error instanceof Error ? error.message : String(error)}`,
     );
+    throw error;
   }
 }
 
@@ -975,7 +982,10 @@ export async function startPackagedSidecars(
     const daemonStatus = await waitForStatus<DaemonStatusSnapshot>(
       {
         label: APP_KEYS.DAEMON,
-        read: async (timeoutMs) => await getSidecarStatus<DaemonStatusSnapshot>(daemon.stamp, { timeoutMs }),
+        read: async (timeoutMs) => await getSidecarStatus<DaemonStatusSnapshot>(daemon.stamp, {
+          generationPid: daemon.generation.process.pid,
+          timeoutMs,
+        }),
       },
       (status) => status.url != null,
       resolveDaemonStatusTimeoutMs(),
@@ -1022,7 +1032,10 @@ export async function startPackagedSidecars(
       waitUntilReady: async (web) => await waitForStatus<WebStatusSnapshot>(
         {
           label: APP_KEYS.WEB,
-          read: async (timeoutMs) => await getSidecarStatus<WebStatusSnapshot>(web.stamp, { timeoutMs }),
+          read: async (timeoutMs) => await getSidecarStatus<WebStatusSnapshot>(web.stamp, {
+            generationPid: web.generation.process.pid,
+            timeoutMs,
+          }),
         },
         (candidate) => candidate.url != null,
         // Web has no legacy-migration path, so it uses the plain platform

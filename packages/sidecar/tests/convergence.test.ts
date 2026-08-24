@@ -249,6 +249,10 @@ describe("server-side atomic operations", () => {
       await vi.waitFor(async () => {
         expect(await getSidecarStatus(restartStamp)).toEqual({ pid: first.pid, port });
       });
+      await expect(getSidecarStatus(restartStamp, { generationPid: first.pid + 1 }))
+        .rejects.toThrow(`sidecar endpoint belongs to generation ${first.pid}, expected ${first.pid + 1}`);
+      await expect(getSidecarStatus(restartStamp, { generationPid: first.pid }))
+        .resolves.toEqual({ pid: first.pid, port });
       const restarted = await restartSidecar({
         args: ["--import", "tsx", fixture],
         command: process.execPath,
@@ -487,7 +491,9 @@ describe("server-side atomic operations", () => {
       const result = await stopSidecar(stable, { killGraceMs: 2_000, termGraceMs: 0 });
       expect(result.remainingPids).toEqual([]);
       expect(result.gracefulAccepted).toBe(false);
-      await expect(findSidecarProcesses(stable)).resolves.toEqual([]);
+      await vi.waitFor(async () => {
+        await expect(findSidecarProcesses(stable)).resolves.toEqual([]);
+      });
       await expect(findSidecarProcesses(beta)).resolves.toHaveLength(1);
     } finally {
       await stopSidecar(stable, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
@@ -529,33 +535,34 @@ describe("server-side atomic operations", () => {
       port: 0,
       runtimeRoot: "/tmp/open-design-replacement-runtime",
     };
-    const old = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
+    const old = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
+    const oldPid = old.process.pid;
     let replacement: { pid: number } | null = null;
     try {
       await vi.waitFor(async () => {
-        expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(old.pid);
+        expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(oldPid);
       });
-      const stopping = stopSidecar(replacementStamp, { killGraceMs: 2_000, termGraceMs: 300 });
+      const stopping = old.stop({ killGraceMs: 2_000, termGraceMs: 300 });
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
       replacement = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
       });
-      process.kill(old.pid, "SIGKILL");
-      await waitForProcessExit(old.pid, 2_000);
+      process.kill(oldPid, "SIGKILL");
+      await waitForProcessExit(oldPid, 2_000);
 
       const result = await stopping;
-      expect(result.matchedPids).toContain(old.pid);
+      expect(result.matchedPids).toContain(oldPid);
       expect(result.matchedPids).not.toContain(replacement.pid);
       expect(result.forcedPids).not.toContain(replacement.pid);
       expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement.pid);
     } finally {
-      try { process.kill(old.pid, "SIGKILL"); } catch {}
+      try { process.kill(oldPid, "SIGKILL"); } catch {}
       if (replacement != null) {
         try { process.kill(replacement.pid, "SIGKILL"); } catch {}
       }
       await Promise.all([
-        waitForProcessExit(old.pid, 2_000),
+        waitForProcessExit(oldPid, 2_000),
         replacement == null ? Promise.resolve(true) : waitForProcessExit(replacement.pid, 2_000),
       ]);
     }
@@ -582,10 +589,15 @@ describe("server-side atomic operations", () => {
     let replacement: { pid: number } | null = null;
 
     try {
+      let ready!: { generationPid: number; runtimePid: number };
       await vi.waitFor(async () => {
-        expect(await readFile(readyPath, "utf8")).toBe(String(spawned.process.pid));
+        ready = JSON.parse(await readFile(readyPath, "utf8"));
+        expect(ready.generationPid).toBe(spawned.process.pid);
+        expect(ready.runtimePid).not.toBe(spawned.process.pid);
       });
-      await expect(findSidecarProcesses(renamedStamp)).resolves.toEqual([]);
+      await expect(findSidecarProcesses(renamedStamp)).resolves.toEqual([
+        expect.objectContaining({ pid: spawned.process.pid }),
+      ]);
       replacement = await launchSidecar({
         args: [fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url))],
         command: process.execPath,

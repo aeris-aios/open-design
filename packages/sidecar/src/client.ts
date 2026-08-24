@@ -7,6 +7,8 @@ const CONTROL_STOP = "sidecar:stop";
 const CONTROL_DESCRIBE = "sidecar:describe";
 const BUSINESS_INVOKE = "sidecar:invoke";
 const INHERITED_ENDPOINT_ENV = "OD_SIDECAR_CLIENT_ENDPOINT";
+export const SIDECAR_GENERATION_PID_ENV = "OD_SIDECAR_GENERATION_PID";
+export const SIDECAR_SUPERVISOR_TARGET_ENV = "OD_SIDECAR_SUPERVISOR_TARGET";
 
 export type SidecarResources = Readonly<{
   dataRoot: string;
@@ -30,6 +32,8 @@ export function prepareSidecarLaunchEnvironment(
     }),
   };
   delete launchEnv[INHERITED_ENDPOINT_ENV];
+  delete launchEnv[SIDECAR_GENERATION_PID_ENV];
+  delete launchEnv[SIDECAR_SUPERVISOR_TARGET_ENV];
   return launchEnv;
 }
 
@@ -62,7 +66,7 @@ export type SidecarDescription = Readonly<{
 type InvokeEnvelope = { action: string; app: string; input: unknown; type: typeof BUSINESS_INVOKE };
 type ControlEnvelope =
   | { type: typeof CONTROL_DESCRIBE }
-  | { type: typeof CONTROL_STATUS }
+  | { targetPid: number | null; type: typeof CONTROL_STATUS }
   | { targetPids: readonly number[] | null; type: typeof CONTROL_STOP };
 
 function normalizeResources(input: unknown): SidecarResources {
@@ -84,7 +88,11 @@ function normalizeResources(input: unknown): SidecarResources {
   if (ownerPid != null && (!Number.isSafeInteger(ownerPid) || ownerPid <= 0)) {
     throw new Error("sidecar ownerPid must be null or a positive safe integer");
   }
-  return Object.freeze({ dataRoot: value.dataRoot, ownerPid, pid: process.pid, port, runtimeRoot: value.runtimeRoot });
+  const generationPid = Number(process.env[SIDECAR_GENERATION_PID_ENV] ?? process.pid);
+  if (!Number.isSafeInteger(generationPid) || generationPid <= 0) {
+    throw new Error(`${SIDECAR_GENERATION_PID_ENV} must be a positive safe integer`);
+  }
+  return Object.freeze({ dataRoot: value.dataRoot, ownerPid, pid: generationPid, port, runtimeRoot: value.runtimeRoot });
 }
 
 function readCurrentResources(): SidecarResources {
@@ -104,7 +112,12 @@ function assertEnvelope(message: unknown): InvokeEnvelope | ControlEnvelope {
   }
   const request = message as Record<string, unknown>;
   if (request.type === CONTROL_DESCRIBE) return { type: CONTROL_DESCRIBE };
-  if (request.type === CONTROL_STATUS) return { type: CONTROL_STATUS };
+  if (request.type === CONTROL_STATUS) {
+    if (request.targetPid != null && (!Number.isSafeInteger(request.targetPid) || Number(request.targetPid) <= 0)) {
+      throw new Error("invalid sidecar status target");
+    }
+    return { targetPid: request.targetPid == null ? null : Number(request.targetPid), type: CONTROL_STATUS };
+  }
   if (request.type === CONTROL_STOP) {
     if (request.targetPids != null && (
       !Array.isArray(request.targetPids) ||
@@ -164,9 +177,16 @@ export class SidecarClient<TRuntime> {
             return { ready: runtimeStarted, resources: this.resources, stamp: this.stamp } satisfies SidecarDescription;
           }
           if (!runtimeStarted) throw new Error("sidecar runtime is starting");
-          if (request.type === CONTROL_STATUS) return await this.#lifecycle.status(runtime);
+          if (request.type === CONTROL_STATUS) {
+            if (request.targetPid != null && request.targetPid !== this.resources.pid) {
+              throw new Error(
+                `sidecar endpoint belongs to generation ${this.resources.pid}, expected ${request.targetPid}`,
+              );
+            }
+            return await this.#lifecycle.status(runtime);
+          }
           if (request.type === CONTROL_STOP) {
-            if (request.targetPids != null && !request.targetPids.includes(process.pid)) {
+            if (request.targetPids != null && !request.targetPids.includes(this.resources.pid)) {
               return { accepted: false };
             }
             setImmediate(() => { this.#stopAndExit(); });

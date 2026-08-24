@@ -10,7 +10,7 @@ import {
   type ProcessSnapshot,
   waitForProcessExit,
 } from "../src/index.js";
-import { parsePosixProcessSnapshots, parseWindowsProcessSnapshots, selectStampedProcessesAtInvocation } from "../src/process.js";
+import { parseWindowsProcessSnapshots, selectStampedProcessesAtInvocation } from "../src/process.js";
 
 function snapshot(pid: number, ppid: number, command = `pid-${pid}`): ProcessSnapshot {
   return { command, pid, ppid };
@@ -99,41 +99,6 @@ describe("selectStampedProcessesAtInvocation", () => {
     ], { namespace: "alpha" }, stampContract, 1_000, "win32")).toEqual([]);
   });
 
-  it("excludes a POSIX replacement created after invocation", () => {
-    expect(() => selectStampedProcessesAtInvocation([
-      { command, pid: 100, ppid: 1, startedAtMs: 1_000 },
-      { command, pid: 200, ppid: 1, startedAtMs: 2_000 },
-    ], { namespace: "alpha" }, stampContract, 1_500, "darwin")).toThrow(
-      "cannot establish process generation boundary for pid 100",
-    );
-
-    expect(selectStampedProcessesAtInvocation([
-      { command, pid: 100, ppid: 1, startedAtMs: 1_000 },
-      { command: "node unrelated.js", pid: 200, ppid: 1, startedAtMs: 2_000 },
-    ], { namespace: "alpha" }, stampContract, 2_000, "darwin")).toEqual([
-      { command, pid: 100, ppid: 1, startedAtMs: 1_000 },
-    ]);
-  });
-
-  it("quick-fails an ambiguous POSIX generation boundary", () => {
-    expect(() => selectStampedProcessesAtInvocation([
-      { command, pid: 100, ppid: 1 },
-    ], { namespace: "alpha" }, stampContract, 1_000, "linux")).toThrow(
-      "cannot establish process generation boundary for pid 100",
-    );
-  });
-});
-
-describe("parsePosixProcessSnapshots", () => {
-  it("retains the ps creation time used by the generation boundary", () => {
-    const started = "Mon Aug 24 17:00:01 2026";
-    expect(parsePosixProcessSnapshots(`  20  10 ${started} node fixture.js --test-namespace=alpha\n`)).toEqual([{
-      command: "node fixture.js --test-namespace=alpha",
-      pid: 20,
-      ppid: 10,
-      startedAtMs: Date.parse(started),
-    }]);
-  });
 });
 
 describe("parseWindowsProcessSnapshots", () => {

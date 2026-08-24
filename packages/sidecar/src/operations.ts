@@ -1,5 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { lstat, rm } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { createConnection } from "node:net";
 
 import type { SpawnProcessRequest, StopProcessesOptions, StopProcessesResult } from "@open-design/platform";
 import {
@@ -17,6 +19,7 @@ import {
 import { requestJsonIpc } from "./json-ipc.js";
 import {
   prepareSidecarLaunchEnvironment,
+  SIDECAR_SUPERVISOR_TARGET_ENV,
   sidecarProtocol,
   type SidecarDescription,
   type SidecarResources,
@@ -31,6 +34,7 @@ export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
 };
 
 export type SidecarStopResult = StopProcessesResult & {
+  staleEndpointRemoved?: boolean;
   gracefulAccepted: boolean;
 };
 
@@ -117,11 +121,28 @@ export async function launchSidecar(request: SidecarLaunchRequest): Promise<{ pi
 
 function sidecarSpawnRequest(request: SidecarLaunchRequest): SpawnProcessRequest {
   const stamp = normalizeSidecarStamp(request.stamp);
-  const { args = [], env, resources, ...spawnRequest } = request;
+  const { args = [], command, env, resources, ...spawnRequest } = request;
+  const preparedEnv = prepareSidecarLaunchEnvironment(env ?? process.env, resources);
+  const supervisorEntry = import.meta.url.endsWith(".ts")
+    ? fileURLToPath(new URL("./supervisor.ts", import.meta.url))
+    : fileURLToPath(new URL("./supervisor.mjs", import.meta.url));
   return {
     ...spawnRequest,
-    args: [...args, ...createProcessStampArgs(stamp, SIDECAR_STAMP_CONTRACT)],
-    env: prepareSidecarLaunchEnvironment(env ?? process.env, resources),
+    args: [
+      ...(import.meta.url.endsWith(".ts") ? ["--import", "tsx"] : []),
+      supervisorEntry,
+      ...createProcessStampArgs(stamp, SIDECAR_STAMP_CONTRACT),
+    ],
+    command: process.execPath,
+    env: {
+      ...preparedEnv,
+      ELECTRON_RUN_AS_NODE: "1",
+      [SIDECAR_SUPERVISOR_TARGET_ENV]: JSON.stringify({
+        args,
+        command,
+        electronRunAsNode: preparedEnv.ELECTRON_RUN_AS_NODE ?? null,
+      }),
+    },
   };
 }
 
@@ -144,22 +165,32 @@ export async function spawnSidecar(request: SidecarLaunchRequest): Promise<Spawn
 
 export async function findSidecarProcesses(stamp: SidecarStamp) {
   const exact = normalizeSidecarStamp(stamp);
-  return (await listProcessSnapshots()).filter((processInfo) =>
+  const matches = (await listProcessSnapshots()).filter((processInfo) =>
     matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
+  );
+  const matchedPids = new Set(matches.map(({ pid }) => pid));
+  return matches.filter(({ ppid }) => !matchedPids.has(ppid));
+}
+
+export async function getSidecarStatus<TResult = unknown>(
+  stamp: SidecarStamp,
+  options?: { generationPid?: number; timeoutMs?: number },
+): Promise<TResult> {
+  const exact = normalizeSidecarStamp(stamp);
+  return await requestJsonIpc<TResult>(
+    resolvePrivateIpcPath(exact),
+    { targetPid: options?.generationPid, type: sidecarProtocol.status },
+    options == null ? undefined : { timeoutMs: options.timeoutMs },
   );
 }
 
-export async function getSidecarStatus<TResult = unknown>(stamp: SidecarStamp, options?: { timeoutMs?: number }): Promise<TResult> {
-  return await requestJsonIpc<TResult>(resolvePrivateIpcPath(normalizeSidecarStamp(stamp)), { type: sidecarProtocol.status }, options);
-}
-
-async function describeSidecar(stamp: SidecarStamp): Promise<SidecarDescription | null> {
+async function describeSidecar(stamp: SidecarStamp, timeoutMs = 2_000): Promise<SidecarDescription | null> {
   let description: SidecarDescription;
   try {
     description = await requestJsonIpc<SidecarDescription>(
       resolvePrivateIpcPath(stamp),
       { type: sidecarProtocol.describe },
-      { timeoutMs: 2_000 },
+      { timeoutMs },
     );
   } catch {
     return null;
@@ -195,12 +226,23 @@ export async function invokeSidecar<TResult = unknown>(
 export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
   const exact = normalizeSidecarStamp(stamp);
   const ownedEndpoint = await readPrivateEndpointIdentity(exact);
-  const initial = await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT);
-  const result = await stopSidecarRoots(exact, initial.roots.map(({ pid }) => pid), options, initial.processes);
-  if (result.remainingPids.length === 0 && (await findSidecarProcesses(exact)).length === 0) {
-    await removeOwnedPrivateEndpoint(exact, ownedEndpoint);
+  const described = await describeSidecar(exact);
+  const initial = described == null
+    ? await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT)
+    : null;
+  const roots = described == null
+    ? initial?.roots.map(({ pid }) => pid) ?? []
+    : [described.resources.pid];
+  const result = await stopSidecarRoots(exact, roots, options, initial?.processes);
+  let staleEndpointRemoved = false;
+  if (
+    result.remainingPids.length === 0 &&
+    (await findSidecarProcesses(exact)).length === 0 &&
+    (roots.length > 0 || await privateEndpointRefusesConnections(exact))
+  ) {
+    staleEndpointRemoved = await removeOwnedPrivateEndpoint(exact, ownedEndpoint);
   }
-  return result;
+  return { ...result, staleEndpointRemoved };
 }
 
 type PrivateEndpointIdentity = Readonly<{ dev: number; ino: number }>;
@@ -212,12 +254,30 @@ async function readPrivateEndpointIdentity(stamp: SidecarStamp): Promise<Private
   return entry?.isSocket() ? { dev: entry.dev, ino: entry.ino } : null;
 }
 
-async function removeOwnedPrivateEndpoint(stamp: SidecarStamp, owned: PrivateEndpointIdentity | null): Promise<void> {
-  if (owned == null) return;
+async function removeOwnedPrivateEndpoint(stamp: SidecarStamp, owned: PrivateEndpointIdentity | null): Promise<boolean> {
+  if (owned == null) return false;
   const current = await readPrivateEndpointIdentity(stamp);
   if (current?.dev === owned.dev && current.ino === owned.ino) {
     await rm(resolvePrivateIpcPath(stamp), { force: true });
+    return true;
   }
+  return false;
+}
+
+async function privateEndpointRefusesConnections(stamp: SidecarStamp): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  const endpoint = resolvePrivateIpcPath(stamp);
+  return await new Promise<boolean>((resolveProbe) => {
+    const socket = createConnection(endpoint);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolveProbe(false);
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      socket.destroy();
+      resolveProbe(error.code === "ECONNREFUSED");
+    });
+  });
 }
 
 /**
@@ -363,13 +423,22 @@ async function stopSidecarRoots(
   // this stop invocation scoped to the process tree observed at call entry so
   // a replacement that acquires the same stamp during the grace window cannot
   // be swept into the old instance's fallback termination.
-  const forced = await stopProcesses(remaining, { termGraceMs: 0, killGraceMs: options.killGraceMs });
+  // A supervisor can create descendants immediately after the invocation
+  // snapshot. Refresh only the already-owned root trees before escalation so
+  // late children cannot be orphaned, while a replacement root remains fenced.
+  const latestSnapshots = await listProcessSnapshots();
+  const latestGenerationPids = [...new Set([
+    ...remaining,
+    ...collectProcessTreePids(latestSnapshots, initialRoots),
+  ])];
+  const forced = await stopProcesses(latestGenerationPids, { termGraceMs: 0, killGraceMs: options.killGraceMs });
+  const matchedPids = [...new Set([...initialPids, ...latestGenerationPids])];
   return {
     alreadyStopped: false,
     forcedPids: forced.forcedPids,
     gracefulAccepted,
-    matchedPids: initialPids,
+    matchedPids,
     remainingPids: forced.remainingPids,
-    stoppedPids: initialPids.filter((pid) => !forced.remainingPids.includes(pid)),
+    stoppedPids: matchedPids.filter((pid) => !forced.remainingPids.includes(pid)),
   };
 }
