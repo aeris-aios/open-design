@@ -1,0 +1,136 @@
+name: Release exact Terminal reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character source commit to build
+        required: true
+        type: string
+      channel:
+        description: Isolated exact channel
+        required: true
+        type: choice
+        options:
+          - betahyx
+          - previewhyx
+      release_version:
+        description: Counted version, for example 0.1.0-betahyx.1
+        required: true
+        type: string
+      standalone_version:
+        description: Independent standalone protocol/runtime version
+        required: true
+        default: 0.1.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-exact-${{ inputs.channel }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: standalone-exact-release
+    timeout-minutes: 45
+    steps:
+      - name: Validate immutable inputs
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CHANNEL" == "betahyx" || "$CHANNEL" == "previewhyx" ]]
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-${CHANNEL}\.[0-9]+$ ]]
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fetch exact official Node carriers
+        run: |
+          mkdir -p .tmp/exact/node
+          curl --fail --silent --show-error --location https://nodejs.org/dist/v24.18.0/SHASUMS256.txt -o .tmp/exact/node/SHASUMS256.txt
+          for archive in node-v24.18.0-darwin-arm64.tar.gz node-v24.18.0-win-x64.zip; do
+            curl --fail --silent --show-error --location "https://nodejs.org/dist/v24.18.0/$archive" -o ".tmp/exact/node/$archive"
+            (cd .tmp/exact/node && grep "  $archive$" SHASUMS256.txt | sha256sum --check --strict -)
+          done
+
+      - name: Write versioned pack request
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          STANDALONE_VERSION: ${{ inputs.standalone_version }}
+          STORAGE_ENDPOINT: ${{ secrets.EXACT_RELEASE_ENDPOINT }}
+          STORAGE_BUCKET: ${{ secrets.EXACT_RELEASE_BUCKET }}
+          SIGNING_KEY_ID: ${{ secrets.EXACT_SIGNING_KEY_ID }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('.tmp/exact')
+          output = root / 'output'
+          output.mkdir(parents=True, exist_ok=True)
+          channel = os.environ['CHANNEL']
+          version = os.environ['RELEASE_VERSION']
+          prefix = f"{os.environ['STORAGE_ENDPOINT'].rstrip('/')}/{os.environ['STORAGE_BUCKET'].strip('/')}/{channel}/{version}"
+          targets = []
+          for target, name in [('darwin-arm64', 'node-v24.18.0-darwin-arm64.tar.gz'), ('win32-x64', 'node-v24.18.0-win-x64.zip')]:
+              path = root / 'node' / name
+              targets.append({'target': target, 'nodeArchiveFile': str(path.resolve()), 'nodeArchiveSha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+          request = {'schemaVersion': 1, 'operation': 'exact.pack', 'channel': channel, 'releaseVersion': version, 'standaloneVersion': os.environ['STANDALONE_VERSION'], 'sourceCommit': os.environ['SOURCE_SHA'], 'publishedAt': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat().replace('+00:00', 'Z'), 'keyId': os.environ['SIGNING_KEY_ID'], 'artifactBaseUrl': prefix, 'outputDirectory': str(output.resolve()), 'targets': targets}
+          (root / 'pack-request.json').write_text(json.dumps(request, sort_keys=True, separators=(',', ':')) + '\n')
+          PY
+
+      - name: Build and sign owner artifacts
+        env:
+          OD_EXACT_ED25519_PRIVATE_KEY: ${{ secrets.EXACT_ED25519_PRIVATE_KEY }}
+        run: python3 .github/scripts/pack.py --request .tmp/exact/pack-request.json --receipt .tmp/exact/pack-receipt.json
+
+      - name: Publish immutable release and latest CAS
+        env:
+          STORAGE_ENDPOINT: ${{ secrets.EXACT_RELEASE_ENDPOINT }}
+          STORAGE_BUCKET: ${{ secrets.EXACT_RELEASE_BUCKET }}
+          OD_EXACT_RELEASE_TOKEN: ${{ secrets.EXACT_RELEASE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          value = {'schemaVersion': 1, 'operation': 'exact.release', 'packReceipt': str(Path('.tmp/exact/pack-receipt.json').resolve()), 'endpointUrl': os.environ['STORAGE_ENDPOINT'], 'bucket': os.environ['STORAGE_BUCKET']}
+          Path('.tmp/exact/release-request.json').write_text(json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n')
+          PY
+          python3 .github/scripts/release.py --request .tmp/exact/release-request.json --receipt .tmp/exact/release-receipt.json
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: exact-${{ inputs.channel }}-${{ inputs.release_version }}-receipts
+          path: |
+            .tmp/exact/*-request.json
+            .tmp/exact/*-receipt.json
+            .tmp/exact/output/.contracts/*.json
+          if-no-files-found: error
+          retention-days: 30
