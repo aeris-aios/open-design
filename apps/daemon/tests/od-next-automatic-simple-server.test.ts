@@ -1049,8 +1049,8 @@ describe('OD Next automatic production through the real server', () => {
     );
   });
 
-  it('turns a broken delivered artifact into one corrective production turn, then completes', async () => {
-    const fixture = await createPublicRolloutFixture('artifact-repair', 'design');
+  it.each(['declared', 'inferred'] as const)('turns a broken delivered artifact into one corrective production turn (%s completion), then completes', async (completionShape) => {
+    const fixture = await createPublicRolloutFixture(`artifact-repair-${completionShape}`, 'design');
     started = fixture.started;
     binDir = fixture.binDir;
     clearOdNextRolloutStop(database());
@@ -1091,7 +1091,7 @@ describe('OD Next automatic production through the real server', () => {
     const fixedHtml = '<!doctype html><html><body><div id="app">FIXED</div>\n<script>\nlet h = \'\';\n'
       + 'h += \'<div class="card">今日任务提醒</div>\';\n'
       + 'document.getElementById(\'app\').innerHTML = h;\n</script></body></html>';
-    const bin = path.join(fixture.binDir, 'codex-public-artifact-repair');
+    const bin = path.join(fixture.binDir, `codex-public-artifact-repair-${completionShape}`);
     await writeFile(bin, `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1110,7 +1110,7 @@ process.stdin.on('end', () => {
     text = ${JSON.stringify('COMPLETED_PLACEHOLDER')};
   } else if (stdin.includes('native continuation \u2014 production')) {
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), ${JSON.stringify('BROKEN_PLACEHOLDER')});
-    text = ${JSON.stringify('COMPLETED_PLACEHOLDER')};
+    text = ${JSON.stringify('PROD_TEXT_PLACEHOLDER')};
   } else {
     const detected = /"snapshotId"\\s*:\\s*"([a-f0-9-]{36})"/.exec(stdin)?.[1]
       || /applied_snapshot=[^a-f0-9]*([a-f0-9-]{36})/.exec(stdin)?.[1];
@@ -1125,13 +1125,16 @@ process.stdin.on('end', () => {
       .replace(JSON.stringify('FIXED_PLACEHOLDER'), JSON.stringify(fixedHtml))
       .replace(JSON.stringify('BROKEN_PLACEHOLDER'), JSON.stringify(brokenHtml))
       .replaceAll(JSON.stringify('COMPLETED_PLACEHOLDER'), JSON.stringify(completedTurn))
+      .replace(JSON.stringify('PROD_TEXT_PLACEHOLDER'), JSON.stringify(
+        completionShape === 'declared' ? completedTurn : 'Delivered the prototype; every screen is wired.',
+      ))
       .replace(JSON.stringify('PLAN_PLACEHOLDER'), JSON.stringify(planTurn)), 'utf8');
     await chmod(bin, 0o755);
 
     const created = await postRun(started.url, publicRunRequest(
       fixture,
       '做一个宠物美容店预约 App 原型。',
-      'artifact-repair-request',
+      `artifact-repair-request-${completionShape}`,
     ));
     const task = await waitForTask(created.taskExecutionId as string, 'completed');
     expect(task.runs.map((mapping) => mapping.inputStage)).toEqual([

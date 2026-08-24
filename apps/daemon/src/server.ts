@@ -15268,7 +15268,11 @@ export async function startServer({
         let odNextArtifactRepairFindings = null;
         if (
           strategyTaskAtStart
-          && strategyProtocolResult?.runtimeState?.outcome === 'completed'
+          && strategyProtocolResult
+          && (
+            strategyProtocolResult.runtimeState?.outcome === 'completed'
+            || odNextTurnMayInferProductionCompletion(strategyTaskAtStart, strategyProtocolResult)
+          )
           && deliverableValid
           && strategyTaskAtStart.executionMode === 'simple'
           && strategyTaskAtStart.inputStage === 'production'

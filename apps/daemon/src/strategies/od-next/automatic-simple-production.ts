@@ -444,10 +444,16 @@ export function prepareAutomaticStrategyContinuation<
   // whose artifact the deterministic audit found broken. Fail-open at every
   // step — if the corrective Run cannot be claimed, the turn completes and the
   // artifact ships as-is.
+  // Real production turns complete two ways: an explicit machine-block
+  // declaration, or the coordinator's inference for a turn that delivered and
+  // answered in prose only. Both are completions of the same delivered
+  // artifact, so both are eligible for the corrective turn.
+  const artifactRepairTurnCompleted =
+    (input.parsed.issues.length === 0 && input.parsed.runtimeState?.outcome === 'completed')
+    || odNextTurnMayInferProductionCompletion(input.task, input.parsed);
   const artifactRepairCandidate =
     Boolean(input.artifactRepair)
-    && input.parsed.issues.length === 0
-    && input.parsed.runtimeState?.outcome === 'completed'
+    && artifactRepairTurnCompleted
     && input.task.route === 'full_plan'
     && input.task.inputStage === 'production'
     && input.task.executionMode === 'simple'
