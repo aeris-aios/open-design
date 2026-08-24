@@ -174,14 +174,14 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 </style>
 <style id="od-no-pager">.deck-controls,#counter,.deck-counter{display:none!important}</style>
 </head>
-<body>
+<body data-density="speaker">
 
 <div class="deck-header"><span>Studio Craft Lab · Onboarding</span><span class="theme-chip" id="theme-chip">bauhaus</span></div>
 
 <div class="deck" id="deck">
 
   <!-- 1 · layout: cover -->
-  <section class="slide" data-title="Cover">
+  <section class="slide" data-title="Cover" data-layout="cover">
     <svg width="220" height="120" viewBox="0 0 220 120" aria-hidden="true" style="margin-bottom:28px">
       <rect x="2" y="34" width="84" height="84" fill="#e03c27" stroke="#111" stroke-width="3"/>
       <polygon points="130,34 172,118 88,118" fill="#f4c430" stroke="#111" stroke-width="3"/>
@@ -200,7 +200,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 2 · layout: toc -->
-  <section class="slide" data-title="Agenda">
+  <section class="slide" data-title="Agenda" data-layout="module-overview">
     <p class="kicker">Agenda</p>
     <h2 class="h2">Three modules</h2>
     <div class="tri-band mt-m" style="max-width:420px"></div>
@@ -213,7 +213,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 3 · layout: section-divider -->
-  <section class="slide" data-title="Section · Why">
+  <section class="slide" data-title="Section · Why" data-layout="rationale">
     <span class="section-num">01</span>
     <p class="eyebrow">Module one</p>
     <h2 class="h2">Why:<br>train the eye first</h2>
@@ -222,7 +222,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 4 · layout: two-column -->
-  <section class="slide" data-title="Principles">
+  <section class="slide" data-title="Principles" data-layout="principles">
     <p class="kicker">Why fundamentals first</p>
     <h2 class="h2">Four habits, not opinions</h2>
     <div class="grid g2 mt-l">
@@ -250,7 +250,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 5 · layout: kpi-grid -->
-  <section class="slide" data-title="Traction KPIs">
+  <section class="slide" data-title="Traction KPIs" data-layout="metrics">
     <p class="kicker">Module two · The Rules</p>
     <h2 class="h2">Four numbers to know cold</h2>
     <div class="grid g4 mt-l anim-stagger-list">
@@ -263,7 +263,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 6 · layout: stat-highlight -->
-  <section class="slide center" data-title="Stars">
+  <section class="slide center" data-title="Stars" data-layout="interlude">
     <p class="kicker">The exercise that sticks</p>
     <p class="stat-big gradient-text anim-rise-in">100</p>
     <p class="lede mt-m" style="max-width:46ch">hand-traced grids before a junior designer touches a real brief — the studio's oldest rule, still the fastest way to make an 8px baseline instinctive.</p>
@@ -274,7 +274,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 7 · layout: chart-bar (pure CSS — no chart library) -->
-  <section class="slide" data-title="Stars by quarter">
+  <section class="slide" data-title="Stars by quarter" data-layout="programme">
     <p class="kicker">Module two · Evidence</p>
     <h2 class="h2">One cohort, four weeks</h2>
     <div class="bar-chart">
@@ -288,7 +288,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 8 · layout: process-steps -->
-  <section class="slide" data-title="Workflow">
+  <section class="slide" data-title="Workflow" data-layout="critique-loop">
     <p class="kicker">Module three · Studio Workflow</p>
     <h2 class="h2">The Friday critique loop</h2>
     <div class="grid g4 mt-l steps anim-stagger-list">
@@ -301,14 +301,14 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   </section>
 
   <!-- 9 · layout: big-quote -->
-  <section class="slide center" data-title="Quote">
+  <section class="slide center" data-title="Quote" data-layout="interlude">
     <p class="quote anim-fade-up">“You don't have taste yet. You have <span class="gradient-text">measurements.</span>”</p>
     <p class="eyebrow mt-l">— Studio creative director, week-one orientation</p>
     <div class="notes">Big quote, set in the display face, uppercase. The tri-color gradient lands on the final phrase only.</div>
   </section>
 
   <!-- 10 · layout: thanks / cta -->
-  <section class="slide center" data-title="Open">
+  <section class="slide center" data-title="Open" data-layout="closing-assignment">
     <svg width="160" height="88" viewBox="0 0 220 120" aria-hidden="true" style="margin:0 auto 24px">
       <rect x="2" y="34" width="84" height="84" fill="#e03c27" stroke="#111" stroke-width="3"/>
       <polygon points="130,34 172,118 88,118" fill="#f4c430" stroke="#111" stroke-width="3"/>

@@ -662,7 +662,7 @@
         });
       }, { root: this._rail, rootMargin: '400px 0px' });
       // Tweaks typically change CSS vars / attrs OUTSIDE <deck-stage>
-      // (on <html>, <body>, a wrapper div, or a <style> tag), which
+      // (on <html>, <body data-density="reader">, a wrapper div, or a <style> tag), which
       // _liveObserver can't see. Re-snapshot author CSS (constructable
       // sheet is shared by reference, so one replaceSync updates every
       // thumb shadow root) and re-sync each thumb host's attrs + custom
@@ -721,7 +721,7 @@
       // Every custom property the author references. _syncThumbHostAttrs
       // mirrors each one's *computed* value at <deck-stage> onto the
       // thumb host so the live value wins over the :host default above
-      // regardless of which ancestor the tweak wrote to (<html>, <body>,
+      // regardless of which ancestor the tweak wrote to (<html>, <body data-density="reader">,
       // a wrapper div, or the deck-stage element itself all inherit
       // down to getComputedStyle(this)).
       this._authorVars = new Set(authorCss.match(/--[\w-]+/g) || []);
@@ -2348,12 +2348,12 @@
   }
 </style>
 </head>
-<body>
+<body data-density="reader">
 
 <deck-stage aspect="1920/1080" no-rail>
 
   <!-- ============ 01 — Cover ============ -->
-  <section class="cover" data-screen-label="01 Cover">
+  <section class="cover" data-screen-label="01 Cover" data-layout="cover">
     <div class="topbar">
       <span class="label">Design Craft &middot; Art Direction Teardown</span>
       <div class="mark">MV</div>
@@ -2366,7 +2366,7 @@
   </section>
 
   <!-- ============ 02 — Agenda (tile grid) ============ -->
-  <section class="agenda" data-screen-label="02 Agenda">
+  <section class="agenda" data-screen-label="02 Agenda" data-layout="agenda">
     <div class="head">
       <h2>Agenda.</h2>
       <span class="label">Five moves &middot; one editorial system</span>
@@ -2411,7 +2411,7 @@
   </section>
 
   <!-- ============ 03 — Big statement ============ -->
-  <section class="statement" data-screen-label="03 Statement">
+  <section class="statement" data-screen-label="03 Statement" data-layout="statement">
     <div>
       <span class="label">Where it went wrong</span>
       <blockquote>Forty-eight pages of stock-photo confidence and centered Helvetica &mdash; a fashion house's annual report that could belong to any insurer.</blockquote>
@@ -2426,7 +2426,7 @@
   </section>
 
   <!-- ============ 04 — Two-column with figure ============ -->
-  <section class="two-col" data-screen-label="04 Two Column">
+  <section class="two-col" data-screen-label="04 Two Column" data-layout="two-column">
     <div class="col-img">
       <svg width="430" height="560" viewBox="0 0 400 520" fill="none" role="img" aria-label="Fern sprig illustration">
         <g stroke="#e89cb1" stroke-width="5" fill="none" stroke-linecap="round">
@@ -2460,7 +2460,7 @@
   </section>
 
   <!-- ============ 05 — Data chart ============ -->
-  <section class="data" data-screen-label="05 Data">
+  <section class="data" data-screen-label="05 Data" data-layout="data">
     <div class="head">
       <div>
         <div class="label">The page system</div>
@@ -2515,7 +2515,7 @@
   </section>
 
   <!-- ============ 06 — Framework / 4 steps ============ -->
-  <section class="framework" data-screen-label="06 Framework">
+  <section class="framework" data-screen-label="06 Framework" data-layout="framework">
     <div class="head">
       <span class="label">Proof rebuild</span>
       <span class="label">Spread 12</span>
@@ -2551,7 +2551,7 @@
   </section>
 
   <!-- ============ 07 — Big stats / KPI callouts ============ -->
-  <section class="stats" data-screen-label="07 Stats">
+  <section class="stats" data-screen-label="07 Stats" data-layout="stats">
     <div class="head">
       <span class="label">What the rebuild proved</span>
       <span class="label">Spread 12 &rarr; 14</span>
@@ -2578,7 +2578,7 @@
   </section>
 
   <!-- ============ 08 — Summary / closing ============ -->
-  <section class="summary" data-screen-label="08 Summary">
+  <section class="summary" data-screen-label="08 Summary" data-layout="closing">
     <div class="topbar">
       <span class="label">Before it ships</span>
       <span class="label">Export checklist</span>

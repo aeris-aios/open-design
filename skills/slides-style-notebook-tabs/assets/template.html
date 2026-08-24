@@ -596,12 +596,12 @@ img, video, canvas, svg {
 </style>
 <style id="od-no-pager">.deck-controls,#counter,.deck-counter{display:none!important}</style>
 </head>
-<body>
+<body data-density="reader">
 <div class="deck-viewport">
     <main class="deck-stage" id="deckStage" aria-label="Slide deck">
 
         <!-- === SLIDE 1: COVER (Intro) === -->
-        <section class="slide active visible">
+        <section class="slide active visible" data-layout="cover">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -625,7 +625,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 2: CONTENTS (Intro) === -->
-        <section class="slide">
+        <section class="slide" data-layout="agenda">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -647,7 +647,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 3: SECTION DIVIDER (Craft) === -->
-        <section class="slide">
+        <section class="slide" data-layout="problem">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -670,7 +670,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 4: BULLETS (Craft) === -->
-        <section class="slide">
+        <section class="slide" data-layout="solution">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -701,7 +701,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 5: QUOTE (Craft) === -->
-        <section class="slide">
+        <section class="slide" data-layout="diagram">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -721,7 +721,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 6: BIG STAT (Numbers) === -->
-        <section class="slide">
+        <section class="slide" data-layout="metric">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -743,7 +743,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 7: BAR CHART (Numbers) === -->
-        <section class="slide">
+        <section class="slide" data-layout="performance">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -766,7 +766,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 8: COMPARISON (Plan) === -->
-        <section class="slide">
+        <section class="slide" data-layout="comparison">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -802,7 +802,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 9: PRINCIPLE GRID (Plan) === -->
-        <section class="slide">
+        <section class="slide" data-layout="contributions">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>
@@ -824,7 +824,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 10: CLOSING (End) === -->
-        <section class="slide">
+        <section class="slide" data-layout="conclusion">
             <div class="paper">
                 <div class="holes"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="margin-rule"></div>

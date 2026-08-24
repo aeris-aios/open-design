@@ -33,12 +33,12 @@ Apply this visual system to a complete presentation without depending on an Open
 ## Workflow
 
 1. Confirm or infer the audience, decision or communication goal, source material, language, output format, and approximate slide count. Ask only when a missing choice would materially change the result.
-2. Read [references/style-system.md](references/style-system.md) before composing. Treat its palette, typography, spacing, signature devices, and forbidden moves as constraints.
-3. Build a one-sentence narrative for the deck, then assign one job and one primary claim to every slide. Choose the closest supplied layout before inventing a new one.
+2. Read [references/style-system.md](references/style-system.md) before composing. When choosing or adapting pages, also read [references/layouts.md](references/layouts.md); load [references/quality-gate.md](references/quality-gate.md) before validation.
+3. Choose `speaker` or `reader` density, build a one-sentence narrative, then assign one job and one primary claim to every slide. Select a registered layout that matches the information shape before inventing a new one.
 4. For HTML, copy [assets/template.html](assets/template.html) and preserve its stage, navigation, style tokens, and layout classes. `node --experimental-strip-types scripts/new-deck.ts <output.html>` is an optional safe copier.
 5. For PPTX, Keynote, Google Slides, Figma Slides, or another native format, recreate the same token values and composition grammar with editable native elements. The HTML is a visual source of truth, not a required runtime.
-6. Replace the sample content; do not reuse its claims as facts. Rewrite content before shrinking type, breaking the grid, or introducing a one-off component.
-7. Run `node --experimental-strip-types scripts/validate-deck.ts <output.html>` for HTML, then render and inspect every slide at 16:9. Fix clipping, weak contrast, accidental overlap, inconsistent page numbering, and off-style additions.
+6. Replace the sample content; do not reuse its claims as facts. Bind each content image to a named `data-image-slot` in HTML or an equivalent named placeholder in native slide formats. Rewrite or split content before shrinking type, breaking the grid, or introducing a one-off component.
+7. Read [references/quality-gate.md](references/quality-gate.md), run `node --experimental-strip-types scripts/validate-deck.ts <output.html>` for HTML, then render and inspect every slide at 16:9 plus one narrow viewport. Fix clipping, collisions, unreadable type, navigation intrusion, broken image slots, and off-style additions.
 
 ## Non-negotiables
 

@@ -761,11 +761,11 @@
 
 </style>
 </head>
-<body>
+<body data-density="speaker">
 <deck-stage width="1920" height="1080" no-rail>
 
   <!-- ============== SLIDE 1 — COVER ============== -->
-  <section class="slide s1" data-screen-label="01 Cover">
+  <section class="slide s1" data-screen-label="01 Cover" data-layout="cover">
     <div class="s1-stage">
       <div class="s1-the">This is</div>
       <div class="s1-big">DESIGN ON</div>
@@ -788,7 +788,7 @@
   </section>
 
   <!-- ============== SLIDE 2 — AGENDA ============== -->
-  <section class="slide s2" data-screen-label="02 Agenda">
+  <section class="slide s2" data-screen-label="02 Agenda" data-layout="agenda">
     <div class="masthead">
       <span>AGENDA</span>
       <span>BRAND-LAUNCH NARRATIVE</span>
@@ -827,7 +827,7 @@
   </section>
 
   <!-- ============== SLIDE 3 — SECTION OPENER (split) ============== -->
-  <section class="slide s3" data-screen-label="03 Section Opener">
+  <section class="slide s3" data-screen-label="03 Section Opener" data-layout="manifesto">
     <div class="s3-left">
       <div class="top">
         <span>SECTION 01</span>
@@ -852,7 +852,7 @@
   </section>
 
   <!-- ============== SLIDE 4 — STATEMENT + 3 SUPPORTING ============== -->
-  <section class="slide s4" data-screen-label="04 Statement And Three">
+  <section class="slide s4" data-screen-label="04 Statement And Three" data-layout="audience">
     <div class="masthead">
       <span>AUDIENCE · WHO WE ARE WRITING TO</span>
       <span>THREE READERS</span>
@@ -886,7 +886,7 @@
   </section>
 
   <!-- ============== SLIDE 5 — CHART ============== -->
-  <section class="slide s5" data-screen-label="05 Data Study">
+  <section class="slide s5" data-screen-label="05 Data Study" data-layout="offer">
     <div class="masthead">
       <span>THE OFFER · PROJECTED UPTAKE</span>
       <span>SIX WEEKS</span>
@@ -975,7 +975,7 @@
   </section>
 
   <!-- ============== SLIDE 6 — PROCESS ============== -->
-  <section class="slide s6" data-screen-label="06 Process Diagram">
+  <section class="slide s6" data-screen-label="06 Process Diagram" data-layout="process">
     <div class="masthead">
       <span>CHANNELS · THE ROLLOUT SEQUENCE</span>
       <span>FOUR PLAYS</span>
@@ -1018,7 +1018,7 @@
   </section>
 
   <!-- ============== SLIDE 7 — KPI GRID ============== -->
-  <section class="slide s7" data-screen-label="07 KPI Grid">
+  <section class="slide s7" data-screen-label="07 KPI Grid" data-layout="proof">
     <div class="masthead">
       <span>THE PROOF · WHAT CONVERTS THE STORY</span>
       <span>FOUR NUMBERS</span>
@@ -1061,7 +1061,7 @@
   </section>
 
   <!-- ============== SLIDE 8 — CLOSING ============== -->
-  <section class="slide s8" data-screen-label="08 Closing">
+  <section class="slide s8" data-screen-label="08 Closing" data-layout="closing">
     <div class="s8-top">
       <span>THE LAUNCH CALENDAR</span>
       <span>MARK THE DATES</span>
@@ -1751,7 +1751,7 @@
         });
       }, { root: this._rail, rootMargin: '400px 0px' });
       // Tweaks typically change CSS vars / attrs OUTSIDE <deck-stage>
-      // (on <html>, <body>, a wrapper div, or a <style> tag), which
+      // (on <html>, <body data-density="speaker">, a wrapper div, or a <style> tag), which
       // _liveObserver can't see. Re-snapshot author CSS (constructable
       // sheet is shared by reference, so one replaceSync updates every
       // thumb shadow root) and re-sync each thumb host's attrs + custom
@@ -1810,7 +1810,7 @@
       // Every custom property the author references. _syncThumbHostAttrs
       // mirrors each one's *computed* value at <deck-stage> onto the
       // thumb host so the live value wins over the :host default above
-      // regardless of which ancestor the tweak wrote to (<html>, <body>,
+      // regardless of which ancestor the tweak wrote to (<html>, <body data-density="speaker">,
       // a wrapper div, or the deck-stage element itself all inherit
       // down to getComputedStyle(this)).
       this._authorVars = new Set(authorCss.match(/--[\w-]+/g) || []);

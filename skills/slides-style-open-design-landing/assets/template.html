@@ -692,9 +692,9 @@ body::before { z-index: 0; }
 }
 </style>
 </head>
-<body>
+<body data-density="reader">
 <div id='deck'>
-  <section class='slide s-cover' data-slide-kind='cover'>
+  <section class='slide s-cover' data-slide-kind='cover' data-layout="cover">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -718,7 +718,7 @@ body::before { z-index: 0; }
     <span class='corner tr'></span>
     <span class='corner bl'></span>
     <span class='corner br'></span>
-    <img src='assets/hero.webp' alt='' />
+    <img src='assets/hero.webp' alt='' data-image-slot="hero-16x9" />
   </div>
 </div>
 <div class='slide-foot'>
@@ -726,7 +726,7 @@ body::before { z-index: 0; }
   <span class='counter'>01 / 11</span>
 </div>
 </section>
-  <section class='slide s-section' data-slide-kind='section'>
+  <section class='slide s-section' data-slide-kind='section' data-layout="section">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -747,7 +747,7 @@ body::before { z-index: 0; }
   <span class='counter'>02 / 11</span>
 </div>
 </section>
-  <section class='slide s-content layout-right' data-slide-kind='content'>
+  <section class='slide s-content layout-right' data-slide-kind='content' data-layout="content-right">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -765,14 +765,14 @@ body::before { z-index: 0; }
     <p class='body'>Partners evaluate the roadmap and the license, not the slide deck. Press wants one sentence they can quote. Community wants proof the story matches the commit log — so we write one narrative and let each audience pull what it needs.</p>
     <ul><li>Partners — read API stability, Apache-2.0 terms, and plugin roadmap before anything else.</li><li>Press — need a single clear thesis: local, open, agent-native design, stated plainly.</li><li>Community — 300+ contributors who fact-check every claim against the repo.</li></ul>
   </div>
-  <div class='art'><img src='assets/about.webp' alt='' /></div>
+  <div class='art'><img src='assets/about.webp' alt='' data-image-slot="evidence-native" /></div>
 </div>
 <div class='slide-foot'>
   <span>MMXXVI · Open / Local / Agent-native</span>
   <span class='counter'>03 / 11</span>
 </div>
 </section>
-  <section class='slide s-content layout-left' data-slide-kind='content'>
+  <section class='slide s-content layout-left' data-slide-kind='content' data-layout="content-left">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -790,14 +790,14 @@ body::before { z-index: 0; }
     <p class='body'>We don't sell seats or gate the workflow. We open-source the plugins, the design systems, and the agent wiring itself — so the belief and the product are the same claim, provable in one clone.</p>
     <ul><li>Apache-2.0, permanently — no dual-license bait-and-switch later.</li><li>Local-first — your files and your own coding agent, not our cloud.</li><li>BYOK everywhere — Anthropic, OpenAI, Azure, Google, plus 14 media providers.</li><li>217+ plugins, 129 design systems — the belief compounding in public.</li></ul>
   </div>
-  <div class='art'><img src='assets/capabilities.webp' alt='' /></div>
+  <div class='art'><img src='assets/capabilities.webp' alt='' data-image-slot="evidence-native" /></div>
 </div>
 <div class='slide-foot'>
   <span>MMXXVI · Open / Local / Agent-native</span>
   <span class='counter'>04 / 11</span>
 </div>
 </section>
-  <section class='slide s-stats' data-slide-kind='stats'>
+  <section class='slide s-stats' data-slide-kind='stats' data-layout="stats">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -842,7 +842,7 @@ body::before { z-index: 0; }
   <span class='counter'>05 / 11</span>
 </div>
 </section>
-  <section class='slide s-section' data-slide-kind='section'>
+  <section class='slide s-section' data-slide-kind='section' data-layout="section">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -863,7 +863,7 @@ body::before { z-index: 0; }
   <span class='counter'>06 / 11</span>
 </div>
 </section>
-  <section class='slide s-content layout-right' data-slide-kind='content'>
+  <section class='slide s-content layout-right' data-slide-kind='content' data-layout="content-right">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -881,14 +881,14 @@ body::before { z-index: 0; }
     <p class='body'>Each channel restates the identical belief in its native format, so a partner reading the README and a journalist reading the press note hear the same founder voice.</p>
     <ul><li>01 · GitHub README + release notes — the thesis, restated at every ship.</li><li>02 · Discord town halls — monthly, founder-hosted, unscripted Q&amp;A.</li><li>03 · Press briefings — one-page thesis doc, sent before any embargo.</li><li>04 · Partner integration guides — the belief translated into API terms.</li><li>05 · Community showcase reposts — proof pulled from real user output.</li></ul>
   </div>
-  <div class='art'><img src='assets/method-1.webp' alt='' /></div>
+  <div class='art'><img src='assets/method-1.webp' alt='' data-image-slot="evidence-native" /></div>
 </div>
 <div class='slide-foot'>
   <span>MMXXVI · Open / Local / Agent-native</span>
   <span class='counter'>07 / 11</span>
 </div>
 </section>
-  <section class='slide s-content layout-left' data-slide-kind='content'>
+  <section class='slide s-content layout-left' data-slide-kind='content' data-layout="content-left">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -906,14 +906,14 @@ body::before { z-index: 0; }
     <p class='body'>Every beat on this calendar carries a growth number, so a creative choice is never separated from what it's supposed to move.</p>
     <ul><li>Week 1 — press embargo lifts with the founder thesis piece; target 5K referral visits.</li><li>Week 3 — partner integration guide ships; target 10 signed pilot partners.</li><li>Week 6 — first Discord town hall; target 1,200 live listeners, 300 new members.</li><li>Week 12 — community showcase recap; target 15% lift in plugin installs.</li></ul>
   </div>
-  <div class='art'><img src='assets/work-1.webp' alt='' /></div>
+  <div class='art'><img src='assets/work-1.webp' alt='' data-image-slot="evidence-native" /></div>
 </div>
 <div class='slide-foot'>
   <span>MMXXVI · Open / Local / Agent-native</span>
   <span class='counter'>08 / 11</span>
 </div>
 </section>
-  <section class='slide s-quote' data-slide-kind='quote'>
+  <section class='slide s-quote' data-slide-kind='quote' data-layout="quote">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -932,14 +932,14 @@ body::before { z-index: 0; }
       <p>Priya Raman<span>Partnerships Lead · Fenwick Studio</span></p>
     </div>
   </div>
-  <div class='art'><img src='assets/testimonial.webp' alt='' /></div>
+  <div class='art'><img src='assets/testimonial.webp' alt='' data-image-slot="evidence-native" /></div>
 </div>
 <div class='slide-foot'>
   <span>MMXXVI · Open / Local / Agent-native</span>
   <span class='counter'>09 / 11</span>
 </div>
 </section>
-  <section class='slide s-cta' data-slide-kind='cta'>
+  <section class='slide s-cta' data-slide-kind='cta' data-layout="cta">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>
@@ -970,7 +970,7 @@ body::before { z-index: 0; }
   <span class='counter'>10 / 11</span>
 </div>
 </section>
-  <section class='slide s-end' data-slide-kind='end'>
+  <section class='slide s-end' data-slide-kind='end' data-layout="closing">
 <div class='slide-chrome'>
   <div class='left'>
     <span class='mark'>Ø</span>

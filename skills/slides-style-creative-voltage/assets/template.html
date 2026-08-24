@@ -701,13 +701,13 @@ img, video, canvas, svg {
 </style>
 <style id="od-no-pager">.deck-controls,#counter,.deck-counter{display:none!important}</style>
 </head>
-<body>
+<body data-density="speaker">
 
 <div class="deck-viewport">
     <main class="deck-stage" id="deckStage">
 
         <!-- === SLIDE 1: COVER — split blue/dark === -->
-        <section class="slide active visible">
+        <section class="slide active visible" data-layout="cover">
             <div class="panel-blue"></div>
             <div class="halftone fade" style="left:0; top:0; width:46%; height:46%;"></div>
             <div class="slide-no">01 / OPEN</div>
@@ -730,7 +730,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 2: AGENDA === -->
-        <section class="slide">
+        <section class="slide" data-layout="agenda">
             <div class="halftone neon fade" style="right:0; top:0; width:34%; height:40%;"></div>
             <div class="slide-no">02 / OPEN</div>
             <nav class="crumbs"><span class="on">Intro</span><span>Problem</span><span>Product</span><span>Proof</span></nav>
@@ -755,7 +755,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 3: SECTION DIVIDER — giant outlined numeral on blue === -->
-        <section class="slide">
+        <section class="slide" data-layout="problem">
             <div class="panel-blue"></div>
             <div class="halftone" style="left:0; bottom:0; width:46%; height:34%; -webkit-mask-image:linear-gradient(0deg,#000 20%,transparent 90%); mask-image:linear-gradient(0deg,#000 20%,transparent 90%);"></div>
             <div class="slide-no">03 / OPEN</div>
@@ -770,7 +770,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 4: BULLETS — the problem === -->
-        <section class="slide">
+        <section class="slide" data-layout="barriers">
             <div class="halftone fade" style="right:0; bottom:0; width:30%; height:44%; -webkit-mask-image:linear-gradient(315deg,#000 25%,transparent 85%); mask-image:linear-gradient(315deg,#000 25%,transparent 85%);"></div>
             <div class="slide-no">04 / OPEN</div>
             <nav class="crumbs"><span>Intro</span><span class="on">Problem</span><span>Product</span><span>Proof</span></nav>
@@ -804,7 +804,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 5: BIG STAT === -->
-        <section class="slide">
+        <section class="slide" data-layout="solution">
             <div class="halftone neon fade" style="left:0; top:0; width:40%; height:50%;"></div>
             <div class="slide-no">05 / OPEN</div>
             <nav class="crumbs"><span>Intro</span><span class="on">Problem</span><span>Product</span><span>Proof</span></nav>
@@ -820,7 +820,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 6: PRINCIPLE GRID — the kit, 2×2 === -->
-        <section class="slide">
+        <section class="slide" data-layout="benefits">
             <div class="halftone fade" style="left:0; bottom:0; width:26%; height:34%; -webkit-mask-image:linear-gradient(45deg,#000 25%,transparent 85%); mask-image:linear-gradient(45deg,#000 25%,transparent 85%);"></div>
             <div class="slide-no">06 / OPEN</div>
             <nav class="crumbs"><span>Intro</span><span>Problem</span><span class="on">Product</span><span>Proof</span></nav>
@@ -853,7 +853,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 7: CSS BAR CHART === -->
-        <section class="slide">
+        <section class="slide" data-layout="growth">
             <div class="halftone neon fade" style="right:0; top:0; width:30%; height:36%; -webkit-mask-image:linear-gradient(225deg,#000 25%,transparent 85%); mask-image:linear-gradient(225deg,#000 25%,transparent 85%);"></div>
             <div class="slide-no">07 / OPEN</div>
             <nav class="crumbs"><span>Intro</span><span>Problem</span><span class="on">Product</span><span>Proof</span></nav>
@@ -878,7 +878,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 8: QUOTE === -->
-        <section class="slide">
+        <section class="slide" data-layout="proof">
             <div class="panel-blue right" style="width:30%;"></div>
             <div class="halftone" style="right:0; top:0; width:30%; height:100%; -webkit-mask-image:linear-gradient(270deg,#000 10%,transparent 80%); mask-image:linear-gradient(270deg,#000 10%,transparent 80%);"></div>
             <div class="slide-no">08 / OPEN</div>
@@ -895,7 +895,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 9: COMPARISON — before vs after === -->
-        <section class="slide">
+        <section class="slide" data-layout="comparison">
             <div class="slide-no">09 / OPEN</div>
             <nav class="crumbs"><span>Intro</span><span>Problem</span><span>Product</span><span class="on">Proof</span></nav>
             <div class="slide-inner">
@@ -922,7 +922,7 @@ img, video, canvas, svg {
         </section>
 
         <!-- === SLIDE 10: CLOSING === -->
-        <section class="slide">
+        <section class="slide" data-layout="closing">
             <div class="panel-blue" style="width:38%;"></div>
             <div class="halftone fade" style="left:0; top:0; width:38%; height:60%;"></div>
             <div class="slide-no">10 / OPEN</div>
