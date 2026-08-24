@@ -65,6 +65,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.runners.outputs.runs_on).control }}
     outputs:
       run: ${{ steps.convergence.outputs.run }}
+      convergence_plan_artifact: ci-convergence-plan-${{ github.run_id }}-${{ github.run_attempt }}
       convergence_hit: ${{ steps.convergence.outputs.hit }}
       convergence_would_run: ${{ steps.convergence.outputs.would_run }}
       scopes: ${{ steps.scopes.outputs.scopes }}
@@ -914,7 +915,9 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
-          name: ci-convergence-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          # A failed-job rerun reuses the successful plan job and therefore its
+          # original attempt-scoped artifact name.
+          name: ${{ needs.plan.outputs.convergence_plan_artifact }}
           path: ${{ runner.temp }}
 
       - name: Create convergence handoff

@@ -130,6 +130,16 @@ describe("workload convergence", () => {
     expect(arc).not.toBe(hosted);
   });
 
+  test("keeps broad test workloads on tracked-tree inputs until their closure is proven", () => {
+    const config = JSON.parse(readFileSync(
+      path.join(repoRoot, ".github", "config", "convergence.json"),
+      "utf8",
+    )) as any;
+
+    expect(config.workflows.ci.workloads.daemon_unit_tests.inputs).toEqual(["*"]);
+    expect(config.workflows.ci.workloads.e2e_vitest.inputs).toEqual(["*"]);
+  });
+
   test("materializes the convergence handoff from the GitHub event context", () => {
     const fixture = createRepository();
     runPlan(fixture);

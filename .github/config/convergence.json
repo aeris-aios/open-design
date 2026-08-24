@@ -128,7 +128,7 @@
           "reusable": false
         },
         "daemon_unit_tests": {
-          "inputs": ["suite://daemon"],
+          "inputs": ["*"],
           "runnerClass": "workspace_unit",
           "products": "none",
           "reusable": true
@@ -146,7 +146,7 @@
           "reusable": true
         },
         "e2e_vitest": {
-          "inputs": ["suite://e2e-runtime"],
+          "inputs": ["*"],
           "runnerClass": "js_hot",
           "products": "none",
           "reusable": true

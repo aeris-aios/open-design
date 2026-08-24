@@ -1612,8 +1612,13 @@ process.stdin.on("end", () => {
     const validate = sectionBetween(workflow, "  validate:", "  runtime_summary:");
 
     expect(plan).toContain("Upload pending convergence plan");
+    expect(plan).toContain(
+      "convergence_plan_artifact: ci-convergence-plan-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
     expect(plan).not.toContain("actions/cache/save");
     expect(validate).toContain("Download pending convergence plan");
+    expect(validate).toContain("name: ${{ needs.plan.outputs.convergence_plan_artifact }}");
+    expect(validate).not.toContain("name: ci-convergence-plan-${{ github.run_id }}-${{ github.run_attempt }}");
     expect(validate).toContain("Upload convergence handoff");
     expect(validate.indexOf("Upload convergence handoff")).toBeGreaterThan(
       validate.indexOf("Check workspace validation jobs"),
