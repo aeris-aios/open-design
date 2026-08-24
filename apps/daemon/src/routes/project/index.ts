@@ -10,6 +10,7 @@ import {
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
+  automaticStrategyTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
   type ChatSessionMode,
   type LocalCatalogScope,
@@ -23,6 +24,9 @@ import {
   type ProjectFileVersionPromptSource,
   type ProjectFileVersionSource,
   type ProjectFileVersionWarning,
+  type ProjectMetadata,
+  type RestoreProjectAutomaticScenarioRequest,
+  type RestoreProjectAutomaticScenarioResponse,
   type ProjectSyncState,
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
@@ -55,7 +59,15 @@ import {
   buildConnectorProbe,
   getInstalledPlugin,
   listInstalledPlugins,
+  automaticScenarioTaskProfile,
+  createAutomaticProjectStrategyBinding,
+  createProjectExampleBinding,
+  digestExampleSkillManifest,
+  InvalidProjectExampleBindingError,
+  readVerifiedProjectScenarioBinding,
+  readVerifiedProjectStrategyBinding,
   resolvePluginSnapshot,
+  restoreProjectSnapshotLink,
   type ResolveSnapshotError,
   type ResolveSnapshotOk,
 } from '../../plugins/index.js';
@@ -65,6 +77,7 @@ import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
 import {
   ensureTeamProjectCommentConversations,
+  getFirstProjectConversation,
   SYNC_KEEPS_UPDATED_AT,
 } from '../../db.js';
 import {
@@ -3658,10 +3671,15 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // inside the otherwise extensible project metadata object.
       const clientMetadata = metadata && typeof metadata === 'object'
         ? Object.fromEntries(
-            Object.entries(metadata).filter(([key]) => key !== 'localCatalogScopes'),
+            Object.entries(metadata).filter(([key]) => (
+              key !== 'localCatalogScopes'
+              && key !== 'scenarioBinding'
+              && key !== 'strategyBinding'
+              && key !== 'exampleBinding'
+            )),
           )
         : null;
-      const projectMetadata =
+      const baseProjectMetadata =
         clientMetadata
           ? {
               ...clientMetadata,
@@ -3712,23 +3730,146 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const initialSessionMode = normalizeChatSessionMode(
         req.body?.conversationMode ?? req.body?.sessionMode,
       );
+      const requestedAutomaticStrategyTaskProfile =
+        req.body?.automaticStrategyTaskProfile === 'prototype'
+        || req.body?.automaticStrategyTaskProfile === 'ppt'
+        || req.body?.automaticStrategyTaskProfile === 'marketing'
+        || req.body?.automaticStrategyTaskProfile === 'hyperframes'
+          ? req.body.automaticStrategyTaskProfile
+          : null;
+      if (
+        req.body?.automaticStrategyTaskProfile !== undefined
+        && !requestedAutomaticStrategyTaskProfile
+      ) {
+        return sendApiError(
+          res,
+          400,
+          'BAD_REQUEST',
+          'automaticStrategyTaskProfile is invalid',
+        );
+      }
       const explicitPlugin =
         typeof req.body?.pluginId === 'string' && req.body.pluginId.trim().length > 0
           ? true
           : typeof req.body?.appliedPluginSnapshotId === 'string'
             && req.body.appliedPluginSnapshotId.trim().length > 0;
+      // An official example card picked under a task type. It is a reference,
+      // not a strategy: the project keeps its automatic OD Next route and the
+      // example's SKILL.md travels as a user-selected Skill at run start. It
+      // therefore deliberately does NOT participate in `explicitPlugin` — the
+      // whole point is to stop pinning an executable plugin.
+      //
+      // Fail-closed like `automaticStrategyTaskProfile` above: a present but
+      // unusable reference is a 400, never a silent drop, because a dropped
+      // reference produces a run that looks correct and quietly lost the
+      // example the user picked.
+      const rawExampleReference = req.body?.exampleReference;
+      let exampleBinding: ProjectMetadata['exampleBinding'] | null = null;
+      if (rawExampleReference !== undefined) {
+        const exampleReference =
+          rawExampleReference && typeof rawExampleReference === 'object'
+          && !Array.isArray(rawExampleReference)
+            ? rawExampleReference as Record<string, unknown>
+            : null;
+        const examplePluginId = typeof exampleReference?.pluginId === 'string'
+          ? exampleReference.pluginId.trim()
+          : '';
+        const exampleSource = typeof exampleReference?.source === 'string'
+          ? exampleReference.source.trim()
+          : '';
+        if (!examplePluginId || !exampleSource) {
+          return sendApiError(res, 400, 'BAD_REQUEST', 'exampleReference is invalid');
+        }
+        // Contradictory claims. `pluginId`/`appliedPluginSnapshotId` say "run
+        // this plugin as the strategy"; `exampleReference` says "keep the
+        // automatic route and carry this example as reference material". A
+        // request asserting both has no single correct reading, and guessing
+        // one would silently decide the route for the user.
+        if (explicitPlugin) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'exampleReference cannot be combined with pluginId or appliedPluginSnapshotId',
+          );
+        }
+        // Re-resolve server-side through the same local lookup
+        // `/api/plugins/:id/apply-local` uses, then read the example's bytes
+        // from the record's own path. The request body contributes an identity
+        // claim only; it never contributes content.
+        const resolvedExample = await ctx.pluginScope?.getLocalPluginBySource?.(
+          examplePluginId,
+          exampleSource,
+        ) ?? null;
+        const resolvedExampleRecord = resolvedExample as
+          { id?: unknown; source?: unknown; fsPath?: unknown } | null;
+        if (
+          !resolvedExampleRecord
+          || resolvedExampleRecord.id !== examplePluginId
+          || resolvedExampleRecord.source !== exampleSource
+          || typeof resolvedExampleRecord.fsPath !== 'string'
+          || !resolvedExampleRecord.fsPath
+        ) {
+          return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'example plugin not found');
+        }
+        try {
+          exampleBinding = createProjectExampleBinding({
+            pluginId: examplePluginId,
+            pluginSource: exampleSource,
+            manifestSourceDigest: await digestExampleSkillManifest(
+              resolvedExampleRecord.fsPath,
+            ),
+            boundAt: now,
+          });
+        } catch (error) {
+          if (error instanceof InvalidProjectExampleBindingError) {
+            return sendApiError(res, 400, 'BAD_REQUEST', error.message);
+          }
+          throw error;
+        }
+      }
+      const automaticStrategyBinding = requestedAutomaticStrategyTaskProfile
+        && initialSessionMode === 'design'
+        && !explicitPlugin
+          ? createAutomaticProjectStrategyBinding({
+              metadata: baseProjectMetadata as ProjectMetadata | null,
+              taskProfile: requestedAutomaticStrategyTaskProfile,
+              boundAt: now,
+            })
+          : null;
+      if (requestedAutomaticStrategyTaskProfile && !automaticStrategyBinding) {
+        return sendApiError(
+          res,
+          400,
+          'BAD_REQUEST',
+          'automaticStrategyTaskProfile does not match this automatic Design route',
+        );
+      }
+      const projectMetadata = automaticStrategyBinding || exampleBinding
+        ? {
+            ...(baseProjectMetadata ?? {}),
+            ...(automaticStrategyBinding
+              ? { strategyBinding: automaticStrategyBinding }
+              : {}),
+            ...(exampleBinding ? { exampleBinding } : {}),
+          }
+        : baseProjectMetadata;
+      const defaultScenarioPluginId = defaultScenarioPluginIdForProjectMetadata(
+        projectMetadata && typeof projectMetadata.kind === 'string'
+          ? projectMetadata as Parameters<
+              typeof defaultScenarioPluginIdForProjectMetadata
+            >[0]
+          : null,
+      );
+      const automaticDefaultRouting = initialSessionMode === 'design'
+        && Boolean(defaultScenarioPluginId)
+        && !explicitPlugin
+        && !automaticStrategyBinding;
       let resolveBody =
         explicitPlugin ? (req.body as Record<string, unknown>) : null;
-      if (!resolveBody && initialSessionMode === 'design') {
-        const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(
-          projectMetadata && typeof projectMetadata.kind === 'string'
-            ? projectMetadata as Parameters<
-                typeof defaultScenarioPluginIdForProjectMetadata
-              >[0]
-            : null,
-        );
-        if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
-          resolveBody = { ...(req.body || {}), pluginId: fallbackPluginId };
+      if (!resolveBody && initialSessionMode === 'design' && !automaticStrategyBinding) {
+        if (defaultScenarioPluginId && getInstalledPlugin(db, defaultScenarioPluginId)) {
+          resolveBody = { ...(req.body || {}), pluginId: defaultScenarioPluginId };
         }
       }
       let project;
@@ -3774,7 +3915,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           }
         }
         project = db.transaction(() => {
-          const createdProject = insertProject(db, {
+          let createdProject = insertProject(db, {
             id,
             name: name.trim(),
             skillId: normalizedSkillId,
@@ -3817,6 +3958,17 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
                   : undefined,
               connectorProbe: buildConnectorProbe(connectorService),
               ...(pluginForSnapshot ? { plugin: pluginForSnapshot } : {}),
+              ...(automaticDefaultRouting && defaultScenarioPluginId
+                ? {
+                    projectBinding: {
+                      provenance: 'automatic_default' as const,
+                      taskProfile: automaticScenarioTaskProfile({
+                        metadata: projectMetadata as ProjectMetadata | null,
+                        pluginId: defaultScenarioPluginId,
+                      }),
+                    },
+                  }
+                : {}),
             });
             if (resolved && !resolved.ok) {
               if (!explicitPlugin) {
@@ -3829,6 +3981,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
               }
             } else {
               pluginResolutionState.snapshot = resolved;
+              if (resolved) createdProject = getProject(db, id) ?? createdProject;
             }
           }
           return createdProject;
@@ -3905,6 +4058,208 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       res.json(body);
     } catch (err: any) {
       sendApiError(res, 400, 'BAD_REQUEST', String(err));
+    }
+  });
+
+  app.post('/api/projects/:id/scenario/restore-automatic', async (req, res) => {
+    const project = getProject(db, req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+    }
+    if (!await enforceWorkspaceProjectMutation(
+      req,
+      res,
+      sendApiError,
+      getWorkspaceProject,
+      getWorkspaceProjectByProjectId,
+      db,
+      project.id,
+      'rename',
+    )) return;
+
+    const request = req.body as Partial<RestoreProjectAutomaticScenarioRequest> | null;
+    if (!request || !Object.prototype.hasOwnProperty.call(request, 'expectedCurrentSnapshotId')) {
+      return sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'expectedCurrentSnapshotId is required',
+      );
+    }
+    if (
+      request.expectedCurrentSnapshotId !== null
+      && typeof request.expectedCurrentSnapshotId !== 'string'
+    ) {
+      return sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'expectedCurrentSnapshotId must be a string or null',
+      );
+    }
+    const currentSnapshotId = project.appliedPluginSnapshotId ?? null;
+    if (request.expectedCurrentSnapshotId !== currentSnapshotId) {
+      return sendApiError(
+        res,
+        409,
+        'PROJECT_SCENARIO_CONFLICT',
+        'project scenario changed; refresh before restoring the automatic scenario',
+      );
+    }
+
+    const automaticStrategyTaskProfile = automaticStrategyTaskProfileForProjectMetadata(
+      project.metadata,
+    );
+    if (automaticStrategyTaskProfile) {
+      const currentStrategyBinding = readVerifiedProjectStrategyBinding(project.metadata);
+      const strategyBinding = createAutomaticProjectStrategyBinding({
+        metadata: project.metadata,
+        taskProfile: automaticStrategyTaskProfile,
+      });
+      if (!strategyBinding) {
+        return sendApiError(
+          res,
+          409,
+          'DEFAULT_SCENARIO_UNAVAILABLE',
+          'no automatic strategy route is available for this project',
+        );
+      }
+      if (
+        currentSnapshotId === null
+        && currentStrategyBinding?.taskProfile === automaticStrategyTaskProfile
+        && !project.metadata?.scenarioBinding
+      ) {
+        const body: RestoreProjectAutomaticScenarioResponse = {
+          project,
+          strategyBinding: currentStrategyBinding,
+          changed: false,
+        };
+        return res.json(body);
+      }
+
+      const restored = db.transaction(() => {
+        if (currentSnapshotId) {
+          restoreProjectSnapshotLink(db, project.id, currentSnapshotId, null);
+        }
+        const metadata: ProjectMetadata = {
+          ...(project.metadata ?? { kind: 'prototype' }),
+          strategyBinding,
+        };
+        delete metadata.scenarioBinding;
+        return updateProject(db, project.id, { metadata });
+      })();
+      if (!restored) {
+        return sendApiError(
+          res,
+          409,
+          'DEFAULT_SCENARIO_RESTORE_FAILED',
+          'automatic strategy restoration failed',
+        );
+      }
+      const body: RestoreProjectAutomaticScenarioResponse = {
+        project: restored,
+        strategyBinding,
+        changed: true,
+      };
+      return res.json(body);
+    }
+
+    const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(project.metadata);
+    if (!defaultPluginId || !getInstalledPlugin(db, defaultPluginId)) {
+      return sendApiError(
+        res,
+        409,
+        'DEFAULT_SCENARIO_UNAVAILABLE',
+        'no installed automatic scenario is available for this project',
+      );
+    }
+    const taskProfile = automaticScenarioTaskProfile({
+      metadata: project.metadata,
+      pluginId: defaultPluginId,
+    });
+    const currentBinding = readVerifiedProjectScenarioBinding(db, {
+      projectId: project.id,
+      appliedPluginSnapshotId: currentSnapshotId,
+      metadata: project.metadata,
+    });
+    if (
+      currentBinding?.provenance === 'automatic_default'
+      && currentBinding.snapshotId === currentSnapshotId
+      && currentBinding.pluginId === defaultPluginId
+      && (currentBinding.taskProfile ?? null) === taskProfile
+    ) {
+      const body: RestoreProjectAutomaticScenarioResponse = {
+        project,
+        scenarioBinding: currentBinding,
+        changed: false,
+      };
+      return res.json(body);
+    }
+
+    const workspaceProject = getWorkspaceProjectByProjectId(db, project.id);
+    const registry = await ctx.pluginScope?.loadRegistry({
+      workspaceId: workspaceProject?.workspaceId == null
+        ? null
+        : String(workspaceProject.workspaceId),
+      workspaceMemberId: typeof workspaceProject?.createdByWorkspaceMemberId === 'string'
+        ? workspaceProject.createdByWorkspaceMemberId
+        : null,
+    });
+    if (!registry) {
+      return sendApiError(res, 503, 'PLUGIN_REGISTRY_UNAVAILABLE', 'plugin registry unavailable');
+    }
+    const conversationId = getFirstProjectConversation(db, project.id)?.id ?? null;
+    const restore = db.transaction(():
+      | { ok: true; resolved: ResolveSnapshotOk; project: NonNullable<ReturnType<typeof getProject>> }
+      | { ok: false; failure: ResolveSnapshotError | null } => {
+      const resolved = resolvePluginSnapshot({
+        db,
+        body: { pluginId: defaultPluginId },
+        projectId: project.id,
+        conversationId,
+        registry,
+        connectorProbe: buildConnectorProbe(connectorService),
+        projectBinding: {
+          provenance: 'automatic_default',
+          taskProfile,
+        },
+      });
+      if (!resolved || !resolved.ok) {
+        return { ok: false, failure: resolved && !resolved.ok ? resolved : null };
+      }
+      const updated = getProject(db, project.id);
+      if (!updated?.metadata?.scenarioBinding) {
+        throw new Error('automatic scenario binding was not persisted');
+      }
+      return { ok: true, resolved, project: updated };
+    });
+    try {
+      const outcome = restore();
+      if (!outcome.ok) {
+        if (outcome.failure) {
+          return res.status(outcome.failure.status).json(outcome.failure.body);
+        }
+        return sendApiError(
+          res,
+          409,
+          'DEFAULT_SCENARIO_RESTORE_FAILED',
+          'automatic scenario restoration failed',
+        );
+      }
+      const body: RestoreProjectAutomaticScenarioResponse = {
+        project: outcome.project,
+        scenarioBinding: outcome.project.metadata!.scenarioBinding!,
+        changed: outcome.resolved.snapshotId !== currentSnapshotId,
+      };
+      return res.json(body);
+    } catch (error) {
+      console.warn('[projects] automatic scenario restore failed', error);
+      return sendApiError(
+        res,
+        409,
+        'DEFAULT_SCENARIO_RESTORE_FAILED',
+        'automatic scenario restoration failed; the existing project pin was preserved',
+      );
     }
   });
 
@@ -4359,6 +4714,22 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // patching other metadata without ever losing their import root.
       if (patch.metadata === null) {
         const existing = getProject(db, req.params.id);
+        if (existing?.metadata?.strategyBinding) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'metadata cannot be cleared while strategyBinding is daemon-owned',
+          );
+        }
+        if (existing?.metadata?.exampleBinding) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'metadata cannot be cleared while exampleBinding is daemon-owned',
+          );
+        }
         if (existing?.metadata?.baseDir) {
           return sendApiError(
             res,
@@ -4383,6 +4754,42 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             400,
             'BAD_REQUEST',
             'localCatalogScopes can only be set during project creation',
+          );
+        }
+        if (
+          'scenarioBinding' in patch.metadata
+          && JSON.stringify(patch.metadata.scenarioBinding)
+            !== JSON.stringify(existingMeta?.scenarioBinding)
+        ) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'scenarioBinding is daemon-owned',
+          );
+        }
+        if (
+          'strategyBinding' in patch.metadata
+          && JSON.stringify(patch.metadata.strategyBinding)
+            !== JSON.stringify(existingMeta?.strategyBinding)
+        ) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'strategyBinding is daemon-owned',
+          );
+        }
+        if (
+          'exampleBinding' in patch.metadata
+          && JSON.stringify(patch.metadata.exampleBinding)
+            !== JSON.stringify(existingMeta?.exampleBinding)
+        ) {
+          return sendApiError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'exampleBinding is daemon-owned',
           );
         }
         if ('fromTrustedPicker' in patch.metadata
@@ -4464,6 +4871,27 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           patch.metadata = {
             ...patch.metadata,
             localCatalogScopes: existingMeta.localCatalogScopes,
+          };
+        }
+        if (existingMeta?.scenarioBinding) {
+          patch.metadata = {
+            ...patch.metadata,
+            scenarioBinding: existingMeta.scenarioBinding,
+          };
+        }
+        if (existingMeta?.strategyBinding) {
+          patch.metadata = {
+            ...patch.metadata,
+            strategyBinding: existingMeta.strategyBinding,
+          };
+        }
+        // `updateProject` replaces metadata wholesale, so a patch that simply
+        // omits the daemon-owned example binding would erase the user's
+        // example without ever naming it.
+        if (existingMeta?.exampleBinding) {
+          patch.metadata = {
+            ...patch.metadata,
+            exampleBinding: existingMeta.exampleBinding,
           };
         }
       }
