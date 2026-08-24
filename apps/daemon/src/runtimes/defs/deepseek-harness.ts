@@ -53,7 +53,14 @@ export const deepseekHarnessAgentDef = {
   bin: 'dsh',
   versionArgs: ['--version'],
   versionPolicy: {
-    supportedVersions: ['0.1.0-rc.6'],
+    // `dsh` is published as a stream of release candidates whose sibling
+    // packages peer-require each other, so the version our own installer
+    // hands the user moves with upstream. Naming one of them made every user
+    // who followed our instructions land on an "untested version" warning the
+    // week after we bumped the installer. Accept the release line; a version
+    // off it still warns.
+    supportedVersions: ['0.1.0-rc.6', '0.1.0-rc.8'],
+    supportedVersionPattern: /^0\.1\.0-rc\.\d+$/u,
     requireVersion: true,
     parse: parseDeepSeekHarnessVersion,
   },
