@@ -14,7 +14,7 @@ Registered layout IDs: `cover`, `problem-split`, `manifesto`, `system-grid`, `ag
 
 | ID | Role | Use when | Guardrail |
 |---|---|---|---|
-| `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Keep the title dominant; no agenda, dashboard, or multi-card payload. |
+| `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Vertically center the complete copy block in the left field; keep the title dominant. |
 | `problem-split` | Problem Split | Contrast the current tension with the opportunity or decision. | Keep each side to one claim; never let the dividing device cut through text. |
 | `manifesto` | Manifesto | Deliver a single high-conviction statement or editorial passage. | Protect whitespace; split the slide before shrinking the statement. |
 | `system-grid` | System Grid | Explain three or four parts of one system. | Use parallel grammar, comparable density, and equal visual weight. |
