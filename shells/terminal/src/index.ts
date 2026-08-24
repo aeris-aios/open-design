@@ -53,6 +53,7 @@ export class FileFixtureLifecyclePort implements LifecyclePort {
   }
 }
 
-export async function applyTerminalUpdate(updater: StandaloneUpdater, launcher: VersionedLauncher, preparation: UpdatePreparation): Promise<{ preparation: UpdatePreparation; lifecycle: LifecycleStatus }> {
+export async function applyTerminalUpdate(updater: StandaloneUpdater, launcher: VersionedLauncher, preparation: UpdatePreparation): Promise<{ preparation: UpdatePreparation; lifecycle?: LifecycleStatus }> {
+  if (preparation.status === "shell-reinstall-required") return { preparation };
   return { preparation, lifecycle: await updater.applyNow(launcher) };
 }

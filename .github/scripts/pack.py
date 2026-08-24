@@ -92,6 +92,10 @@ def main() -> None:
         })
         run_terminal(scene_request, scene_receipt)
 
+    scene_manifest = read_json(scene / "scene.json")
+    if scene_manifest.get("standaloneVersion") != request.get("standaloneVersion"):
+        raise SystemExit("requested standaloneVersion differs from Terminal scene")
+
     temporary_files: list[Path] = []
     try:
         signers = []

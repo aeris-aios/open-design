@@ -212,17 +212,18 @@ jobs:
           STORAGE_BUCKET: ${{ secrets.EXACT_RELEASE_BUCKET }}
         run: |
           python3 - <<'PY'
-          import json, os
+          import json, os, subprocess
           from pathlib import Path
           root = Path('.tmp/exact')
           output = root / 'output'
           output.mkdir(parents=True, exist_ok=True)
           channel = os.environ['CHANNEL']
           version = os.environ['RELEASE_VERSION']
+          published_at = subprocess.check_output(['git', 'show', '--no-patch', '--format=%cI', os.environ['SOURCE_SHA']], text=True).strip()
           prefix = f"{os.environ['STORAGE_ENDPOINT'].rstrip('/')}/{os.environ['STORAGE_BUCKET'].strip('/')}/{channel}/{version}"
           lock = json.loads(Path('shells/terminal/node-lock.json').read_text())
           targets = [{'target': target, 'nodeArchiveFile': f"/convergence-scene/{value['archive']}", 'nodeArchiveSha256': value['sha256']} for target, value in lock['targets'].items()]
-          request = {'schemaVersion': 1, 'operation': 'exact.pack', 'channel': channel, 'releaseVersion': version, 'standaloneVersion': os.environ['STANDALONE_VERSION'], 'sourceCommit': os.environ['SOURCE_SHA'], 'publishedAt': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat().replace('+00:00', 'Z'), 'artifactBaseUrl': prefix, 'outputDirectory': str(output.resolve()), 'sceneDirectory': str((root / 'scene').resolve()), 'targets': targets}
+          request = {'schemaVersion': 1, 'operation': 'exact.pack', 'channel': channel, 'releaseVersion': version, 'standaloneVersion': os.environ['STANDALONE_VERSION'], 'sourceCommit': os.environ['SOURCE_SHA'], 'publishedAt': published_at, 'artifactBaseUrl': prefix, 'outputDirectory': str(output.resolve()), 'sceneDirectory': str((root / 'scene').resolve()), 'targets': targets}
           (root / 'pack-request.json').write_text(json.dumps(request, sort_keys=True, separators=(',', ':')) + '\n')
           PY
 

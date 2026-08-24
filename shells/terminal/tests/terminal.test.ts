@@ -31,4 +31,11 @@ describe("Terminal shell skeleton", () => {
     await expect(applyTerminalUpdate({ applyNow } as never, {} as never, preparation)).resolves.toEqual({ preparation, lifecycle });
     expect(applyNow).toHaveBeenCalledOnce();
   });
+
+  it("preserves a shell reinstall requirement without applying a stale attempt", async () => {
+    const applyNow = vi.fn();
+    const preparation = { status: "shell-reinstall-required" as const, releaseVersion: "0.1.0-betahyx.2" };
+    await expect(applyTerminalUpdate({ applyNow } as never, {} as never, preparation)).resolves.toEqual({ preparation });
+    expect(applyNow).not.toHaveBeenCalled();
+  });
 });
