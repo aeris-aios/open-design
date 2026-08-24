@@ -45,7 +45,7 @@ describe("Terminal shell skeleton", () => {
     expect(status).toHaveBeenCalledOnce();
   });
 
-  it("replays apply-update against a real already-active generation", async () => {
+  it("replays apply-update after install committed without starting the generation", async () => {
     const root = await mkdtemp(join(tmpdir(), "terminal-replay-")); roots.push(root);
     const artifact = Buffer.from("closure-update");
     const keys = generateKeyPairSync("ed25519");
@@ -80,11 +80,12 @@ describe("Terminal shell skeleton", () => {
 
     const prepared = await updater.prepareLatest();
     expect(prepared.status).toBe("prepared");
-    await expect(applyTerminalUpdate(updater, launcher, prepared)).resolves.toMatchObject({ lifecycle: { state: "running" } });
+    if (prepared.status !== "prepared") throw new Error("expected a prepared generation");
+    await store.commit(prepared.generation.id);
     const current = await updater.prepareLatest();
     expect(current).toMatchObject({ status: "current", applyRequired: false });
-    await expect(applyTerminalUpdate(updater, launcher, current)).resolves.toMatchObject({ lifecycle: { state: "running" } });
-    expect(await store.readState()).toMatchObject({ active: current.status === "current" ? current.generationId : null, attempt: null });
+    await expect(applyTerminalUpdate(updater, launcher, current)).resolves.toMatchObject({ lifecycle: { state: "stopped" } });
+    expect(await store.readState()).toMatchObject({ active: prepared.generation.id, attempt: prepared.generation.id });
   });
 
   it("rejects a foreign Node carrier before parsing commands or opening a store", () => {

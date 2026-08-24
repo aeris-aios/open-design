@@ -81,7 +81,7 @@ export class StandaloneUpdater {
     if (!compatible) return { status: "shell-reinstall-required", releaseVersion: lane.releaseVersion };
     const id = sha256Hex(canonicalJson(envelope.metadata));
     const state = await this.store.readState();
-    if (state.attempt === id) return { status: "current", generationId: id, applyRequired: true };
+    if (state.attempt === id) return { status: "current", generationId: id, applyRequired: state.attempt !== state.active };
     if (state.active === id) return { status: "current", generationId: id, applyRequired: false };
     if (state.active !== null) {
       const active = await this.store.activeGeneration();
