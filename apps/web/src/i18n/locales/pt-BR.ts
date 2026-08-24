@@ -144,6 +144,7 @@ export const ptBR: Dict = {
   'chat.runError.title.sessionExpired': "Sessão expirada",
   'chat.runError.title.gitBashMissing': "Git Bash ausente",
   'chat.runError.title.cpuUnsupported': "Processador não compatível",
+  'chat.runError.title.cliSessionRefused': "Versão do agente incompatível",
   'chat.runError.quotaExhaustedMessage': "A cota ou o limite de cobrança do seu serviço de modelo acabou, então tentar de novo não vai ajudar. Recarregue com seu provedor ou mude para outro modelo ou serviço.",
   'chat.runError.workspaceCreditsMessage': "Seu espaço de trabalho ficou sem créditos. Adicione créditos (ou peça ao proprietário do espaço para recarregar) ou mude para outro modelo ou serviço.",
   'chat.runError.timedOutMessage': "Esta execução demorou demais e foi interrompida. Tente novamente ou reduza a tarefa e repita.",
@@ -152,6 +153,10 @@ export const ptBR: Dict = {
   'chat.runError.sessionExpiredMessage': "A sessão retomada havia expirado. Ela foi redefinida, então tente novamente para iniciar uma nova execução.",
   'chat.runError.gitBashMissingMessage': "O Git Bash é necessário para executar este agente no Windows, mas não foi encontrado. Instale o Git para Windows e tente novamente.",
   'chat.runError.cpuUnsupportedMessage': "O runtime deste agente precisa de um conjunto de instruções de CPU (AVX2) que este dispositivo não possui, por isso não consegue iniciar. Atualize o OpenDesign para a versão mais recente, que inclui um runtime compatível.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} recusou-se a iniciar uma sessão. Normalmente essa versão é incompatível com o Open Design: mude para outra versão e tente novamente.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} recusou-se a iniciar uma sessão. Normalmente a versão instalada é incompatível com o Open Design: mude para outra versão e tente novamente.",
   'common.cancel': 'Cancelar',
   'chat.selectFromLibrary': 'Importar da biblioteca',
   'chat.importFigma': 'Importar do Figma',

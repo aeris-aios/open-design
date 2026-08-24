@@ -9,8 +9,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
 
-// Wiring coverage for the ACP handshake-rejection guidance, driven through the
-// FULL server run cycle rather than the pure helpers in isolation.
+// Wiring coverage for the ACP handshake-rejection classification, driven
+// through the FULL server run cycle rather than the pure helpers in isolation.
 //
 // The failure this pins down (Kimi Code 0.37.x / 0.38.0): the agent CLI answers
 // `initialize`, then rejects `session/new` with a bare JSON-RPC `Internal
@@ -20,12 +20,18 @@ import { startServer } from '../src/server.js';
 // `acpFatalErrorObservedBeforeCancellation && hasFatalError()`, well before the
 // stderr-tail `rewriteKnownAgentStreamError` fallback further down.
 //
-// So a unit test over `buildAcpHandshakeFailureMessage` proves nothing about
-// what the user reads. These tests assert on the two surfaces a user and the
-// telemetry pipeline actually observe — the `error` SSE event recorded in the
-// run's events log, and `run.error` on `GET /api/runs/:id` — plus the spawn
-// count, which is what "stop retrying a deterministic failure" means in
-// practice.
+// So a unit test over the pure predicates proves nothing about what the user
+// reads. These tests assert on the two surfaces a user and the telemetry
+// pipeline actually observe — the `error` SSE event recorded in the run's
+// events log, and `run.error` / `run.errorCode` on `GET /api/runs/:id` — plus
+// the spawn count, which is what "stop retrying a deterministic failure" means
+// in practice.
+//
+// The daemon's job here is to NAME the failure, not to word it: it emits the
+// `AGENT_CLI_SESSION_REFUSED` code plus the structured identity (agent display
+// name, detected CLI version) and leaves `run.error` as the agent's own line.
+// The sentence the user reads is the web's, resolved from that code through
+// i18n — a daemon-authored English paragraph can never be localized.
 
 type StartedServer = {
   url: string;
@@ -39,6 +45,17 @@ type RunStatus = {
   error: string | null;
   errorCode: string | null;
   eventsLogPath: string;
+};
+
+/** The structured half of an SSE `error` frame — what the web localizes from. */
+type ErrorFrame = {
+  message?: unknown;
+  error?: {
+    code?: unknown;
+    message?: unknown;
+    retryable?: unknown;
+    details?: Record<string, unknown>;
+  };
 };
 
 type RunEvent = { event: string; data: unknown };
@@ -68,7 +85,7 @@ describe('ACP handshake rejection — server wiring', () => {
     restoreEnv(originalEnv);
   });
 
-  it('replaces the bare json-rpc line with actionable guidance on the run and the SSE error event', async () => {
+  it('names the refusal with an error code and structured identity, leaving the agent line verbatim', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-bin-'));
     const logPath = path.join(binDir, 'invocations.jsonl');
     await writeAcpCliShim(binDir, AGENT_BIN, { logPath, cliVersion: '0.38.0' });
@@ -85,30 +102,39 @@ describe('ACP handshake rejection — server wiring', () => {
 
     expect(run.status).toBe('failed');
 
-    // 1. What the user reads. The bare protocol frame says nothing about the
-    //    one thing that fixes this, so the message must name the CLI, the
-    //    version that refused, and the action.
+    // 1. `run.error` is the agent's own line, unedited. It is the input to
+    //    run-failure-classification.ts, so dropping or padding the JSON-RPC
+    //    frame would degrade this failure class in telemetry — and it is the
+    //    text the card shows under 「查看错误详情」, so it must appear once and
+    //    carry no prose of the daemon's own.
     const runError = run.error ?? '';
-    expect(runError).toContain(AGENT_DISPLAY_NAME);
-    expect(runError).toContain('0.38.0');
-    expect(runError).toMatch(/refused to start a session/i);
-    expect(runError).toMatch(/update the cli/i);
+    expect(runError).toBe('json-rpc id 2: Internal error');
+    expect(runError).not.toMatch(/refused to start a session/i);
+    expect(runError).not.toMatch(/update the cli/i);
+    expect(runError).not.toMatch(/Details:/i);
 
-    // 2. The raw agent line survives. `run.error` is also the input to
-    //    run-failure-classification.ts, so dropping the JSON-RPC frame would
-    //    silently degrade this failure class to `unknown` in telemetry.
-    expect(runError).toMatch(/json-rpc id 2: Internal error/i);
+    // 2. The failure is NAMED, not worded. A code is localizable; an English
+    //    paragraph written in the daemon is not.
+    expect(run.errorCode).toBe('AGENT_CLI_SESSION_REFUSED');
 
-    // 3. The SSE `error` event carries the same rewritten copy. This is the
-    //    payload the ACP bridge forwards to connected clients; before the fix
-    //    it was the agent's raw JSON-RPC frame, forwarded verbatim.
+    // 3. The SSE `error` frame carries the same code plus the identity the
+    //    localized copy interpolates. This is the payload the ACP bridge
+    //    forwards to connected clients, and the one `run.error` is read from.
     const events = await readRunEvents(run.eventsLogPath);
     const errorEvents = events.filter((event) => event.event === 'error');
     expect(errorEvents.length).toBeGreaterThan(0);
     for (const event of errorEvents) {
-      const message = effectiveErrorMessage(event.data);
-      expect(message).toContain(AGENT_DISPLAY_NAME);
-      expect(message).toMatch(/json-rpc id 2: Internal error/i);
+      const frame = event.data as ErrorFrame;
+      expect(frame.error?.code).toBe('AGENT_CLI_SESSION_REFUSED');
+      expect(frame.error?.details).toMatchObject({
+        kind: 'agent_cli',
+        action: 'update_cli',
+        agent: AGENT_DISPLAY_NAME,
+        agentCliVersion: '0.38.0',
+      });
+      // The message fields stay the agent's line on both surfaces.
+      expect(effectiveErrorMessage(event.data)).toBe('json-rpc id 2: Internal error');
+      expect(JSON.stringify(event.data)).not.toMatch(/refused to start a session/i);
     }
   });
 
@@ -133,18 +159,33 @@ describe('ACP handshake rejection — server wiring', () => {
     const run = await sendRunAndWait(started.url, conversationId, 'draft a landing page');
 
     expect(run.status).toBe('failed');
-    expect(run.error ?? '').toMatch(/refused to start a session/i);
+    expect(run.error ?? '').toBe('json-rpc id 2: Internal error');
+    expect(run.errorCode).toBe('AGENT_CLI_SESSION_REFUSED');
 
     // This shape carries a nested `error` object (the agent supplied
-    // `error.data`), which is the field `run.error` is read from — so it must
-    // be rewritten too, not just the top-level `message`.
+    // `error.data`), which is the field `run.error` and `run.errorCode` are
+    // read from — so the code has to land there, not only on the top level.
+    // The agent's own `data` survives alongside the identity the card needs.
     const events = await readRunEvents(run.eventsLogPath);
     const errorEvents = events.filter((event) => event.event === 'error');
     expect(errorEvents.length).toBeGreaterThan(0);
     for (const event of errorEvents) {
-      const payload = event.data as { error?: { message?: string } };
-      expect(payload.error?.message ?? '').toMatch(/refused to start a session/i);
-      expect(payload.error?.message ?? '').toMatch(/json-rpc id 2: Internal error/i);
+      const frame = event.data as ErrorFrame;
+      expect(frame.error?.code).toBe('AGENT_CLI_SESSION_REFUSED');
+      expect(frame.error?.message).toBe('json-rpc id 2: Internal error');
+      expect(frame.error?.details).toMatchObject({
+        kind: 'agent_cli',
+        action: 'update_cli',
+        agent: AGENT_DISPLAY_NAME,
+        // Reported even without an explicit `/api/agents` warm-up: model
+        // detection probes the same CLI and records its `--version`.
+        agentCliVersion: '0.37.2',
+        retryable: true,
+      });
+      // A CLI that calls its own handshake rejection transient does not get to
+      // mark the run retryable: the identical request against the identical
+      // build only reproduces it.
+      expect(frame.error?.retryable).toBe(false);
     }
 
     // The daemon opened exactly one session for this run. (Model detection
@@ -196,16 +237,17 @@ describe('ACP handshake rejection — server wiring', () => {
     // What the agent actually said survives — that is the sentence pointing at
     // the fix (sign in), and it is also what the classifier reads.
     expect(runError).toMatch(/json-rpc id 2: Authentication required/i);
-    // …and none of the CLI-compatibility prescription appears.
-    expect(runError).not.toMatch(/refused to start a session/i);
-    expect(runError).not.toMatch(/update the cli/i);
-    expect(runError).not.toMatch(/reinstall/i);
+    // …and the CLI-compatibility verdict is not pinned on it. Getting this
+    // wrong now costs a whole localized card, not just a paragraph.
+    expect(run.errorCode).not.toBe('AGENT_CLI_SESSION_REFUSED');
 
     const events = await readRunEvents(run.eventsLogPath);
     const errorEvents = events.filter((event) => event.event === 'error');
     expect(errorEvents.length).toBeGreaterThan(0);
     for (const event of errorEvents) {
-      expect(effectiveErrorMessage(event.data)).not.toMatch(/update the cli/i);
+      const frame = event.data as ErrorFrame;
+      expect(frame.error?.code).not.toBe('AGENT_CLI_SESSION_REFUSED');
+      expect(frame.error?.details?.kind).not.toBe('agent_cli');
     }
   });
 });

@@ -150,6 +150,7 @@ export const zhTW: Dict = {
   "chat.runError.title.sessionExpired": "工作階段已過期",
   "chat.runError.title.gitBashMissing": "缺少 Git Bash",
   "chat.runError.title.cpuUnsupported": "處理器不支援",
+  "chat.runError.title.cliSessionRefused": "智慧體版本不相容",
   "chat.runError.quotaExhaustedMessage": "所用模型服務的額度或帳單上限已用盡，重試也無法恢復。請前往對應服務儲值，或切換到其他模型／服務。",
   "chat.runError.workspaceCreditsMessage": "工作區額度已用盡。請儲值（或聯絡工作區管理員補充），或切換到其他模型／服務。",
   "chat.runError.timedOutMessage": "本次執行耗時過長已被中斷。請重試，或縮小任務範圍後再試。",
@@ -158,6 +159,10 @@ export const zhTW: Dict = {
   "chat.runError.sessionExpiredMessage": "要恢復的工作階段已過期，已為你重置。重試即可開始一次全新執行。",
   "chat.runError.gitBashMissingMessage": "在 Windows 上執行此智能體需要 Git Bash，但找不到。請安裝 Git for Windows 後重試。",
   "chat.runError.cpuUnsupportedMessage": "此智能體的執行時需要此裝置處理器不支援的指令集（AVX2），因此無法啟動。請將 OpenDesign 更新到最新版本，新版本附帶相容的執行時。",
+  "chat.runError.cliSessionRefusedMessage":
+    "{agent} {version} 拒絕開始工作階段。通常是這個版本與 Open Design 不相容，換一個版本後重試。",
+  "chat.runError.cliSessionRefusedMessageNoVersion":
+    "{agent} 拒絕開始工作階段。通常是目前版本與 Open Design 不相容，換一個版本後重試。",
   "common.cancel": "取消",
   "chat.selectFromLibrary": "從資源庫匯入",
   "chat.importFigma": "從 Figma 匯入",

@@ -84,6 +84,36 @@ describe('i18n locales', () => {
     }
   });
 
+  // PR #7303 round 3: the ACP handshake-refusal copy used to be an English
+  // paragraph the DAEMON wrote into `run.error`, so a Chinese UI showed a
+  // Chinese title over an English body. It is a dictionary entry now — pin the
+  // two languages the product signed off, and let the parity test below prove
+  // the other seventeen exist with the same placeholders.
+  it('localizes the ACP CLI session refusal card', async () => {
+    const zh = await loadDict('zh-CN');
+    expect(zh['chat.runError.title.cliSessionRefused']).toBe('智能体版本不兼容');
+    expect(zh['chat.runError.cliSessionRefusedMessage']).toBe(
+      '{agent} {version} 拒绝开始会话。通常是这个版本与 Open Design 不兼容，换一个版本后重试。',
+    );
+    expect(zh['chat.runError.cliSessionRefusedMessageNoVersion']).toBe(
+      '{agent} 拒绝开始会话。通常是当前版本与 Open Design 不兼容，换一个版本后重试。',
+    );
+
+    // No locale may quietly fall back to English prose for these keys.
+    for (const locale of LOCALES) {
+      if (locale === 'en') continue;
+      const dict = await loadDict(locale);
+      for (const key of [
+        'chat.runError.title.cliSessionRefused',
+        'chat.runError.cliSessionRefusedMessage',
+        'chat.runError.cliSessionRefusedMessageNoVersion',
+      ] as const) {
+        expect(dict[key], `${locale}.${key}`).not.toBe(en[key]);
+        expect(dict[key], `${locale}.${key}`).not.toMatch(/TODO/i);
+      }
+    }
+  });
+
   it('keeps locale dictionaries aligned with English keys and placeholders', async () => {
     const englishKeys = Object.keys(en).sort();
 

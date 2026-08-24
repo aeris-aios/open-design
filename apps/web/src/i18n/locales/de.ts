@@ -144,6 +144,7 @@ export const de: Dict = {
   'chat.runError.title.sessionExpired': "Sitzung abgelaufen",
   'chat.runError.title.gitBashMissing': "Git Bash fehlt",
   'chat.runError.title.cpuUnsupported': "Prozessor nicht unterstützt",
+  'chat.runError.title.cliSessionRefused': "Agent-Version nicht kompatibel",
   'chat.runError.quotaExhaustedMessage': "Das Kontingent oder Abrechnungslimit deines Modelldienstes ist aufgebraucht – ein erneuter Versuch hilft nicht. Lade bei deinem Anbieter auf oder wechsle zu einem anderen Modell oder Dienst.",
   'chat.runError.workspaceCreditsMessage': "Dein Workspace hat keine Credits mehr. Füge Credits hinzu (oder bitte den Workspace-Eigentümer aufzuladen) oder wechsle zu einem anderen Modell oder Dienst.",
   'chat.runError.timedOutMessage': "Dieser Lauf hat zu lange gedauert und wurde abgebrochen. Versuche es erneut oder verkleinere die Aufgabe und wiederhole.",
@@ -152,6 +153,10 @@ export const de: Dict = {
   'chat.runError.sessionExpiredMessage': "Die fortgesetzte Sitzung war abgelaufen. Sie wurde zurückgesetzt, wiederhole, um einen neuen Lauf zu starten.",
   'chat.runError.gitBashMissingMessage': "Für diesen Agenten unter Windows wird Git Bash benötigt, es wurde aber nicht gefunden. Installiere Git für Windows und versuche es erneut.",
   'chat.runError.cpuUnsupportedMessage': "Die Laufzeitumgebung dieses Agenten benötigt einen CPU-Befehlssatz (AVX2), den dieses Gerät nicht besitzt, und kann daher nicht starten. Aktualisiere OpenDesign auf die neueste Version, die eine kompatible Laufzeitumgebung mitliefert.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} hat den Start einer Sitzung verweigert. Meist ist diese Version nicht mit Open Design kompatibel — wechsle zu einer anderen Version und versuche es erneut.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} hat den Start einer Sitzung verweigert. Meist ist die installierte Version nicht mit Open Design kompatibel — wechsle zu einer anderen Version und versuche es erneut.",
   'common.cancel': 'Abbrechen',
   'chat.selectFromLibrary': 'Aus Bibliothek importieren',
   'chat.importFigma': 'Aus Figma importieren',

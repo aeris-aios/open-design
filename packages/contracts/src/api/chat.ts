@@ -784,6 +784,10 @@ export type PersistedAgentEvent =
   // `failureCategory` / `failureDetail` carry the daemon's finer classification
   // for the same failure, so the error card can name a specific type + fix even
   // when many causes share one `code` (e.g. hard_quota vs a transient 429).
+  // `agentCliVersion` is the CLI build this run actually observed, carried as
+  // DATA so the localized copy for a version-specific failure
+  // (`AGENT_CLI_SESSION_REFUSED`) can name it. Absent when the daemon never
+  // detected one, in which case the copy degrades to a version-less sentence.
   | {
       kind: 'status';
       label: string;
@@ -791,6 +795,7 @@ export type PersistedAgentEvent =
       code?: string;
       failureCategory?: RunFailureCategory;
       failureDetail?: RunFailureDetail;
+      agentCliVersion?: string;
     }
   | { kind: 'text'; text: string }
   | { kind: 'conversation_title'; title: string }

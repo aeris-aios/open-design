@@ -304,6 +304,77 @@ describe('resolveRunFailureUi', () => {
     }
   });
 
+  // An ACP agent that answered `initialize` and then refused `session/new`
+  // (Kimi Code 0.37.x / 0.38.0). The daemon names it with a code and ships the
+  // runtime identity as data; the sentence the user reads is this map's job.
+  // Before this, the daemon wrote an English paragraph into `run.error` and the
+  // card printed it verbatim — untranslated in every non-English UI, and
+  // duplicated because the paragraph also restated the raw agent line the
+  // details block already shows.
+  describe('AGENT_CLI_SESSION_REFUSED', () => {
+    it('renders localized copy naming the agent and the version that refused', () => {
+      const ui = resolveRunFailureUi(
+        'AGENT_CLI_SESSION_REFUSED',
+        'agent_protocol_error',
+        'kimi',
+        'json-rpc id 2: Internal error',
+        '0.38.0',
+      );
+      expect(ui).toMatchObject({
+        primaryAction: 'retry',
+        titleKey: 'chat.runError.title.cliSessionRefused',
+        messageKey: 'chat.runError.cliSessionRefusedMessage',
+        secondaryRetry: false,
+        showSwitchCard: false,
+      });
+      expect(ui.messageVars?.version).toBe('0.38.0');
+    });
+
+    it('drops the version from the copy when the daemon never detected one', () => {
+      for (const version of [undefined, null, '', '   ']) {
+        const ui = resolveRunFailureUi(
+          'AGENT_CLI_SESSION_REFUSED',
+          'agent_protocol_error',
+          'kimi',
+          'json-rpc id 2: Internal error',
+          version,
+        );
+        // Promising a version we could not read is worse than not naming one —
+        // same rule the rolling-window copy follows.
+        expect(ui.messageKey).toBe('chat.runError.cliSessionRefusedMessageNoVersion');
+        expect(ui.messageVars?.version).toBeUndefined();
+      }
+    });
+
+    it('resolves the same way for every agent, hosted AMR included', () => {
+      for (const agent of ['kimi', 'devin', 'amr', 'antigravity', null]) {
+        expect(
+          resolveRunFailureUi('AGENT_CLI_SESSION_REFUSED', 'agent_protocol_error', agent, null, '1.2.3'),
+        ).toMatchObject({
+          titleKey: 'chat.runError.title.cliSessionRefused',
+          messageKey: 'chat.runError.cliSessionRefusedMessage',
+        });
+      }
+    });
+
+    it('leaves the neighbouring handshake causes on their own cards', () => {
+      // #7303 round 2: an ACP CLI can fail the same handshake because the user
+      // is signed out, throttled, out of credit, or the upstream is down. Those
+      // arrive with their own codes and must never inherit "change your CLI".
+      const neighbours: Array<[string, string]> = [
+        ['AGENT_AUTH_REQUIRED', 'chat.runError.title.signInRequired'],
+        ['UNAUTHORIZED', 'chat.runError.title.signInRequired'],
+        ['RATE_LIMITED', 'chat.runError.title.rateLimited'],
+        ['UPSTREAM_UNAVAILABLE', 'chat.runError.title.upstreamUnavailable'],
+      ];
+      for (const [code, titleKey] of neighbours) {
+        const ui = resolveRunFailureUi(code, null, 'kimi', null, '0.38.0');
+        expect(ui.titleKey).toBe(titleKey);
+        expect(ui.messageKey).not.toBe('chat.runError.cliSessionRefusedMessage');
+      }
+    });
+  });
+
   it('shows plain retry (no card) for generic non-AMR failures', () => {
     const ui = resolveRunFailureUi('AGENT_EXECUTION_FAILED', null, 'claude');
     expect(ui).toMatchObject({ primaryAction: 'retry', showSwitchCard: false, messageKey: null });

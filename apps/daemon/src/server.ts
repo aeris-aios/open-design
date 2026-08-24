@@ -215,11 +215,7 @@ import {
   resolveModelForServiceTier,
 } from './runtimes/models.js';
 import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
-import {
-  buildAcpHandshakeFailureMessage,
-  isAcpCliSessionRefusalText,
-  withAcpHandshakeFailureGuidance,
-} from './runtimes/acp-handshake-failure.js';
+import { withAcpHandshakeFailureGuidance } from './runtimes/acp-handshake-failure.js';
 import { getDetectedRuntimeVersions } from './runtimes/detection.js';
 import { preflightCodexDefaultModel } from './runtimes/codex-model-preflight.js';
 import { preparePromptFileForAgent } from './runtimes/prompt-file.js';
@@ -2277,7 +2273,7 @@ function createSseErrorPayload(code, message, init = {}) {
   return { message, error: createCompatApiError(code, message, init) };
 }
 
-function rewriteKnownAgentStreamError(agentId, message, failureText = '', options = {}) {
+function rewriteKnownAgentStreamError(agentId, message, failureText = '') {
   const rawMessage =
     typeof message === 'string' && message.trim()
       ? message.trim()
@@ -2290,31 +2286,22 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '', option
   ) {
     return 'The run failed due to an unknown upstream streaming error. Please retry.';
   }
-  // An ACP agent that answers `initialize` and then refuses `session/new` /
-  // `session/load` for no stated reason leaves the user staring at `json-rpc
-  // id 2: Internal error`, which says nothing about the one thing that fixes
-  // it: the installed CLI build. Lead with that, and keep the raw line
-  // appended — `run.error` is both what the user reads and what
-  // run-failure-classification.ts reads, so dropping it would degrade the
-  // telemetry shape to `unknown`. A handshake error that does name its cause
-  // is left alone; see `isAcpCliSessionRefusalText`.
-  if (isAcpCliSessionRefusalText(rawMessage)) {
-    return buildAcpHandshakeFailureMessage({
-      rawMessage,
-      agentName: options.agentName ?? null,
-      agentCliVersion:
-        options.agentCliVersion ?? getDetectedRuntimeVersions(agentId)?.agentCliVersion ?? null,
-    });
-  }
+  // An ACP handshake refusal that reaches one of the stderr-tail fallbacks is
+  // deliberately NOT reworded here. The daemon has no locale, so a sentence
+  // composed at this layer lands in `run.error` untranslated and the chat
+  // renders it verbatim. The failure is NAMED instead: each `send('error', …)`
+  // below wraps its payload in `withAcpHandshakeFailureGuidance`, which stamps
+  // `AGENT_CLI_SESSION_REFUSED` plus the runtime identity and leaves the
+  // agent's own line alone.
   return rawMessage;
 }
 
 /**
- * The runtime identity failure copy leads with: display name plus whichever CLI
- * version this run actually observed. Codex's model preflight is the only
- * producer of `preflightAgentCliVersion`; every other agent falls back to the
- * daemon-lifetime detection probe, and an undetected version degrades the copy
- * rather than blocking it.
+ * The runtime identity a failure ships as structured data: display name plus
+ * whichever CLI version this run actually observed. Codex's model preflight is
+ * the only producer of `preflightAgentCliVersion`; every other agent falls back
+ * to the daemon-lifetime detection probe, and an undetected version degrades
+ * the client's copy rather than blocking it.
  *
  * @param def - The resolved `RuntimeAgentDef` for this run.
  * @param run - The run record, read for a preflight-detected CLI version.
@@ -12986,7 +12973,6 @@ export async function startServer({
           agentId,
           String(ev.message || 'Agent stream error'),
           failureText,
-          agentFailureIdentity(def, run),
         );
         agentStreamErrorObservedBeforeCancellation = true;
         run.runtimeFailureObservedBeforeCancellation = true;
@@ -13012,9 +12998,12 @@ export async function startServer({
           }));
           return;
         }
-        send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', agentStreamError, {
-          details: ev.raw ? { raw: ev.raw } : undefined,
-        }));
+        send('error', withAcpHandshakeFailureGuidance(
+          createSseErrorPayload('AGENT_EXECUTION_FAILED', agentStreamError, {
+            details: ev.raw ? { raw: ev.raw } : undefined,
+          }),
+          agentFailureIdentity(def, run),
+        ));
         return;
       }
       // First well-formed decoded stream event = CLI ready for the
@@ -13157,24 +13146,22 @@ export async function startServer({
           agentStreamError = structuredCode
             ? message
             : diagnostic?.message
-              ?? rewriteKnownAgentStreamError(
-                agentId,
-                message,
-                failureText,
-                agentFailureIdentity(def, run),
-              );
+              ?? rewriteKnownAgentStreamError(agentId, message, failureText);
           agentStreamErrorObservedBeforeCancellation = true;
           run.runtimeFailureObservedBeforeCancellation = true;
-          send('error', createSseErrorPayload(
-            structuredCode ?? diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
-            agentStreamError,
-            {
-              retryable: structuredCode
-                ? false
-                : diagnostic?.retryable
-                  ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
-              ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
-            },
+          send('error', withAcpHandshakeFailureGuidance(
+            createSseErrorPayload(
+              structuredCode ?? diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
+              agentStreamError,
+              {
+                retryable: structuredCode
+                  ? false
+                  : diagnostic?.retryable
+                    ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
+                ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
+              },
+            ),
+            agentFailureIdentity(def, run),
           ));
           return;
         }
@@ -13894,13 +13881,15 @@ export async function startServer({
               def.id,
               (agentStderrTail || agentStdoutTail || '').trim(),
               `${agentStderrTail}\n${agentStdoutTail}`,
-              agentFailureIdentity(def, run),
             );
             if (rewritten !== 'Agent stream error') {
-              send('error', createSseErrorPayload(
-                'AGENT_EXECUTION_FAILED',
-                rewritten,
-                { retryable: true },
+              send('error', withAcpHandshakeFailureGuidance(
+                createSseErrorPayload(
+                  'AGENT_EXECUTION_FAILED',
+                  rewritten,
+                  { retryable: true },
+                ),
+                agentFailureIdentity(def, run),
               ));
             }
           }

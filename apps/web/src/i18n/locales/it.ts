@@ -144,6 +144,7 @@ export const it: Dict = {
   'chat.runError.title.sessionExpired': "Sessione scaduta",
   'chat.runError.title.gitBashMissing': "Git Bash mancante",
   'chat.runError.title.cpuUnsupported': "Processore non supportato",
+  'chat.runError.title.cliSessionRefused': "Versione dell’agente incompatibile",
   'chat.runError.quotaExhaustedMessage': "La quota o il limite di fatturazione del tuo servizio di modello è esaurito, quindi riprovare non servirà. Ricarica presso il tuo provider o passa a un altro modello o servizio.",
   'chat.runError.workspaceCreditsMessage': "Il tuo spazio di lavoro ha esaurito i crediti. Aggiungi crediti (o chiedi al proprietario dello spazio di ricaricare) oppure passa a un altro modello o servizio.",
   'chat.runError.timedOutMessage': "Questa esecuzione ha richiesto troppo tempo ed è stata interrotta. Riprova, oppure riduci l'attività e ripeti.",
@@ -152,6 +153,10 @@ export const it: Dict = {
   'chat.runError.sessionExpiredMessage': "La sessione ripresa era scaduta. È stata reimpostata, quindi riprova per avviare una nuova esecuzione.",
   'chat.runError.gitBashMissingMessage': "Per eseguire questo agente su Windows è necessario Git Bash, ma non è stato trovato. Installa Git per Windows e riprova.",
   'chat.runError.cpuUnsupportedMessage': "L'ambiente di esecuzione di questo agente richiede un set di istruzioni della CPU (AVX2) che questo dispositivo non possiede, quindi non può avviarsi. Aggiorna OpenDesign all'ultima versione, che include un ambiente di esecuzione compatibile.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} ha rifiutato di avviare una sessione. Di solito questa versione non è compatibile con Open Design: passa a un’altra versione e riprova.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} ha rifiutato di avviare una sessione. Di solito la versione installata non è compatibile con Open Design: passa a un’altra versione e riprova.",
   'common.cancel': 'Annulla',
   'chat.selectFromLibrary': 'Importa dalla libreria',
   'chat.importFigma': 'Importa da Figma',

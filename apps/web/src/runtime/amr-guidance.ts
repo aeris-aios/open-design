@@ -199,6 +199,8 @@ export type RunFailureMessageKey =
   | 'chat.runError.sessionExpiredMessage'
   | 'chat.runError.gitBashMissingMessage'
   | 'chat.runError.cpuUnsupportedMessage'
+  | 'chat.runError.cliSessionRefusedMessage'
+  | 'chat.runError.cliSessionRefusedMessageNoVersion'
   | null;
 
 // i18n keys for the unified error card's TITLE (the "error type" line above the
@@ -227,6 +229,7 @@ export type RunFailureTitleKey =
   | 'chat.runError.title.gitBashMissing'
   | 'chat.runError.title.artifactMissing'
   | 'chat.runError.title.cpuUnsupported'
+  | 'chat.runError.title.cliSessionRefused'
   | 'chat.runError.title.generic';
 
 export interface RunFailureUi {
@@ -465,6 +468,7 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
 };
 
 // Resolve the failure UI for a failed run:
+//   - ACP CLI refused the session → named type + the detected CLI version
 //   - agent-agnostic root cause (cli missing, prompt too large, model
 //     unavailable, tool loop, bad output, bad runtime def) → named type + fix
 //   - agent-agnostic failure_detail (timeout, empty output, stale resumed
@@ -482,7 +486,30 @@ export function resolveRunFailureUi(
   detail: string | null | undefined,
   agentId: string | null | undefined,
   rawMessage?: string | null,
+  agentCliVersion?: string | null,
 ): RunFailureUi {
+  // An ACP agent CLI that answered `initialize` and then refused to open a
+  // session. Resolved before every other branch, and before the static
+  // agent-agnostic table, because the copy is not a fixed sentence: it names
+  // the CLI build the daemon detected, and has to degrade to a version-less
+  // wording when there was none. The daemon deliberately sends only the code
+  // plus that version as data — a sentence composed there could never be
+  // translated (see runtimes/acp-handshake-failure.ts).
+  if (code === 'AGENT_CLI_SESSION_REFUSED') {
+    const version = agentCliVersion?.trim();
+    return {
+      primaryAction: 'retry',
+      titleKey: 'chat.runError.title.cliSessionRefused',
+      // Naming a version we did not read is worse than not naming one — the
+      // same rule the rolling model-window copy follows.
+      messageKey: version
+        ? 'chat.runError.cliSessionRefusedMessage'
+        : 'chat.runError.cliSessionRefusedMessageNoVersion',
+      ...(version ? { messageVars: { version } } : {}),
+      secondaryRetry: false,
+      showSwitchCard: false,
+    };
+  }
   // Agent-agnostic codes resolve first so an AMR/Antigravity run that hits one
   // of them still gets the specific guidance instead of the generic fallback.
   const agnostic = typeof code === 'string' ? AGENT_AGNOSTIC_FAILURE_UI[code] : undefined;

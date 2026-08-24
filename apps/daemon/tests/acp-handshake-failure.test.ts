@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ACP_CLI_SESSION_REFUSED_CODE,
   acpRpcErrorId,
-  buildAcpHandshakeFailureMessage,
   isAcpCliSessionRefusalText,
   isAcpHandshakeRpcErrorText,
   withAcpHandshakeFailureGuidance,
@@ -54,48 +54,100 @@ describe('acpRpcErrorId', () => {
   });
 });
 
-describe('buildAcpHandshakeFailureMessage', () => {
-  it('names the CLI and its detected version, and says what to do', () => {
-    const message = buildAcpHandshakeFailureMessage({
-      rawMessage: 'json-rpc id 2: Internal error',
-      agentName: 'Kimi CLI',
+describe('withAcpHandshakeFailureGuidance', () => {
+  const RAW = 'json-rpc id 2: Internal error';
+
+  it('names the failure with a code and structured identity instead of a sentence', () => {
+    const payload = withAcpHandshakeFailureGuidance(
+      { message: RAW },
+      { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+    ) as {
+      message: string;
+      error: { code: string; message: string; retryable: boolean; details: Record<string, unknown> };
+    };
+
+    // A code crosses the daemon/web boundary; an English paragraph does not.
+    // The web maps this code to localized copy (see amr-guidance.ts), so the
+    // identity the copy interpolates has to travel as data, not as prose.
+    expect(payload.error.code).toBe(ACP_CLI_SESSION_REFUSED_CODE);
+    expect(payload.error.details).toMatchObject({
+      kind: 'agent_cli',
+      action: 'update_cli',
+      agent: 'Kimi CLI',
       agentCliVersion: '0.38.0',
     });
-    expect(message).toContain('Kimi CLI');
-    expect(message).toContain('0.38.0');
-    expect(message).toMatch(/refused to start a session/i);
-    expect(message).toMatch(/update the cli/i);
-    // No hardcoded known-bad version list in product copy — which versions are
-    // blocked is a product decision, not a daemon constant.
-    expect(message).not.toMatch(/0\.37/);
+    // A CLI build that refuses `session/new` refuses it again; the payload says so.
+    expect(payload.error.retryable).toBe(false);
   });
 
-  it('degrades cleanly when the agent name or version is unknown', () => {
-    const message = buildAcpHandshakeFailureMessage({
-      rawMessage: 'json-rpc id 2: Internal error',
-    });
-    expect(message).toMatch(/agent cli/i);
-    expect(message).not.toContain('undefined');
-    expect(message).not.toContain('null');
-    expect(message).not.toContain('()');
+  it('leaves the agent line verbatim on both message surfaces', () => {
+    const payload = withAcpHandshakeFailureGuidance(
+      { message: RAW, error: { code: 'AGENT_EXECUTION_FAILED', message: RAW } },
+      { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+    ) as { message: string; error: { message: string } };
+
+    // `run.error` is read from `error.message ?? message` and is BOTH the
+    // classifier's input and the text the card shows under 「查看错误详情」.
+    // Appending a `Details:` restatement made the card print it twice.
+    expect(payload.message).toBe(RAW);
+    expect(payload.error.message).toBe(RAW);
+    expect(JSON.stringify(payload)).not.toMatch(/Details:/i);
+    expect(JSON.stringify(payload)).not.toMatch(/refused to start a session/i);
   });
 
-  it('keeps the raw JSON-RPC text so classification and triage still see it', () => {
-    const message = buildAcpHandshakeFailureMessage({
-      rawMessage: 'json-rpc id 2: Internal error',
-      agentName: 'Kimi CLI',
-      agentCliVersion: '0.38.0',
+  it('degrades cleanly when the agent name or version was never detected', () => {
+    const payload = withAcpHandshakeFailureGuidance({ message: RAW }) as {
+      error: { details: Record<string, unknown> };
+    };
+    expect(payload.error.details).toMatchObject({ kind: 'agent_cli', action: 'update_cli' });
+    expect(payload.error.details).not.toHaveProperty('agent');
+    expect(payload.error.details).not.toHaveProperty('agentCliVersion');
+    expect(JSON.stringify(payload)).not.toContain('undefined');
+    expect(JSON.stringify(payload)).not.toContain('null');
+  });
+
+  it('keeps the agent\'s own error data alongside the identity it adds', () => {
+    const payload = withAcpHandshakeFailureGuidance(
+      {
+        message: RAW,
+        error: { code: 'AGENT_EXECUTION_FAILED', message: RAW, details: { retryable: true } },
+      },
+      { agentName: 'Kimi CLI' },
+    ) as { error: { details: Record<string, unknown> } };
+    expect(payload.error.details).toMatchObject({
+      retryable: true,
+      kind: 'agent_cli',
+      agent: 'Kimi CLI',
     });
-    expect(message).toContain('json-rpc id 2: Internal error');
-    // The rewritten user-facing message is what lands in `run.error`, which is
-    // the very text `classifyRunFailure` reads. Embedding the raw line keeps
-    // the telemetry shape identical instead of degrading it to `unknown`.
-    const failure = classify('AGENT_EXECUTION_FAILED', message);
-    expect(failure).toMatchObject({
+  });
+
+  it('keeps the raw line readable by the classifier', () => {
+    const payload = withAcpHandshakeFailureGuidance({ message: RAW }) as {
+      error: { message: string };
+    };
+    // Same text, same classification: naming the failure with a code must not
+    // move it off `agent_protocol_error` / `session_init`.
+    expect(
+      classify(ACP_CLI_SESSION_REFUSED_CODE, payload.error.message),
+    ).toMatchObject({
       failure_category: 'process_exit',
       failure_detail: 'agent_protocol_error',
       failure_stage: 'session_init',
+      user_action: 'install_cli',
     });
+  });
+
+  it('leaves every non-refusal payload untouched by identity', () => {
+    for (const raw of [
+      'json-rpc id 4: Internal error',
+      'ACP session exited before completion (code=1, signal=none)',
+    ]) {
+      const payload = withAcpHandshakeFailureGuidance(
+        { message: raw },
+        { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+      );
+      expect(payload).toEqual({ message: raw });
+    }
   });
 });
 
@@ -212,10 +264,10 @@ describe('handshake failures that name their own remedy', () => {
     expect(payload.error.message).toBe(raw);
   });
 
-  it.each(REMEDIED)('never prescribes a CLI upgrade for: %s', (raw) => {
-    const payload = withAcpHandshakeFailureGuidance({ message: raw }) as { message: string };
-    expect(payload.message).not.toMatch(/update the cli/i);
-    expect(payload.message).not.toMatch(/refused to start a session/i);
+  it.each(REMEDIED)('never files it as a CLI-version refusal: %s', (raw) => {
+    // The whole card hangs off the code now, so a wrong code here would tell a
+    // signed-out / throttled user to change their perfectly good CLI build.
+    expect(withAcpHandshakeFailureGuidance({ message: raw })).toEqual({ message: raw });
   });
 
   it('files an unauthenticated handshake under auth rather than install_cli', () => {
@@ -285,9 +337,9 @@ describe('handshake failures that name their own remedy', () => {
     const payload = withAcpHandshakeFailureGuidance(
       { message: 'json-rpc id 2: Internal error' },
       { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
-    ) as { message: string };
-    expect(payload.message).toMatch(/refused to start a session/i);
-    expect(payload.message).toContain('json-rpc id 2: Internal error');
+    ) as { message: string; error: { code: string } };
+    expect(payload.error.code).toBe(ACP_CLI_SESSION_REFUSED_CODE);
+    expect(payload.message).toBe('json-rpc id 2: Internal error');
     expect(
       classify('AGENT_EXECUTION_FAILED', 'json-rpc id 2: Internal error'),
     ).toMatchObject({

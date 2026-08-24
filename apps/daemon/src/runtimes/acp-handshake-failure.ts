@@ -1,7 +1,7 @@
 /** @module runtimes/acp-handshake-failure
  * Recognises an ACP *handshake* rejection — the agent CLI answered
- * `initialize` and then refused to open a session — and turns it into copy the
- * user can act on.
+ * `initialize` and then refused to open a session — and NAMES it, so the
+ * client can say what to do about it in the reader's own language.
  *
  * `agent-protocol/acp/session.ts` numbers the handshake deterministically:
  * request id 1 is `initialize`, id 2 is `session/new` (or `session/load` when
@@ -11,21 +11,30 @@
  * after a session existed and keeps the old transient treatment.
  *
  * The id answers *when* the failure happened, never *why* — so it alone can
- * never justify the copy. A CLI that is signed out, throttled, or talking to a
- * dead upstream also fails inside the handshake, and telling that user to
- * update or downgrade a perfectly good CLI sends them after the wrong fix.
- * `isAcpCliSessionRefusalText` is the predicate the copy hangs off: handshake
- * numbering AND no cause with a remedy of its own.
+ * never justify the verdict. A CLI that is signed out, throttled, or talking to
+ * a dead upstream also fails inside the handshake, and telling that user to
+ * change a perfectly good CLI sends them after the wrong fix.
+ * `isAcpCliSessionRefusalText` is the predicate the verdict hangs off:
+ * handshake numbering AND no cause with a remedy of its own.
  *
- * The raw `json-rpc id N: …` line stays inside the rewritten message on
- * purpose. `run.error` is both what the user reads and what
- * `run-failure-classification.ts` reads, so dropping the raw line would
- * silently degrade the telemetry shape to `unknown` and make this class of
- * failure untriageable in aggregate.
+ * What this module does NOT do is write the sentence. The daemon has no locale
+ * — a paragraph composed here lands verbatim in `run.error` and is rendered
+ * verbatim by the chat, so a Chinese UI showed a Chinese title over an English
+ * body, and the paragraph's own `Details: …` restatement printed the agent's
+ * line a second time in a card that already shows it. Instead the failure
+ * travels as `AGENT_CLI_SESSION_REFUSED` plus the runtime identity as
+ * structured `details`, and `apps/web/src/runtime/amr-guidance.ts` maps that
+ * code to localized copy.
+ *
+ * The raw `json-rpc id N: …` line is left untouched in the message fields on
+ * purpose. `run.error` is both what the details block shows and what
+ * `run-failure-classification.ts` reads, so rewriting it would silently degrade
+ * the telemetry shape to `unknown` and make this class of failure untriageable
+ * in aggregate.
  *
  * Deliberately carries no list of known-bad CLI versions: which versions are
- * blocked is a product decision, so the copy stays generic and reports only
- * the version the daemon actually detected.
+ * blocked is a product decision, so the payload reports only the version the
+ * daemon actually detected and leaves the wording to the client.
  */
 
 import { classifyAgentServiceFailure } from './auth.js';
@@ -79,10 +88,11 @@ function handshakeFailureNamesItsOwnRemedy(text: string | null | undefined): boo
 /**
  * True when a handshake failure reads as the agent CLI itself refusing to open
  * a session: it answered `initialize`, rejected `session/new` / `session/load`,
- * and offered no cause of its own. That is the one shape "update, or reinstall
- * a version that worked" actually answers — the CLI build is the only variable
- * left. A handshake error that does name its cause is left alone, so the user
- * reads the sentence that points at their real fix.
+ * and offered no cause of its own. That is the one shape "this CLI build cannot
+ * start a session — change it, then retry" actually answers, because the build
+ * is the only variable left. A handshake error that does name its cause keeps
+ * that cause's own code, so the user reads the card that points at their real
+ * fix.
  *
  * @param text - Failure text as surfaced by the ACP session.
  */
@@ -90,7 +100,14 @@ export function isAcpCliSessionRefusalText(text: string | null | undefined): boo
   return isAcpHandshakeRpcErrorText(text) && !handshakeFailureNamesItsOwnRemedy(text);
 }
 
-/** Runtime identity the failure copy leads with. */
+/**
+ * Structured API error code for an ACP CLI that answered `initialize` and then
+ * refused to open a session. The client owns the wording; this is the whole of
+ * the daemon's verdict.
+ */
+export const ACP_CLI_SESSION_REFUSED_CODE = 'AGENT_CLI_SESSION_REFUSED';
+
+/** Runtime identity the localized copy interpolates. */
 export interface AcpAgentIdentity {
   /** Display name of the runtime (`RuntimeAgentDef.name`), when known. */
   agentName?: string | null;
@@ -98,37 +115,38 @@ export interface AcpAgentIdentity {
   agentCliVersion?: string | null;
 }
 
-export interface AcpHandshakeFailureMessageInput extends AcpAgentIdentity {
-  /** The raw agent line (`json-rpc id 2: Internal error`), kept verbatim in the result. */
-  rawMessage: string;
-}
-
 function readable(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 /**
- * Builds the user-facing message for an ACP handshake rejection: what the CLI
- * did, the version that did it, and the one action that resolves it.
+ * The `details` bag a session refusal ships: what kind of thing failed, what
+ * resolves it, and whichever identity the daemon actually detected.
  *
- * @param input - Raw agent line plus whatever identity the daemon detected.
- * @returns A single-paragraph message that still embeds the raw agent line.
+ * Mirrors the shape `createAmrModelUnavailablePayload` uses for
+ * `AMR_MODEL_UNAVAILABLE` (`kind` / `action` / the one fact the copy names), so
+ * a client reads every structured failure the same way. Undetected identity is
+ * OMITTED rather than sent as null: the copy degrades to a version-less
+ * sentence, and a client must never render the word "null" at a user.
+ *
+ * @param identity - Runtime name and detected CLI version, either possibly absent.
+ * @param existing - The agent's own JSON-RPC `error.data`, preserved underneath.
  */
-export function buildAcpHandshakeFailureMessage(
-  input: AcpHandshakeFailureMessageInput,
-): string {
-  const name = readable(input.agentName);
-  const version = readable(input.agentCliVersion);
-  const subject = name ? `The ${name}` : 'The agent CLI';
-  const versioned = version ? `${subject} (${version})` : subject;
-  const raw = readable(input.rawMessage);
-  const details = raw ? ` Details: ${raw}` : '';
-  return (
-    `${versioned} accepted the connection but refused to start a session. ` +
-    'This usually means the installed CLI version is not compatible with the ' +
-    'session request it received. Update the CLI, or reinstall a version that ' +
-    `worked before, then retry.${details}`
-  );
+function acpCliSessionRefusalDetails(
+  identity: AcpAgentIdentity,
+  existing: unknown,
+): Record<string, unknown> {
+  const agent = readable(identity.agentName);
+  const agentCliVersion = readable(identity.agentCliVersion);
+  return {
+    ...(existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {}),
+    kind: 'agent_cli',
+    action: 'update_cli',
+    ...(agent ? { agent } : {}),
+    ...(agentCliVersion ? { agentCliVersion } : {}),
+  };
 }
 
 /** The failure frame `agent-protocol/acp/session.ts` puts on `send('error', …)`. */
@@ -139,28 +157,33 @@ interface AcpErrorFrame {
 }
 
 /**
- * Invariant: no ACP handshake rejection leaves the daemon still reading as a
- * bare JSON-RPC frame.
+ * Invariant: no ACP handshake rejection leaves the daemon as an unnamed
+ * JSON-RPC frame the client can only print raw.
  *
  * `attachAcpSession` hands its failure payload to the caller's
  * `send('error', payload)`, and in server.ts that one payload feeds BOTH
  * user-facing surfaces at once: it is streamed to SSE clients verbatim, and
- * `design.runs.emit` reads `error.message ?? message` out of it to populate
- * `run.error`. The close handler that runs afterwards short-circuits on
- * `hasFatalError()`, so nothing downstream gets a second chance to explain the
- * failure — the payload is the last point where both surfaces can be corrected
- * together.
+ * `design.runs.emit` reads `error.message ?? message` and `error.code ?? code`
+ * out of it to populate `run.error` / `run.errorCode`. The close handler that
+ * runs afterwards short-circuits on `hasFatalError()`, so nothing downstream
+ * gets a second chance to classify the failure — the payload is the last point
+ * where both surfaces can be corrected together.
  *
- * Rewrites only the message fields, and only for a handshake-numbered JSON-RPC
- * error that named no cause of its own. Every other payload is returned by
- * identity, so structured failures (`AMR_MODEL_UNAVAILABLE`, promoted opencode
- * errors), post-session protocol errors, and handshake errors that already say
- * what went wrong (`Authentication required`, a 429, an upstream 5xx) keep the
- * exact shape and text their own handling depends on.
+ * Stamps only the structured half — code, retryability, identity — and only for
+ * a handshake-numbered JSON-RPC error that named no cause of its own. The
+ * message fields keep the agent's own line on both surfaces. Every other
+ * payload is returned by identity, so structured failures
+ * (`AMR_MODEL_UNAVAILABLE`, promoted opencode errors), post-session protocol
+ * errors, and handshake errors that already say what went wrong
+ * (`Authentication required`, a 429, an upstream 5xx) keep the exact shape and
+ * code their own handling depends on.
+ *
+ * `retryable` is forced to false even when the agent claimed otherwise: a build
+ * that refuses `session/new` refuses the identical request identically.
  *
  * @param payload - The raw ACP error payload, forwarded unchanged when it is not a handshake rejection.
- * @param identity - Runtime name and detected CLI version to lead the copy with.
- * @returns The payload to send, with `message` / `error.message` explained when applicable.
+ * @param identity - Runtime name and detected CLI version for the client's copy.
+ * @returns The payload to send, carrying `AGENT_CLI_SESSION_REFUSED` when applicable.
  */
 export function withAcpHandshakeFailureGuidance(
   payload: unknown,
@@ -179,10 +202,14 @@ export function withAcpHandshakeFailureGuidance(
     readable(typeof frame.message === 'string' ? frame.message : null);
   if (!rawMessage || !isAcpCliSessionRefusalText(rawMessage)) return payload;
 
-  const explained = buildAcpHandshakeFailureMessage({ rawMessage, ...identity });
   return {
     ...frame,
-    ...(typeof frame.message === 'string' ? { message: explained } : {}),
-    ...(nested ? { error: { ...nested, message: explained } } : {}),
+    error: {
+      ...(nested ?? {}),
+      code: ACP_CLI_SESSION_REFUSED_CODE,
+      message: rawMessage,
+      retryable: false,
+      details: acpCliSessionRefusalDetails(identity, nested?.details),
+    },
   };
 }

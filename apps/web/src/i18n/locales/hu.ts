@@ -144,6 +144,7 @@ export const hu: Dict = {
   'chat.runError.title.sessionExpired': "A munkamenet lejárt",
   'chat.runError.title.gitBashMissing': "Hiányzó Git Bash",
   'chat.runError.title.cpuUnsupported': "A processzor nem támogatott",
+  'chat.runError.title.cliSessionRefused': "Nem kompatibilis ügynökverzió",
   'chat.runError.quotaExhaustedMessage': "A modellszolgáltatásod kerete vagy számlázási korlátja elfogyott, ezért az újrapróbálkozás nem segít. Tölts fel a szolgáltatódnál, vagy válts másik modellre vagy szolgáltatásra.",
   'chat.runError.workspaceCreditsMessage': "A munkaterületed kreditjei elfogytak. Adj hozzá kreditet (vagy kérd a munkaterület tulajdonosát, hogy töltse fel), vagy válts másik modellre vagy szolgáltatásra.",
   'chat.runError.timedOutMessage': "Ez a futás túl sokáig tartott, ezért leállt. Próbáld újra, vagy szűkítsd a feladatot, és ismételd meg.",
@@ -152,6 +153,10 @@ export const hu: Dict = {
   'chat.runError.sessionExpiredMessage': "A folytatott munkamenet lejárt. Visszaállt, ezért próbáld újra egy új futás indításához.",
   'chat.runError.gitBashMissingMessage': "Az ügynök Windowson való futtatásához Git Bash szükséges, de nem található. Telepítsd a Git for Windowst, majd próbáld újra.",
   'chat.runError.cpuUnsupportedMessage': "Az ügynök futtatókörnyezete olyan CPU-utasításkészletet (AVX2) igényel, amellyel ez az eszköz nem rendelkezik, ezért nem tud elindulni. Frissítsd az OpenDesignt a legújabb verzióra, amely kompatibilis futtatókörnyezetet tartalmaz.",
+  'chat.runError.cliSessionRefusedMessage':
+    "A(z) {agent} {version} megtagadta a munkamenet indítását. Ez a verzió általában nem kompatibilis az Open Designnal — válts másik verzióra, majd próbáld újra.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "A(z) {agent} megtagadta a munkamenet indítását. A telepített verzió általában nem kompatibilis az Open Designnal — válts másik verzióra, majd próbáld újra.",
   'common.cancel': 'Mégse',
   'chat.selectFromLibrary': 'Importálás a könyvtárból',
   'chat.importFigma': 'Importálás Figmából',

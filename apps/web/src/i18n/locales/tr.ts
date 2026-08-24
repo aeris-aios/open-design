@@ -144,6 +144,7 @@ export const tr: Dict = {
   'chat.runError.title.sessionExpired': "Oturum süresi doldu",
   'chat.runError.title.gitBashMissing': "Git Bash yok",
   'chat.runError.title.cpuUnsupported': "İşlemci desteklenmiyor",
+  'chat.runError.title.cliSessionRefused': "Aracı sürümü uyumsuz",
   'chat.runError.quotaExhaustedMessage': "Model hizmetinizin kotası veya faturalandırma limiti doldu, bu yüzden yeniden denemek işe yaramaz. Sağlayıcınızda bakiye yükleyin ya da başka bir modele veya hizmete geçin.",
   'chat.runError.workspaceCreditsMessage': "Çalışma alanınızın kredisi bitti. Kredi ekleyin (veya çalışma alanı sahibinden yükleme yapmasını isteyin) ya da başka bir modele veya hizmete geçin.",
   'chat.runError.timedOutMessage': "Bu çalışma çok uzun sürdü ve durduruldu. Yeniden deneyin veya görevi küçültüp tekrar deneyin.",
@@ -152,6 +153,10 @@ export const tr: Dict = {
   'chat.runError.sessionExpiredMessage': "Sürdürülen oturumun süresi dolmuştu. Sıfırlandı, bu yüzden yeni bir çalışma başlatmak için yeniden deneyin.",
   'chat.runError.gitBashMissingMessage': "Bu aracıyı Windows'ta çalıştırmak için Git Bash gerekir ancak bulunamadı. Git for Windows'u kurup yeniden deneyin.",
   'chat.runError.cpuUnsupportedMessage': "Bu aracının çalışma zamanı, bu cihazın CPU'sunda bulunmayan bir komut seti (AVX2) gerektirdiğinden başlatılamıyor. Uyumlu çalışma zamanı içeren en son OpenDesign sürümüne güncelleyin.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} bir oturum başlatmayı reddetti. Bu sürüm genellikle Open Design ile uyumlu değildir; farklı bir sürüme geçip yeniden deneyin.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} bir oturum başlatmayı reddetti. Yüklü sürüm genellikle Open Design ile uyumlu değildir; farklı bir sürüme geçip yeniden deneyin.",
   'common.cancel': 'İptal et',
   'chat.selectFromLibrary': 'Kitaplıktan içe aktar',
   'chat.importFigma': 'Figma\'dan içe aktar',

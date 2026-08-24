@@ -144,6 +144,7 @@ export const pl: Dict = {
   'chat.runError.title.sessionExpired': "Sesja wygasła",
   'chat.runError.title.gitBashMissing': "Brak Git Bash",
   'chat.runError.title.cpuUnsupported': "Procesor nieobsługiwany",
+  'chat.runError.title.cliSessionRefused': "Niezgodna wersja agenta",
   'chat.runError.quotaExhaustedMessage': "Limit lub próg rozliczeniowy Twojej usługi modelu został wyczerpany, więc ponowna próba nie pomoże. Doładuj u swojego dostawcy lub przełącz się na inny model albo usługę.",
   'chat.runError.workspaceCreditsMessage': "W Twoim obszarze roboczym skończyły się kredyty. Dodaj kredyty (lub poproś właściciela obszaru o doładowanie) albo przełącz się na inny model lub usługę.",
   'chat.runError.timedOutMessage': "To uruchomienie trwało zbyt długo i zostało zatrzymane. Spróbuj ponownie lub zawęź zadanie i powtórz.",
@@ -152,6 +153,10 @@ export const pl: Dict = {
   'chat.runError.sessionExpiredMessage': "Wznowiona sesja wygasła. Została zresetowana, więc spróbuj ponownie, aby rozpocząć nowe uruchomienie.",
   'chat.runError.gitBashMissingMessage': "Do uruchomienia tego agenta w systemie Windows wymagany jest Git Bash, ale go nie znaleziono. Zainstaluj Git dla Windows i spróbuj ponownie.",
   'chat.runError.cpuUnsupportedMessage': "Środowisko uruchomieniowe tego agenta wymaga zestawu instrukcji procesora (AVX2), którego to urządzenie nie posiada, więc nie może się uruchomić. Zaktualizuj OpenDesign do najnowszej wersji, która zawiera zgodne środowisko uruchomieniowe.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} odmówił rozpoczęcia sesji. Zwykle ta wersja jest niezgodna z Open Design — przejdź na inną wersję i spróbuj ponownie.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} odmówił rozpoczęcia sesji. Zwykle zainstalowana wersja jest niezgodna z Open Design — przejdź na inną wersję i spróbuj ponownie.",
   'common.cancel': 'Anuluj',
   'chat.selectFromLibrary': 'Importuj z biblioteki',
   'chat.importFigma': 'Importuj z Figmy',

@@ -144,6 +144,7 @@ export const fa: Dict = {
   'chat.runError.title.sessionExpired': "نشست منقضی شد",
   'chat.runError.title.gitBashMissing': "نبود Git Bash",
   'chat.runError.title.cpuUnsupported': "پردازنده پشتیبانی نمی‌شود",
+  'chat.runError.title.cliSessionRefused': "نسخهٔ عامل ناسازگار است",
   'chat.runError.quotaExhaustedMessage': "سهمیه یا سقف صورت‌حساب سرویس مدل شما تمام شده است، بنابراین تلاش دوباره کمکی نمی‌کند. نزد ارائه‌دهنده شارژ کنید یا به مدل یا سرویس دیگری تغییر دهید.",
   'chat.runError.workspaceCreditsMessage': "اعتبار فضای کاری شما تمام شده است. اعتبار اضافه کنید (یا از مالک فضای کاری بخواهید شارژ کند)، یا به مدل یا سرویس دیگری تغییر دهید.",
   'chat.runError.timedOutMessage': "این اجرا بیش از حد طول کشید و متوقف شد. دوباره تلاش کنید یا کار را کوچک‌تر کرده و دوباره اجرا کنید.",
@@ -152,6 +153,10 @@ export const fa: Dict = {
   'chat.runError.sessionExpiredMessage': "نشستی که از سر گرفته شد منقضی شده بود. بازنشانی شد، پس برای شروع اجرای تازه دوباره تلاش کنید.",
   'chat.runError.gitBashMissingMessage': "برای اجرای این عامل در ویندوز به Git Bash نیاز است اما یافت نشد. Git for Windows را نصب کنید و دوباره تلاش کنید.",
   'chat.runError.cpuUnsupportedMessage': "محیط اجرای این عامل به مجموعه دستورالعمل پردازنده (AVX2) نیاز دارد که این دستگاه فاقد آن است، بنابراین نمی‌تواند اجرا شود. OpenDesign را به آخرین نسخه که محیط اجرای سازگار دارد به‌روزرسانی کنید.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} از شروع جلسه خودداری کرد. معمولاً این نسخه با Open Design سازگار نیست؛ به نسخهٔ دیگری تغییر دهید و دوباره تلاش کنید.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} از شروع جلسه خودداری کرد. معمولاً نسخهٔ نصب‌شده با Open Design سازگار نیست؛ به نسخهٔ دیگری تغییر دهید و دوباره تلاش کنید.",
   'common.cancel': 'لغو',
   'chat.selectFromLibrary': 'وارد کردن از کتابخانه',
   'chat.importFigma': 'وارد کردن از Figma',

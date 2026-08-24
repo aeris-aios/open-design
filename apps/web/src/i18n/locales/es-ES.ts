@@ -144,6 +144,7 @@ export const esES: Dict = {
   'chat.runError.title.sessionExpired': "Sesión caducada",
   'chat.runError.title.gitBashMissing': "Falta Git Bash",
   'chat.runError.title.cpuUnsupported': "Procesador no compatible",
+  'chat.runError.title.cliSessionRefused': "Versión del agente incompatible",
   'chat.runError.quotaExhaustedMessage': "La cuota o el límite de facturación de tu servicio de modelo se ha agotado, así que reintentar no servirá. Recarga con tu proveedor o cambia a otro modelo o servicio.",
   'chat.runError.workspaceCreditsMessage': "Tu espacio de trabajo se ha quedado sin créditos. Añade créditos (o pide al propietario del espacio que recargue) o cambia a otro modelo o servicio.",
   'chat.runError.timedOutMessage': "Esta ejecución tardó demasiado y se detuvo. Inténtalo de nuevo o reduce la tarea y reintenta.",
@@ -152,6 +153,10 @@ export const esES: Dict = {
   'chat.runError.sessionExpiredMessage': "La sesión reanudada había caducado. Se ha restablecido, así que reintenta para iniciar una ejecución nueva.",
   'chat.runError.gitBashMissingMessage': "Se necesita Git Bash para ejecutar este agente en Windows, pero no se encontró. Instala Git para Windows y reintenta.",
   'chat.runError.cpuUnsupportedMessage': "El entorno de ejecución de este agente necesita un conjunto de instrucciones de CPU (AVX2) que este dispositivo no tiene, por lo que no puede iniciarse. Actualiza OpenDesign a la última versión, que incluye un entorno de ejecución compatible.",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} se negó a iniciar una sesión. Esa versión suele ser incompatible con Open Design: cambia a otra versión y reinténtalo.",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} se negó a iniciar una sesión. La versión instalada suele ser incompatible con Open Design: cambia a otra versión y reinténtalo.",
   'common.cancel': 'Cancelar',
   'chat.selectFromLibrary': 'Importar de la biblioteca',
   'chat.importFigma': 'Importar de Figma',

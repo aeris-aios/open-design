@@ -144,6 +144,7 @@ export const th: Dict = {
   'chat.runError.title.sessionExpired': "เซสชันหมดอายุ",
   'chat.runError.title.gitBashMissing': "ไม่มี Git Bash",
   'chat.runError.title.cpuUnsupported': "โปรเซสเซอร์ไม่รองรับ",
+  'chat.runError.title.cliSessionRefused': "เวอร์ชันเอเจนต์ไม่รองรับ",
   'chat.runError.quotaExhaustedMessage': "โควตาหรือวงเงินเรียกเก็บของบริการโมเดลที่คุณใช้หมดแล้ว การลองใหม่จึงไม่ช่วย โปรดเติมเงินกับผู้ให้บริการ หรือสลับไปใช้โมเดลหรือบริการอื่น",
   'chat.runError.workspaceCreditsMessage': "เครดิตของพื้นที่ทำงานของคุณหมดแล้ว โปรดเพิ่มเครดิต (หรือขอให้เจ้าของพื้นที่ทำงานเติม) หรือสลับไปใช้โมเดลหรือบริการอื่น",
   'chat.runError.timedOutMessage': "การรันนี้ใช้เวลานานเกินไปและถูกหยุด ลองใหม่อีกครั้ง หรือลดขอบเขตงานแล้วลองใหม่",
@@ -152,6 +153,10 @@ export const th: Dict = {
   'chat.runError.sessionExpiredMessage': "เซสชันที่กลับมาทำต่อหมดอายุแล้ว ระบบรีเซ็ตให้แล้ว โปรดลองใหม่เพื่อเริ่มการรันใหม่",
   'chat.runError.gitBashMissingMessage': "ต้องใช้ Git Bash เพื่อรันเอเจนต์นี้บน Windows แต่ไม่พบ โปรดติดตั้ง Git for Windows แล้วลองใหม่",
   'chat.runError.cpuUnsupportedMessage': "รันไทม์ของเอเจนต์นี้ต้องการชุดคำสั่ง CPU (AVX2) ที่อุปกรณ์นี้ไม่มี จึงไม่สามารถเริ่มทำงานได้ โปรดอัปเดต OpenDesign เป็นเวอร์ชันล่าสุดซึ่งมาพร้อมรันไทม์ที่เข้ากันได้",
+  'chat.runError.cliSessionRefusedMessage':
+    "{agent} {version} ปฏิเสธการเริ่มเซสชัน โดยทั่วไปเวอร์ชันนี้ไม่รองรับ Open Design โปรดเปลี่ยนเป็นเวอร์ชันอื่นแล้วลองอีกครั้ง",
+  'chat.runError.cliSessionRefusedMessageNoVersion':
+    "{agent} ปฏิเสธการเริ่มเซสชัน โดยทั่วไปเวอร์ชันที่ติดตั้งอยู่ไม่รองรับ Open Design โปรดเปลี่ยนเป็นเวอร์ชันอื่นแล้วลองอีกครั้ง",
   'common.cancel': 'ยกเลิก',
   'chat.selectFromLibrary': 'นำเข้าจากไลบรารี',
   'chat.importFigma': 'นำเข้าจาก Figma',
