@@ -15,12 +15,21 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 from unittest.mock import patch
 
+import handoff as handoff_contract
 from lib.config import ConfigError, compact_json, load_json, object_value, repository_root, schema_v1
-from lib.github import append_outputs, append_summary
+from lib.github import (
+    GitHubError,
+    append_outputs,
+    append_summary,
+    download_artifact,
+    event_payload,
+    unique_run_artifact,
+)
 from lib.r2 import R2Client, R2Credentials, R2Error, R2PreconditionFailed, self_check as r2_self_check
 
 
@@ -30,6 +39,13 @@ DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 IDENTITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 PRODUCT_TYPES = {"job", "url"}
 PUBLIC_READ_USER_AGENT = "open-design-workload-convergence/1"
+STORAGE_ENV = {
+    "endpoint": "CLOUDFLARE_R2_WORKLOAD_RESULTS_URL",
+    "bucket": "CLOUDFLARE_R2_WORKLOAD_RESULTS_BUCKET",
+    "public_origin": "OD_WORKLOAD_RESULTS_BASE_URL",
+    "access_key_id": "CLOUDFLARE_R2_WORKLOAD_RESULTS_AK",
+    "secret_access_key": "CLOUDFLARE_R2_WORKLOAD_RESULTS_SK",
+}
 
 
 def canonical_json(value: Any) -> str:
@@ -538,6 +554,11 @@ def write_json_atomic(path: Path, value: Any) -> None:
 
 
 def plan_command(args: argparse.Namespace, contract: ConvergenceContract, root: Path) -> int:
+    repository_id = args.repository_id or int(os.environ.get("GITHUB_REPOSITORY_ID", "0"))
+    repository = args.repository or os.environ.get("GITHUB_REPOSITORY", "")
+    base_url = args.base_url or os.environ.get(STORAGE_ENV["public_origin"], "")
+    if repository_id <= 0 or not repository:
+        raise ConfigError("repository id and name are required for convergence planning")
     workflow = contract.workflow(args.workflow)
     scope_plan = load_json(args.scope_plan)
     enabled = object_value(scope_plan.get("enabled"), "scope plan.enabled")
@@ -550,8 +571,8 @@ def plan_command(args: argparse.Namespace, contract: ConvergenceContract, root: 
     runner_plan = object_value(json.loads(args.runner_plan_json), "runner plan")
     calculated = calculate(contract, root, args.workflow, runner_plan)
     hits, read_reasons, results = resolve_results(
-        args.base_url or None,
-        args.repository_id,
+        base_url or None,
+        repository_id,
         workflow,
         calculated,
         args.timeout,
@@ -571,8 +592,8 @@ def plan_command(args: argparse.Namespace, contract: ConvergenceContract, root: 
     pending = {
         "schemaVersion": 1,
         "protocol": PROTOCOL,
-        "repositoryId": args.repository_id,
-        "repository": args.repository,
+        "repositoryId": repository_id,
+        "repository": repository,
         "workflow": workflow.name,
         "policy": workflow.policy,
         "mode": args.mode,
@@ -631,12 +652,17 @@ def validated_provenance(value: Any) -> dict[str, Any]:
     return provenance
 
 
-def finalize_command(args: argparse.Namespace, contract: ConvergenceContract) -> int:
-    pending = object_value(load_json(args.pending), "pending convergence")
+def finalize_candidate(
+    pending_path: Path,
+    provenance: dict[str, Any],
+    products_root: Path,
+    contract: ConvergenceContract,
+) -> dict[str, Any]:
+    pending = object_value(load_json(pending_path), "pending convergence")
     workflow = contract.workflow(require_string(pending.get("workflow"), "pending workflow"))
     if pending.get("schemaVersion") != 1 or pending.get("protocol") != PROTOCOL or pending.get("policy") != workflow.policy:
         raise ConfigError("pending convergence contract differs")
-    provenance = validated_provenance(load_json(args.provenance))
+    provenance = validated_provenance(provenance)
     workloads = object_value(pending.get("workloads"), "pending workloads")
     receipts = []
     for identity, raw in workloads.items():
@@ -652,7 +678,7 @@ def finalize_command(args: argparse.Namespace, contract: ConvergenceContract) ->
             continue
         products_mode = workflow.workloads[identity].products
         if products_mode == "manifest":
-            manifest_path = args.products_root / identity / "product-manifest.json"
+            manifest_path = products_root / identity / "product-manifest.json"
             if not manifest_path.is_file():
                 raise ConfigError(f"executed reusable product workload lacks manifest: {identity}")
             manifest = object_value(load_json(manifest_path), f"product manifest {identity}")
@@ -685,7 +711,7 @@ def finalize_command(args: argparse.Namespace, contract: ConvergenceContract) ->
                 "receipt": receipt,
             }
         )
-    candidate = {
+    return {
         "schemaVersion": 1,
         "protocol": PROTOCOL,
         "repositoryId": pending["repositoryId"],
@@ -695,7 +721,59 @@ def finalize_command(args: argparse.Namespace, contract: ConvergenceContract) ->
         "provenance": provenance,
         "results": receipts,
     }
-    write_json_atomic(args.output, candidate)
+
+
+def producer_context(payload: dict[str, Any]) -> dict[str, Any]:
+    event = os.environ.get("GITHUB_EVENT_NAME", "")
+    if event == "pull_request":
+        source = object_value(payload.get("pull_request"), "pull_request event")
+        head = object_value(source.get("head"), "pull_request.head")
+        base = object_value(source.get("base"), "pull_request.base")
+        head_sha = require_string(head.get("sha"), "pull_request.head.sha")
+        base_sha = require_string(base.get("sha"), "pull_request.base.sha")
+    elif event == "merge_group":
+        source = object_value(payload.get("merge_group"), "merge_group event")
+        head_sha = require_string(source.get("head_sha"), "merge_group.head_sha")
+        base_sha = require_string(source.get("base_sha"), "merge_group.base_sha")
+    else:
+        raise ConfigError(f"unsupported convergence producer event: {event!r}")
+    repository = require_string(os.environ.get("GITHUB_REPOSITORY"), "GITHUB_REPOSITORY")
+    repository_data = object_value(payload.get("repository"), "event repository")
+    repository_id = int(os.environ.get("GITHUB_REPOSITORY_ID", "0") or repository_data.get("id", 0))
+    run_id = int(os.environ.get("GITHUB_RUN_ID", "0"))
+    run_attempt = int(os.environ.get("GITHUB_RUN_ATTEMPT", "0"))
+    if repository_id <= 0 or run_id <= 0 or run_attempt <= 0:
+        raise ConfigError("GitHub repository/run identity must be positive")
+    tree_sha = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+    return {
+        "repositoryId": repository_id,
+        "repository": repository,
+        "provenance": validated_provenance(
+            {
+                "event": event,
+                "runId": run_id,
+                "runAttempt": run_attempt,
+                "headSha": head_sha,
+                "baseSha": base_sha,
+                "treeSha": tree_sha,
+                "validatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            }
+        ),
+    }
+
+
+def handoff_command(args: argparse.Namespace, contract: ConvergenceContract) -> int:
+    context = producer_context(event_payload())
+    candidate = finalize_candidate(args.pending, context["provenance"], args.products_root, contract)
+    if candidate.get("repositoryId") != context["repositoryId"] or candidate.get("repository") != context["repository"]:
+        raise ConfigError("pending convergence repository differs from the producing run")
+    handoff_contract.write_convergence(args.handoff_root, args.id, candidate)
+    append_outputs(
+        {
+            "name": handoff_contract.artifact_name("convergence", args.id),
+            "path": str(args.handoff_root),
+        }
+    )
     print(json.dumps(candidate, indent=2, sort_keys=True))
     return 0
 
@@ -766,15 +844,133 @@ def prepare_publication_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def product_sources_command(args: argparse.Namespace) -> int:
+def candidate_product_sources(candidate_path: Path) -> list[str]:
     with tempfile.TemporaryDirectory() as temporary:
-        manifest = prepare_publication(args.candidate, Path(temporary), require_urls=False)
+        manifest = prepare_publication(candidate_path, Path(temporary), require_urls=False)
         sources: set[str] = set()
         for item in manifest:
             receipt = object_value(load_json(Path(item["file"])), "convergence candidate receipt")
             products = validate_products(receipt.get("products"), "receipt.products", require_urls=False)
             sources.update(entry["source"] for entry in products.values() if entry["type"] == "job")
-    print(json.dumps(sorted(sources)))
+    return sorted(sources)
+
+
+def workflow_run_context(payload: dict[str, Any]) -> dict[str, Any]:
+    run = object_value(payload.get("workflow_run"), "workflow_run event")
+    repository = object_value(payload.get("repository"), "event repository")
+    head_repository = object_value(run.get("head_repository"), "workflow_run.head_repository")
+    context = {
+        "repository_id": repository.get("id"),
+        "repository": repository.get("full_name"),
+        "workflow": run.get("name"),
+        "event": run.get("event"),
+        "run_id": run.get("id"),
+        "run_attempt": run.get("run_attempt"),
+        "head_sha": run.get("head_sha"),
+        "head_repository": head_repository.get("full_name"),
+    }
+    if not isinstance(context["repository_id"], int) or context["repository_id"] <= 0:
+        raise ConfigError("workflow_run repository id must be positive")
+    for field in ("repository", "workflow", "event", "head_sha", "head_repository"):
+        require_string(context[field], f"workflow_run {field}")
+    for field in ("run_id", "run_attempt"):
+        if not isinstance(context[field], int) or context[field] <= 0:
+            raise ConfigError(f"workflow_run {field} must be positive")
+    if context["event"] not in {"pull_request", "merge_group"}:
+        raise ConfigError("workflow_run event is not admissible")
+    return context
+
+
+def git_differs(left: str, right: str, paths: list[str]) -> bool:
+    result = subprocess.run(["git", "diff", "--quiet", left, right, "--", *paths], check=False)
+    if result.returncode not in {0, 1}:
+        raise subprocess.CalledProcessError(result.returncode, result.args)
+    return result.returncode == 1
+
+
+def admit_command(args: argparse.Namespace, contract: ConvergenceContract) -> int:
+    context = workflow_run_context(event_payload())
+    if context["head_repository"] != context["repository"]:
+        raise ConfigError("workflow_run head repository is not trusted")
+    entries = handoff_contract.candidate_entry_dirs(args.handoff_root, "convergence")
+    if len(entries) != 1:
+        raise ConfigError(f"expected one convergence handoff, found {len(entries)}")
+    entry = handoff_contract.validate_convergence(entries[0])
+    links = {
+        "repository_id": context["repository_id"],
+        "repository": context["repository"],
+        "workflow": context["workflow"],
+        "event": context["event"],
+        "run_id": context["run_id"],
+        "run_attempt": context["run_attempt"],
+        "head_sha": context["head_sha"],
+    }
+    for field, expected in links.items():
+        if entry[field] != expected:
+            raise ConfigError(f"convergence handoff {field} differs from workflow_run")
+    workflow = contract.workflow(entry["workflow"])
+    if entry["policy"] != workflow.policy:
+        raise ConfigError("convergence handoff policy differs from trusted policy")
+    base_sha = entry["base_sha"]
+    head_sha = entry["head_sha"]
+    subprocess.run(
+        ["git", "fetch", "--no-tags", "--depth=1", "origin", base_sha, head_sha],
+        check=True,
+    )
+    control_paths = contract.suite_paths(CONTROL_SUITE)
+    candidate = entry["candidate_path"]
+    reason = "trusted"
+    publish = True
+    if git_differs(base_sha, head_sha, control_paths):
+        reason = "producer-control-plane-changed"
+        publish = False
+    elif git_differs("HEAD", base_sha, control_paths):
+        reason = "producer-control-plane-superseded"
+        publish = False
+    append_outputs(
+        {
+            "candidate": candidate,
+            "publish": str(publish).lower(),
+            "reason": reason,
+        }
+    )
+    print(json.dumps({"candidate": candidate, "publish": publish, "reason": reason}, sort_keys=True))
+    return 0
+
+
+def storage_config(*, required: bool) -> dict[str, str]:
+    values = {key: os.environ.get(name, "") for key, name in STORAGE_ENV.items()}
+    missing = [STORAGE_ENV[key] for key, value in values.items() if not value]
+    if required and missing:
+        raise ConfigError(f"workload result storage is missing: {', '.join(missing)}")
+    return values
+
+
+def storage_status_command() -> int:
+    configured = all(storage_config(required=False).values())
+    append_outputs({"configured": str(configured).lower()})
+    if not configured:
+        print("Workload result storage is not configured; validated result was not published.")
+    return 0
+
+
+def stage_products_command(args: argparse.Namespace) -> int:
+    repository = require_string(os.environ.get("GITHUB_REPOSITORY"), "GITHUB_REPOSITORY")
+    run_id = args.run_id
+    if run_id is None:
+        run_id = workflow_run_context(event_payload())["run_id"]
+    if run_id <= 0:
+        raise ConfigError("a positive producing run id is required")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    staged = []
+    for source in candidate_product_sources(args.candidate):
+        artifact = unique_run_artifact(repository, run_id, source)
+        if artifact is None:
+            raise ConfigError(f"current-run product artifact is missing: {source}")
+        destination = args.output_dir / f"{source}.zip"
+        download_artifact(repository, artifact["id"], destination)
+        staged.append(source)
+    print(json.dumps({"staged": staged}, sort_keys=True))
     return 0
 
 
@@ -902,14 +1098,12 @@ def self_check() -> None:
 
 
 def publish_command(args: argparse.Namespace) -> int:
-    origin = public_origin(args.public_origin)
-    access_key_id = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-    secret_access_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-    session_token = os.environ.get("CLOUDFLARE_R2_SESSION_TOKEN")
+    storage = storage_config(required=True)
+    origin = public_origin(storage["public_origin"])
     client = R2Client(
-        endpoint=args.endpoint,
-        bucket=args.bucket,
-        credentials=R2Credentials(access_key_id, secret_access_key, session_token),
+        endpoint=storage["endpoint"],
+        bucket=storage["bucket"],
+        credentials=R2Credentials(storage["access_key_id"], storage["secret_access_key"]),
         timeout=args.timeout,
     )
     with tempfile.TemporaryDirectory() as temporary:
@@ -997,28 +1191,30 @@ def parse_args() -> argparse.Namespace:
     plan.add_argument("--workflow", required=True)
     plan.add_argument("--scope-plan", type=Path, required=True)
     plan.add_argument("--runner-plan-json", required=True)
-    plan.add_argument("--repository-id", type=int, required=True)
-    plan.add_argument("--repository", required=True)
+    plan.add_argument("--repository-id", type=int)
+    plan.add_argument("--repository")
     plan.add_argument("--base-url", default="")
     plan.add_argument("--timeout", type=float, default=2.0)
     plan.add_argument("--mode", choices=["shadow", "enforce"], default="shadow")
     plan.add_argument("--pending", type=Path, required=True)
-    finalize = sub.add_parser("finalize")
-    finalize.add_argument("--pending", type=Path, required=True)
-    finalize.add_argument("--provenance", type=Path, required=True)
-    finalize.add_argument("--products-root", type=Path, required=True)
-    finalize.add_argument("--output", type=Path, required=True)
+    handoff = sub.add_parser("handoff")
+    handoff.add_argument("--pending", type=Path, required=True)
+    handoff.add_argument("--products-root", type=Path, required=True)
+    handoff.add_argument("--handoff-root", type=Path, required=True)
+    handoff.add_argument("--id", default="ci-results")
+    admit = sub.add_parser("admit")
+    admit.add_argument("--handoff-root", type=Path, required=True)
     publication = sub.add_parser("prepare-publication")
     publication.add_argument("--candidate", type=Path, required=True)
     publication.add_argument("--output-dir", type=Path, required=True)
-    sources = sub.add_parser("product-sources")
-    sources.add_argument("--candidate", type=Path, required=True)
+    sub.add_parser("storage-status")
+    stage = sub.add_parser("stage-products")
+    stage.add_argument("--candidate", type=Path, required=True)
+    stage.add_argument("--output-dir", type=Path, required=True)
+    stage.add_argument("--run-id", type=int)
     publish = sub.add_parser("publish")
     publish.add_argument("--candidate", type=Path, required=True)
     publish.add_argument("--output-dir", type=Path, required=True)
-    publish.add_argument("--endpoint", required=True)
-    publish.add_argument("--bucket", required=True)
-    publish.add_argument("--public-origin", required=True)
     publish.add_argument("--products-root", type=Path, required=True)
     publish.add_argument("--timeout", type=float, default=15.0)
     return parser.parse_args()
@@ -1029,8 +1225,10 @@ def main() -> int:
     root = args.root.resolve() if args.root else repository_root(__file__)
     if args.command == "prepare-publication":
         return prepare_publication_command(args)
-    if args.command == "product-sources":
-        return product_sources_command(args)
+    if args.command == "storage-status":
+        return storage_status_command()
+    if args.command == "stage-products":
+        return stage_products_command(args)
     if args.command == "publish":
         return publish_command(args)
     contract = ConvergenceContract(args.config or root / ".github/config/convergence.json")
@@ -1052,12 +1250,14 @@ def main() -> int:
         return 0
     if args.command == "github-output":
         return plan_command(args, contract, root)
-    return finalize_command(args, contract)
+    if args.command == "handoff":
+        return handoff_command(args, contract)
+    return admit_command(args, contract)
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ConfigError, R2Error, json.JSONDecodeError, subprocess.SubprocessError, OSError) as error:
+    except (ConfigError, GitHubError, R2Error, json.JSONDecodeError, subprocess.SubprocessError, OSError) as error:
         print(f"convergence error: {error}", file=sys.stderr)
         raise SystemExit(2)

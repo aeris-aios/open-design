@@ -85,15 +85,12 @@ jobs:
         id: convergence
         env:
           RUNNER_PLAN_JSON: ${{ needs.runners.outputs.runs_on }}
-          WORKLOAD_RESULTS_BASE_URL: ${{ secrets.OD_WORKLOAD_RESULTS_BASE_URL }}
+          OD_WORKLOAD_RESULTS_BASE_URL: ${{ secrets.OD_WORKLOAD_RESULTS_BASE_URL }}
         run: >-
           python3 .github/scripts/convergence.py github-output
           --workflow ci
           --scope-plan "$RUNNER_TEMP/scope-plan.json"
           --runner-plan-json "$RUNNER_PLAN_JSON"
-          --repository-id "${{ github.repository_id }}"
-          --repository "${{ github.repository }}"
-          --base-url "$WORKLOAD_RESULTS_BASE_URL"
           --mode shadow
           --pending "$RUNNER_TEMP/pending-convergence.json"
 
@@ -924,57 +921,11 @@ jobs:
         id: convergence_handoff
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         continue-on-error: true
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          REPOSITORY_ID: ${{ github.repository_id }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          handoff_id="ci-results"
-          handoff_root="$RUNNER_TEMP/handoff-convergence-$handoff_id"
-          handoff_dir="$(python3 .github/scripts/handoff.py dir convergence "$handoff_id" --root "$handoff_root")"
-          mkdir -p "$handoff_dir" "$RUNNER_TEMP/convergence-products"
-          tree_sha="$(git rev-parse 'HEAD^{tree}')"
-          jq -n \
-            --arg event "$EVENT_NAME" \
-            --argjson run_id "$RUN_ID" \
-            --argjson run_attempt "$RUN_ATTEMPT" \
-            --arg head_sha "$HEAD_SHA" \
-            --arg base_sha "$BASE_SHA" \
-            --arg tree_sha "$tree_sha" \
-            --arg validated_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-            '{event: $event, runId: $run_id, runAttempt: $run_attempt, headSha: $head_sha, baseSha: $base_sha, treeSha: $tree_sha, validatedAt: $validated_at}' \
-            > "$RUNNER_TEMP/convergence-provenance.json"
-          python3 .github/scripts/convergence.py finalize \
-            --pending "$RUNNER_TEMP/pending-convergence.json" \
-            --provenance "$RUNNER_TEMP/convergence-provenance.json" \
-            --products-root "$RUNNER_TEMP/convergence-products" \
-            --output "$handoff_dir/candidate.json"
-          jq -n \
-            --arg kind "convergence" \
-            --arg id "$handoff_id" \
-            --argjson repository_id "$REPOSITORY_ID" \
-            --arg repository "$REPOSITORY" \
-            --arg workflow "ci" \
-            --arg policy "ci-v1" \
-            --arg event "$EVENT_NAME" \
-            --argjson run_id "$RUN_ID" \
-            --argjson run_attempt "$RUN_ATTEMPT" \
-            --arg head_sha "$HEAD_SHA" \
-            --arg base_sha "$BASE_SHA" \
-            --arg tree_sha "$tree_sha" \
-            --argjson schema_version 1 \
-            '{schema_version: $schema_version, kind: $kind, id: $id, repository_id: $repository_id, repository: $repository, workflow: $workflow, policy: $policy, event: $event, run_id: $run_id, run_attempt: $run_attempt, head_sha: $head_sha, base_sha: $base_sha, tree_sha: $tree_sha}' \
-            > "$handoff_dir/metadata.json"
-          python3 .github/scripts/handoff.py validate convergence "$handoff_dir" >/dev/null
-          {
-            echo "name=$(python3 .github/scripts/handoff.py artifact-name convergence "$handoff_id")"
-            echo "path=$handoff_root"
-          } >> "$GITHUB_OUTPUT"
+        run: >-
+          python3 .github/scripts/convergence.py handoff
+          --pending "$RUNNER_TEMP/pending-convergence.json"
+          --products-root "$RUNNER_TEMP/convergence-products"
+          --handoff-root "$RUNNER_TEMP/handoff-convergence-ci-results"
 
       - name: Upload convergence handoff
         if: ${{ steps.convergence_handoff.outputs.name != '' }}

@@ -2042,7 +2042,7 @@ process.stdin.on("end", () => {
     // Packaging hash autofix left core ci with nix — no ci-produced autofix handoffs for now.
     expect(ciWorkflow).toContain("handoff.py dir comment");
     expect(ciWorkflow).toContain("handoff.py dir report");
-    expect(ciWorkflow).toContain("handoff.py dir convergence");
+    expect(ciWorkflow).toContain("convergence.py handoff");
     expect(ciWorkflow).toContain("handoff-comment-");
     expect(ciWorkflow).toContain("handoff-report-");
     expect(ciWorkflow).toContain("handoff-convergence-");
@@ -2068,15 +2068,17 @@ process.stdin.on("end", () => {
     expect(handoffScript).toContain("def self_check()");
     expect(handoffScript).toContain('"report"');
     expect(handoffScript).toContain('"convergence"');
-    expect(convergenceWorkflow).toContain("artifact-name convergence ci-results");
+    expect(convergenceWorkflow).toContain("handoff.py resolve-run-artifact convergence ci-results");
     expect(convergenceWorkflow).toContain("Checkout trusted convergence code");
-    expect(convergenceWorkflow).toContain("convergence.py control-paths");
-    expect(convergenceWorkflow).toContain('git diff --quiet "$base_sha" "$RUN_HEAD_SHA"');
-    expect(convergenceWorkflow).toContain('git diff --quiet HEAD "$base_sha"');
+    expect(convergenceWorkflow).toContain("convergence.py admit");
     expect(convergenceWorkflow).toContain("python3 .github/scripts/convergence.py publish");
-    expect(convergenceWorkflow).toContain("convergence.py product-sources");
-    expect(convergenceWorkflow).toContain('artifacts/$artifact_id/zip');
+    expect(convergenceWorkflow).toContain("convergence.py stage-products");
+    expect(convergenceWorkflow).toContain("convergence.py storage-status");
     expect(convergenceWorkflow).toContain("CLOUDFLARE_R2_WORKLOAD_RESULTS_AK");
+    expect(convergenceWorkflow).not.toContain("gh api");
+    expect(convergenceWorkflow).not.toContain("jq");
+    expect(convergenceWorkflow).not.toContain("ci-v1");
+    expect(ciWorkflow).not.toContain("convergence-provenance.json");
     expect(convergenceWorkflow).not.toContain("actions/checkout@v6.0.2\n        with:\n          ref: ${{ github.event.workflow_run.head_sha }}");
 
     for (const workflow of [commentWorkflow, autofixWorkflow]) {

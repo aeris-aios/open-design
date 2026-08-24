@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from lib.github import GitHubError, append_outputs, event_payload, unique_run_artifact
 
 SCHEMA_VERSION = 1
 KINDS = {"comment", "autofix", "report", "convergence"}
@@ -267,6 +270,45 @@ def validate_entry(kind: str, entry_dir: Path) -> dict[str, Any]:
     return validate_report(entry_dir)
 
 
+def write_convergence(root: Path, handoff_id: str, candidate: dict[str, Any]) -> Path:
+    provenance = candidate.get("provenance")
+    if not isinstance(provenance, dict):
+        fail("Convergence candidate provenance must be an object")
+    entry = handoff_dir(root, "convergence", handoff_id)
+    entry.mkdir(parents=True, exist_ok=False)
+    metadata = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "convergence",
+        "id": require_slug(handoff_id, "handoff id"),
+        "repository_id": candidate.get("repositoryId"),
+        "repository": candidate.get("repository"),
+        "workflow": candidate.get("workflow"),
+        "policy": candidate.get("policy"),
+        "event": provenance.get("event"),
+        "run_id": provenance.get("runId"),
+        "run_attempt": provenance.get("runAttempt"),
+        "head_sha": provenance.get("headSha"),
+        "base_sha": provenance.get("baseSha"),
+        "tree_sha": provenance.get("treeSha"),
+    }
+    (entry / "candidate.json").write_text(
+        json.dumps(candidate, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (entry / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    validate_convergence(entry)
+    return entry
+
+
+def resolve_run_artifact(kind: str, handoff_id: str, run_id: int, repository: str) -> None:
+    name = artifact_name(kind, handoff_id)
+    artifact = unique_run_artifact(repository, run_id, name)
+    append_outputs({"found": str(artifact is not None).lower(), "name": name if artifact else ""})
+
+
 
 def candidate_entry_dirs(root: Path, kind: str) -> list[Path]:
     kind = require_kind(kind)
@@ -360,8 +402,6 @@ def self_check() -> None:
             ),
             encoding="utf-8",
         )
-        convergence = handoff_dir(root, "convergence", "ci-results")
-        convergence.mkdir(parents=True)
         candidate = {
             "repositoryId": 56,
             "repository": "nexu-io/open-design",
@@ -376,27 +416,7 @@ def self_check() -> None:
                 "treeSha": "c" * 40,
             },
         }
-        (convergence / "candidate.json").write_text(json.dumps(candidate), encoding="utf-8")
-        (convergence / "metadata.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": SCHEMA_VERSION,
-                    "kind": "convergence",
-                    "id": "ci-results",
-                    "repository_id": 56,
-                    "repository": "nexu-io/open-design",
-                    "workflow": "ci",
-                    "policy": "ci-v1",
-                    "event": "pull_request",
-                    "run_id": 34,
-                    "run_attempt": 1,
-                    "head_sha": "a" * 40,
-                    "base_sha": "b" * 40,
-                    "tree_sha": "c" * 40,
-                }
-            ),
-            encoding="utf-8",
-        )
+        convergence = write_convergence(root, "ci-results", candidate)
         assert artifact_name("comment", "visual-pr-app") == "handoff-comment-visual-pr-app"
         assert artifact_pattern("autofix") == "handoff-autofix-*"
         assert artifact_name("report", "visual-pr") == "handoff-report-visual-pr"
@@ -433,6 +453,12 @@ def main() -> None:
     list_parser.add_argument("kind", choices=sorted(KINDS))
     list_parser.add_argument("root")
 
+    resolve = subparsers.add_parser("resolve-run-artifact")
+    resolve.add_argument("kind", choices=sorted(KINDS))
+    resolve.add_argument("id")
+    resolve.add_argument("--run-id", type=int)
+    resolve.add_argument("--repository")
+
     subparsers.add_parser("self-check")
 
     args = parser.parse_args()
@@ -451,6 +477,18 @@ def main() -> None:
     elif args.command == "list":
         for entry in candidate_entry_dirs(Path(args.root), args.kind):
             emit_json(validate_entry(args.kind, entry))
+    elif args.command == "resolve-run-artifact":
+        run_id = args.run_id
+        if run_id is None:
+            workflow_run = event_payload().get("workflow_run")
+            if isinstance(workflow_run, dict) and isinstance(workflow_run.get("id"), int):
+                run_id = workflow_run["id"]
+            else:
+                run_id = int(os.environ.get("GITHUB_RUN_ID", "0"))
+        repository = args.repository or os.environ.get("GITHUB_REPOSITORY", "")
+        if run_id is None or run_id <= 0 or not repository:
+            fail("run id and repository are required to resolve a handoff artifact")
+        resolve_run_artifact(args.kind, args.id, run_id, repository)
     elif args.command == "self-check":
         self_check()
 
@@ -458,5 +496,7 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except BrokenPipeError:
+    except (BrokenPipeError, GitHubError) as error:
+        if isinstance(error, GitHubError):
+            print(f"handoff error: {error}", file=sys.stderr)
         sys.exit(1)

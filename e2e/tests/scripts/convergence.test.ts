@@ -34,6 +34,7 @@ function createRepository() {
   writeFileSync(scopePlanPath, JSON.stringify({ enabled: { a: true, b: true } }));
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"], { cwd: root });
   return { root, configPath, scopePlanPath, pendingPath: path.join(root, "pending.json") };
 }
 
@@ -129,6 +130,65 @@ describe("workload convergence", () => {
     expect(arc).not.toBe(hosted);
   });
 
+  test("materializes the convergence handoff from the GitHub event context", () => {
+    const fixture = createRepository();
+    runPlan(fixture);
+    const eventPath = path.join(fixture.root, "event.json");
+    const outputPath = path.join(fixture.root, "handoff-output.txt");
+    const handoffRoot = path.join(fixture.root, "handoff-root");
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: fixture.root, encoding: "utf8" }).trim();
+    writeFileSync(eventPath, JSON.stringify({
+      repository: { id: 42, full_name: "example/repo" },
+      pull_request: { head: { sha: headSha }, base: { sha: headSha } },
+    }));
+    writeFileSync(outputPath, "");
+    execFileSync("python3", [
+      convergenceScript, "--root", fixture.root, "--config", fixture.configPath,
+      "handoff", "--pending", fixture.pendingPath,
+      "--products-root", path.join(fixture.root, "products"),
+      "--handoff-root", handoffRoot,
+    ], {
+      cwd: fixture.root,
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "example/repo",
+        GITHUB_REPOSITORY_ID: "42",
+        GITHUB_RUN_ID: "12",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_OUTPUT: outputPath,
+      },
+    });
+    const metadata = JSON.parse(readFileSync(
+      path.join(handoffRoot, "handoff", "convergence", "ci-results", "metadata.json"),
+      "utf8",
+    )) as Record<string, unknown>;
+    expect(metadata).toMatchObject({
+      repository_id: 42, repository: "example/repo", workflow: "ci", policy: "test-v1",
+      event: "pull_request", run_id: 12, run_attempt: 1, head_sha: headSha,
+    });
+    expect(readFileSync(outputPath, "utf8")).toContain("name=handoff-convergence-ci-results");
+
+    writeFileSync(eventPath, JSON.stringify({
+      repository: { id: 42, full_name: "example/repo" },
+      workflow_run: {
+        id: 12, run_attempt: 1, name: "ci", event: "pull_request", head_sha: headSha,
+        head_repository: { full_name: "example/repo" },
+      },
+    }));
+    writeFileSync(outputPath, "");
+    execFileSync("git", ["remote", "add", "origin", fixture.root], { cwd: fixture.root });
+    execFileSync("python3", [
+      convergenceScript, "--root", fixture.root, "--config", fixture.configPath,
+      "admit", "--handoff-root", handoffRoot,
+    ], {
+      cwd: fixture.root,
+      env: { ...process.env, GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: outputPath },
+    });
+    expect(readFileSync(outputPath, "utf8")).toContain("publish=true");
+  });
+
   test("rejects dependency cycles and dangling suites before planning", () => {
     const fixture = createRepository();
     const config = JSON.parse(readFileSync(fixture.configPath, "utf8")) as any;
@@ -166,10 +226,6 @@ describe("workload convergence", () => {
       bundle: { type: "job", source: "build-products" },
       report: { type: "url", source: "https://results.example/report.json" },
     })));
-    const sources = JSON.parse(execFileSync("python3", [
-      convergenceScript, "product-sources", "--candidate", candidatePath,
-    ], { cwd: repoRoot, encoding: "utf8" })) as string[];
-    expect(sources).toEqual(["build-products"]);
     const rejected = spawnSync("python3", [
       convergenceScript, "prepare-publication", "--candidate", candidatePath,
       "--output-dir", path.join(root, "rejected"),
