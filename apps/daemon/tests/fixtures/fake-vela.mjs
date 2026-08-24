@@ -203,18 +203,23 @@ function logDiag(line) {
 // Real agent CLIs log a line or two while shutting down after the host kills
 // them. Modelling that is the only way a spec can cover what the daemon does
 // with agent bytes that arrive AFTER it has already given up on the turn.
-if (STDERR_ON_SIGTERM) {
+// The two knobs compose. `STDERR_ON_SIGTERM` alone models a CLI that logs a
+// shutdown line and exits; `IGNORE_SIGTERM` alone models one that never honours
+// the signal; together they model the worst case for the host — a child that
+// keeps talking on stderr while refusing to die, so every one of those late
+// bytes reaches the daemon's raw stderr handler after the verdict.
+if (STDERR_ON_SIGTERM || IGNORE_SIGTERM) {
+  // Logged once, like a real CLI announcing shutdown, not once per signal —
+  // repeating it on every SIGTERM would keep pushing the host's timers out and
+  // hide the race this models.
+  let announcedShutdown = false;
   process.on('SIGTERM', () => {
-    logDiag('shutting down after SIGTERM');
-    exit(143);
+    if (STDERR_ON_SIGTERM && !announcedShutdown) {
+      announcedShutdown = true;
+      logDiag('shutting down after SIGTERM');
+    }
+    if (!IGNORE_SIGTERM) exit(143);
   });
-}
-
-// A child that does not die on the host's first SIGTERM. The daemon must still
-// finish the attempt under the verdict it already reached, rather than letting a
-// second watchdog re-terminalize the run while this process lingers.
-if (IGNORE_SIGTERM) {
-  process.on('SIGTERM', () => {});
 }
 
 // Append one line per session-bind method (`new` / `load`) to the file named by

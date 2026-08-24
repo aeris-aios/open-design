@@ -74,6 +74,10 @@ const OUTER_INACTIVITY_TIMEOUT_MS = 120_000;
 // Just above ACP_STAGE_TIMEOUT_MS so the stage watchdog fires first and the
 // outer one is still pending when it does.
 const LINGER_INACTIVITY_TIMEOUT_MS = 3_000;
+// The chatty-linger case needs the outer watchdog to be re-armable AND to have
+// time to fire before forced shutdown reaps the child, so the kill grace is
+// deliberately longer than the inactivity ceiling here.
+const CHATTY_LINGER_KILL_GRACE_MS = 2_500;
 
 describe('ACP stall progress age', () => {
   const originalEnv = snapshotEnv();
@@ -312,6 +316,69 @@ describe('ACP stall progress age', () => {
     expect(finished.failure_detail).toBe('timeout');
 
     // And the age still describes the silence, not the drawn-out teardown.
+    expect(
+      finished.last_progress_age_ms,
+      progressAgeFailureContext(finished, run),
+    ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
+  }, 60_000);
+
+  // The worst case is a child that does BOTH: keeps logging on stderr and keeps
+  // refusing to die. Retiring the watchdog at the verdict is not enough on its
+  // own, because every late stderr byte reaches `noteAgentActivity` through the
+  // raw handler — and while the freeze stops the timestamp, the timer block
+  // below it re-arms the very watchdog `retireAttemptOnAcpVerdict` just cleared.
+  // If that re-armed timer fires before forced shutdown reaps the child, the run
+  // terminalizes a second time under `inactivity_watchdog`.
+  //
+  // Once the attempt has a verdict, nothing the child says may restart any of
+  // this attempt's clocks.
+  it('keeps acp_stage_timeout attribution when the child keeps logging and refuses to die', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-stall-chatty-bin-'));
+    const fakeVela = await writeSilentlyStallingVela(binDir, 'vela-silent-stall-chatty-linger', {
+      ignoreSigterm: true,
+      stderrOnSigterm: true,
+    });
+
+    process.env.POSTHOG_KEY = 'phc_test_acp_stall_chatty';
+    delete process.env.POSTHOG_HOST;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
+    process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
+    process.env.OD_ACP_STAGE_TIMEOUT_MS = String(ACP_STAGE_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = String(LINGER_INACTIVITY_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '0';
+    process.env.OD_CHAT_RUN_INACTIVITY_KILL_GRACE_MS = String(CHATTY_LINGER_KILL_GRACE_MS);
+
+    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    await putConfig(started.url, {
+      agentId: 'amr',
+      agentCliEnv: { amr: { VELA_BIN: fakeVela } },
+      telemetry: { metrics: true, content: false, artifactManifest: false },
+      privacyDecisionAt: Date.now(),
+    });
+
+    const run = await createAndWaitForAmrRun(started.url);
+    expect(run.status).toBe('failed');
+
+    const finished = await waitForRunFinished(run.id);
+
+    expect(
+      finished.terminal_trigger,
+      progressAgeFailureContext(finished, run),
+    ).toBe('acp_stage_timeout');
+    expect(finished.failure_category).toBe('timeout');
+    expect(finished.failure_detail).toBe('timeout');
+
+    // Exactly one terminal failure reached the transcript. A second `error`
+    // here is the inactivity watchdog re-terminalizing the attempt.
+    expect(
+      readRunEventTail(run.eventsLogPath).filter((entry) => entry === 'error').length,
+      progressAgeFailureContext(finished, run),
+    ).toBe(1);
+
     expect(
       finished.last_progress_age_ms,
       progressAgeFailureContext(finished, run),

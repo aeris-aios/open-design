@@ -12964,12 +12964,20 @@ export async function startServer({
       scheduleForcedChildShutdown();
     };
     const noteAgentActivity = () => {
+      // Once this attempt has a terminal verdict, nothing the child says may
+      // restart any of its clocks — not the progress timestamp, and not the
+      // inactivity watchdog. Bailing here rather than only skipping the
+      // timestamp is load-bearing: the raw `child.stderr` handler routes every
+      // late byte through this helper, so a child that logs while ignoring
+      // SIGTERM would otherwise re-arm the very watchdog
+      // `retireAttemptOnAcpVerdict` just cleared, and that timer firing before
+      // forced shutdown reaps the child terminalizes the run a second time
+      // under `inactivity_watchdog`. The token TTL is moot for the same reason:
+      // this attempt is over, and a retry builds a fresh closure.
+      if (progressClockFrozen) return;
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
-      // Frozen once this attempt has a terminal verdict — see
-      // `freezeProgressClock`. Everything else here still runs: the token TTL
-      // and watchdog re-arm are unrelated to what the field measures.
-      if (!progressClockFrozen) run.lastAgentActivityAt = Date.now();
+      run.lastAgentActivityAt = Date.now();
       if (toolTokenGrant) {
         toolTokenRegistry.refreshToken(toolTokenGrant.token, { ttlMs: toolTokenTtlMs });
       }
