@@ -19,6 +19,29 @@ function classify(errorCode: string | null, error: string) {
   });
 }
 
+/**
+ * The same classification with the `runtime_close` diagnostic an ACP fatal
+ * really carries.
+ *
+ * `deriveRpcCloseReason` in server.ts records `fatal_rpc_error` whenever the
+ * host tears the child down after a protocol failure, so every ACP-fatal run
+ * reaching the classifier has this event in its stream. Omitting it — as the
+ * bare `classify` helper does — hides the branch that decides whether the
+ * failure keeps its retry, which is exactly what the readiness-exit regression
+ * turned on.
+ */
+function classifyWithAcpFatalClose(errorCode: string, error: string) {
+  return classifyRunFailure({
+    result: 'failed',
+    status: { status: 'failed', error, errorCode },
+    errorCode,
+    agentId: 'kimi',
+    events: [
+      { event: 'diagnostic', data: { type: 'runtime_close', rpc_close_reason: 'fatal_rpc_error' } },
+    ],
+  });
+}
+
 function retryDecisionFor(error: string) {
   const failure = classify('AGENT_EXECUTION_FAILED', error);
   return decideSafeRunRetry({
@@ -540,5 +563,50 @@ describe('handshake failures the run classifier already has a remedy for', () =>
       user_action: 'none',
     });
     expect(withAcpHandshakeFailureGuidance({ message: CRASHED })).toEqual({ message: CRASHED });
+  });
+
+  // The same AMR wrapper text WITHOUT a crash banner, which is the common case:
+  // vela's bundled OpenCode simply exited before it answered a health check (a
+  // port collision, an OOM kill, a half-written config). vela reports that from
+  // inside `session/new`, so the frame is handshake-numbered — but the agent CLI
+  // refused nothing, and its build is not the variable. This shape was a
+  // retryable `fatal_rpc_error` before the refusal guidance existed, and both
+  // halves of the misfire matter: the user is told to replace a healthy CLI,
+  // and the automatic retry that actually recovers a startup race is withdrawn.
+  it('leaves a bundled runtime that never started to the startup reading', () => {
+    const NEVER_READY =
+      'json-rpc id 2: start opencode server: opencode exited before readiness: exit status 3';
+    expect(isAcpHandshakeRpcErrorText(NEVER_READY)).toBe(true);
+    expect(isAcpCliSessionRefusalText(NEVER_READY)).toBe(false);
+    expect(classifyWithAcpFatalClose('AGENT_EXECUTION_FAILED', NEVER_READY)).toMatchObject({
+      failure_category: 'process_exit',
+      failure_detail: 'fatal_rpc_error',
+      retryable: true,
+      user_action: 'retry',
+    });
+    expect(withAcpHandshakeFailureGuidance({ message: NEVER_READY })).toEqual({
+      message: NEVER_READY,
+    });
+  });
+
+  // The wrapper's other startup shapes, from the same two vela call sites
+  // (`acp_runtime.go` newSession/loadSession). None of them is a statement
+  // about the agent CLI's own build, and none is deterministic — so the
+  // invariant asserted here is the one that matters to the user, not the
+  // bucket: keep the retry, never prescribe a CLI change. Which bucket each
+  // lands in is a different question, and an earlier branch that recognises a
+  // more specific cause (a readiness wait that timed out is a `timeout`) is
+  // free to claim it.
+  it.each([
+    'json-rpc id 2: start opencode server: opencode readiness timed out for http://127.0.0.1:51423',
+    'json-rpc id 2: start opencode server: allocate localhost port: bind: address already in use',
+    'json-rpc id 2: opencode exited before readiness',
+  ])('does not read %s as an unexplained CLI refusal', (raw) => {
+    expect(isAcpHandshakeRpcErrorText(raw)).toBe(true);
+    expect(isAcpCliSessionRefusalText(raw)).toBe(false);
+    const failure = classifyWithAcpFatalClose('AGENT_EXECUTION_FAILED', raw);
+    expect(failure).toMatchObject({ retryable: true });
+    expect(failure?.user_action).not.toBe('install_cli');
+    expect(failure?.failure_stage).not.toBe('session_init');
   });
 });

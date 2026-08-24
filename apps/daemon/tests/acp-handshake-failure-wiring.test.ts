@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
 
@@ -85,6 +85,15 @@ const AGENT_ID = 'kimi';
 const AGENT_BIN = 'kimi';
 /** `kimiAgentDef.name` — the display name the guidance copy must lead with. */
 const AGENT_DISPLAY_NAME = 'Kimi CLI';
+/**
+ * What an ACP CLI says when a runtime IT manages failed to come up, verbatim
+ * from vela's `acp_runtime.go` (`start opencode server: %v` wrapping
+ * `opencode exited before readiness: %w`). Reported from inside `session/new`,
+ * so it reaches the daemon handshake-numbered — while saying nothing at all
+ * about the agent CLI's own build.
+ */
+const RUNTIME_NEVER_READY =
+  'start opencode server: opencode exited before readiness: exit status 3';
 
 describe('ACP handshake rejection — server wiring', () => {
   const originalEnv = snapshotEnv();
@@ -96,6 +105,14 @@ describe('ACP handshake rejection — server wiring', () => {
   // Gates the fake CLI may still be parked at. Released before shutdown so a
   // failed assertion cannot leave a held probe wedging teardown.
   let heldGates: string[] = [];
+  // The empty home detection is scoped to for this test — see
+  // `isolateAgentDetection`. Per test, because the toolchain-directory cache is
+  // keyed on it.
+  let agentHomeDir = '';
+
+  beforeEach(async () => {
+    agentHomeDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-home-'));
+  });
 
   afterEach(async () => {
     for (const gate of heldGates) await openGate(gate).catch(() => undefined);
@@ -109,6 +126,8 @@ describe('ACP handshake rejection — server wiring', () => {
     binDir = null;
     for (const dir of extraBinDirs) await removeTempDir(dir);
     extraBinDirs = [];
+    if (agentHomeDir) await removeTempDir(agentHomeDir);
+    agentHomeDir = '';
     restoreEnv(originalEnv);
   });
 
@@ -116,7 +135,7 @@ describe('ACP handshake rejection — server wiring', () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-bin-'));
     const logPath = path.join(binDir, 'invocations.jsonl');
     await writeAcpCliShim(binDir, AGENT_BIN, { logPath, cliVersion: '0.38.0' });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     clearTelemetryEnv();
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
@@ -176,7 +195,7 @@ describe('ACP handshake rejection — server wiring', () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-reload-bin-'));
     const logPath = path.join(binDir, 'invocations.jsonl');
     await writeAcpCliShim(binDir, AGENT_BIN, { logPath, cliVersion: '0.38.0' });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     clearTelemetryEnv();
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
@@ -216,7 +235,7 @@ describe('ACP handshake rejection — server wiring', () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-stale-bin-'));
     const staleLog = path.join(binDir, 'invocations.jsonl');
     await writeAcpCliShim(binDir, AGENT_BIN, { logPath: staleLog, cliVersion: '0.38.0' });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     // The build they repointed Open Design at afterwards. Off PATH on purpose:
     // it is reachable ONLY through the configured override, so anything that
@@ -285,7 +304,7 @@ describe('ACP handshake rejection — server wiring', () => {
       cliVersion: '0.37.2',
       retryable: true,
     });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     clearTelemetryEnv();
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
@@ -356,7 +375,7 @@ describe('ACP handshake rejection — server wiring', () => {
       cliVersion: '0.38.0',
       errorMessage: 'Authentication required',
     });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     clearTelemetryEnv();
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
@@ -400,7 +419,7 @@ describe('ACP handshake rejection — server wiring', () => {
       cliVersion: '0.38.0',
       errorMessage: '[code=request_too_large] request body exceeds configured limit',
     });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     clearTelemetryEnv();
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
@@ -433,6 +452,71 @@ describe('ACP handshake rejection — server wiring', () => {
     }
   });
 
+  // AMR is the largest population running this path, and what it runs
+  // underneath is OpenCode. When vela's bundled OpenCode child fails to come up
+  // — a port collision, an OOM kill, a half-written config — vela reports that
+  // from inside `session/new`, so the failure arrives handshake-numbered even
+  // though the agent CLI refused nothing at all.
+  //
+  // Two things then go wrong at once if the JSON-RPC id is the only evidence
+  // consulted: the user is told to replace a CLI that is perfectly healthy,
+  // and the automatic retry that actually recovers a startup race is withdrawn.
+  // A startup race recovers on the second attempt; a CLI-build verdict never
+  // does, which is why the two must not be collapsed.
+  it('keeps a bundled runtime that never started retryable, and does not blame the CLI', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-startup-bin-'));
+    const logPath = path.join(binDir, 'invocations.jsonl');
+    await writeAcpCliShim(binDir, AGENT_BIN, {
+      logPath,
+      cliVersion: '0.38.0',
+      errorMessage: RUNTIME_NEVER_READY,
+      // vela marks its own startup failure transient. Unlike a handshake
+      // refusal — where a CLI claiming retryability is claiming something the
+      // daemon can disprove — here the CLI is right, and the daemon must not
+      // overrule it.
+      retryable: true,
+    });
+    isolateAgentDetection(binDir, agentHomeDir);
+
+    clearTelemetryEnv();
+    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
+    await putConfig(started.url, { agentId: AGENT_ID });
+    await detectAgents(started.url);
+
+    const conversationId = await createConversation(started.url);
+    const run = await sendRunAndWait(started.url, conversationId, 'draft a landing page');
+
+    expect(run.status).toBe('failed');
+    expect(run.error ?? '').toBe(`json-rpc id 2: ${RUNTIME_NEVER_READY}`);
+    expect(run.errorCode).not.toBe('AGENT_CLI_SESSION_REFUSED');
+
+    const events = await readRunEvents(run.eventsLogPath);
+    const errorEvents = events.filter((event) => event.event === 'error');
+    expect(errorEvents.length).toBeGreaterThan(0);
+    for (const event of errorEvents) {
+      const frame = event.data as ErrorFrame;
+      expect(frame.error?.code).not.toBe('AGENT_CLI_SESSION_REFUSED');
+      expect(frame.error?.details?.action).not.toBe('update_cli');
+      expect(frame.error?.details?.kind).not.toBe('agent_cli');
+      // The retryability the CLI reported survives to the client.
+      expect(frame.error?.retryable).not.toBe(false);
+      expect(effectiveErrorMessage(event.data)).toBe(`json-rpc id 2: ${RUNTIME_NEVER_READY}`);
+    }
+
+    // The retry the fatal path already granted this shape is still granted:
+    // the daemon re-ran it rather than recording a suppression.
+    expect(events.some((event) => event.event === 'run_retry_attempted')).toBe(true);
+    expect(await readRunSessionRequests(logPath)).toEqual(['session/new', 'session/new']);
+
+    // …and the telemetry files it as the fatal startup failure it is, not as a
+    // session-init CLI verdict. A card and a dashboard disagreeing about the
+    // remedy is how this class of bug stays invisible.
+    const errorEvent = await readPersistedRunErrorEvent(started.url, conversationId);
+    expect(errorEvent.code).not.toBe('AGENT_CLI_SESSION_REFUSED');
+    expect(errorEvent.failureCategory).toBe('process_exit');
+    expect(errorEvent.failureDetail).toBe('fatal_rpc_error');
+  });
+
   // The detected CLI version is part of the promise this failure makes: the
   // card names the build that refused. Reading it from the process-wide
   // detection cache at failure time made that promise depend on whether some
@@ -446,6 +530,13 @@ describe('ACP handshake rejection — server wiring', () => {
   // flight — the window that used to leave the cache blank. Both halves of the
   // fix are exercised at once: the run reports the version it froze at spawn,
   // and the in-flight probe no longer retracts the cached reading behind it.
+  //
+  // The overlap is what this case is for; the refresh's SIZE is not. It waits
+  // on two full `/api/agents` refreshes, so before `isolateAgentDetection`
+  // bounded them to the one fake CLI, this case's runtime was really a measure
+  // of how many agent CLIs the host had installed — 9s here, ~28s and past the
+  // 20s test timeout on a reviewer's machine. The gates below still construct
+  // the same overlap; only the host's CLIs are out of it.
   it('names the version this run spawned with, even mid-refresh', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-race-bin-'));
     const logPath = path.join(binDir, 'invocations.jsonl');
@@ -458,7 +549,7 @@ describe('ACP handshake rejection — server wiring', () => {
       versionGate,
       sessionGate,
     });
-    prependToPath(binDir);
+    isolateAgentDetection(binDir, agentHomeDir);
 
     clearTelemetryEnv();
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
@@ -588,8 +679,35 @@ async function detectAgents(url: string): Promise<void> {
   await response.json();
 }
 
-function prependToPath(dir: string): void {
-  process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`;
+/**
+ * Makes the fixture CLI the ONLY agent CLI detection can find.
+ *
+ * `GET /api/agents` probes every shipped runtime, and detection resolves
+ * binaries from `process.env.PATH` PLUS the machine's user toolchain
+ * directories — Homebrew, `~/.local/bin`, `~/.bun/bin`, version-manager and npm
+ * prefixes (`resolvePathDirs` in runtimes/executables.ts). So on any host that
+ * actually has agent CLIs installed, one refresh becomes a dozen real
+ * `--version` / `--help` / compatibility spawns, and the cost of a test that
+ * waits on one is a property of the host rather than of the code under test.
+ * Measured through this same path: ~2.8s on this machine, and the gated case
+ * below — which waits on a refresh twice — ran ~28s on a reviewer's, past the
+ * suite's 20s test timeout, while passing here.
+ *
+ * `OD_AGENT_HOME` is detection's own answer to that (`resolveDetectionHome`):
+ * pointed at an empty directory it scopes the search strictly to that home and
+ * skips the machine's toolchain locations entirely, so the walk over the
+ * registry finds nothing except what this test wrote onto PATH. Same route,
+ * same probe path, same assertions — the host's CLIs simply stop being dragged
+ * through them, and the refresh drops to a single spawn of the fake CLI.
+ *
+ * @param dir - Directory holding the fake agent CLI shim.
+ * @param homeDir - Empty directory to scope detection to, per test.
+ */
+function isolateAgentDetection(dir: string, homeDir: string): void {
+  process.env.OD_AGENT_HOME = homeDir;
+  // System bins stay reachable (the shim's `#!/bin/sh`, and anything the
+  // daemon shells out to); no agent CLI lives there.
+  process.env.PATH = [dir, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter);
 }
 
 /**
@@ -707,6 +825,7 @@ async function readRunEvents(eventsLogPath: string): Promise<RunEvent[]> {
 function snapshotEnv(): Record<string, string | undefined> {
   return {
     PATH: process.env.PATH,
+    OD_AGENT_HOME: process.env.OD_AGENT_HOME,
     LANGFUSE_PUBLIC_KEY: process.env.LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY: process.env.LANGFUSE_SECRET_KEY,
     LANGFUSE_BASE_URL: process.env.LANGFUSE_BASE_URL,

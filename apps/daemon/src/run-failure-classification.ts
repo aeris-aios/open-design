@@ -530,6 +530,32 @@ function isProcessCrashText(text: string): boolean {
     .test(text);
 }
 
+/**
+ * True when the failure text is an agent CLI reporting that a runtime IT
+ * manages failed to start — not a statement about the CLI's own build.
+ *
+ * vela wraps every bundled-OpenCode startup failure this way before answering
+ * `session/new` / `session/load` (`acp_runtime.go`: `start opencode server:
+ * %v`, over `opencode_process.go`'s `opencode exited before readiness`), so the
+ * text arrives inside a handshake-numbered JSON-RPC frame while describing a
+ * CHILD OF THE CLI that never came up: a port collision, an OOM kill, a
+ * half-written config, a binary the release package is missing.
+ *
+ * The distinction the classifier needs from this is which variable the user can
+ * move. An agent CLI that answered `initialize` and then refused to open a
+ * session with no reason has only its own build left to blame; a CLI that
+ * reports its managed runtime never became ready has named the moving part
+ * itself, and pointing that user at the CLI version sends them after a fix that
+ * cannot apply. These startups are also the transient half of the pair — a port
+ * race clears on the next attempt — which is the retry the refusal reading
+ * withdraws.
+ *
+ * @param text - Failure text as surfaced by the ACP session (`rpcErrorMessage`).
+ */
+function isManagedRuntimeStartupFailureText(text: string): boolean {
+  return /\bstart opencode server\b|\bopencode exited before readiness\b/i.test(text);
+}
+
 // The child binary executed an instruction this CPU does not implement — in
 // practice a Bun-compiled agent (bundled opencode) built for AVX2 running on a
 // CPU without it (Intel Atom/Celeron/Pentium N-series through 2021, and
@@ -539,10 +565,10 @@ function isProcessCrashText(text: string): boolean {
 //   machines. Unconditional — the feature line itself is the proof.
 // - Windows STATUS_ILLEGAL_INSTRUCTION (hex 0xC000001D or Go/Node's decimal
 //   exit-status rendering 3221225501), but ONLY inside vela's bundled-opencode
-//   startup wrapper text ("start opencode server" / "opencode exited before
-//   readiness"). The raw status code is a generic Windows SIGILL that any
-//   agent binary could die with for unrelated reasons; every bannerless
-//   production trace carries the vela wrapper, so the gate costs no recall.
+//   startup wrapper text (`isManagedRuntimeStartupFailureText`). The raw status
+//   code is a generic Windows SIGILL that any agent binary could die with for
+//   unrelated reasons; every bannerless production trace carries the vela
+//   wrapper, so the gate costs no recall.
 // A bare "Illegal instruction" line is deliberately NOT matched: any
 // unrelated SIGILL (a runtime bug on an AVX2-capable machine) would then be
 // mislabeled as a processor limitation and lose its retry. The same binary on
@@ -552,7 +578,7 @@ function isCpuUnsupportedCrashText(text: string): boolean {
   if (/\bno_avx2\b/i.test(text)) return true;
   return (
     /0xc000001d|\b3221225501\b/i.test(text) &&
-    /\bstart opencode server\b|\bopencode exited before readiness\b/i.test(text)
+    isManagedRuntimeStartupFailureText(text)
   );
 }
 
@@ -1000,12 +1026,25 @@ function classifyRunFailureBase(
   // this same reading, exposed so the ACP payload rewrite prescribes exactly
   // what the telemetry records.
   //
-  // The one deferral is not about wording: a text carrying an OS-level crash
-  // banner (a Bun panic, a Windows STATUS_ILLEGAL_INSTRUCTION from the bundled
-  // opencode) describes a child that DIED, and the JSON-RPC frame is only how
-  // the corpse was reported. `signalInterruptClassification` below owns that
-  // reading — the same reason `isCpuUnsupportedCrashText` is checked above.
-  if (isAcpHandshakeRpcErrorText(text) && !isProcessCrashText(text)) {
+  // The deferrals are not about wording. Both are texts where the handshake
+  // frame is the ENVELOPE rather than the evidence — something other than the
+  // agent CLI's own build failed, and the CLI merely carried the report:
+  //
+  // - An OS-level crash banner (a Bun panic, a Windows
+  //   STATUS_ILLEGAL_INSTRUCTION from the bundled opencode) describes a child
+  //   that DIED; `signalInterruptClassification` below owns that reading, the
+  //   same reason `isCpuUnsupportedCrashText` is checked above.
+  // - A managed runtime that never became ready describes a child that never
+  //   STARTED. AMR is the population this reaches — vela reports its bundled
+  //   OpenCode's startup failures from inside `session/new` — and a startup
+  //   race is exactly the shape the fatal_rpc_error path below recovers by
+  //   retrying. Filing it here would tell that user to replace a healthy CLI
+  //   and take the recovery away at the same time.
+  if (
+    isAcpHandshakeRpcErrorText(text)
+    && !isProcessCrashText(text)
+    && !isManagedRuntimeStartupFailureText(text)
+  ) {
     return classification(
       'process_exit',
       'agent_protocol_error',
