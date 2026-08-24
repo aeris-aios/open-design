@@ -4,6 +4,7 @@ import { normalizeSidecarStamp, readCurrentSidecarStamp, resolvePrivateIpcPath, 
 const RESOURCES_ENV = "OD_SIDECAR_RESOURCES";
 const CONTROL_STATUS = "sidecar:status";
 const CONTROL_STOP = "sidecar:stop";
+const CONTROL_DESCRIBE = "sidecar:describe";
 const BUSINESS_INVOKE = "sidecar:invoke";
 const INHERITED_ENDPOINT_ENV = "OD_SIDECAR_CLIENT_ENDPOINT";
 
@@ -52,8 +53,14 @@ export type SidecarConnection = {
   status<TResult = unknown>(app: string, options?: { timeoutMs?: number }): Promise<TResult>;
 };
 
+export type SidecarDescription = Readonly<{
+  resources: SidecarResources;
+  stamp: SidecarStamp;
+}>;
+
 type InvokeEnvelope = { action: string; app: string; input: unknown; type: typeof BUSINESS_INVOKE };
 type ControlEnvelope =
+  | { type: typeof CONTROL_DESCRIBE }
   | { type: typeof CONTROL_STATUS }
   | { targetPids: readonly number[] | null; type: typeof CONTROL_STOP };
 
@@ -95,6 +102,7 @@ function assertEnvelope(message: unknown): InvokeEnvelope | ControlEnvelope {
     throw new Error("invalid sidecar request");
   }
   const request = message as Record<string, unknown>;
+  if (request.type === CONTROL_DESCRIBE) return { type: CONTROL_DESCRIBE };
   if (request.type === CONTROL_STATUS) return { type: CONTROL_STATUS };
   if (request.type === CONTROL_STOP) {
     if (request.targetPids != null && (
@@ -154,6 +162,9 @@ export class SidecarClient<TRuntime> {
         socketPath: resolvePrivateIpcPath(this.stamp),
         handler: async (message) => {
           const request = assertEnvelope(message);
+          if (request.type === CONTROL_DESCRIBE) {
+            return { resources: this.resources, stamp: this.stamp } satisfies SidecarDescription;
+          }
           if (request.type === CONTROL_STATUS) return await this.#lifecycle.status(runtime);
           if (request.type === CONTROL_STOP) {
             if (request.targetPids != null && !request.targetPids.includes(process.pid)) {
@@ -276,6 +287,7 @@ export const SidecarFactory = Object.freeze({
 });
 
 export const sidecarProtocol = Object.freeze({
+  describe: CONTROL_DESCRIBE,
   resourcesEnv: RESOURCES_ENV,
   status: CONTROL_STATUS,
   stop: CONTROL_STOP,

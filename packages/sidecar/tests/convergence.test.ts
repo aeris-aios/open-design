@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +8,14 @@ import { fileURLToPath } from "node:url";
 import { waitForProcessExit } from "@open-design/platform";
 import {
   normalizeSidecarStamp,
+  allocatePort,
   bootstrapSidecarProcess,
   findSidecarProcesses,
+  getSidecarStatus,
   launchSidecar,
   registerSidecarProcess,
   readCurrentSidecarStamp,
+  restartSidecar,
   SidecarFactory,
   SIDECAR_STAMP_FIELDS,
   SIDECAR_STAMP_FLAGS,
@@ -207,6 +211,167 @@ describe("normalized sidecar client", () => {
 });
 
 describe("server-side atomic operations", () => {
+  it("restarts a sidecar on its known concrete port by default", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
+    const restartStamp = { ...stamp, namespace: `restart-port-${process.pid}` };
+    const port = (await allocatePort()).port;
+    const resources = {
+      dataRoot: "/tmp/open-design-restart",
+      ownerPid: null,
+      port,
+      runtimeRoot: "/tmp/open-design-restart-runtime",
+    };
+    const first = await launchSidecar({ args: ["--import", "tsx", fixture], command: process.execPath, resources, stamp: restartStamp });
+
+    try {
+      await vi.waitFor(async () => {
+        expect(await getSidecarStatus(restartStamp)).toEqual({ pid: first.pid, port });
+      });
+      const restarted = await restartSidecar({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        resources: { ...resources, port: 0 },
+        stamp: restartStamp,
+      });
+
+      expect(restarted.pid).not.toBe(first.pid);
+      expect(restarted.reusedPort).toBe(true);
+      expect(restarted.stop.stoppedPids).toContain(first.pid);
+      await vi.waitFor(async () => {
+        expect(await getSidecarStatus(restartStamp)).toEqual({ pid: restarted.pid, port });
+      });
+    } finally {
+      await stopSidecar(restartStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  });
+
+  it("keeps an adjacent proxy and namespace healthy across a daemon restart (TD-06)", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
+    const daemonPort = (await allocatePort()).port;
+    const adjacentDaemonPort = (await allocatePort({ reserved: new Set([daemonPort]) })).port;
+    const webPort = (await allocatePort({ reserved: new Set([daemonPort, adjacentDaemonPort]) })).port;
+    const daemonStamp = { ...stamp, namespace: `td06-a-${process.pid}` };
+    const adjacentStamp = { ...stamp, namespace: `td06-b-${process.pid}` };
+    const resources = {
+      dataRoot: "/tmp/open-design-td06-a",
+      ownerPid: null,
+      port: daemonPort,
+      runtimeRoot: "/tmp/open-design-td06-a-runtime",
+    };
+    const adjacentResources = {
+      dataRoot: "/tmp/open-design-td06-b",
+      ownerPid: null,
+      port: adjacentDaemonPort,
+      runtimeRoot: "/tmp/open-design-td06-b-runtime",
+    };
+    const daemon = await launchSidecar({
+      args: ["--import", "tsx", fixture],
+      command: process.execPath,
+      resources,
+      stamp: daemonStamp,
+    });
+    const adjacent = await launchSidecar({
+      args: ["--import", "tsx", fixture],
+      command: process.execPath,
+      resources: adjacentResources,
+      stamp: adjacentStamp,
+    });
+    const web = createServer(async (request, response) => {
+      try {
+        const upstream = await fetch(`http://127.0.0.1:${daemonPort}${request.url ?? "/"}`);
+        response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+        response.end(await upstream.text());
+      } catch (error) {
+        response.writeHead(502, { "content-type": "text/plain" });
+        response.end(error instanceof Error ? error.message : String(error));
+      }
+    });
+
+    try {
+      await vi.waitFor(async () => {
+        await expect(getSidecarStatus(daemonStamp)).resolves.toEqual({ pid: daemon.pid, port: daemonPort });
+        await expect(getSidecarStatus(adjacentStamp)).resolves.toEqual({ pid: adjacent.pid, port: adjacentDaemonPort });
+      });
+      await new Promise<void>((resolve, reject) => {
+        web.once("error", reject);
+        web.listen(webPort, "127.0.0.1", resolve);
+      });
+      await expect(fetch(`http://127.0.0.1:${webPort}/api/projects`).then(({ status }) => status)).resolves.toBe(200);
+      await expect(fetch(`http://127.0.0.1:${adjacentDaemonPort}/api/projects`).then(({ status }) => status)).resolves.toBe(200);
+
+      const restarted = await restartSidecar({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        resources: { ...resources, port: 0 },
+        stamp: daemonStamp,
+      });
+      expect(restarted.reusedPort).toBe(true);
+      await vi.waitFor(async () => {
+        await expect(getSidecarStatus(daemonStamp)).resolves.toEqual({ pid: restarted.pid, port: daemonPort });
+      });
+
+      expect(web.address()).toEqual(expect.objectContaining({ port: webPort }));
+      await expect(fetch(`http://127.0.0.1:${webPort}/api/projects`).then(({ status }) => status)).resolves.toBe(200);
+      await expect(getSidecarStatus(adjacentStamp)).resolves.toEqual({ pid: adjacent.pid, port: adjacentDaemonPort });
+      await expect(fetch(`http://127.0.0.1:${adjacentDaemonPort}/api/projects`).then(({ status }) => status)).resolves.toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => web.close(() => resolve()));
+      await Promise.all([
+        stopSidecar(daemonStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+        stopSidecar(adjacentStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+      ]);
+    }
+  });
+
+  it("keeps explicit and fresh restart port requests authoritative", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
+    const restartStamp = { ...stamp, namespace: `restart-override-${process.pid}` };
+    const firstPort = (await allocatePort()).port;
+    const explicitPort = (await allocatePort({ reserved: new Set([firstPort]) })).port;
+    const request = {
+      args: ["--import", "tsx", fixture],
+      command: process.execPath,
+      resources: {
+        dataRoot: "/tmp/open-design-restart-override",
+        ownerPid: null,
+        port: firstPort,
+        runtimeRoot: "/tmp/open-design-restart-override-runtime",
+      },
+      stamp: restartStamp,
+    };
+    await launchSidecar(request);
+
+    try {
+      await vi.waitFor(async () => {
+        expect(await getSidecarStatus(restartStamp)).toEqual(expect.objectContaining({ port: firstPort }));
+      });
+      const explicit = await restartSidecar({ ...request, resources: { ...request.resources, port: explicitPort } });
+      expect(explicit.reusedPort).toBe(false);
+      await vi.waitFor(async () => {
+        expect(await getSidecarStatus(restartStamp)).toEqual(expect.objectContaining({ port: explicitPort }));
+      });
+
+      const fresh = await restartSidecar(
+        { ...request, resources: { ...request.resources, port: 0 } },
+        { reuseKnownPort: false },
+      );
+      expect(fresh.reusedPort).toBe(false);
+      let freshStatus!: { pid: number; port: number };
+      await vi.waitFor(async () => {
+        freshStatus = await getSidecarStatus(restartStamp);
+        expect(freshStatus.pid).toBe(fresh.pid);
+        expect(freshStatus.port).toBeGreaterThan(0);
+      });
+      await expect(restartSidecar(
+        { ...request, resources: { ...request.resources, port: 0 } },
+        { requireConcretePort: true },
+      )).rejects.toThrow("without a concrete port");
+      await expect(getSidecarStatus(restartStamp)).resolves.toEqual(freshStatus);
+    } finally {
+      await stopSidecar(restartStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  });
+
   it("does not leak a parent client capability into an independently stamped sidecar", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
     const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-env-"));

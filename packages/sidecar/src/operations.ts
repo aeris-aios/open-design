@@ -12,7 +12,12 @@ import {
 } from "@open-design/platform";
 
 import { requestJsonIpc } from "./json-ipc.js";
-import { prepareSidecarLaunchEnvironment, sidecarProtocol, type SidecarResources } from "./client.js";
+import {
+  prepareSidecarLaunchEnvironment,
+  sidecarProtocol,
+  type SidecarDescription,
+  type SidecarResources,
+} from "./client.js";
 import { normalizeSidecarStamp, readCurrentSidecarStamp, resolvePrivateIpcPath, SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
 
 export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
@@ -24,6 +29,18 @@ export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
 
 export type SidecarStopResult = StopProcessesResult & {
   gracefulAccepted: boolean;
+};
+
+export type SidecarRestartOptions = {
+  requireConcretePort?: boolean;
+  reuseKnownPort?: boolean;
+  stop?: StopProcessesOptions;
+};
+
+export type SidecarRestartResult = {
+  pid: number;
+  reusedPort: boolean;
+  stop: SidecarStopResult;
 };
 
 /**
@@ -130,6 +147,29 @@ export async function getSidecarStatus<TResult = unknown>(stamp: SidecarStamp, o
   return await requestJsonIpc<TResult>(resolvePrivateIpcPath(normalizeSidecarStamp(stamp)), { type: sidecarProtocol.status }, options);
 }
 
+async function describeSidecar(stamp: SidecarStamp): Promise<SidecarDescription | null> {
+  try {
+    const description = await requestJsonIpc<SidecarDescription>(
+      resolvePrivateIpcPath(stamp),
+      { type: sidecarProtocol.describe },
+      { timeoutMs: 2_000 },
+    );
+    const describedStamp = normalizeSidecarStamp(description.stamp);
+    if (JSON.stringify(describedStamp) !== JSON.stringify(stamp)) {
+      throw new Error("sidecar endpoint described a different stamp");
+    }
+    if (!Number.isSafeInteger(description.resources.pid) || description.resources.pid <= 0) {
+      throw new Error("sidecar endpoint described an invalid pid");
+    }
+    if (!Number.isInteger(description.resources.port) || description.resources.port < 0 || description.resources.port > 65535) {
+      throw new Error("sidecar endpoint described an invalid port");
+    }
+    return description;
+  } catch {
+    return null;
+  }
+}
+
 export async function invokeSidecar<TResult = unknown>(
   stamp: SidecarStamp,
   action: string,
@@ -151,6 +191,47 @@ export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOpt
     matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
   );
   return await stopSidecarRoots(exact, initialRoots.map(({ pid }) => pid), options, initialSnapshots);
+}
+
+/**
+ * Replace one exact five-field sidecar resource while preserving concrete OS
+ * resources known by the prior generation. A requested non-zero port remains
+ * authoritative; zero means dynamic and inherits a known concrete predecessor
+ * port unless the caller explicitly asks for a fresh allocation.
+ */
+export async function restartSidecar(
+  request: SidecarLaunchRequest,
+  options: SidecarRestartOptions = {},
+): Promise<SidecarRestartResult> {
+  const stamp = normalizeSidecarStamp(request.stamp);
+  const previous = await describeSidecar(stamp);
+  const requestedPort = request.resources.port;
+  const knownPort = previous?.resources.port ?? 0;
+  if (options.requireConcretePort === true && requestedPort === 0 && knownPort === 0) {
+    throw new Error("cannot restart sidecar without a concrete port");
+  }
+  const stop = previous == null
+    ? await stopSidecar(stamp, options.stop)
+    : await stopSidecarRoots(stamp, [previous.resources.pid], options.stop ?? {});
+  if (stop.remainingPids.length > 0) {
+    throw new Error(`cannot restart sidecar while prior generation remains: ${stop.remainingPids.join(", ")}`);
+  }
+
+  const replacements = await findSidecarProcesses(stamp);
+  if (replacements.length > 0) {
+    throw new Error(`cannot restart sidecar because another generation appeared: ${replacements.map(({ pid }) => pid).join(", ")}`);
+  }
+
+  const reusedPort = options.reuseKnownPort !== false && requestedPort === 0 && knownPort > 0;
+  const launched = await launchSidecar({
+    ...request,
+    resources: {
+      ...request.resources,
+      port: reusedPort ? knownPort : requestedPort,
+    },
+    stamp,
+  });
+  return { pid: launched.pid, reusedPort, stop };
 }
 
 async function stopSidecarRoots(

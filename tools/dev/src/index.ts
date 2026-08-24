@@ -23,7 +23,10 @@ import {
   findSidecarProcesses,
   invokeSidecar,
   launchSidecar,
+  restartSidecar,
   stopSidecar,
+  type SidecarRestartOptions,
+  type SidecarRestartResult,
   type SidecarStamp as ConvergedSidecarStamp,
 } from "@open-design/sidecar";
 import {
@@ -369,9 +372,11 @@ async function spawnSidecarRuntime(request: {
   config: ToolDevConfig;
   env: NodeJS.ProcessEnv;
   logHandle: FileHandle;
-}): Promise<{ pid: number }> {
+  restart?: boolean;
+  restartOptions?: SidecarRestartOptions;
+}): Promise<{ pid: number } | SidecarRestartResult> {
   const sidecarConfig = request.config.apps[request.appName];
-  return await launchSidecar({
+  const launchRequest = {
     args: [request.config.tsxCliPath, sidecarConfig.sidecarEntryPath],
     command: process.execPath,
     cwd: request.config.workspaceRoot,
@@ -387,7 +392,10 @@ async function spawnSidecarRuntime(request: {
       runtimeRoot: request.config.toolsDevRoot,
     },
     stamp: createConvergedAppStamp(request.config, request.appName),
-  });
+  };
+  return request.restart === true
+    ? await restartSidecar(launchRequest, request.restartOptions)
+    : await launchSidecar(launchRequest);
 }
 
 function resolveToolsDevDataRoot(workspaceRoot: string): string {
@@ -404,8 +412,8 @@ function resolveToolsDevDataRoot(workspaceRoot: string): string {
 async function spawnDaemonRuntime(
   config: ToolDevConfig,
   options: CliOptions,
-  spawnOptions: { requireDesktopAuth?: boolean } = {},
-): Promise<{ pid: number }> {
+  spawnOptions: { requireDesktopAuth?: boolean; restart?: boolean; restartOptions?: SidecarRestartOptions } = {},
+): Promise<{ pid: number } | SidecarRestartResult> {
   const daemonPort = parsePortOption(options.daemonPort, "--daemon-port");
   const webPort = parsePortOption(options.webPort, "--web-port");
   const logHandle = await openAppLog(config, APP_KEYS.DAEMON);
@@ -434,6 +442,8 @@ async function spawnDaemonRuntime(
         ...(spawnOptions.requireDesktopAuth ? { OD_REQUIRE_DESKTOP_AUTH: "1" } : {}),
       },
       logHandle,
+      ...(spawnOptions.restart === undefined ? {} : { restart: spawnOptions.restart }),
+      ...(spawnOptions.restartOptions === undefined ? {} : { restartOptions: spawnOptions.restartOptions }),
     });
   } finally {
     await logHandle.close();
@@ -712,6 +722,71 @@ async function startDaemon(
   }
 }
 
+async function restartDaemon(config: ToolDevConfig, options: CliOptions) {
+  const runningDaemon = await inspectDaemonRuntime(runtimeLookup(config));
+  const runningWeb = await inspectWebRuntime(runtimeLookup(config));
+  const requestedDaemonPort = parsePortOption(options.daemonPort, "--daemon-port");
+  const requestedWebPort = parsePortOption(options.webPort, "--web-port");
+  const runningDaemonPort = runningDaemon?.url == null ? null : Number(urlPort(runningDaemon.url));
+  const runningWebPort = runningWeb?.url == null ? null : Number(urlPort(runningWeb.url));
+
+  if (runningWebPort != null && requestedWebPort != null && requestedWebPort !== runningWebPort) {
+    throw new Error(
+      `${APP_KEYS.WEB} is already running in namespace ${config.namespace} at ${runningWeb?.url}; ` +
+      `restart web to change its port`,
+    );
+  }
+  if (
+    runningWebPort != null &&
+    requestedDaemonPort != null &&
+    runningDaemonPort != null &&
+    requestedDaemonPort !== runningDaemonPort
+  ) {
+    throw new Error(
+      `${APP_KEYS.WEB} still depends on daemon port ${runningDaemonPort}; restart web to change the daemon port`,
+    );
+  }
+
+  const restartOptions: CliOptions = {
+    ...options,
+    ...(runningWebPort == null ? {} : { webPort: runningWebPort }),
+  };
+  const desktopAlreadyRunning = await inspectDesktopRuntime(runtimeLookup(config));
+  const restarted = await spawnDaemonRuntime(config, restartOptions, {
+    requireDesktopAuth: desktopAlreadyRunning != null,
+    restart: true,
+    restartOptions: { requireConcretePort: runningWebPort != null },
+  });
+  if (!("stop" in restarted)) throw new Error("sidecar restart did not return its stopped generation");
+
+  try {
+    const status = await waitForDaemonRuntime(
+      runtimeLookup(config),
+      undefined,
+      () => isProcessAlive(restarted.pid),
+    );
+    return {
+      start: {
+        [APP_KEYS.DAEMON]: {
+          app: APP_KEYS.DAEMON,
+          created: true,
+          logPath: config.apps.daemon.latestLogPath,
+          pid: restarted.pid,
+          status,
+        },
+      },
+      stop: {
+        [APP_KEYS.DAEMON]: formatStopAppResult(APP_KEYS.DAEMON, restarted.stop),
+      },
+    };
+  } catch (error) {
+    const logPath = config.apps.daemon.latestLogPath;
+    const lines = await readLogTail(logPath, 80).catch(() => []);
+    await stopApp(config, APP_KEYS.DAEMON).catch(() => undefined);
+    throw appendStartupLogDiagnostics(error, APP_KEYS.DAEMON, createStartupLogDiagnostics(logPath, lines));
+  }
+}
+
 async function startWeb(config: ToolDevConfig, options: CliOptions) {
   const webPort = parsePortOption(options.webPort, "--web-port");
   const existing = await inspectWebRuntime(runtimeLookup(config));
@@ -838,14 +913,17 @@ async function startApp(
   }
 }
 
-async function stopApp(config: ToolDevConfig, appName: ToolDevAppName) {
-  const stop = await stopSidecar(createConvergedAppStamp(config, appName));
+function formatStopAppResult(appName: ToolDevAppName, stop: Awaited<ReturnType<typeof stopSidecar>>) {
   return {
     app: appName,
     status: stop.alreadyStopped && !stop.gracefulAccepted ? "not-running" : stop.remainingPids.length === 0 ? "stopped" : "partial",
     stop,
     via: stop.gracefulAccepted ? (stop.forcedPids.length === 0 ? "ipc" : "ipc+fallback") : "fallback",
   };
+}
+
+async function stopApp(config: ToolDevConfig, appName: ToolDevAppName) {
+  return formatStopAppResult(appName, await stopSidecar(createConvergedAppStamp(config, appName)));
 }
 
 async function inspectAppStatus(config: ToolDevConfig, appName: ToolDevAppName) {
@@ -896,6 +974,7 @@ async function status(config: ToolDevConfig, appName: string | undefined) {
 }
 
 async function restartTargets(config: ToolDevConfig, appName: string | undefined, options: CliOptions) {
+  if (appName === APP_KEYS.DAEMON) return await restartDaemon(config, options);
   const stopTargets = resolveStopApps(appName);
   const startTargets = resolveStartApps(appName);
   await resolveSharedPortsFromRunningState(startTargets, options, {
