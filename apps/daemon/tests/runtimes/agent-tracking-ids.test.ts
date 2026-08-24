@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { agentIdToTracking } from '@open-design/contracts/analytics';
 import { SHIPPED_AGENT_DEFS } from '../../src/runtimes/registry.js';
 
@@ -29,5 +32,43 @@ describe('every shipped agent has its own analytics id', () => {
     expect(agentIdToTracking('my-custom-agent')).toBe('other');
     expect(agentIdToTracking('not-a-shipped-agent')).toBe('other');
     expect(agentIdToTracking(null)).toBe('other');
+  });
+
+  // The regression that made this guard worth rewriting: whose machine it runs
+  // on must not change the answer. Walking AGENT_DEFS instead of
+  // SHIPPED_AGENT_DEFS fails here with `expected [ 'my-custom-agent' ] to
+  // deeply equal []` — a developer's personal config wearing the costume of a
+  // missing mapper case. Registry lists are built once at module load, so the
+  // profile has to exist before the import to be part of it.
+  it('stays green on a machine that declares a local agent profile', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'od-local-agent-profile-'));
+    const profilesFile = path.join(dir, 'agents.local.json');
+    writeFileSync(
+      profilesFile,
+      JSON.stringify({ agents: [{ id: 'my-custom-agent', baseAgent: 'claude' }] }),
+    );
+    vi.stubEnv('OD_AGENT_PROFILES_CONFIG', profilesFile);
+    vi.resetModules();
+
+    try {
+      const registry = await import('../../src/runtimes/registry.js');
+
+      // Guards the assertions below against passing for the boring reason that
+      // the profile never loaded at all.
+      expect(registry.AGENT_DEFS.map((def) => def.id)).toContain('my-custom-agent');
+      expect(registry.SHIPPED_AGENT_DEFS.map((def) => def.id)).not.toContain(
+        'my-custom-agent',
+      );
+
+      const collapsed = registry.SHIPPED_AGENT_DEFS.map((def) => def.id)
+        .filter((id) => agentIdToTracking(id) === 'other')
+        .sort();
+
+      expect(collapsed).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 });
