@@ -302,6 +302,7 @@ import {
   resolveSkillId,
   splitDerivedSkillId,
 } from './skills.js';
+import { resolveSkillCatalogScope } from './skill-catalog-scope.js';
 import {
   activateWorkspaceTeamSkillIfStillShared,
   resolveAndActivateWorkspaceTeamSkill,
@@ -9153,7 +9154,6 @@ export async function startServer({
     // transitioning; the daemon persists the local catalogue partition so
     // the first run reads the same local record without waiting for identity
     // discovery or treating this as remote membership authority.
-    const skillCatalogScope = localCatalogScope(metadata?.localCatalogScopes?.skill);
     const designSystemCatalogScope = localCatalogScope(
       metadata?.localCatalogScopes?.designSystem,
     );
@@ -9254,17 +9254,12 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getWorkspaceProjectByProjectId(db, projectId)
         : null;
-    const skillResourceScope = skillCatalogScope ?? (
-      projectResourceScope?.workspaceId
-        ? {
-            workspaceId: String(projectResourceScope.workspaceId),
-            workspaceMemberId:
-              typeof projectResourceScope.createdByWorkspaceMemberId === 'string'
-                ? projectResourceScope.createdByWorkspaceMemberId
-                : null,
-          }
-        : null
-    );
+    // Shared with OD Next's frozen-package capture so a Skill this prompt can
+    // resolve is a Skill that route can freeze, and vice versa.
+    const skillResourceScope = resolveSkillCatalogScope({
+      metadata,
+      workspaceBinding: projectResourceScope,
+    });
     let allSkillsPromise: ReturnType<typeof listAllSkillLikeEntries> | null = null;
     const loadAllSkills = async () => {
       allSkillsPromise ??= skillResourceScope
@@ -15574,6 +15569,7 @@ export async function startServer({
   registerRunRoutes(app, {
     db,
     design,
+    resources: { listAllSkillLikeEntries },
     http: httpDeps,
     paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },

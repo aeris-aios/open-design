@@ -116,19 +116,77 @@ export async function captureFrozenSkillPackage(input: {
   catalog: readonly SkillInfo[];
   ioHooks?: FrozenSkillCaptureIoHooks;
 }): Promise<FrozenSkillPackageV1> {
-  const ids = normalizeSelectedSkillIds(input);
-  const targets: FrozenSkillCaptureTarget[] = [];
-  for (const canonicalId of ids) {
+  return captureFrozenSkillPackageFromSelections({
+    skills: resolveSelectedCatalogSkills(input),
+    ioHooks: input.ioHooks,
+  });
+}
+
+/**
+ * Resolve explicitly selected Skill ids against a catalogue listing.
+ *
+ * Split out from capture so a caller that mixes selection channels can decide
+ * what an unavailable Skill means for it. Capture itself has no opinion: it
+ * freezes the entries it is handed.
+ */
+export function resolveSelectedCatalogSkills(input: {
+  skillId?: unknown;
+  skillIds?: unknown;
+  catalog: readonly SkillInfo[];
+}): SkillInfo[] {
+  const resolved: SkillInfo[] = [];
+  for (const canonicalId of normalizeSelectedSkillIds(input)) {
     const skill = findSkillById(input.catalog, canonicalId);
     if (!skill) {
       throw new InvalidFrozenSkillPackageError(`Selected Skill ${canonicalId} is unavailable.`);
     }
-    targets.push({
+    resolved.push(skill);
+  }
+  return resolved;
+}
+
+/**
+ * Capture one package from every channel a session selected a Skill through.
+ *
+ * A task has exactly one frozen package, so the channels have to converge
+ * before capture rather than each producing a package of its own: the package
+ * identity is a digest over the whole selection list, and two packages would
+ * mean two identities for one task. `skills` come from the Skill catalogue
+ * (the composer's @-mention popover, `od run --skill`); `sources` are
+ * skill-like folders the caller resolved itself (an official example card).
+ *
+ * Order is authority order, and it survives into `skill_names` and into the
+ * body order the model reads: a Skill the user named explicitly precedes
+ * material that came along with a card they picked.
+ */
+export async function captureFrozenSkillPackageFromSelections(input: {
+  skills?: readonly SkillInfo[] | undefined;
+  sources?: readonly ResolvedFrozenSkillSourceV1[] | undefined;
+  ioHooks?: FrozenSkillCaptureIoHooks | undefined;
+}): Promise<FrozenSkillPackageV1> {
+  const targets: FrozenSkillCaptureTarget[] = [
+    ...(input.skills ?? []).map((skill) => ({
       dir: skill.dir,
       label: `Selected Skill ${skill.id}`,
       name: skill.name,
-      identity: { kind: 'catalog', canonicalId: skill.id },
-    });
+      identity: { kind: 'catalog' as const, canonicalId: skill.id },
+    })),
+    ...(input.sources ?? []).map((source) => ({
+      dir: source.dir,
+      label: source.label ?? `Selected Skill source ${path.basename(source.dir)}`,
+      name: source.name,
+      identity: {
+        kind: 'declared' as const,
+        ...(source.expectedManifestDigest
+          ? { expectedManifestDigest: source.expectedManifestDigest }
+          : {}),
+      },
+    })),
+  ];
+  if (targets.length > MAX_SKILL_COUNT) {
+    throw new InvalidFrozenSkillPackageError(
+      `OD Next accepts at most ${MAX_SKILL_COUNT} explicitly selected Skills.`,
+    );
   }
   return captureTargets(targets, input.ioHooks);
 }
@@ -189,25 +247,10 @@ export async function captureFrozenSkillPackageFromSources(input: {
   sources: readonly ResolvedFrozenSkillSourceV1[];
   ioHooks?: FrozenSkillCaptureIoHooks;
 }): Promise<FrozenSkillPackageV1> {
-  if (input.sources.length > MAX_SKILL_COUNT) {
-    throw new InvalidFrozenSkillPackageError(
-      `OD Next accepts at most ${MAX_SKILL_COUNT} explicitly selected Skills.`,
-    );
-  }
-  return captureTargets(
-    input.sources.map((source) => ({
-      dir: source.dir,
-      label: source.label ?? `Selected Skill source ${path.basename(source.dir)}`,
-      name: source.name,
-      identity: {
-        kind: 'declared' as const,
-        ...(source.expectedManifestDigest
-          ? { expectedManifestDigest: source.expectedManifestDigest }
-          : {}),
-      },
-    })),
-    input.ioHooks,
-  );
+  return captureFrozenSkillPackageFromSelections({
+    sources: input.sources,
+    ioHooks: input.ioHooks,
+  });
 }
 
 async function captureTargets(

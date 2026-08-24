@@ -8,11 +8,7 @@ import { resolveLocalizedText } from '@open-design/contracts';
 
 import { readVerifiedProjectExampleBinding } from '../../plugins/example-binding.js';
 import { renderPluginBriefTemplate } from '../../plugins/share-helpers.js';
-import {
-  captureFrozenSkillPackageFromSources,
-  createEmptyFrozenSkillPackage,
-  type FrozenSkillPackageV1,
-} from './frozen-skill-package.js';
+import type { ResolvedFrozenSkillSourceV1 } from './frozen-skill-package.js';
 
 /** The subset of an installed plugin record this resolver needs. */
 export interface ResolvedExamplePluginRecord {
@@ -29,28 +25,28 @@ export type ResolveLocalPluginBySource = (
 ) => Promise<ResolvedExamplePluginRecord | null>;
 
 /**
- * The frozen Skill package an admitted OD Next task starts from.
+ * Resolve the project's official example card to a capture source, or null.
  *
- * The invariant this helper exists to hold: **an example card never changes
- * the route.** A strategy task always carries a package — the empty one is
- * what keeps restart/continuation identity deterministic — and when the
- * project was seeded from an official example card, that package additionally
- * carries the example's SKILL.md and its explicitly referenced side files as a
- * user-selected Skill. Nothing here consults or produces an explicit-plugin
- * signal; the example is reference material, not an executable strategy.
+ * The invariant this exists to hold: **an example card never changes the
+ * route.** Picking one is a more specific choice inside a task type OD Next
+ * already owns, not a claim on the strategy, so the card rides along in
+ * `session_skills/user_selected_skills` instead of pinning a plugin. Capture
+ * itself happens in `captureOdNextSessionSkillPackage`, because a task freezes
+ * ONE package across every channel the session selected material through.
  *
- * It is deliberately fail-soft. Every reason capture can fail — the example
+ * It is deliberately fail-soft. Every reason resolution can fail — the example
  * was uninstalled, its manifest moved on from the digest the project pinned,
  * the folder is unreadable — is a reason to run this task without the example,
  * never a reason to fail the user's run or to divert it off the automatic
- * route it already qualified for. Failures are warned about, then swallowed.
+ * route it already qualified for. Failures are warned about, then swallowed,
+ * and null means "run without the card".
  */
-export async function captureProjectExampleSkillPackage(input: {
+export async function resolveProjectExampleSkillSource(input: {
   metadata: ProjectMetadata | null | undefined;
   getLocalPluginBySource: ResolveLocalPluginBySource | undefined;
-}): Promise<FrozenSkillPackageV1> {
+}): Promise<ResolvedFrozenSkillSourceV1 | null> {
   const binding = readVerifiedProjectExampleBinding(input.metadata);
-  if (!binding) return createEmptyFrozenSkillPackage();
+  if (!binding) return null;
   try {
     if (!input.getLocalPluginBySource) {
       throw new Error('no local plugin resolver is wired into this run route');
@@ -70,26 +66,24 @@ export async function captureProjectExampleSkillPackage(input: {
     ) {
       throw new Error(`example plugin ${binding.pluginId} no longer resolves locally`);
     }
-    return await captureFrozenSkillPackageFromSources({
-      sources: [{
-        dir: record.fsPath,
-        // Locale-independent on purpose: this string is hashed into the
-        // package identity, which has to stay stable across restarts and
-        // across a user switching languages mid-project.
-        name: typeof record.title === 'string' && record.title.trim()
-          ? record.title.trim()
-          : binding.pluginId,
-        expectedManifestDigest: binding.manifestSourceDigest,
-        label: `Example card ${binding.pluginId}`,
-      }],
-    });
+    return {
+      dir: record.fsPath,
+      // Locale-independent on purpose: this string is hashed into the
+      // package identity, which has to stay stable across restarts and
+      // across a user switching languages mid-project.
+      name: typeof record.title === 'string' && record.title.trim()
+        ? record.title.trim()
+        : binding.pluginId,
+      expectedManifestDigest: binding.manifestSourceDigest,
+      label: `Example card ${binding.pluginId}`,
+    };
   } catch (error) {
     console.warn(
       `[od-next-example] example ${binding.pluginId} could not be frozen; running without it: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return createEmptyFrozenSkillPackage();
+    return null;
   }
 }
 

@@ -29,6 +29,14 @@ export type EntryStrategyRoutingFields = {
  * for, so it rides the automatic branch exclusively — when re-validation
  * collapses the claim, the reference is dropped with it rather than smuggled
  * onto a project that is no longer on an OD Next route.
+ *
+ * A `skillId` crosses both branches. It used to be dropped on the automatic
+ * one, back when a Skill and the automatic route were mutually exclusive
+ * authorities; the daemon now freezes an explicitly selected Skill into
+ * `session_skills/user_selected_skills` instead, so dropping it here would
+ * silently discard the Skill the user @-mentioned. The claim is still
+ * re-derived from the exact metadata, so this carries a Skill onto a route,
+ * never onto a route it failed to prove.
  */
 export function entryStrategyRoutingFields(
   input: EntryStrategyRoutingInput,
@@ -41,7 +49,7 @@ export function entryStrategyRoutingFields(
       : null;
   if (automaticStrategyTaskProfile) {
     return {
-      skillId: null,
+      skillId: input.skillId ?? null,
       automaticStrategyTaskProfile,
       ...(input.exampleReference ? { exampleReference: input.exampleReference } : {}),
     };

@@ -99,10 +99,10 @@ import {
 } from '../strategies/od-next/coordinator.js';
 import type { FrozenSkillPackageV1 } from '../strategies/od-next/frozen-skill-package.js';
 import { InvalidFrozenSkillPackageError } from '../strategies/od-next/frozen-skill-package.js';
-import {
-  captureProjectExampleSkillPackage,
-  type ResolvedExamplePluginRecord,
-} from '../strategies/od-next/example-skill-source.js';
+import type { ResolvedExamplePluginRecord } from '../strategies/od-next/example-skill-source.js';
+import { captureOdNextSessionSkillPackage } from '../strategies/od-next/session-skill-package.js';
+import { resolveSkillCatalogScope } from '../skill-catalog-scope.js';
+import type { SkillInfo } from '../skills.js';
 import {
   buildOdNextTaskConfigurationV1,
   createOdNextTaskInputSnapshot,
@@ -522,6 +522,19 @@ interface RunRoutesDesignService {
   getAppVersion(): string;
 }
 
+/**
+ * The Skill catalogue a run resolves user-selected Skills from. Same listing
+ * the system-prompt composer reads, scoped through
+ * `resolveSkillCatalogScope`, so a Skill admitted on one surface is
+ * resolvable on the other.
+ */
+interface RunRoutesSkillCatalogService {
+  listAllSkillLikeEntries: (options?: {
+    workspaceId?: string | null;
+    workspaceMemberId?: string | null;
+  }) => Promise<readonly SkillInfo[]>;
+}
+
 interface ProjectFileEntry {
   name: string;
   artifactKind?: string | null;
@@ -618,6 +631,7 @@ function automaticOdNextFallbackDecision(
 export interface RegisterRunRoutesDeps {
   db: SqliteDb;
   design: RunRoutesDesignService;
+  resources: RunRoutesSkillCatalogService;
   http: {
     createSseResponse: (res: Response) => SseResponse;
     sendApiError: (
@@ -1883,16 +1897,6 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         && verifiedScenarioBinding?.provenance === 'automatic_default'
         && verifiedScenarioBinding.pluginId === defaultPluginId,
       );
-      const suppliedSkillWasNamed = Boolean(
-        (typeof requestBody.skillId === 'string' && requestBody.skillId.trim().length > 0)
-        || (
-          Array.isArray(requestBody.skillIds)
-          && requestBody.skillIds.some((value) => (
-            typeof value === 'string' && value.trim().length > 0
-          ))
-        )
-        || (typeof rolloutProject?.skillId === 'string' && rolloutProject.skillId.length > 0)
-      );
       const suppliedContextPluginWasNamed = Boolean(
         Array.isArray((rolloutProject?.metadata as ContractProjectMetadata | undefined)?.contextPlugins)
         && (rolloutProject?.metadata as ContractProjectMetadata).contextPlugins!.length > 0
@@ -1902,9 +1906,17 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         || suppliedPluginWasNamed
         || (projectHasExplicitPin && !projectPinIsAutomaticDefault)
       );
+      // A named Skill is deliberately absent here. Naming one — the composer's
+      // @-mention, `od run --skill`, a Skill persisted on the project — refines
+      // the task; it does not claim the route away from a task type OD Next
+      // already owns. An admitted strategy carries the Skill in
+      // `session_skills/user_selected_skills` (see
+      // `captureOdNextSessionSkillPackage`), where the strategy's conflict
+      // order already ranks a user-selected Skill above its own. A context
+      // plugin still claims authority: that is an executable surface the
+      // strategy has no slot for.
       const explicitUserPlugin = Boolean(
         explicitExecutablePlugin
-        || suppliedSkillWasNamed
         || suppliedContextPluginWasNamed
       );
       const rolloutPolicy = readOdNextRolloutPolicy();
@@ -2649,18 +2661,33 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       && !idempotentStrategyRetry
       && strategyRolloutDecision?.effectiveMode === 'active'
     ) {
-      // Automatic OD Next owns the complete prompt/Skill surface. Explicit
-      // Skills are ordinary-route authority above; an admitted strategy task
-      // therefore persists an empty package solely to keep restart/continuation
-      // identity deterministic.
-      //
-      // The one exception is an official example card. Picking one is a more
-      // specific choice inside the same task type, not a claim on the strategy,
-      // so it keeps this automatic route and rides along in
-      // `session_skills/user_selected_skills` instead of pinning a plugin.
-      frozenSkillPackage = await captureProjectExampleSkillPackage({
-        metadata: runProject?.metadata as ContractProjectMetadata | null | undefined,
+      // Everything the session selected inside this task type — an @-mentioned
+      // Skill, an official example card — is frozen into one package here and
+      // read back as `session_skills/user_selected_skills`. A task with no
+      // selection still persists the empty package, which is what keeps
+      // restart/continuation identity deterministic.
+      const runProjectMetadata =
+        runProject?.metadata as ContractProjectMetadata | null | undefined;
+      frozenSkillPackage = await captureOdNextSessionSkillPackage({
+        metadata: runProjectMetadata,
         getLocalPluginBySource: ctx.plugins.getLocalPluginBySource,
+        selection: {
+          // Mirror the ordinary route's own resolution order
+          // (`composeDaemonSystemPrompt`): the request's Skill, else the one
+          // persisted on the project, plus this turn's @-mentions.
+          skillId: typeof requestBody.skillId === 'string' && requestBody.skillId
+            ? requestBody.skillId
+            : runProject?.skillId,
+          skillIds: requestBody.skillIds,
+        },
+        listSkillCatalog: () => ctx.resources.listAllSkillLikeEntries(
+          resolveSkillCatalogScope({
+            metadata: runProjectMetadata,
+            workspaceBinding: typeof requestBody.projectId === 'string' && requestBody.projectId
+              ? ctx.projectStore?.getWorkspaceProjectByProjectId(db, requestBody.projectId)
+              : null,
+          }) ?? undefined,
+        ),
       });
     }
     const fingerprintSnapshot = clarificationTask

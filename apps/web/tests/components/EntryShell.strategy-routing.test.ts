@@ -7,13 +7,29 @@ describe('EntryShell automatic strategy routing', () => {
     ['ppt', { kind: 'deck' as const }],
     ['marketing', { kind: 'prototype' as const, intent: 'marketing' as const }],
     ['hyperframes', { kind: 'video' as const, intent: 'hyperframes' as const }],
-  ] as const)('lets OD Next own the %s route without implicit Skill or plugin inputs', (taskProfile, metadata) => {
+  ] as const)('lets OD Next own the %s route without implicit plugin inputs', (taskProfile, metadata) => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: taskProfile,
-      skillId: 'implicit-default-skill',
       pluginInputs: { legacy: true },
     }, metadata)).toEqual({
       skillId: null,
+      automaticStrategyTaskProfile: taskProfile,
+    });
+  });
+
+  it.each([
+    ['prototype', { kind: 'prototype' as const }],
+    ['ppt', { kind: 'deck' as const }],
+    ['marketing', { kind: 'prototype' as const, intent: 'marketing' as const }],
+    ['hyperframes', { kind: 'video' as const, intent: 'hyperframes' as const }],
+  ] as const)('carries an @-mentioned Skill onto the %s route', (taskProfile, metadata) => {
+    // The daemon freezes it into `session_skills/user_selected_skills`; the
+    // route is still the task type's, so nothing has to be dropped.
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: taskProfile,
+      skillId: 'frontend-design',
+    }, metadata)).toEqual({
+      skillId: 'frontend-design',
       automaticStrategyTaskProfile: taskProfile,
     });
   });
@@ -27,10 +43,10 @@ describe('EntryShell automatic strategy routing', () => {
     // fail-closed re-derivation must agree with the claim rather than collapse it.
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: 'prototype',
-      skillId: 'implicit-default-skill',
+      skillId: 'frontend-design',
       pluginInputs: { legacy: true },
     }, metadata)).toEqual({
-      skillId: null,
+      skillId: 'frontend-design',
       automaticStrategyTaskProfile: 'prototype',
     });
   });
@@ -55,7 +71,6 @@ describe('EntryShell automatic strategy routing', () => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: 'prototype',
       exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
-      skillId: 'implicit-default-skill',
     }, { kind: 'prototype' })).toEqual({
       skillId: null,
       automaticStrategyTaskProfile: 'prototype',
@@ -67,7 +82,6 @@ describe('EntryShell automatic strategy routing', () => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: 'prototype',
       exampleReference: { pluginId: 'example-web-prototype', source: '/plugins/web-prototype' },
-      skillId: 'implicit-default-skill',
     }, {
       kind: 'prototype',
       platform: 'auto',

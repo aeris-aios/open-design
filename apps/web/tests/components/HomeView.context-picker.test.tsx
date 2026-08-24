@@ -426,7 +426,7 @@ describe('HomeView context picker', () => {
     }));
   });
 
-  it('clears an active type chip when the user picks a skill (#2972)', async () => {
+  it('keeps the active type chip when the user picks a skill (#2972)', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -471,18 +471,23 @@ describe('HomeView context picker', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-skill')).toBeTruthy();
-      // Round-4 skin: the cleared template pill shows the gray creation-type
-      // kicker instead of a "None" placeholder label.
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Creation type');
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('Slide deck');
     });
+    // #2972 asked for a defined, explainable rule when the prompt's intent and
+    // the picked card disagree. The rule used to be "the Skill wins, drop the
+    // card", which routed a user who picked Prototype into a deck project
+    // behind their back. The task type now owns the route and the Skill rides
+    // along inside it, so the answer to the conflict is "both survive" — the
+    // strategy's own conflict order ranks the user-selected Skill above its
+    // task-type Skill in the prompt.
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
 
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
       skillId: DECK_SKILL.id,
-      projectKind: 'deck',
+      projectKind: 'prototype',
     }));
     expect(onSubmit.mock.calls[0]?.[0]?.pluginId).not.toBe('example-web-prototype');
   });
@@ -531,7 +536,10 @@ describe('HomeView context picker', () => {
     await pickHomeTemplate('prototype');
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
-      expect(screen.queryByTestId('home-hero-active-skill')).toBeNull();
+      // The mention the user typed is still in their prompt, so the Skill it
+      // named stays selected too — picking a task type decides the route, not
+      // what material the turn carries.
+      expect(screen.getByTestId('home-hero-active-skill')).toBeTruthy();
     });
 
     setHomeHeroPrompt('Build a pricing-page prototype.');
@@ -542,7 +550,7 @@ describe('HomeView context picker', () => {
       pluginId: null,
       pluginSelectionProvenance: 'automatic-default',
       automaticStrategyTaskProfile: 'prototype',
-      skillId: null,
+      skillId: SKILL.id,
       projectKind: 'prototype',
       appliedPluginSnapshotId: null,
       pluginTitle: null,

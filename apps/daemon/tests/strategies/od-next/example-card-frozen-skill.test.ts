@@ -18,10 +18,10 @@ import {
   resolveFrozenSkillBundleBodies,
 } from '../../../src/strategies/od-next/frozen-skill-package.js';
 import {
-  captureProjectExampleSkillPackage,
   odNextExampleReferenceFact,
   type ResolveLocalPluginBySource,
 } from '../../../src/strategies/od-next/example-skill-source.js';
+import { captureOdNextSessionSkillPackage } from '../../../src/strategies/od-next/session-skill-package.js';
 import { digestExampleSkillManifest } from '../../../src/plugins/example-binding.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -266,7 +266,7 @@ describe('official example cards enter OD Next as a user-selected Skill', () => 
   });
 });
 
-describe('captureProjectExampleSkillPackage never fails or diverts a run', () => {
+describe('the example card never fails or diverts a run', () => {
   const metadataWithBinding = (dir: string, digest: string): ProjectMetadata => ({
     kind: 'prototype',
     exampleBinding: {
@@ -282,7 +282,9 @@ describe('captureProjectExampleSkillPackage never fails or diverts a run', () =>
   it('captures the bound example through an exact id + source re-resolution', async () => {
     const dir = path.join(EXAMPLES_DIR, 'web-prototype');
     const digest = await digestExampleSkillManifest(dir);
-    const frozen = await captureProjectExampleSkillPackage({
+    const frozen = await captureOdNextSessionSkillPackage({
+      selection: {},
+      listSkillCatalog: async () => [],
       metadata: metadataWithBinding(dir, digest),
       getLocalPluginBySource: async (id, source) => ({
         id,
@@ -297,7 +299,9 @@ describe('captureProjectExampleSkillPackage never fails or diverts a run', () =>
   });
 
   it('returns the empty package when there is no binding at all', async () => {
-    const frozen = await captureProjectExampleSkillPackage({
+    const frozen = await captureOdNextSessionSkillPackage({
+      selection: {},
+      listSkillCatalog: async () => [],
       metadata: { kind: 'prototype' },
       getLocalPluginBySource: async () => {
         throw new Error('must not be consulted');
@@ -322,7 +326,9 @@ describe('captureProjectExampleSkillPackage never fails or diverts a run', () =>
     'falls back to the empty package when %s',
     async (_label, resolver) => {
       const dir = path.join(EXAMPLES_DIR, 'web-prototype');
-      const frozen = await captureProjectExampleSkillPackage({
+      const frozen = await captureOdNextSessionSkillPackage({
+      selection: {},
+      listSkillCatalog: async () => [],
         metadata: metadataWithBinding(dir, await digestExampleSkillManifest(dir)),
         getLocalPluginBySource: resolver,
       });
@@ -333,7 +339,9 @@ describe('captureProjectExampleSkillPackage never fails or diverts a run', () =>
   it('falls back to the empty package when the example moved on from its digest', async () => {
     const dir = path.join(EXAMPLES_DIR, 'web-prototype');
     const stale = `sha256:${createHash('sha256').update('stale').digest('hex')}`;
-    const frozen = await captureProjectExampleSkillPackage({
+    const frozen = await captureOdNextSessionSkillPackage({
+      selection: {},
+      listSkillCatalog: async () => [],
       metadata: metadataWithBinding(dir, stale),
       getLocalPluginBySource: async (id, source) => ({ id, source, fsPath: dir }),
     });

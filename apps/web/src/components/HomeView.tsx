@@ -1435,8 +1435,6 @@ export function HomeView({
   ): Promise<boolean> {
     const applyRequestId = activePluginApplyRequestRef.current + 1;
     activePluginApplyRequestRef.current = applyRequestId;
-    setActiveSkill(null);
-    setActiveSkillCatalogScope(null);
     const shouldResolveImmediately = options?.deferApply !== true;
     const inputFields = options?.inputFields ?? record.manifest?.od?.inputs ?? [];
     const optimisticInputs = hydratePluginInputs(
@@ -2358,13 +2356,18 @@ export function HomeView({
     focusPromptAtEnd();
   }
 
+  // Mentioning a Skill leaves the task type alone.
+  //
+  // #2972 asked for a defined rule when the prompt's intent and the picked card
+  // disagree, and the rule used to be "the Skill wins, drop the card" — which
+  // satisfies "defined" but not "users are not silently routed into the wrong
+  // workflow": picking 幻灯片 and then mentioning a prototype-mode Skill
+  // created a prototype project. The task type now owns the route and the
+  // Skill is material carried inside it (the daemon freezes it into
+  // `session_skills/user_selected_skills`, where the strategy's own conflict
+  // order already ranks a user-selected Skill above its own), so nothing has
+  // to be discarded to keep the rule defined.
   function useSkill(skill: SkillSummary, nextPrompt: string | null) {
-    activePluginApplyRequestRef.current += 1;
-    setActive(null);
-    setPendingChipId(null);
-    setPendingApplyId(null);
-    setFallbackProjectKind(null);
-    setFallbackProjectMetadata(null);
     setActiveSkill(skill);
     setActiveSkillCatalogScope(localCatalogScopeFromWorkspaceContext(workspaceContext));
     setError(null);
@@ -2887,11 +2890,12 @@ export function HomeView({
             submittedActive?.inputs ?? null,
             submittedActive?.projectMetadata ?? fallbackProjectMetadata ?? null,
           );
-      // Scenario plugins (chips / preset cards) and explicit skill picks are
-      // mutually exclusive routing sources. In Design mode, free-form prompts
-      // route through the default design router; in Ask mode they stay plain
-      // chat conversations with no hidden router plugin.
-      const resolvedSkillId = submittedActive ? null : activeSkill?.id ?? null;
+      // A mentioned Skill travels with whatever the composer selected, rather
+      // than replacing it: the pick decides the route, the Skill is material
+      // inside it. In Design mode, free-form prompts route through the default
+      // design router; in Ask mode they stay plain chat conversations with no
+      // hidden router plugin.
+      const resolvedSkillId = activeSkill?.id ?? null;
       const submittedChip = submittedRouteChipId
         ? findChip(submittedRouteChipId)
         : null;

@@ -198,62 +198,38 @@ describe('OD Next automatic production through the real server', () => {
     expect(researchContract).toContain('Run the ordinary public fixture.');
   });
 
-  it('routes an explicitly requested Skill directly through the ordinary default', async () => {
+  it('keeps the automatic route when a named Skill cannot be resolved', async () => {
     const fixture = await createPublicRolloutFixture('prestart-skill-fallback', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
     clearOdNextRolloutStop(database());
-    const sharedProject = await createProjectForScenario(
-      started.url,
-      'prestart-shared-strategy-snapshot',
-      { kind: 'prototype' },
-    );
-    const sharedStrategySnapshot = await createStrategySnapshot(
-      sharedProject.projectId,
-      sharedProject.conversationId,
-    );
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
     process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
-    const strategySnapshotCountAtStart = (database().prepare(`
-      SELECT COUNT(*) AS count FROM applied_plugin_snapshots
-       WHERE plugin_id = 'od-next-strategy'
-    `).get() as { count: number }).count;
 
     const created = await postRun(started.url, {
       ...publicRunRequest(
         fixture,
-        'Complete this request through the ordinary default.',
+        'Complete this request through the automatic route.',
         'prestart-skill-fallback-request',
       ),
       skillIds: ['missing-automatic-skill'],
     });
 
-    expect(created.strategyTask).toBeUndefined();
-    expect(created.taskExecutionId).toBeUndefined();
-    expect(created.pluginId).toBe('example-web-prototype');
-    await waitForRunTerminal(started.url, created.runId as string);
-    expect((database().prepare(
-      'SELECT COUNT(*) AS count FROM strategy_task_executions',
-    ).get() as { count: number }).count).toBe(0);
-    expect((database().prepare(`
-      SELECT COUNT(*) AS count FROM applied_plugin_snapshots
-       WHERE plugin_id = 'od-next-strategy'
-    `).get() as { count: number }).count).toBe(strategySnapshotCountAtStart);
-    expect((database().prepare(
-      'SELECT COUNT(*) AS count FROM applied_plugin_snapshots WHERE id = ?',
-    ).get(sharedStrategySnapshot.snapshotId) as { count: number }).count).toBe(1);
+    // A Skill that no longer resolves is dropped, exactly as the ordinary
+    // route drops it — it is not evidence the user claimed the route.
+    expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
     expect(await readDurableRunState(created.runId as string)).toMatchObject({
-      strategyRolloutDecision: {
-        decisionClass: 'explicit_user',
-        effectiveMode: 'off',
-        primaryReasonCode: 'od_next_rollout_explicit_user_authority',
-      },
+      strategyRolloutDecision: { effectiveMode: 'active' },
     });
-    const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
-    expect(invocations).toHaveLength(1);
-    expect(invocations[0]?.stdin).toContain('Complete this request through the ordinary default.');
-    expect(invocations[0]?.stdin).not.toContain('OD Next Strategy V2');
-    expect(invocations[0]?.stdin).not.toContain('open-design.strategy-state/v2');
+    const task = getStrategyTaskExecution(database(), created.taskExecutionId as string);
+    expect(task?.promptBundle.text).not.toContain('user_selected_skills');
+    expect(task?.promptBundle.text).not.toContain('missing-automatic-skill');
+
+    const canceled = await fetch(
+      `${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`,
+      { method: 'POST' },
+    );
+    expect(canceled.status).toBe(200);
   });
 
   it('rolls back automatic task preparation and reclaims once through the ordinary default', async () => {
@@ -267,6 +243,9 @@ describe('OD Next automatic production through the real server', () => {
       SELECT COUNT(*) AS count FROM applied_plugin_snapshots
        WHERE plugin_id = 'od-next-strategy'
     `).get() as { count: number }).count;
+    const strategyTaskCountAtStart = (database().prepare(
+      'SELECT COUNT(*) AS count FROM strategy_task_executions',
+    ).get() as { count: number }).count;
     database().exec(`
       CREATE TRIGGER reject_automatic_strategy_task
       BEFORE INSERT ON strategy_task_executions
@@ -289,9 +268,12 @@ describe('OD Next automatic production through the real server', () => {
       expect(created.taskExecutionId).toBeUndefined();
       expect(created.pluginId).toBe('example-web-prototype');
       await waitForRunTerminal(started.url, created.runId as string);
+      // A delta, not an absolute: this suite shares one data root across its
+      // tests, and what this case proves is that the rolled-back preparation
+      // left nothing behind — not that the whole file ran no strategy task.
       expect((database().prepare(
         'SELECT COUNT(*) AS count FROM strategy_task_executions',
-      ).get() as { count: number }).count).toBe(0);
+      ).get() as { count: number }).count).toBe(strategyTaskCountAtStart);
       expect((database().prepare(`
         SELECT COUNT(*) AS count FROM applied_plugin_snapshots
          WHERE plugin_id = 'od-next-strategy'
@@ -857,7 +839,7 @@ describe('OD Next automatic production through the real server', () => {
       .toBe(strategyTaskCountAtStart + 1);
   });
 
-  it('routes explicit Web and CLI Skills through the same ordinary run', async () => {
+  it('carries explicit Web and CLI Skills into the same automatic run', async () => {
     const fixture = await createPublicRolloutFixture('web-cli-skill-parity', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
@@ -874,9 +856,10 @@ describe('OD Next automatic production through the real server', () => {
         `description: ${skillId} parity fixture`,
         '---',
         `# ${skillId}`,
+        `BODY_MARKER_${skillId.toUpperCase().replaceAll('-', '_')}`,
       ].join('\n'));
     }
-    const prompt = 'Complete this request through ordinary Skill routing.';
+    const prompt = 'Complete this request through automatic Skill routing.';
     const clientRequestId = 'web-cli-skill-parity-request';
     const strategyTaskCountAtStart = (database().prepare(
       'SELECT COUNT(*) AS count FROM strategy_task_executions',
@@ -890,11 +873,19 @@ describe('OD Next automatic production through the real server', () => {
       skillId: 'bundle-skill-a',
       skillIds: ['bundle-skill-a', 'bundle-skill-b'],
     });
-    expect(web.strategyTask).toBeUndefined();
-    expect(web.taskExecutionId).toBeUndefined();
-    expect(web.pluginId).toBe('example-web-prototype');
+    // The @-mention refines the task; it does not take it off the route.
+    expect(web.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
     await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
-    await waitForRunTerminal(started.url, web.runId as string);
+
+    const task = getStrategyTaskExecution(database(), web.taskExecutionId as string);
+    const bundle = task?.promptBundle.text ?? '';
+    // Both Skills reach the Agent through the Bundle slot the strategy's own
+    // conflict order ranks above its orchestration and task-type Skills.
+    expect(bundle).toContain('<user_selected_skills skill_names="bundle-skill-a,bundle-skill-b">');
+    expect(bundle).toContain('BODY_MARKER_BUNDLE_SKILL_A');
+    expect(bundle).toContain('BODY_MARKER_BUNDLE_SKILL_B');
+    const invocation = (await readProjectInvocations(fixture.logPath, fixture.projectId))[0];
+    expect(invocation?.stdin).toBe(bundle);
 
     const cliResult = await runOdCli([
       'run',
@@ -916,11 +907,76 @@ describe('OD Next automatic production through the real server', () => {
     await waitForInvocationCount(fixture.logPath, fixture.projectId, 1);
 
     expect(cli.runId).toBe(web.runId);
-    expect(cli.taskExecutionId).toBeUndefined();
+    expect(cli.taskExecutionId).toBe(web.taskExecutionId);
     expect((database().prepare(
       'SELECT COUNT(*) AS count FROM strategy_task_executions',
-    ).get() as { count: number }).count).toBe(strategyTaskCountAtStart);
+    ).get() as { count: number }).count).toBe(strategyTaskCountAtStart + 1);
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+
+    const canceled = await fetch(
+      `${started.url}/api/runs/${encodeURIComponent(web.runId as string)}/cancel`,
+      { method: 'POST' },
+    );
+    expect(canceled.status).toBe(200);
+  });
+
+  it('carries the Home-picked Skill persisted on the project into the Bundle', async () => {
+    // The real Home flow: the @-mention is stored on the project row at create
+    // time and the first run never names it again. That row is the third
+    // branch of the old explicit-authority read, so it needs its own witness.
+    const fixture = await createPublicRolloutFixture('project-skill-row', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const skillDir = path.join(process.env.OD_DATA_DIR!, 'skills', 'home-picked-skill');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(path.join(skillDir, 'SKILL.md'), [
+      '---',
+      'name: home-picked-skill',
+      'description: home picked fixture',
+      '---',
+      '# home-picked-skill',
+      'BODY_MARKER_HOME_PICKED',
+    ].join('\n'));
+
+    const projectId = `od-next-public-project-skill-row-${Date.now()}`;
+    const createResponse = await fetch(`${started.url}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'OD Next public project skill row',
+        metadata: { kind: 'prototype' },
+        automaticStrategyTaskProfile: 'prototype',
+        skillId: 'home-picked-skill',
+        conversationMode: 'design',
+        skipDiscoveryBrief: true,
+      }),
+    });
+    const createBody = await createResponse.json() as { conversationId: string };
+    expect(createResponse.status, JSON.stringify(createBody)).toBe(200);
+
+    const created = await postRun(started.url, publicRunRequest(
+      { projectId, conversationId: createBody.conversationId },
+      'Build it with the Skill I picked on Home.',
+      'project-skill-row-request',
+    ));
+    expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+
+    const bundle = getStrategyTaskExecution(
+      database(),
+      created.taskExecutionId as string,
+    )?.promptBundle.text ?? '';
+    expect(bundle).toContain('<user_selected_skills skill_names="home-picked-skill">');
+    expect(bundle).toContain('BODY_MARKER_HOME_PICKED');
+
+    const canceled = await fetch(
+      `${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`,
+      { method: 'POST' },
+    );
+    expect(canceled.status).toBe(200);
   });
 
   it('routes project context plugins through the ordinary default', async () => {
