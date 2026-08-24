@@ -85,6 +85,7 @@ export type WinPaths = {
   packagedConfigPath: string;
   packagedMainPrebundleMetaPath: string;
   packagedMainPrebundlePath: string;
+  sidecarSupervisorPrebundlePath: string;
   resourceRoot: string;
   setupPath: string;
   setupZipPath: string;

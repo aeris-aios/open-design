@@ -70,6 +70,10 @@ async function buildPrebundledStandaloneRuntime(
     metafilePath: paths.packagedMainPrebundleMetaPath,
     policyName: "packagedMain",
   });
+  await cp(
+    join(config.workspaceRoot, "packages", "sidecar", "dist", "supervisor.mjs"),
+    paths.sidecarSupervisorPrebundlePath,
+  );
 
   await runEsbuild(config, [
     join(config.workspaceRoot, "apps", "web", "dist", "sidecar", "index.js"),

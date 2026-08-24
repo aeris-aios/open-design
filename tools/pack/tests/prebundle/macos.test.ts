@@ -14,6 +14,7 @@ import {
   MAC_PREBUNDLE_RUNTIME_DEPENDENCIES,
   MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH,
   MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH,
+  MAC_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH,
   MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH,
   assertMacPrebundleMetafile,
   findForbiddenMacPrebundleInputs,
@@ -105,6 +106,7 @@ describe("mac standalone prebundle policy", () => {
     expect(MAC_PREBUNDLE_COPIED_RUNTIME_DEPENDENCIES).toEqual({ "fsevents": "2.3.3" });
     expect(MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-cli.mjs");
     expect(MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-sidecar.mjs");
+    expect(MAC_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH).toBe("app/prebundled/supervisor.mjs");
     expect(MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH).toBe("app/prebundled/web-sidecar.mjs");
   });
 

@@ -5,6 +5,7 @@ import type { ToolPackConfig } from "../config/index.js";
 export const WIN_PREBUNDLED_APP_DIR_NAME = "prebundled";
 export const WIN_PREBUNDLE_META_DIR_NAME = "prebundle-meta";
 export const WIN_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH = "app/prebundled/packaged-main.mjs";
+export const WIN_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH = "app/prebundled/supervisor.mjs";
 export const WIN_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH = "app/prebundled/web-sidecar.mjs";
 export const WIN_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH = "app/prebundled/daemon/daemon-cli.mjs";
 export const WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH = "app/prebundled/daemon/daemon-sidecar.mjs";

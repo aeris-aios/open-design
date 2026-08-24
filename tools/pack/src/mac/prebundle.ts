@@ -5,6 +5,7 @@ import type { ToolPackConfig } from "../config/index.js";
 export const MAC_PREBUNDLED_APP_DIR_NAME = "prebundled";
 export const MAC_PREBUNDLE_META_DIR_NAME = "prebundle-meta";
 export const MAC_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH = "app/prebundled/packaged-main.mjs";
+export const MAC_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH = "app/prebundled/supervisor.mjs";
 export const MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH = "app/prebundled/web-sidecar.mjs";
 export const MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH = "app/prebundled/daemon/daemon-cli.mjs";
 export const MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH = "app/prebundled/daemon/daemon-sidecar.mjs";

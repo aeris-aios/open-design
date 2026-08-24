@@ -11,6 +11,7 @@ import {
   WIN_PREBUNDLE_RUNTIME_DEPENDENCIES,
   WIN_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH,
   WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH,
+  WIN_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH,
   WIN_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH,
   assertWinPrebundleMetafile,
   findForbiddenWinPrebundleInputs,
@@ -99,6 +100,7 @@ describe("win standalone prebundle policy", () => {
     });
     expect(WIN_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-cli.mjs");
     expect(WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-sidecar.mjs");
+    expect(WIN_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH).toBe("app/prebundled/supervisor.mjs");
     expect(WIN_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH).toBe("app/prebundled/web-sidecar.mjs");
   });
 });

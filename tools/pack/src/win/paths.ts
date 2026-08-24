@@ -9,6 +9,7 @@ import {
   WIN_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH,
   WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH,
   WIN_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH,
+  WIN_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH,
   WIN_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH,
 } from "./prebundle.js";
 import { PRODUCT_NAME } from "./constants.js";
@@ -56,6 +57,7 @@ export function resolveWinPaths(config: ToolPackConfig): WinPaths {
     packagedConfigPath: join(namespaceRoot, "open-design-config.json"),
     packagedMainPrebundleMetaPath: join(namespaceRoot, WIN_PREBUNDLE_META_DIR_NAME, "packaged-main.meta.json"),
     packagedMainPrebundlePath: join(namespaceRoot, "assembled", WIN_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH),
+    sidecarSupervisorPrebundlePath: join(namespaceRoot, "assembled", WIN_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH),
     resourceRoot: join(namespaceRoot, "resources", "open-design"),
     setupPath: join(namespaceRoot, "builder", `${PRODUCT_NAME}-${namespaceToken}-setup.exe`),
     setupZipPath: join(namespaceRoot, "builder", `${PRODUCT_NAME}-${namespaceToken}-portable.zip`),
