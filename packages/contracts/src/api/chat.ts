@@ -821,6 +821,11 @@ export type PersistedAgentEvent =
   // DATA so the localized copy for a version-specific failure
   // (`AGENT_CLI_SESSION_REFUSED`) can name it. Absent when the daemon never
   // detected one, in which case the copy degrades to a version-less sentence.
+  // This event is what a RELOADED conversation renders from — the client never
+  // replays the stream — so the daemon lifts the version out of the error
+  // frame's `details` when it persists the event
+  // (`runSseEventToPersistedAgentEvent`). A field that reached only the live
+  // SSE frame would silently drop the version the moment the user came back.
   | {
       kind: 'status';
       label: string;

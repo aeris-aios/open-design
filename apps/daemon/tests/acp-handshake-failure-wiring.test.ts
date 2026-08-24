@@ -60,6 +60,23 @@ type ErrorFrame = {
 
 type RunEvent = { event: string; data: unknown };
 
+/** The persisted half of the same failure — what a reload reads instead of SSE. */
+type PersistedStatusEvent = {
+  kind?: unknown;
+  label?: unknown;
+  detail?: unknown;
+  code?: unknown;
+  agentCliVersion?: unknown;
+  failureCategory?: unknown;
+  failureDetail?: unknown;
+};
+
+type PersistedMessage = {
+  id: string;
+  role: string;
+  events?: PersistedStatusEvent[];
+};
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP_CLI = path.join(HERE, 'fixtures', 'fake-acp-handshake-cli.mjs');
 
@@ -73,6 +90,9 @@ describe('ACP handshake rejection — server wiring', () => {
   const originalEnv = snapshotEnv();
   let started: StartedServer | null = null;
   let binDir: string | null = null;
+  // Extra bin directories a test created (a second, differently-versioned CLI
+  // the user repoints at). Removed alongside `binDir`.
+  let extraBinDirs: string[] = [];
   // Gates the fake CLI may still be parked at. Released before shutdown so a
   // failed assertion cannot leave a held probe wedging teardown.
   let heldGates: string[] = [];
@@ -87,6 +107,8 @@ describe('ACP handshake rejection — server wiring', () => {
     started = null;
     if (binDir) await removeTempDir(binDir);
     binDir = null;
+    for (const dir of extraBinDirs) await removeTempDir(dir);
+    extraBinDirs = [];
     restoreEnv(originalEnv);
   });
 
@@ -141,6 +163,115 @@ describe('ACP handshake rejection — server wiring', () => {
       expect(effectiveErrorMessage(event.data)).toBe('json-rpc id 2: Internal error');
       expect(JSON.stringify(event.data)).not.toMatch(/refused to start a session/i);
     }
+  });
+
+  // The SSE frame is only half the surface. The daemon persists every run event
+  // onto the assistant message BEFORE emitting it, and `ChatPane` rebuilds the
+  // failure card from that stored event after a reload — it never replays the
+  // stream. So a version that reaches the live client but not the database
+  // means the card names the build while the tab stays open and silently
+  // degrades to the version-less sentence the moment the user comes back, which
+  // is exactly when they return to act on it.
+  it('persists the version with the failure, so a reload still names the build', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-reload-bin-'));
+    const logPath = path.join(binDir, 'invocations.jsonl');
+    await writeAcpCliShim(binDir, AGENT_BIN, { logPath, cliVersion: '0.38.0' });
+    prependToPath(binDir);
+
+    clearTelemetryEnv();
+    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
+    await putConfig(started.url, { agentId: AGENT_ID });
+    await detectAgents(started.url);
+
+    const conversationId = await createConversation(started.url);
+    const run = await sendRunAndWait(started.url, conversationId, 'draft a landing page');
+    expect(run.status).toBe('failed');
+    expect(run.errorCode).toBe('AGENT_CLI_SESSION_REFUSED');
+
+    // Read the conversation back the way a reloaded client does.
+    const errorEvent = await readPersistedRunErrorEvent(started.url, conversationId);
+    expect(errorEvent.code).toBe('AGENT_CLI_SESSION_REFUSED');
+    // The agent's own line survives into storage too — same invariant as the
+    // live surface, since this is the text the card shows under details.
+    expect(errorEvent.detail).toBe('json-rpc id 2: Internal error');
+    // …and the one fact the localized copy interpolates.
+    expect(errorEvent.agentCliVersion).toBe('0.38.0');
+    // The finalizer rewrites this same event in place to stamp the run's
+    // classification. Asserting those landed proves the pass ran — and that it
+    // carried the version through rather than replacing the event with a fresh
+    // one built from `run.errorCode` alone.
+    expect(errorEvent.failureCategory).toBe('process_exit');
+    expect(errorEvent.failureDetail).toBe('agent_protocol_error');
+  });
+
+  // `getDetectedRuntimeVersions` answers per agent id, with no regard for WHICH
+  // executable that reading came from. `/api/agents` probes whatever the launch
+  // inputs resolved to at that moment; a run resolves them again, and the user
+  // is free to repoint the CLI in between (Settings writes `KIMI_BIN`, or PATH
+  // changes). When they do, the child is the new binary and the cached reading
+  // is the old one — so the refusal card tells the user to change the version
+  // of a CLI they are not running, while their actual CLI keeps failing.
+  it('names the CLI this run launched, not the one detection happened to cache', async () => {
+    // The build the user had when Settings last listed agents.
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-stale-bin-'));
+    const staleLog = path.join(binDir, 'invocations.jsonl');
+    await writeAcpCliShim(binDir, AGENT_BIN, { logPath: staleLog, cliVersion: '0.38.0' });
+    prependToPath(binDir);
+
+    // The build they repointed Open Design at afterwards. Off PATH on purpose:
+    // it is reachable ONLY through the configured override, so anything that
+    // resolves it proves the configured launch inputs were honoured.
+    const configuredDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-configured-bin-'));
+    extraBinDirs = [configuredDir];
+    const configuredLog = path.join(configuredDir, 'invocations.jsonl');
+    const configuredBin = await writeAcpCliShim(configuredDir, AGENT_BIN, {
+      logPath: configuredLog,
+      cliVersion: '0.41.7',
+    });
+
+    clearTelemetryEnv();
+    // The OD Next admission gate in `POST /api/runs` happens to run a
+    // scope-aware version probe of its own before the run starts, which warms
+    // the process-wide cache under the run's launch identity as a side effect.
+    // It only runs for the automatic-strategy route, though: a run that names a
+    // plugin or snapshot, a project whose task type OD Next does not own, and a
+    // daemon with the rollout switched off all skip it and leave the spawn-time
+    // capture as the only thing establishing which build this run started. Take
+    // that incidental warm-up out so this test observes the capture itself
+    // rather than a neighbouring subsystem's cache write.
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
+    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
+    await putConfig(started.url, { agentId: AGENT_ID });
+    // Detection runs against the PATH build and caches 0.38.0 for `kimi`.
+    await detectAgents(started.url);
+
+    // Now the user repoints the CLI, exactly as the Settings CLI-path field
+    // does, and does NOT re-open the agent list before sending.
+    await putConfig(started.url, {
+      agentId: AGENT_ID,
+      agentCliEnv: { [AGENT_ID]: { KIMI_BIN: configuredBin } },
+    });
+
+    const conversationId = await createConversation(started.url);
+    const run = await sendRunAndWait(started.url, conversationId, 'draft a landing page');
+    expect(run.status).toBe('failed');
+    expect(run.errorCode).toBe('AGENT_CLI_SESSION_REFUSED');
+
+    // Ground truth first: the child this run spawned really was the configured
+    // binary, so the assertion below is about provenance, not about resolution.
+    expect(await readRunSessionRequests(configuredLog)).toEqual(['session/new']);
+    expect(await readRunSessionRequests(staleLog)).toEqual([]);
+
+    const events = await readRunEvents(run.eventsLogPath);
+    const errorEvents = events.filter((event) => event.event === 'error');
+    expect(errorEvents.length).toBeGreaterThan(0);
+    for (const event of errorEvents) {
+      expectDetectedVersion(event.data as ErrorFrame, '0.41.7');
+    }
+
+    // The stored copy the reloaded card reads must agree with the live one.
+    const errorEvent = await readPersistedRunErrorEvent(started.url, conversationId);
+    expect(errorEvent.agentCliVersion).toBe('0.41.7');
   });
 
   it('does not re-run a handshake rejection — the same CLI build refuses again', async () => {
@@ -493,6 +624,72 @@ function effectiveErrorMessage(data: unknown): string {
   return typeof payload.message === 'string' ? payload.message : '';
 }
 
+/**
+ * The stored `status: 'error'` event a reloaded conversation renders from.
+ *
+ * Goes through the same route the web client calls on mount, so this reads what
+ * a user coming back to the tab actually gets — not what the live stream said.
+ * Polls briefly because finalize-time enrichment lands just after the run turns
+ * terminal; it does not tolerate a missing event.
+ */
+async function readPersistedRunErrorEvent(
+  url: string,
+  encoded: string,
+): Promise<PersistedStatusEvent> {
+  const { projectId, conversationId, headers } = decodeFixtureIdentity(encoded);
+  const startedAt = Date.now();
+  let last: PersistedStatusEvent | null = null;
+  while (Date.now() - startedAt < 10_000) {
+    const response = await fetch(
+      `${url}/api/projects/${encodeURIComponent(projectId)}`
+        + `/conversations/${encodeURIComponent(conversationId)}/messages`,
+      { headers },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { messages?: PersistedMessage[] };
+    for (const message of (body.messages ?? []).slice().reverse()) {
+      if (message.role !== 'assistant') continue;
+      const events = message.events ?? [];
+      for (let i = events.length - 1; i >= 0; i--) {
+        const event = events[i];
+        if (event?.kind === 'status' && event.label === 'error') {
+          last = event;
+          // The finalizer rewrites this event a beat after the run turns
+          // terminal, to stamp the run's classification. Wait for that pass so
+          // the assertions read the settled row rather than the first write.
+          if (typeof event.code === 'string' && typeof event.failureCategory === 'string') {
+            return event;
+          }
+        }
+      }
+    }
+    await delay(50);
+  }
+  if (last) return last;
+  throw new Error('conversation never persisted a status:error event');
+}
+
+function decodeFixtureIdentity(encoded: string): {
+  projectId: string;
+  conversationId: string;
+  headers: Record<string, string>;
+} {
+  const [projectId, conversationId, workspaceId, workspaceMemberId] = encoded.split('::');
+  if (!projectId || !conversationId || !workspaceId || !workspaceMemberId) {
+    throw new Error(`invalid ACP handshake fixture identity: ${encoded}`);
+  }
+  return {
+    projectId,
+    conversationId,
+    headers: {
+      'x-od-workspace-id': workspaceId,
+      'x-od-workspace-type': 'personal',
+      'x-od-workspace-member-id': workspaceMemberId,
+      'x-od-workspace-role': 'owner',
+    },
+  };
+}
+
 async function readRunEvents(eventsLogPath: string): Promise<RunEvent[]> {
   let raw = '';
   try {
@@ -516,6 +713,7 @@ function snapshotEnv(): Record<string, string | undefined> {
     OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
     POSTHOG_KEY: process.env.POSTHOG_KEY,
     POSTHOG_HOST: process.env.POSTHOG_HOST,
+    OD_NEXT_STRATEGY_ROLLOUT: process.env.OD_NEXT_STRATEGY_ROLLOUT,
   };
 }
 
@@ -593,16 +791,8 @@ async function startRun(
   encoded: string,
   message: string,
 ): Promise<{ runId: string; headers: Record<string, string> }> {
-  const [projectId, conversationId, workspaceId, workspaceMemberId] = encoded.split('::');
-  if (!projectId || !conversationId || !workspaceId || !workspaceMemberId) {
-    throw new Error(`invalid ACP handshake fixture identity: ${encoded}`);
-  }
-  const workspaceHeaders = {
-    'x-od-workspace-id': workspaceId,
-    'x-od-workspace-type': 'personal',
-    'x-od-workspace-member-id': workspaceMemberId,
-    'x-od-workspace-role': 'owner',
-  };
+  const { projectId, conversationId, headers: workspaceHeaders } =
+    decodeFixtureIdentity(encoded);
   const runResponse = await fetch(`${url}/api/runs`, {
     method: 'POST',
     headers: {

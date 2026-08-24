@@ -142,6 +142,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+/**
+ * The CLI build a failure frame reports, lifted out of its structured
+ * `details` bag so persistence can keep it.
+ *
+ * The version is DATA, not prose: the daemon has no locale, so a
+ * version-specific failure (`AGENT_CLI_SESSION_REFUSED`) ships the build it
+ * observed and lets the client write the sentence. That only survives a reload
+ * if the persisted event carries it too — `ChatPane` rebuilds the failure card
+ * from the stored message, never from a replayed stream — so a version that
+ * reaches the live client and not the database degrades to the version-less
+ * copy exactly when the user comes back to act on it.
+ *
+ * Validated rather than trusted: `details` is a pass-through bag that also
+ * carries the agent's own JSON-RPC `error.data`, so a non-string or blank value
+ * is dropped rather than persisted for the client to render at a user.
+ */
+function readAgentCliVersion(details: unknown): string | null {
+  if (!isRecord(details)) return null;
+  const value = details.agentCliVersion;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
 export function persistRunEventToAssistantMessage(
   db: SqliteDb,
   run: ChatRunMessageState,
@@ -354,11 +376,13 @@ export function runSseEventToPersistedAgentEvent(
       : typeof record.message === 'string'
         ? record.message
         : '';
+    const agentCliVersion = readAgentCliVersion(error.details);
     return {
       kind: 'status',
       label: 'error',
       ...(message ? { detail: message } : {}),
       ...(typeof error.code === 'string' ? { code: error.code } : {}),
+      ...(agentCliVersion ? { agentCliVersion } : {}),
     };
   }
   if (event !== 'agent') return null;
