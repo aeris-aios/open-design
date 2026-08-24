@@ -122,6 +122,11 @@ const residualAllowedExactPaths = new Set([
   // precedent as `fake-vela.mjs`: Vitest puts it on PATH and the daemon
   // spawns it, so it must be directly executable (shebang + .mjs).
   "apps/daemon/tests/fixtures/fake-acp-handshake-cli.mjs",
+  // Fake `kimi acp` ACP stdio stub used by the stdio-MCP wiring test. It
+  // records the `session/new` params the daemon actually sends, and the test
+  // spawns it through a PATH shim, so it must be directly executable by Node
+  // without a transform — same precedent as `fake-vela.mjs` above.
+  "apps/daemon/tests/fixtures/fake-kimi-acp-cli.mjs",
   "tools/dev/bin/tools-dev.mjs",
   "tools/dev/esbuild.config.mjs",
   "tools/pack/bin/tools-pack.mjs",

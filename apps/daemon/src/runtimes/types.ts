@@ -315,6 +315,13 @@ export type RuntimeAgentDef = {
   // MCP `map[string]string` shape. Leave `undefined` (defaults to 'array')
   // for all other agents — the existing behavior is unchanged.
   acpMcpEnvFormat?: 'array' | 'map';
+  // First version of this agent whose ACP `session/new` handler rejects stdio
+  // MCP servers, e.g. `'0.37.0'` for Kimi Code CLI. When set, the ACP session
+  // withholds stdio entries from any build at or above it and sends only the
+  // transports that build still accepts. Leave `undefined` for every agent that
+  // still ingests stdio MCP servers at all versions — the existing behavior is
+  // unchanged. See `agent-protocol/acp/stdio-mcp.ts` for the mechanism.
+  acpStdioMcpRemovedInVersion?: string;
 };
 
 export type DetectedAgent = Omit<
