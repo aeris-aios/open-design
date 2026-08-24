@@ -18,6 +18,10 @@
 .new-project-modal {
   width: 100%;
   max-width: 840px;
+  /* Keep one responsive frame while tabs swap forms of different natural
+     heights. Without an explicit height, Prototype -> Media/Image shrinks the
+     dialog on the first committed frame and reads as a flash. */
+  height: min(820px, calc(100vh - 80px));
   max-height: calc(100vh - 80px);
   background: var(--bg-panel);
   border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);

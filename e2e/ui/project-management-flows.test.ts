@@ -294,6 +294,32 @@ test.describe('new project modal from left rail', () => {
     await expect(page.getByTestId('new-project-media-surface-audio')).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.newproj-title')).toContainText('New audio');
   });
+
+  test('[P1] new project frame stays stable when switching from prototype to image', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await stubEmptyProjectsNewProjectData(page);
+    await openNewProjectFromProjectsView(page);
+
+    const modal = page.locator('.new-project-modal');
+    const stableModalHeight = async (): Promise<number> => modal.evaluate(async (element) => {
+      let previous = -1;
+      let stableFrames = 0;
+      while (stableFrames < 3) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        const current = element.getBoundingClientRect().height;
+        stableFrames = Math.abs(current - previous) < 0.01 ? stableFrames + 1 : 0;
+        previous = current;
+      }
+      return previous;
+    });
+
+    const prototypeHeight = await stableModalHeight();
+    await page.getByTestId('new-project-tab-media').click();
+    await expect(page.locator('.newproj-title')).toContainText('New image');
+    const imageHeight = await stableModalHeight();
+
+    expect(imageHeight).toBeCloseTo(prototypeHeight, 0);
+  });
 });
 
 test('[P0] projects empty state create action opens the new project flow', async ({ page }) => {
