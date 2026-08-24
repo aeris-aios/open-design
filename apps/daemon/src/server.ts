@@ -12940,6 +12940,29 @@ export async function startServer({
     const freezeProgressClock = () => {
       progressClockFrozen = true;
     };
+    /**
+     * The ACP bridge has reached a terminal verdict for this attempt: it has
+     * already emitted the error and SIGTERMed the child. Hand the attempt over
+     * to the close handler under THAT verdict.
+     *
+     * Retiring the outer chat inactivity watchdog is the point. `fail()` issues
+     * one direct SIGTERM and nothing escalates it, while the outer watchdog is
+     * still armed from the agent's last real output — so a child that lingers
+     * past that ceiling lets `failForInactivity` fire on a run it does not yet
+     * consider terminal, overwrite `terminal_trigger` with `inactivity_watchdog`,
+     * and emit a second failure. The stall then reads as the wrong clock, which
+     * is the confusion `acp_stage_timeout` exists to remove.
+     *
+     * Escalating the teardown is the other half: without it, retiring the
+     * watchdog would leave a SIGTERM-ignoring child with nothing to reap it.
+     * `scheduleForcedChildShutdown` captures this attempt's child, so a retry
+     * that swaps `run.child` inside the grace window is not affected.
+     */
+    const retireAttemptOnAcpVerdict = () => {
+      freezeProgressClock();
+      clearInactivityWatchdog();
+      scheduleForcedChildShutdown();
+    };
     const noteAgentActivity = () => {
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
@@ -14255,7 +14278,7 @@ export async function startServer({
           // reaction to the SIGTERM this error is about to trigger, not
           // progress. Freeze here so the recorded age keeps describing the
           // silence rather than our own teardown.
-          if (event === 'error') freezeProgressClock();
+          if (event === 'error') retireAttemptOnAcpVerdict();
           if (event === 'error') flushVisibleAgentStderr();
           if (def.id === 'amr' && event === 'error') {
             const failure = classifyAmrAccountFailureSignal({

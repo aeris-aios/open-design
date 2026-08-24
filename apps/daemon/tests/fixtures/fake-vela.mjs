@@ -61,6 +61,10 @@
  *   FAKE_VELA_STDERR_ON_SIGTERM  – when set to '1', log a shutdown line to
  *                                   stderr on SIGTERM and exit 143, the way a
  *                                   real CLI does when the host kills it
+ *   FAKE_VELA_IGNORE_SIGTERM     – when set to '1', swallow SIGTERM and stay
+ *                                   alive, modelling a CLI (or a wrapper shim)
+ *                                   that is slow to die or never honours the
+ *                                   signal at all
  *   FAKE_VELA_PROMPT_RESULT_DELAY_MS – delay the terminal session/prompt result
  *                                      after streaming substantive output
  *   FAKE_VELA_MODELS             – newline-separated `vela models` stdout
@@ -101,6 +105,7 @@ const STALL_HEARTBEAT_MS = env.FAKE_VELA_STALL_HEARTBEAT_MS === undefined
 const TEXT_BEFORE_STALL = env.FAKE_VELA_TEXT_BEFORE_STALL === '1';
 const OPEN_TOOL_BEFORE_STALL = env.FAKE_VELA_OPEN_TOOL_BEFORE_STALL === '1';
 const STDERR_ON_SIGTERM = env.FAKE_VELA_STDERR_ON_SIGTERM === '1';
+const IGNORE_SIGTERM = env.FAKE_VELA_IGNORE_SIGTERM === '1';
 const PROMPT_RESULT_DELAY_MS = Number(env.FAKE_VELA_PROMPT_RESULT_DELAY_MS) || 0;
 const OMIT_PROMPT_USAGE = env.FAKE_VELA_OMIT_PROMPT_USAGE === '1';
 const STAY_ALIVE_AFTER_PROMPT_MS = Number(env.FAKE_VELA_STAY_ALIVE_AFTER_PROMPT_MS) || 0;
@@ -203,6 +208,13 @@ if (STDERR_ON_SIGTERM) {
     logDiag('shutting down after SIGTERM');
     exit(143);
   });
+}
+
+// A child that does not die on the host's first SIGTERM. The daemon must still
+// finish the attempt under the verdict it already reached, rather than letting a
+// second watchdog re-terminalize the run while this process lingers.
+if (IGNORE_SIGTERM) {
+  process.on('SIGTERM', () => {});
 }
 
 // Append one line per session-bind method (`new` / `load`) to the file named by

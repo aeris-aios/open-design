@@ -71,6 +71,9 @@ const FAKE_VELA = fileURLToPath(new URL('../fixtures/fake-vela.mjs', import.meta
 // bridge because it is armed from session/prompt).
 const ACP_STAGE_TIMEOUT_MS = 2_000;
 const OUTER_INACTIVITY_TIMEOUT_MS = 120_000;
+// Just above ACP_STAGE_TIMEOUT_MS so the stage watchdog fires first and the
+// outer one is still pending when it does.
+const LINGER_INACTIVITY_TIMEOUT_MS = 3_000;
 
 describe('ACP stall progress age', () => {
   const originalEnv = snapshotEnv();
@@ -256,6 +259,64 @@ describe('ACP stall progress age', () => {
       progressAgeFailureContext(finished, run),
     ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
   }, 60_000);
+
+  // Attribution has to survive a child that is slow to die. `fail()` issues one
+  // direct SIGTERM and nothing escalates it, while the outer chat inactivity
+  // watchdog stays armed from the agent's last real output. If the child lingers
+  // past that ceiling, `failForInactivity` still sees a non-terminal run, fires,
+  // and overwrites `terminal_trigger` with `inactivity_watchdog` — attributing
+  // the stall to the wrong clock, which is the exact confusion this PR exists to
+  // remove. The ACP verdict owns the attempt: the outer watchdog must be retired
+  // and the teardown escalated once it lands.
+  it('keeps acp_stage_timeout attribution when the child outlives the first SIGTERM', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-stall-linger-bin-'));
+    const fakeVela = await writeSilentlyStallingVela(binDir, 'vela-silent-stall-linger', {
+      ignoreSigterm: true,
+    });
+
+    process.env.POSTHOG_KEY = 'phc_test_acp_stall_linger';
+    delete process.env.POSTHOG_HOST;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
+    process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
+    process.env.OD_ACP_STAGE_TIMEOUT_MS = String(ACP_STAGE_TIMEOUT_MS);
+    // Deliberately just above the stage timeout: the ACP watchdog wins the race,
+    // and the outer watchdog is still armed and would fire a beat later.
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = String(LINGER_INACTIVITY_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '0';
+    process.env.OD_CHAT_RUN_INACTIVITY_KILL_GRACE_MS = '500';
+
+    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    await putConfig(started.url, {
+      agentId: 'amr',
+      agentCliEnv: { amr: { VELA_BIN: fakeVela } },
+      telemetry: { metrics: true, content: false, artifactManifest: false },
+      privacyDecisionAt: Date.now(),
+    });
+
+    const run = await createAndWaitForAmrRun(started.url);
+    expect(run.status).toBe('failed');
+
+    const finished = await waitForRunFinished(run.id);
+
+    // The ACP stage watchdog reached the verdict first, so it owns the terminal
+    // attribution even though the child needed escalation to actually die.
+    expect(
+      finished.terminal_trigger,
+      progressAgeFailureContext(finished, run),
+    ).toBe('acp_stage_timeout');
+    expect(finished.failure_category).toBe('timeout');
+    expect(finished.failure_detail).toBe('timeout');
+
+    // And the age still describes the silence, not the drawn-out teardown.
+    expect(
+      finished.last_progress_age_ms,
+      progressAgeFailureContext(finished, run),
+    ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
+  }, 60_000);
 });
 
 /**
@@ -322,7 +383,11 @@ async function waitForRunFinished(runId: string): Promise<Record<string, any>> {
 async function writeSilentlyStallingVela(
   dir: string,
   name: string,
-  options: { openToolBeforeStall?: boolean; stderrOnSigterm?: boolean } = {},
+  options: {
+    openToolBeforeStall?: boolean;
+    stderrOnSigterm?: boolean;
+    ignoreSigterm?: boolean;
+  } = {},
 ): Promise<string> {
   const bin = path.join(dir, name);
   await writeFile(bin, `#!/bin/sh
@@ -331,7 +396,7 @@ if [ "$1" = "agent" ] && [ "$2" = "run" ]; then
   export FAKE_VELA_TEXT_BEFORE_STALL=1
   export FAKE_VELA_STALL_HEARTBEAT_MS=0
   export FAKE_VELA_REQUIRE_SET_MODEL=0
-${options.openToolBeforeStall ? '  export FAKE_VELA_OPEN_TOOL_BEFORE_STALL=1\n' : ''}${options.stderrOnSigterm ? '  export FAKE_VELA_STDERR_ON_SIGTERM=1\n' : ''}fi
+${options.openToolBeforeStall ? '  export FAKE_VELA_OPEN_TOOL_BEFORE_STALL=1\n' : ''}${options.stderrOnSigterm ? '  export FAKE_VELA_STDERR_ON_SIGTERM=1\n' : ''}${options.ignoreSigterm ? '  export FAKE_VELA_IGNORE_SIGTERM=1\n' : ''}fi
 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_VELA)} "$@"
 `, 'utf8');
   await chmod(bin, 0o755);
@@ -428,6 +493,7 @@ function snapshotEnv(): Record<string, string | undefined> {
     OD_ACP_STAGE_TIMEOUT_MS: process.env.OD_ACP_STAGE_TIMEOUT_MS,
     OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS: process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS,
     OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS: process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS,
+    OD_CHAT_RUN_INACTIVITY_KILL_GRACE_MS: process.env.OD_CHAT_RUN_INACTIVITY_KILL_GRACE_MS,
     VELA_RUNTIME_KEY: process.env.VELA_RUNTIME_KEY,
     VELA_LINK_URL: process.env.VELA_LINK_URL,
   };
