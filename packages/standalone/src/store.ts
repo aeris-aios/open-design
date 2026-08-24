@@ -29,6 +29,21 @@ function assertNamespace(value: string): void {
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) throw new Error(`invalid standalone namespace: ${value}`);
 }
 
+function versionOrder(value: string, channel: string): number[] {
+  const match = new RegExp(`^(\\d+)\\.(\\d+)\\.(\\d+)-${channel}\\.(\\d+)$`).exec(value);
+  if (match == null) throw new Error(`invalid ${channel} release version: ${value}`);
+  return match.slice(1).map(Number);
+}
+
+function compareVersions(left: string, right: string, channel: string): number {
+  const a = versionOrder(left, channel);
+  const b = versionOrder(right, channel);
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!;
+  }
+  return 0;
+}
+
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${Date.now()}.${atomicSequence++}.tmp`;
@@ -174,6 +189,13 @@ export class StandaloneStore {
     await writeJsonAtomic(this.generationPath(id), generation);
     await this.withStateTransaction(async () => {
       const state = await this.readState();
+      for (const existingId of new Set([state.active, state.attempt])) {
+        if (existingId === null || existingId === id) continue;
+        const existing = await readJson<GenerationRecord>(this.generationPath(existingId));
+        const order = compareVersions(existing.releaseVersion, generation.releaseVersion, generation.channel);
+        if (order > 0) throw new Error(`channel head would downgrade ${existing.releaseVersion} to ${generation.releaseVersion}`);
+        if (order === 0) throw new Error(`release version ${generation.releaseVersion} has conflicting metadata generations ${existing.id} and ${generation.id}`);
+      }
       await writeJsonAtomic(this.statePath, { ...state, attempt: id });
     });
     return generation;
@@ -210,6 +232,10 @@ export class StandaloneStore {
     const state = await this.readState();
     if (state.active === null) throw new Error("no active standalone generation");
     return readJson<GenerationRecord>(this.generationPath(state.active));
+  }
+
+  generation(id: string): Promise<GenerationRecord> {
+    return readJson<GenerationRecord>(this.generationPath(id));
   }
 
   async resolveComponent(name: string, readArtifact: ArtifactReader): Promise<string> {

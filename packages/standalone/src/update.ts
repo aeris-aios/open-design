@@ -22,6 +22,16 @@ export type InstalledShellIdentity = {
   runtime: { name: string; version: string };
 };
 
+export function supportsInstalledShell(envelope: SignedStandaloneMetadata, shell: InstalledShellIdentity): boolean {
+  return envelope.metadata.shellCompatibility.some((candidate) =>
+    candidate.shell === shell.shell
+    && candidate.target === shell.target
+    && candidate.shellVersion === shell.shellVersion
+    && candidate.runtime.name === shell.runtime.name
+    && candidate.runtime.version === shell.runtime.version
+  );
+}
+
 export type UpdatePreparation =
   | { status: "prepared"; generation: GenerationRecord }
   | { status: "current"; generationId: string; applyRequired: boolean }
@@ -71,24 +81,18 @@ export class StandaloneUpdater {
     if (envelope.metadata.channel !== this.channel || envelope.metadata.releaseVersion !== lane.releaseVersion) {
       throw new Error(`${this.contentLane} lane metadata identity mismatch`);
     }
-    const compatible = envelope.metadata.shellCompatibility.some((candidate) =>
-      candidate.shell === this.shell.shell
-      && candidate.target === this.shell.target
-      && candidate.shellVersion === this.shell.shellVersion
-      && candidate.runtime.name === this.shell.runtime.name
-      && candidate.runtime.version === this.shell.runtime.version
-    );
-    if (!compatible) return { status: "shell-reinstall-required", releaseVersion: lane.releaseVersion };
     const id = sha256Hex(canonicalJson(envelope.metadata));
     const state = await this.store.readState();
     if (state.attempt === id) return { status: "current", generationId: id, applyRequired: state.attempt !== state.active };
     if (state.active === id) return { status: "current", generationId: id, applyRequired: false };
-    if (state.active !== null) {
-      const active = await this.store.activeGeneration();
-      const order = compareVersions(active.releaseVersion, lane.releaseVersion, this.channel);
-      if (order > 0) throw new Error(`channel head would downgrade ${active.releaseVersion} to ${lane.releaseVersion}`);
-      if (order === 0) return { status: "current", generationId: active.id, applyRequired: false };
+    for (const existingId of new Set([state.active, state.attempt])) {
+      if (existingId === null) continue;
+      const existing = await this.store.generation(existingId);
+      const order = compareVersions(existing.releaseVersion, lane.releaseVersion, this.channel);
+      if (order > 0) throw new Error(`channel head would downgrade ${existing.releaseVersion} to ${lane.releaseVersion}`);
+      if (order === 0) throw new Error(`release version ${lane.releaseVersion} has conflicting metadata generations ${existing.id} and ${id}`);
     }
+    if (!supportsInstalledShell(envelope, this.shell)) return { status: "shell-reinstall-required", releaseVersion: lane.releaseVersion };
     const generation = await this.store.prepare(envelope, this.trustedKeys, (url) => this.source.readArtifact(url));
     return { status: "prepared", generation };
   }

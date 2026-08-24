@@ -55,6 +55,21 @@ describe("standalone exact skeleton", () => {
     await expect(store.prepare(envelope, new Map([["test-key", keys.publicKey]]), async () => bytes)).rejects.toThrow("signature verification failed");
   });
 
+  it("preserves a newer prepared generation against downgrade and equivocation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "standalone-ordering-")); roots.push(root);
+    const keys = generateKeyPairSync("ed25519");
+    const trusted = new Map([["test-key", keys.publicKey]]);
+    const store = new StandaloneStore(root, "terminal-betahyx");
+    const newestBytes = Buffer.from("newest");
+    const newest = await store.prepare(signStandaloneMetadata(metadata(newestBytes, "0.1.0-betahyx.3"), "test-key", keys.privateKey), trusted, async () => newestBytes);
+
+    const olderBytes = Buffer.from("older");
+    await expect(store.prepare(signStandaloneMetadata(metadata(olderBytes, "0.1.0-betahyx.2"), "test-key", keys.privateKey), trusted, async () => olderBytes)).rejects.toThrow("would downgrade");
+    const equivocalBytes = Buffer.from("equivocal");
+    await expect(store.prepare(signStandaloneMetadata(metadata(equivocalBytes, "0.1.0-betahyx.3"), "test-key", keys.privateKey), trusted, async () => equivocalBytes)).rejects.toThrow("conflicting metadata generations");
+    expect(await store.readState()).toMatchObject({ attempt: newest.id });
+  });
+
   it("supports dual-sign key rotation and defers automatic activation until cold start", async () => {
     const root = await mkdtemp(join(tmpdir(), "standalone-update-")); roots.push(root);
     const artifact = Buffer.from("closure-update");
@@ -104,6 +119,25 @@ describe("standalone exact skeleton", () => {
     const activated = await updater.activateOnColdStart();
     expect(activated).toBeNull();
     expect(await store.readState()).toMatchObject({ active: active.id, attempt: null });
+    const older = metadata(artifact, "0.1.0-betahyx.0");
+    older.shellCompatibility = [{ shell: "terminal", target: "darwin-arm64", shellVersion: "9.9.9", runtime: { name: "node", version: "24.18.0" } }];
+    const olderEnvelope = signStandaloneMetadata(older, "next", nextKeys.privateKey);
+    const olderBytes = Buffer.from(canonicalJson(olderEnvelope));
+    const olderHead = signStandaloneChannelHead({
+      schemaVersion: 1,
+      channel: "betahyx",
+      publishedAt: "2026-08-24T00:00:00.000Z",
+      lanes: { closure: { releaseVersion: older.releaseVersion, url: "https://fixtures.invalid/older-metadata.json", sha256: sha256Hex(olderBytes), size: olderBytes.byteLength } },
+    }, [{ keyId: "next", privateKey: nextKeys.privateKey }]);
+    const replay = new StandaloneUpdater(
+      "betahyx",
+      "closure",
+      { shell: "terminal", target: "darwin-arm64", shellVersion: "0.1.0", runtime: { name: "node", version: "24.18.0" } },
+      trusted,
+      store,
+      { readChannelHead: async () => olderHead, readArtifact: async (url) => url.endsWith("older-metadata.json") ? olderBytes : artifact },
+    );
+    await expect(replay.prepareLatest()).rejects.toThrow("would downgrade");
     const preview = metadata(artifact);
     preview.channel = "previewhyx";
     preview.releaseVersion = "0.1.0-previewhyx.1";
