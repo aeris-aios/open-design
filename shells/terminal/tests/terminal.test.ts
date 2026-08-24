@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FileFixtureLifecyclePort, OFFICIAL_NODE_VERSION, assertOfficialNodeVersion } from "../src/index.js";
+import { FileFixtureLifecyclePort, OFFICIAL_NODE_VERSION, applyTerminalUpdate, assertOfficialNodeVersion } from "../src/index.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true }))); });
@@ -22,5 +22,13 @@ describe("Terminal shell skeleton", () => {
     await expect(port.start(generation)).resolves.toEqual({ state: "running", generationId: "generation-1" });
     await expect(new FileFixtureLifecyclePort(root, "betahyx-local").status()).resolves.toEqual({ state: "running", generationId: "generation-1" });
     await expect(port.stop()).resolves.toEqual({ state: "stopped", generationId: "generation-1" });
+  });
+
+  it("applies an already-prepared update returned as current", async () => {
+    const lifecycle = { state: "running" as const, generationId: "generation-2" };
+    const applyNow = vi.fn(async () => lifecycle);
+    const preparation = { status: "current" as const, generationId: "generation-2" };
+    await expect(applyTerminalUpdate({ applyNow } as never, {} as never, preparation)).resolves.toEqual({ preparation, lifecycle });
+    expect(applyNow).toHaveBeenCalledOnce();
   });
 });

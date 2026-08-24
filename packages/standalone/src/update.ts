@@ -98,8 +98,11 @@ export class StandaloneUpdater {
   }
 
   async applyNow(launcher: VersionedLauncher): Promise<LifecycleStatus> {
+    const state = await this.store.readState();
+    if (state.attempt === null || state.attempt === state.active) throw new Error("no prepared generation to apply");
     await launcher.stop();
-    await this.store.activatePrepared();
+    const activated = await this.store.activatePrepared();
+    if (activated === null) throw new Error("no prepared generation to apply");
     return launcher.start();
   }
 }

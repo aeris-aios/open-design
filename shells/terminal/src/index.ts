@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { canonicalJson, type GenerationRecord, type LifecyclePort, type LifecycleStatus } from "@open-design/standalone";
+import { canonicalJson, replaceFile, type GenerationRecord, type LifecyclePort, type LifecycleStatus, type StandaloneUpdater, type UpdatePreparation, type VersionedLauncher } from "@open-design/standalone";
 
 export const TERMINAL_SHELL_VERSION = "0.1.0";
 export const OFFICIAL_NODE_VERSION = "24.18.0";
@@ -33,7 +33,11 @@ export class FileFixtureLifecyclePort implements LifecyclePort {
     await mkdir(dirname(this.path), { recursive: true });
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(temporary, canonicalJson(status), { encoding: "utf8", flag: "wx" });
-    await rename(temporary, this.path);
+    try { await replaceFile(temporary, this.path); }
+    catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
     return status;
   }
 
@@ -47,4 +51,8 @@ export class FileFixtureLifecyclePort implements LifecyclePort {
     const current = await this.read();
     return this.write({ state: "stopped", generationId: current.generationId });
   }
+}
+
+export async function applyTerminalUpdate(updater: StandaloneUpdater, launcher: VersionedLauncher, preparation: UpdatePreparation): Promise<{ preparation: UpdatePreparation; lifecycle: LifecycleStatus }> {
+  return { preparation, lifecycle: await updater.applyNow(launcher) };
 }

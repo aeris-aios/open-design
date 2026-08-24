@@ -33,7 +33,23 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${Date.now()}.${atomicSequence++}.tmp`;
   await writeFile(temporary, canonicalJson(value), { encoding: "utf8", flag: "wx" });
-  await rename(temporary, path);
+  try { await replaceFile(temporary, path); }
+  catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function replaceFile(from: string, to: string): Promise<void> {
+  try { await rename(from, to); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (process.platform !== "win32" || (code !== "EPERM" && code !== "EEXIST")) throw error;
+    await unlink(to).catch((unlinkError: NodeJS.ErrnoException) => {
+      if (unlinkError.code !== "ENOENT") throw unlinkError;
+    });
+    await rename(from, to);
+  }
 }
 
 async function readJson<T>(path: string): Promise<T> {
@@ -129,7 +145,7 @@ export class StandaloneStore {
     await mkdir(dirname(destination), { recursive: true });
     const temporary = `${destination}.${process.pid}.${Date.now()}.${atomicSequence++}.tmp`;
     await writeFile(temporary, bytes, { flag: "wx" });
-    try { await rename(temporary, destination); }
+    try { await replaceFile(temporary, destination); }
     catch (error) {
       await unlink(temporary).catch(() => undefined);
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -207,8 +223,14 @@ export class StandaloneStore {
     return this.withStateTransaction(async () => {
       const state = await this.readState();
       const fallback = state.lastSuccessful;
+      const generation = fallback === null ? null : await readJson<GenerationRecord>(this.generationPath(fallback));
       await writeJsonAtomic(this.statePath, { ...state, attempt: null, active: fallback });
-      return fallback === null ? null : readJson<GenerationRecord>(this.generationPath(fallback));
+      return generation;
     });
+  }
+
+  async lastSuccessfulGeneration(): Promise<GenerationRecord | null> {
+    const state = await this.readState();
+    return state.lastSuccessful === null ? null : readJson<GenerationRecord>(this.generationPath(state.lastSuccessful));
   }
 }

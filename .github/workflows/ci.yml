@@ -321,6 +321,11 @@ jobs:
           pnpm --filter @open-design/platform test
           pnpm --filter @open-design/sidecar test
           pnpm --filter @open-design/sidecar-proto test
+          if [ "${{ fromJSON(needs.plan.outputs.scopes).terminal_scene_required }}" = "true" ]; then
+            pnpm --filter @open-design/standalone test
+            pnpm --filter @open-design/closure test
+            pnpm --filter @open-design/terminal test
+          fi
           if [ "${{ fromJSON(needs.plan.outputs.scopes).tools_dev_tests_required }}" = "true" ]; then
             pnpm --filter @open-design/tools-dev test
           fi

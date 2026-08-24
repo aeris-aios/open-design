@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { FossilBootloader, StandaloneStore, StandaloneUpdater, VersionedLauncher, type SignedStandaloneChannelHead, type SignedStandaloneMetadata } from "@open-design/standalone";
-import { FileFixtureLifecyclePort, OFFICIAL_NODE_VERSION, TERMINAL_SHELL_IDENTITY, TERMINAL_SHELL_VERSION } from "./index.js";
+import { FileFixtureLifecyclePort, OFFICIAL_NODE_VERSION, TERMINAL_SHELL_IDENTITY, TERMINAL_SHELL_VERSION, applyTerminalUpdate } from "./index.js";
 
 function option(name: string, fallback?: string): string {
   const index = process.argv.indexOf(name);
@@ -63,8 +63,8 @@ async function main(): Promise<void> {
       { readChannelHead: async () => JSON.parse(Buffer.from(await readArtifact(headUrl)).toString("utf8")) as SignedStandaloneChannelHead, readArtifact },
     );
     const preparation = await updater.prepareLatest();
-    output = command === "apply-update" && preparation.status === "prepared"
-      ? { preparation, lifecycle: await updater.applyNow(launcher) }
+    output = command === "apply-update"
+      ? await applyTerminalUpdate(updater, launcher, preparation)
       : preparation;
   } else if (command === "status") {
     output = await launcher.status();

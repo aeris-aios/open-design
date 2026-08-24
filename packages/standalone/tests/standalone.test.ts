@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,11 +9,11 @@ import { FossilBootloader, StandaloneStore, StandaloneUpdater, VersionedLauncher
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
-function metadata(bytes: Uint8Array): StandaloneMetadata {
+function metadata(bytes: Uint8Array, releaseVersion = "0.1.0-betahyx.1"): StandaloneMetadata {
   return {
     schemaVersion: 1,
     channel: "betahyx",
-    releaseVersion: "0.1.0-betahyx.1",
+    releaseVersion,
     standaloneVersion: "0.1.0",
     sourceCommit: "7a4175c86fe305b6432081c3dc269cd4bd4ec04d",
     publishedAt: "2026-08-24T00:00:00.000Z",
@@ -93,12 +93,73 @@ describe("standalone exact skeleton", () => {
     );
     await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "prepared" });
     expect(await store.readState()).toMatchObject({ active: null, attempt: expect.any(String) });
+    await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "current" });
+    const launcher = new VersionedLauncher(store, new FixturePort());
+    await expect(updater.applyNow(launcher)).resolves.toMatchObject({ state: "running" });
+    expect(await store.readState()).toMatchObject({ active: expect.any(String), attempt: null });
+    await expect(updater.applyNow(launcher)).rejects.toThrow("no prepared generation to apply");
+
+    await expect(updater.prepareLatest()).resolves.toMatchObject({ status: "current" });
+    const active = await store.activeGeneration();
     const activated = await updater.activateOnColdStart();
-    expect(await store.readState()).toMatchObject({ active: activated!.id, attempt: activated!.id });
+    expect(activated).toBeNull();
+    expect(await store.readState()).toMatchObject({ active: active.id, attempt: null });
     const preview = metadata(artifact);
     preview.channel = "previewhyx";
     preview.releaseVersion = "0.1.0-previewhyx.1";
     const previewEnvelope = signStandaloneMetadata(preview, "next", nextKeys.privateKey);
     await expect(store.prepare(previewEnvelope, trusted, async () => artifact)).rejects.toThrow("already bound to betahyx");
+  });
+
+  it("recovers the lifecycle before committing a failed activation rollback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "standalone-rollback-")); roots.push(root);
+    const keys = generateKeyPairSync("ed25519");
+    const trusted = new Map([["test-key", keys.publicKey]]);
+    const store = new StandaloneStore(root, "terminal-betahyx");
+    const firstBytes = Buffer.from("first");
+    const first = await store.prepare(signStandaloneMetadata(metadata(firstBytes), "test-key", keys.privateKey), trusted, async () => firstBytes);
+    await store.commit(first.id);
+    const port = new FixturePort();
+    await new VersionedLauncher(store, port).start();
+
+    const secondBytes = Buffer.from("second");
+    const second = await store.prepare(signStandaloneMetadata(metadata(secondBytes, "0.1.0-betahyx.2"), "test-key", keys.privateKey), trusted, async () => secondBytes);
+    await store.commit(second.id);
+    const failingPort: LifecyclePort = {
+      status: () => port.status(),
+      stop: () => port.stop(),
+      start: async (generation) => {
+        if (generation.id === second.id) throw new Error("activation failed");
+        return port.start(generation);
+      },
+    };
+
+    await expect(new VersionedLauncher(store, failingPort).start()).resolves.toEqual({ state: "running", generationId: first.id });
+    expect(await store.readState()).toEqual({ schemaVersion: 1, active: first.id, attempt: null, lastSuccessful: first.id });
+    await expect(port.status()).resolves.toEqual({ state: "running", generationId: first.id });
+  });
+
+  it("leaves generation state unchanged when the rollback record is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "standalone-missing-rollback-")); roots.push(root);
+    const keys = generateKeyPairSync("ed25519");
+    const trusted = new Map([["test-key", keys.publicKey]]);
+    const store = new StandaloneStore(root, "terminal-betahyx");
+    const firstBytes = Buffer.from("first");
+    const first = await store.prepare(signStandaloneMetadata(metadata(firstBytes), "test-key", keys.privateKey), trusted, async () => firstBytes);
+    await store.commit(first.id);
+    await new VersionedLauncher(store, new FixturePort()).start();
+    const secondBytes = Buffer.from("second");
+    const second = await store.prepare(signStandaloneMetadata(metadata(secondBytes, "0.1.0-betahyx.2"), "test-key", keys.privateKey), trusted, async () => secondBytes);
+    await store.commit(second.id);
+    await unlink(join(root, "generations", `${first.id}.json`));
+    const stateBefore = await store.readState();
+    const failingPort: LifecyclePort = {
+      status: async () => ({ state: "stopped", generationId: null }),
+      stop: async () => ({ state: "stopped", generationId: null }),
+      start: async () => { throw new Error("activation failed"); },
+    };
+
+    await expect(new VersionedLauncher(store, failingPort).start()).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await store.readState()).toEqual(stateBefore);
   });
 });

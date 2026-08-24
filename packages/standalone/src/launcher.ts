@@ -19,11 +19,12 @@ export class VersionedLauncher {
       await this.store.markSuccessful(generation.id);
       return status;
     } catch (error) {
-      const fallback = await this.store.rollbackFailedActivation();
+      const fallback = await this.store.lastSuccessfulGeneration();
       if (fallback === null || fallback.id === generation.id) throw error;
       await this.lifecycle.stop();
       const recovered = await this.lifecycle.start(fallback);
       if (recovered.state !== "running" || recovered.generationId !== fallback.id) throw error;
+      await this.store.rollbackFailedActivation();
       await this.store.markSuccessful(fallback.id);
       return recovered;
     }

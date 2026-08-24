@@ -159,7 +159,10 @@
     },
     {
       "id": "terminal-scene-sources",
-      "match": { "prefixes": ["apps/closure/", "packages/standalone/", "shells/terminal/"] },
+      "match": {
+        "prefixes": ["apps/closure/", "packages/standalone/", "shells/terminal/"],
+        "exact": [".github/scripts/pack.py", ".github/scripts/release.py", ".github/workflows/release-exact.yml"]
+      },
       "effects": ["terminal_scene_required", "workspace_validation_required"], "confidence": "certain"
     },
     {
