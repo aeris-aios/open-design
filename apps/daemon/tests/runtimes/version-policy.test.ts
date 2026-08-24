@@ -115,6 +115,16 @@ describe('runtime version policy', () => {
     ['0.1.0-rc.6', undefined],
     ['0.1.0-rc.8', undefined],
     ['0.1.0-rc.14', undefined],
+    // Upstream moved to a new patch line while a policy scoped to `0.1.0-rc.N`
+    // was in flight, which is how "supported" quietly stopped meaning "what
+    // the registry serves". These are the versions actually published there.
+    ['0.1.1-rc.1', undefined],
+    ['0.1.1-rc.2', undefined],
+    // A stable release on a line we support should not read as untested.
+    ['0.1.1', undefined],
+    // Still off the line, still warns. The point is to stop pinning, not to
+    // stop checking.
+    ['0.2.0-rc.1', 'untested-version'],
     ['0.0.9', 'untested-version'],
   ] as const)('accepts %s on the shipped DeepSeek Harness policy', async (version, reason) => {
     const dir = mkdtempSync(path.join(tmpdir(), 'od-dsh-version-'));
