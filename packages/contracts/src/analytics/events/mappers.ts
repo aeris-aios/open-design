@@ -2,6 +2,7 @@
  * @module analytics/events/mappers
  * Enum mapping helpers (code <-> CSV wire format).
  */
+import { HYPERFRAMES_VIDEO_MODEL } from '../../api/projects.js';
 import type { AnalyticsConfigureGlobals, TrackingConfigureAvailability, TrackingConfigureType, TrackingRuntimeType } from '../public-params.js';
 import type { TrackingArtifactKind, TrackingByokProviderId, TrackingCliProviderId, TrackingExecutionMode, TrackingFeedbackProviderId, TrackingFidelity, TrackingFileSizeBucket, TrackingFileType, TrackingNewProjectTab, TrackingProjectKind } from './shared-enums.js';
 import type { TrackingSessionMode, TrackingSettingsArea } from './ui-click.js';
@@ -22,11 +23,10 @@ export function sessionModeToTracking(
 // Code `ProjectKind` from packages/contracts/src/api/projects.ts:
 //   'prototype' | 'deck' | 'template' | 'other' | 'brand' | 'image' | 'video' | 'audio'
 // Discriminates HyperFrames from generic AI video. A HyperFrames project is
-// stored as `kind: 'video'` with `metadata.videoModel === 'hyperframes-html'`
+// stored as `kind: 'video'` with `metadata.videoModel === HYPERFRAMES_VIDEO_MODEL`
 // (the local HTML→MP4 renderer); callers pass that videoModel through so the
 // analytics layer can split it out into its own `project_kind`. See the
 // `'hyperframes'` member docblock on `TrackingProjectKind`.
-const HYPERFRAMES_VIDEO_MODEL = 'hyperframes-html';
 
 // Discriminators read off a project's persisted `metadata` to split the coarse
 // product `kind` into the finer analytics `project_kind` (so a created
