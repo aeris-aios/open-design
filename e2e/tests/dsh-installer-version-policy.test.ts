@@ -84,35 +84,58 @@ describe('DeepSeek Harness installer and daemon version policy agree', () => {
 });
 
 /**
- * The peer ranges in `packages/dsh-runtime/package.json`, reduced to the only
- * thing that decides whether a prerelease can install: for each
- * `major.minor.patch` tuple that carries a prerelease comparator, the lowest
- * release candidate it admits.
+ * The peer ranges that track the DeepSeek Harness version, one entry per
+ * package.
  *
- * semver refuses a prerelease unless some comparator shares its exact tuple AND
- * carries a prerelease of its own, so a tuple missing from this map cannot
- * install at all, however high its number.
+ * Kept per dependency on purpose. Merging every comparator in the manifest into
+ * one table lets a single updated peer vouch for the other four, so a
+ * half-finished bump reads as compatible — the exact partial state this file is
+ * supposed to catch. `@deepseek-ai/cordis*` is excluded: it has its own version
+ * line and never moves with dsh.
  */
-function peerPrereleaseFloors(manifest: string): Map<string, number> {
-  const floors = new Map<string, number>();
-  for (const match of manifest.matchAll(/>=(\d+\.\d+\.\d+)-rc\.(\d+)/gu)) {
-    const tuple = match[1];
-    const floor = Number(match[2]);
-    if (!tuple || Number.isNaN(floor)) continue;
-    const current = floors.get(tuple);
-    if (current === undefined || floor < current) floors.set(tuple, floor);
-  }
-  return floors;
+function dshPeerRanges(manifestSource: string): Record<string, string> {
+  const manifest = JSON.parse(manifestSource) as {
+    peerDependencies?: Record<string, string>;
+  };
+  const peers = manifest.peerDependencies ?? {};
+  return Object.fromEntries(
+    Object.entries(peers).filter(([name]) => name.startsWith('@deepseek-ai/dsh-')),
+  );
 }
 
-function peerCanInstall(floors: Map<string, number>, version: string): boolean {
+/**
+ * The lowest release candidate one range admits for a given
+ * `major.minor.patch`, or undefined when it carries no prerelease comparator
+ * for that tuple at all.
+ *
+ * semver refuses a prerelease unless some comparator shares its exact tuple AND
+ * carries a prerelease of its own, so a missing tuple cannot install however
+ * high the candidate number.
+ */
+function prereleaseFloor(range: string, tuple: string): number | undefined {
+  let floor: number | undefined;
+  for (const match of range.matchAll(/>=(\d+\.\d+\.\d+)-rc\.(\d+)/gu)) {
+    if (match[1] !== tuple) continue;
+    const candidate = Number(match[2]);
+    if (Number.isNaN(candidate)) continue;
+    if (floor === undefined || candidate < floor) floor = candidate;
+  }
+  return floor;
+}
+
+/** Installable only when *every* dsh peer admits the version. */
+function peerCanInstall(ranges: Record<string, string>, version: string): boolean {
   const parsed = /^(\d+\.\d+\.\d+)-rc\.(\d+)$/u.exec(version);
   if (!parsed) return true; // stable releases need no prerelease comparator
   const tuple = parsed[1];
   const candidate = Number(parsed[2]);
   if (tuple === undefined || Number.isNaN(candidate)) return false;
-  const floor = floors.get(tuple);
-  return floor !== undefined && candidate >= floor;
+  const entries = Object.values(ranges);
+  if (entries.length === 0) return false;
+  return entries.every((range) => {
+    const floor = prereleaseFloor(range, tuple);
+    return floor !== undefined && candidate >= floor;
+  });
 }
 
 // Two authorities decide whether a DeepSeek Harness version works, and they can
@@ -143,11 +166,11 @@ describe('accepted DeepSeek Harness versions can actually install their companio
       readFile(AGENT_DEF, 'utf8'),
       readFile(PEER_MANIFEST, 'utf8'),
     ]);
-    const floors = peerPrereleaseFloors(manifest);
-    expect(floors.size).toBeGreaterThan(0);
+    const ranges = dshPeerRanges(manifest);
+    expect(Object.keys(ranges).length).toBeGreaterThan(0);
 
     const overclaimed = MATRIX.filter(
-      (version) => accepts(def, version) && !peerCanInstall(floors, version),
+      (version) => accepts(def, version) && !peerCanInstall(ranges, version),
     );
 
     expect(overclaimed).toEqual([]);
@@ -160,12 +183,40 @@ describe('accepted DeepSeek Harness versions can actually install their companio
       readFile(AGENT_DEF, 'utf8'),
       readFile(PEER_MANIFEST, 'utf8'),
     ]);
-    const floors = peerPrereleaseFloors(manifest);
+    const ranges = dshPeerRanges(manifest);
 
     expect(accepts(def, '0.1.1-rc.2')).toBe(true);
-    expect(peerCanInstall(floors, '0.1.1-rc.2')).toBe(true);
+    expect(peerCanInstall(ranges, '0.1.1-rc.2')).toBe(true);
 
-    expect(peerCanInstall(floors, '0.1.2-rc.1')).toBe(false);
+    expect(peerCanInstall(ranges, '0.1.2-rc.1')).toBe(false);
     expect(accepts(def, '0.1.2-rc.1')).toBe(false);
+  });
+
+  // A bump that updates one peer and forgets the rest is the realistic way this
+  // goes wrong — and reading the manifest as one blob hides it, because the
+  // updated peer's comparator answers for everyone. All five ranges being
+  // identical today is a coincidence, not a guarantee.
+  it('does not let one updated peer vouch for the others', () => {
+    const partial = JSON.stringify({
+      peerDependencies: {
+        '@deepseek-ai/cordis': '>=4.0.1',
+        '@deepseek-ai/dsh-agent': '>=0.1.0-rc.6 || >=0.1.1-rc.0',
+        '@deepseek-ai/dsh-llm': '>=0.1.0-rc.6',
+        '@deepseek-ai/dsh-session': '>=0.1.0-rc.6',
+      },
+    });
+    const ranges = dshPeerRanges(partial);
+
+    expect(Object.keys(ranges)).not.toContain('@deepseek-ai/cordis');
+    expect(peerCanInstall(ranges, '0.1.1-rc.2')).toBe(false);
+    expect(peerCanInstall(ranges, '0.1.0-rc.8')).toBe(true);
+  });
+
+  // The floor is part of the contract, not just the tuple.
+  it('respects each range\'s own floor', () => {
+    const ranges = { '@deepseek-ai/dsh-agent': '>=0.1.0-rc.6' };
+
+    expect(peerCanInstall(ranges, '0.1.0-rc.6')).toBe(true);
+    expect(peerCanInstall(ranges, '0.1.0-rc.3')).toBe(false);
   });
 });
