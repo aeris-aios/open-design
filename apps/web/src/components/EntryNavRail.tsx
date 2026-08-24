@@ -103,10 +103,6 @@ const REPO_URL = 'https://github.com/nexu-io/open-design';
 const GITHUB_HELP_URL = `${REPO_URL}/issues/new`;
 const GITHUB_FEATURE_URL = `${REPO_URL}/pulls`;
 const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
-// Chinese-locale community entry. Discord is unreachable for most of that
-// audience, so the same social slot points at the Feishu (飞书) group invite.
-const FEISHU_URL =
-  'https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=866kece3-58ba-40fe-9fd4-6dc6a049f69b';
 const X_URL = 'https://x.com/OpenDesignHQ';
 const CONTACT_EMAIL_URL = 'mailto:support@open-design.ai';
 const externalLinkProps = { target: '_blank', rel: 'noreferrer noopener' } as const;
@@ -238,12 +234,9 @@ interface Props {
    * The update-ready host (`UpdaterPopup`), which renders nothing until the
    * updater reports a downloaded, unopened installer.
    *
-   * It rides the floating account module's row IMMEDIATELY AFTER the avatar
-   * chip (`.entry-nav-rail__account-updater`), per product: 升级提醒按钮跟在
-   * 头像后边，不再单独占一行。 Earlier homes — the rail footer (#5517) and a
-   * strip above the identity row — both detached the reminder from the
-   * avatar. The footer stays as the fallback home for the signed-out shell,
-   * which has no account row at all.
+   * It is an independent control immediately after the floating credits/avatar
+   * capsule (`.entry-nav-rail__account-updater`). The footer stays as the
+   * fallback home for the signed-out shell, which has no account capsule.
    */
   updaterSlot?: ReactNode;
   /** Optional notice shown above the footer controls. */
@@ -786,7 +779,8 @@ export function EntryTopRightCluster({
               The capsule owns the pill material; the segments inside are
               chrome-free click targets. */}
           {context ? (
-            <div className="entry-top-right-account-pill">
+            <>
+              <div className="entry-top-right-account-pill">
           {(billing || balanceLabel) && showCreditsBalance ? (
             <button
               type="button"
@@ -836,19 +830,6 @@ export function EntryTopRightCluster({
                   ) : null}
                 </span>
               </button>
-              {/* Update-ready rocket, riding the same row immediately AFTER the
-                  avatar chip. It is mounted unconditionally so the row's shape
-                  is stable, and it holds no element children until the updater
-                  actually has something to show; `:empty { display: none }` is
-                  what keeps an idle slot from reserving width (plus the row's
-                  6px gap) next to the avatar.
-
-                  The rocket must never be a DESCENDANT of the trigger above:
-                  a button inside the account button would be invalid markup and
-                  would make every rocket click toggle the account menu too. */}
-              <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
-                {updaterSlot}
-              </div>
               {accountOpen ? (
                 <>
                   {/* No backdrop here (unlike the team menu): hover-open relies
@@ -1018,8 +999,16 @@ export function EntryTopRightCluster({
                   }}
                 />
               ) : null}
-            </div>
-            </div>
+              </div>
+              </div>
+              {/* Update-ready rocket: an independent control immediately after
+                  the credits/avatar capsule. The slot stays mounted so
+                  `:empty { display: none }` can remove it from cluster layout
+                  until an installer has downloaded. */}
+              <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
+                {updaterSlot}
+              </div>
+            </>
           ) : null}
         </div>,
         document.body,
@@ -1136,9 +1125,9 @@ export function WorkspaceTopRightAccountCluster({
 /**
  * Community/contact links pinned to the bottom of the nav rail.
  *
- * The row's first slot is locale-switched: Chinese UIs get the Feishu group
- * invite (Discord is effectively unreachable there), every other locale keeps
- * Discord. X and mail are locale-independent. Analytics keeps reporting these
+ * The row's first slot is the Discord invite for every locale (the Chinese
+ * Feishu group entry was retired so there is one community to point at). X
+ * and mail are locale-independent. Analytics keeps reporting these
  * under `area: 'account_menu'` so the existing funnel stays comparable across
  * the move out of that menu.
  */
@@ -1149,11 +1138,9 @@ function RailSocialRow({
   page: TrackingWorkspacePage;
   dimensions: ReturnType<typeof workspaceAnalyticsDimensions>;
 }) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const analytics = useAnalytics();
-  const isChinese = locale === 'zh-CN' || locale === 'zh-TW';
-  const communityUrl = isChinese ? FEISHU_URL : DISCORD_URL;
-  const communityLabel = isChinese ? t('entry.feishuAria') : t('entry.discordAria');
+  const communityLabel = t('entry.discordAria');
 
   function track(element: AccountMenuClickProps['element']) {
     trackAccountMenuClick(analytics.track, {
@@ -1168,14 +1155,14 @@ function RailSocialRow({
     <div className="entry-nav-rail__social" data-testid="entry-nav-rail-social">
       <a
         className="entry-nav-rail__social-btn"
-        href={communityUrl}
+        href={DISCORD_URL}
         {...externalLinkProps}
         aria-label={communityLabel}
         title={communityLabel}
-        data-testid={isChinese ? 'entry-nav-rail-feishu' : 'entry-nav-rail-discord'}
-        onClick={() => track(isChinese ? 'feishu' : 'discord')}
+        data-testid="entry-nav-rail-discord"
+        onClick={() => track('discord')}
       >
-        <Icon name={isChinese ? 'feishu' : 'discord'} size={15} />
+        <Icon name="discord" size={15} />
       </a>
       <a
         className="entry-nav-rail__social-btn"

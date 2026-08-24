@@ -500,6 +500,7 @@ function snapshotEnv(): Record<string, string | undefined> {
     OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
     POSTHOG_KEY: process.env.POSTHOG_KEY,
     POSTHOG_HOST: process.env.POSTHOG_HOST,
+    OD_NEXT_STRATEGY_ROLLOUT: process.env.OD_NEXT_STRATEGY_ROLLOUT,
   };
 }
 
@@ -517,6 +518,10 @@ function clearTelemetryEnv(): void {
   delete process.env.LANGFUSE_SECRET_KEY;
   delete process.env.LANGFUSE_BASE_URL;
   delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+  // This suite exercises the legacy native-session resume contract. OD Next
+  // owns a separate locked-session continuation policy that deliberately
+  // forbids the cold re-seeding asserted by the rollover cases below.
+  process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
 }
 
 async function putConfig(url: string, patch: Record<string, unknown>): Promise<void> {

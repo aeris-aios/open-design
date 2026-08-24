@@ -170,6 +170,7 @@ import {
   type ExportProgress,
   type ImageExportFormat,
 } from '../runtime/exports';
+import { fetchAppVersionInfo } from '../providers/registry';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { shouldConsumeSlideNav } from '../runtime/slide-nav';
@@ -9072,6 +9073,63 @@ function HtmlViewer({
   const [imageExportFormat, setImageExportFormat] = useState<ImageExportFormat>('png');
   const [imageExportError, setImageExportError] = useState<string | null>(null);
   const [pptxExportModalOpen, setPptxExportModalOpen] = useState(false);
+  // Ask the daemon whether it can render slides each time an export surface
+  // opens, and let the answer live no longer than that surface. This is the
+  // whole capability contract, stated once:
+  //
+  //   1. An answer never outlives the surface opening that fetched it. The
+  //      export surface is the popover's Export tab or the PPTX modal — not
+  //      the popover shell, which can open on Share and sit there across a
+  //      daemon swap before the tab is switched. Every way the surface can
+  //      become visible (opening onto the Export tab, switching Share to
+  //      Export, the menu-to-modal handoff) starts from unknown and asks
+  //      again. Transitions arrive as batched updates whose OR can stay
+  //      unchanged, so the effect depends on the raw inputs, not a derived
+  //      boolean.
+  //   2. Unknown fails open. A pending probe and a daemon predating the
+  //      capability field both show the entry; only a resolved `false` — from
+  //      this daemon, during this opening — hides it.
+  //   3. The daemon stays the authority of last resort. A swap after the
+  //      probe resolves is unclosable client-side (time-of-check vs
+  //      time-of-use); it is caught by the export POST itself, whose 501
+  //      surfaces the no-renderer message rather than a generic failure.
+  //
+  // Anything beyond this — background caches, retries, cross-surface
+  // carryover — reintroduces the replica-of-remote-state problem this shape
+  // exists to avoid.
+  const [slideRendererAvailable, setSlideRendererAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    const exportSurfaceVisible =
+      (deployMenuOpen && unifiedActionTab === 'export') || pptxExportModalOpen;
+    if (!exportSurfaceVisible) return;
+    let cancelled = false;
+    setSlideRendererAvailable(null);
+    void (async () => {
+      // A probe that FAILS (daemon starting up, transient network) is retried
+      // briefly, because leaving the whole opening at unknown would fail open
+      // for its entire lifetime. A probe that SUCCEEDS without the capability
+      // field is an old daemon: asking again cannot teach us more, so it
+      // stops at unknown immediately. The retry lives and dies with this
+      // opening — cancelled on any surface transition — so nothing here
+      // crosses surfaces either.
+      const retryDelaysMs = [1_000, 3_000];
+      for (let attempt = 0; !cancelled; attempt += 1) {
+        const info = await fetchAppVersionInfo();
+        if (cancelled) return;
+        if (info) {
+          const next = info.capabilities?.slideRenderer;
+          setSlideRendererAvailable(typeof next === 'boolean' ? next : null);
+          return;
+        }
+        const delay = retryDelaysMs[attempt];
+        if (delay === undefined) return;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deployMenuOpen, unifiedActionTab, pptxExportModalOpen]);
   const [pptxExportMode, setPptxExportMode] = useState<'editable' | 'screenshot'>('editable');
   const imageExportSnapshotDataUrlRef = useRef<string | null>(null);
   // Threads the share-popover click → artifact_export_result(image) pair, the
@@ -14461,7 +14519,15 @@ function HtmlViewer({
   // PPTX export is slide-based, so show it only for explicit decks plus
   // structured deck runtimes. Do not key this off plain `.slide`: ordinary
   // parallax/long pages may use that class but must remain page-mode exports.
-  const showPptxExport = canShare && deckExportSignal;
+  // ...and only when the daemon on the other end can actually render slides.
+  // The route this button calls hard-fails with 501 when `desktopSlideRenderer`
+  // is absent (headless / container deployments), and both modes in the export
+  // modal reach that same 501, so without this the user is offered an action —
+  // and a mode choice — that cannot succeed. `null` means the daemon has not
+  // answered or predates the flag: keep showing the entry, since hiding on
+  // absence would take a working export away from every deployment that has
+  // not upgraded. Only an explicit `false` hides it.
+  const showPptxExport = canShare && deckExportSignal && slideRendererAvailable !== false;
   const canPptx = showPptxExport && !streaming;
   const showMarkdownExport = source !== null && isMarkdownArtifact && !viewerOnly;
   const showImageExport = canShare;
@@ -17406,7 +17472,21 @@ function HtmlViewer({
                       editable,
                       workspaceContext,
                     });
-                    if (!res.ok) throw new Error('error' in res ? res.error : t('fileViewer.exportPptxNa'));
+                    if (!res.ok) {
+                      // `unavailable` covers two very different situations and
+                      // used to share one message: a runtime with no off-screen
+                      // renderer (permanent, 501) and a daemon we could not
+                      // reach at all (transient, says nothing about support).
+                      // Telling a user with a dead daemon that the feature is
+                      // "not available here" sends them to the wrong problem.
+                      throw new Error(
+                        'error' in res
+                          ? res.error
+                          : res.reason === 'unreachable'
+                            ? t('fileViewer.exportDaemonUnreachable')
+                            : t('fileViewer.exportPptxNa'),
+                      );
+                    }
                   });
                 }}
               >

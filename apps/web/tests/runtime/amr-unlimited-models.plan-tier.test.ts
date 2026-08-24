@@ -52,6 +52,7 @@ describe('planUnlimitedTier', () => {
 });
 
 const POPULAR_MODEL_IDS = [
+  'deepseek-v4-flash-vision-exp',
   'deepseek-v4-flash',
   'deepseek-v4-pro',
   'glm-5.2',
@@ -67,10 +68,10 @@ const unlimitedOn = (tier: string) =>
 
 describe('per-tier unlimited sets, as the badge sees them', () => {
   it('matches the model counts the Pricing page advertises per tier', () => {
-    expect(unlimitedOn('go')).toHaveLength(3);
-    expect(unlimitedOn('plus')).toHaveLength(4);
-    expect(unlimitedOn('pro')).toHaveLength(5);
-    expect(unlimitedOn('max')).toHaveLength(8);
+    expect(unlimitedOn('go')).toHaveLength(4);
+    expect(unlimitedOn('plus')).toHaveLength(5);
+    expect(unlimitedOn('pro')).toHaveLength(6);
+    expect(unlimitedOn('max')).toHaveLength(9);
   });
 
   it('keeps GLM-5.2 unlimited on Pro and MiniMax M2.7 metered', () => {
@@ -97,6 +98,14 @@ describe('per-tier unlimited sets, as the badge sees them', () => {
 });
 
 describe('isUnlimitedModelForPlanTier', () => {
+  it('badges DeepSeek V4 Flash Vision Exp on every personal tier only', () => {
+    for (const tier of ['go', 'plus', 'pro', 'max']) {
+      expect(isUnlimitedModelForPlanTier('deepseek-v4-flash-vision-exp', tier)).toBe(true);
+    }
+    expect(isUnlimitedModelForPlanTier('deepseek-v4-flash-vision-exp', 'free')).toBe(false);
+    expect(isUnlimitedModelForPlanTier('deepseek-v4-flash-vision-exp', 'team_pro')).toBe(false);
+  });
+
   it('badges a Pro subscriber on every model their plan covers', () => {
     for (const modelId of unlimitedOn('pro')) {
       expect(isUnlimitedModelForPlanTier(modelId, 'pro')).toBe(true);
