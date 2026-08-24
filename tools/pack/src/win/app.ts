@@ -320,7 +320,6 @@ function createAppLocalPrebundlePaths(paths: WinPaths, appRoot: string, entryRoo
     daemonSidecarPrebundlePath: join(appRoot, WIN_PREBUNDLED_APP_DIR_NAME, "daemon", "daemon-sidecar.mjs"),
     packagedMainPrebundleMetaPath: join(entryRoot, WIN_PREBUNDLE_META_DIR_NAME, "packaged-main.meta.json"),
     packagedMainPrebundlePath: join(appRoot, WIN_PREBUNDLED_APP_DIR_NAME, "packaged-main.mjs"),
-    sidecarSupervisorPrebundlePath: join(appRoot, WIN_PREBUNDLED_APP_DIR_NAME, "supervisor.mjs"),
     webSidecarPrebundleMetaPath: join(entryRoot, WIN_PREBUNDLE_META_DIR_NAME, "web-sidecar.meta.json"),
     webSidecarPrebundlePath: join(appRoot, WIN_PREBUNDLED_APP_DIR_NAME, "web-sidecar.mjs"),
   };
@@ -346,10 +345,6 @@ async function buildPrebundledStandaloneRuntime(
     metafilePath: paths.packagedMainPrebundleMetaPath,
     policyName: "packagedMain",
   });
-  await cp(
-    join(config.workspaceRoot, "packages", "sidecar", "dist", "supervisor.mjs"),
-    paths.sidecarSupervisorPrebundlePath,
-  );
 
   await runEsbuild(config, [
     join(config.workspaceRoot, "apps", "web", "dist", "sidecar", "index.js"),
@@ -435,7 +430,7 @@ export async function createWinPackagedAppCacheKey(
     platform: "win32",
     prebundle: shouldUseWinStandalonePrebundle(config.webOutputMode),
     runtimeDependencies: shouldUseWinStandalonePrebundle(config.webOutputMode) ? runtimeDependencies : null,
-    schemaVersion: 5,
+    schemaVersion: 6,
     tarballsKey,
     webOutputMode: config.webOutputMode,
   });

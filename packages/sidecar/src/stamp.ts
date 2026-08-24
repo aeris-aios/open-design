@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
 import type { ProcessStampContract } from "@open-design/platform";
@@ -69,8 +70,13 @@ export function sidecarStampKey(stamp: SidecarStamp): string {
 }
 
 export function resolvePrivateIpcPath(stamp: SidecarStamp, platform: NodeJS.Platform = process.platform): string {
-  const digest = createHash("sha256").update(sidecarStampKey(stamp)).digest("hex").slice(0, 32);
+  const principal = platform === "win32"
+    ? (() => {
+        try { return userInfo().username; } catch { return process.env.USERNAME ?? process.env.USER ?? "unknown"; }
+      })()
+    : String(process.getuid?.() ?? process.env.USER ?? "unknown");
+  const digest = createHash("sha256").update(`${principal}\n${sidecarStampKey(stamp)}`).digest("hex").slice(0, 32);
   return platform === "win32"
     ? `\\\\.\\pipe\\open-design-sidecar-${digest}`
-    : join("/tmp", "open-design", "sidecar", `${digest}.sock`);
+    : join(tmpdir(), `od-sidecar-${principal}`, `${digest}.sock`);
 }

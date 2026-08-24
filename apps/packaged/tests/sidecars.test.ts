@@ -155,57 +155,39 @@ describe('packaged stale sidecar retirement', () => {
     }
   }
 
-  it('treats an absent endpoint with no stamped root as a clean first boot', async () => {
+  it('delegates a clean first boot to the sidecar lifecycle atomic', async () => {
     await withLog(async (logPath) => {
-      const stop = vi.fn(async () => stopped());
+      const stop = vi.fn(async () => ({ ...stopped({ matchedPids: [] }), alreadyStopped: true }));
       await expect(retireExistingSidecar(testStamp(), logPath, {
-        find: async () => [],
-        status: (async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }) as never,
-        stop,
-      })).resolves.toBeUndefined();
-      expect(stop).not.toHaveBeenCalled();
-    });
-  });
-
-  it('quick-fails an unresponsive daemon instead of risking a second writer', async () => {
-    await withLog(async (logPath) => {
-      const stop = vi.fn(async () => stopped());
-      await expect(retireExistingSidecar(testStamp(), logPath, {
-        find: async () => [{ command: 'daemon', pid: 4321, ppid: 1 }],
-        status: (async () => { throw new Error('timed out'); }) as never,
-        stop,
-      })).rejects.toThrow('cannot safely relaunch unresponsive daemon sidecar');
-      expect(stop).not.toHaveBeenCalled();
-    });
-  });
-
-  it('retires an unresponsive web generation through its durable stamped root', async () => {
-    await withLog(async (logPath) => {
-      const stop = vi.fn(async () => stopped());
-      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
-        find: async () => [{ command: 'sidecar-supervisor', pid: 4321, ppid: 1 }],
-        status: (async () => { throw new Error('timed out'); }) as never,
         stop,
       })).resolves.toBeUndefined();
       expect(stop).toHaveBeenCalledOnce();
     });
   });
 
-  it('quick-fails web recovery when neither a generation root nor a stale endpoint was retired', async () => {
+  it('retires an unresponsive daemon through the sidecar lifecycle atomic', async () => {
     await withLog(async (logPath) => {
-      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
-        find: async () => [],
-        status: (async () => { throw new Error('timed out'); }) as never,
-        stop: async () => stopped({ matchedPids: [] }),
-      })).rejects.toThrow('no durable generation root was found');
+      const stop = vi.fn(async () => stopped());
+      await expect(retireExistingSidecar(testStamp(), logPath, {
+        stop,
+      })).resolves.toBeUndefined();
+      expect(stop).toHaveBeenCalledOnce();
     });
   });
 
-  it('allows web recovery when the only remaining artifact was a stale endpoint', async () => {
+  it('retires an unresponsive web generation through the same lifecycle atomic', async () => {
+    await withLog(async (logPath) => {
+      const stop = vi.fn(async () => stopped());
+      await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
+        stop,
+      })).resolves.toBeUndefined();
+      expect(stop).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('allows recovery when the lifecycle atomic removes only a stale endpoint', async () => {
     await withLog(async (logPath) => {
       await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
-        find: async () => [],
-        status: (async () => { throw new Error('timed out'); }) as never,
         stop: async () => stopped({ matchedPids: [], staleEndpointRemoved: true }),
       })).resolves.toBeUndefined();
     });
@@ -214,7 +196,6 @@ describe('packaged stale sidecar retirement', () => {
   it('does not relaunch after a healthy generation fails to stop', async () => {
     await withLog(async (logPath) => {
       await expect(retireExistingSidecar(testStamp(APP_KEYS.WEB), logPath, {
-        status: (async () => ({ pid: 1234 })) as never,
         stop: async () => stopped({ remainingPids: [4321] }),
       })).rejects.toThrow('generation remains: 4321');
     });

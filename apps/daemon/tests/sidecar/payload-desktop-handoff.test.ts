@@ -94,9 +94,13 @@ describe("legacy payload desktop handoff", () => {
       await rm(value.launcherPaths.attemptsPath, { force: true });
 
       const lifecycleHoldObservations: boolean[] = [];
-      const launch = vi.fn(async () => {
+      const spawn = vi.fn(async () => {
         lifecycleHoldObservations.push(isParentMonitorExitHeld());
-        return { pid: 7654 };
+        return {
+          process: { pid: 7654 },
+          stamp: {} as never,
+          stop: vi.fn(),
+        };
       });
       const requestDesktop = vi.fn(async (message: "shutdown" | "status") =>
         message === "status"
@@ -104,7 +108,7 @@ describe("legacy payload desktop handoff", () => {
           : (lifecycleHoldObservations.push(isParentMonitorExitHeld()), { accepted: true }));
       await expect(executeLegacyPayloadDesktopHandoff(prepared, {
         confirmTimeoutMs: 100,
-        launch,
+        spawn: spawn as never,
         now: () => new Date("2026-07-15T02:00:00.000Z"),
         requestDesktop,
         sleep: async () => undefined,
@@ -117,7 +121,7 @@ describe("legacy payload desktop handoff", () => {
         target: { generation: 2, version: value.version },
       });
 
-      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
         command: value.payloadExecutablePath,
         resources: {
           dataRoot: join(value.root, "data"),
@@ -140,6 +144,50 @@ describe("legacy payload desktop handoff", () => {
         state: "armed",
         target: { generation: 2, version: value.version },
       });
+    } finally {
+      await rm(value.root, { force: true, recursive: true });
+    }
+  });
+
+  it("retires the launched payload generation when the outer refuses shutdown", async () => {
+    const value = await fixture();
+    try {
+      const prepared = await prepareLegacyPayloadDesktopHandoff({
+        dataRoot: join(value.root, "data"),
+        env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
+        namespace: value.namespace,
+        parentPid: 4321,
+        platform: "darwin",
+        requestDesktopStatus: async () => ({
+          executablePath: value.outerExecutablePath,
+          pid: 4321,
+          state: "running",
+        }),
+        runtimeRoot: value.runtimeRoot,
+        source: SIDECAR_SOURCES.PACKAGED,
+      });
+      if (prepared.kind !== "prepared") throw new Error("expected prepared handoff");
+      await writeFile(value.launcherPaths.runtimePath, JSON.stringify({
+        active: { generation: 1, version: value.version },
+        channel: "beta",
+        lastSuccessful: { generation: 1, version: value.version },
+        namespace: value.namespace,
+        schemaVersion: LAUNCHER_SCHEMA_VERSION,
+      }));
+      await rm(value.launcherPaths.attemptsPath, { force: true });
+
+      const stop = vi.fn(async () => ({ remainingPids: [] }));
+      await expect(executeLegacyPayloadDesktopHandoff(prepared, {
+        confirmTimeoutMs: 100,
+        requestDesktop: async (message) => {
+          if (message === "shutdown") throw new Error("outer refused shutdown");
+          return { executablePath: value.outerExecutablePath, pid: 4321, state: "running" };
+        },
+        sleep: async () => undefined,
+        spawn: (async () => ({ process: { pid: 7654 }, stamp: {} as never, stop })) as never,
+      })).resolves.toEqual({ kind: "aborted", reason: "shutdown-failed" });
+      expect(stop).toHaveBeenCalledWith({ termGraceMs: 0 });
+      expect(JSON.parse(await readFile(value.launcherPaths.handoffPath, "utf8"))).toMatchObject({ state: "prepared" });
     } finally {
       await rm(value.root, { force: true, recursive: true });
     }

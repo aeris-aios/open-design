@@ -389,8 +389,12 @@ export function parseWindowsProcessSnapshots(stdout: string): ProcessSnapshot[] 
     .filter((snapshot): snapshot is ProcessSnapshot => snapshot != null);
 }
 
-/** @internal Enumerate processes without converting backend failure into an empty snapshot. */
-async function listProcessSnapshotsStrict(): Promise<ProcessSnapshot[]> {
+/**
+ * Capture the current process table without converting backend failure into an
+ * empty snapshot. Mutation paths use this strict form so discovery failure can
+ * never be mistaken for an already-stopped process set.
+ */
+export async function captureProcessSnapshot(): Promise<ProcessSnapshot[]> {
   return process.platform === "win32"
     ? await listWindowsProcessSnapshots()
     : await listPosixProcessSnapshots();
@@ -404,7 +408,7 @@ async function listProcessSnapshotsStrict(): Promise<ProcessSnapshot[]> {
  */
 export async function listProcessSnapshots(): Promise<ProcessSnapshot[]> {
   try {
-    return await listProcessSnapshotsStrict();
+    return await captureProcessSnapshot();
   } catch {
     return [];
   }
@@ -455,7 +459,7 @@ export async function captureStampedProcessSnapshot<
   contract: ProcessStampContract<TStamp, TCriteria>,
 ): Promise<StampedProcessInvocationSnapshot> {
   const invokedAtMs = Date.now();
-  const processes = await listProcessSnapshotsStrict();
+  const processes = await captureProcessSnapshot();
   const matches = selectStampedProcessesAtInvocation(processes, criteria, contract, invokedAtMs);
   const matchedPids = new Set(matches.map(({ pid }) => pid));
   return {

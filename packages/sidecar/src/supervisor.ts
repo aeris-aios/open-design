@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 
-import { createProcessStampArgs } from "@open-design/platform";
+import {
+  captureProcessSnapshot,
+  collectProcessTreePids,
+  createProcessStampArgs,
+  isProcessAlive,
+  stopProcesses,
+} from "@open-design/platform";
 
 import { SIDECAR_GENERATION_PID_ENV, SIDECAR_SUPERVISOR_TARGET_ENV } from "./client.js";
 import { readCurrentSidecarStamp, SIDECAR_STAMP_CONTRACT } from "./stamp.js";
@@ -53,13 +60,35 @@ const ownerPid = serializedResources == null
         return null;
       }
     })();
+let ownerShutdownTask: Promise<void> | null = null;
+async function stopTargetAfterOwnerDeath(): Promise<void> {
+  if (child.pid == null) return;
+  const rootPid = child.pid;
+  try { child.kill("SIGTERM"); } catch {}
+  await sleep(5_000);
+  if (!isProcessAlive(rootPid)) return;
+  let ownedPids = [rootPid];
+  try {
+    ownedPids = collectProcessTreePids(await captureProcessSnapshot(), [rootPid]);
+  } catch {
+    // The exact child pid remains a safe fallback when process discovery fails.
+  }
+  const stopped = await stopProcesses(ownedPids, { killGraceMs: 1_000, termGraceMs: 0 });
+  if (stopped.remainingPids.length > 0) {
+    console.error(`sidecar supervisor could not stop ownerless target: ${stopped.remainingPids.join(", ")}`);
+    process.exitCode = 1;
+  }
+}
+
 const ownerTimer = ownerPid == null ? null : setInterval(() => {
   try {
     process.kill(ownerPid, 0);
   } catch {
-    if (child.pid != null) {
-      try { child.kill("SIGTERM"); } catch {}
-    }
+    if (ownerTimer != null) clearInterval(ownerTimer);
+    ownerShutdownTask ??= stopTargetAfterOwnerDeath().catch((error) => {
+      console.error("sidecar supervisor failed to stop ownerless target", error);
+      process.exitCode = 1;
+    });
   }
 }, 1_000);
 ownerTimer?.unref();

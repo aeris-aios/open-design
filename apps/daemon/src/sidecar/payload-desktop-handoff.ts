@@ -20,9 +20,7 @@ import {
   type LauncherVersionPointer,
 } from "@open-design/launcher-proto";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
-import {
-  launchSidecar,
-} from "@open-design/sidecar";
+import { spawnSidecar } from "@open-design/sidecar";
 import {
   APP_KEYS,
   SIDECAR_ENV,
@@ -422,7 +420,7 @@ export async function executeLegacyPayloadDesktopHandoff(
     now?: () => Date;
     requestDesktop?: (message: "shutdown" | "status") => Promise<unknown>;
     sleep?: (durationMs: number) => Promise<unknown>;
-    launch?: typeof launchSidecar;
+    spawn?: typeof spawnSidecar;
     writeJsonFile?: typeof writeJsonFile;
   } = {},
 ): Promise<LegacyPayloadDesktopHandoffResult> {
@@ -487,28 +485,32 @@ export async function executeLegacyPayloadDesktopHandoff(
   const persist = options.writeJsonFile ?? writeJsonFile;
   const releaseParentMonitor = holdParentMonitorExit();
   try {
+    let generation: Awaited<ReturnType<typeof spawnSidecar>>;
     try {
-      await (options.launch ?? launchSidecar)({
-      args,
-      command: prepared.descriptor.payloadExecutablePath,
-      cwd: dirname(prepared.descriptor.payloadExecutablePath),
-      env: desktopProcessEnv(options.env ?? process.env, prepared.runtimeRoot),
-      logFd: null,
-      resources: {
-        dataRoot: prepared.dataRoot,
-        ownerPid: null,
-        port: 0,
-        runtimeRoot: prepared.runtimeRoot,
-      },
-      stamp: desktopStamp,
+      generation = await (options.spawn ?? spawnSidecar)({
+        args,
+        command: prepared.descriptor.payloadExecutablePath,
+        cwd: dirname(prepared.descriptor.payloadExecutablePath),
+        env: desktopProcessEnv(options.env ?? process.env, prepared.runtimeRoot),
+        logFd: null,
+        resources: {
+          dataRoot: prepared.dataRoot,
+          ownerPid: null,
+          port: 0,
+          runtimeRoot: prepared.runtimeRoot,
+        },
+        stamp: desktopStamp,
       });
     } catch {
       return { kind: "aborted", reason: "spawn-failed" };
     }
-
     try {
       await requestDesktop("shutdown");
     } catch {
+      const cleanup = await generation.stop({ termGraceMs: 0 });
+      if (cleanup.remainingPids.length > 0) {
+        throw new Error(`payload desktop handoff rollback left generation: ${cleanup.remainingPids.join(", ")}`);
+      }
       return { kind: "aborted", reason: "shutdown-failed" };
     }
 

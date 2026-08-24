@@ -51,7 +51,6 @@ function createPaths(root: string): WinPaths {
     packagedConfigPath: join(namespaceRoot, "open-design-config.json"),
     packagedMainPrebundleMetaPath: join(namespaceRoot, "prebundle-meta", "packaged-main.meta.json"),
     packagedMainPrebundlePath: join(namespaceRoot, "assembled", "app", "prebundled", "packaged-main.mjs"),
-    sidecarSupervisorPrebundlePath: join(namespaceRoot, "assembled", "app", "prebundled", "supervisor.mjs"),
     resourceRoot: join(namespaceRoot, "resources", "open-design"),
     setupPath: join(namespaceRoot, "builder", "Open Design-second-setup.exe"),
     setupZipPath: join(namespaceRoot, "builder", "Open Design-second-portable.zip"),

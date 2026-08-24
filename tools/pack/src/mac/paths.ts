@@ -12,7 +12,6 @@ import {
   MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH,
   MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH,
   MAC_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH,
-  MAC_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH,
   MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH,
 } from "./prebundle.js";
 import { resolveMacInstallIdentity } from "./identity.js";
@@ -68,7 +67,6 @@ export function resolveMacPaths(config: ToolPackConfig): MacPaths {
     mountPoint: join(namespaceRoot, "mount"),
     packagedMainPrebundleMetaPath: join(namespaceRoot, MAC_PREBUNDLE_META_DIR_NAME, "packaged-main.meta.json"),
     packagedMainPrebundlePath: join(namespaceRoot, "assembled", MAC_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH),
-    sidecarSupervisorPrebundlePath: join(namespaceRoot, "assembled", MAC_PREBUNDLED_SIDECAR_SUPERVISOR_RELATIVE_PATH),
     packagedConfigPath: join(namespaceRoot, "open-design-config.json"),
     resourceRoot: join(namespaceRoot, "resources", "open-design"),
     payloadZipPath: join(namespaceRoot, "payload", `${PRODUCT_NAME}-${namespaceToken}-payload.zip`),

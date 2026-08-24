@@ -39,6 +39,7 @@ export type {
 } from "./process.js";
 export {
   collectProcessTreePids,
+  captureProcessSnapshot,
   captureStampedProcessSnapshot,
   createProcessStampArgs,
   isProcessAlive,

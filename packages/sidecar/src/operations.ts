@@ -5,6 +5,7 @@ import { createConnection } from "node:net";
 
 import type { SpawnProcessRequest, StopProcessesOptions, StopProcessesResult } from "@open-design/platform";
 import {
+  captureProcessSnapshot,
   captureStampedProcessSnapshot,
   collectProcessTreePids,
   createProcessStampArgs,
@@ -45,6 +46,8 @@ export type SidecarRestartOptions = {
 };
 
 const RESTART_READY_TIMEOUT_MS = 30_000;
+const BOOTSTRAP_READY_TIMEOUT_MS = 90_000;
+const EXISTING_GENERATION_STABILITY_MS = 750;
 const restartTails = new Map<string, Promise<void>>();
 
 export type SidecarRestartResult = {
@@ -94,6 +97,7 @@ export async function bootstrapSidecarProcess(
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     launch?: typeof launchSidecar;
+    waitUntilReady?: (stamp: SidecarStamp, pid: number) => Promise<void>;
   } = {},
 ): Promise<boolean> {
   const stamp = normalizeSidecarStamp(stampInput);
@@ -103,7 +107,7 @@ export async function bootstrapSidecarProcess(
   } catch (error) {
     if (!(error instanceof Error) || error.message !== "current process is missing its sidecar argv stamp") throw error;
   }
-  await (options.launch ?? launchSidecar)({
+  const launched = await (options.launch ?? launchSidecar)({
     args: options.args ?? process.argv.slice(1),
     command: options.command ?? process.execPath,
     cwd: options.cwd ?? process.cwd(),
@@ -112,6 +116,18 @@ export async function bootstrapSidecarProcess(
     resources,
     stamp,
   });
+  try {
+    await (options.waitUntilReady ?? waitForBootstrappedSidecarReady)(stamp, launched.pid, BOOTSTRAP_READY_TIMEOUT_MS);
+  } catch (error) {
+    const cleanup = await stopSidecarRoots(stamp, [launched.pid], { termGraceMs: 0 });
+    if (cleanup.remainingPids.length > 0) {
+      throw new AggregateError(
+        [error, new Error(`failed to retire rejected bootstrap generation: ${cleanup.remainingPids.join(", ")}`)],
+        "sidecar bootstrap failed and cleanup was incomplete",
+      );
+    }
+    throw error;
+  }
   return true;
 }
 
@@ -157,7 +173,9 @@ export async function spawnSidecar(request: SidecarLaunchRequest): Promise<Spawn
     process,
     stamp,
     stop(options = {}) {
-      stopTask ??= stopSidecarRoots(stamp, [rootPid], options);
+      stopTask ??= stopSidecarRoots(stamp, [rootPid], options).finally(() => {
+        stopTask = null;
+      });
       return stopTask;
     },
   };
@@ -223,37 +241,65 @@ export async function invokeSidecar<TResult = unknown>(
   );
 }
 
-export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
-  const exact = normalizeSidecarStamp(stamp);
-  const ownedEndpoint = await readPrivateEndpointIdentity(exact);
-  const described = await describeSidecar(exact);
-  const initial = described == null
-    ? await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT)
-    : null;
-  if (initial != null) {
-    const endpointAfterCapture = await readPrivateEndpointIdentity(exact);
-    if (!samePrivateEndpointIdentity(ownedEndpoint, endpointAfterCapture)) {
-      throw new Error("cannot stop sidecar because endpoint ownership changed during recovery");
-    }
-    if (initial.roots.length > 1) {
-      throw new Error(
-        `cannot stop sidecar with multiple stamped generation roots: ${initial.roots.map(({ pid }) => pid).join(", ")}`,
-      );
-    }
+type InspectedSidecarGeneration = {
+  description: SidecarDescription | null;
+  endpoint: PrivateEndpointIdentity | null;
+  processes: Awaited<ReturnType<typeof captureProcessSnapshot>>;
+  roots: number[];
+};
+
+async function inspectSidecarGeneration(stamp: SidecarStamp): Promise<InspectedSidecarGeneration> {
+  const endpoint = await readPrivateEndpointIdentity(stamp);
+  const snapshot = await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT);
+  const endpointAfterCapture = await readPrivateEndpointIdentity(stamp);
+  if (!samePrivateEndpointIdentity(endpoint, endpointAfterCapture)) {
+    throw new Error("cannot mutate sidecar because endpoint ownership changed during process discovery");
   }
-  const roots = described == null
-    ? initial?.roots.map(({ pid }) => pid) ?? []
-    : [described.resources.pid];
-  const result = await stopSidecarRoots(exact, roots, options, initial?.processes);
+  if (snapshot.roots.length > 1) {
+    throw new Error(
+      `cannot mutate sidecar with multiple stamped generation roots: ${snapshot.roots.map(({ pid }) => pid).join(", ")}`,
+    );
+  }
+  const description = await describeSidecar(stamp);
+  const endpointAfterDescribe = await readPrivateEndpointIdentity(stamp);
+  if (!samePrivateEndpointIdentity(endpoint, endpointAfterDescribe)) {
+    throw new Error("cannot mutate sidecar because endpoint ownership changed during description");
+  }
+  const roots = snapshot.roots.map(({ pid }) => pid);
+  if (description != null && (roots.length !== 1 || roots[0] !== description.resources.pid)) {
+    throw new Error(
+      `cannot mutate sidecar because endpoint pid ${description.resources.pid} is not the stamped generation root`,
+    );
+  }
+  return { description, endpoint, processes: snapshot.processes, roots };
+}
+
+async function stopInspectedSidecar(
+  stamp: SidecarStamp,
+  inspected: InspectedSidecarGeneration,
+  options: StopProcessesOptions,
+): Promise<SidecarStopResult> {
+  const result = await stopSidecarRoots(stamp, inspected.roots, options, inspected.processes);
+  const replacements = (await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT)).roots;
+  if (replacements.length > 0) {
+    return {
+      ...result,
+      remainingPids: [...new Set([...result.remainingPids, ...replacements.map(({ pid }) => pid)])],
+    };
+  }
   let staleEndpointRemoved = false;
   if (
     result.remainingPids.length === 0 &&
-    (await findSidecarProcesses(exact)).length === 0 &&
-    (roots.length > 0 || await privateEndpointRefusesConnections(exact))
+    (inspected.roots.length > 0 || await privateEndpointRefusesConnections(stamp))
   ) {
-    staleEndpointRemoved = await removeOwnedPrivateEndpoint(exact, ownedEndpoint);
+    staleEndpointRemoved = await removeOwnedPrivateEndpoint(stamp, inspected.endpoint);
   }
   return { ...result, staleEndpointRemoved };
+}
+
+export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
+  const exact = normalizeSidecarStamp(stamp);
+  return await stopInspectedSidecar(exact, await inspectSidecarGeneration(exact), options);
 }
 
 type PrivateEndpointIdentity = Readonly<{ dev: number; ino: number }>;
@@ -319,20 +365,19 @@ async function restartSidecarGeneration(
   options: SidecarRestartOptions,
 ): Promise<SidecarRestartResult> {
   const stamp = normalizeSidecarStamp(request.stamp);
-  const previous = await describeSidecar(stamp);
+  const inspected = await inspectSidecarGeneration(stamp);
+  const previous = inspected.description;
   const requestedPort = request.resources.port;
   const knownPort = previous?.resources.port ?? 0;
   if (options.requireConcretePort === true && requestedPort === 0 && knownPort === 0) {
     throw new Error("cannot restart sidecar without a concrete port");
   }
-  const stop = previous == null
-    ? await stopSidecar(stamp, options.stop)
-    : await stopSidecarRoots(stamp, [previous.resources.pid], options.stop ?? {});
+  const stop = await stopInspectedSidecar(stamp, inspected, options.stop ?? {});
   if (stop.remainingPids.length > 0) {
     throw new Error(`cannot restart sidecar while prior generation remains: ${stop.remainingPids.join(", ")}`);
   }
 
-  const replacements = await findSidecarProcesses(stamp);
+  const replacements = (await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT)).roots;
   if (replacements.length > 0) {
     throw new Error(`cannot restart sidecar because another generation appeared: ${replacements.map(({ pid }) => pid).join(", ")}`);
   }
@@ -349,7 +394,13 @@ async function restartSidecarGeneration(
   try {
     await waitForOwnedSidecarReady(stamp, launched.pid);
   } catch (error) {
-    await stopSidecarRoots(stamp, [launched.pid], { termGraceMs: 0 }).catch(() => undefined);
+    const cleanup = await stopSidecarRoots(stamp, [launched.pid], { termGraceMs: 0 });
+    if (cleanup.remainingPids.length > 0) {
+      throw new AggregateError(
+        [error, new Error(`failed to retire rejected restart generation: ${cleanup.remainingPids.join(", ")}`)],
+        "sidecar restart failed and cleanup was incomplete",
+      );
+    }
     throw error;
   }
   return { pid: launched.pid, reusedPort, stop };
@@ -370,8 +421,8 @@ async function serializeRestart<TResult>(stamp: SidecarStamp, operation: () => P
   }
 }
 
-async function waitForOwnedSidecarReady(stamp: SidecarStamp, pid: number): Promise<void> {
-  const deadline = Date.now() + RESTART_READY_TIMEOUT_MS;
+async function waitForOwnedSidecarReady(stamp: SidecarStamp, pid: number, timeoutMs = RESTART_READY_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const description = await describeSidecar(stamp);
     if (description?.resources.pid === pid && description.ready) return;
@@ -384,27 +435,53 @@ async function waitForOwnedSidecarReady(stamp: SidecarStamp, pid: number): Promi
   throw new Error(`sidecar restart did not acquire endpoint ownership for pid ${pid}`);
 }
 
+async function waitForBootstrappedSidecarReady(stamp: SidecarStamp, pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let stableExisting: { pid: number; since: number } | null = null;
+  while (Date.now() < deadline) {
+    const description = await describeSidecar(stamp);
+    if (description?.resources.pid === pid && description.ready) return;
+    if (description?.ready === true && description.resources.pid !== pid && !isProcessAlive(pid)) {
+      const observedExisting = stableExisting as { pid: number; since: number } | null;
+      if (observedExisting == null || observedExisting.pid !== description.resources.pid) {
+        stableExisting = { pid: description.resources.pid, since: Date.now() };
+      } else if (Date.now() - observedExisting.since >= EXISTING_GENERATION_STABILITY_MS) {
+        return;
+      }
+    } else {
+      stableExisting = null;
+    }
+    if (!isProcessAlive(pid) && description == null) {
+      throw new Error(`sidecar bootstrap generation ${pid} exited before a generation became ready`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`sidecar bootstrap did not leave a ready generation for pid ${pid}`);
+}
+
 async function stopSidecarRoots(
   stamp: SidecarStamp,
   rootPids: readonly number[],
   options: StopProcessesOptions,
   knownSnapshots?: Awaited<ReturnType<typeof listProcessSnapshots>>,
 ): Promise<SidecarStopResult> {
-  const snapshots = knownSnapshots ?? await listProcessSnapshots();
+  const snapshots = knownSnapshots ?? await captureProcessSnapshot();
   const existingPidSet = new Set(snapshots.map(({ pid }) => pid));
   const initialRoots = [...new Set(rootPids)].filter((pid) => existingPidSet.has(pid));
   const initialPids = collectProcessTreePids(snapshots, initialRoots);
   const initialPidSet = new Set(initialPids);
   let gracefulAccepted = false;
-  try {
-    const response = await requestJsonIpc<{ accepted?: unknown }>(
-      resolvePrivateIpcPath(stamp),
-      { targetPids: initialRoots, type: sidecarProtocol.stop },
-      { timeoutMs: 2_000 },
-    );
-    gracefulAccepted = response.accepted === true;
-  } catch {
-    // An absent or stale endpoint is resolved by the exact argv scan below.
+  if (initialRoots.length > 0) {
+    try {
+      const response = await requestJsonIpc<{ accepted?: unknown }>(
+        resolvePrivateIpcPath(stamp),
+        { targetPids: initialRoots, type: sidecarProtocol.stop },
+        { timeoutMs: 2_000 },
+      );
+      gracefulAccepted = response.accepted === true;
+    } catch {
+      // An absent or stale endpoint is resolved by the exact argv scan below.
+    }
   }
 
   if (initialRoots.length === 0) {
@@ -420,9 +497,7 @@ async function stopSidecarRoots(
 
   const graceMs = options.termGraceMs ?? 5_000;
   const deadline = Date.now() + graceMs;
-  const remainingInitialPids = async () => (await listProcessSnapshots())
-    .map(({ pid }) => pid)
-    .filter((pid) => initialPidSet.has(pid));
+  const remainingInitialPids = () => [...initialPidSet].filter(isProcessAlive);
   let remaining = await remainingInitialPids();
   while (remaining.length > 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -446,11 +521,26 @@ async function stopSidecarRoots(
   // A supervisor can create descendants immediately after the invocation
   // snapshot. Refresh only the already-owned root trees before escalation so
   // late children cannot be orphaned, while a replacement root remains fenced.
-  const latestSnapshots = await listProcessSnapshots();
+  const latestSnapshots = await captureProcessSnapshot();
+  const ownedRootSet = new Set(
+    latestSnapshots
+      .filter((processInfo) => initialRoots.includes(processInfo.pid))
+      .filter((processInfo) => matchesStampedProcess(processInfo, stamp, SIDECAR_STAMP_CONTRACT))
+      .map(({ pid }) => pid),
+  );
   const latestGenerationPids = [...new Set([
-    ...remaining,
-    ...collectProcessTreePids(latestSnapshots, initialRoots),
+    ...collectProcessTreePids(latestSnapshots, [...ownedRootSet]),
   ])];
+  if (latestGenerationPids.length === 0) {
+    return {
+      alreadyStopped: false,
+      forcedPids: [],
+      gracefulAccepted,
+      matchedPids: initialPids,
+      remainingPids: remaining,
+      stoppedPids: initialPids.filter((pid) => !remaining.includes(pid)),
+    };
+  }
   const forced = await stopProcesses(latestGenerationPids, { termGraceMs: 0, killGraceMs: options.killGraceMs });
   const matchedPids = [...new Set([...initialPids, ...latestGenerationPids])];
   return {

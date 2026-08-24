@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
 import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { waitForProcessExit } from "@open-design/platform";
+import { captureProcessSnapshot, collectProcessTreePids, waitForProcessExit } from "@open-design/platform";
 import {
   normalizeSidecarStamp,
   allocatePort,
@@ -89,13 +90,15 @@ describe("five-field argv identity", () => {
     process.argv = [process.execPath, "/tmp/packaged-entry.js", "--headless"];
     const launch = vi.fn(async () => ({ pid: 4321 }));
     const resources = { dataRoot: "/tmp/data", ownerPid: null, port: 0, runtimeRoot: "/tmp/runtime" };
-    await expect(bootstrapSidecarProcess(stamp, resources, { launch })).resolves.toBe(true);
+    const waitUntilReady = vi.fn(async () => undefined);
+    await expect(bootstrapSidecarProcess(stamp, resources, { launch, waitUntilReady })).resolves.toBe(true);
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({
       args: ["/tmp/packaged-entry.js", "--headless"],
       command: process.execPath,
       resources,
       stamp,
     }));
+    expect(waitUntilReady).toHaveBeenCalledWith(stamp, 4321, 90_000);
   });
 
   it("rejects partial matching and derived identity fields", () => {
@@ -525,6 +528,68 @@ describe("server-side atomic operations", () => {
       await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
   }, 10_000);
+
+  it("removes a refused stale endpoint after its stamped generation is already gone", async () => {
+    if (process.platform === "win32") return;
+    const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));
+    const staleStamp = { ...stamp, app: "web", namespace: `stale-only-${process.pid}` };
+    const endpoint = resolvePrivateIpcPath(staleStamp);
+    const launched = await launchSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_STALE_ENDPOINT: endpoint },
+      resources: { dataRoot: "/tmp/open-design-stale-only", ownerPid: null, port: 0, runtimeRoot: "/tmp/open-design-stale-only-runtime" },
+      stamp: staleStamp,
+    });
+
+    try {
+      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      const generationPids = collectProcessTreePids(await captureProcessSnapshot(), [launched.pid]);
+      for (const pid of generationPids) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+      }
+      await Promise.all(generationPids.map(async (pid) => await waitForProcessExit(pid, 2_000)));
+      await expect(findSidecarProcesses(staleStamp)).resolves.toEqual([]);
+
+      const result = await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 });
+      expect(result).toMatchObject({ alreadyStopped: true, staleEndpointRemoved: true });
+      await expect(lstat(endpoint)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  }, 10_000);
+
+  it("force-stops an unresponsive target after its declared owner dies", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));
+    const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    if (owner.pid == null) throw new Error("owner fixture has no pid");
+    const ownerStamp = { ...stamp, app: "web", namespace: `owner-death-${process.pid}` };
+    const endpoint = resolvePrivateIpcPath(ownerStamp);
+    const launched = await launchSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_STALE_ENDPOINT: endpoint },
+      resources: { dataRoot: "/tmp/open-design-owner-death", ownerPid: owner.pid, port: 0, runtimeRoot: "/tmp/open-design-owner-death-runtime" },
+      stamp: ownerStamp,
+    });
+    let generationPids: number[] = [];
+    try {
+      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      generationPids = collectProcessTreePids(await captureProcessSnapshot(), [launched.pid]);
+      expect(generationPids.length).toBeGreaterThan(1);
+      owner.kill("SIGKILL");
+      await expect(waitForProcessExit(launched.pid, 9_000)).resolves.toBe(true);
+      await Promise.all(generationPids.map(async (pid) => {
+        await expect(waitForProcessExit(pid, 2_000)).resolves.toBe(true);
+      }));
+    } finally {
+      try { owner.kill("SIGKILL"); } catch {}
+      for (const pid of generationPids) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+      }
+      await stopSidecar(ownerStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  }, 15_000);
 
   it("does not let an earlier stop terminate a replacement with the same stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));

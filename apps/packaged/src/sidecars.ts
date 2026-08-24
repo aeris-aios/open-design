@@ -17,7 +17,6 @@ import {
   type WebStatusSnapshot,
 } from "@open-design/sidecar-proto";
 import {
-  findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
   spawnSidecar,
@@ -548,39 +547,12 @@ export async function retireExistingSidecar(
   stamp: SidecarStamp,
   logPath: string,
   deps: {
-    find?: typeof findSidecarProcesses;
-    status?: typeof getSidecarStatus;
     stop?: typeof stopSidecar;
   } = {},
 ): Promise<void> {
-  let status: { pid?: number | null } | null = null;
-  try {
-    status = await (deps.status ?? getSidecarStatus)<{ pid?: number | null }>(stamp, { timeoutMs: 350 });
-  } catch (error) {
-    const roots = await (deps.find ?? findSidecarProcesses)(stamp);
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" && roots.length === 0) return;
-    if (stamp.app !== APP_KEYS.WEB) {
-      throw new Error(`cannot safely relaunch unresponsive ${stamp.app} sidecar`);
-    }
-    await appendSidecarLifecycleLog(
-      logPath,
-      `[open-design packaged] ${stamp.app} endpoint is unavailable; retiring any stale stamped generation before relaunch`,
-    );
-    const stopped = await (deps.stop ?? stopSidecar)(stamp, { termGraceMs: 2_500 });
-    if ((stopped.matchedPids.length === 0 && stopped.staleEndpointRemoved !== true) || stopped.remainingPids.length > 0) {
-      throw new Error(
-        stopped.matchedPids.length === 0
-          ? `cannot relaunch ${stamp.app}; no durable generation root was found`
-          : `cannot relaunch ${stamp.app}; stale generation remains: ${stopped.remainingPids.join(", ")}`,
-      );
-    }
-    return;
-  }
-
-  const pid = typeof status.pid === "number" ? status.pid : null;
   await appendSidecarLifecycleLog(
     logPath,
-    `[open-design packaged] existing ${stamp.app} sidecar detected pid=${pid ?? "unknown"}; requesting shutdown before relaunch`,
+    `[open-design packaged] retiring prior ${stamp.app} generation before launch`,
   );
   try {
     const stopped = await (deps.stop ?? stopSidecar)(stamp, { termGraceMs: 2_500 });

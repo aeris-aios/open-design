@@ -11,7 +11,7 @@
  * the IPC-path recognizer, and the public IPC types.
  */
 
-import { lstat, mkdir, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { createServer as createNetServer } from "node:net";
 import { dirname } from "node:path";
@@ -154,7 +154,8 @@ async function staleUnixSocketExists(socketPath: string): Promise<boolean> {
  */
 async function prepareIpcPath(socketPath: string): Promise<void> {
   if (isWindowsNamedPipePath(socketPath)) return;
-  await mkdir(dirname(socketPath), { recursive: true });
+  await mkdir(dirname(socketPath), { mode: 0o700, recursive: true });
+  await chmod(dirname(socketPath), 0o700);
   if (await staleUnixSocketExists(socketPath)) await rm(socketPath, { force: true });
 }
 
@@ -277,6 +278,7 @@ export async function createJsonIpcServer({
       resolveListen();
     });
   });
+  if (!isWindowsNamedPipePath(socketPath)) await chmod(socketPath, 0o600);
   const ownedSocket = await readUnixSocketIdentity(socketPath);
 
   return {

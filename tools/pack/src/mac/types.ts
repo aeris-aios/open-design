@@ -31,7 +31,6 @@ export type MacPaths = {
   mountPoint: string;
   packagedMainPrebundleMetaPath: string;
   packagedMainPrebundlePath: string;
-  sidecarSupervisorPrebundlePath: string;
   packagedConfigPath: string;
   payloadZipPath: string;
   resourceRoot: string;
