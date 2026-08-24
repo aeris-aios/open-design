@@ -8,6 +8,7 @@ import {
   finalizeMessageAgentEvents,
   upsertMessage,
 } from '../db.js';
+import { runAttemptAnchor } from '../run-lifecycle-tracer.js';
 
 type SqliteDb = Database.Database;
 
@@ -219,7 +220,30 @@ export function persistRunEventToAssistantMessage(
  * The monotonic guard is on the timestamp rather than the index because a
  * manual resume resets the attempt index back to 0 while still starting a
  * genuinely later attempt.
+ *
+ * Idempotent by construction: re-writing the anchor the row already holds is
+ * allowed by the `<=` guard and stores identical values. Both writers rely on
+ * that — the attempt boundary is persisted the moment it is opened, and the
+ * `start` frame that follows writes the same pair again.
  */
+function writeAssistantMessageAttemptAnchor(
+  db: SqliteDb,
+  messageId: string,
+  anchor: { attemptStartedAt: number; attemptIndex: number },
+): void {
+  try {
+    db.prepare(
+      `UPDATE messages
+          SET attempt_started_at = ?, attempt_index = ?
+        WHERE id = ?
+          AND (attempt_started_at IS NULL OR attempt_started_at <= ?)`,
+    ).run(anchor.attemptStartedAt, anchor.attemptIndex, messageId, anchor.attemptStartedAt);
+  } catch (err) {
+    // The clock is a display affordance; never let it break the run.
+    console.warn('[runs] attempt clock persistence failed', err);
+  }
+}
+
 function stampAssistantMessageAttemptStart(
   db: SqliteDb,
   messageId: string,
@@ -232,17 +256,25 @@ function stampAssistantMessageAttemptStart(
     typeof data.attemptIndex === 'number' && Number.isFinite(data.attemptIndex)
       ? data.attemptIndex
       : 0;
-  try {
-    db.prepare(
-      `UPDATE messages
-          SET attempt_started_at = ?, attempt_index = ?
-        WHERE id = ?
-          AND (attempt_started_at IS NULL OR attempt_started_at <= ?)`,
-    ).run(attemptStartedAt, attemptIndex, messageId, attemptStartedAt);
-  } catch (err) {
-    // The clock is a display affordance; never let it break the run.
-    console.warn('[runs] attempt clock persistence failed', err);
-  }
+  writeAssistantMessageAttemptAnchor(db, messageId, { attemptStartedAt, attemptIndex });
+}
+
+/**
+ * Persist the run's CURRENT attempt anchor to its assistant row.
+ *
+ * Called when an attempt boundary is opened, which for an automatic same-run
+ * retry is the respawn — not the `start` frame that follows it once the child
+ * is up. Between those two moments the run object already reports the new
+ * attempt, so leaving the row behind would let a refresh or a reattach read the
+ * previous attempt's anchor and then watch the clock jump when `start` lands.
+ * The `start` write stays as the transport-of-record for the anchor and is a
+ * no-op when this already stored the same pair.
+ */
+export function persistRunAttemptAnchor(db: SqliteDb, run: ChatRunMessageState): void {
+  if (!run.assistantMessageId) return;
+  const anchor = runAttemptAnchor(run);
+  if (!anchor) return;
+  writeAssistantMessageAttemptAnchor(db, run.assistantMessageId, anchor);
 }
 
 function appendPendingMessageEvent(
@@ -588,9 +620,7 @@ function liveArtifactRefreshPhase(value: unknown): 'started' | 'succeeded' | 'fa
 function claimAttemptAnchor(
   run: ChatRunMessageState,
 ): { attemptStartedAt: number; attemptIndex: number } | Record<string, never> {
-  const attemptStartedAt = run.analyticsTelemetry?.attemptStartedAt;
-  if (typeof attemptStartedAt !== 'number' || !Number.isFinite(attemptStartedAt)) return {};
-  return { attemptStartedAt, attemptIndex: run.retryAttemptCount ?? 0 };
+  return runAttemptAnchor(run) ?? {};
 }
 
 export function pinAssistantMessageOnRunCreate(

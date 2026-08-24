@@ -8,7 +8,7 @@ import {
   normalizeRunToolBundleForRun,
   summarizeRunToolBundle,
 } from '../run-tool-bundle.js';
-import { createRunLifecycleTracer } from '../run-lifecycle-tracer.js';
+import { createRunLifecycleTracer, runAttemptAnchor } from '../run-lifecycle-tracer.js';
 import { projectWorkspaceProvenance } from '../workspace-contract.js';
 import { OPEN_DESIGN_PLUGIN_ID } from '../mcp-observability.js';
 import {
@@ -1219,8 +1219,12 @@ export function createChatRunService({
     // number to render as elapsed time. `analyticsTelemetry` is part of the
     // durable run state, so this survives a daemon restart and a page refresh
     // reads back the same anchor the live stream reported.
-    attemptStartedAt: run.analyticsTelemetry?.attemptStartedAt ?? null,
-    attemptIndex: run.retryAttemptCount ?? 0,
+    //
+    // Taken as one pair (see runAttemptAnchor): `retryAttemptCount` advances
+    // when a retry is DECIDED, so reading the index from it would advertise the
+    // next attempt while this anchor still belongs to the one that just ended.
+    attemptStartedAt: runAttemptAnchor(run)?.attemptStartedAt ?? null,
+    attemptIndex: runAttemptAnchor(run)?.attemptIndex ?? run.retryAttemptCount ?? 0,
     cancelRequested: !!run.cancelRequested,
     cancelOrigin: run.cancelOrigin ?? null,
     terminalTrigger: run.terminalTrigger ?? null,

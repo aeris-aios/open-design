@@ -41,6 +41,8 @@ type StartedServer = {
   shutdown?: () => Promise<void> | void;
 };
 
+type RunDiagnosticValue = { state: string; value?: number };
+
 type RunStatus = {
   id: string;
   status: string;
@@ -51,6 +53,12 @@ type RunStatus = {
   // The fields under test. Absent before the fix.
   attemptStartedAt?: number | null;
   attemptIndex?: number;
+  executionDiagnostics?: {
+    timing?: {
+      queueDurationMs?: RunDiagnosticValue;
+      retryWaitDurationMs?: RunDiagnosticValue;
+    };
+  };
 };
 
 type ConversationMessage = {
@@ -101,9 +109,12 @@ describe('per-attempt run clock (red spec)', () => {
     }
   });
 
-  it('exposes the retried attempt’s start time, not the first attempt’s', async () => {
+  // One daemon + one fake CLI whose attempt 0 hangs until the inactivity
+  // watchdog fails it as retryable, so every spec here exercises a real
+  // policy-scheduled same-run retry rather than a simulated one.
+  const startDaemonWithRetryingClaude = async (binName: string): Promise<string> => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-attempt-clock-bin-'));
-    const fakeClaude = await writeHangThenSucceedClaude(binDir, 'claude-attempt-clock');
+    const fakeClaude = await writeHangThenSucceedClaude(binDir, binName);
 
     delete process.env.POSTHOG_KEY;
     delete process.env.POSTHOG_HOST;
@@ -120,9 +131,14 @@ describe('per-attempt run clock (red spec)', () => {
       telemetry: { metrics: true, content: false, artifactManifest: false },
       privacyDecisionAt: Date.now(),
     });
+    return started.url;
+  };
+
+  it('exposes the retried attempt’s start time, not the first attempt’s', async () => {
+    const url = await startDaemonWithRetryingClaude('claude-attempt-clock');
 
     const { run, projectId, conversationId, assistantMessageId } =
-      await createAndWaitForRun(started.url);
+      await createAndWaitForRun(url);
 
     // Guard the premise: attempt 0 must really have been retried and attempt 1
     // must really have succeeded, or the clock assertions below prove nothing.
@@ -156,11 +172,7 @@ describe('per-attempt run clock (red spec)', () => {
     // The run object is in-memory + a state file; the chat transcript is the DB.
     // If the anchor does not reach the message row, reloading the page reads
     // back attempt 0 and the cumulative clock returns.
-    const messages = await fetchConversationMessages(
-      started.url,
-      projectId,
-      conversationId,
-    );
+    const messages = await fetchConversationMessages(url, projectId, conversationId);
     const assistant = messages.find((m) => m.id === assistantMessageId);
     expect(assistant).toBeDefined();
     expect(assistant?.attemptStartedAt).toBe(run.attemptStartedAt);
@@ -169,6 +181,101 @@ describe('per-attempt run clock (red spec)', () => {
     // time is lost and the secondary "N attempts / total" line cannot be built.
     expect(typeof assistant?.startedAt).toBe('number');
     expect(assistant!.startedAt!).toBeLessThan(assistant!.attemptStartedAt!);
+  }, 30_000);
+
+  // Red spec for review thread PRRT_kwDOSOgY8s6bwoqw.
+  //
+  // The retry boundary is opened when the FAILED attempt is torn down, but the
+  // next attempt is not spawned until the policy backoff (250-1000ms) elapses.
+  // Throughout that window `/api/runs/:id` advertises the next attempt (a fresh
+  // anchor, an incremented index) while the transcript row still carries the
+  // attempt that just ended -- so a refresh or a reattach during the backoff
+  // reads one attempt, the live stream then reports another, and the clock
+  // visibly jumps. The PR promises status, SSE, and the persisted message agree;
+  // this is the window where they do not.
+  //
+  // Sampled with a sandwich read (status -> transcript -> status) so a mismatch
+  // can only mean a real divergence: if the run's own anchor is unchanged across
+  // the transcript read, the two reads did not straddle the respawn.
+  it('keeps run status and the persisted transcript on the same attempt while a retry waits out its backoff', async () => {
+    const url = await startDaemonWithRetryingClaude('claude-attempt-backoff');
+
+    type Sample = { status: RunStatus; assistant: ConversationMessage | undefined };
+    const samples: Sample[] = [];
+    let sawRunning = false;
+
+    const { run } = await createAndWaitForRun(url, {
+      pollIntervalMs: 5,
+      onPoll: async (status, ctx) => {
+        if (status.status === 'running') sawRunning = true;
+        // The retry backoff is the only stretch where a run that has already
+        // executed goes back to `queued`.
+        if (!sawRunning || status.status !== 'queued') return;
+        const messages = await fetchConversationMessages(url, ctx.projectId, ctx.conversationId);
+        const assistant = messages.find((m) => m.id === ctx.assistantMessageId);
+        const after = await fetchRunStatus(url, status.id);
+        if (
+          after.status !== status.status ||
+          after.attemptIndex !== status.attemptIndex ||
+          after.attemptStartedAt !== status.attemptStartedAt
+        ) {
+          return;
+        }
+        samples.push({ status, assistant });
+      },
+    });
+
+    expect(run.status).toBe('succeeded');
+    // Premise guard: if the backoff window was never observed the assertions
+    // below are vacuous.
+    expect(samples.length).toBeGreaterThan(0);
+
+    for (const sample of samples) {
+      expect(sample.assistant).toBeDefined();
+      expect(sample.assistant?.attemptStartedAt).toBe(sample.status.attemptStartedAt);
+      expect(sample.assistant?.attemptIndex).toBe(sample.status.attemptIndex);
+    }
+  }, 30_000);
+
+  // Red spec for review thread PRRT_kwDOSOgY8s6bwoq3.
+  //
+  // `RunTimingProps` defines `retry_wait_duration_ms` as everything earlier
+  // attempts consumed -- their execution AND the policy backoff -- leaving
+  // `queue_duration_ms` as the wait the CURRENT attempt endured. Because the
+  // attempt boundary is stamped at teardown, the backoff falls after the
+  // boundary and is booked as the next attempt's queueing instead. The daemon
+  // has no queue at all, so a `queue_duration_ms` at or above the policy delay
+  // is that misattribution, and every dashboard reading the new field
+  // undercounts retry time by exactly the backoff.
+  it('books the retry backoff as retry wait, not as the next attempt’s queueing', async () => {
+    const url = await startDaemonWithRetryingClaude('claude-attempt-backoff-metric');
+    const { run } = await createAndWaitForRun(url);
+    expect(run.status).toBe('succeeded');
+
+    const events = await readRunEvents(run.eventsLogPath);
+    const retryAttempted = events.find((record) => record.event === 'run_retry_attempted');
+    expect(retryAttempted).toBeDefined();
+    const retryDelayMs = retryAttempted!.data.retry_delay_ms;
+    expect(typeof retryDelayMs).toBe('number');
+    // Premise guard: an immediate retry would make both spans indistinguishable.
+    expect(retryDelayMs as number).toBeGreaterThan(0);
+
+    const timing = run.executionDiagnostics?.timing;
+    const queueDurationMs = timing?.queueDurationMs?.value;
+    const retryWaitDurationMs = timing?.retryWaitDurationMs?.value;
+    expect(typeof queueDurationMs).toBe('number');
+    expect(typeof retryWaitDurationMs).toBe('number');
+
+    // The backoff is time the RUN spent between attempts. Charging it to the
+    // next attempt's queueing is the bug.
+    expect(queueDurationMs as number).toBeLessThan(retryDelayMs as number);
+
+    // ...and it has to actually land in retry wait. The retry is decided at the
+    // `run_retry_attempted` frame and the timer cannot fire before its delay,
+    // so a correctly anchored boundary is at least that far out.
+    expect(retryWaitDurationMs as number).toBeGreaterThanOrEqual(
+      retryAttempted!.timestamp - run.createdAt + (retryDelayMs as number),
+    );
   }, 30_000);
 });
 
@@ -251,7 +358,23 @@ async function fetchConversationMessages(
   return Array.isArray(body) ? body : body.messages ?? [];
 }
 
-async function createAndWaitForRun(url: string): Promise<{
+async function fetchRunStatus(url: string, runId: string): Promise<RunStatus> {
+  const response = await fetch(`${url}/api/runs/${encodeURIComponent(runId)}`);
+  expect(response.status).toBe(200);
+  return await response.json() as RunStatus;
+}
+
+interface RunPollContext {
+  projectId: string;
+  conversationId: string;
+  assistantMessageId: string;
+}
+
+async function createAndWaitForRun(url: string, opts?: {
+  /** Tight enough to land several samples inside a 250-1000ms retry backoff. */
+  pollIntervalMs?: number;
+  onPoll?: (run: RunStatus, ctx: RunPollContext) => Promise<void>;
+}): Promise<{
   run: RunStatus;
   projectId: string;
   conversationId: string;
@@ -291,20 +414,19 @@ async function createAndWaitForRun(url: string): Promise<{
   });
   expect(runResponse.status).toBe(202);
   const body = await runResponse.json() as { runId: string };
+  const ctx: RunPollContext = {
+    projectId,
+    conversationId: projectBody.conversationId,
+    assistantMessageId,
+  };
   const waitStartedAt = Date.now();
   while (Date.now() - waitStartedAt < 25_000) {
-    const response = await fetch(`${url}/api/runs/${encodeURIComponent(body.runId)}`);
-    expect(response.status).toBe(200);
-    const run = await response.json() as RunStatus;
+    const run = await fetchRunStatus(url, body.runId);
     if (['failed', 'succeeded', 'canceled'].includes(run.status)) {
-      return {
-        run,
-        projectId,
-        conversationId: projectBody.conversationId,
-        assistantMessageId,
-      };
+      return { run, ...ctx };
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await opts?.onPoll?.(run, ctx);
+    await new Promise((resolve) => setTimeout(resolve, opts?.pollIntervalMs ?? 100));
   }
   throw new Error(`run ${body.runId} did not finish`);
 }

@@ -101,6 +101,41 @@ export function runLifecycleMarkersForStreamEvent(
   };
 }
 
+export interface RunAttemptAnchor {
+  attemptStartedAt: number;
+  attemptIndex: number;
+}
+
+/**
+ * The attempt a run's clock anchor describes, as an inseparable pair.
+ *
+ * Both halves must come from the SAME source or they can name different
+ * attempts. `retryAttemptCount` moves when a retry is DECIDED — before the next
+ * attempt is opened — so between the decision and the respawn it advertises an
+ * attempt that has not started, while the anchor still belongs to the attempt
+ * that just ended. The telemetry bag is written as one unit by
+ * `resetForAttempt` / `markAttemptStart`, so it is the only coherent source;
+ * `retryAttemptCount` remains a fallback for runs hydrated from a state file
+ * written before the bag carried an index.
+ *
+ * Returns null rather than a half-populated pair: an index with no timestamp
+ * describes an attempt nothing can measure, which is worse than saying nothing.
+ */
+export function runAttemptAnchor(
+  run: RunWithLifecycleTelemetry & { retryAttemptCount?: number | null },
+): RunAttemptAnchor | null {
+  const attemptStartedAt = run.analyticsTelemetry?.attemptStartedAt;
+  if (typeof attemptStartedAt !== 'number' || !Number.isFinite(attemptStartedAt)) return null;
+  const bagIndex = run.analyticsTelemetry?.attemptIndex;
+  const attemptIndex =
+    typeof bagIndex === 'number' && Number.isFinite(bagIndex)
+      ? bagIndex
+      : typeof run.retryAttemptCount === 'number' && Number.isFinite(run.retryAttemptCount)
+        ? run.retryAttemptCount
+        : 0;
+  return { attemptStartedAt, attemptIndex };
+}
+
 export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
   mark(mark: RunLifecycleMark, timestamp?: number): void;
   markFirstModelEvent(
@@ -176,17 +211,14 @@ export function createRunLifecycleTracer(run: RunWithLifecycleTelemetry): {
     // always answerable without inferring it from `run.createdAt`.
     //
     // `resetForAttempt` already stamps this for retries and manual resumes, at
-    // the moment the failed attempt is torn down. Attempt 0 had no such
+    // the moment the next attempt is actually respawned. Attempt 0 had no such
     // boundary and was left unstamped, which is why the only start time a
     // client could read was the logical run start -- the value that keeps
     // growing across retries and reads as a wedged task.
     //
-    // First-write-wins within an attempt: `resetForAttempt` has just replaced
-    // the telemetry bag, so the retry's teardown timestamp is the one that
-    // survives. Anchoring the retry at teardown rather than at respawn keeps
-    // the clock continuous across the policy backoff (no visible gap while the
-    // run sits in `queued`) and keeps the backoff attributable as this
-    // attempt's queue wait.
+    // First-write-wins within an attempt: on a retry `resetForAttempt` has just
+    // replaced the telemetry bag with the respawn timestamp, so this call is a
+    // no-op there and only attempt 0 is stamped from here.
     markAttemptStart(attemptIndex: number, timestamp = Date.now()) {
       const current = run.analyticsTelemetry ?? {};
       if (current.attemptStartedAt !== undefined) return;

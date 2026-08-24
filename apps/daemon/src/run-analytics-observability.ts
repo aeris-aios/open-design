@@ -1237,9 +1237,16 @@ export function summarizeRunTimingAnalytics(args: {
   //
   // Split into the two things that were being conflated:
   //   queue_duration_ms      -- the wait THIS attempt endured before executing
-  //   retry_wait_duration_ms -- everything earlier attempts consumed
+  //   retry_wait_duration_ms -- everything earlier attempts consumed, i.e.
+  //                             their execution plus the policy backoff
   // Their sum reconstructs the pre-fix value, so old dashboards remain
   // auditable against new rows.
+  //
+  // The boundary is stamped when an attempt is actually opened (respawn for a
+  // retry, `startChatRun` for attempt 0), so the backoff falls BEFORE it and
+  // lands in retry wait. Stamping it at teardown instead would leave the
+  // backoff on this side of the boundary and re-label it as queueing — the
+  // daemon has no queue, so that number would be fiction again.
   const attemptBoundaryAt =
     (telemetry.attemptIndex ?? 0) > 0 && telemetry.attemptStartedAt !== undefined
       ? telemetry.attemptStartedAt
