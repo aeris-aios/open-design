@@ -230,6 +230,17 @@ export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOpt
   const initial = described == null
     ? await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT)
     : null;
+  if (initial != null) {
+    const endpointAfterCapture = await readPrivateEndpointIdentity(exact);
+    if (!samePrivateEndpointIdentity(ownedEndpoint, endpointAfterCapture)) {
+      throw new Error("cannot stop sidecar because endpoint ownership changed during recovery");
+    }
+    if (initial.roots.length > 1) {
+      throw new Error(
+        `cannot stop sidecar with multiple stamped generation roots: ${initial.roots.map(({ pid }) => pid).join(", ")}`,
+      );
+    }
+  }
   const roots = described == null
     ? initial?.roots.map(({ pid }) => pid) ?? []
     : [described.resources.pid];
@@ -246,6 +257,15 @@ export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOpt
 }
 
 type PrivateEndpointIdentity = Readonly<{ dev: number; ino: number }>;
+
+function samePrivateEndpointIdentity(
+  left: PrivateEndpointIdentity | null,
+  right: PrivateEndpointIdentity | null,
+): boolean {
+  return left == null || right == null
+    ? left === right
+    : left.dev === right.dev && left.ino === right.ino;
+}
 
 async function readPrivateEndpointIdentity(stamp: SidecarStamp): Promise<PrivateEndpointIdentity | null> {
   if (process.platform === "win32") return null;

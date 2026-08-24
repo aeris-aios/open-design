@@ -568,6 +568,36 @@ describe("server-side atomic operations", () => {
     }
   }, 10_000);
 
+  it("quick-fails stamp-only recovery when multiple generation roots are ambiguous", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const ambiguousStamp = { ...stamp, namespace: `ambiguous-${process.pid}` };
+    const resources = {
+      dataRoot: "/tmp/open-design-ambiguous",
+      ownerPid: null,
+      port: 0,
+      runtimeRoot: "/tmp/open-design-ambiguous-runtime",
+    };
+    const first = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: ambiguousStamp });
+    const second = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: ambiguousStamp });
+    const firstPid = first.process.pid;
+    const secondPid = second.process.pid;
+    try {
+      await vi.waitFor(async () => {
+        expect((await findSidecarProcesses(ambiguousStamp)).map(({ pid }) => pid).sort())
+          .toEqual([firstPid, secondPid].sort());
+      });
+      await expect(stopSidecar(ambiguousStamp, { termGraceMs: 0 }))
+        .rejects.toThrow("multiple stamped generation roots");
+      expect((await findSidecarProcesses(ambiguousStamp)).map(({ pid }) => pid).sort())
+        .toEqual([firstPid, secondPid].sort());
+    } finally {
+      await Promise.all([
+        first.stop({ killGraceMs: 2_000, termGraceMs: 0 }),
+        second.stop({ killGraceMs: 2_000, termGraceMs: 0 }),
+      ]);
+    }
+  });
+
   it("stops its spawned generation after the process hides its argv stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/renamed-child.ts", import.meta.url));
     const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-renamed-"));
