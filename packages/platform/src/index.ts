@@ -32,12 +32,14 @@ export type {
   ProcessStampField,
   ProcessStampShape,
   SpawnProcessRequest,
+  StampedProcessInvocationSnapshot,
   StampedProcessMatchCriteria,
   StopProcessesOptions,
   StopProcessesResult,
 } from "./process.js";
 export {
   collectProcessTreePids,
+  captureStampedProcessSnapshot,
   createProcessStampArgs,
   isProcessAlive,
   listProcessSnapshots,

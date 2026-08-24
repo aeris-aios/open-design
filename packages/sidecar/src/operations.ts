@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 
 import type { SpawnProcessRequest, StopProcessesOptions, StopProcessesResult } from "@open-design/platform";
 import {
+  captureStampedProcessSnapshot,
   collectProcessTreePids,
   createProcessStampArgs,
   listProcessSnapshots,
@@ -186,11 +187,8 @@ export async function invokeSidecar<TResult = unknown>(
 
 export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
   const exact = normalizeSidecarStamp(stamp);
-  const initialSnapshots = await listProcessSnapshots();
-  const initialRoots = initialSnapshots.filter((processInfo) =>
-    matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
-  );
-  return await stopSidecarRoots(exact, initialRoots.map(({ pid }) => pid), options, initialSnapshots);
+  const initial = await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT);
+  return await stopSidecarRoots(exact, initial.roots.map(({ pid }) => pid), options, initial.processes);
 }
 
 /**

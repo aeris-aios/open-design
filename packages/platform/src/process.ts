@@ -40,6 +40,13 @@ export type ProcessSnapshot = {
   command: string;
   pid: number;
   ppid: number;
+  /** OS-reported process creation time when the enumeration backend can provide it. */
+  startedAtMs?: number;
+};
+
+export type StampedProcessInvocationSnapshot = {
+  processes: ProcessSnapshot[];
+  roots: ProcessSnapshot[];
 };
 
 export type StampedProcessMatchCriteria<TStamp extends ProcessStampShape> = Partial<TStamp>;
@@ -94,6 +101,7 @@ type WindowsProcessRecord = {
   CommandLine?: string | null;
   ParentProcessId?: number | string | null;
   ProcessId?: number | string | null;
+  StartedAtMs?: number | string | null;
 };
 
 /** @internal Extract a Node `error.code` as a string, or `null` when the value carries no code. */
@@ -348,7 +356,7 @@ async function listPosixProcessSnapshots(): Promise<ProcessSnapshot[]> {
 async function listWindowsProcessSnapshots(): Promise<ProcessSnapshot[]> {
   const command = [
     "$ErrorActionPreference = 'Stop'",
-    "Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Compress",
+    "Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine, @{Name='StartedAtMs';Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress",
   ].join("; ");
   const stdout = await new Promise<string>((resolveList, rejectList) => {
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }, (error, out) => {
@@ -356,6 +364,11 @@ async function listWindowsProcessSnapshots(): Promise<ProcessSnapshot[]> {
       else resolveList(out);
     });
   });
+  return parseWindowsProcessSnapshots(stdout);
+}
+
+/** @internal Parse the JSON emitted by the Windows process enumeration command. */
+export function parseWindowsProcessSnapshots(stdout: string): ProcessSnapshot[] {
   const payload = stdout.trim();
   if (!payload) return [];
   const records = JSON.parse(payload) as WindowsProcessRecord | WindowsProcessRecord[];
@@ -363,11 +376,24 @@ async function listWindowsProcessSnapshots(): Promise<ProcessSnapshot[]> {
     .map((record) => {
       const pid = Number(record.ProcessId);
       const ppid = Number(record.ParentProcessId);
+      const startedAtMs = Number(record.StartedAtMs);
       const commandLine = record.CommandLine?.trim();
       if (!commandLine || Number.isNaN(pid) || Number.isNaN(ppid)) return null;
-      return { command: commandLine, pid, ppid };
+      return {
+        command: commandLine,
+        pid,
+        ppid,
+        ...(Number.isSafeInteger(startedAtMs) && startedAtMs > 0 ? { startedAtMs } : {}),
+      };
     })
     .filter((snapshot): snapshot is ProcessSnapshot => snapshot != null);
+}
+
+/** @internal Enumerate processes without converting backend failure into an empty snapshot. */
+async function listProcessSnapshotsStrict(): Promise<ProcessSnapshot[]> {
+  return process.platform === "win32"
+    ? await listWindowsProcessSnapshots()
+    : await listPosixProcessSnapshots();
 }
 
 /**
@@ -378,12 +404,62 @@ async function listWindowsProcessSnapshots(): Promise<ProcessSnapshot[]> {
  */
 export async function listProcessSnapshots(): Promise<ProcessSnapshot[]> {
   try {
-    return process.platform === "win32"
-      ? await listWindowsProcessSnapshots()
-      : await listPosixProcessSnapshots();
+    return await listProcessSnapshotsStrict();
   } catch {
     return [];
   }
+}
+
+/**
+ * Select stamped processes that unambiguously existed before an operation's
+ * invocation boundary. Windows process enumeration is asynchronous, so its
+ * results are fenced by the OS creation time. A matching record exactly on the
+ * boundary, or without a creation time, is deliberately rejected instead of
+ * risking that a newer generation is terminated.
+ *
+ * @internal Exported from this module for deterministic boundary tests; the
+ * package barrel exposes only `captureStampedProcessSnapshot`.
+ */
+export function selectStampedProcessesAtInvocation<
+  TStamp extends ProcessStampShape,
+  TCriteria extends Partial<TStamp> = Partial<TStamp>,
+>(
+  snapshots: ProcessSnapshot[],
+  criteria: TCriteria | undefined,
+  contract: ProcessStampContract<TStamp, TCriteria>,
+  invokedAtMs: number,
+  platform: NodeJS.Platform = process.platform,
+): ProcessSnapshot[] {
+  const matches = snapshots.filter((snapshot) => matchesStampedProcess(snapshot, criteria, contract));
+  if (platform !== "win32") return matches;
+
+  return matches.filter((snapshot) => {
+    if (snapshot.startedAtMs == null || snapshot.startedAtMs === invokedAtMs) {
+      throw new Error(`cannot establish process generation boundary for pid ${snapshot.pid}`);
+    }
+    return snapshot.startedAtMs < invokedAtMs;
+  });
+}
+
+/**
+ * Capture the process table and argv-stamped roots that safely belonged to the
+ * generation visible when this call began. Unlike `listProcessSnapshots`,
+ * enumeration and boundary failures are surfaced so lifecycle callers can
+ * quick-fail instead of reporting a false `alreadyStopped` result.
+ */
+export async function captureStampedProcessSnapshot<
+  TStamp extends ProcessStampShape,
+  TCriteria extends Partial<TStamp> = Partial<TStamp>,
+>(
+  criteria: TCriteria | undefined,
+  contract: ProcessStampContract<TStamp, TCriteria>,
+): Promise<StampedProcessInvocationSnapshot> {
+  const invokedAtMs = Date.now();
+  const processes = await listProcessSnapshotsStrict();
+  return {
+    processes,
+    roots: selectStampedProcessesAtInvocation(processes, criteria, contract, invokedAtMs),
+  };
 }
 
 /**
