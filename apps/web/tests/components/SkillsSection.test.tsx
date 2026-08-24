@@ -87,6 +87,8 @@ function renderSkillsSection(
       );
     }
     if (url.startsWith('/api/skills/') && init?.method === 'DELETE') {
+      const id = decodeURIComponent(url.split('/').pop() ?? '');
+      catalog = catalog.filter((skill) => skill.id !== id);
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -217,6 +219,38 @@ describe('SkillsSection', () => {
     expect(screen.queryByTestId('skill-row-builtin-skill')).toBeNull();
   });
 
+  it('keeps the source selected when other filters hide its skills', async () => {
+    renderSkillsSection([
+      makeSkill({
+        id: 'builtin-skill',
+        name: 'Built-in skill',
+        source: 'built-in',
+      }),
+      makeSkill({
+        id: 'user-skill',
+        name: 'User skill',
+        source: 'user',
+      }),
+    ]);
+
+    const sourceSelect = await screen.findByLabelText('Source');
+    await waitFor(() => {
+      expect(sourceSelect.querySelector('option[value="user"]')).not.toBeNull();
+    });
+    fireEvent.change(sourceSelect, { target: { value: 'user' } });
+    expect(await screen.findByTestId('skill-row-user-skill')).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText('Search...'), {
+      target: { value: 'Built-in skill' },
+    });
+
+    await waitFor(() => {
+      expect(sourceSelect).toHaveValue('user');
+      expect(sourceSelect.querySelector('option[value="user"]')?.textContent).toContain('(0)');
+      expect(screen.queryByTestId('skill-row-builtin-skill')).toBeNull();
+    });
+  });
+
   it('treats an omitted source as built-in for counts and filtering', async () => {
     renderSkillsSection([
       makeSkill({
@@ -263,6 +297,36 @@ describe('SkillsSection', () => {
         method: 'DELETE',
       });
     });
+  });
+
+  it('resets the source selection after deleting its last skill', async () => {
+    const { fetchMock } = renderSkillsSection([
+      makeSkill({
+        id: 'user-skill',
+        name: 'User skill',
+        source: 'user',
+      }),
+      makeSkill({
+        id: 'builtin-skill',
+        name: 'Built-in skill',
+        source: 'built-in',
+      }),
+    ]);
+
+    const sourceSelect = await screen.findByLabelText('Source');
+    const row = await screen.findByTestId('skill-row-user-skill');
+    fireEvent.change(sourceSelect, { target: { value: 'user' } });
+    fireEvent.click(within(row).getByTestId('skills-delete'));
+    fireEvent.click(within(row).getByTestId('skills-delete-confirm'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/skills/user-skill', {
+        method: 'DELETE',
+      });
+      expect(sourceSelect).toHaveValue('all');
+    });
+    expect(await screen.findByTestId('skill-row-builtin-skill')).toBeTruthy();
+    expect(sourceSelect.querySelector('option[value="user"]')).toBeNull();
   });
 
   it('warns before editing a built-in skill creates a user override', async () => {

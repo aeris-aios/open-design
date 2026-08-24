@@ -263,13 +263,28 @@ export function SkillsSection({ cfg, setCfg, onSkillsRefresh, onSkillsChanged }:
     return counts;
   }, [skills, modeFilter, categoryFilter, searchQuery, locale]);
 
+  const sourceCatalogCounts = useMemo(() => {
+    const counts = new Map<SkillSource, number>([
+      ['user', 0],
+      ['built-in', 0],
+    ]);
+    for (const skill of skills) {
+      const source = getSkillSource(skill);
+      counts.set(source, (counts.get(source) ?? 0) + 1);
+    }
+    return counts;
+  }, [skills]);
+
   // Do not leave the select pointing at a source that disappeared after a
-  // refresh or no longer matches the other active filters.
+  // refresh (for example, when the last user skill is deleted).
   useEffect(() => {
-    if (sourceFilter !== 'all' && (sourceCounts.get(sourceFilter) ?? 0) === 0) {
+    if (
+      sourceFilter !== 'all'
+      && (sourceCatalogCounts.get(sourceFilter) ?? 0) === 0
+    ) {
       setSourceFilter('all');
     }
-  }, [sourceCounts, sourceFilter]);
+  }, [sourceCatalogCounts, sourceFilter]);
 
   const modeOptions = useMemo(() => {
     const modes = new Set(skills.map((s) => s.mode));
@@ -674,7 +689,7 @@ export function SkillsSection({ cfg, setCfg, onSkillsRefresh, onSkillsChanged }:
               </option>
               {SOURCE_FILTERS.map((s) => {
                 const count = sourceCounts.get(s) ?? 0;
-                if (count === 0) return null;
+                if ((sourceCatalogCounts.get(s) ?? 0) === 0) return null;
                 return (
                   <option key={s} value={s}>
                     {s} ({count})
