@@ -129,7 +129,7 @@ async function fetchModels(
   }
 }
 
-type VersionProbeOutcome =
+export type VersionProbeOutcome =
   | { kind: 'not-invocable'; cause: NotInvocableCause }
   | { kind: 'spawned'; version: string | null };
 
@@ -174,8 +174,8 @@ function launcherTargetMissing(err: unknown): boolean {
 }
 
 /**
- * Run the agent's `--version` probe and classify the result. The probe
- * has two distinct failure modes the catch arm has to discriminate:
+ * Classify a rejected `--version` probe. There are two distinct failure modes
+ * to discriminate:
  *
  *   - **Not invocable.** The OS rejected the spawn outright, OR the
  *     wrapper script spawned but its underlying interpreter / target
@@ -197,7 +197,39 @@ function launcherTargetMissing(err: unknown): boolean {
  * codes with a *numeric* `err.code` equal to the exit status, so those
  * two arms are unambiguous. Windows wrappers are the case they cannot
  * decide on their own — see `launcherTargetMissing` above.
+ *
+ * Exported because half of what it decides cannot be reached from a test that
+ * spawns a fixture. `9009` and cmd.exe / PowerShell's wording only ever come
+ * from a real Windows launcher, and POSIX masks exit statuses to 8 bits, so a
+ * shell asked for 9009 reports 49. Since the daemon suite runs on Linux in CI,
+ * driving this directly is the only way the merge gate can catch a regression
+ * in a signature the Windows fix depends on.
  */
+export function classifyVersionProbeFailure(err: unknown): VersionProbeOutcome {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  if (typeof code === 'string') {
+    if (code === 'EACCES') {
+      return { kind: 'not-invocable', cause: 'not-executable' };
+    }
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return { kind: 'not-invocable', cause: 'missing-target' };
+    }
+  } else if (typeof code === 'number') {
+    if (code === 126) {
+      return { kind: 'not-invocable', cause: 'not-executable' };
+    }
+    // 127 is the POSIX shell's "command not found"; 9009 is cmd.exe's.
+    if (code === 127 || code === WINDOWS_COMMAND_NOT_FOUND_EXIT) {
+      return { kind: 'not-invocable', cause: 'missing-target' };
+    }
+    if (launcherTargetMissing(err)) {
+      return { kind: 'not-invocable', cause: 'missing-target' };
+    }
+  }
+  return { kind: 'spawned', version: null };
+}
+
+/** Run the agent's `--version` probe and classify the result. */
 async function probeVersionAtPath(
   def: RuntimeAgentDef,
   resolved: string,
@@ -214,27 +246,7 @@ async function probeVersionAtPath(
       : rawVersion;
     return { kind: 'spawned', version };
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    if (typeof code === 'string') {
-      if (code === 'EACCES') {
-        return { kind: 'not-invocable', cause: 'not-executable' };
-      }
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
-        return { kind: 'not-invocable', cause: 'missing-target' };
-      }
-    } else if (typeof code === 'number') {
-      if (code === 126) {
-        return { kind: 'not-invocable', cause: 'not-executable' };
-      }
-      // 127 is the POSIX shell's "command not found"; 9009 is cmd.exe's.
-      if (code === 127 || code === WINDOWS_COMMAND_NOT_FOUND_EXIT) {
-        return { kind: 'not-invocable', cause: 'missing-target' };
-      }
-      if (launcherTargetMissing(err)) {
-        return { kind: 'not-invocable', cause: 'missing-target' };
-      }
-    }
-    return { kind: 'spawned', version: null };
+    return classifyVersionProbeFailure(err);
   }
 }
 
