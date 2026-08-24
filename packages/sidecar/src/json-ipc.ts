@@ -21,6 +21,20 @@ import { isWindowsNamedPipePath } from "./ipc-path.js";
 import { closeServer } from "./net.js";
 import type { JsonIpcHandler, JsonIpcServerHandle } from "./types.js";
 
+type UnixSocketIdentity = Readonly<{ dev: number; ino: number }>;
+
+async function readUnixSocketIdentity(socketPath: string): Promise<UnixSocketIdentity | null> {
+  if (isWindowsNamedPipePath(socketPath)) return null;
+  const entry = await lstat(socketPath).catch(() => null);
+  return entry?.isSocket() ? { dev: entry.dev, ino: entry.ino } : null;
+}
+
+async function removeOwnedUnixSocket(socketPath: string, owned: UnixSocketIdentity | null): Promise<void> {
+  if (owned == null) return;
+  const current = await readUnixSocketIdentity(socketPath);
+  if (current?.dev === owned.dev && current.ino === owned.ino) await rm(socketPath, { force: true });
+}
+
 let jsonIpcTraceSeq = 0;
 
 /**
@@ -263,11 +277,12 @@ export async function createJsonIpcServer({
       resolveListen();
     });
   });
+  const ownedSocket = await readUnixSocketIdentity(socketPath);
 
   return {
     async close() {
       await closeServer(server);
-      if (!isWindowsNamedPipePath(socketPath)) await rm(socketPath, { force: true });
+      await removeOwnedUnixSocket(socketPath, ownedSocket);
     },
   };
 }

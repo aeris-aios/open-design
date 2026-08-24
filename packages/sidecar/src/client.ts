@@ -54,6 +54,7 @@ export type SidecarConnection = {
 };
 
 export type SidecarDescription = Readonly<{
+  ready: boolean;
   resources: SidecarResources;
   stamp: SidecarStamp;
 }>;
@@ -155,16 +156,14 @@ export class SidecarClient<TRuntime> {
     let runtime!: TRuntime;
     let runtimeStarted = false;
     try {
-      runtime = await this.#lifecycle.start(this.resources);
-      runtimeStarted = true;
-      this.#runtime = runtime;
       this.#ipcServer = await createJsonIpcServer({
         socketPath: resolvePrivateIpcPath(this.stamp),
         handler: async (message) => {
           const request = assertEnvelope(message);
           if (request.type === CONTROL_DESCRIBE) {
-            return { resources: this.resources, stamp: this.stamp } satisfies SidecarDescription;
+            return { ready: runtimeStarted, resources: this.resources, stamp: this.stamp } satisfies SidecarDescription;
           }
+          if (!runtimeStarted) throw new Error("sidecar runtime is starting");
           if (request.type === CONTROL_STATUS) return await this.#lifecycle.status(runtime);
           if (request.type === CONTROL_STOP) {
             if (request.targetPids != null && !request.targetPids.includes(process.pid)) {
@@ -180,6 +179,9 @@ export class SidecarClient<TRuntime> {
           return await handler(request.input);
         },
       });
+      runtime = await this.#lifecycle.start(this.resources);
+      runtimeStarted = true;
+      this.#runtime = runtime;
       for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, this.#signalHandler);
       if (this.resources.ownerPid != null) {
         this.#ownerTimer = setInterval(() => {
@@ -197,6 +199,8 @@ export class SidecarClient<TRuntime> {
     } catch (error) {
       this.#runtime = null;
       if (runtimeStarted) await this.#lifecycle.stop(runtime).catch(() => undefined);
+      await this.#ipcServer?.close().catch(() => undefined);
+      this.#ipcServer = null;
       this.#clearEndpoint();
       throw error;
     }

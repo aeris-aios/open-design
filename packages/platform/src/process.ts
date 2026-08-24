@@ -329,14 +329,20 @@ export async function waitForProcessExit(pid: number | null | undefined, timeout
   return !isProcessAlive(pid);
 }
 
-/** @internal Parse `ps -axo pid=,ppid=,command=` output into process snapshots. */
-function parsePsOutput(stdout: string): ProcessSnapshot[] {
+/** @internal Parse `ps -axo pid=,ppid=,lstart=,command=` output into process snapshots. */
+export function parsePosixProcessSnapshots(stdout: string): ProcessSnapshot[] {
   return stdout
     .split(/\r?\n/)
     .map((line) => {
-      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/);
       if (!match) return null;
-      return { pid: Number(match[1]), ppid: Number(match[2]), command: match[3] };
+      const startedAtMs = Date.parse(match[3]);
+      return {
+        command: match[4],
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        ...(Number.isSafeInteger(startedAtMs) && startedAtMs > 0 ? { startedAtMs } : {}),
+      };
     })
     .filter((snapshot): snapshot is ProcessSnapshot => snapshot != null);
 }
@@ -344,12 +350,12 @@ function parsePsOutput(stdout: string): ProcessSnapshot[] {
 /** @internal Enumerate process snapshots on POSIX via `ps`. */
 async function listPosixProcessSnapshots(): Promise<ProcessSnapshot[]> {
   const stdout = await new Promise<string>((resolveList, rejectList) => {
-    execFile("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }, (error, out) => {
+    execFile("ps", ["-axo", "pid=,ppid=,lstart=,command="], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }, (error, out) => {
       if (error) rejectList(error);
       else resolveList(out);
     });
   });
-  return parsePsOutput(stdout);
+  return parsePosixProcessSnapshots(stdout);
 }
 
 /** @internal Enumerate process snapshots on Windows via `Get-CimInstance Win32_Process` JSON. */
@@ -412,8 +418,8 @@ export async function listProcessSnapshots(): Promise<ProcessSnapshot[]> {
 
 /**
  * Select stamped processes that unambiguously existed before an operation's
- * invocation boundary. Windows process enumeration is asynchronous, so its
- * results are fenced by the OS creation time. A matching record exactly on the
+ * invocation boundary. Process enumeration is asynchronous, so its results
+ * are fenced by the OS creation time. A matching record exactly on the
  * boundary, or without a creation time, is deliberately rejected instead of
  * risking that a newer generation is terminated.
  *
@@ -431,10 +437,12 @@ export function selectStampedProcessesAtInvocation<
   platform: NodeJS.Platform = process.platform,
 ): ProcessSnapshot[] {
   const matches = snapshots.filter((snapshot) => matchesStampedProcess(snapshot, criteria, contract));
-  if (platform !== "win32") return matches;
-
   return matches.filter((snapshot) => {
     if (snapshot.startedAtMs == null || snapshot.startedAtMs === invokedAtMs) {
+      throw new Error(`cannot establish process generation boundary for pid ${snapshot.pid}`);
+    }
+    if (snapshot.startedAtMs > invokedAtMs) return false;
+    if (platform !== "win32" && snapshot.startedAtMs + 1_000 > invokedAtMs) {
       throw new Error(`cannot establish process generation boundary for pid ${snapshot.pid}`);
     }
     return snapshot.startedAtMs < invokedAtMs;

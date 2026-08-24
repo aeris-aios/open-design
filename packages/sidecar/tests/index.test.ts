@@ -138,6 +138,43 @@ describe("generic sidecar path boundary", () => {
 });
 
 describe("generic sidecar JSON IPC", () => {
+  it("does not unlink a replacement socket when an old server finishes closing", async () => {
+    if (process.platform === "win32") return;
+    const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-owned-ipc-"));
+    const socketPath = testIpcPath(root);
+    let releaseOld!: () => void;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const holdOld = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const old = await createJsonIpcServer({
+      socketPath,
+      handler: async () => {
+        markEntered();
+        await holdOld;
+        return { generation: "old" };
+      },
+    });
+    const oldRequest = requestJsonIpc(socketPath, { type: "status" });
+    await entered;
+    const closing = old.close();
+    await rm(socketPath, { force: true });
+    const replacement = await createJsonIpcServer({
+      socketPath,
+      handler: async () => ({ generation: "replacement" }),
+    });
+
+    try {
+      releaseOld();
+      await oldRequest;
+      await closing;
+      await expect(requestJsonIpc(socketPath, { type: "status" })).resolves.toEqual({ generation: "replacement" });
+    } finally {
+      releaseOld();
+      await replacement.close();
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("traces low-level IPC events without changing request semantics", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-ipc-"));
     const socketPath = testIpcPath(root);

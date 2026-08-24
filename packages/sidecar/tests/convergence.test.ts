@@ -200,13 +200,34 @@ describe("normalized sidecar client", () => {
       },
     });
     await expect(client.start()).rejects.toThrow();
-    expect(events).toEqual(["start", "stop"]);
+    expect(events).toEqual([]);
     expect(SidecarFactory.inheritedEnvironment()).toEqual({});
 
     await blocker.stop();
     await expect(client.start()).resolves.toBeUndefined();
-    expect(events).toEqual(["start", "stop", "start"]);
+    expect(events).toEqual(["start"]);
     expect(Object.keys(SidecarFactory.inheritedEnvironment())).toEqual(["OD_SIDECAR_CLIENT_ENDPOINT"]);
+    await client.stop();
+  });
+
+  it("releases endpoint ownership when business lifecycle startup fails", async () => {
+    installCurrentProcess(stamp);
+    let attempts = 0;
+    const client = SidecarFactory.create({
+      lifecycle: {
+        async start() {
+          attempts += 1;
+          if (attempts === 1) throw new Error("transient business startup failure");
+          return { ready: true };
+        },
+        status(runtime) { return runtime; },
+        async stop() {},
+      },
+    });
+
+    await expect(client.start()).rejects.toThrow("transient business startup failure");
+    await expect(client.start()).resolves.toBeUndefined();
+    await expect(client.status("daemon")).resolves.toEqual({ ready: true });
     await client.stop();
   });
 });
@@ -245,6 +266,34 @@ describe("server-side atomic operations", () => {
       await stopSidecar(restartStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
   });
+
+  it("serializes two concurrent restarts into one healthy generation", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
+    const restartStamp = { ...stamp, namespace: `restart-concurrent-${process.pid}` };
+    const resources = {
+      dataRoot: "/tmp/open-design-restart-concurrent",
+      ownerPid: null,
+      port: 0,
+      runtimeRoot: "/tmp/open-design-restart-concurrent-runtime",
+    };
+
+    try {
+      const results = await Promise.allSettled([
+        restartSidecar({ args: ["--import", "tsx", fixture], command: process.execPath, resources, stamp: restartStamp }),
+        restartSidecar({ args: ["--import", "tsx", fixture], command: process.execPath, resources, stamp: restartStamp }),
+      ]);
+      const fulfilled = results
+        .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof restartSidecar>>> => result.status === "fulfilled")
+        .map(({ value }) => value);
+      expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+      const live = await findSidecarProcesses(restartStamp);
+      expect(live).toHaveLength(1);
+      const status = await getSidecarStatus<{ pid: number }>(restartStamp);
+      expect(status.pid).toBe(fulfilled.at(-1)?.pid);
+    } finally {
+      await stopSidecar(restartStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  }, 15_000);
 
   it("keeps an adjacent proxy and namespace healthy across a daemon restart (TD-06)", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));

@@ -6,6 +6,7 @@ import {
   captureStampedProcessSnapshot,
   collectProcessTreePids,
   createProcessStampArgs,
+  isProcessAlive,
   listProcessSnapshots,
   matchesStampedProcess,
   spawnBackgroundProcess,
@@ -38,6 +39,9 @@ export type SidecarRestartOptions = {
   reuseKnownPort?: boolean;
   stop?: StopProcessesOptions;
 };
+
+const RESTART_READY_TIMEOUT_MS = 30_000;
+const restartTails = new Map<string, Promise<void>>();
 
 export type SidecarRestartResult = {
   pid: number;
@@ -150,26 +154,28 @@ export async function getSidecarStatus<TResult = unknown>(stamp: SidecarStamp, o
 }
 
 async function describeSidecar(stamp: SidecarStamp): Promise<SidecarDescription | null> {
+  let description: SidecarDescription;
   try {
-    const description = await requestJsonIpc<SidecarDescription>(
+    description = await requestJsonIpc<SidecarDescription>(
       resolvePrivateIpcPath(stamp),
       { type: sidecarProtocol.describe },
       { timeoutMs: 2_000 },
     );
-    const describedStamp = normalizeSidecarStamp(description.stamp);
-    if (JSON.stringify(describedStamp) !== JSON.stringify(stamp)) {
-      throw new Error("sidecar endpoint described a different stamp");
-    }
-    if (!Number.isSafeInteger(description.resources.pid) || description.resources.pid <= 0) {
-      throw new Error("sidecar endpoint described an invalid pid");
-    }
-    if (!Number.isInteger(description.resources.port) || description.resources.port < 0 || description.resources.port > 65535) {
-      throw new Error("sidecar endpoint described an invalid port");
-    }
-    return description;
   } catch {
     return null;
   }
+  const describedStamp = normalizeSidecarStamp(description.stamp);
+  if (JSON.stringify(describedStamp) !== JSON.stringify(stamp)) {
+    throw new Error("sidecar endpoint described a different stamp");
+  }
+  if (!Number.isSafeInteger(description.resources.pid) || description.resources.pid <= 0) {
+    throw new Error("sidecar endpoint described an invalid pid");
+  }
+  if (!Number.isInteger(description.resources.port) || description.resources.port < 0 || description.resources.port > 65535) {
+    throw new Error("sidecar endpoint described an invalid port");
+  }
+  if (typeof description.ready !== "boolean") throw new Error("sidecar endpoint described invalid readiness");
+  return description;
 }
 
 export async function invokeSidecar<TResult = unknown>(
@@ -188,19 +194,30 @@ export async function invokeSidecar<TResult = unknown>(
 
 export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
   const exact = normalizeSidecarStamp(stamp);
+  const ownedEndpoint = await readPrivateEndpointIdentity(exact);
   const initial = await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT);
   const result = await stopSidecarRoots(exact, initial.roots.map(({ pid }) => pid), options, initial.processes);
   if (result.remainingPids.length === 0 && (await findSidecarProcesses(exact)).length === 0) {
-    await removeStalePrivateEndpoint(exact);
+    await removeOwnedPrivateEndpoint(exact, ownedEndpoint);
   }
   return result;
 }
 
-async function removeStalePrivateEndpoint(stamp: SidecarStamp): Promise<void> {
-  if (process.platform === "win32") return;
+type PrivateEndpointIdentity = Readonly<{ dev: number; ino: number }>;
+
+async function readPrivateEndpointIdentity(stamp: SidecarStamp): Promise<PrivateEndpointIdentity | null> {
+  if (process.platform === "win32") return null;
   const endpoint = resolvePrivateIpcPath(stamp);
   const entry = await lstat(endpoint).catch(() => null);
-  if (entry?.isSocket()) await rm(endpoint, { force: true });
+  return entry?.isSocket() ? { dev: entry.dev, ino: entry.ino } : null;
+}
+
+async function removeOwnedPrivateEndpoint(stamp: SidecarStamp, owned: PrivateEndpointIdentity | null): Promise<void> {
+  if (owned == null) return;
+  const current = await readPrivateEndpointIdentity(stamp);
+  if (current?.dev === owned.dev && current.ino === owned.ino) {
+    await rm(resolvePrivateIpcPath(stamp), { force: true });
+  }
 }
 
 /**
@@ -212,6 +229,14 @@ async function removeStalePrivateEndpoint(stamp: SidecarStamp): Promise<void> {
 export async function restartSidecar(
   request: SidecarLaunchRequest,
   options: SidecarRestartOptions = {},
+): Promise<SidecarRestartResult> {
+  const stamp = normalizeSidecarStamp(request.stamp);
+  return await serializeRestart(stamp, async () => await restartSidecarGeneration({ ...request, stamp }, options));
+}
+
+async function restartSidecarGeneration(
+  request: SidecarLaunchRequest,
+  options: SidecarRestartOptions,
 ): Promise<SidecarRestartResult> {
   const stamp = normalizeSidecarStamp(request.stamp);
   const previous = await describeSidecar(stamp);
@@ -241,7 +266,42 @@ export async function restartSidecar(
     },
     stamp,
   });
+  try {
+    await waitForOwnedSidecarReady(stamp, launched.pid);
+  } catch (error) {
+    await stopSidecarRoots(stamp, [launched.pid], { termGraceMs: 0 }).catch(() => undefined);
+    throw error;
+  }
   return { pid: launched.pid, reusedPort, stop };
+}
+
+async function serializeRestart<TResult>(stamp: SidecarStamp, operation: () => Promise<TResult>): Promise<TResult> {
+  const key = JSON.stringify(normalizeSidecarStamp(stamp));
+  const previous = restartTails.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const tail = new Promise<void>((resolve) => { release = resolve; });
+  restartTails.set(key, tail);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (restartTails.get(key) === tail) restartTails.delete(key);
+  }
+}
+
+async function waitForOwnedSidecarReady(stamp: SidecarStamp, pid: number): Promise<void> {
+  const deadline = Date.now() + RESTART_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const description = await describeSidecar(stamp);
+    if (description?.resources.pid === pid && description.ready) return;
+    if (description != null && description.resources.pid !== pid) {
+      throw new Error(`sidecar restart lost endpoint ownership to pid ${description.resources.pid}`);
+    }
+    if (!isProcessAlive(pid)) throw new Error(`sidecar restart generation ${pid} exited before becoming ready`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`sidecar restart did not acquire endpoint ownership for pid ${pid}`);
 }
 
 async function stopSidecarRoots(
