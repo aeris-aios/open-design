@@ -27,7 +27,6 @@ const EXPECTED_PUSH_EXCLUDED_ENTRIES = [
   '.file-versions',
   '.live-artifacts',
   '.od-skills',
-  '.od-frames',
   '.git',
   'node_modules',
   '.npmrc',

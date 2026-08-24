@@ -59,57 +59,18 @@ export function findQuestionFormCloseTag(text: string, from: number, closeTag: s
 // doc) count as a clarification turn, so artifact-generating runs that merely
 // mention the markup are not misclassified.
 export function emittedRenderableQuestionForm(text: unknown): boolean {
-  return countRenderableQuestionForms(text) > 0;
-}
-
-/**
- * What a text actually did with the `<question-form>` markup.
- *
- * "No form" and "a form that cannot render" are different facts with different
- * remedies, and collapsing them to a single renderable count is what let a
- * production turn emit `<question-form> 无需提出——…` — an open marker with prose
- * for a body and no close tag — while every consumer scored it as silence.
- */
-export interface QuestionFormScan {
-  /** Closed blocks whose body satisfies the parser contract. These render. */
-  renderable: number;
-  /** Closed blocks whose body fails the contract. The UI keeps them as prose. */
-  unrenderable: number;
-  /** An open marker with no matching close tag anywhere after it. */
-  unterminated: boolean;
-}
-
-/**
- * Classify every `<question-form>`/`<ask-question>` marker in `text`.
- *
- * Scanning stops at the first unterminated marker, exactly as the renderable
- * count always has: without a close tag there is no way to know where the body
- * ends, so nothing after it can be attributed. That stop is now *reported*
- * (`unterminated`) instead of silently returning a count of zero.
- */
-export function scanQuestionForms(text: unknown): QuestionFormScan {
-  const scan: QuestionFormScan = { renderable: 0, unrenderable: 0, unterminated: false };
-  if (typeof text !== 'string' || !text) return scan;
+  if (typeof text !== 'string' || !text) return false;
   let cursor = 0;
   while (cursor < text.length) {
     const m = QUESTION_FORM_OPEN_RE.exec(text.slice(cursor));
-    if (!m) return scan;
+    if (!m) return false;
     const tagName = (m[1] ?? 'question-form').toLowerCase();
     const closeTag = `</${tagName}>`;
     const openEnd = cursor + m.index + m[0].length;
     const closeIdx = findQuestionFormCloseTag(text, openEnd, closeTag);
-    if (closeIdx === -1) {
-      scan.unterminated = true;
-      return scan;
-    }
-    if (questionFormBodyIsRenderable(text.slice(openEnd, closeIdx))) scan.renderable += 1;
-    else scan.unrenderable += 1;
+    if (closeIdx === -1) return false;
+    if (questionFormBodyIsRenderable(text.slice(openEnd, closeIdx))) return true;
     cursor = closeIdx + closeTag.length;
   }
-  return scan;
-}
-
-/** Count complete renderable forms so one-round protocols can reject ambiguity. */
-export function countRenderableQuestionForms(text: unknown): number {
-  return scanQuestionForms(text).renderable;
+  return false;
 }

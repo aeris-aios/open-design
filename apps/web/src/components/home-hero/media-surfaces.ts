@@ -200,9 +200,7 @@ export function metadataForHomeMediaComposer(
   if (surface === 'video' || surface === 'hyperframes') {
     return {
       kind: 'video',
-      ...(surface === 'hyperframes'
-        ? { intent: 'hyperframes' as const, videoModel: 'hyperframes-html' as const }
-        : {}),
+      ...(surface === 'hyperframes' ? { videoModel: 'hyperframes-html' as const } : {}),
       ...(promptTemplate ? { promptTemplate } : {}),
     };
   }

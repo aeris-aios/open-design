@@ -1072,10 +1072,7 @@ describe('NewProjectPanel start-from rail', () => {
 
     fireEvent.click(screen.getByTestId('create-project'));
     expect(onCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        skillId: 'prototype-skill',
-        skillSelectionProvenance: 'automatic-default',
-      }),
+      expect.objectContaining({ skillId: 'prototype-skill' }),
     );
   });
 
@@ -1092,10 +1089,7 @@ describe('NewProjectPanel start-from rail', () => {
 
     fireEvent.click(screen.getByTestId('create-project'));
     expect(onCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        skillId: 'saas-landing',
-        skillSelectionProvenance: 'explicit-user',
-      }),
+      expect.objectContaining({ skillId: 'saas-landing' }),
     );
   });
 

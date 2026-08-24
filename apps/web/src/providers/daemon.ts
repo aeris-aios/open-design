@@ -37,7 +37,6 @@ import type {
   ResearchOptions,
   RunContextSelection,
   SseErrorPayload,
-  StrategyTaskProjectionV2,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
@@ -271,23 +270,6 @@ export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: st
   return warning ? `${warning}\n\n${transcript}` : transcript;
 }
 
-/** Build only the turns before the latest user message without text subtraction. */
-export function buildDaemonPriorTranscript(
-  history: ChatMessage[],
-  targetAgentId?: string,
-): string {
-  let latestUserIndex = -1;
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    if (history[index]?.role === 'user') {
-      latestUserIndex = index;
-      break;
-    }
-  }
-  return latestUserIndex < 0
-    ? buildDaemonTranscript(history, targetAgentId)
-    : buildDaemonTranscript(history.slice(0, latestUserIndex), targetAgentId);
-}
-
 export interface DaemonStreamHandlers extends StreamHandlers {
   onAgentEvent: (ev: AgentEvent) => void;
   /** Authoritative artifact count from the daemon's terminal run record. */
@@ -357,6 +339,7 @@ export interface DaemonStreamOptions {
   // (non-workspace) usage, matching those other call sites.
   workspaceContext?: WorkspaceCollabContext | null;
   initialLastEventId?: string | null;
+  onRunCreated?: (runId: string) => void;
   onRunStatus?: (status: ChatRunStatus) => void;
   /** Authoritative project-relative artifacts created or modified by the run. */
   onArtifactPaths?: (paths: string[]) => void;
@@ -366,13 +349,6 @@ export interface DaemonStreamOptions {
   // (page_name / area / entry_from / DS context). Behavior never
   // depends on them.
   analyticsHints?: ChatAnalyticsHints;
-  /** Daemon-issued continuation handle used only for an explicit task reply. */
-  taskExecutionId?: string;
-  /** Called for the initial Run and every daemon-projected successor Run. */
-  onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2) => void;
-  /** Called once the daemon projects the logical strategy task as terminal
-   *  (completed / blocked / canceled), with the terminal projection. */
-  onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
 }
 
 export interface DaemonReattachOptions {
@@ -391,11 +367,6 @@ export interface DaemonReattachOptions {
   onRunEventId?: (eventId: string) => void;
   /** Publish a current-run success outcome to the app-level upgrade gate. */
   publishRunFinishedEvent?: boolean;
-  /** Called when reattach discovers a newer active Run in the same task. */
-  onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2) => void;
-  /** Called once the daemon projects the logical strategy task as terminal
-   *  (completed / blocked / canceled), with the terminal projection. */
-  onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
 }
 
 export const RUNS_CHANGED_EVENT = 'open-design:runs-changed';
@@ -747,8 +718,6 @@ export async function streamViaDaemon({
   onArtifactPaths,
   onRunEventId,
   analyticsHints,
-  taskExecutionId,
-  onStrategyTaskSettled,
 }: DaemonStreamOptions): Promise<void> {
   const emitRunStatus = (status: ChatRunStatus) => {
     onRunStatus?.(status);
@@ -761,9 +730,7 @@ export async function streamViaDaemon({
   const request: ChatRequest = {
     agentId,
     message: transcript,
-    ...(taskExecutionId ? { taskExecutionId } : {}),
     currentPrompt: latestUserPromptFromHistory(history),
-    priorTranscript: buildDaemonPriorTranscript(history, agentId),
     projectId: projectId ?? null,
     conversationId: conversationId ?? null,
     sessionMode,
@@ -835,8 +802,7 @@ export async function streamViaDaemon({
 
     const created = (await createResp.json()) as ChatRunCreateResponse;
     const runId = created.runId;
-    if (created.strategyTask) onRunCreated?.(runId, created.strategyTask);
-    else onRunCreated?.(runId);
+    onRunCreated?.(runId);
     // Start the stuck-run watchdog. trackRunProgress is called inside the
     // SSE consumer below on every event; trackRunTerminal fires when the
     // stream resolves to a terminal state (or errors out).
@@ -862,8 +828,6 @@ export async function streamViaDaemon({
       conversationId,
       workspaceContext,
       publishRunFinishedEvent: true,
-      onRunCreated,
-      onStrategyTaskSettled,
     });
   } catch (err) {
     if ((err as Error).name === 'AbortError') return;
@@ -1242,51 +1206,7 @@ export async function listProjectRuns(
   }
 }
 
-interface DaemonPhysicalRunResult {
-  nextRunId?: string;
-  strategyTask?: StrategyTaskProjectionV2;
-}
-
-async function consumeDaemonRun(options: DaemonReattachOptions): Promise<void> {
-  let runId = options.runId;
-  let initialLastEventId = options.initialLastEventId;
-  let taskText = '';
-  const visited = new Set<string>();
-  const taskHandlers: DaemonStreamHandlers = {
-    ...options.handlers,
-    onDelta: (delta) => {
-      taskText += delta;
-      options.handlers.onDelta(delta);
-    },
-    onDone: () => options.handlers.onDone(taskText),
-  };
-  while (true) {
-    if (visited.has(runId)) {
-      options.onRunStatus?.('failed');
-      options.handlers.onError(new Error('daemon returned a cyclic strategy task Run chain'));
-      return;
-    }
-    visited.add(runId);
-    const result = await consumeDaemonPhysicalRun({
-      ...options,
-      handlers: taskHandlers,
-      runId,
-      initialLastEventId,
-    });
-    if (!result?.nextRunId) return;
-    runId = result.nextRunId;
-    initialLastEventId = null;
-    trackRunStart(runId, {
-      agent_id: options.agentId,
-      project_id: options.projectId ?? undefined,
-      conversation_id: options.conversationId ?? undefined,
-      client_type: detectClientType(),
-    });
-    options.onRunCreated?.(runId, result.strategyTask);
-  }
-}
-
-async function consumeDaemonPhysicalRun({
+async function consumeDaemonRun({
   agentId,
   runId,
   signal,
@@ -1300,14 +1220,12 @@ async function consumeDaemonPhysicalRun({
   conversationId,
   workspaceContext,
   publishRunFinishedEvent,
-  onStrategyTaskSettled,
-}: DaemonReattachOptions): Promise<DaemonPhysicalRunResult | void> {
+}: DaemonReattachOptions): Promise<void> {
   let acc = '';
   let stderrBuf = '';
   let exitCode: number | null = null;
   let exitSignal: string | null = null;
   let endStatus: ChatRunStatus | null = null;
-  let endStrategyTask: StrategyTaskProjectionV2 | undefined;
   let pendingStructuredError: Error | null = null;
   // Tracks whether the server explicitly declared `status: 'succeeded'` in
   // the SSE end payload (or via the fallback run-status fetch). Distinct
@@ -1494,13 +1412,13 @@ async function consumeDaemonPhysicalRun({
             if (event.data.failureDetail) endFailureDetail = event.data.failureDetail;
             reportArtifactCount(event.data.artifactCount);
             reportArtifactPaths(event.data.artifactPaths);
-            if (event.data.strategyTask) endStrategyTask = event.data.strategyTask;
             // `serverDeclaredSuccess` records whether the server explicitly
             // set `status: 'succeeded'` in the end payload — the local
             // `'succeeded'` fallback below does not count and must keep
             // hitting the exit-code/signal safety net later.
             serverDeclaredSuccess = event.data.status === 'succeeded';
             endStatus = isChatRunStatus(event.data.status) ? event.data.status : 'succeeded';
+            onRunStatus?.(endStatus);
           }
         }
       }
@@ -1522,7 +1440,7 @@ async function consumeDaemonPhysicalRun({
           if (status.failureDetail) endFailureDetail = status.failureDetail;
           reportArtifactCount(status.artifactCount);
           reportArtifactPaths(status.artifactPaths);
-          if (status.strategyTask) endStrategyTask = status.strategyTask;
+          onRunStatus?.(endStatus);
           break;
         }
         if (!status) {
@@ -1555,59 +1473,13 @@ async function consumeDaemonPhysicalRun({
         if (status.failureDetail) endFailureDetail = status.failureDetail;
         reportArtifactCount(status.artifactCount);
         reportArtifactPaths(status.artifactPaths);
-        if (status.strategyTask) endStrategyTask = status.strategyTask;
+        onRunStatus?.(endStatus);
       } else {
         onRunStatus?.('failed');
         handlers.onError(createGenericDaemonDisconnectError());
         return;
       }
     }
-
-    if (endStrategyTask && !endStrategyTask.terminal) {
-      const nextRunId = endStrategyTask.activeRunId !== runId
-        ? endStrategyTask.activeRunId
-        : endStrategyTask.nextRunId;
-      if (nextRunId && nextRunId !== runId) {
-        onRunStatus?.('running');
-        return { nextRunId, strategyTask: endStrategyTask };
-      }
-    }
-
-    if (endStrategyTask?.terminal) {
-      // Surface the terminal projection before the status/error handlers run,
-      // so a blocked verdict (with its gate attribution) is stamped onto the
-      // assistant message ahead of the failure finalization it triggers.
-      onStrategyTaskSettled?.(endStrategyTask);
-      if (endStrategyTask.outcome === 'canceled') {
-        endStatus = 'canceled';
-      } else if (endStrategyTask.outcome === 'blocked') {
-        // A blocked strategy verdict does not retroactively unmake a Run that
-        // already succeeded AND delivered. Observed across every runtime: the
-        // agent writes the canonical deliverable correctly, the daemon's own
-        // `validateRunDeliverable` resolves it, and then the turn is refused
-        // over a machine-block defect. Remapping that to `failed` hid the file
-        // the user asked for behind a generic error card and suppressed the
-        // next-step actions that reach it.
-        //
-        // The strategy contract is explicit that a post-claim failure keeps the
-        // current Run's own result rather than inventing a new one, so only a
-        // Run that did NOT succeed-and-deliver falls through to the failure
-        // branch. `deliverableValid` is filesystem-backed (entry resolved, this
-        // Run touched it, kind matches) — never the agent's own assertion — and
-        // an unreachable daemon fails closed to the previous behaviour.
-        const deliveredDespiteBlock = endStatus === 'succeeded'
-          && (await fetchChatRunStatus(runId, workspaceContext))?.deliverableValid === true;
-        if (!deliveredDespiteBlock) {
-          endStatus = 'failed';
-          pendingStructuredError ??= new Error('The strategy task could not continue.');
-        }
-      } else if (endStrategyTask.outcome === 'completed') {
-        endStatus = 'succeeded';
-        serverDeclaredSuccess = true;
-      }
-    }
-
-    onRunStatus?.(endStatus);
 
     if (endStatus === 'canceled') {
       handlers.onDone(acc);

@@ -42,10 +42,6 @@ vi.mock('../../src/components/home-hero/PlaceholderCarousel', () => ({
 
 import { HomeHero } from '../../src/components/HomeHero';
 import { findChip, orderedCreateChips } from '../../src/components/home-hero/chips';
-import {
-  prototypeSceneProjectMetadata,
-  prototypeSubChipForSlug,
-} from '../../src/components/home-hero/sub-chips';
 
 afterEach(() => {
   placeholderCarouselMock.reportScenario = false;
@@ -111,26 +107,20 @@ describe('HomeHero scenario cards', () => {
     expect(ids).not.toContain('mobile');
   });
 
-  it('keeps nested prototype scenarios executable without giving them a chip of their own', () => {
+  it('keeps nested prototype scenarios executable without exposing them as top-level templates', () => {
     renderHero();
     openTemplatePicker();
     expect(screen.queryByTestId('home-hero-template-wedge-wireframe')).toBeNull();
     expect(screen.queryByTestId('home-hero-template-wedge-mobile')).toBeNull();
     expect(screen.getByTestId('home-hero-template-wedge-document')).toBeTruthy();
-    // They are scenes, so they have no catalog entry at all — what makes them
-    // executable is the Prototype chip's action plus their own refinement.
-    expect(findChip('wireframe')).toBeUndefined();
-    expect(findChip('mobile')).toBeUndefined();
-    const prototypeChip = findChip('prototype')!;
-    expect(prototypeChip.action).toMatchObject({
-      kind: 'apply-scenario',
+    expect(findChip('wireframe')?.action.kind).toBe('apply-scenario');
+    expect(findChip('mobile')?.action.kind).toBe('apply-scenario');
+    // Wireframe reuses the web-prototype seed at lo-fi fidelity.
+    expect(findChip('wireframe')?.action).toMatchObject({
       pluginId: 'example-web-prototype',
       projectKind: 'prototype',
+      projectMetadata: { kind: 'prototype', fidelity: 'wireframe' },
     });
-    // Wireframe reuses the web-prototype seed at lo-fi fidelity.
-    expect(
-      prototypeSceneProjectMetadata(prototypeChip, prototypeSubChipForSlug('wireframe')),
-    ).toEqual({ kind: 'prototype', fidelity: 'wireframe' });
     expect(findChip('document')?.action).toMatchObject({
       pluginId: 'od-new-generation',
       projectKind: 'other',

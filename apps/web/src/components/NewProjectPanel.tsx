@@ -128,8 +128,6 @@ export type MediaSurface = 'image' | 'video' | 'audio';
 export interface CreateInput {
   name: string;
   skillId: string | null;
-  /** UI-only intent marker; the public project contract still receives only the resolved skill id. */
-  skillSelectionProvenance?: 'automatic-default' | 'explicit-user';
   designSystemId: string | null;
   metadata: ProjectMetadata;
   userWorkingDirToken?: string;
@@ -768,7 +766,6 @@ export function NewProjectPanel({
     onCreate({
       name: trimmedName || autoName(tab, mediaSurface, t),
       skillId: startTemplateId ?? skillIdForTab,
-      skillSelectionProvenance: startTemplateId ? 'explicit-user' : 'automatic-default',
       designSystemId: primaryDs,
       metadata: {
         ...metadata,

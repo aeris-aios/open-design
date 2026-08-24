@@ -20,12 +20,6 @@
  */
 
 import { createRoleMarkerGuard, type RoleMarkerGuard } from '../role-marker-guard.js';
-import {
-  createClaudeChildEvidenceCollector,
-  type ClaudeChildRuntimeFact,
-  type ClaudeChildToolRuntimeFact,
-  type ClaudeOpenChildTerminationReason,
-} from './claude-child-evidence.js';
 
 type StreamEvent = Record<string, unknown>;
 type EventSink = (event: StreamEvent) => void;
@@ -47,14 +41,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-export interface ClaudeStreamHandlerOptions {
+interface ClaudeStreamHandlerOptions {
   suppressHtmlArtifactsAfterFileWrite?: boolean;
-  onChildRuntimeFact?: (fact: ClaudeChildRuntimeFact) => void;
-  onChildToolRuntimeFact?: (fact: ClaudeChildToolRuntimeFact) => void;
-  childEvidenceNow?: () => number;
-  nativeBuildPackageBindings?: Readonly<Record<string, string>>;
-  /** Consume forwarded Child frames only as native evidence, never as parent UI output. */
-  suppressForwardedSubagentEvents?: boolean;
 }
 
 export function createClaudeStreamHandler(
@@ -62,18 +50,6 @@ export function createClaudeStreamHandler(
   options: ClaudeStreamHandlerOptions = {},
 ) {
   let buffer = '';
-  const childEvidence = options.onChildRuntimeFact || options.onChildToolRuntimeFact
-    ? createClaudeChildEvidenceCollector({
-        ...(options.onChildRuntimeFact ? { onFact: options.onChildRuntimeFact } : {}),
-        ...(options.onChildToolRuntimeFact
-          ? { onToolFact: options.onChildToolRuntimeFact }
-          : {}),
-        ...(options.childEvidenceNow ? { now: options.childEvidenceNow } : {}),
-        ...(options.nativeBuildPackageBindings
-          ? { nativeBuildPackageBindings: options.nativeBuildPackageBindings }
-          : {}),
-      })
-    : null;
 
   // Per-content-block scratch, keyed by `${messageId}:${blockIndex}`.
   const blocks = new Map<string, BlockState>();
@@ -401,15 +377,6 @@ export function createClaudeStreamHandler(
   function handleObject(obj: unknown) {
     if (!isRecord(obj)) return;
 
-    childEvidence?.observe(obj);
-    if (
-      options.suppressForwardedSubagentEvents === true &&
-      typeof obj.parent_tool_use_id === 'string' &&
-      obj.parent_tool_use_id.trim().length > 0
-    ) {
-      return;
-    }
-
     if (obj.type === 'system' && obj.subtype === 'init') {
       onEvent({
         type: 'status',
@@ -698,15 +665,7 @@ export function createClaudeStreamHandler(
     emitSafeText(currentMessageId, text);
   }
 
-  function finishOpenChildEvidence(reason: ClaudeOpenChildTerminationReason): void {
-    childEvidence?.finishOpenChildren(reason);
-  }
-
-  function childEvidenceCoverage() {
-    return childEvidence?.coverage();
-  }
-
-  return { feed, flush, finishOpenChildEvidence, childEvidenceCoverage };
+  return { feed, flush };
 }
 
 function stringifyToolResult(content: unknown): string {

@@ -23,7 +23,6 @@ import {
   renderPluginBlock,
   resolveLocalizedText,
   type AppliedPluginSnapshot,
-  type AppliedStrategyBindingV2,
   type ApplyResult,
   type InstalledPluginRecord,
   type McpServerSpec,
@@ -44,11 +43,6 @@ import {
 import { deriveAutoAtomSurfaces } from './atoms/auto-surfaces.js';
 import { ensureCoreQualityStages } from './ensure-core-stages.js';
 import { getManifestContextCraft } from './context-craft.js';
-import {
-  isInternalBundledStrategyV2,
-  validateBundledStrategyActivationV2,
-} from './strategy-provenance.js';
-import { enforceOdNextStrategyPipelineV2 } from './strategy-stage-policy.js';
 
 export class MissingInputError extends Error {
   readonly fields: string[];
@@ -56,15 +50,6 @@ export class MissingInputError extends Error {
     super(`Missing required plugin inputs: ${fields.join(', ')}`);
     this.fields = fields;
     this.name = 'MissingInputError';
-  }
-}
-
-export class InternalBundledStrategyApplyError extends Error {
-  readonly pluginId: string;
-  constructor(pluginId: string) {
-    super(`Bundled strategy ${pluginId} is internal until hash-gated activation.`);
-    this.pluginId = pluginId;
-    this.name = 'InternalBundledStrategyApplyError';
   }
 }
 
@@ -92,8 +77,6 @@ export interface ApplyInput {
   // tests), the connector bindings stay in `pending` status and no
   // auto-prompt is derived.
   connectorProbe?: ConnectorProbe | undefined;
-  /** Daemon-internal, controlled-I/O proof for OD Next activation. */
-  internalStrategyBinding?: AppliedStrategyBindingV2 | undefined;
 }
 
 export interface ApplyComputed {
@@ -106,16 +89,6 @@ export interface ApplyComputed {
 }
 
 export function applyPlugin(input: ApplyInput): ApplyComputed {
-  const isInternalStrategy = isInternalBundledStrategyV2(input.plugin);
-  if (isInternalStrategy && !input.internalStrategyBinding) {
-    throw new InternalBundledStrategyApplyError(input.plugin.id);
-  }
-  if (!isInternalStrategy && input.internalStrategyBinding) {
-    throw new InternalBundledStrategyApplyError(input.plugin.id);
-  }
-  const strategy = input.internalStrategyBinding
-    ? validateBundledStrategyActivationV2(input.plugin, input.internalStrategyBinding)
-    : undefined;
   const manifest = input.plugin.manifest;
   const rawTrust: TrustTier = input.trust ?? input.plugin.trust;
   const trust: ApplyTrust = rawTrust === 'restricted' ? 'restricted' : 'trusted';
@@ -163,18 +136,12 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   // anti-slop) stages, so the five-stage main flow is stable whether the
   // artifact came from a free-form prompt or a plugin. Pure media stays
   // generate-only. See ensure-core-stages.ts for the full rationale.
-  const appliedPipeline = strategy
-    ? enforceOdNextStrategyPipelineV2({
-        plugin: input.plugin,
-        binding: strategy,
-        pipeline: pipelineResolution.pipeline,
-      })
-    : ensureCoreQualityStages({
-        pipeline: pipelineResolution.pipeline,
-        taskKind,
-        mode: manifest.od?.mode,
-        source: pipelineResolution.source,
-      });
+  const appliedPipeline = ensureCoreQualityStages({
+    pipeline: pipelineResolution.pipeline,
+    taskKind,
+    mode: manifest.od?.mode,
+    source: pipelineResolution.source,
+  });
 
   const declaredSurfaces = manifest.od?.genui?.surfaces ?? [];
   const autoOAuth = input.connectorProbe
@@ -240,7 +207,6 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
     pluginTitle,
     pluginDescription,
     query:                queryText || undefined,
-    ...(strategy ? { strategy } : {}),
     status:               'fresh',
   };
 

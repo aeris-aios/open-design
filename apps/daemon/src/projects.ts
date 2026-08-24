@@ -186,13 +186,7 @@ async function collectFolders(dir, relDir, out, shouldSkipDir?: (name: string) =
     if (shouldSkipDir?.(e.name)) continue;
     const rel = relDir ? `${relDir}/${e.name}` : e.name;
     const full = path.join(dir, e.name);
-    let st;
-    try {
-      st = await stat(full);
-    } catch (err) {
-      if (err && err.code === 'ENOENT') continue;
-      throw err;
-    }
+    const st = await stat(full);
     out.push({
       name: rel,
       path: rel,
@@ -299,15 +293,8 @@ async function collectFiles(dir, relDir, out, shouldSkipDir?: (name: string) => 
     }
     if (!e.isFile()) continue;
     if (e.name.endsWith('.artifact.json')) continue;
-    let st;
-    let manifest;
-    try {
-      st = await stat(full);
-      manifest = await readManifestForPath(projectRoot, rel);
-    } catch (err) {
-      if (err && err.code === 'ENOENT') continue;
-      throw err;
-    }
+    const st = await stat(full);
+    const manifest = await readManifestForPath(projectRoot, rel);
     out.push({
       name: rel,
       path: rel,

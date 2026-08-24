@@ -32,7 +32,6 @@ import type {
   TrustTier,
 } from '@open-design/contracts';
 import { defaultTrustForRecord, resolveCapabilitiesGranted } from './trust.js';
-import { isInternalBundledStrategyV2 } from './strategy-provenance.js';
 import { getWorkspaceResourceByResourceId } from '../db.js';
 import type Database from 'better-sqlite3';
 
@@ -415,8 +414,7 @@ export function listInstalledPlugins(
   const rows = db.prepare(`SELECT * FROM installed_plugins ORDER BY title ASC`).all() as DbRow[];
   const records = rows.map(rowToInstalledPlugin);
   return records.filter((record) =>
-    !isInternalBundledStrategyV2(record)
-    && pluginVisibleFromWorkspace(db, record, workspaceId, workspaceMemberId),
+    pluginVisibleFromWorkspace(db, record, workspaceId, workspaceMemberId),
   );
 }
 
