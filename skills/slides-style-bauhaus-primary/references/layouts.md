@@ -14,7 +14,7 @@ Registered layout IDs: `cover`, `module-overview`, `rationale`, `principles`, `m
 
 | ID | Role | Use when | Guardrail |
 |---|---|---|---|
-| `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Keep the title dominant; no agenda, dashboard, or multi-card payload. |
+| `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Center the complete content group horizontally on the canvas while keeping its internal typography left-aligned. |
 | `module-overview` | Module Overview | Set the sequence and expectation for the deck. | Use short labels and preserve scanning rhythm. |
 | `rationale` | Rationale | Use this layout only for content that matches its demonstrated information shape. | Preserve its hierarchy, alignment, and signature spacing before adding variants. |
 | `principles` | Principles | Use this layout only for content that matches its demonstrated information shape. | Preserve its hierarchy, alignment, and signature spacing before adding variants. |

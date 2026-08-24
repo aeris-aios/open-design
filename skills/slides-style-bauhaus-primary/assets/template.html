@@ -84,6 +84,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
 .center{display:flex;align-items:center;justify-content:center;text-align:center}
+.cover-stack{width:min(760px,100%);margin-inline:auto;text-align:left}
 .mt-s{margin-top:8px}.mt-m{margin-top:18px}.mt-l{margin-top:32px}
 
 /* ============ CARDS / PILLS — zero radius, 2px ink, hard shadow ============ */
@@ -182,19 +183,21 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 
   <!-- 1 · layout: cover -->
   <section class="slide" data-title="Cover" data-layout="cover">
-    <svg width="220" height="120" viewBox="0 0 220 120" aria-hidden="true" style="margin-bottom:28px">
-      <rect x="2" y="34" width="84" height="84" fill="#e03c27" stroke="#111" stroke-width="3"/>
-      <polygon points="130,34 172,118 88,118" fill="#f4c430" stroke="#111" stroke-width="3"/>
-      <circle cx="176" cy="76" r="42" fill="#1d4eaf" stroke="#111" stroke-width="3"/>
-    </svg>
-    <p class="kicker">Professional Training · Design Fundamentals</p>
-    <h1 class="h1 anim-rise-in">The Studio<br><span class="gradient-text">Eye</span></h1>
-    <p class="lede">A hands-on grid, type, and color foundations course for new brand designers — the exact exercises that turn a good hire into a mentor-ready designer in one quarter.</p>
-    <div class="row wrap mt-l" style="gap:10px">
-      <span class="pill pill-accent">Weeks 1–6</span>
-      <span class="pill pill-accent-2">Grid · Type · Color</span>
-      <span class="pill pill-accent-3">Studio Critique</span>
-      <span class="pill">For New Hires</span>
+    <div class="cover-stack">
+      <svg width="220" height="120" viewBox="0 0 220 120" aria-hidden="true" style="margin-bottom:28px">
+        <rect x="2" y="34" width="84" height="84" fill="#e03c27" stroke="#111" stroke-width="3"/>
+        <polygon points="130,34 172,118 88,118" fill="#f4c430" stroke="#111" stroke-width="3"/>
+        <circle cx="176" cy="76" r="42" fill="#1d4eaf" stroke="#111" stroke-width="3"/>
+      </svg>
+      <p class="kicker">Professional Training · Design Fundamentals</p>
+      <h1 class="h1 anim-rise-in">The Studio<br><span class="gradient-text">Eye</span></h1>
+      <p class="lede">A hands-on grid, type, and color foundations course for new brand designers — the exact exercises that turn a good hire into a mentor-ready designer in one quarter.</p>
+      <div class="row wrap mt-l" style="gap:10px">
+        <span class="pill pill-accent">Weeks 1–6</span>
+        <span class="pill pill-accent-2">Grid · Type · Color</span>
+        <span class="pill pill-accent-3">Studio Critique</span>
+        <span class="pill">For New Hires</span>
+      </div>
     </div>
     <div class="notes">Cover. The square-triangle-circle device is the deck's signature mark — every accent in the deck stays inside the red/yellow/blue primaries on an aged-canvas ground.</div>
   </section>
