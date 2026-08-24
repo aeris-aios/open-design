@@ -144,6 +144,14 @@ describe('sourceLooksLikeNavigableDeck', () => {
     )).toBe(false);
   });
 
+  it('ignores deck-shaped text inside report comments and scripts', () => {
+    expect(sourceLooksLikeNavigableDeck(
+      '<main class="doc"><h1>Annual report</h1></main>' +
+      '<!-- print support waits for a <deck-stage> when one exists -->' +
+      '<script>const example = "<deck-stage></deck-stage>";</script>',
+    )).toBe(false);
+  });
+
   it('keeps explicit and multi-screen persisted decks navigable', () => {
     expect(sourceLooksLikeNavigableDeck(
       '<deck-stage><section data-screen-label="Cover">A</section></deck-stage>',
