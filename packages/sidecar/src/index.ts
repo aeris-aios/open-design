@@ -50,7 +50,7 @@ export {
   SIDECAR_STAMP_FIELDS,
   SIDECAR_STAMP_FLAGS,
 } from "./stamp.js";
-export type { SidecarLaunchRequest, SidecarStopResult } from "./operations.js";
+export type { SidecarLaunchRequest, SidecarStopResult, SpawnedSidecar } from "./operations.js";
 export {
   bootstrapSidecarProcess,
   findSidecarProcesses,

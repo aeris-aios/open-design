@@ -31,6 +31,11 @@ const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => 
     unref: vi.fn(),
   }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
 });
+const spawnSidecar = vi.fn(async (request: { env: NodeJS.ProcessEnv; stamp: Record<string, string> }) => ({
+  process: await spawnLoggedProcess(request),
+  stamp: request.stamp,
+  stop: vi.fn(),
+}));
 const stopSidecar = vi.fn(async (stamp: { source: string }) => ({
   alreadyStopped: stamp.source !== "packaged",
   forcedPids: [],
@@ -44,7 +49,7 @@ vi.mock("@open-design/sidecar", async () => ({
   ...(await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar")),
   findSidecarProcesses,
   getSidecarStatus,
-  spawnSidecar: spawnLoggedProcess,
+  spawnSidecar,
   stopSidecar,
 }));
 

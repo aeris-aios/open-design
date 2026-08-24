@@ -388,7 +388,7 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   const logHandle = await open(logPath, "a");
   let child: ChildProcess;
   try {
-    child = await spawnSidecar({
+    const spawned = await spawnSidecar({
       args: [],
       command: target.executablePath,
       cwd: target.appPath,
@@ -407,6 +407,7 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
       },
       stamp,
     });
+    child = spawned.process;
   } finally {
     await logHandle.close().catch(() => undefined);
   }

@@ -21,6 +21,7 @@ import {
   invokeSidecar,
   spawnSidecar,
   stopSidecar,
+  type SpawnedSidecar,
   type SidecarStamp,
   type SidecarRuntimeContext,
 } from "@open-design/sidecar";
@@ -111,6 +112,7 @@ export type PackagedSidecarHandle = {
 type ManagedSidecarChild = {
   app: AppKey;
   child: ChildProcess;
+  generation: SpawnedSidecar;
   logHandle: FileHandle;
   logPath: string;
   stamp: SidecarStamp;
@@ -774,7 +776,7 @@ async function spawnSidecarChild(options: {
       PATH: resolvePackagedPathEnv(),
       ...(usesElectronAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
   };
-  const child = await spawnSidecar({
+  const generation = await spawnSidecar({
     args: [options.entryPath],
     command,
     cwd: options.paths.runtimeRoot,
@@ -791,7 +793,7 @@ async function spawnSidecarChild(options: {
     stamp,
   });
 
-  return { app: options.app, child, logHandle, logPath, stamp };
+  return { app: options.app, child: generation.process, generation, logHandle, logPath, stamp };
 }
 
 export function createPackagedSidecarSpawnOptions(input: {
@@ -815,7 +817,7 @@ export function createPackagedSidecarSpawnOptions(input: {
 async function closeManagedChild(child: ManagedSidecarChild): Promise<void> {
   const appendLifecycleLog = async (message: string): Promise<void> => appendSidecarLifecycleLog(child.logPath, message);
   await appendLifecycleLog(`[open-design packaged] shutdown requested app=${child.app} pid=${child.child.pid ?? "unknown"}`);
-  const stop = await stopSidecar(child.stamp);
+  const stop = await child.generation.stop();
   if (stop.forcedPids.length > 0) {
     await appendLifecycleLog(`[open-design packaged] graceful shutdown timed out app=${child.app} pid=${child.child.pid ?? "unknown"}; forced=${stop.forcedPids.join(",")}`);
   }

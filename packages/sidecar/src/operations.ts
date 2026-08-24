@@ -1,3 +1,5 @@
+import type { ChildProcess } from "node:child_process";
+
 import type { SpawnProcessRequest, StopProcessesOptions, StopProcessesResult } from "@open-design/platform";
 import {
   collectProcessTreePids,
@@ -22,6 +24,18 @@ export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
 
 export type SidecarStopResult = StopProcessesResult & {
   gracefulAccepted: boolean;
+};
+
+/**
+ * One concrete process generation created for a five-field sidecar resource.
+ * The stamp identifies the resource across processes; this handle retains the
+ * root process identity needed to retire this generation even if its runtime
+ * later rewrites the argv visible to the operating system.
+ */
+export type SpawnedSidecar = {
+  readonly process: ChildProcess & { pid: number };
+  readonly stamp: SidecarStamp;
+  stop(options?: StopProcessesOptions): Promise<SidecarStopResult>;
 };
 
 export function registerSidecarProcess(
@@ -88,8 +102,21 @@ function sidecarSpawnRequest(request: SidecarLaunchRequest): SpawnProcessRequest
   };
 }
 
-export async function spawnSidecar(request: SidecarLaunchRequest) {
-  return await spawnLoggedProcess(sidecarSpawnRequest(request));
+export async function spawnSidecar(request: SidecarLaunchRequest): Promise<SpawnedSidecar> {
+  const stamp = normalizeSidecarStamp(request.stamp);
+  const child = await spawnLoggedProcess(sidecarSpawnRequest({ ...request, stamp }));
+  if (child.pid == null) throw new Error("spawned sidecar process has no pid");
+  const rootPid = child.pid;
+  const process = child as ChildProcess & { pid: number };
+  let stopTask: Promise<SidecarStopResult> | null = null;
+  return {
+    process,
+    stamp,
+    stop(options = {}) {
+      stopTask ??= stopSidecarRoots(stamp, [rootPid], options);
+      return stopTask;
+    },
+  };
 }
 
 export async function findSidecarProcesses(stamp: SidecarStamp) {
@@ -123,13 +150,25 @@ export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOpt
   const initialRoots = initialSnapshots.filter((processInfo) =>
     matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
   );
-  const initialPids = collectProcessTreePids(initialSnapshots, initialRoots.map(({ pid }) => pid));
+  return await stopSidecarRoots(exact, initialRoots.map(({ pid }) => pid), options, initialSnapshots);
+}
+
+async function stopSidecarRoots(
+  stamp: SidecarStamp,
+  rootPids: readonly number[],
+  options: StopProcessesOptions,
+  knownSnapshots?: Awaited<ReturnType<typeof listProcessSnapshots>>,
+): Promise<SidecarStopResult> {
+  const snapshots = knownSnapshots ?? await listProcessSnapshots();
+  const existingPidSet = new Set(snapshots.map(({ pid }) => pid));
+  const initialRoots = [...new Set(rootPids)].filter((pid) => existingPidSet.has(pid));
+  const initialPids = collectProcessTreePids(snapshots, initialRoots);
   const initialPidSet = new Set(initialPids);
   let gracefulAccepted = false;
   try {
     const response = await requestJsonIpc<{ accepted?: unknown }>(
-      resolvePrivateIpcPath(exact),
-      { targetPids: initialRoots.map(({ pid }) => pid), type: sidecarProtocol.stop },
+      resolvePrivateIpcPath(stamp),
+      { targetPids: initialRoots, type: sidecarProtocol.stop },
       { timeoutMs: 2_000 },
     );
     gracefulAccepted = response.accepted === true;
