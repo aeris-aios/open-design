@@ -7,10 +7,15 @@
  * request id 1 is `initialize`, id 2 is `session/new` (or `session/load` when
  * resuming), and ids from 3 up belong to model selection and `session/prompt`.
  * So a JSON-RPC error carrying id 1 or 2 is, by construction, a handshake
- * failure: nothing has streamed yet, and the same CLI build will refuse the
- * same request again — retrying only makes the user wait for an identical
- * error. Anything numbered 3 or higher happened after a session existed and
- * keeps the old transient treatment.
+ * failure: nothing has streamed yet. Anything numbered 3 or higher happened
+ * after a session existed and keeps the old transient treatment.
+ *
+ * The id answers *when* the failure happened, never *why* — so it alone can
+ * never justify the copy. A CLI that is signed out, throttled, or talking to a
+ * dead upstream also fails inside the handshake, and telling that user to
+ * update or downgrade a perfectly good CLI sends them after the wrong fix.
+ * `isAcpCliSessionRefusalText` is the predicate the copy hangs off: handshake
+ * numbering AND no cause with a remedy of its own.
  *
  * The raw `json-rpc id N: …` line stays inside the rewritten message on
  * purpose. `run.error` is both what the user reads and what
@@ -22,6 +27,8 @@
  * blocked is a product decision, so the copy stays generic and reports only
  * the version the daemon actually detected.
  */
+
+import { classifyAgentServiceFailure } from './auth.js';
 
 /** Highest JSON-RPC request id the ACP handshake can use (`initialize`, then `session/new` / `session/load`). */
 export const ACP_HANDSHAKE_MAX_RPC_ID = 2;
@@ -42,13 +49,45 @@ export function acpRpcErrorId(text: string | null | undefined): number | null {
 
 /**
  * True when a failure text is a JSON-RPC error raised during the ACP
- * handshake, i.e. before any session existed.
+ * handshake, i.e. before any session existed. Structural only: it reports
+ * *when* the failure happened and says nothing about its cause.
  *
  * @param text - Failure text as surfaced by the ACP session.
  */
 export function isAcpHandshakeRpcErrorText(text: string | null | undefined): boolean {
   const id = acpRpcErrorId(text);
   return id !== null && id >= 1 && id <= ACP_HANDSHAKE_MAX_RPC_ID;
+}
+
+/**
+ * True when the handshake failure names a cause the user fixes some other way
+ * — an expired credential, an exhausted quota, an upstream outage.
+ *
+ * Reuses `classifyAgentServiceFailure` instead of growing a second signature
+ * list: it is agent-agnostic, covers exactly these three classes, and carries
+ * its own suite. It is unrelated to `isCliNotInstalledText` in
+ * `run-failure-classification.ts` and must stay narrower than it — that
+ * predicate answers "was the binary even there", which a CLI that already
+ * answered `initialize` has plainly settled.
+ *
+ * @param text - Failure text as surfaced by the ACP session.
+ */
+function handshakeFailureNamesItsOwnRemedy(text: string | null | undefined): boolean {
+  return classifyAgentServiceFailure(typeof text === 'string' ? text : '') !== null;
+}
+
+/**
+ * True when a handshake failure reads as the agent CLI itself refusing to open
+ * a session: it answered `initialize`, rejected `session/new` / `session/load`,
+ * and offered no cause of its own. That is the one shape "update, or reinstall
+ * a version that worked" actually answers — the CLI build is the only variable
+ * left. A handshake error that does name its cause is left alone, so the user
+ * reads the sentence that points at their real fix.
+ *
+ * @param text - Failure text as surfaced by the ACP session.
+ */
+export function isAcpCliSessionRefusalText(text: string | null | undefined): boolean {
+  return isAcpHandshakeRpcErrorText(text) && !handshakeFailureNamesItsOwnRemedy(text);
 }
 
 /** Runtime identity the failure copy leads with. */
@@ -113,9 +152,11 @@ interface AcpErrorFrame {
  * together.
  *
  * Rewrites only the message fields, and only for a handshake-numbered JSON-RPC
- * error. Every other payload is returned by identity, so structured failures
- * (`AMR_MODEL_UNAVAILABLE`, promoted opencode errors) and post-session protocol
- * errors keep the exact shape their own handling depends on.
+ * error that named no cause of its own. Every other payload is returned by
+ * identity, so structured failures (`AMR_MODEL_UNAVAILABLE`, promoted opencode
+ * errors), post-session protocol errors, and handshake errors that already say
+ * what went wrong (`Authentication required`, a 429, an upstream 5xx) keep the
+ * exact shape and text their own handling depends on.
  *
  * @param payload - The raw ACP error payload, forwarded unchanged when it is not a handshake rejection.
  * @param identity - Runtime name and detected CLI version to lead the copy with.
@@ -136,7 +177,7 @@ export function withAcpHandshakeFailureGuidance(
   const rawMessage =
     readable(typeof nested?.message === 'string' ? nested.message : null) ??
     readable(typeof frame.message === 'string' ? frame.message : null);
-  if (!rawMessage || !isAcpHandshakeRpcErrorText(rawMessage)) return payload;
+  if (!rawMessage || !isAcpCliSessionRefusalText(rawMessage)) return payload;
 
   const explained = buildAcpHandshakeFailureMessage({ rawMessage, ...identity });
   return {

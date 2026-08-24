@@ -217,7 +217,7 @@ import {
 import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
 import {
   buildAcpHandshakeFailureMessage,
-  isAcpHandshakeRpcErrorText,
+  isAcpCliSessionRefusalText,
   withAcpHandshakeFailureGuidance,
 } from './runtimes/acp-handshake-failure.js';
 import { getDetectedRuntimeVersions } from './runtimes/detection.js';
@@ -2291,12 +2291,14 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '', option
     return 'The run failed due to an unknown upstream streaming error. Please retry.';
   }
   // An ACP agent that answers `initialize` and then refuses `session/new` /
-  // `session/load` leaves the user staring at `json-rpc id 2: Internal error`,
-  // which says nothing about the one thing that fixes it: the installed CLI
-  // build. Lead with that, and keep the raw line appended — `run.error` is
-  // both what the user reads and what run-failure-classification.ts reads, so
-  // dropping it would degrade the telemetry shape to `unknown`.
-  if (isAcpHandshakeRpcErrorText(rawMessage)) {
+  // `session/load` for no stated reason leaves the user staring at `json-rpc
+  // id 2: Internal error`, which says nothing about the one thing that fixes
+  // it: the installed CLI build. Lead with that, and keep the raw line
+  // appended — `run.error` is both what the user reads and what
+  // run-failure-classification.ts reads, so dropping it would degrade the
+  // telemetry shape to `unknown`. A handshake error that does name its cause
+  // is left alone; see `isAcpCliSessionRefusalText`.
+  if (isAcpCliSessionRefusalText(rawMessage)) {
     return buildAcpHandshakeFailureMessage({
       rawMessage,
       agentName: options.agentName ?? null,

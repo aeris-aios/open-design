@@ -10,7 +10,10 @@ import { isModelWindowLimitFailure } from '@open-design/contracts';
 
 import { classifyAmrAccountFailure } from './integrations/vela-errors.js';
 import { summarizeRunToolProgress } from './run-diagnostics.js';
-import { isAcpHandshakeRpcErrorText } from './runtimes/acp-handshake-failure.js';
+import {
+  isAcpCliSessionRefusalText,
+  isAcpHandshakeRpcErrorText,
+} from './runtimes/acp-handshake-failure.js';
 import { classifyAgentServiceFailure } from './runtimes/auth.js';
 import type { RunResult, RunStatusForAnalytics } from './run-result.js';
 
@@ -827,15 +830,16 @@ function classifyRunFailureBase(
 
   if (isAgentProtocolErrorText(text)) {
     const protocolDetail = processExitDetail(errorCode, text);
+    const handshakeStage =
+      protocolDetail === 'agent_protocol_error' && isAcpHandshakeRpcErrorText(text);
     // A JSON-RPC error numbered inside the ACP handshake (`initialize`,
     // `session/new` / `session/load`) means the CLI never opened a session, so
-    // the run produced nothing and the same CLI build will refuse again.
-    // Attribute it to `session_init` — that stage is what stops the retry
-    // policy from re-running a deterministic failure, and it points triage at
-    // the CLI rather than at the model or the stream.
-    const handshakeRejected =
-      protocolDetail === 'agent_protocol_error' && isAcpHandshakeRpcErrorText(text);
-    if (handshakeRejected) {
+    // the run produced nothing. When the CLI also gave no reason for refusing,
+    // its build is the only variable left: attribute it to `session_init` —
+    // that stage is what stops the retry policy from re-running a
+    // deterministic failure, and it points triage at the CLI rather than at
+    // the model or the stream.
+    if (handshakeStage && isAcpCliSessionRefusalText(text)) {
       return classification(
         'process_exit',
         protocolDetail,
@@ -844,13 +848,20 @@ function classifyRunFailureBase(
         'install_cli',
       );
     }
-    return classification(
-      'process_exit',
-      protocolDetail,
-      'child_close',
-      retryableHint ?? true,
-      retryableHint === false ? 'none' : 'retry',
-    );
+    if (!handshakeStage) {
+      return classification(
+        'process_exit',
+        protocolDetail,
+        'child_close',
+        retryableHint ?? true,
+        retryableHint === false ? 'none' : 'retry',
+      );
+    }
+    // A handshake failure that named its own cause — an expired credential, an
+    // exhausted quota, an upstream outage. The JSON-RPC frame is only the
+    // envelope it arrived in, so fall through to the branches that own those
+    // causes and let the run be filed, and the user advised, under the fix
+    // that actually applies.
   }
 
   const serviceFailure = classifyAgentServiceFailure(text);

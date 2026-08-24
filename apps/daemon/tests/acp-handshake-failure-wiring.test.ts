@@ -163,12 +163,57 @@ describe('ACP handshake rejection — server wiring', () => {
       });
     }
   });
+
+  // Regression for the misfire this guidance shipped with: reading only the
+  // JSON-RPC id made EVERY handshake-stage error a CLI-compatibility verdict.
+  // Running a real Kimi CLI while signed out produces `json-rpc id 2:
+  // Authentication required` — a healthy, current CLI reporting the one thing
+  // it cannot do for the user — and the daemon answered it by telling them to
+  // update or downgrade that CLI. No pure-function test caught it, because the
+  // helpers were consistent with themselves; only the end-to-end text a signed
+  // out user reads shows the prescription is wrong.
+  it('does not blame the CLI version when the agent says the user is signed out', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-auth-bin-'));
+    const logPath = path.join(binDir, 'invocations.jsonl');
+    await writeAcpCliShim(binDir, AGENT_BIN, {
+      logPath,
+      cliVersion: '0.38.0',
+      errorMessage: 'Authentication required',
+    });
+    prependToPath(binDir);
+
+    clearTelemetryEnv();
+    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
+    await putConfig(started.url, { agentId: AGENT_ID });
+    await detectAgents(started.url);
+
+    const conversationId = await createConversation(started.url);
+    const run = await sendRunAndWait(started.url, conversationId, 'draft a landing page');
+
+    expect(run.status).toBe('failed');
+
+    const runError = run.error ?? '';
+    // What the agent actually said survives — that is the sentence pointing at
+    // the fix (sign in), and it is also what the classifier reads.
+    expect(runError).toMatch(/json-rpc id 2: Authentication required/i);
+    // …and none of the CLI-compatibility prescription appears.
+    expect(runError).not.toMatch(/refused to start a session/i);
+    expect(runError).not.toMatch(/update the cli/i);
+    expect(runError).not.toMatch(/reinstall/i);
+
+    const events = await readRunEvents(run.eventsLogPath);
+    const errorEvents = events.filter((event) => event.event === 'error');
+    expect(errorEvents.length).toBeGreaterThan(0);
+    for (const event of errorEvents) {
+      expect(effectiveErrorMessage(event.data)).not.toMatch(/update the cli/i);
+    }
+  });
 });
 
 async function writeAcpCliShim(
   dir: string,
   name: string,
-  opts: { logPath: string; cliVersion: string; retryable?: boolean },
+  opts: { logPath: string; cliVersion: string; retryable?: boolean; errorMessage?: string },
 ): Promise<string> {
   const bin = path.join(dir, name);
   const lines = [
@@ -176,6 +221,11 @@ async function writeAcpCliShim(
     `export FAKE_ACP_INVOCATION_LOG=${JSON.stringify(opts.logPath)}`,
     `export FAKE_ACP_CLI_VERSION=${JSON.stringify(opts.cliVersion)}`,
   ];
+  if (opts.errorMessage) {
+    lines.push(
+      `export FAKE_ACP_SESSION_NEW_ERROR_MESSAGE=${JSON.stringify(opts.errorMessage)}`,
+    );
+  }
   if (opts.retryable) lines.push('export FAKE_ACP_SESSION_NEW_ERROR_RETRYABLE=1');
   lines.push(
     `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_ACP_CLI)} "$@"`,
