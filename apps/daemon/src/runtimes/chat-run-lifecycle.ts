@@ -141,6 +141,29 @@ export function applyClaudeStreamJsonRunBookkeeping(
   }
 }
 
+/**
+ * Whether an emission from a runtime adapter counts as *agent progress* for the
+ * inactivity clock (`run.lastAgentActivityAt`, exported to analytics as
+ * `last_progress_age_ms`).
+ *
+ * Only bytes the agent produced count. A terminal `error` emitted by an adapter
+ * is the daemon reporting its own verdict — an ACP stage-watchdog timeout, a
+ * protocol failure we detected, a close with no result — not the agent making
+ * progress. Stamping the clock from it means the daemon's own timeout event is
+ * the last recorded "progress", so `last_progress_age_ms` reads near zero on
+ * exactly the stalled runs whose contract says it must read "near the
+ * inactivity ceiling" (see TrackingRunFinished in packages/contracts). That is
+ * what made the 2026-07-28 AMR design-system stall (run 14b04dd3, ~30 minutes
+ * of silence, reported age 664ms) look like a run that was still working when
+ * it was killed.
+ *
+ * Agent-originated errors are not lost by this: they arrive on the child's
+ * stdout/stderr, and those raw-chunk handlers stamp the clock already.
+ */
+export function runtimeEmissionCountsAsAgentProgress(channel: string): boolean {
+  return channel !== 'error';
+}
+
 export function resolveChatRunShutdownGraceMs() {
   const raw = Number(process.env.OD_CHAT_RUN_SHUTDOWN_GRACE_MS);
   if (!Number.isFinite(raw)) return 3_000;

@@ -45,6 +45,12 @@
  *   FAKE_VELA_PROMPT_ERROR_ON_LOAD – when set, session/prompt errors only after session/load
  *   FAKE_VELA_STALL_AFTER_PROMPT – when set to '1', session/prompt never completes
  *                                   and emits non-substantive heartbeat updates
+ *   FAKE_VELA_STALL_HEARTBEAT_MS – heartbeat interval for the stall above
+ *                                   (default 20). '0' = emit nothing at all,
+ *                                   i.e. a bridge that goes silent on stdout
+ *                                   while the process stays alive
+ *   FAKE_VELA_TEXT_BEFORE_STALL  – when set to '1', stream the assistant text
+ *                                   once before stalling
  *   FAKE_VELA_PROMPT_RESULT_DELAY_MS – delay the terminal session/prompt result
  *                                      after streaming substantive output
  *   FAKE_VELA_MODELS             – newline-separated `vela models` stdout
@@ -79,6 +85,9 @@ const SET_MODEL_ERROR = env.FAKE_VELA_SET_MODEL_ERROR || '';
 const PROMPT_ERROR = env.FAKE_VELA_PROMPT_ERROR || '';
 const PROMPT_ERROR_ON_LOAD = env.FAKE_VELA_PROMPT_ERROR_ON_LOAD || '';
 const STALL_AFTER_PROMPT = env.FAKE_VELA_STALL_AFTER_PROMPT === '1';
+const STALL_HEARTBEAT_MS = env.FAKE_VELA_STALL_HEARTBEAT_MS === undefined
+  ? 20
+  : Number(env.FAKE_VELA_STALL_HEARTBEAT_MS) || 0;
 const TEXT_BEFORE_STALL = env.FAKE_VELA_TEXT_BEFORE_STALL === '1';
 const PROMPT_RESULT_DELAY_MS = Number(env.FAKE_VELA_PROMPT_RESULT_DELAY_MS) || 0;
 const OMIT_PROMPT_USAGE = env.FAKE_VELA_OMIT_PROMPT_USAGE === '1';
@@ -309,12 +318,23 @@ function handleMessage(msg) {
         // watchdog fed without producing text, thinking, tools, artifacts, or
         // a terminal prompt result. This models a provider bridge that stays
         // transport-alive forever while never returning a first model output.
-        setInterval(() => {
-          writeNotification('session/update', {
-            sessionId,
-            update: { sessionUpdate: 'heartbeat' },
-          });
-        }, 20);
+        //
+        // `FAKE_VELA_STALL_HEARTBEAT_MS=0` drops the heartbeats entirely: the
+        // bridge goes completely silent on stdout while the process stays
+        // alive. That is the shape of the 2026-07-28 AMR stall — vela stopped
+        // writing ACP lines while still holding the turn open — and it is the
+        // only way to let a watchdog actually fire in a spec.
+        if (STALL_HEARTBEAT_MS > 0) {
+          setInterval(() => {
+            writeNotification('session/update', {
+              sessionId,
+              update: { sessionUpdate: 'heartbeat' },
+            });
+          }, STALL_HEARTBEAT_MS);
+        } else {
+          // Hold the event loop open without writing anything.
+          setInterval(() => {}, 60_000);
+        }
         return;
       }
       emitSessionUpdates(sessionId);

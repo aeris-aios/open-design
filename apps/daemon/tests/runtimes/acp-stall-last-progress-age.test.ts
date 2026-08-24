@@ -1,0 +1,273 @@
+/**
+ * `last_progress_age_ms` must survive the stall it is meant to describe.
+ *
+ * The analytics contract (packages/contracts/src/analytics/events/result-events.ts)
+ * defines the field as "age of the last agent activity at finish. Near the
+ * inactivity ceiling on a stall; near zero on a clean finish." It is the one
+ * property that answers "how long had the agent been silent when we gave up".
+ *
+ * On an ACP runtime it reports the opposite. `attachAcpSession`'s own stage
+ * watchdog ends a stalled turn by calling `fail()`, which emits an SSE `error`
+ * through the daemon's ACP `send` wrapper (server.ts) — and that wrapper stamps
+ * `run.lastAgentActivityAt = Date.now()` for every emission, error included. So
+ * the daemon's own timeout event resets the progress clock microseconds before
+ * the run finalizes, and a run that sat silent for the entire timeout window
+ * reports a `last_progress_age_ms` of a few hundred milliseconds.
+ *
+ * Field evidence: run 14b04dd3-56b0-4d44-926b-db6cee3017ab (2026-07-28, OD
+ * 0.16.1, runtime_type=amr_cloud) ran 37.2 minutes, was ended by a watchdog
+ * after ~30 minutes of silence, and reported `last_progress_age_ms = 664`. That
+ * reading is what made the incident look like "the process was still doing
+ * something right up to the kill" and sent triage after the wrong window.
+ *
+ * This spec pins the contract: after a silent ACP stall, the reported age must
+ * cover the silence, not the daemon's own error emission.
+ */
+
+import type { Server } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const posthogCapture = vi.hoisted(() => vi.fn());
+const posthogShutdown = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('posthog-node', () => ({
+  PostHog: vi.fn(function PostHogMock() {
+    return {
+      capture: posthogCapture,
+      groupIdentify: vi.fn(),
+      on: vi.fn(),
+      shutdown: posthogShutdown,
+    };
+  }),
+}));
+
+const { startServer } = await import('../../src/server.js');
+
+type StartedServer = {
+  url: string;
+  server: Server;
+  shutdown?: () => Promise<void> | void;
+};
+
+type RunStatus = {
+  id: string;
+  status: string;
+  errorCode: string | null;
+  terminalTrigger: string | null;
+  eventsLogPath: string;
+};
+
+const FAKE_VELA = fileURLToPath(new URL('../fixtures/fake-vela.mjs', import.meta.url));
+
+// The ACP stage watchdog is the only clock allowed to end this run: the outer
+// chat inactivity watchdog is parked far above it so the terminal event can
+// only come from `attachAcpSession`'s own timer, exactly as it did in the
+// field incident (AMR sets both to 30 min; the stage timer wins on a silent
+// bridge because it is armed from session/prompt).
+const ACP_STAGE_TIMEOUT_MS = 2_000;
+const OUTER_INACTIVITY_TIMEOUT_MS = 120_000;
+
+describe('ACP stall progress age', () => {
+  const originalEnv = snapshotEnv();
+  let started: StartedServer | null = null;
+  let binDir: string | null = null;
+
+  afterEach(async () => {
+    await Promise.resolve(started?.shutdown?.());
+    if (started?.server) {
+      await new Promise<void>((resolve) => started?.server.close(() => resolve()));
+    }
+    started = null;
+    if (binDir) await rm(binDir, { recursive: true, force: true });
+    binDir = null;
+    restoreEnv(originalEnv);
+    posthogCapture.mockReset();
+  });
+
+  it('reports the real silence in last_progress_age_ms when the ACP stage watchdog ends a stalled run', async () => {
+    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-stall-age-bin-'));
+    const fakeVela = await writeSilentlyStallingVela(binDir, 'vela-silent-stall');
+
+    process.env.POSTHOG_KEY = 'phc_test_acp_stall';
+    delete process.env.POSTHOG_HOST;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
+    process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
+    process.env.OD_ACP_STAGE_TIMEOUT_MS = String(ACP_STAGE_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = String(OUTER_INACTIVITY_TIMEOUT_MS);
+    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '0';
+
+    started = await startServer({ port: 0, returnServer: true }) as StartedServer;
+    await putConfig(started.url, {
+      agentId: 'amr',
+      agentCliEnv: { amr: { VELA_BIN: fakeVela } },
+      telemetry: { metrics: true, content: false, artifactManifest: false },
+      privacyDecisionAt: Date.now(),
+    });
+
+    const run = await createAndWaitForAmrRun(started.url);
+    expect(run.status).toBe('failed');
+
+    const finished = await waitForRunFinished(run.id);
+
+    // Sanity: this is the incident's terminal fingerprint — an ACP stage
+    // timeout classifies as `timeout`/`timeout` (the outer inactivity watchdog
+    // would have produced `timeout`/`inactivity_timeout` instead) and the run
+    // carries the CHILD's exit code, not a stall code.
+    expect(finished.failure_category).toBe('timeout');
+    expect(finished.failure_detail).toBe('timeout');
+
+    // ...which is why the terminal must name the watchdog that fired. Without
+    // it an ACP stage timeout is indistinguishable from a user interrupt.
+    expect(finished.terminal_trigger).toBe('acp_stage_timeout');
+
+    // The turn streamed its text and then went silent for the whole stage
+    // window. The reported progress age must cover that silence.
+    expect(typeof finished.last_progress_age_ms).toBe('number');
+    expect(finished.last_progress_age_ms).toBeGreaterThanOrEqual(
+      ACP_STAGE_TIMEOUT_MS * 0.8,
+    );
+  }, 60_000);
+});
+
+async function waitForRunFinished(runId: string): Promise<Record<string, any>> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    for (const call of posthogCapture.mock.calls) {
+      const payload = call[0] as { event?: string; properties?: Record<string, unknown> };
+      if (payload?.event === 'run_finished' && payload.properties?.run_id === runId) {
+        return payload.properties as Record<string, any>;
+      }
+    }
+    await delay(100);
+  }
+  throw new Error(`no run_finished analytics event for run ${runId}`);
+}
+
+async function writeSilentlyStallingVela(dir: string, name: string): Promise<string> {
+  const bin = path.join(dir, name);
+  await writeFile(bin, `#!/bin/sh
+if [ "$1" = "agent" ] && [ "$2" = "run" ]; then
+  export FAKE_VELA_STALL_AFTER_PROMPT=1
+  export FAKE_VELA_TEXT_BEFORE_STALL=1
+  export FAKE_VELA_STALL_HEARTBEAT_MS=0
+  export FAKE_VELA_REQUIRE_SET_MODEL=0
+fi
+exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_VELA)} "$@"
+`, 'utf8');
+  await chmod(bin, 0o755);
+  return bin;
+}
+
+async function putConfig(url: string, patch: Record<string, unknown>): Promise<void> {
+  const response = await fetch(`${url}/api/app-config`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  expect(response.status).toBe(200);
+}
+
+async function createAndWaitForAmrRun(url: string): Promise<RunStatus> {
+  const projectId = `acp_stall_age_${randomUUID()}`;
+  const projectResponse = await fetch(`${url}/api/projects`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: projectId,
+      name: 'ACP stall progress age',
+      metadata: { kind: 'prototype' },
+      skipDiscoveryBrief: true,
+    }),
+  });
+  expect(projectResponse.status).toBe(200);
+  const projectBody = await projectResponse.json() as { conversationId: string };
+
+  // AMR Cloud runs are workspace-scoped; adopt the project into a personal
+  // workspace first so the run carries an explicit scope (same shape as
+  // tests/run-retry-runtime.test.ts).
+  const personalWorkspaceId = `acp_stall_personal_${projectId}`;
+  const workspaceHeaders: Record<string, string> = {
+    'x-od-workspace-id': personalWorkspaceId,
+    'x-od-workspace-type': 'personal',
+    'x-od-workspace-member-id': 'acp-stall-personal-owner',
+    'x-od-workspace-role': 'owner',
+  };
+  const adoptionResponse = await fetch(
+    `${url}/api/workspaces/${encodeURIComponent(personalWorkspaceId)}/projects?view=all`,
+    { headers: workspaceHeaders },
+  );
+  expect(adoptionResponse.status).toBe(200);
+
+  const prompt = 'refine this design system from the uploaded screenshots';
+  const runResponse = await fetch(`${url}/api/runs`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-od-analytics-device-id': 'acp-stall-age-device',
+      'x-od-analytics-session-id': 'acp-stall-age-session',
+      'x-od-analytics-client-type': 'web',
+      ...workspaceHeaders,
+    },
+    body: JSON.stringify({
+      projectId,
+      conversationId: projectBody.conversationId,
+      assistantMessageId: `assistant_acp_stall_${randomUUID()}`,
+      clientRequestId: `client_acp_stall_${randomUUID()}`,
+      agentId: 'amr',
+      message: prompt,
+      currentPrompt: prompt,
+    }),
+  });
+  expect(runResponse.status).toBe(202);
+  const body = await runResponse.json() as { runId: string };
+
+  const deadline = Date.now() + 40_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${url}/api/runs/${encodeURIComponent(body.runId)}`,
+      { headers: workspaceHeaders },
+    );
+    expect(response.status).toBe(200);
+    const run = await response.json() as RunStatus;
+    if (run.status === 'failed' || run.status === 'succeeded' || run.status === 'canceled') {
+      return run;
+    }
+    await delay(100);
+  }
+  throw new Error(`run ${body.runId} did not finish`);
+}
+
+function snapshotEnv(): Record<string, string | undefined> {
+  return {
+    POSTHOG_KEY: process.env.POSTHOG_KEY,
+    POSTHOG_HOST: process.env.POSTHOG_HOST,
+    LANGFUSE_PUBLIC_KEY: process.env.LANGFUSE_PUBLIC_KEY,
+    LANGFUSE_SECRET_KEY: process.env.LANGFUSE_SECRET_KEY,
+    LANGFUSE_BASE_URL: process.env.LANGFUSE_BASE_URL,
+    OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
+    OD_ACP_STAGE_TIMEOUT_MS: process.env.OD_ACP_STAGE_TIMEOUT_MS,
+    OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS: process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS,
+    OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS: process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS,
+    VELA_RUNTIME_KEY: process.env.VELA_RUNTIME_KEY,
+    VELA_LINK_URL: process.env.VELA_LINK_URL,
+  };
+}
+
+function restoreEnv(env: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

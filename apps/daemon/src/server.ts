@@ -114,6 +114,7 @@ import {
   resolveChatRunArtifactQuietPeriodMs,
   resolveChatRunFirstOutputTimeoutMs,
   resolveChatRunInactivityTimeoutMs,
+  runtimeEmissionCountsAsAgentProgress,
   resolveChatRunShutdownGraceMs,
 } from './runtimes/chat-run-lifecycle.js';
 import {
@@ -169,6 +170,7 @@ export {
   resolveChatRunArtifactQuietPeriodMs,
   resolveChatRunFirstOutputTimeoutMs,
   resolveChatRunInactivityTimeoutMs,
+  runtimeEmissionCountsAsAgentProgress,
 } from './runtimes/chat-run-lifecycle.js';
 export {
   renderRunContextPrompt,
@@ -13283,7 +13285,13 @@ export async function startServer({
               noteFirstOutputEvent(data);
             }
           }
-          noteAgentActivity();
+          // A terminal `error` from the ACP bridge is the daemon's own verdict
+          // (stage-watchdog timeout, protocol failure), not agent progress —
+          // stamping the progress clock from it is what made a 30-minute stall
+          // report `last_progress_age_ms = 664`.
+          if (runtimeEmissionCountsAsAgentProgress(event)) {
+            noteAgentActivity();
+          }
           if (event === 'error') flushVisibleAgentStderr();
           if (def.id === 'amr' && event === 'error') {
             const failure = classifyAmrAccountFailureSignal({
