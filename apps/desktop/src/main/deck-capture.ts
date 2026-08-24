@@ -1360,21 +1360,28 @@ export async function captureEditablePptxLayeredBackgrounds(
       )) as LayeredPptxBackgroundGeometry | null;
       if (!geometry) throw new Error(`could not isolate layered PPTX background ${target.id}`);
       await nextFrames(window);
-      const screenshot = (await dbg.sendCommand("Page.captureScreenshot", {
-        captureBeyondViewport: true,
-        clip: {
-          height: geometry.height,
-          scale: captureScale,
-          width: geometry.width,
-          x: geometry.pageX,
-          y: geometry.pageY,
+      const screenshotData = await captureUntilPainted(
+        async () => {
+          const screenshot = (await dbg.sendCommand("Page.captureScreenshot", {
+            captureBeyondViewport: true,
+            clip: {
+              height: geometry.height,
+              scale: captureScale,
+              width: geometry.width,
+              x: geometry.pageX,
+              y: geometry.pageY,
+            },
+            format: "png",
+            fromSurface: true,
+          })) as { data?: string };
+          if (!screenshot.data) throw new Error(`Chromium returned no layered PPTX capture for ${target.id}`);
+          return screenshot.data;
         },
-        format: "png",
-        fromSurface: true,
-      })) as { data?: string };
-      if (!screenshot.data) throw new Error(`Chromium returned no layered PPTX capture for ${target.id}`);
+        (data) => pngBufferHasPaint(Buffer.from(data, "base64")),
+        { label: target.id, onRetry: () => nextFrames(window) },
+      );
       captures[target.id] = {
-        dataUrl: `data:image/png;base64,${screenshot.data}`,
+        dataUrl: `data:image/png;base64,${screenshotData}`,
         height: geometry.height,
         left: geometry.left,
         slideIndex: geometry.slideIndex,
@@ -1876,6 +1883,46 @@ async function nextFrames(window: BrowserWindow): Promise<void> {
     "new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(function(){r(true)})})})",
     true,
   );
+}
+
+export function pngInspectionHasPaint(png: {
+  maxAlpha: number;
+  opaquePixels: number;
+  translucentPixels: number;
+}): boolean {
+  return png.maxAlpha > 0 && png.opaquePixels + png.translucentPixels > 0;
+}
+
+export async function captureUntilPainted<T>(
+  capture: () => Promise<T>,
+  isPainted: (value: T) => boolean,
+  options: { attempts?: number; label: string; onRetry?: () => Promise<void> },
+): Promise<T> {
+  const attempts = options.attempts ?? 3;
+  let last: T | undefined;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    last = await capture();
+    if (isPainted(last)) return last;
+    if (attempt < attempts - 1 && options.onRetry) await options.onRetry();
+  }
+  throw new Error(`transparent chromium capture: ${options.label}`);
+}
+
+export function pngBufferHasPaint(data: Buffer): boolean {
+  const image = nativeImage.createFromBuffer(data);
+  const bitmap = image.toBitmap();
+  let maxAlpha = 0;
+  let paintedPixels = 0;
+  for (let offset = 3; offset < bitmap.length; offset += 4) {
+    const alpha = bitmap[offset];
+    if (alpha > maxAlpha) maxAlpha = alpha;
+    if (alpha >= 16) paintedPixels += 1;
+  }
+  return pngInspectionHasPaint({
+    maxAlpha,
+    opaquePixels: paintedPixels,
+    translucentPixels: 0,
+  });
 }
 
 function injectBaseHref(doc: string, baseHref: string | undefined): string {

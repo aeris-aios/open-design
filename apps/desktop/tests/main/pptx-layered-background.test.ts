@@ -10,14 +10,49 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   cjkPromotedFontFamily,
   captureEditablePptxLayeredBackgrounds,
+  captureUntilPainted,
   collectLayeredPptxBackgroundTargets,
   isolateLayeredPptxBackground,
+  pngBufferHasPaint,
+  pngInspectionHasPaint,
   restoreLayeredPptxBackgroundIsolation,
   runDomToPptx,
 } from '../../src/main/deck-capture.js';
 
 const execFileP = promisify(execFile);
 const desktopRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+const ELECTRON_CAPTURE_UNTIL_PAINTED_SOURCE = `
+function pngInspectionHasPaint(png) {
+  return png.maxAlpha > 0 && png.opaquePixels + png.translucentPixels > 0;
+}
+async function captureUntilPainted(capture, isPainted, options) {
+  const attempts = options.attempts == null ? 3 : options.attempts;
+  let last;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    last = await capture();
+    if (isPainted(last)) return last;
+    if (attempt < attempts - 1 && options.onRetry) await options.onRetry();
+  }
+  throw new Error('transparent chromium capture: ' + options.label);
+}
+function pngBufferHasPaint(data) {
+  const image = nativeImage.createFromBuffer(data);
+  const bitmap = image.toBitmap();
+  let maxAlpha = 0;
+  let paintedPixels = 0;
+  for (let offset = 3; offset < bitmap.length; offset += 4) {
+    const alpha = bitmap[offset];
+    if (alpha > maxAlpha) maxAlpha = alpha;
+    if (alpha >= 16) paintedPixels += 1;
+  }
+  return pngInspectionHasPaint({
+    maxAlpha: maxAlpha,
+    opaquePixels: paintedPixels,
+    translucentPixels: 0,
+  });
+}
+`;
 
 class FakeStyle {
   private readonly values = new Map<string, { priority: string; value: string }>();
@@ -176,6 +211,38 @@ async function runExport(
   const result = await runDomToPptx('.slide', layeredBackgrounds);
   expect(result.error).toBeUndefined();
 }
+
+describe('chromium empty-capture retry', () => {
+  test('treats fully transparent inspections as unpainted', () => {
+    expect(pngInspectionHasPaint({ maxAlpha: 0, opaquePixels: 0, translucentPixels: 0 })).toBe(false);
+    expect(pngInspectionHasPaint({ maxAlpha: 255, opaquePixels: 12, translucentPixels: 0 })).toBe(true);
+    expect(pngInspectionHasPaint({ maxAlpha: 80, opaquePixels: 0, translucentPixels: 4 })).toBe(true);
+  });
+
+  test('retries a transparent capture then returns paint', async () => {
+    const retries: number[] = [];
+    let attempts = 0;
+    const result = await captureUntilPainted(
+      async () => {
+        attempts += 1;
+        return attempts === 1 ? { maxAlpha: 0, opaquePixels: 0, translucentPixels: 0 } : { maxAlpha: 255, opaquePixels: 8, translucentPixels: 0 };
+      },
+      pngInspectionHasPaint,
+      { label: 'retry-fixture', onRetry: async () => { retries.push(attempts); } },
+    );
+    expect(attempts).toBe(2);
+    expect(retries).toEqual([1]);
+    expect(result.opaquePixels).toBe(8);
+  });
+
+  test('throws a transparent-capture error after exhausted retries', async () => {
+    await expect(captureUntilPainted(
+      async () => ({ maxAlpha: 0, opaquePixels: 0, translucentPixels: 0 }),
+      pngInspectionHasPaint,
+      { attempts: 3, label: 'chromium-slide-filter-foreground.png' },
+    )).rejects.toThrow('transparent chromium capture: chromium-slide-filter-foreground.png');
+  });
+});
 
 describe('editable PPTX layered backgrounds', () => {
   afterEach(() => {
@@ -1142,6 +1209,7 @@ const collectLayeredPptxBackgroundTargets = ${collectLayeredPptxBackgroundTarget
 const isolateLayeredPptxBackground = ${isolateLayeredPptxBackground.toString()};
 const restoreLayeredPptxBackgroundIsolation = ${restoreLayeredPptxBackgroundIsolation.toString()};
 const captureEditablePptxLayeredBackgrounds = ${captureEditablePptxLayeredBackgrounds.toString()};
+${ELECTRON_CAPTURE_UNTIL_PAINTED_SOURCE}
 
 async function nextFrames(window) {
   await window.webContents.executeJavaScript(
@@ -1166,6 +1234,23 @@ function rgbAt(image, logicalX, logicalY, logicalWidth, logicalHeight) {
   const bitmap = image.toBitmap();
   const offset = (y * size.width + x) * 4;
   return [bitmap[offset + 2], bitmap[offset + 1], bitmap[offset]];
+}
+
+async function captureCdpPngUntilPainted(dbg, clip, label, window) {
+  return captureUntilPainted(
+    async () => {
+      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+        captureBeyondViewport: true,
+        clip,
+        format: 'png',
+        fromSurface: true,
+      });
+      if (!screenshot.data) throw new Error('Chromium returned no capture for ' + label);
+      return screenshot.data;
+    },
+    (data) => pngBufferHasPaint(Buffer.from(data, 'base64')),
+    { label, onRetry: () => nextFrames(window) },
+  );
 }
 
 app.whenReady().then(async () => {
@@ -1194,12 +1279,7 @@ app.whenReady().then(async () => {
     dbg.attach('1.3');
     await dbg.sendCommand('Page.enable');
     const stripeClip = { height: 1, scale: 1, width: 1, x: 7, y: 540 };
-    const largeReferenceShot = await dbg.sendCommand('Page.captureScreenshot', {
-      captureBeyondViewport: true,
-      clip: stripeClip,
-      format: 'png',
-      fromSurface: true,
-    });
+    const largeReferenceShot = { data: await captureCdpPngUntilPainted(dbg, stripeClip, 'dpr2-large-reference', window) };
     const [largeTarget] = await window.webContents.executeJavaScript(
       '(' + collectLayeredPptxBackgroundTargets.toString() + ')(".slide")',
       true,
@@ -1214,12 +1294,7 @@ app.whenReady().then(async () => {
     );
     if (!largeGeometry) throw new Error('Could not isolate the large layered background target');
     await nextFrames(window);
-    const largeExportedShot = await dbg.sendCommand('Page.captureScreenshot', {
-      captureBeyondViewport: true,
-      clip: stripeClip,
-      format: 'png',
-      fromSurface: true,
-    });
+    const largeExportedShot = { data: await captureCdpPngUntilPainted(dbg, stripeClip, 'dpr2-large-exported', window) };
     await window.webContents.executeJavaScript(
       '(' + restoreLayeredPptxBackgroundIsolation.toString() + ')()',
       true,
@@ -1337,6 +1412,15 @@ async function probePseudoTextClipCaptures(): Promise<{
     `
 const { app, BrowserWindow, nativeImage } = require('electron');
 
+${ELECTRON_CAPTURE_UNTIL_PAINTED_SOURCE}
+
+async function nextFrames(window) {
+  await window.webContents.executeJavaScript(
+    'new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(function(){r(true)})})})',
+    true,
+  );
+}
+
 app.whenReady().then(async () => {
   const window = new BrowserWindow({
     height: 180,
@@ -1375,23 +1459,28 @@ app.whenReady().then(async () => {
         ${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')',
         true,
       );
-      await window.webContents.executeJavaScript(
-        'new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(function(){r(true)})})})',
-        true,
-      );
-      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
-        captureBeyondViewport: true,
-        clip: {
-          height: geometry.height,
-          scale: 1 / devicePixelRatio,
-          width: geometry.width,
-          x: geometry.pageX,
-          y: geometry.pageY,
+      await nextFrames(window);
+      const screenshotData = await captureUntilPainted(
+        async () => {
+          const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+            captureBeyondViewport: true,
+            clip: {
+              height: geometry.height,
+              scale: 1 / devicePixelRatio,
+              width: geometry.width,
+              x: geometry.pageX,
+              y: geometry.pageY,
+            },
+            format: 'png',
+            fromSurface: true,
+          });
+          if (!screenshot.data) throw new Error('Chromium returned no capture for ' + target.id);
+          return screenshot.data;
         },
-        format: 'png',
-        fromSurface: true,
-      });
-      const bitmap = nativeImage.createFromBuffer(Buffer.from(screenshot.data, 'base64')).toBitmap();
+        (data) => pngBufferHasPaint(Buffer.from(data, 'base64')),
+        { label: target.id, onRetry: () => nextFrames(window) },
+      );
+      const bitmap = nativeImage.createFromBuffer(Buffer.from(screenshotData, 'base64')).toBitmap();
       let paintedPixels = 0;
       let transparentPixels = 0;
       for (let offset = 3; offset < bitmap.length; offset += 4) {
@@ -1480,6 +1569,8 @@ async function runLayeredBackgroundMediaProbe(): Promise<LayeredBackgroundProbe>
 const { app, BrowserWindow, nativeImage } = require('electron');
 const { readFile } = require('node:fs/promises');
 const { gunzipSync, inflateRawSync } = require('node:zlib');
+
+${ELECTRON_CAPTURE_UNTIL_PAINTED_SOURCE}
 
 const fixtures = {
   supported: '<div class="supported"></div>',
@@ -2456,6 +2547,12 @@ app.whenReady().then(async () => {
     // under Linux/Xvfb instead of suspending rAF for a hidden window.
     window.setOpacity(0);
     window.showInactive();
+    async function waitForPaintedFrames() {
+      await window.webContents.executeJavaScript(
+        'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        true,
+      );
+    }
     await window.webContents.executeJavaScript(bundle, true);
     const dbg = window.webContents.debugger;
     dbg.attach('1.3');
@@ -2521,69 +2618,36 @@ app.whenReady().then(async () => {
     probeStage = 'normalize export DOM';
     const prepared = await window.webContents.executeJavaScript(${JSON.stringify(prepareSource)}, true);
     if (!prepared?.prepared || prepared.error) throw new Error(prepared?.error || 'PPTX DOM normalization failed');
-    await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-    const compositedPseudoContentCapture = await window.webContents.executeJavaScript(
-      '(() => { const rect = document.querySelector(".composited-pseudo-content").getBoundingClientRect(); return { geometry: { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
-      true,
-    );
-    const compositedPseudoContentScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
-      captureBeyondViewport: true,
-      clip: {
-        ...compositedPseudoContentCapture.geometry,
-        scale: 2 / compositedPseudoContentCapture.pixelRatio,
-      },
-      format: 'png',
-      fromSurface: true,
-    });
-    const compositedPseudoContentChromiumData = Buffer.from(compositedPseudoContentScreenshot.data, 'base64');
-    const compositedPseudoContentChromium = inspectPng(
-      compositedPseudoContentChromiumData,
+    await waitForPaintedFrames();
+    async function captureChromiumReference(selector, name, padding = 0) {
+      return captureUntilPainted(async () => {
+        const capture = await window.webContents.executeJavaScript(
+          '(() => { const element = document.querySelector(' + JSON.stringify(selector) + '); const rect = element.getBoundingClientRect(); const slideRect = element.closest(".slide").getBoundingClientRect(); const left = Math.max(slideRect.left, rect.left - ' + padding + '); const top = Math.max(slideRect.top, rect.top - ' + padding + '); const right = Math.min(slideRect.right, rect.right + ' + padding + '); const bottom = Math.min(slideRect.bottom, rect.bottom + ' + padding + '); return { geometry: { height: bottom - top, width: right - left, x: left + window.scrollX, y: top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
+          true,
+        );
+        await waitForPaintedFrames();
+        const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+          captureBeyondViewport: true,
+          clip: { ...capture.geometry, scale: 2 / capture.pixelRatio },
+          format: 'png',
+          fromSurface: true,
+        });
+        const data = Buffer.from(screenshot.data, 'base64');
+        return { data, png: inspectPng(data, name) };
+      }, (result) => pngInspectionHasPaint(result.png), { label: name, onRetry: waitForPaintedFrames });
+    }
+    const compositedPseudoContent = await captureChromiumReference(
+      '.composited-pseudo-content',
       'chromium-composited-pseudo-content.png',
     );
-    const realBlendCapture = await window.webContents.executeJavaScript(
-      '(() => { const rect = document.querySelector(".real-blend-target").getBoundingClientRect(); return { geometry: { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
-      true,
-    );
-    const realBlendScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
-      captureBeyondViewport: true,
-      clip: {
-        ...realBlendCapture.geometry,
-        scale: 2 / realBlendCapture.pixelRatio,
-      },
-      format: 'png',
-      fromSurface: true,
-    });
-    const realBlendChromiumData = Buffer.from(realBlendScreenshot.data, 'base64');
-    const realBlendChromium = inspectPng(realBlendChromiumData, 'chromium-real-blend.png');
-    const nestedOpacityCapture = await window.webContents.executeJavaScript(
-      '(() => { const rect = document.querySelector(".nested-opacity").getBoundingClientRect(); return { geometry: { height: rect.height, width: rect.width, x: rect.left + window.scrollX, y: rect.top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
-      true,
-    );
-    const nestedOpacityScreenshot = await dbg.sendCommand('Page.captureScreenshot', {
-      captureBeyondViewport: true,
-      clip: {
-        ...nestedOpacityCapture.geometry,
-        scale: 2 / nestedOpacityCapture.pixelRatio,
-      },
-      format: 'png',
-      fromSurface: true,
-    });
-    const nestedOpacityChromiumData = Buffer.from(nestedOpacityScreenshot.data, 'base64');
-    const nestedOpacityChromium = inspectPng(nestedOpacityChromiumData, 'chromium-nested-opacity.png');
-    async function captureChromiumReference(selector, name, padding = 0) {
-      const capture = await window.webContents.executeJavaScript(
-        '(() => { const element = document.querySelector(' + JSON.stringify(selector) + '); const rect = element.getBoundingClientRect(); const slideRect = element.closest(".slide").getBoundingClientRect(); const left = Math.max(slideRect.left, rect.left - ' + padding + '); const top = Math.max(slideRect.top, rect.top - ' + padding + '); const right = Math.min(slideRect.right, rect.right + ' + padding + '); const bottom = Math.min(slideRect.bottom, rect.bottom + ' + padding + '); return { geometry: { height: bottom - top, width: right - left, x: left + window.scrollX, y: top + window.scrollY }, pixelRatio: window.devicePixelRatio }; })()',
-        true,
-      );
-      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
-        captureBeyondViewport: true,
-        clip: { ...capture.geometry, scale: 2 / capture.pixelRatio },
-        format: 'png',
-        fromSurface: true,
-      });
-      const data = Buffer.from(screenshot.data, 'base64');
-      return { data, png: inspectPng(data, name) };
-    }
+    const compositedPseudoContentChromiumData = compositedPseudoContent.data;
+    const compositedPseudoContentChromium = compositedPseudoContent.png;
+    const realBlend = await captureChromiumReference('.real-blend-target', 'chromium-real-blend.png');
+    const realBlendChromiumData = realBlend.data;
+    const realBlendChromium = realBlend.png;
+    const nestedOpacity = await captureChromiumReference('.nested-opacity', 'chromium-nested-opacity.png');
+    const nestedOpacityChromiumData = nestedOpacity.data;
+    const nestedOpacityChromium = nestedOpacity.png;
     const textClipStandardChromium = await captureChromiumReference(
       '.text-clip-standard',
       'chromium-text-clip-standard.png',
@@ -2636,20 +2700,28 @@ app.whenReady().then(async () => {
     for (const target of targets) {
       probeStage = 'isolate target ' + target.id;
       const geometry = await window.webContents.executeJavaScript(${JSON.stringify(isolateSource)} + '(' + JSON.stringify(target.id) + ')', true);
-      await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true);
-      const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
-        captureBeyondViewport: true,
-        clip: {
-          x: geometry.pageX,
-          y: geometry.pageY,
-          width: geometry.width,
-          height: geometry.height,
-          scale: Math.min(2, 2 / devicePixelRatio),
+      await waitForPaintedFrames();
+      const screenshotData = await captureUntilPainted(
+        async () => {
+          const screenshot = await dbg.sendCommand('Page.captureScreenshot', {
+            captureBeyondViewport: true,
+            clip: {
+              x: geometry.pageX,
+              y: geometry.pageY,
+              width: geometry.width,
+              height: geometry.height,
+              scale: Math.min(2, 2 / devicePixelRatio),
+            },
+            format: 'png',
+            fromSurface: true,
+          });
+          if (!screenshot.data) throw new Error('Chromium returned no capture for ' + target.id);
+          return screenshot.data;
         },
-        format: 'png',
-        fromSurface: true,
-      });
-      captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshot.data };
+        (data) => pngBufferHasPaint(Buffer.from(data, 'base64')),
+        { label: target.id, onRetry: waitForPaintedFrames },
+      );
+      captures[target.id] = { ...geometry, dataUrl: 'data:image/png;base64,' + screenshotData };
       await window.webContents.executeJavaScript(${JSON.stringify(restoreSource)}, true);
     }
     probeStage = 'export deck';
