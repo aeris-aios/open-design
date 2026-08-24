@@ -8,12 +8,12 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  bgraBitmapHasPaint,
   cjkPromotedFontFamily,
   captureEditablePptxLayeredBackgrounds,
   captureUntilPainted,
   collectLayeredPptxBackgroundTargets,
   isolateLayeredPptxBackground,
-  pngBufferHasPaint,
   pngInspectionHasPaint,
   restoreLayeredPptxBackgroundIsolation,
   runDomToPptx,
@@ -22,9 +22,20 @@ import {
 const execFileP = promisify(execFile);
 const desktopRoot = fileURLToPath(new URL('../..', import.meta.url));
 
+function bgraWithUniformAlpha(alpha: number): Buffer {
+  const bitmap = Buffer.alloc(16);
+  for (let pixel = 0; pixel < 4; pixel += 1) {
+    bitmap[pixel * 4] = 18;
+    bitmap[pixel * 4 + 1] = 54;
+    bitmap[pixel * 4 + 2] = 99;
+    bitmap[pixel * 4 + 3] = alpha;
+  }
+  return bitmap;
+}
+
 const ELECTRON_CAPTURE_UNTIL_PAINTED_SOURCE = `
 function pngInspectionHasPaint(png) {
-  return png.maxAlpha > 0 && png.opaquePixels + png.translucentPixels > 0;
+  return png.maxAlpha > 0;
 }
 async function captureUntilPainted(capture, isPainted, options) {
   const attempts = options.attempts == null ? 3 : options.attempts;
@@ -36,21 +47,15 @@ async function captureUntilPainted(capture, isPainted, options) {
   }
   throw new Error('transparent chromium capture: ' + options.label);
 }
-function pngBufferHasPaint(data) {
-  const image = nativeImage.createFromBuffer(data);
-  const bitmap = image.toBitmap();
-  let maxAlpha = 0;
-  let paintedPixels = 0;
+function bgraBitmapHasPaint(bitmap) {
+  if (bitmap.length < 4) return false;
   for (let offset = 3; offset < bitmap.length; offset += 4) {
-    const alpha = bitmap[offset];
-    if (alpha > maxAlpha) maxAlpha = alpha;
-    if (alpha >= 16) paintedPixels += 1;
+    if (bitmap[offset] > 0) return true;
   }
-  return pngInspectionHasPaint({
-    maxAlpha: maxAlpha,
-    opaquePixels: paintedPixels,
-    translucentPixels: 0,
-  });
+  return false;
+}
+function pngBufferHasPaint(data) {
+  return bgraBitmapHasPaint(nativeImage.createFromBuffer(data).toBitmap());
 }
 `;
 
@@ -214,10 +219,70 @@ async function runExport(
 
 describe('chromium empty-capture retry', () => {
   test('treats fully transparent inspections as unpainted', () => {
-    expect(pngInspectionHasPaint({ maxAlpha: 0, opaquePixels: 0, translucentPixels: 0 })).toBe(false);
-    expect(pngInspectionHasPaint({ maxAlpha: 255, opaquePixels: 12, translucentPixels: 0 })).toBe(true);
-    expect(pngInspectionHasPaint({ maxAlpha: 80, opaquePixels: 0, translucentPixels: 4 })).toBe(true);
+    expect(pngInspectionHasPaint({ maxAlpha: 0 })).toBe(false);
+    expect(pngInspectionHasPaint({ maxAlpha: 8 })).toBe(true);
+    expect(pngInspectionHasPaint({ maxAlpha: 255 })).toBe(true);
   });
+
+  test('treats BGRA bitmaps with any visible alpha as painted', () => {
+    expect(bgraBitmapHasPaint(bgraWithUniformAlpha(0))).toBe(false);
+    expect(bgraBitmapHasPaint(bgraWithUniformAlpha(1))).toBe(true);
+    expect(bgraBitmapHasPaint(bgraWithUniformAlpha(15))).toBe(true);
+    expect(bgraBitmapHasPaint(bgraWithUniformAlpha(255))).toBe(true);
+  });
+
+  test('treats real PNG buffers with any visible alpha as painted', async () => {
+    const probeDir = await mkdtemp(join(tmpdir(), 'od-pptx-png-paint-'));
+    await writeFile(join(probeDir, 'package.json'), '{"main":"main.cjs"}\n');
+    await writeFile(
+      join(probeDir, 'main.cjs'),
+      `
+const { app, nativeImage } = require('electron');
+${ELECTRON_CAPTURE_UNTIL_PAINTED_SOURCE}
+function pngWithUniformAlpha(alpha) {
+  const bitmap = Buffer.alloc(16);
+  for (let pixel = 0; pixel < 4; pixel += 1) {
+    bitmap[pixel * 4] = 18;
+    bitmap[pixel * 4 + 1] = 54;
+    bitmap[pixel * 4 + 2] = 99;
+    bitmap[pixel * 4 + 3] = alpha;
+  }
+  return nativeImage.createFromBitmap(bitmap, { height: 2, width: 2 }).toPNG();
+}
+app.whenReady().then(() => {
+  process.stdout.write('OD_PNG_PAINT:' + JSON.stringify({
+    0: pngBufferHasPaint(pngWithUniformAlpha(0)),
+    1: pngBufferHasPaint(pngWithUniformAlpha(1)),
+    15: pngBufferHasPaint(pngWithUniformAlpha(15)),
+    255: pngBufferHasPaint(pngWithUniformAlpha(255)),
+  }) + '\\n');
+  app.quit();
+});
+`,
+    );
+    try {
+      const electronRelativePath = (await readFile(
+        join(desktopRoot, 'node_modules', 'electron', 'path.txt'),
+        'utf8',
+      )).trim();
+      const electronPath = join(desktopRoot, 'node_modules', 'electron', 'dist', electronRelativePath);
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const command = process.platform === 'linux' ? 'xvfb-run' : electronPath;
+      const args = process.platform === 'linux' ? ['-a', electronPath, probeDir] : [probeDir];
+      const { stdout, stderr } = await execFileP(command, args, { env, timeout: 10_000 });
+      const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_PNG_PAINT:'));
+      if (!marker) throw new Error(`Electron paint probe returned no result: ${stdout || stderr}`);
+      expect(JSON.parse(marker.slice('OD_PNG_PAINT:'.length))).toEqual({
+        0: false,
+        1: true,
+        15: true,
+        255: true,
+      });
+    } finally {
+      await rm(probeDir, { force: true, recursive: true });
+    }
+  }, 15_000);
 
   test('retries a transparent capture then returns paint', async () => {
     const retries: number[] = [];

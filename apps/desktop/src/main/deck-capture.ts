@@ -1887,10 +1887,8 @@ async function nextFrames(window: BrowserWindow): Promise<void> {
 
 export function pngInspectionHasPaint(png: {
   maxAlpha: number;
-  opaquePixels: number;
-  translucentPixels: number;
 }): boolean {
-  return png.maxAlpha > 0 && png.opaquePixels + png.translucentPixels > 0;
+  return png.maxAlpha > 0;
 }
 
 export async function captureUntilPainted<T>(
@@ -1908,21 +1906,16 @@ export async function captureUntilPainted<T>(
   throw new Error(`transparent chromium capture: ${options.label}`);
 }
 
-export function pngBufferHasPaint(data: Buffer): boolean {
-  const image = nativeImage.createFromBuffer(data);
-  const bitmap = image.toBitmap();
-  let maxAlpha = 0;
-  let paintedPixels = 0;
+export function bgraBitmapHasPaint(bitmap: Buffer): boolean {
+  if (bitmap.length < 4) return false;
   for (let offset = 3; offset < bitmap.length; offset += 4) {
-    const alpha = bitmap[offset];
-    if (alpha > maxAlpha) maxAlpha = alpha;
-    if (alpha >= 16) paintedPixels += 1;
+    if (bitmap[offset] > 0) return true;
   }
-  return pngInspectionHasPaint({
-    maxAlpha,
-    opaquePixels: paintedPixels,
-    translucentPixels: 0,
-  });
+  return false;
+}
+
+export function pngBufferHasPaint(data: Buffer): boolean {
+  return bgraBitmapHasPaint(nativeImage.createFromBuffer(data).toBitmap());
 }
 
 function injectBaseHref(doc: string, baseHref: string | undefined): string {
