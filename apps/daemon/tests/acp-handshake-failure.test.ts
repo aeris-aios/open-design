@@ -240,6 +240,22 @@ describe('handshake failures that name their own remedy', () => {
     ).toMatchObject({ failure_category: 'rate_limit' });
   });
 
+  it('files the remaining named causes under the category that owns them', () => {
+    expect(classify('AGENT_EXECUTION_FAILED', UNAUTHORIZED)).toMatchObject({
+      failure_category: 'auth',
+      user_action: 'login',
+    });
+    expect(classify('AGENT_EXECUTION_FAILED', RATE_LIMITED)).toMatchObject({
+      failure_category: 'rate_limit',
+    });
+    expect(classify('AGENT_EXECUTION_FAILED', NO_BALANCE)).toMatchObject({
+      failure_category: 'insufficient_balance',
+    });
+    expect(classify('AGENT_EXECUTION_FAILED', UPSTREAM_DOWN)).toMatchObject({
+      failure_category: 'upstream_unavailable',
+    });
+  });
+
   it('does not retry a signed-out handshake either', () => {
     // Suppressed as an auth failure rather than as a handshake rejection —
     // a different, more accurate reason for the same outcome. Re-running while
