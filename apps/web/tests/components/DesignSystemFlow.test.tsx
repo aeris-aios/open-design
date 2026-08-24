@@ -3874,6 +3874,7 @@ describe('DesignSystemDetailView', () => {
     mocks.listConversations.mockResolvedValue([
       { id: 'conv-design-system', projectId: project.id, title: 'Design system', createdAt: 1, updatedAt: 1 },
     ]);
+
     render(
       <DesignSystemDetailView
         id={system.id}
