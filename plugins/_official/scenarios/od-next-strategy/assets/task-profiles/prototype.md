@@ -200,7 +200,7 @@ Two kinds of text, two treatments:
 | Numeral + caption | stat strip, hero stats | `.od-stat` — numeral above, caption below, each its own block |
 | Label + helper text | settings row, form row | `.od-row > .od-field.od-fill + control.od-fixed`; helper is a block under the label, ≤ 2 lines |
 | Weekday + day + availability | date rail cell | `.od-cell` — three blocks; sold-out dims the whole cell and keeps its text (约满 / 余 2) |
-| Commerce / service card | list row, 2–3 column tile | `.od-tile > .od-media + body`: name ≤ 5 汉字 one line; selling points as ≤ 3 tag chips, not a 2-line description; price `¥98起` (起 smaller, attached) in `.od-nowrap`, on the name line or lower-right — never wrapped |
+| Commerce / service card | list row, 2–3 column tile | `.od-tile > .od-media + body`: name ≤ 5 汉字 one line; selling points as ≤ 3 tag chips, not a 2-line description; price `¥98起` (起 smaller, attached) in `.od-nowrap`, on the name line or lower-right — never wrapped. Media: bare `.od-media` keeps the photo's full frame (product shots, covers, artwork); only a deliberately uniform tile crop sets `--od-ratio` **and** adds `.od-media-cover` together |
 | Chip rail | filter bar | `.od-rail` — the next chip peeks at the edge; chips ≤ 4 汉字; anything longer is a list row |
 | Screen chrome | top bar / content / bottom bar | `.od-screen > header + .od-scroll + footer` — bars take their own space, the middle scrolls, no height constant reused as padding; a translucent overlay bar is an explicit choice with `backdrop-filter` and the hero as first child |
 | Centring placeholder in a bar | top bar | `.od-spacer` sized like the opposite control — never an empty button |
